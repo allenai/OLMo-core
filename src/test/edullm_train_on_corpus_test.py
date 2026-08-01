@@ -273,3 +273,275 @@ def test_the_platform_variables_are_required_and_named_when_missing(monkeypatch,
     message = str(refusal.value)
     for name in ("EDULLM_DATASET_ID", "EDULLM_CHECKPOINT_DIR"):
         assert name in message
+
+
+class Boom(Exception):
+    """Whatever the reader raises, wrapped in a message like the ones botocore produces."""
+
+
+def resolve_with_a_reader_that_raises(monkeypatch, exc: BaseException):
+    import types
+
+    class Boto3S3:
+        @classmethod
+        def default(cls, region="us-east-1"):
+            return ReaderProtocolStub()
+
+    def dataset_paths(dataset_id, version, *, s3, **_):
+        raise exc
+
+    read_module: Any = types.ModuleType("edullm_data.read")
+    read_module.dataset_paths = dataset_paths
+    read_module.resolve_latest = lambda dataset_id, *, s3, **_: "v1"
+    s3_module: Any = types.ModuleType("edullm_data.s3")
+    s3_module.Boto3S3 = Boto3S3
+    monkeypatch.setitem(sys.modules, "edullm_data", types.ModuleType("edullm_data"))
+    monkeypatch.setitem(sys.modules, "edullm_data.read", read_module)
+    monkeypatch.setitem(sys.modules, "edullm_data.s3", s3_module)
+
+    with pytest.raises(entry.Refusal) as refusal:
+        entry.resolve_corpus(
+            dataset_id="pretrain/regmix-10b", version="v1", tokenizer_id="tokenizer/dolma2-bpe"
+        )
+    return refusal.value
+
+
+def test_a_role_that_may_not_read_the_corpus_is_not_the_same_number_as_a_bad_run(monkeypatch):
+    """Mutation: give every reader failure one code, which is what exit 1 already did.
+
+    A missing ``s3:GetObject`` on ``edullm-data`` and a registry entry pointing at a prefix
+    nobody published both arrive here as a failed read, and they have nothing in common: the
+    first is an IAM change, the second is a dataset that is not there. Told apart at the
+    exit code, the first question after a dead container is already answered.
+    """
+    denied = resolve_with_a_reader_that_raises(
+        monkeypatch,
+        Boom("An error occurred (AccessDenied) when calling the HeadObject operation"),
+    )
+    assert denied.stage is entry.Stage.THE_ROLE_MAY_NOT_READ_THE_CORPUS
+
+    absent = resolve_with_a_reader_that_raises(
+        monkeypatch, Boom("An error occurred (NoSuchKey) when calling the GetObject operation")
+    )
+    assert absent.stage is entry.Stage.THE_CORPUS_IS_NOT_WHERE_THE_REGISTRY_SAYS
+
+    # And something neither, which must not be filed as either -- a reader that changed under
+    # us is a third thing, and calling it AccessDenied would send somebody to write a policy.
+    other = resolve_with_a_reader_that_raises(monkeypatch, Boom("manifest is not valid JSON"))
+    assert other.stage is entry.Stage.THE_READER_FAILED_IN_SOME_OTHER_WAY
+
+
+def test_a_denial_wrapped_in_the_readers_own_exception_is_still_a_denial(monkeypatch):
+    # The reader does not re-raise botocore's errors bare; it raises its own with the original
+    # attached. Reading only the outermost message would file every denial as unrecognised.
+    wrapped = Boom("could not read the seal")
+    wrapped.__cause__ = Boom("AccessDenied")
+    assert (
+        resolve_with_a_reader_that_raises(monkeypatch, wrapped).stage
+        is entry.Stage.THE_ROLE_MAY_NOT_READ_THE_CORPUS
+    )
+
+
+def test_every_stage_has_a_number_of_its_own_and_none_collides_with_the_shell():
+    """Mutation: number a stage 127, or reuse one.
+
+    126, 127 and 128+n belong to the shell and the signal convention -- "cannot execute",
+    "not found", "killed by signal n" -- and a stage sharing one of those is a stage that
+    reads as an infrastructure failure forever.
+    """
+    numbers = [int(stage) for stage in entry.Stage]
+    assert len(numbers) == len(set(numbers))
+    assert all(64 <= number <= 78 for number in numbers)
+
+
+def test_the_stage_survives_the_boundary_that_turns_it_into_an_exit_status(monkeypatch, capsys):
+    """Mutation: let main's SystemExit reach the interpreter directly.
+
+    ``SystemExit("a message")`` exits 1 and prints the message, which is exactly the
+    indistinguishable failure this exists to end. The number only appears if something turns
+    the refusal into one.
+    """
+    for name in ("EDULLM_DATASET_ID", "EDULLM_DATASET_VERSION", "EDULLM_DATASET_TOKENIZER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("EDULLM_CHECKPOINT_DIR", raising=False)
+    monkeypatch.delenv("EDULLM_WANDB_PROJECT", raising=False)
+    monkeypatch.setattr(sys, "argv", ["train_on_corpus", "some-run"])
+
+    assert entry.cli() == int(entry.Stage.THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT)
+    printed = capsys.readouterr().err
+    assert "EDULLM_DATASET_ID" in printed
+    assert "edullm-stage: THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT" in printed
+
+
+def test_a_diagnostic_that_cannot_reach_wandb_does_not_replace_the_error_it_reports(monkeypatch):
+    """Mutation: let the reporter's own failure propagate.
+
+    W&B is reached over a network, and a container broken enough to die in startup may be
+    broken in exactly that way. A reporter that raises turns "the role cannot read the
+    corpus" into "connection refused", which is a worse answer than no answer.
+    """
+    import types
+
+    monkeypatch.setenv("EDULLM_WANDB_PROJECT", "edullm-platform-smoke")
+    exploding: Any = types.ModuleType("wandb")
+
+    def refuse(*args, **kwargs):
+        raise RuntimeError("no route to host")
+
+    exploding.init = refuse
+    exploding.run = None
+    monkeypatch.setitem(sys.modules, "wandb", exploding)
+
+    entry.leave_the_reason_in_wandb(
+        run_name="run_x", stage=entry.Stage.THE_ROLE_MAY_NOT_READ_THE_CORPUS, explanation="denied"
+    )
+
+
+def test_nothing_is_sent_to_wandb_when_the_platform_named_no_project(monkeypatch):
+    # Running the image by hand must not fail on a missing WANDB_API_KEY, which is the same
+    # reason the trainer's own callback is enabled only when the project is set.
+    import types
+
+    monkeypatch.delenv("EDULLM_WANDB_PROJECT", raising=False)
+    tripwire: Any = types.ModuleType("wandb")
+
+    def never(*args, **kwargs):
+        raise AssertionError("W&B was reached without a project")
+
+    tripwire.init = never
+    tripwire.run = None
+    monkeypatch.setitem(sys.modules, "wandb", tripwire)
+
+    entry.leave_the_reason_in_wandb(
+        run_name="run_x", stage=entry.Stage.TRAINING_ITSELF_FAILED, explanation="whatever"
+    )
+
+
+class FakeModel:
+    def __init__(self, parameters):
+        self._parameters = parameters
+
+    def parameters(self):
+        return self._parameters
+
+
+class FakeTrainModule:
+    def __init__(self, parameters):
+        self.model = FakeModel(parameters)
+
+
+class FakeTrainer:
+    def __init__(self, parameters, step):
+        self.train_module = FakeTrainModule(parameters)
+        self.global_step = step
+
+
+@dataclass
+class FakeOptions:
+    run_name: str = "run_0"
+    save_folder: str = "s3://bucket/teams/platform/runs/run_0/checkpoints/"
+
+
+@dataclass
+class FakeConfig:
+    dataset_id: str = "pretrain/regmix-10b"
+    dataset_version: str = "v1"
+
+
+class FakeParameter:
+    def __init__(self, count):
+        self._count = count
+
+    def numel(self):
+        return self._count
+
+
+def test_the_first_and_last_loss_are_kept_and_the_ones_between_are_not():
+    """The summary reports both ends. Steps with no loss in their metrics are ignored."""
+    watcher = entry.LossWatcher()
+
+    watcher.log_metrics(1, {"throughput/device/TPS": 1000.0})
+    watcher.log_metrics(2, {"train/CE loss": 6.9})
+    watcher.log_metrics(3, {"train/CE loss": 6.5})
+    watcher.log_metrics(4, {"train/CE loss": 6.1})
+
+    assert watcher.first == 6.9
+    assert watcher.last == 6.1
+
+
+def test_the_summary_is_one_json_object_carrying_what_only_this_process_knows(capsys):
+    """The platform reads this back out of the log stream, so it has to parse on its own."""
+    import json
+
+    watcher = entry.LossWatcher()
+    watcher.log_metrics(1, {"train/CE loss": 6.9})
+    watcher.log_metrics(2, {"train/CE loss": 6.1})
+
+    entry.summarise(
+        opts=FakeOptions(),
+        config=FakeConfig(),
+        trainer=FakeTrainer([FakeParameter(100), FakeParameter(90)], step=50),
+        losses=watcher,
+        seconds=12.5,
+    )
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["parameters"] == 190
+    assert printed["steps"] == 50
+    assert printed["first_loss"] == 6.9
+    assert printed["last_loss"] == 6.1
+    assert printed["seconds"] == 12.5
+    assert printed["dataset_id"] == "pretrain/regmix-10b"
+    assert printed["checkpoint_uri"].endswith("/checkpoints/")
+
+
+def test_a_summary_is_printed_even_when_no_step_reported_a_loss(capsys):
+    """A run that printed nothing cannot be told apart from one that never started."""
+    import json
+
+    entry.summarise(
+        opts=FakeOptions(),
+        config=FakeConfig(),
+        trainer=FakeTrainer([FakeParameter(1)], step=0),
+        losses=entry.LossWatcher(),
+        seconds=0.5,
+    )
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["first_loss"] is None
+    assert printed["last_loss"] is None
+
+
+def test_the_config_print_names_how_many_shards_rather_than_all_of_them(monkeypatch):
+    """olmo-150b-dolma2 resolves to 6,851 objects and the dtype must stay readable."""
+    printed = []
+    monkeypatch.setattr(entry.rich, "print", lambda value: printed.append(value))
+    monkeypatch.setattr(
+        entry,
+        "resolve_corpus",
+        lambda **kwargs: entry.corpus_from_manifest(
+            FakeManifest(
+                paths=[f"s3://edullm-data/x/v1/tokens/train-{n:05}.u32le.bin" for n in range(9)]
+            ),
+            dataset_id=kwargs["dataset_id"],
+            version=kwargs["version"],
+            tokenizer_id=kwargs["tokenizer_id"],
+        ),
+    )
+    opts, overrides = entry.build_parser().parse_known_args(
+        [
+            "a-run-id",
+            "--dataset-id=pretrain/regmix-10b",
+            "--dataset-version=v1",
+            "--dataset-tokenizer=tokenizer/dolma2-bpe",
+            "--save-folder=s3://outputs/teams/platform/runs/a-run-id/checkpoints/",
+        ]
+    )
+    config = entry.build_config(opts, overrides)
+    paths = list(config.dataset.paths)
+    entry.show(config)
+
+    assert len(printed) == 1
+    assert printed[0].dataset.paths == [f"<{len(paths)} objects>"]
+    # The config itself is untouched, because the run trains on it after this prints.
+    assert list(config.dataset.paths) == paths

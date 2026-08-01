@@ -39,16 +39,29 @@ that is merely worse than it should be, which is indistinguishable from a bad hy
   3. Header bytes. OLMo-core memmaps from offset zero; a container format with a leading
      header decodes that header as tokens. The headerless ``.u32le.bin`` form is zero here,
      and anything else is refused rather than read wrong.
+
+HOW THIS SAYS WHAT WENT WRONG, GIVEN THAT NOBODY CAN READ ITS LOG. A container that fails
+before training writes its explanation to a CloudWatch stream that no credential on the
+platform side may read, and Batch reports only ``exitCode`` and "Essential container in task
+exited". So the exit code carries the stage -- see ``Stage`` -- and the explanation is also
+written to W&B, which is the one place a run's own output lands that a researcher can open.
 """
 
 import argparse
+import contextlib
+import copy
+import enum
+import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
-from typing import List, Optional, cast
+import time
+import traceback
+from dataclasses import dataclass, replace
+from typing import Dict, Iterator, List, Optional, cast
 
 import rich
+import torch
 
 from olmo_core.config import Config, DType
 from olmo_core.data import (
@@ -68,6 +81,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    Callback,
     CheckpointerCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
@@ -80,6 +94,144 @@ from olmo_core.train.train_module import (
 from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
+
+
+class Stage(enum.IntEnum):
+    """Which stage a run died in, said in the exit code, because nobody can read the log.
+
+    THE EXIT CODE IS THE ONLY CHANNEL OUT OF A CONTAINER THAT DIES BEFORE W&B EXISTS.
+    Batch reports ``status``, ``statusReason`` and ``exitCode``, and for a container that
+    exits on its own the reason is always "Essential container in task exited". The
+    explanation is on stdout, in a CloudWatch stream, and no credential on the platform side
+    holds ``logs:GetLogEvents`` -- the researcher-facing role that would is not deployed, and
+    the deploy role deliberately cannot read other tenants' logs in a shared account.
+
+    So on 2026-08-01 four runs died between five and forty seconds with exit 1, and exit 1 is
+    what a bad hyperparameter, a lost quote, a missing entry point, an unreadable bucket and a
+    wrong argument all look like. Each was diagnosed by resubmitting with a change and seeing
+    whether the number moved -- at an A10G and several minutes of image pull per guess.
+
+    One number per stage costs nothing and answers the first question every time: 65 says the
+    role cannot read the corpus, 66 says the corpus is not where the registry says, 67 says the
+    manifest is not safe to memmap. None of those is a training problem and all three are
+    indistinguishable from one at exit 1.
+
+    The values are in the conventional ``sysexits`` range and stay clear of 126, 127 and 128+n,
+    which the shell and the signal convention already own.
+    """
+
+    THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT = 64
+    THE_ROLE_MAY_NOT_READ_THE_CORPUS = 65
+    THE_CORPUS_IS_NOT_WHERE_THE_REGISTRY_SAYS = 66
+    THE_READER_FAILED_IN_SOME_OTHER_WAY = 67
+    THE_MANIFEST_IS_NOT_SAFE_TO_MEMMAP = 68
+    THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER = 69
+    THE_CONFIG_WOULD_NOT_BUILD = 70
+    THE_TRAINING_ENVIRONMENT_WOULD_NOT_START = 71
+    TRAINING_ITSELF_FAILED = 72
+
+
+class Refusal(SystemExit):
+    """A refusal that carries which stage it came from as well as what to tell the person.
+
+    A ``SystemExit`` subclass so that every existing ``raise SystemExit(message)`` reads the
+    same to a caller and to a test, and so an accidental escape still stops the process. What
+    it adds is ``stage``, which ``cli()`` turns into the process's exit status.
+    """
+
+    def __init__(self, stage: "Stage", explanation: str) -> None:
+        super().__init__(explanation)
+        self.stage = stage
+        self.explanation = explanation
+
+
+@contextlib.contextmanager
+def during(stage: Stage) -> Iterator[None]:
+    """Tag whatever goes wrong in here with the stage it went wrong in.
+
+    Only for the unforeseen. A refusal this file writes on purpose already knows its stage and
+    passes through untouched; what this catches is the ``AttributeError`` from a library that
+    changed under us, which is precisely the class of failure that arrives as a bare exit 1.
+    """
+    try:
+        yield
+    except Refusal:
+        raise
+    except BaseException as exc:
+        raise Refusal(stage, f"{type(exc).__name__}: {exc}") from exc
+
+
+def _looks_like(exc: BaseException, *words: str) -> bool:
+    """Whether an exception, or anything it was raised from, mentions one of these.
+
+    Deliberately string-matching rather than catching ``botocore.exceptions.ClientError``.
+    The reader wraps S3 errors in its own types, those types are not importable at the top of
+    this file, and the distinction being drawn -- refused versus absent -- is one that both
+    botocore and the reader spell in words in the message.
+    """
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        text = f"{type(exc).__name__}: {exc}".lower()
+        if any(word in text for word in words):
+            return True
+        exc = exc.__cause__ or exc.__context__  # type: ignore[assignment]
+    return False
+
+
+def read_failure(exc: BaseException) -> Stage:
+    """Refused, absent, or something else -- the distinction that decides what to do next.
+
+    A probe that recorded only "the read failed" would read the same for a role missing a
+    grant and for a registry pointing at a prefix nobody published, and the two have nothing
+    in common: one is an IAM change and one is a dataset that is not there.
+    """
+    if _looks_like(exc, "accessdenied", "403", "forbidden", "not authorized"):
+        return Stage.THE_ROLE_MAY_NOT_READ_THE_CORPUS
+    if _looks_like(exc, "nosuchkey", "nosuchbucket", "404", "not found", "no such"):
+        return Stage.THE_CORPUS_IS_NOT_WHERE_THE_REGISTRY_SAYS
+    return Stage.THE_READER_FAILED_IN_SOME_OTHER_WAY
+
+
+def leave_the_reason_in_wandb(*, run_name: str, stage: Stage, explanation: str) -> None:
+    """Put the traceback where the researcher already looks, since the log is unreachable.
+
+    W&B is the one place a run's own output lands that somebody on this platform can open. A
+    container that dies during startup never gets there, because the trainer's W&B callback
+    initialises well after the corpus is resolved -- so the runs that most need explaining are
+    exactly the ones that leave nothing behind.
+
+    This creates a run of its own for that case, named after the platform run id and tagged so
+    it sorts away from real training. If training itself failed there is already a run open and
+    the reason is written into that one instead of beside it.
+
+    Every failure in here is swallowed. A diagnostic that replaces the error it was reporting
+    with its own is worse than no diagnostic, and W&B is reachable over a network that a
+    broken container may be exactly what is broken about.
+    """
+    project = os.environ.get("EDULLM_WANDB_PROJECT")
+    if not project:
+        return
+    try:
+        import wandb
+
+        # Through the environment rather than through Settings, whose accepted fields move
+        # between wandb versions. A default here only applies if nothing else set one.
+        os.environ.setdefault("WANDB_INIT_TIMEOUT", "60")
+        run = wandb.run
+        if run is None:
+            run = wandb.init(
+                project=project,
+                name=f"{run_name}-died",
+                job_type="crash",
+                tags=["died-before-training", stage.name.lower().replace("_", "-")],
+            )
+        run.summary["edullm_stage"] = stage.name
+        run.summary["edullm_exit_code"] = int(stage)
+        run.summary["edullm_explanation"] = explanation
+        run.finish(exit_code=int(stage))
+    except BaseException as exc:  # noqa: BLE001 -- see the docstring
+        print(f"could not leave the reason in W&B: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 # WHICH TOKENIZER EACH PUBLISHED ONE IS, SPELLED OUT RATHER THAN GUESSED.
@@ -140,31 +292,38 @@ def corpus_from_manifest(read, *, dataset_id: str, version: str, tokenizer_id: s
     ``paths``, ``dtype``, ``byte_order``, ``header_bytes`` and ``rows`` will do.
     """
     if not read.paths:
-        raise SystemExit(f"{dataset_id}/{version} resolved to no trainable shards")
+        raise Refusal(
+            Stage.THE_MANIFEST_IS_NOT_SAFE_TO_MEMMAP,
+            f"{dataset_id}/{version} resolved to no trainable shards",
+        )
 
     if read.dtype is None:
-        raise SystemExit(
+        raise Refusal(
+            Stage.THE_MANIFEST_IS_NOT_SAFE_TO_MEMMAP,
             f"{dataset_id}/{version} declares no dtype, so there is no width to read it at. "
-            "A fixed-width corpus must; refusing rather than guessing."
+            "A fixed-width corpus must; refusing rather than guessing.",
         )
     if read.header_bytes:
-        raise SystemExit(
+        raise Refusal(
+            Stage.THE_MANIFEST_IS_NOT_SAFE_TO_MEMMAP,
             f"{dataset_id}/{version} declares {read.header_bytes} header bytes and OLMo-core "
-            "memmaps from offset zero, so the header would be decoded as tokens."
+            "memmaps from offset zero, so the header would be decoded as tokens.",
         )
     if read.byte_order is not None and read.byte_order != sys.byteorder:
-        raise SystemExit(
+        raise Refusal(
+            Stage.THE_MANIFEST_IS_NOT_SAFE_TO_MEMMAP,
             f"{dataset_id}/{version} is {read.byte_order}-endian and this host is "
             f"{sys.byteorder}-endian. numpy would read every token to a different, "
-            "in-range-looking id."
+            "in-range-looking id.",
         )
 
     try:
         tokenizer = TOKENIZERS[tokenizer_id]()
     except KeyError:
         known = ", ".join(sorted(TOKENIZERS)) or "none"
-        raise SystemExit(
-            f"no OLMo-core config for {tokenizer_id}; this image knows: {known}"
+        raise Refusal(
+            Stage.THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER,
+            f"no OLMo-core config for {tokenizer_id}; this image knows: {known}",
         ) from None
 
     return Corpus(
@@ -207,16 +366,37 @@ def resolve_corpus(*, dataset_id: str, version: str, tokenizer_id: str) -> Corpu
     # pinned version is the normal case and what the platform sends; this branch exists so a
     # person poking at the image by hand does not have to look one up first.
     if version in ("", "latest"):
-        resolved = resolve_latest(dataset_id, s3=s3)
+        try:
+            resolved = resolve_latest(dataset_id, s3=s3)
+        except Refusal:
+            raise
+        except BaseException as exc:
+            raise Refusal(read_failure(exc), f"{type(exc).__name__}: {exc}") from exc
         if resolved is None:
-            raise SystemExit(f"no published version of {dataset_id}")
+            raise Refusal(
+                Stage.THE_CORPUS_IS_NOT_WHERE_THE_REGISTRY_SAYS,
+                f"no published version of {dataset_id}",
+            )
         version = resolved
 
     # split is left at its default, which returns TRAINABLE shards only. Passing split="train"
     # would work today and would break quietly on a corpus that names its trainable split
     # anything else; the default is the reader's own answer to "what may this run see", and
     # held-out shards are not it.
-    read = dataset_paths(dataset_id, version, s3=s3)
+    # THE STAGE THAT ACTUALLY TOUCHES THE ACCOUNT, AND THE ONE WORTH TELLING APART FROM THE
+    # REST. Everything above this line is local. This call HEADs the seal, GETs the manifest
+    # and lists the group, so it is where a missing s3:GetObject on edullm-data shows up --
+    # and a role without that grant and a registry entry pointing at an unpublished prefix
+    # both arrive here as a failed read. read_failure separates them.
+    try:
+        read = dataset_paths(dataset_id, version, s3=s3)
+    except Refusal:
+        raise
+    except BaseException as exc:
+        raise Refusal(
+            read_failure(exc),
+            f"reading {dataset_id}/{version}: {type(exc).__name__}: {exc}",
+        ) from exc
     return corpus_from_manifest(
         read, dataset_id=dataset_id, version=version, tokenizer_id=tokenizer_id
     )
@@ -239,7 +419,9 @@ def build_config(opts, overrides: List[str]):
 
     factory = getattr(TransformerConfig, opts.model_factory, None)
     if factory is None:
-        raise SystemExit(f"unknown model factory: {opts.model_factory}")
+        raise Refusal(
+            Stage.THE_CONFIG_WOULD_NOT_BUILD, f"unknown model factory: {opts.model_factory}"
+        )
 
     # padded rather than exact for the same reason the example pads: a vocab that is a
     # multiple of 128 keeps the embedding matmul on a fast path. dolma2's 100,278 pads to
@@ -349,9 +531,84 @@ def build_config(opts, overrides: List[str]):
     return config.merge(overrides)
 
 
-def train(config) -> None:
+class LossWatcher(Callback):
+    """Keeps the first and last training loss so the summary below can report them."""
+
+    def __init__(self) -> None:
+        self.first: Optional[float] = None
+        self.last: Optional[float] = None
+
+    def log_metrics(self, step: int, metrics: Dict[str, float]) -> None:
+        del step
+        loss = metrics.get("train/CE loss")
+        if loss is None:
+            return
+        if self.first is None:
+            self.first = float(loss)
+        self.last = float(loss)
+
+
+def summarise(*, opts, config, trainer, losses: LossWatcher, seconds: float) -> None:
+    """Print what only this process can report, as one JSON object on stdout.
+
+    The platform reads this back out of the log stream: the device torch actually got, the
+    parameter count, the loss at both ends and where the checkpoints went are not facts Batch
+    holds. Printed on rank zero only, and printed whatever the losses are, because a run that
+    reported nothing is indistinguishable from one that never started.
+    """
+    if get_rank() != 0:
+        return
+    device = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
+    peak = torch.cuda.max_memory_allocated() / 1024**3 if torch.cuda.is_available() else 0.0
+    url = ""
+    if os.environ.get("EDULLM_WANDB_PROJECT"):
+        with contextlib.suppress(Exception):
+            import wandb
+
+            url = getattr(wandb.run, "url", "") or ""
+    print(
+        json.dumps(
+            {
+                "run_id": opts.run_name,
+                "dataset_id": config.dataset_id,
+                "dataset_version": config.dataset_version,
+                "gpu": device,
+                "torch": torch.__version__,
+                "cuda": torch.version.cuda,
+                "parameters": sum(
+                    parameter.numel() for parameter in trainer.train_module.model.parameters()
+                ),
+                "steps": trainer.global_step,
+                "first_loss": losses.first,
+                "last_loss": losses.last,
+                "seconds": seconds,
+                "peak_memory_gib": peak,
+                "checkpoint_uri": opts.save_folder,
+                "wandb_project": os.environ.get("EDULLM_WANDB_PROJECT", ""),
+                "wandb_url": url,
+            },
+            indent=2,
+        ),
+        flush=True,
+    )
+
+
+def show(config) -> None:
+    """Print the config with the shard list replaced by its length.
+
+    olmo-150b-dolma2 resolves to 6,851 objects, and printing each one buries every other
+    line of the config -- including the dtype and the tokenizer, which are the two fields
+    worth reading. The paths themselves are in the config the ConfigSaverCallback writes
+    next to the checkpoints.
+    """
+    shown = copy.copy(config.dataset)
+    shown.paths = [f"<{len(config.dataset.paths)} objects>"]
+    rich.print(replace(config, dataset=shown))
+
+
+def train(config, opts=None) -> None:
     if get_rank() == 0:
-        rich.print(config)
+        show(config)
 
     seed_all(config.init_seed)
 
@@ -362,12 +619,23 @@ def train(config) -> None:
     trainer = config.trainer.build(train_module, data_loader)
 
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config.as_config_dict()
+    losses = LossWatcher()
+    trainer.add_callback("edullm_losses", losses)
 
     # maybe_load_checkpoint is what makes a second Batch attempt continue the first rather
     # than start over. It looks in the save folder, which is EDULLM_CHECKPOINT_DIR, which is
     # derived from the run id and is therefore the same string on both attempts.
     trainer.maybe_load_checkpoint()
+    started = time.monotonic()
     trainer.fit()
+    if opts is not None:
+        summarise(
+            opts=opts,
+            config=config,
+            trainer=trainer,
+            losses=losses,
+            seconds=time.monotonic() - started,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -417,24 +685,55 @@ def main() -> None:
         if not value
     ]
     if missing:
-        raise SystemExit(
+        raise Refusal(
+            Stage.THE_PLATFORM_DID_NOT_SET_THE_ENVIRONMENT,
             "the platform sets these and they are unset: "
             + ", ".join(missing)
             + ". Submitting with dataset_release: none leaves the first three empty, which "
-            "means this run has no corpus to open."
+            "means this run has no corpus to open.",
         )
 
-    config = build_config(opts, overrides)
+    with during(Stage.THE_CONFIG_WOULD_NOT_BUILD):
+        config = build_config(opts, overrides)
     if opts.dry_run:
-        rich.print(config)
+        show(config)
         return
 
-    prepare_training_environment()
+    with during(Stage.THE_TRAINING_ENVIRONMENT_WOULD_NOT_START):
+        prepare_training_environment()
     try:
-        train(config)
+        with during(Stage.TRAINING_ITSELF_FAILED):
+            train(config, opts)
     finally:
         teardown_training_environment()
 
 
+def cli() -> int:
+    """Run, and turn a refusal into a number a person on the platform side can actually see.
+
+    ``main`` raises rather than exiting so that a test can read the message. This is the
+    boundary where a stage becomes the process's exit status, the explanation goes to stderr
+    for whoever can read the log, and the same explanation goes to W&B for everyone who
+    cannot.
+    """
+    try:
+        main()
+    except Refusal as refusal:
+        print(refusal.explanation, file=sys.stderr)
+        # Machine-readable and greppable, for the case where somebody does have the log.
+        print(f"edullm-stage: {refusal.stage.name} exit={int(refusal.stage)}", file=sys.stderr)
+        if refusal.__cause__ is not None:
+            traceback.print_exception(
+                type(refusal.__cause__), refusal.__cause__, refusal.__cause__.__traceback__
+            )
+        leave_the_reason_in_wandb(
+            run_name=os.environ.get("EDULLM_RUN_ID", "local"),
+            stage=refusal.stage,
+            explanation=refusal.explanation,
+        )
+        return int(refusal.stage)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(cli())
