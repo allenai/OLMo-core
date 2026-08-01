@@ -447,6 +447,63 @@ def all_gather_object(obj: T, group: Optional[dist.ProcessGroup] = None) -> List
     return output_list
 
 
+_CPU_OBJECT_PG: Optional[dist.ProcessGroup] = None
+_CPU_OBJECT_PG_UNAVAILABLE = False
+
+
+def _cpu_object_process_group() -> Optional[dist.ProcessGroup]:
+    """
+    A lazily-created world-sized gloo group for object collectives, or ``None`` if one is not
+    available (in which case callers should fall back to the default group).
+
+    ``new_group`` is collective, so this must be reached by every rank -- which it is, since the
+    only caller is itself a collective.
+    """
+    global _CPU_OBJECT_PG, _CPU_OBJECT_PG_UNAVAILABLE
+    if _CPU_OBJECT_PG is not None or _CPU_OBJECT_PG_UNAVAILABLE:
+        return _CPU_OBJECT_PG
+    if backend_supports_cpu():
+        # The default backend already keeps object collectives on the host.
+        _CPU_OBJECT_PG_UNAVAILABLE = True
+        return None
+    try:
+        _CPU_OBJECT_PG = dist.new_group(backend="gloo")
+    except Exception as e:  # pragma: no cover - depends on the build's available backends
+        log.warning("could not create a gloo group for object collectives (%s); falling back", e)
+        _CPU_OBJECT_PG_UNAVAILABLE = True
+    return _CPU_OBJECT_PG
+
+
+def all_gather_object_cpu(obj: T, group: Optional[dist.ProcessGroup] = None) -> List[T]:
+    """
+    All-gather a Python object **without routing the pickled bytes through GPU memory**.
+
+    :func:`all_gather_object` (and ``torch.distributed.all_gather_object``) serialize to a tensor on
+    the collective's device. Under NCCL that device is the GPU, and the implementation then
+    allocates ``max_pickled_size * world_size`` bytes there. Gathering results alongside a large
+    model can therefore OOM the GPU over a payload that is trivial for host RAM -- and it fails
+    *after* the expensive work, discarding it.
+
+    This routes the gather over a CPU (gloo) group instead, so the pickled bytes live in host
+    memory. It falls back to the default group when a gloo group is unavailable, or when an explicit
+    ``group`` is given (a caller-supplied subgroup cannot be substituted).
+
+    :param obj: The object contributed by this rank. Must be picklable.
+    :param group: An explicit process group. Passing one disables the CPU routing.
+
+    :returns: One entry per rank, in rank order.
+    """
+    if not is_distributed():
+        return [obj]
+
+    if group is None:
+        group = _cpu_object_process_group()
+
+    output_list: List[T] = [obj] * get_world_size(group)
+    dist.all_gather_object(output_list, obj, group=group)
+    return output_list
+
+
 def get_mesh_coordinates(mesh: "DeviceMesh", rank: Optional[int] = None) -> Optional[List[int]]:
     """
     Calculate the coordinates of a global rank on a device mesh.

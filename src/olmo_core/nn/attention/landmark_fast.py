@@ -717,12 +717,12 @@ class FastLandmarkAttention(Attention):
         # (content keeps absolute positions 0..L_i, the pad TAIL is masked per row; see
         # :meth:`TransformerGenerationModule.generate_landmark_batch`). All-None == the legacy
         # bs=1 / exact-length path (unchanged).
-        self._ragged_qpos: Optional[torch.Tensor] = (
-            None  # (B,) current per-row query/write position
-        )
-        self._ragged_prompt_lens: Optional[torch.Tensor] = (
-            None  # (B,) per-row landmark-prompt length
-        )
+        self._ragged_qpos: Optional[
+            torch.Tensor
+        ] = None  # (B,) current per-row query/write position
+        self._ragged_prompt_lens: Optional[
+            torch.Tensor
+        ] = None  # (B,) per-row landmark-prompt length
         self._ragged_top_k: Optional[torch.Tensor] = None  # (B,) per-row top-k, or None for dense
 
     def set_landmark_ragged_decode(
@@ -982,13 +982,21 @@ class FastLandmarkAttention(Attention):
             vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
             att = self._decode_one(qh, kh, vh, start_pos)
         else:
-            if start_pos != 0:
+            # Multi-token forward. ``start_pos == 0`` is the ordinary single-shot prefill;
+            # ``start_pos > 0`` is a later slice of a chunked prefill (see
+            # ``GenerationConfig.prefill_chunk_size``), which attends over the whole cached prefix.
+            # The fused kernels take the history implicitly as ``len(k) - len(q)`` and require it to
+            # be a whole number of blocks, so a chunk must begin on a block boundary: landmark
+            # positions are absolute, and starting mid-block would shift the entire block structure
+            # relative to the ``is_mem`` pattern ``_attn_core`` builds.
+            if start_pos % self.block_size != 0:
                 raise NotImplementedError(
-                    "Landmark multi-token forward with a non-empty cache is not supported "
-                    "(only single-shot prefill from position 0)."
+                    "Landmark chunked prefill requires every chunk to start on a block boundary "
+                    f"(block_size={self.block_size}), got start_pos={start_pos}. Set "
+                    f"GenerationConfig.prefill_chunk_size to a multiple of {self.block_size}."
                 )
-            kh = repeat_kv(k.transpose(1, 2), n_rep)
-            vh = repeat_kv(v.transpose(1, 2), n_rep)
+            kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)
+            vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
             att = self._prefill(qh, kh, vh)
 
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
@@ -998,6 +1006,12 @@ class FastLandmarkAttention(Attention):
     def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         """Prefill over an arbitrary-length prompt: right-pad to a multiple of block_size, run the
         fused kernel, slice off the padded tail (padding is future-only, never attended causally).
+
+        ``k``/``v`` may be *longer* than ``q`` during a chunked prefill, where they cover the whole
+        cached prefix and ``q`` is only the current chunk. Padding all three by the same amount
+        leaves the kernel's implicit history ``len(k) - len(q)`` unchanged, and keeps both the
+        history and the padded total a whole number of blocks (the caller guarantees the chunk
+        starts on a block boundary).
         """
         T = q.shape[2]
         pad = (-T) % self.block_size

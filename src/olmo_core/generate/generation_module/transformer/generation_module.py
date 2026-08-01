@@ -668,6 +668,47 @@ class TransformerGenerationModule(GenerationModule):
             # NOTE: completions_only does not apply to logits/logprobs. They are already computed only for completions.
         return generated, logits, logprobs
 
+    def _align_prefill_chunk_size(self, chunk_size: Optional[int]) -> Optional[int]:
+        """
+        Round ``chunk_size`` down to a multiple of the landmark block size, if this is a landmark
+        model.
+
+        Landmark blocks are tied to absolute position, so a chunk that starts mid-block would shift
+        the whole block structure; :meth:`FastLandmarkAttention._forward_generate` rejects it. Rather
+        than make every caller know the model's ``mem_freq``, snap the request down here. Returns
+        ``chunk_size`` unchanged for non-landmark models.
+
+        :param chunk_size: The requested chunk size, or ``None``.
+
+        :returns: The aligned chunk size, or ``None`` if chunking is off.
+        """
+        if not chunk_size:
+            return chunk_size
+        block_sizes = {
+            int(bs)
+            for attn in self._landmark_attention_layers()
+            if (bs := getattr(attn, "block_size", 0))
+        }
+        if not block_sizes:
+            return chunk_size
+        # A single stride that satisfies every landmark layer at once.
+        stride = math.lcm(*block_sizes)
+        aligned = (chunk_size // stride) * stride
+        if aligned == 0:
+            raise OLMoConfigurationError(
+                f"prefill_chunk_size={chunk_size} is smaller than the landmark block size "
+                f"({stride}); it cannot be aligned to a block boundary."
+            )
+        if aligned != chunk_size:
+            log.warning(
+                "prefill_chunk_size=%d is not a multiple of the landmark block size %d; "
+                "using %d instead (chunks must start on a block boundary).",
+                chunk_size,
+                stride,
+                aligned,
+            )
+        return aligned
+
     def _prefill_forward(
         self,
         input_ids: torch.Tensor,
@@ -690,6 +731,7 @@ class TransformerGenerationModule(GenerationModule):
         :returns: Logits for the final prompt position, shape ``(batch_size, 1, vocab_size)``.
         """
         seq_len = input_ids.shape[1]
+        chunk_size = self._align_prefill_chunk_size(chunk_size)
         if not chunk_size or seq_len <= chunk_size:
             return self.model(input_ids, logits_to_keep=1, cache_leftpad=cache_leftpad)
 

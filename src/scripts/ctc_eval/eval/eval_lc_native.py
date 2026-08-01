@@ -141,6 +141,7 @@ def main():
 
     from transformers import AutoTokenizer
     from olmo_core.config import DType
+    from olmo_core.distributed.utils import all_gather_object_cpu
     from olmo_core.generate.generation_module.config import GenerationConfig
     from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
@@ -231,8 +232,19 @@ def main():
                 lout.append(strip_think(tok.decode(clean, skip_special_tokens=True)))
         full = [None] * len(prompts)
         if world > 1:
-            parts = [None] * world
-            torch.distributed.all_gather_object(parts, list(zip(my_gidx, lout)))
+            # Gather the per-rank shards over CPU (gloo), NOT the NCCL/GPU path.
+            # torch.distributed.all_gather_object serializes to a tensor on the collective's
+            # device and then allocates max_pickled_size * world_size there; on an ultra-long
+            # rung that landed as a single ~79 GiB GPU request with ~58 GiB free, killing the job
+            # AFTER all the generation work was done. The payload is only text, so keep it on the
+            # host. Sizes are logged: the shards here should be kilobytes, and anything close to
+            # a GiB means a generation is running away rather than that the gather is greedy.
+            payload = list(zip(my_gidx, lout))
+            chars = sum(len(r) for _, r in payload)
+            if chars > 64 * 1024 * 1024:
+                print(f"[gather] WARNING rank shard is {chars/2**20:.1f} MiB of text "
+                      f"({len(payload)} rows) -- generations may not be terminating.", flush=True)
+            parts = all_gather_object_cpu(payload)
             for part in parts:
                 for gi, resp in part:
                     full[gi] = resp
