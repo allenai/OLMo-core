@@ -12,6 +12,8 @@ from .block import (
     TransformerBlockBase,
 )
 from .config import (
+    MoEFusedV2TransformerConfig,
+    OLMoDDPModelConfig,
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
     TransformerBlockType,
@@ -25,6 +27,8 @@ from .model import MoETransformer, NormalizedTransformer, Transformer
 __all__ = [
     "TransformerType",
     "TransformerConfig",
+    "OLMoDDPModelConfig",
+    "MoEFusedV2TransformerConfig",
     "Transformer",
     "NormalizedTransformer",
     "MoETransformer",

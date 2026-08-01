@@ -35,7 +35,20 @@ log = logging.getLogger(__name__)
 
 
 def has_flash_attn_2() -> bool:
-    return flash_attn_2 is not None
+    # flash-attn 4 also provides the ``flash_attn`` namespace for its CUTE implementation,
+    # but it does not expose the flash-attn 2 functions from that namespace. Checking the
+    # module alone would therefore report a false positive when only the ``fa4`` extra is
+    # installed.
+    return flash_attn_2 is not None and all(
+        hasattr(flash_attn_2, name)
+        for name in (
+            "flash_attn_func",
+            "flash_attn_varlen_func",
+            "flash_attn_qkvpacked_func",
+            "flash_attn_varlen_qkvpacked_func",
+            "flash_attn_with_kvcache",
+        )
+    )
 
 
 def has_flash_attn_3() -> bool:
@@ -85,7 +98,7 @@ def dispatch_flash_attn(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
+    if not has_flash_attn_2():
         raise RuntimeError("flash-attn 2 is required!")
 
     if cu_seqlens is not None:
@@ -184,7 +197,7 @@ def dispatch_flash_attn_qkvpacked(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
+    if not has_flash_attn_2():
         raise RuntimeError("flash-attn 2 is required!")
 
     if cu_seqlens is not None and max_seqlen is not None:
@@ -250,7 +263,7 @@ def dispatch_flash_attn_with_kvcache(
     causal: bool = False,
     window_size: Tuple[int, int] = (-1, -1),
 ) -> torch.Tensor:
-    if flash_attn_2 is None:
+    if not has_flash_attn_2():
         raise RuntimeError("flash-attn 2 is required!")
 
     return flash_attn_2.flash_attn_with_kvcache(
@@ -499,10 +512,10 @@ def dispatch_flash_attn_4(
             _flatten_batch_dim(q),
             _flatten_batch_dim(k),
             _flatten_batch_dim(v),
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,

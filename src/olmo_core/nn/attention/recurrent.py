@@ -1,11 +1,11 @@
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
-from torch.distributed.tensor import Placement
+from torch.distributed.tensor import DTensor, Placement, distribute_tensor
 from torch.nn import functional as F
 
 from olmo_core.config import DType
@@ -294,15 +294,24 @@ class GatedDeltaNet(SequenceMixer):
         - Gated RMS normalization
         """
         del seq_len
+        # Training FLOPs include the forward pass plus backward dgrad and wgrad
+        # work, matching the convention used by the other sequence mixers.
+        training_factor = 3
+
         # Linear projection FLOPs (2 ops per multiply-add)
-        linear_flops = 2 * sum(
-            m.weight.numel()
-            for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+        linear_flops = (
+            2
+            * training_factor
+            * sum(
+                m.weight.numel()
+                for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+            )
         )
 
         # Short convolution FLOPs (2 ops per multiply-add, kernel_size taps per output)
         conv_flops = (
             2
+            * training_factor
             * self.conv_size
             * (self.key_dim + self.key_dim + self.value_dim)  # q_conv1d  # k_conv1d  # v_conv1d
         )
@@ -314,7 +323,7 @@ class GatedDeltaNet(SequenceMixer):
         # - Query-state matmul: n_v_heads * head_k_dim * head_v_dim
         # Each is 2 FLOPs per element (multiply-add or similar)
         state_size = self.n_v_heads * self.head_k_dim * self.head_v_dim
-        recurrent_flops = 2 * 4 * state_size
+        recurrent_flops = 2 * training_factor * 4 * state_size
 
         return int(linear_flops + conv_flops + recurrent_flops)
 
@@ -451,3 +460,384 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
             dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
+
+
+def _copy_into_tensor_or_dtensor(dst: torch.Tensor, src: torch.Tensor) -> None:
+    if isinstance(dst, DTensor):
+        dst.copy_(distribute_tensor(src, dst.device_mesh, placements=dst.placements))
+    else:
+        dst.copy_(src)
+
+
+def _pad_tensor_by_size(input_tensor: torch.Tensor, pad_size: int) -> torch.Tensor:
+    pad_shape = (
+        (0, 0, 0, 0, 0, pad_size, 0, 0)
+        if len(input_tensor.shape) == 4
+        else (0, 0, 0, pad_size, 0, 0)
+    )
+    return F.pad(input_tensor, pad_shape, mode="constant", value=0)
+
+
+def _reshape_into_chunks(
+    input_tensor: torch.Tensor, pad_size: int, chunk_size: int
+) -> torch.Tensor:
+    input_tensor = _pad_tensor_by_size(input_tensor, pad_size)
+    if len(input_tensor.shape) == 3:
+        return input_tensor.reshape(input_tensor.shape[0], -1, chunk_size, input_tensor.shape[2])
+    return input_tensor.reshape(
+        input_tensor.shape[0],
+        -1,
+        chunk_size,
+        input_tensor.shape[2],
+        input_tensor.shape[3],
+    )
+
+
+def _segment_sum(input_tensor: torch.Tensor) -> torch.Tensor:
+    chunk_size = input_tensor.size(-1)
+    input_tensor = input_tensor[..., None].expand(*input_tensor.size(), chunk_size)
+    mask = torch.tril(
+        torch.ones(chunk_size, chunk_size, device=input_tensor.device, dtype=torch.bool),
+        diagonal=-1,
+    )
+    input_tensor = input_tensor.masked_fill(~mask, 0)
+    tensor_segsum = torch.cumsum(input_tensor, dim=-2)
+
+    mask = torch.tril(
+        torch.ones(chunk_size, chunk_size, device=input_tensor.device, dtype=torch.bool),
+        diagonal=0,
+    )
+    return tensor_segsum.masked_fill(~mask, -torch.inf)
+
+
+class NemotronRMSNormGated(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        *,
+        group_size: int,
+        eps: float = 1e-5,
+        dtype: torch.dtype = torch.float32,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size, dtype=dtype, device=init_device))
+        self.variance_epsilon = eps
+        self.group_size = group_size
+
+    def reset_parameters(self) -> None:
+        nn.init.ones_(self.weight)
+
+    def forward(
+        self, hidden_states: torch.Tensor, gate: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        if gate is not None:
+            hidden_states = hidden_states * F.silu(gate.to(torch.float32))
+        *prefix_dims, last_dim = hidden_states.shape
+        group_count = last_dim // self.group_size
+        hidden_states_group = hidden_states.view(*prefix_dims, group_count, self.group_size)
+        variance = hidden_states_group.pow(2).mean(-1, keepdim=True)
+        hidden_states_group = hidden_states_group * torch.rsqrt(variance + self.variance_epsilon)
+        hidden_states = hidden_states_group.view(*prefix_dims, group_count * self.group_size)
+        return self.weight * hidden_states.to(input_dtype)
+
+
+@SequenceMixerConfig.register("nemotron_mamba2")
+@dataclass
+class NemotronMamba2Config(SequenceMixerConfig["NemotronMamba2Mixer"]):
+    ssm_state_size: int = 128
+    conv_kernel: int = 4
+    mamba_num_heads: int = 64
+    mamba_head_dim: int = 64
+    n_groups: int = 8
+    chunk_size: int = 128
+    time_step_min: float = 0.001
+    time_step_max: float = 0.1
+    time_step_floor: float = 0.0001
+    use_conv_bias: bool = True
+    use_bias: bool = False
+    layer_norm_epsilon: float = 1e-5
+    dtype: DType = DType.bfloat16
+
+    def num_params(self, d_model: int) -> int:
+        intermediate = self.mamba_num_heads * self.mamba_head_dim
+        conv_dim = intermediate + 2 * self.n_groups * self.ssm_state_size
+        projection_size = intermediate + conv_dim + self.mamba_num_heads
+        params = d_model * projection_size
+        if self.use_bias:
+            params += projection_size
+        params += conv_dim * self.conv_kernel
+        if self.use_conv_bias:
+            params += conv_dim
+        params += 3 * self.mamba_num_heads
+        params += intermediate
+        params += intermediate * d_model
+        if self.use_bias:
+            params += d_model
+        return params
+
+    def build(
+        self,
+        d_model: int,
+        *,
+        layer_idx: int,
+        n_layers: int,
+        init_device: str = "cpu",
+        cache: Optional[BufferCache] = None,
+    ) -> "NemotronMamba2Mixer":
+        del n_layers, cache
+        return NemotronMamba2Mixer(
+            d_model=d_model,
+            layer_idx=layer_idx,
+            dtype=self.dtype.as_pt(),
+            init_device=init_device,
+            **self.as_dict(exclude={"dtype"}),
+        )
+
+
+class NemotronMamba2Mixer(SequenceMixer):
+    def __init__(
+        self,
+        *,
+        d_model: int,
+        layer_idx: int,
+        ssm_state_size: int,
+        conv_kernel: int,
+        mamba_num_heads: int,
+        mamba_head_dim: int,
+        n_groups: int,
+        chunk_size: int,
+        time_step_min: float,
+        time_step_max: float,
+        time_step_floor: float,
+        use_conv_bias: bool,
+        use_bias: bool,
+        layer_norm_epsilon: float,
+        dtype: torch.dtype,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.layer_idx = layer_idx
+        self.ssm_state_size = ssm_state_size
+        self.conv_kernel_size = conv_kernel
+        self.num_heads = mamba_num_heads
+        self.head_dim = mamba_head_dim
+        self.intermediate_size = mamba_num_heads * mamba_head_dim
+        self.n_groups = n_groups
+        self.chunk_size = chunk_size
+        self.time_step_min = time_step_min
+        self.time_step_max = time_step_max
+        self.time_step_floor = time_step_floor
+        self.conv_dim = self.intermediate_size + 2 * self.n_groups * self.ssm_state_size
+
+        projection_size = self.intermediate_size + self.conv_dim + self.num_heads
+        self.in_proj = nn.Linear(
+            d_model, projection_size, bias=use_bias, dtype=dtype, device=init_device
+        )
+        self.conv1d = nn.Conv1d(
+            in_channels=self.conv_dim,
+            out_channels=self.conv_dim,
+            bias=use_conv_bias,
+            kernel_size=self.conv_kernel_size,
+            groups=self.conv_dim,
+            padding=self.conv_kernel_size - 1,
+            dtype=dtype,
+            device=init_device,
+        )
+        self.dt_bias = nn.Parameter(torch.ones(self.num_heads, dtype=dtype, device=init_device))
+        self.A_log = nn.Parameter(torch.empty(self.num_heads, dtype=dtype, device=init_device))
+        self.D = nn.Parameter(torch.ones(self.num_heads, dtype=dtype, device=init_device))
+        self.norm = NemotronRMSNormGated(
+            self.intermediate_size,
+            group_size=self.intermediate_size // self.n_groups,
+            eps=layer_norm_epsilon,
+            dtype=dtype,
+            init_device=init_device,
+        )
+        self.out_proj = nn.Linear(
+            self.intermediate_size, d_model, bias=use_bias, dtype=dtype, device=init_device
+        )
+        self.reset_parameters()
+
+    def reset_parameters(self, generator: Optional[torch.Generator] = None) -> None:
+        with torch.no_grad():
+            if self.A_log.device.type != "meta":
+                values = (
+                    torch.arange(
+                        1, self.num_heads + 1, device=self.A_log.device, dtype=torch.float32
+                    )
+                    .log()
+                    .to(dtype=self.A_log.dtype)
+                )
+                _copy_into_tensor_or_dtensor(self.A_log, values)
+            if self.dt_bias.device.type != "meta":
+                # Match the Nemotron-H / Mamba2 timestep init: sample dt log-uniformly in
+                # [time_step_min, time_step_max], clamp by time_step_floor, and store the
+                # inverse-softplus so softplus(dt_bias) recovers dt in the configured range. The
+                # generator (when supplied by init_weights) keeps this tied to the model init seed
+                # rather than the ambient global RNG.
+                dt = torch.exp(
+                    torch.rand(
+                        self.num_heads,
+                        device=self.dt_bias.device,
+                        dtype=torch.float32,
+                        generator=generator,
+                    )
+                    * (math.log(self.time_step_max) - math.log(self.time_step_min))
+                    + math.log(self.time_step_min)
+                ).clamp(min=self.time_step_floor)
+                inv_dt = dt + torch.log(-torch.expm1(-dt))
+                _copy_into_tensor_or_dtensor(self.dt_bias, inv_dt.to(dtype=self.dt_bias.dtype))
+            nn.init.ones_(self.D)
+            self.norm.reset_parameters()
+
+    def forward(
+        self,
+        input_states: torch.Tensor,
+        *,
+        attention_mask: Optional[torch.Tensor] = None,
+        **kwargs: Any,
+    ) -> torch.Tensor:
+        del kwargs
+        batch_size, seq_len, _ = input_states.shape
+        dtype = input_states.dtype
+        if attention_mask is not None:
+            input_states = (input_states * attention_mask[:, :, None]).to(dtype)
+        projected_states = self.in_proj(input_states)
+        d_mlp = (
+            projected_states.shape[-1]
+            - 2 * self.intermediate_size
+            - 2 * self.n_groups * self.ssm_state_size
+            - self.num_heads
+        ) // 2
+        _, _, gate, hidden_states, dt = projected_states.split(
+            [d_mlp, d_mlp, self.intermediate_size, self.conv_dim, self.num_heads], dim=-1
+        )
+
+        hidden_states = F.silu(
+            self.conv1d(hidden_states.transpose(1, 2))[..., :seq_len].transpose(1, 2)
+        )
+        if attention_mask is not None:
+            hidden_states = (hidden_states * attention_mask[:, :, None]).to(hidden_states.dtype)
+
+        hidden_states, B, C = torch.split(
+            hidden_states,
+            [
+                self.intermediate_size,
+                self.n_groups * self.ssm_state_size,
+                self.n_groups * self.ssm_state_size,
+            ],
+            dim=-1,
+        )
+        A = -torch.exp(self.A_log.float())
+        dt = F.softplus(dt + self.dt_bias)
+        dt = torch.clamp(dt, self.time_step_min)
+        hidden_states = hidden_states.reshape(batch_size, seq_len, -1, self.head_dim).float()
+        B = B.reshape(batch_size, seq_len, -1, self.ssm_state_size).float()
+        C = C.reshape(batch_size, seq_len, -1, self.ssm_state_size).float()
+        B = B.repeat_interleave(self.num_heads // self.n_groups, dim=2, output_size=self.num_heads)
+        C = C.repeat_interleave(self.num_heads // self.n_groups, dim=2, output_size=self.num_heads)
+        pad_size = (self.chunk_size - seq_len % self.chunk_size) % self.chunk_size
+
+        D_residual = self.D[..., None] * _pad_tensor_by_size(hidden_states, pad_size)
+
+        hidden_states = hidden_states * dt[..., None]
+        A = A.to(hidden_states.dtype) * dt
+
+        hidden_states, A, B, C = [
+            _reshape_into_chunks(t, pad_size, self.chunk_size) for t in (hidden_states, A, B, C)
+        ]
+
+        A = A.permute(0, 3, 1, 2)
+        A_cumsum = torch.cumsum(A, dim=-1)
+        L = torch.exp(_segment_sum(A))
+
+        G_intermediate = C[:, :, :, None, :, :] * B[:, :, None, :, :, :]
+        G = G_intermediate.sum(dim=-1)
+        M_intermediate = G[..., None] * L.permute(0, 2, 3, 4, 1)[..., None]
+        M = M_intermediate.sum(dim=-1)
+        Y_diag = (M[..., None] * hidden_states[:, :, None]).sum(3)
+
+        decay_states = torch.exp(A_cumsum[:, :, :, -1:] - A_cumsum)
+        B_decay_contraction = B * decay_states.permute(0, 2, 3, 1)[..., None]
+        states = (
+            (
+                B_decay_contraction.permute(0, 1, 3, 2, 4)[..., None]
+                * hidden_states.permute(0, 1, 3, 2, 4)[..., None, :]
+            )
+            .sum(dim=3)
+            .permute(0, 1, 2, 4, 3)
+        )
+        previous_states = torch.zeros_like(states[:, :1])
+        states = torch.cat([previous_states, states], dim=1)
+        decay_chunk = torch.exp(_segment_sum(F.pad(A_cumsum[:, :, :, -1], (1, 0))))
+
+        states_permuted = states.permute(0, 2, 1, 3, 4)
+        result = (decay_chunk[..., None, None] * states_permuted[:, :, None, ...]).sum(dim=2)
+        new_states = result.permute(0, 2, 1, 3, 4)
+        states = new_states[:, :-1]
+
+        state_decay_out = torch.exp(A_cumsum)
+        C_times_states = C[..., None, :] * states[:, :, None, ...]
+        state_decay_out_permuted = state_decay_out.permute(0, 2, 3, 1)
+        Y_off = C_times_states.sum(-1) * state_decay_out_permuted[..., None]
+
+        y = Y_diag + Y_off
+        y = y.reshape(batch_size, -1, self.num_heads, self.head_dim)
+        y = y + D_residual
+        if pad_size > 0:
+            y = y[:, :seq_len, :, :]
+        y = y.reshape(batch_size, seq_len, -1)
+
+        scan_output = self.norm(y, gate)
+        return self.out_proj(scan_output.to(dtype))
+
+    def apply_tp(
+        self,
+        tp_mesh: DeviceMesh,
+        input_layout: Optional[Placement] = None,
+        output_layout: Optional[Placement] = None,
+        use_local_output: bool = True,
+        float8_enabled: bool = False,
+    ):
+        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
+        raise NotImplementedError("Tensor parallelism is not implemented for NemotronMamba2Mixer")
+
+    def apply_cp(
+        self,
+        cp_mesh: DeviceMesh,
+        ring: Optional[RingContextParallelStyle] = None,
+        uly: Optional[UlyssesContextParallelStyle] = None,
+    ):
+        del cp_mesh, ring, uly
+        raise NotImplementedError("Context parallelism is not implemented for NemotronMamba2Mixer")
+
+    def init_weights(
+        self,
+        *,
+        init_method: "InitMethod",
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+    ) -> None:
+        from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        del d_model
+        init_linear(self.in_proj, std=std, generator=generator)
+        init_linear(self.conv1d, std=std, generator=generator)
+        out_std = std
+        if init_method in (InitMethod.llama, InitMethod.normalized):
+            out_std = std / math.sqrt(2 * num_blocks)
+        elif init_method == InitMethod.llama_depth:
+            out_std = std / math.sqrt(2 * (block_idx + 1))
+        init_linear(self.out_proj, std=out_std, generator=generator)
+        self.reset_parameters(generator=generator)
+
+    def num_flops_per_token(self, seq_len: int) -> int:
+        del seq_len
+        return 0

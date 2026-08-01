@@ -1,0 +1,407 @@
+import pytest
+import torch
+
+from olmo_core.nn.moe.utils import (
+    moe_permute_no_compile,
+    moe_unpermute_1d_fused_drop_no_compile,
+    moe_unpermute_no_compile,
+)
+from olmo_core.nn.moe.v2.ep_no_sync_common import (
+    build_keep_reorder,
+    restore_drop_unpermute_1d,
+)
+from olmo_core.testing import requires_gpu, requires_te
+
+
+def _reference_unpermute(
+    *,
+    input_fwd: torch.Tensor,
+    row_id_map: torch.Tensor,
+    probs: torch.Tensor,
+) -> torch.Tensor:
+    """Differentiable pure-torch unpermute-and-combine matching the TE row-id layout."""
+    num_tokens, top_k = probs.shape
+    out = input_fwd.new_zeros((num_tokens, input_fwd.shape[-1]))
+    for token_idx in range(num_tokens):
+        for topk_idx in range(top_k):
+            row_idx = int(row_id_map[topk_idx * num_tokens + token_idx].item())
+            if row_idx >= 0:
+                out[token_idx] = out[token_idx] + input_fwd[row_idx] * probs[
+                    token_idx, topk_idx
+                ].to(dtype=input_fwd.dtype)
+    return out
+
+
+@requires_gpu
+@requires_te
+def test_restore_unpermute_1d_packed_backward_buffer_does_not_corrupt_prob_grads():
+    torch.manual_seed(31)
+    device = torch.device("cuda")
+    num_tokens = 8
+    top_k = 2
+    d_model = 512
+    num_rows = num_tokens * top_k
+
+    row_id_map = torch.arange(num_rows, device=device, dtype=torch.int32)
+    local_inverse_reorder_indices = torch.arange(num_rows, device=device, dtype=torch.long)
+    packed_keep_mask = torch.ones(num_rows, device=device, dtype=torch.bool)
+    probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
+    grad_out = torch.randn(num_tokens, d_model, device=device, dtype=torch.float32)
+
+    inp_ref = torch.randn(num_rows, d_model, device=device, dtype=torch.float16, requires_grad=True)
+    probs_ref = probs.detach().clone().requires_grad_(True)
+    out_ref = moe_unpermute_1d_fused_drop_no_compile(
+        inp=inp_ref,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_ref,
+        num_kept=torch.tensor(num_rows, device=device),
+        row_id_map_is_packed=True,
+        backward_grad_input_buffer=None,
+        map_type="index",
+    )
+    (out_ref * grad_out.to(out_ref.dtype)).sum().backward()
+
+    inp_alias = inp_ref.detach().clone().requires_grad_(True)
+    probs_alias = probs.detach().clone().requires_grad_(True)
+    out_alias = moe_unpermute_1d_fused_drop_no_compile(
+        inp=inp_alias,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_alias,
+        num_kept=torch.tensor(num_rows, device=device),
+        row_id_map_is_packed=True,
+        backward_grad_input_buffer=inp_alias.detach(),
+        map_type="index",
+    )
+    (out_alias * grad_out.to(out_alias.dtype)).sum().backward()
+
+    assert inp_ref.grad is not None
+    assert inp_alias.grad is not None
+    assert probs_ref.grad is not None
+    assert probs_alias.grad is not None
+    torch.testing.assert_close(inp_alias.grad, inp_ref.grad, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(probs_alias.grad, probs_ref.grad, atol=5e-3, rtol=5e-3)
+
+
+@requires_gpu
+@requires_te
+def test_restore_unpermute_1d_prob_grads_with_frozen_experts():
+    """
+    Router-probability gradients must still flow when the expert outputs (input 0)
+    are frozen but ``merging_probs`` (input 2) requires grad. Regression test for the
+    unpermute backward gating prob-gradient computation on ``needs_input_grad[0]``.
+    """
+    torch.manual_seed(37)
+    device = torch.device("cuda")
+    num_tokens = 8
+    top_k = 2
+    d_model = 512
+    num_rows = num_tokens * top_k
+
+    row_id_map = torch.arange(num_rows, device=device, dtype=torch.int32)
+    local_inverse_reorder_indices = torch.arange(num_rows, device=device, dtype=torch.long)
+    packed_keep_mask = torch.ones(num_rows, device=device, dtype=torch.bool)
+    grad_out = torch.randn(num_tokens, d_model, device=device, dtype=torch.float32)
+
+    # Expert outputs are frozen; only the router probabilities are trainable.
+    inp = torch.randn(num_rows, d_model, device=device, dtype=torch.float32)
+    probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32, requires_grad=True)
+
+    out = moe_unpermute_1d_fused_drop_no_compile(
+        inp=inp,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs,
+        num_kept=torch.tensor(num_rows, device=device),
+        row_id_map_is_packed=True,
+        map_type="index",
+    )
+    (out * grad_out).sum().backward()
+
+    probs_ref = probs.detach().clone().requires_grad_(True)
+    out_ref = _reference_unpermute(input_fwd=inp, row_id_map=row_id_map, probs=probs_ref)
+    (out_ref * grad_out).sum().backward()
+
+    assert probs.grad is not None
+    torch.testing.assert_close(probs.grad, probs_ref.grad, atol=5e-3, rtol=5e-3)
+
+
+def _build_random_keep_splits(
+    *,
+    num_rows: int,
+    keep_fraction: float,
+    seed: int,
+    device: torch.device,
+) -> torch.Tensor:
+    keep_count = int(round(keep_fraction * num_rows))
+    keep_count = max(0, min(keep_count, num_rows))
+    keep_splits = torch.zeros(num_rows, device=device, dtype=torch.long)
+    if keep_count > 0:
+        g = torch.Generator(device=device)
+        g.manual_seed(seed)
+        keep_rows = torch.randperm(num_rows, generator=g, device=device)[:keep_count]
+        keep_splits[keep_rows] = 1
+    return keep_splits
+
+
+def _reference_restore_drop_unpermute(
+    *,
+    combine_out: torch.Tensor,
+    row_id_map: torch.Tensor,
+    local_inverse_reorder_indices: torch.Tensor,
+    packed_keep_mask: torch.Tensor,
+    merging_probs: torch.Tensor,
+    restore_shape: torch.Size,
+) -> torch.Tensor:
+    restored = combine_out.index_select(0, local_inverse_reorder_indices)
+    restored_keep_mask = packed_keep_mask.index_select(0, local_inverse_reorder_indices)
+    restored = torch.where(
+        restored_keep_mask.unsqueeze(-1),
+        restored,
+        torch.zeros_like(restored),
+    )
+    return moe_unpermute_no_compile(
+        inp=restored,
+        row_id_map=row_id_map,
+        merging_probs=merging_probs,
+        restore_shape=restore_shape,
+        map_type="index",
+    )
+
+
+def _build_block(backend: str = "te_fused"):
+    from olmo_core.config import DType
+    from olmo_core.nn.attention import AttentionConfig, AttentionType
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.moe import MoERouterGatingFunction
+    from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
+    from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+    from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+
+    layer_norm = LayerNormConfig(
+        name=LayerNormType.rms,
+        eps=1e-6,
+        bias=False,
+        dtype=DType.float32,
+    )
+    return OLMoDDPTransformerBlock(
+        d_model=512,
+        block_idx=0,
+        n_layers=1,
+        sequence_mixer=AttentionConfig(
+            name=AttentionType.default,
+            n_heads=2,
+            n_kv_heads=2,
+            bias=False,
+            use_flash=False,
+            dtype=DType.float32,
+        ),
+        attention_norm=layer_norm,
+        routed_experts_router=MoERouterConfigV2(
+            d_model=512,
+            num_experts=4,
+            top_k=2,
+            gating_function=MoERouterGatingFunction.softmax,
+            uniform_expert_assignment=True,
+            lb_loss_weight=None,
+            z_loss_weight=None,
+            dtype=DType.float32,
+        ),
+        shared_experts_router=None,
+        shared_experts=None,
+        routed_experts=RoutedExpertsConfig(
+            d_model=512,
+            hidden_size=1024,
+            num_experts=4,
+            bias=False,
+            dtype=DType.float32,
+        ),
+        feed_forward_norm=layer_norm,
+        ep=ExpertParallelConfig(
+            path=ExpertParallelPath.no_sync_1d,
+            restore_unpermute_backend=backend,
+        ),
+        init_device="cuda",
+    )
+
+
+@requires_gpu
+@requires_te
+# Curated subset (not the full dtype x top_k x keep_fraction cross-product): each dtype, top_k, and
+# keep_fraction value appears at least once, covering the no-drop and heavy-drop paths.
+@pytest.mark.parametrize(
+    "dtype, top_k, keep_fraction",
+    [
+        (torch.bfloat16, 2, 1.0),
+        (torch.bfloat16, 2, 0.3),
+        (torch.float16, 1, 0.7),
+        (torch.float32, 4, 0.7),
+    ],
+)
+def test_restore_unpermute_1d_te_fused_matches_reference(
+    dtype: torch.dtype,
+    top_k: int,
+    keep_fraction: float,
+):
+    torch.manual_seed(7)
+    device = torch.device("cuda")
+    num_tokens = 128
+    d_model = 512
+    num_experts = 16
+
+    x = torch.randn(num_tokens, d_model, device=device, dtype=dtype)
+    routing_map = torch.randint(
+        low=0,
+        high=num_experts,
+        size=(num_tokens, top_k),
+        device=device,
+        dtype=torch.int32,
+    )
+    permuted, row_id_map = moe_permute_no_compile(
+        inp=x,
+        routing_map=routing_map,
+        num_out_tokens=num_tokens * top_k,
+        map_type="index",
+    )
+    restore_shape = x.shape
+
+    requested_splits = torch.ones(permuted.shape[0], device=device, dtype=torch.long)
+    keep_splits = _build_random_keep_splits(
+        num_rows=permuted.shape[0],
+        keep_fraction=keep_fraction,
+        seed=11,
+        device=device,
+    )
+    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+        requested_splits,
+        keep_splits,
+        permuted.shape[0],
+    )
+    combine_out = permuted.index_select(0, reorder_indices)
+    merging_probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
+
+    combine_out_reference = combine_out.detach().clone().requires_grad_(True)
+    combine_out_fused = combine_out.detach().clone().requires_grad_(True)
+    probs_reference = merging_probs.detach().clone().requires_grad_(True)
+    probs_fused = merging_probs.detach().clone().requires_grad_(True)
+
+    out_reference = _reference_restore_drop_unpermute(
+        combine_out=combine_out_reference,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_reference,
+        restore_shape=restore_shape,
+    )
+    out_fused = moe_unpermute_1d_fused_drop_no_compile(
+        inp=combine_out_fused,
+        row_id_map=row_id_map,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        merging_probs=probs_fused,
+        map_type="index",
+    )
+
+    torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
+
+    grad_out = torch.randn_like(out_reference)
+    (out_reference * grad_out).sum().backward()
+    (out_fused * grad_out).sum().backward()
+
+    assert combine_out_reference.grad is not None
+    assert combine_out_fused.grad is not None
+    assert probs_reference.grad is not None
+    assert probs_fused.grad is not None
+    torch.testing.assert_close(
+        combine_out_fused.grad, combine_out_reference.grad, atol=5e-3, rtol=5e-3
+    )
+    torch.testing.assert_close(probs_fused.grad, probs_reference.grad, atol=5e-3, rtol=5e-3)
+
+
+@requires_gpu
+@requires_te
+def test_restore_unpermute_backend_selector_behavior():
+    try:
+        block = _build_block()
+    except ImportError as exc:
+        pytest.skip(f"Skipping selector behavior test due import error: {exc}")
+    assert block.ep.restore_unpermute_backend == "te_fused"
+
+    torch.manual_seed(23)
+    device = torch.device("cuda")
+    num_tokens = 64
+    top_k = 2
+    d_model = 512
+    num_experts = 8
+
+    x = torch.randn(num_tokens, d_model, device=device, dtype=torch.float16)
+    routing_map = torch.randint(
+        low=0,
+        high=num_experts,
+        size=(num_tokens, top_k),
+        device=device,
+        dtype=torch.int32,
+    )
+    permuted, row_id_map = moe_permute_no_compile(
+        inp=x,
+        routing_map=routing_map,
+        num_out_tokens=num_tokens * top_k,
+        map_type="index",
+    )
+    requested_splits = torch.ones(permuted.shape[0], device=device, dtype=torch.long)
+    keep_splits = _build_random_keep_splits(
+        num_rows=permuted.shape[0],
+        keep_fraction=0.7,
+        seed=5,
+        device=device,
+    )
+    reorder_indices, local_inverse_reorder_indices, packed_keep_mask = build_keep_reorder(
+        requested_splits,
+        keep_splits,
+        permuted.shape[0],
+    )
+    combine_out = permuted.index_select(0, reorder_indices)
+    probs = torch.rand(num_tokens, top_k, device=device, dtype=torch.float32)
+    num_kept = packed_keep_mask.to(dtype=torch.long).sum(dtype=torch.long)
+
+    block.ep.restore_unpermute_backend = "te_unfused"
+    out_reference = restore_drop_unpermute_1d(
+        block,
+        combine_out=combine_out,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        num_kept=num_kept,
+        reversed_local_x_permutation_mapping=row_id_map,
+        local_x_global_routed_expert_weights=probs,
+        hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
+    )
+    block.ep.restore_unpermute_backend = "te_fused"
+    out_fused = restore_drop_unpermute_1d(
+        block,
+        combine_out=combine_out,
+        local_inverse_reorder_indices=local_inverse_reorder_indices,
+        packed_keep_mask=packed_keep_mask,
+        num_kept=num_kept,
+        reversed_local_x_permutation_mapping=row_id_map,
+        local_x_global_routed_expert_weights=probs,
+        hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
+    )
+    torch.testing.assert_close(out_fused, out_reference, atol=5e-3, rtol=5e-3)
+
+    block.ep.restore_unpermute_backend = "cuda"
+    with pytest.raises(RuntimeError, match="not implemented yet"):
+        _ = restore_drop_unpermute_1d(
+            block,
+            combine_out=combine_out,
+            local_inverse_reorder_indices=local_inverse_reorder_indices,
+            packed_keep_mask=packed_keep_mask,
+            num_kept=num_kept,
+            reversed_local_x_permutation_mapping=row_id_map,
+            local_x_global_routed_expert_weights=probs,
+            hidden_shape_before_permute=torch.Size([num_tokens, d_model]),
+        )

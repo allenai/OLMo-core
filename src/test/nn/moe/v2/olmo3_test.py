@@ -1,0 +1,147 @@
+import pytest
+import torch
+
+transformers = pytest.importorskip("transformers")
+
+from olmo_core.nn.attention import AttentionBackendName, AttentionType  # noqa: E402
+from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes  # noqa: E402
+from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig  # noqa: E402
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (  # noqa: E402
+    Olmo3MoeForCausalLM,
+    Olmo3MoeModel,
+)
+from olmo_core.nn.moe.v2.olmo3 import (  # noqa: E402
+    build_olmo3_moe_config_from_hf_config,
+    build_olmo3_moe_hf_config_from_native_config,
+    gather_olmo3_moe_hf_state,
+    load_olmo3_moe_hf_state,
+)
+
+
+def small_config(**kwargs):
+    values = dict(
+        vocab_size=64,
+        hidden_size=32,
+        attention_hidden_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=8,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        moe_intermediate_size=16,
+        shared_expert_intermediate_size=16,
+        max_position_embeddings=32,
+        use_head_qk_norm=True,
+        dense_layers_indices=[],
+        layer_types=["full_attention", "full_attention"],
+    )
+    values.update(kwargs)
+    return Olmo3MoeConfig(**values)
+
+
+def test_factory_builds_all_moe_olmo_ddp_model():
+    native_config = build_olmo3_moe_config_from_hf_config(
+        small_config(), ep_capacity_factor=2.0, attention_backend=AttentionBackendName.torch
+    )
+    model = native_config.build(init_device="cpu")
+    assert model.__class__.__name__ == "OLMoDDPModel"
+    assert len(list(model.routed_blocks())) == 2
+    assert all(block.ep.capacity_factor == 2.0 for block in native_config.resolved_block_configs)
+
+
+def test_registers_base_model_for_transformers_auto_model():
+    _register_olmo3moe_auto_classes()
+    config = small_config()
+
+    assert config.auto_map["AutoModel"] == "modeling_olmo3moe.Olmo3MoeModel"
+    assert isinstance(transformers.AutoModel.from_config(config), Olmo3MoeModel)
+
+
+def test_factory_builds_mixed_dense_moe_peri_ln_model():
+    config = small_config(
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+    )
+    native_config = build_olmo3_moe_config_from_hf_config(
+        config, attention_backend=AttentionBackendName.torch
+    )
+    model = native_config.build(init_device="cpu")
+
+    blocks = list(model.blocks.values())
+    assert blocks[0].is_shared_only
+    assert blocks[0].shared_experts.hidden_size == 24
+    assert blocks[1].has_routed_experts
+    assert len(list(model.routed_blocks())) == 1
+    assert all(block.use_peri_norm for block in blocks)
+    assert all(block.attention_input_norm is not None for block in blocks)
+    assert all(block.feed_forward_input_norm is not None for block in blocks)
+
+
+def test_native_and_hf_config_roundtrip_preserves_mixed_architecture():
+    config = small_config(
+        attention_hidden_size=64,
+        head_dim=16,
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+        layer_types=["full_attention", "sliding_attention"],
+        sliding_window=16,
+        max_position_embeddings=128,
+        pad_token_id=1,
+        eos_token_id=2,
+    )
+    native_config = build_olmo3_moe_config_from_hf_config(
+        config, attention_backend=AttentionBackendName.torch
+    )
+    roundtrip = build_olmo3_moe_hf_config_from_native_config(
+        native_config,
+        max_position_embeddings=config.max_position_embeddings,
+        pad_token_id=config.pad_token_id,
+        bos_token_id=config.bos_token_id,
+        eos_token_id=config.eos_token_id,
+    )
+
+    for field in (
+        "vocab_size",
+        "hidden_size",
+        "attention_hidden_size",
+        "head_dim",
+        "dense_mlp_intermediate_size",
+        "moe_intermediate_size",
+        "shared_expert_intermediate_size",
+        "n_routed_experts",
+        "num_experts_per_tok",
+        "num_hidden_layers",
+        "num_attention_heads",
+        "num_key_value_heads",
+        "max_position_embeddings",
+        "sliding_window",
+        "layer_types",
+        "dense_layers_indices",
+        "use_peri_ln",
+    ):
+        assert getattr(roundtrip, field) == getattr(config, field)
+
+
+@pytest.mark.parametrize("attention_type", [AttentionType.default, AttentionType.fused_v2])
+def test_full_hf_state_load_and_gather_roundtrip_without_ep(attention_type):
+    config = small_config(
+        dense_layers_indices=[0],
+        dense_mlp_intermediate_size=24,
+        use_peri_ln=True,
+    )
+    hf_model = Olmo3MoeForCausalLM(config).to(dtype=torch.bfloat16)
+    hf_state = {name: value.detach().clone() for name, value in hf_model.state_dict().items()}
+    native_config = build_olmo3_moe_config_from_hf_config(
+        config, attention_backend=AttentionBackendName.torch, attention_type=attention_type
+    )
+    native_model = native_config.build(init_device="cpu")
+
+    load_olmo3_moe_hf_state(native_model, config, hf_state)
+    roundtrip = gather_olmo3_moe_hf_state(native_model, config)
+
+    assert roundtrip.keys() == hf_state.keys()
+    for name in hf_state:
+        torch.testing.assert_close(roundtrip[name], hf_state[name])
