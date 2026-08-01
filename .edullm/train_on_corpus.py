@@ -181,10 +181,27 @@ def resolve_corpus(*, dataset_id: str, version: str, tokenizer_id: str) -> Corpu
     # Imported here rather than at the top so that everything above can be exercised on a
     # host without the reader installed. In the image it is always present -- the Dockerfile
     # asserts the import at build time -- so this defers nothing that can fail in a run.
-    import boto3
     from edullm_data.read import dataset_paths, resolve_latest
+    from edullm_data.s3 import Boto3S3
 
-    s3 = boto3.client("s3")
+    # NOT boto3.client("s3"), WHICH IS WHAT THIS SAID AND WHAT IT COST.
+    #
+    # The reader's `s3` parameter is typed against its own four-method protocol -- get, head,
+    # get_range, list -- and a boto3 client implements none of them. `_require_validated`
+    # calls `s3.head(bucket, key)`; a boto3 client has no such method, so the run died with an
+    # AttributeError before a single byte left the account.
+    #
+    # It presents as the most misleading failure available. The name of the parameter is `s3`,
+    # a boto3 client is what `s3` means everywhere else in this file's world, the type
+    # annotation is a Protocol so nothing checks it at the call, and the traceback names a
+    # missing attribute rather than a wrong argument. On a GPU job it is a container that
+    # starts, exits 1 in under a second, and writes its only explanation to a log stream
+    # nobody on the platform side is allowed to read. It took three submissions and a probe
+    # whose exit codes encoded which stage failed.
+    #
+    # Boto3S3.default() is the reader's own adapter and takes the credentials from the task
+    # environment, which on Batch is the workload role.
+    s3 = Boto3S3.default()
 
     # "latest" resolves through the catalog rather than being an alias anybody can move. A
     # pinned version is the normal case and what the platform sends; this branch exists so a
