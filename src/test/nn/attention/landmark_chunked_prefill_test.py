@@ -37,7 +37,7 @@ def _build(name: AttentionType, *, d_model: int = 64, device: str = "cuda"):
         bias=False,
         mem_freq=MEM_FREQ,
         qk_norm=LayerNormConfig(name="rms", eps=1e-6, bias=False),
-        dtype=None,
+        use_head_qk_norm=True,
     ).build(d_model, layer_idx=0, n_layers=1, init_device=device)
     attn.eval()
     return attn.to(device)
