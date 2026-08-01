@@ -528,8 +528,10 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         self.f_proj_1 = nn.Linear(config.hidden_size, self.head_v_dim, bias=False)
         self.f_proj_2 = nn.Linear(self.head_v_dim, self.gate_dim, bias=False)
         self.beta_proj = nn.Linear(config.hidden_size, self.n_heads, bias=False)
-        self.A_log = nn.Parameter(torch.empty(self.n_heads, dtype=torch.float32))
-        self.dt_bias = nn.Parameter(torch.empty(self.gate_dim, dtype=torch.float32))
+        self.A_log = nn.Parameter(
+            torch.empty(self.n_heads, dtype=torch.float32).uniform_(1, 16).log_()
+        )
+        self.dt_bias = nn.Parameter(torch.zeros(self.gate_dim, dtype=torch.float32))
         self.q_conv1d = Olmo3MoeCausalConv1d(self.key_dim, config.linear_conv_kernel_dim)
         self.k_conv1d = Olmo3MoeCausalConv1d(self.key_dim, config.linear_conv_kernel_dim)
         self.v_conv1d = Olmo3MoeCausalConv1d(self.value_dim, config.linear_conv_kernel_dim)
