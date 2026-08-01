@@ -155,6 +155,11 @@ def test_olmo3moe_kda_rejects_padding_mask_before_attention():
 @requires_fla
 @requires_triton
 def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeForCausalLM,
+        Olmo3MoeKimiDeltaAttention,
+    )
+
     config = _small_kda_emo_config()
 
     assert "linear_attention" in config.layer_types
@@ -162,6 +167,11 @@ def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
     assert config.dense_layers_use_shared_expert is True
     assert config.emo_eval_document_expert_pool == config.n_routed_experts
     assert config.global_load_balancing is True
+
+    model = Olmo3MoeForCausalLM(config)
+    kda = next(module for module in model.modules() if isinstance(module, Olmo3MoeKimiDeltaAttention))
+    assert torch.isfinite(kda.A_log).all()
+    assert torch.equal(kda.dt_bias, torch.zeros_like(kda.dt_bias))
 
     _assert_logprobs_match_after_conversion_roundtrip(config, torch.device("cuda"))
 
