@@ -3,7 +3,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import tempfile
 import typing
 from pathlib import Path
@@ -25,7 +24,7 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
     Similar ``functools.cache``, but uses a persistent cache on the filesystem when the env var
     '{CACHE_DIR_ENV_VAR}' is set, otherwise caching is disabled.
 
-    Arguments must be JSON-serializable. The result must be pickle-able.
+    Arguments must be JSON-serializable. The result must be JSON-serializable.
     """
 
     def decorator(user_function: F) -> F:
@@ -41,7 +40,7 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
                 key = f"{user_function.__qualname__}-{_deterministic_hash((args, kwargs))}"
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 lock_path = cache_dir / f"{key}.lock"
-                cache_path = cache_dir / f"{key}.pkl"
+                cache_path = cache_dir / f"{key}.json"
                 with FileLock(lock_path):
                     if cache_path.exists():
                         log.debug(
@@ -49,8 +48,8 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
                             user_function.__qualname__,
                         )
                         # Cache hit. Load and return the cached result.
-                        with cache_path.open("rb") as f:
-                            return pickle.load(f)
+                        with cache_path.open("r") as f:
+                            return json.load(f)
                     else:
                         # Cache miss. Call the user function and cache the result.
                         log.debug(
@@ -59,11 +58,11 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
                         )
                         result = user_function(*args, **kwargs)
                         tmp_file = tempfile.NamedTemporaryFile(
-                            mode="wb", dir=cache_dir, prefix=key, suffix=".tmp", delete=False
+                            mode="w", dir=cache_dir, prefix=key, suffix=".tmp", delete=False
                         )
                         tmp_path = Path(tmp_file.name)
                         try:
-                            pickle.dump(result, tmp_file)
+                            json.dump(result, tmp_file)
 
                             # Ensure all data is written to disk.
                             tmp_file.flush()
