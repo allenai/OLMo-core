@@ -42,6 +42,8 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         "provider.dtype=bfloat16",
         "-o",
         "provider.trust_remote_code=true",
+        "-o",
+        'provider.dependencies=["flash-linear-attention==0.4.1"]',
         "-n",
         f"lc-275m-kda-cx8-ruler-{length // 1024}k-hf",
         "-m",
