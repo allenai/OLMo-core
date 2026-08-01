@@ -18,12 +18,11 @@ MODEL = Path(
 )
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
-# The stock olmo-eval HF image currently carries a CUDA 12.3 runtime. Its FLA
-# 0.4.1 KDA kernel is valid on Ceres' H100s but fails at launch on Holmes'
-# B300s, which require the newer Blackwell runtime used by our training image.
-CLUSTER = "ai2/ceres"
+CLUSTER = "ai2/holmes"
 BUDGET = "ai2/oe-other"
 GROUP = "olmoe3-v2-kda-lc-ruler"
+# Exact image used by the successful LCE attempt and exact-logit HF validation.
+IMAGE = "01KW8G8JC20H11Y60PPTE2VN4Q"
 
 
 def command(length: int, *, dry_run: bool) -> list[str]:
@@ -48,7 +47,7 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         "-o",
         "batching.chunk_size=8",
         "-o",
-        'provider.dependencies=["flash-linear-attention==0.4.1"]',
+        'provider.dependencies=["huggingface-hub==1.12.2"]',
         "-n",
         f"lc-275m-kda-cx8-ruler-{length // 1024}k-hf",
         "-m",
@@ -63,6 +62,8 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         WORKSPACE,
         "--budget",
         BUDGET,
+        "--image",
+        IMAGE,
         "--priority",
         "urgent",
         "--timeout",
@@ -75,6 +76,10 @@ def command(length: int, *, dry_run: bool) -> list[str]:
         "HF_TOKEN:HF_TOKEN",
         "--env",
         f"HF_DATASETS_CACHE={RULER_CACHE}",
+        "--env",
+        "PYTHONPATH=/gantry-runtime/src",
+        "--env",
+        "OLMO_HF_REQUIRE_TE_EXPERT_PARITY=1",
         "--no-save-requests",
         "--save-predictions",
         "--no-follow",

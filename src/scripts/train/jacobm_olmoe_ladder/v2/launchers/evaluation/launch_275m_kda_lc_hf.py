@@ -11,7 +11,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO = Path("/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/OLMo-core-moe-v2-core")
 SOURCE = Path(
     "/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/"
@@ -31,7 +30,8 @@ IMAGE = "01KW8G8JC20H11Y60PPTE2VN4Q"
 NAME = "convert-lc-275m-kda-cx8-step37991-hf"
 
 
-def build_spec(commit: str) -> dict[str, object]:
+def build_spec(commit: str, *, force: bool = False) -> dict[str, object]:
+    force_value = "1" if force else "0"
     command = f"""set -euo pipefail
 mkdir -p /results {OUTPUT.parent}
 cd {REPO}
@@ -42,8 +42,14 @@ export PYTHONUNBUFFERED=1
 SOURCE={SOURCE}
 OUTPUT={OUTPUT}
 MARKER="${{OUTPUT}}/conversion_complete.json"
+FORCE={force_value}
 
-if [[ -f "${{MARKER}}" ]]; then
+if [[ "${{FORCE}}" == "1" && -f "${{MARKER}}" ]]; then
+  cp "${{MARKER}}" /results/prior_conversion_complete.json
+  rm "${{MARKER}}"
+fi
+
+if [[ -f "${{MARKER}}" && "${{FORCE}}" != "1" ]]; then
   echo "Validated HF conversion already exists at ${{OUTPUT}}"
 else
   if [[ -e "${{OUTPUT}}" ]] && find "${{OUTPUT}}" -mindepth 1 -print -quit | grep -q .; then
@@ -58,6 +64,52 @@ else
     --debug \\
     2>&1 | tee /results/conversion.log
 fi
+
+OLMO_HF_REQUIRE_TE_EXPERT_PARITY=1 python - "${{OUTPUT}}" <<'PY'
+import sys
+from pathlib import Path
+
+import torch
+from transformers import AutoModelForCausalLM
+from transformers.cache_utils import DynamicCache
+
+output = Path(sys.argv[1])
+model = AutoModelForCausalLM.from_pretrained(
+    output,
+    torch_dtype=torch.bfloat16,
+    trust_remote_code=True,
+).cuda().eval()
+input_ids = torch.tensor(
+    [[1, 42, 314, 2718, 7, 11, 13, 17, 19, 23, 29, 31]],
+    device="cuda",
+)
+with torch.no_grad():
+    full_logits = model(input_ids, use_cache=False).logits
+    cache = DynamicCache(config=model.config)
+    cached_logits = [
+        model(input_ids[:, :8], past_key_values=cache, use_cache=True).logits
+    ]
+    for position in range(8, input_ids.shape[1]):
+        cached_logits.append(
+            model(
+                input_ids[:, position : position + 1],
+                past_key_values=cache,
+                use_cache=True,
+            ).logits
+        )
+    cached_logits = torch.cat(cached_logits, dim=1)
+
+torch.testing.assert_close(
+    cached_logits.float(),
+    full_logits.float(),
+    rtol=2e-2,
+    atol=2e-2,
+)
+print(
+    "KDA cached decode validation: "
+    f"max_abs_error={{(cached_logits.float() - full_logits.float()).abs().max().item():.6g}}"
+)
+PY
 
 python - "${{SOURCE}}" "${{OUTPUT}}" "{commit}" <<'PY'
 import datetime
@@ -178,6 +230,11 @@ find "${{OUTPUT}}" -maxdepth 1 -type f -printf '%f %s bytes\\n' \\
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--submit", action="store_true")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run conversion and validation even when the completion marker exists.",
+    )
     parser.add_argument("--name", default=NAME)
     args = parser.parse_args()
 
@@ -188,7 +245,7 @@ def main() -> None:
     commit = subprocess.check_output(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
     ).strip()
-    spec = build_spec(commit)
+    spec = build_spec(commit, force=args.force)
     rendered = yaml.safe_dump(spec, sort_keys=False)
     if not args.submit:
         print(rendered)
