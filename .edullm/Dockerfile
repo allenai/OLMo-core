@@ -103,6 +103,31 @@ COPY . .
 # The version is re-asserted alongside it, because the pin above only binds if nothing later
 # in the resolution moved it.
 #
+# THE DATASET READER IS INSTALLED HERE BECAUSE A TRAINING RUN CANNOT OPEN A CORPUS WITHOUT
+# IT. `edullm-data` publishes the platform corpora into s3://edullm-data behind a validator,
+# and `edullm_data.read` is the supported way to turn a dataset id and version into file URIs
+# plus the dtype those files actually hold. Without it in the image, a container told which
+# corpus it may read has no way to read it.
+#
+# PINNED BY COMMIT, AND TO THE SAME COMMIT THE PLATFORM PINS. The platform declares this
+# reader in its own `reader` dependency group at 38bf831a, and the reasoning for pinning a
+# commit rather than a tag lives there: `is_trainable` does not exist at v0.2.0, so a tag pin
+# answers a request for training data with held-out shards. Two pins on one commit is a
+# duplication worth having -- the platform resolves it for its tests and this image resolves
+# it for the run -- but they must move together, and a mismatch is a container reading
+# through a different library than the one the tests exercised.
+#
+# A TARBALL URL RATHER THAN git+https, AND NOT FOR STYLE. `pip install git+https://…` shells
+# out to git, and the registered base is a bare python image that carries none. The choice
+# was between adding git to the image and asking pip for the archive GitHub already serves
+# for any commit; the archive needs no new package in an image an untrusted training command
+# runs inside. The URL carries the same forty hex digits, so it names exactly one tree just
+# as immutably as the git form does.
+#
+# The import assertion below is the same argument as the one above it: `import edullm_data`
+# would prove the distribution installed, and `from edullm_data.read import dataset_paths`
+# proves the module a training run actually reaches for loads.
+#
 # THE LAST LINE IMPORTS SUBMODULES, AND THE SHALLOW VERSION OF IT ALREADY FAILED ONCE.
 #
 # It used to read `import olmo_core, boto3, wandb`, which passed on an image whose first
@@ -116,9 +141,11 @@ COPY . .
 RUN set -eux; \
     python -m pip install --no-cache-dir "torch==2.9.0"; \
     python -m pip install --no-cache-dir ".[wandb]" boto3; \
+    python -m pip install --no-cache-dir "edullm-data @ https://github.com/edu-llm/edullm-data/archive/38bf831a6c3f445e394784018441fd59288b876c.tar.gz"; \
     python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'torch was moved off the pin: {torch.__version__}'"; \
     python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
-    python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"
+    python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"; \
+    python -c "from edullm_data.read import dataset_paths, resolve_latest; print(dataset_paths.__module__)"
 
 # No CMD. The entrypoint of the registered base is inherited deliberately, so swapping the
 # base does not leave a stale command behind.
