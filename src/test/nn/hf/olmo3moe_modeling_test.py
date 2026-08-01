@@ -97,17 +97,23 @@ def _small_kda_emo_config():
     )
 
 
-def _assert_logprobs_match_after_conversion_roundtrip(config):
+def _assert_logprobs_match_after_conversion_roundtrip(
+    config, device: torch.device = torch.device("cpu")
+):
     from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
 
-    model = Olmo3MoeForCausalLM(config)
+    model = Olmo3MoeForCausalLM(config).to(device)
     model.eval()
 
     input_ids = torch.randint(
         0, config.vocab_size, (1, 8), generator=torch.Generator().manual_seed(0)
-    )
-    with torch.no_grad():
+    ).to(device)
+    with torch.no_grad(), torch.autocast(
+        device_type=device.type,
+        dtype=torch.bfloat16,
+        enabled=device.type == "cuda",
+    ):
         ref_logits = model(input_ids, use_cache=False).logits
     ref_logprobs = torch.log_softmax(ref_logits, dim=-1)
 
@@ -117,7 +123,11 @@ def _assert_logprobs_match_after_conversion_roundtrip(config):
 
     model.load_state_dict(hf_roundtrip, strict=True)
     model.eval()
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(
+        device_type=device.type,
+        dtype=torch.bfloat16,
+        enabled=device.type == "cuda",
+    ):
         rt_logits = model(input_ids, use_cache=False).logits
     rt_logprobs = torch.log_softmax(rt_logits, dim=-1)
 
@@ -143,7 +153,7 @@ def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
     assert config.emo_eval_document_expert_pool == config.n_routed_experts
     assert config.global_load_balancing is True
 
-    _assert_logprobs_match_after_conversion_roundtrip(config)
+    _assert_logprobs_match_after_conversion_roundtrip(config, torch.device("cuda"))
 
 
 @requires_olmo3moe
