@@ -296,13 +296,19 @@ class BeakerLaunchConfig(Config):
     The job priority.
     """
 
-    preemptible: bool = True
+    preemptible: bool | None = True
     """
     If the job should be preemptible.
     """
 
     min_runtime: str | None = None
-    """Minimum guaranteed runtime before the job can be preempted, e.g. ``"15m"``."""
+    """
+    Minimum protected runtime requested from Beaker, for example ``"4h"``.
+
+    Prefer this over :attr:`preemptible` for allocation-based scheduling:
+    ``"0s"`` selects unallocated backfill, while a positive duration selects
+    the allocated lane without implicitly requesting maximum protection.
+    """
 
     retries: int | None = None
     """
