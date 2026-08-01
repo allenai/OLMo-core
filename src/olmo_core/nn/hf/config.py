@@ -42,6 +42,36 @@ except ImportError:
     Olmo3Config = None
 
 
+def _validate_olmo3moe_router_selection(router: Any) -> None:
+    """Reject router behavior that the HF Olmo3Moe implementation cannot reproduce."""
+    unsupported_modifiers = []
+    if router.bias_gamma is not None:
+        unsupported_modifiers.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_modifiers.append("score_correction_bias")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    if router.expert_weight_scale is not None:
+        unsupported_modifiers.append("expert_weight_scale")
+    if (
+        router.gating_function == MoERouterGatingFunction.sigmoid
+        and router.sigmoid_stability_epsilon != 1e-7
+    ):
+        unsupported_modifiers.append(
+            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
+        )
+    if unsupported_modifiers:
+        raise NotImplementedError(
+            f"Exporting olmo3moe with router selection modifiers "
+            f"({', '.join(unsupported_modifiers)}) is not supported."
+        )
+
+
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     blocks = list(model.blocks.values())
     for block in blocks:
@@ -202,37 +232,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
     # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
     # path, so exporting any of these would silently diverge (or crash on the first HF forward).
-    unsupported_modifiers = []
-    if router.bias_gamma is not None:
-        unsupported_modifiers.append("bias_gamma")
-    if router.score_correction_bias:
-        unsupported_modifiers.append("score_correction_bias")
-    if router.gating_function not in (
-        MoERouterGatingFunction.softmax,
-        MoERouterGatingFunction.sigmoid,
-    ):
-        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
-    if router.n_group is not None or router.topk_group is not None:
-        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
-    # ``expert_weight_scale`` multiplies the selected expert weights in the router forward, but the
-    # HF Olmo3Moe router has no corresponding field/multiply. (``original_top_k`` and
-    # ``restore_weight_scale`` ARE representable — they map to the HF config below.)
-    if router.expert_weight_scale is not None:
-        unsupported_modifiers.append("expert_weight_scale")
-    # The HF sigmoid router hard-codes a 1e-7 stability epsilon, so a different value would route
-    # with different weights after export.
-    if (
-        router.gating_function == MoERouterGatingFunction.sigmoid
-        and router.sigmoid_stability_epsilon != 1e-7
-    ):
-        unsupported_modifiers.append(
-            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
-        )
-    if unsupported_modifiers:
-        raise NotImplementedError(
-            f"Exporting olmo3moe with router selection modifiers "
-            f"({', '.join(unsupported_modifiers)}) is not supported."
-        )
+    _validate_olmo3moe_router_selection(router)
 
     # The HF olmo3moe router/expert linears are bias-free and the converter only copies
     # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
@@ -362,6 +362,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     routed_experts = representative.routed_experts
     router = representative.routed_experts_router
     assert routed_experts is not None and router is not None
+    _validate_olmo3moe_router_selection(router)
     if representative.latent_down_proj is not None or representative.latent_up_proj is not None:
         raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
     if router.emo is None:
@@ -382,6 +383,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     )
     for block in sparse_blocks[1:]:
         assert block.routed_experts is not None and block.routed_experts_router is not None
+        _validate_olmo3moe_router_selection(block.routed_experts_router)
         signature = (
             block.routed_experts.d_model,
             block.routed_experts.hidden_size,
@@ -417,6 +419,16 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
+    ropes = [block.attention.rope for block in attention_blocks]
+    if any(rope is None for rope in ropes) != all(rope is None for rope in ropes):
+        raise NotImplementedError("Full-attention layers must consistently enable or disable RoPE.")
+    rope_theta = None
+    rope_scaling = None
+    if attention.rope is not None:
+        rope_theta = attention.rope.theta
+        if any(rope is None or rope.theta != rope_theta for rope in ropes):
+            raise NotImplementedError("Heterogeneous full-attention RoPE theta values are unsupported.")
+        rope_scaling = _get_and_validate_rope_scaling_config(attention_blocks)
     if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
         raise NotImplementedError("HF export requires head-wise QK norm.")
     if any(
@@ -479,6 +491,8 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         max_position_embeddings=-1,
         use_head_qk_norm=True,
         use_rope=attention.rope is not None,
+        rope_theta=rope_theta,
+        rope_scaling=rope_scaling,
         attention_gate_type=gate_type,
         attention_gate_full_precision=gate_full_precision,
         linear_num_key_heads=kda.n_heads,
@@ -501,6 +515,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         emo_eval_document_expert_pool=router.emo.eval_pool_size(),
         emo_eos_token_id=router.emo.eos_token_id,
         global_load_balancing=router.global_load_balancing,
+        use_cache=False,
         pad_token_id=None,
         bos_token_id=None,
         eos_token_id=router.emo.eos_token_id,

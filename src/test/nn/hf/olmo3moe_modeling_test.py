@@ -141,6 +141,16 @@ def test_olmo3moe_logprobs_match_after_conversion_roundtrip():
 
 
 @requires_olmo3moe
+def test_olmo3moe_kda_rejects_padding_mask_before_attention():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import _validate_linear_attention_mask
+
+    attention_mask = torch.tensor([[1, 1, 1, 0]])
+
+    with pytest.raises(NotImplementedError, match="attention-mask support"):
+        _validate_linear_attention_mask(attention_mask)
+
+
+@requires_olmo3moe
 @requires_gpu
 @requires_fla
 @requires_triton

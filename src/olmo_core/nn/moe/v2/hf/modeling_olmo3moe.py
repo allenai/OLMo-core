@@ -869,6 +869,25 @@ class Olmo3MoeRMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
+def _validate_linear_attention_mask(
+    attention_mask: Optional[torch.Tensor | dict[str, Optional[torch.Tensor]]],
+) -> None:
+    if attention_mask is None:
+        return
+    linear_attention_mask = (
+        attention_mask.get("linear_attention")
+        if isinstance(attention_mask, dict)
+        else attention_mask
+    )
+    if linear_attention_mask is not None and (
+        linear_attention_mask.ndim != 2 or not bool(torch.all(linear_attention_mask != 0))
+    ):
+        raise NotImplementedError(
+            "KDA attention-mask support is not implemented; only unpadded inputs "
+            "(or an all-ones 2D attention mask) are supported."
+        )
+
+
 @auto_docstring
 class Olmo3MoeModel(Olmo3MoePreTrainedModel):
     def __init__(self, config: Olmo3MoeConfig):
@@ -944,6 +963,8 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
                 "KDA recurrent-state caching is not implemented in the exported HF model; "
                 "run with use_cache=False."
             )
+        if has_linear_attention:
+            _validate_linear_attention_mask(attention_mask)
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
 
