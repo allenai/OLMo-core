@@ -1,3 +1,4 @@
+import importlib
 import os
 from collections.abc import Callable
 from inspect import signature
@@ -266,7 +267,9 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         """Mirror OLMo-core's no-EP permutation and weighted-unpermutation path."""
-        from transformer_engine.pytorch.permutation import moe_permute, moe_unpermute
+        permutation = importlib.import_module("transformer_engine.pytorch.permutation")
+        moe_permute = permutation.moe_permute
+        moe_unpermute = permutation.moe_unpermute
 
         N, H = hidden_states.shape
         K = topk_ids.shape[-1]
