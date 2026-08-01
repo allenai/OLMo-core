@@ -19,9 +19,9 @@ MODEL = Path(
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 # The stock olmo-eval HF image currently carries a CUDA 12.3 runtime. Its FLA
-# 0.4.1 KDA kernel is valid on Jupiter's H100s but fails at launch on Holmes'
+# 0.4.1 KDA kernel is valid on Ceres' H100s but fails at launch on Holmes'
 # B300s, which require the newer Blackwell runtime used by our training image.
-CLUSTER = "ai2/jupiter"
+CLUSTER = "ai2/ceres"
 BUDGET = "ai2/oe-other"
 GROUP = "olmoe3-v2-kda-lc-ruler"
 
