@@ -56,7 +56,11 @@ def all_to_all_single_cp2hp(
 
     # [CP, B, T/CP, H/CP, D] -> [B, CP, T/CP, H/CP, D] -> [B, T, H/CP, D]
     exchanged = exchanged.view(world_size, B, t_local, h_out, d_in).permute(1, 0, 2, 3, 4)
-    exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in)
+    # '.contiguous()' is not redundant: when the merged dims include one of size 1 (e.g. h_out == 1,
+    # which happens as soon as the CP degree equals the head count) 'reshape' can satisfy the request
+    # as a view and leaves the result non-contiguous, which then breaks a downstream '.view()'. When
+    # the merge genuinely requires a copy, 'reshape' has already materialized it and this is a no-op.
+    exchanged = exchanged.reshape(B, t_local * world_size, h_out, d_in).contiguous()
 
     if input_was_3d:
         exchanged = exchanged.squeeze(-1)  # [B, T, H/CP, 1] -> [B, T, H/CP]
@@ -119,7 +123,8 @@ def all_to_all_cp2hp(
             for r in range(world_size)
         ]
         out = torch.stack(chunks, dim=0).permute(1, 0, 2, 3, 4)
-        out = out.reshape(B, t_local * world_size, h_out, d_in)
+        # See the note in 'all_to_all_single_cp2hp' on why '.contiguous()' is required here.
+        out = out.reshape(B, t_local * world_size, h_out, d_in).contiguous()
         outputs.append(out)
 
     if inputs_were_3d:
@@ -242,7 +247,8 @@ def all_to_all_single_hp2cp(
 
     # [CP, B, T/CP, H/CP, D] -> [B, T/CP, CP, H/CP, D] -> [B, T/CP, H, D]
     exchanged = exchanged.view(world_size, B, t_out, h_in, d_in).permute(1, 2, 0, 3, 4)
-    exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in)
+    # See the note in 'all_to_all_single_cp2hp' on why '.contiguous()' is required here.
+    exchanged = exchanged.reshape(B, t_out, h_in * world_size, d_in).contiguous()
 
     if input_was_3d:
         exchanged = exchanged.squeeze(-1)  # [B, T/CP, H, 1] -> [B, T/CP, H]
@@ -307,7 +313,8 @@ def all_to_all_hp2cp(
             for r in range(world_size)
         ]
         out = torch.stack(chunks, dim=0).permute(1, 2, 0, 3, 4)
-        out = out.reshape(B, t_out, h_in * world_size, d_in)
+        # See the note in 'all_to_all_single_cp2hp' on why '.contiguous()' is required here.
+        out = out.reshape(B, t_out, h_in * world_size, d_in).contiguous()
         outputs.append(out)
 
     if inputs_were_3d:
@@ -354,7 +361,8 @@ def all_to_all_single_cp2hp_qkvpacked(
 
     # [CP, B, T/CP, 3, H/CP, D] -> [B, CP, T/CP, 3, H/CP, D] -> [B, T, 3, H/CP, D]
     exchanged = exchanged.view(world_size, B, t_local, three, h_out, d_in).permute(1, 0, 2, 3, 4, 5)
-    exchanged = exchanged.reshape(B, t_local * world_size, three, h_out, d_in)
+    # See the note in 'all_to_all_single_cp2hp' on why '.contiguous()' is required here.
+    exchanged = exchanged.reshape(B, t_local * world_size, three, h_out, d_in).contiguous()
     return exchanged
 
 
@@ -387,5 +395,6 @@ def all_to_all_single_hp2cp_qkvpacked(
 
     # [CP, B, T/CP, 3, H/CP, D] -> [B, T/CP, CP, 3, H/CP, D] -> [B, T/CP, 3, H, D]
     exchanged = exchanged.view(world_size, B, t_out, three, h_in, d_in).permute(1, 2, 0, 3, 4, 5)
-    exchanged = exchanged.reshape(B, t_out, three, h_in * world_size, d_in)
+    # See the note in 'all_to_all_single_cp2hp' on why '.contiguous()' is required here.
+    exchanged = exchanged.reshape(B, t_out, three, h_in * world_size, d_in).contiguous()
     return exchanged

@@ -313,6 +313,13 @@ def _test_qkv_cp2hp_replicates_kv_heads(n_heads: int, n_kv_heads: int):
 
     h_local = n_heads // world_size
     assert q_out.shape == (B, T, h_local, D), f"got q shape {q_out.shape}"
+
+    # Callers feed these straight into kernels and then '.view()' the result, so a non-contiguous
+    # return is a real bug. It is only reachable when the merged head dim is 1 (h_local == 1), where
+    # 'reshape' can satisfy the merge as a view instead of copying.
+    for name, out in (("q", q_out), ("k", k_out), ("v", v_out)):
+        assert out.is_contiguous(), f"{name} came back non-contiguous (h_local={h_local})"
+
     if n_kv_heads % world_size == 0:
         # No replication needed: the plain split still applies.
         assert k_out.shape == (B, T, n_kv_heads // world_size, D), f"got k shape {k_out.shape}"
@@ -367,9 +374,61 @@ _KV_REPLICATION_CASES = [
     # n_kv_heads > 1 and smaller than the CP degree: the only shape that pins down the replicated
     # head *order*. Mirrors Qwen3.5-4B (n_heads=16, n_kv_heads=4) at cp=16.
     pytest.param(4, 8, 2, id="cp4-gqa-replicated"),
+    # CP degree == n_heads, so each rank ends up with a single head. This is the shape Qwen3.5-4B
+    # actually hits at cp=16, and it is the one where the trailing 'reshape' in the collectives can
+    # be satisfied as a view and silently return a non-contiguous tensor.
+    pytest.param(4, 4, 1, id="cp4-one-head-per-rank"),
+    pytest.param(2, 2, 1, id="cp2-one-head-per-rank"),
     pytest.param(2, 4, 2, id="cp2-gqa-no-replication"),
     pytest.param(2, 4, 4, id="cp2-mha-no-replication"),
 ]
+
+
+def _test_hp2cp_roundtrip_is_contiguous(n_heads: int):
+    """
+    Regression test: ``all_to_all_single_hp2cp`` returned a non-contiguous tensor whenever the
+    per-rank head count was 1, because merging a size-1 dim is expressible as a view so ``reshape``
+    never copied. Dense attention then failed on ``att.view(B, T, -1)``.
+    """
+    device = get_default_device()
+    world_size = dist.get_world_size()
+    group = dist.new_group()
+    assert group is not None
+
+    B, T, D = 2, 8, 16
+    h_local = n_heads // world_size
+
+    hp = torch.randn(B, T, h_local, D, device=device)
+    cp = all_to_all_single_hp2cp(hp, group)
+
+    assert cp.shape == (B, T // world_size, n_heads, D), f"got {cp.shape}"
+    assert cp.is_contiguous(), f"hp2cp returned non-contiguous output for h_local={h_local}"
+    # The operation dense attention actually performs on this tensor.
+    cp.view(B, T // world_size, -1)
+
+    # And back the other way.
+    back = all_to_all_single_cp2hp(cp, group)
+    assert back.is_contiguous(), f"cp2hp returned non-contiguous output for h_local={h_local}"
+    back.view(B, T, -1)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize(
+    "world_size, n_heads",
+    [
+        pytest.param(2, 2, id="cp2-one-head-per-rank"),
+        pytest.param(4, 4, id="cp4-one-head-per-rank"),
+        pytest.param(2, 4, id="cp2-two-heads-per-rank"),
+        pytest.param(4, 8, id="cp4-two-heads-per-rank"),
+    ],
+)
+def test_hp2cp_roundtrip_is_contiguous(backend: str, world_size: int, n_heads: int):
+    run_distributed_test(
+        partial(_test_hp2cp_roundtrip_is_contiguous, n_heads=n_heads),
+        backend=backend,
+        start_method="spawn",
+        world_size=world_size,
+    )
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
