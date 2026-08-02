@@ -234,9 +234,10 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
             continue
         block_router = block.routed_experts_router
         block_experts = block.routed_experts
-        if block_router is None or block_experts is None or block_router.emo is None:
+        emo = getattr(block_router, "emo", None)
+        if block_router is None or block_experts is None or emo is None:
             continue
-        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+        if emo.eval_pool_size() != block_experts.num_experts:
             raise NotImplementedError(
                 "Plain olmo3moe HF export cannot represent a restricted EMO evaluation pool; "
                 "eval_document_expert_pool must span every routed expert."
