@@ -421,7 +421,13 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             raise NotImplementedError("Heterogeneous sparse EMo layers are unsupported.")
 
     for block in blocks:
-        if block.shared_experts is not None and block.shared_experts.activation.value != "swiglu":
+        if block.shared_experts is None:
+            continue
+        if block.shared_experts.num_experts > 1:
+            raise NotImplementedError(
+                "Exporting KDA + EMo with more than one shared expert per block is unsupported."
+            )
+        if block.shared_experts.activation.value != "swiglu":
             raise NotImplementedError(
                 "Exporting KDA + EMo requires SwiGLU shared experts, got "
                 f"{block.shared_experts.activation.value!r}."
@@ -452,6 +458,20 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
+    gate_signature = (
+        (attention.gate.granularity, attention.gate.full_precision)
+        if attention.gate is not None
+        else None
+    )
+    for block in attention_blocks[1:]:
+        block_gate = block.attention.gate
+        block_gate_signature = (
+            (block_gate.granularity, block_gate.full_precision) if block_gate is not None else None
+        )
+        if block_gate_signature != gate_signature:
+            raise NotImplementedError(
+                "Heterogeneous full-attention gate configurations are unsupported."
+            )
     ropes = [block.attention.rope for block in attention_blocks]
     if any(rope is None for rope in ropes) != all(rope is None for rope in ropes):
         raise NotImplementedError("Full-attention layers must consistently enable or disable RoPE.")
@@ -498,10 +518,21 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         if representative.shared_experts is not None
         else None
     )
-    layer_types = [
-        "linear_attention" if isinstance(block.attention, KimiDeltaAttention) else "full_attention"
-        for block in blocks
-    ]
+    layer_types = []
+    window_sizes = set()
+    for block in blocks:
+        if isinstance(block.attention, KimiDeltaAttention):
+            layer_types.append("linear_attention")
+        elif block.attention.backend.window_size != (-1, -1):
+            layer_types.append("sliding_attention")
+            window_sizes.add(block.attention.backend.window_size[0])
+        else:
+            layer_types.append("full_attention")
+    if len(window_sizes) > 1:
+        raise NotImplementedError(
+            "KDA + EMo export requires one common sliding-attention window size."
+        )
+    sliding_window = (window_sizes.pop() + 1) if window_sizes else attention.head_dim
     kda_norm_eps = float(getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5)))
 
     return Olmo3MoeConfig(
@@ -536,6 +567,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         linear_allow_neg_eigval=kda.allow_neg_eigval,
         linear_norm_eps=kda_norm_eps,
         latent_moe_dim=None,
+        sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
         dense_layers_use_shared_expert=True,

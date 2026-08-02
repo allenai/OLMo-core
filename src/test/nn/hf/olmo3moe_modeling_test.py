@@ -158,8 +158,15 @@ def test_olmo3moe_dynamic_cache_has_kda_states_and_reorders_them():
     cache = DynamicCache(config=config)
     linear_layer = cache.layers[0]
 
-    conv_state = torch.arange(2 * (32 + 32 + 64) * 4).view(2, 128, 4).float()
-    cache.update_conv_state(conv_state, layer_idx=0)
+    has_indexed_states = hasattr(linear_layer, "number_of_states")
+    if has_indexed_states:
+        assert linear_layer.number_of_states == 3
+        for state_idx, channels in enumerate((32, 32, 64)):
+            state = torch.arange(2 * channels * 4).view(2, channels, 4).float()
+            cache.update_conv_state(state, layer_idx=0, state_idx=state_idx)
+    else:
+        conv_state = torch.arange(2 * (32 + 32 + 64) * 4).view(2, 128, 4).float()
+        cache.update_conv_state(conv_state, layer_idx=0)
     recurrent = torch.arange(2 * 4 * 8 * 16).view(2, 4, 8, 16).float()
     cache.update_recurrent_state(recurrent, layer_idx=0)
     keys = torch.randn(2, 2, 5, 8)
@@ -169,8 +176,16 @@ def test_olmo3moe_dynamic_cache_has_kda_states_and_reorders_them():
     cache.reorder_cache(torch.tensor([1, 0, 1]))
 
     assert cache.get_seq_length() == 5
-    torch.testing.assert_close(linear_layer.conv_states[0], linear_layer.conv_states[2])
-    torch.testing.assert_close(linear_layer.recurrent_states[0], linear_layer.recurrent_states[2])
+    if has_indexed_states:
+        torch.testing.assert_close(linear_layer.conv_states[0][0], linear_layer.conv_states[0][2])
+        torch.testing.assert_close(
+            linear_layer.recurrent_states[0][0], linear_layer.recurrent_states[0][2]
+        )
+    else:
+        torch.testing.assert_close(linear_layer.conv_states[0], linear_layer.conv_states[2])
+        torch.testing.assert_close(
+            linear_layer.recurrent_states[0], linear_layer.recurrent_states[2]
+        )
     torch.testing.assert_close(cache.layers[1].keys[0], cache.layers[1].keys[2])
 
 
