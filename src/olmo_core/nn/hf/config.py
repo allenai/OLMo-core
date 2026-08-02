@@ -362,37 +362,56 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     routed_experts = representative.routed_experts
     router = representative.routed_experts_router
     assert routed_experts is not None and router is not None
-    _validate_olmo3moe_router_selection(router)
-    if representative.latent_down_proj is not None or representative.latent_up_proj is not None:
-        raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
-    if router.emo is None:
-        raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
-    if router.emo.eval_pool_size() != routed_experts.num_experts:
-        raise NotImplementedError(
-            "HF EMo export currently requires eval_document_expert_pool=num_experts."
-        )
-
-    sparse_signature = (
-        routed_experts.d_model,
-        routed_experts.hidden_size,
-        routed_experts.num_experts,
-        router.top_k,
-        representative.shared_experts.hidden_size
-        if representative.shared_experts is not None
-        else None,
-    )
-    for block in sparse_blocks[1:]:
+    sparse_signature = None
+    for block in sparse_blocks:
         assert block.routed_experts is not None and block.routed_experts_router is not None
-        _validate_olmo3moe_router_selection(block.routed_experts_router)
+        block_router = block.routed_experts_router
+        block_experts = block.routed_experts
+        _validate_olmo3moe_router_selection(block_router)
+        if block.latent_down_proj is not None or block.latent_up_proj is not None:
+            raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
+        if block_router.emo is None:
+            raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
+        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+            raise NotImplementedError(
+                "HF EMo export currently requires eval_document_expert_pool=num_experts."
+            )
+        if block_router.bias is not None:
+            raise NotImplementedError("Exporting KDA + EMo with a biased router is unsupported.")
+        if block_experts.bias:
+            raise NotImplementedError("Exporting KDA + EMo with biased routed experts is unsupported.")
+        if block_experts.activation.value != "swiglu":
+            raise NotImplementedError(
+                "Exporting KDA + EMo requires SwiGLU routed experts, got "
+                f"{block_experts.activation.value!r}."
+            )
         signature = (
-            block.routed_experts.d_model,
-            block.routed_experts.hidden_size,
-            block.routed_experts.num_experts,
-            block.routed_experts_router.top_k,
+            block_experts.d_model,
+            block_experts.hidden_size,
+            block_experts.num_experts,
+            block_router.top_k,
+            block_router.original_top_k,
+            block_router.gating_function,
+            block_router.normalize_expert_weights,
+            block_router.restore_weight_scale,
+            block_router.global_load_balancing,
+            block_router.emo.min_document_expert_pool,
+            block_router.emo.max_document_expert_pool,
+            block_router.emo.eval_pool_size(),
+            block_router.emo.eos_token_id,
             block.shared_experts.hidden_size if block.shared_experts is not None else None,
         )
-        if signature != sparse_signature or block.latent_down_proj is not None:
+        if sparse_signature is None:
+            sparse_signature = signature
+        elif signature != sparse_signature:
             raise NotImplementedError("Heterogeneous sparse EMo layers are unsupported.")
+
+    for block in blocks:
+        if block.shared_experts is not None and block.shared_experts.activation.value != "swiglu":
+            raise NotImplementedError(
+                "Exporting KDA + EMo requires SwiGLU shared experts, got "
+                f"{block.shared_experts.activation.value!r}."
+            )
 
     kda = kda_blocks[0].attention
     assert isinstance(kda, KimiDeltaAttention)
