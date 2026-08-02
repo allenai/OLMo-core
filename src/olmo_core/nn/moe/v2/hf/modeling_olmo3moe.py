@@ -569,8 +569,13 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         cache_layer = (
             past_key_values.layers[self.layer_idx] if past_key_values is not None else None
         )
-        has_previous_state = cache_layer is not None and cache_layer.has_previous_state
         has_indexed_states = cache_layer is not None and hasattr(cache_layer, "number_of_states")
+        if cache_layer is None:
+            has_previous_state = False
+        elif has_indexed_states:
+            has_previous_state = all(cache_layer.has_previous_state.values())
+        else:
+            has_previous_state = bool(cache_layer.has_previous_state)
         if has_previous_state and has_indexed_states:
             initial_conv_states = [cache_layer.conv_states[i] for i in range(3)]
         elif has_previous_state:
