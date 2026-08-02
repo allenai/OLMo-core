@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
-from olmo_core.nn.attention import Attention
+from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
@@ -40,6 +40,36 @@ try:
     from transformers import Olmo3Config  # type: ignore
 except ImportError:
     Olmo3Config = None
+
+
+def _validate_olmo3moe_router_selection(router: Any) -> None:
+    """Reject router behavior that the HF Olmo3Moe implementation cannot reproduce."""
+    unsupported_modifiers = []
+    if router.bias_gamma is not None:
+        unsupported_modifiers.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_modifiers.append("score_correction_bias")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    if router.expert_weight_scale is not None:
+        unsupported_modifiers.append("expert_weight_scale")
+    if (
+        router.gating_function == MoERouterGatingFunction.sigmoid
+        and router.sigmoid_stability_epsilon != 1e-7
+    ):
+        unsupported_modifiers.append(
+            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
+        )
+    if unsupported_modifiers:
+        raise NotImplementedError(
+            f"Exporting olmo3moe with router selection modifiers "
+            f"({', '.join(unsupported_modifiers)}) is not supported."
+        )
 
 
 def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
@@ -124,6 +154,9 @@ def _register_olmo3moe_auto_classes() -> None:
 def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
+    if any(isinstance(block.attention, KimiDeltaAttention) for block in model.blocks.values()):
+        return _get_olmo3moe_kda_emo_config(model)
+
     if Olmo3MoeConfig is None:
         raise RuntimeError(
             "Building an Olmo3MoeConfig requires the olmo3moe HF model files "
@@ -199,37 +232,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
     # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
     # path, so exporting any of these would silently diverge (or crash on the first HF forward).
-    unsupported_modifiers = []
-    if router.bias_gamma is not None:
-        unsupported_modifiers.append("bias_gamma")
-    if router.score_correction_bias:
-        unsupported_modifiers.append("score_correction_bias")
-    if router.gating_function not in (
-        MoERouterGatingFunction.softmax,
-        MoERouterGatingFunction.sigmoid,
-    ):
-        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
-    if router.n_group is not None or router.topk_group is not None:
-        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
-    # ``expert_weight_scale`` multiplies the selected expert weights in the router forward, but the
-    # HF Olmo3Moe router has no corresponding field/multiply. (``original_top_k`` and
-    # ``restore_weight_scale`` ARE representable — they map to the HF config below.)
-    if router.expert_weight_scale is not None:
-        unsupported_modifiers.append("expert_weight_scale")
-    # The HF sigmoid router hard-codes a 1e-7 stability epsilon, so a different value would route
-    # with different weights after export.
-    if (
-        router.gating_function == MoERouterGatingFunction.sigmoid
-        and router.sigmoid_stability_epsilon != 1e-7
-    ):
-        unsupported_modifiers.append(
-            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
-        )
-    if unsupported_modifiers:
-        raise NotImplementedError(
-            f"Exporting olmo3moe with router selection modifiers "
-            f"({', '.join(unsupported_modifiers)}) is not supported."
-        )
+    _validate_olmo3moe_router_selection(router)
 
     # The HF olmo3moe router/expert linears are bias-free and the converter only copies
     # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
@@ -329,6 +332,212 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         pad_token_id=None,  # type: ignore
         bos_token_id=None,
         eos_token_id=None,  # type: ignore
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
+def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
+    """Build a fail-closed HF config for the KDA + full-width EMo ladder."""
+
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+    if Olmo3MoeConfig is None:
+        raise RuntimeError("The olmo3moe HF model files are unavailable.")
+    _register_olmo3moe_auto_classes()
+
+    blocks = list(model.blocks.values())
+    if not blocks or not all(isinstance(block, OLMoDDPTransformerBlock) for block in blocks):
+        raise NotImplementedError("KDA + EMo export requires OLMoDDP blocks at every layer.")
+
+    dense_layers_indices = [idx for idx, block in enumerate(blocks) if block.routed_experts is None]
+    sparse_blocks = [block for block in blocks if block.routed_experts is not None]
+    kda_blocks = [block for block in blocks if isinstance(block.attention, KimiDeltaAttention)]
+    attention_blocks = [block for block in blocks if isinstance(block.attention, Attention)]
+    if not dense_layers_indices or not sparse_blocks or not kda_blocks or not attention_blocks:
+        raise NotImplementedError(
+            "KDA + EMo export requires dense, sparse, KDA, and full-attention layers."
+        )
+
+    representative = sparse_blocks[0]
+    routed_experts = representative.routed_experts
+    router = representative.routed_experts_router
+    assert routed_experts is not None and router is not None
+    sparse_signature = None
+    for block in sparse_blocks:
+        assert block.routed_experts is not None and block.routed_experts_router is not None
+        block_router = block.routed_experts_router
+        block_experts = block.routed_experts
+        _validate_olmo3moe_router_selection(block_router)
+        if block.latent_down_proj is not None or block.latent_up_proj is not None:
+            raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
+        if block_router.emo is None:
+            raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
+        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+            raise NotImplementedError(
+                "HF EMo export currently requires eval_document_expert_pool=num_experts."
+            )
+        if block_router.bias is not None:
+            raise NotImplementedError("Exporting KDA + EMo with a biased router is unsupported.")
+        if block_experts.bias:
+            raise NotImplementedError("Exporting KDA + EMo with biased routed experts is unsupported.")
+        if block_experts.activation.value != "swiglu":
+            raise NotImplementedError(
+                "Exporting KDA + EMo requires SwiGLU routed experts, got "
+                f"{block_experts.activation.value!r}."
+            )
+        signature = (
+            block_experts.d_model,
+            block_experts.hidden_size,
+            block_experts.num_experts,
+            block_router.top_k,
+            block_router.original_top_k,
+            block_router.gating_function,
+            block_router.normalize_expert_weights,
+            block_router.restore_weight_scale,
+            block_router.global_load_balancing,
+            block_router.emo.min_document_expert_pool,
+            block_router.emo.max_document_expert_pool,
+            block_router.emo.eval_pool_size(),
+            block_router.emo.eos_token_id,
+            block.shared_experts.hidden_size if block.shared_experts is not None else None,
+        )
+        if sparse_signature is None:
+            sparse_signature = signature
+        elif signature != sparse_signature:
+            raise NotImplementedError("Heterogeneous sparse EMo layers are unsupported.")
+
+    for block in blocks:
+        if block.shared_experts is not None and block.shared_experts.activation.value != "swiglu":
+            raise NotImplementedError(
+                "Exporting KDA + EMo requires SwiGLU shared experts, got "
+                f"{block.shared_experts.activation.value!r}."
+            )
+
+    kda = kda_blocks[0].attention
+    assert isinstance(kda, KimiDeltaAttention)
+    kda_signature = (
+        kda.n_heads,
+        kda.n_v_heads,
+        kda.head_k_dim,
+        kda.head_v_dim,
+        kda.conv_size,
+        kda.allow_neg_eigval,
+    )
+    for block in kda_blocks[1:]:
+        other = block.attention
+        assert isinstance(other, KimiDeltaAttention)
+        if (
+            other.n_heads,
+            other.n_v_heads,
+            other.head_k_dim,
+            other.head_v_dim,
+            other.conv_size,
+            other.allow_neg_eigval,
+        ) != kda_signature:
+            raise NotImplementedError("Heterogeneous KDA layer shapes are unsupported.")
+
+    attention = attention_blocks[0].attention
+    assert isinstance(attention, Attention)
+    ropes = [block.attention.rope for block in attention_blocks]
+    if any(rope is None for rope in ropes) != all(rope is None for rope in ropes):
+        raise NotImplementedError("Full-attention layers must consistently enable or disable RoPE.")
+    rope_theta = None
+    rope_scaling = None
+    if attention.rope is not None:
+        rope_theta = attention.rope.theta
+        if any(rope is None or rope.theta != rope_theta for rope in ropes):
+            raise NotImplementedError("Heterogeneous full-attention RoPE theta values are unsupported.")
+        rope_scaling = _get_and_validate_rope_scaling_config(attention_blocks)
+    if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
+        raise NotImplementedError("HF export requires head-wise QK norm.")
+    if any(
+        projection.bias is not None
+        for projection in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
+    ):
+        raise NotImplementedError("Biased full-attention projections are unsupported.")
+
+    gate_type: Optional[str] = None
+    gate_full_precision = True
+    if attention.gate is not None:
+        gate_type = str(attention.gate.granularity)
+        if attention.gate.granularity not in (
+            GateGranularity.headwise,
+            GateGranularity.elementwise,
+        ):
+            raise NotImplementedError(f"Unsupported attention gate {attention.gate.granularity!r}.")
+        gate_full_precision = attention.gate.full_precision
+
+    if any(not block.use_peri_norm or block.use_pre_norm for block in blocks):
+        raise NotImplementedError("KDA + EMo export requires peri-norm without pre-norm.")
+
+    dense_hidden_sizes = {
+        blocks[idx].shared_experts.hidden_size
+        for idx in dense_layers_indices
+        if blocks[idx].shared_experts is not None
+    }
+    if len(dense_hidden_sizes) != 1:
+        raise NotImplementedError("Dense layers must share one MLP width.")
+    shared_hidden = (
+        representative.shared_experts.hidden_size
+        if representative.shared_experts is not None
+        else None
+    )
+    layer_types = [
+        "linear_attention" if isinstance(block.attention, KimiDeltaAttention) else "full_attention"
+        for block in blocks
+    ]
+    kda_norm_eps = float(
+        getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5))
+    )
+
+    return Olmo3MoeConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        attention_hidden_size=attention.n_heads * attention.head_dim,
+        head_dim=attention.head_dim,
+        dense_mlp_intermediate_size=next(iter(dense_hidden_sizes)),
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=shared_hidden,
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=-1,
+        use_head_qk_norm=True,
+        use_rope=attention.rope is not None,
+        rope_theta=rope_theta,
+        rope_scaling=rope_scaling,
+        attention_gate_type=gate_type,
+        attention_gate_full_precision=gate_full_precision,
+        linear_num_key_heads=kda.n_heads,
+        linear_num_value_heads=kda.n_v_heads,
+        linear_key_head_dim=kda.head_k_dim,
+        linear_value_head_dim=kda.head_v_dim,
+        linear_conv_kernel_dim=kda.conv_size,
+        linear_allow_neg_eigval=kda.allow_neg_eigval,
+        linear_norm_eps=kda_norm_eps,
+        latent_moe_dim=None,
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        dense_layers_use_shared_expert=True,
+        embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
+        embed_norm=model.embedding_norm is not None,
+        use_peri_ln=True,
+        rms_norm_eps=representative.feed_forward_norm.eps,
+        emo_min_document_expert_pool=router.emo.min_document_expert_pool,
+        emo_max_document_expert_pool=router.emo.max_document_expert_pool,
+        emo_eval_document_expert_pool=router.emo.eval_pool_size(),
+        emo_eos_token_id=router.emo.eos_token_id,
+        global_load_balancing=router.global_load_balancing,
+        use_cache=False,
+        pad_token_id=None,
+        bos_token_id=None,
+        eos_token_id=router.emo.eos_token_id,
         tie_word_embeddings=model.tie_word_embeddings,
     )
 

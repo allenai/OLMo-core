@@ -334,10 +334,36 @@ class Olmo3MoeSparseMLP(nn.Module):
         super().__init__()
         self.config = config
         self.router = Olmo3MoeRouter(config)
+        self.routed_hidden_size = (
+            config.latent_moe_dim if config.latent_moe_dim is not None else config.hidden_size
+        )
+        self.latent_down_proj: Optional[nn.Linear]
+        self.latent_up_proj_input_norm: Optional[Olmo3MoeRMSNorm]
+        self.latent_up_proj: Optional[nn.Linear]
+        if config.latent_moe_dim is None:
+            self.latent_down_proj = None
+            self.latent_up_proj_input_norm = None
+            self.latent_up_proj = None
+        else:
+            self.latent_down_proj = nn.Linear(
+                config.hidden_size,
+                config.latent_moe_dim,
+                bias=config.latent_moe_bias,
+            )
+            self.latent_up_proj_input_norm = (
+                Olmo3MoeRMSNorm(config.latent_moe_dim, eps=config.rms_norm_eps)
+                if config.latent_moe_up_proj_input_norm
+                else None
+            )
+            self.latent_up_proj = nn.Linear(
+                config.latent_moe_dim,
+                config.hidden_size,
+                bias=config.latent_moe_bias,
+            )
         self.experts = Olmo3MoeExperts()
         for _ in range(config.n_routed_experts):
             expert = Olmo3MoeExpert(
-                hidden_size=config.hidden_size,
+                hidden_size=self.routed_hidden_size,
                 moe_intermediate_size=config.moe_intermediate_size,
                 hidden_act=config.hidden_act,
             )
@@ -362,12 +388,18 @@ class Olmo3MoeSparseMLP(nn.Module):
         expert_weights, expert_indices = self.router(x)
         K = expert_indices.size(-1)
         # Flatten tokens: N = B*S. vLLM's fused experts expects (N, H), (N, K), (N, K).
-        x_flat = x.reshape(B * S, H)  # (N, H)
+        routed_x = self.latent_down_proj(x) if self.latent_down_proj is not None else x
+        routed_h = routed_x.shape[-1]
+        x_flat = routed_x.reshape(B * S, routed_h)
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
         w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
 
-        out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)  # (N, H)
-        routed_expert_out = out_flat.view(B, S, H)
+        out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)
+        routed_expert_out = out_flat.view(B, S, routed_h)
+        if self.latent_up_proj is not None:
+            if self.latent_up_proj_input_norm is not None:
+                routed_expert_out = self.latent_up_proj_input_norm(routed_expert_out)
+            routed_expert_out = self.latent_up_proj(routed_expert_out)
 
         # shared expert
         if self.shared_expert is None:
@@ -431,11 +463,145 @@ class Olmo3MoeRouter(nn.Module):
         return expert_weights, expert_indices
 
 
+class Olmo3MoeCausalConv1d(nn.Conv1d):
+    """Depthwise causal convolution with the same FLA path as OLMo-core KDA."""
+
+    def __init__(self, hidden_size: int, kernel_size: int):
+        super().__init__(
+            hidden_size,
+            hidden_size,
+            kernel_size,
+            groups=hidden_size,
+            bias=False,
+            padding=kernel_size - 1,
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        try:
+            from fla.modules.convolution import causal_conv1d
+        except ImportError as exc:  # pragma: no cover - environment failure
+            raise RuntimeError(
+                "KDA inference requires flash-linear-attention with "
+                "fla.modules.convolution.causal_conv1d"
+            ) from exc
+        output, _ = causal_conv1d(
+            x=x,
+            weight=self.weight.squeeze(1),
+            bias=None,
+            activation="silu",
+            backend="triton",
+            cu_seqlens=None,
+        )
+        return output
+
+
+class Olmo3MoeKimiDeltaAttention(nn.Module):
+    """HF-side KDA matching :class:`olmo_core.nn.attention.KimiDeltaAttention`."""
+
+    def __init__(self, config: Olmo3MoeConfig, layer_idx: int):
+        super().__init__()
+        self.layer_idx = layer_idx
+        if config.linear_num_key_heads is None or config.linear_key_head_dim is None:
+            raise ValueError("KDA layers require linear_num_key_heads and linear_key_head_dim")
+        if config.linear_value_head_dim is None:
+            raise ValueError("KDA layers require linear_value_head_dim")
+
+        try:
+            from fla.modules import FusedRMSNormGated
+        except ImportError as exc:  # pragma: no cover - environment failure
+            raise RuntimeError(
+                "KDA inference requires flash-linear-attention with fla.modules.FusedRMSNormGated"
+            ) from exc
+
+        self.n_heads = config.linear_num_key_heads
+        self.n_v_heads = config.linear_num_value_heads
+        self.head_k_dim = config.linear_key_head_dim
+        self.head_v_dim = config.linear_value_head_dim
+        self.key_dim = self.n_heads * self.head_k_dim
+        self.value_dim = self.n_v_heads * self.head_v_dim
+        self.gate_dim = self.n_heads * self.head_k_dim
+        self.allow_neg_eigval = config.linear_allow_neg_eigval
+
+        self.q_proj = nn.Linear(config.hidden_size, self.key_dim, bias=False)
+        self.k_proj = nn.Linear(config.hidden_size, self.key_dim, bias=False)
+        self.v_proj = nn.Linear(config.hidden_size, self.value_dim, bias=False)
+        self.f_proj_1 = nn.Linear(config.hidden_size, self.head_v_dim, bias=False)
+        self.f_proj_2 = nn.Linear(self.head_v_dim, self.gate_dim, bias=False)
+        self.beta_proj = nn.Linear(config.hidden_size, self.n_heads, bias=False)
+        self.A_log = nn.Parameter(
+            torch.empty(self.n_heads, dtype=torch.float32).uniform_(1, 16).log_()
+        )
+        self.dt_bias = nn.Parameter(torch.zeros(self.gate_dim, dtype=torch.float32))
+        self.q_conv1d = Olmo3MoeCausalConv1d(self.key_dim, config.linear_conv_kernel_dim)
+        self.k_conv1d = Olmo3MoeCausalConv1d(self.key_dim, config.linear_conv_kernel_dim)
+        self.v_conv1d = Olmo3MoeCausalConv1d(self.value_dim, config.linear_conv_kernel_dim)
+        self.g_proj_1 = nn.Linear(config.hidden_size, self.head_v_dim, bias=False)
+        self.g_proj_2 = nn.Linear(self.head_v_dim, self.value_dim, bias=True)
+        self.o_norm = FusedRMSNormGated(
+            self.head_v_dim,
+            eps=config.linear_norm_eps,
+            activation="sigmoid",
+        )
+        self.o_proj = nn.Linear(self.value_dim, config.hidden_size, bias=False)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_values: Optional[Cache] = None,
+        **kwargs,
+    ) -> tuple[torch.Tensor, None]:
+        del kwargs
+        if past_key_values is not None:
+            raise NotImplementedError(
+                "The exported KDA model does not yet implement recurrent-state caching; "
+                "run with use_cache=False."
+            )
+        try:
+            from fla.ops.kda import chunk_kda
+        except ImportError as exc:  # pragma: no cover - environment failure
+            raise RuntimeError(
+                "KDA inference requires flash-linear-attention with fla.ops.kda.chunk_kda"
+            ) from exc
+
+        batch_size, seq_len, _ = hidden_states.shape
+        q = self.q_conv1d(self.q_proj(hidden_states))
+        k = self.k_conv1d(self.k_proj(hidden_states))
+        v = self.v_conv1d(self.v_proj(hidden_states))
+        raw_decay = self.f_proj_2(self.f_proj_1(hidden_states))
+        beta = self.beta_proj(hidden_states).float().sigmoid()
+        if self.allow_neg_eigval:
+            beta = beta * 2.0
+
+        q = q.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
+        k = k.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
+        v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
+        raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
+        output, _ = chunk_kda(
+            q=q,
+            k=k,
+            v=v,
+            g=raw_decay,
+            beta=beta,
+            A_log=self.A_log,
+            dt_bias=self.dt_bias,
+            use_qk_l2norm_in_kernel=True,
+            use_gate_in_kernel=True,
+        )
+        output_gate = self.g_proj_2(self.g_proj_1(hidden_states)).view(
+            batch_size, seq_len, self.n_v_heads, self.head_v_dim
+        )
+        output = self.o_norm(output, output_gate).view(batch_size, seq_len, -1)
+        return self.o_proj(output), None
+
+
 class Olmo3MoeDecoderLayer(GradientCheckpointingLayer):
     def __init__(self, config: Olmo3MoeConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
-        self.self_attn = Olmo3MoeAttention(config=config, layer_idx=layer_idx)
+        if config.layer_types[layer_idx] == "linear_attention":
+            self.self_attn = Olmo3MoeKimiDeltaAttention(config=config, layer_idx=layer_idx)
+        else:
+            self.self_attn = Olmo3MoeAttention(config=config, layer_idx=layer_idx)
 
         if layer_idx in config.dense_layers_indices:
             self.mlp = Olmo3MoeDenseMLP(config)
@@ -531,6 +697,8 @@ class Olmo3MoeAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
         self.use_head_qk_norm = config.use_head_qk_norm
+        self.gate_type = config.attention_gate_type
+        self.gate_full_precision = config.attention_gate_full_precision
 
         self.q_proj = nn.Linear(
             config.hidden_size,
@@ -552,6 +720,23 @@ class Olmo3MoeAttention(nn.Module):
             config.hidden_size,
             bias=config.attention_bias,
         )
+        self.g_proj: Optional[nn.Linear]
+        if self.gate_type == "elementwise":
+            self.g_proj = nn.Linear(
+                config.hidden_size,
+                config.num_attention_heads * self.head_dim,
+                bias=config.attention_bias,
+            )
+        elif self.gate_type == "headwise":
+            self.g_proj = nn.Linear(
+                config.hidden_size,
+                config.num_attention_heads,
+                bias=config.attention_bias,
+            )
+        elif self.gate_type is None:
+            self.g_proj = None
+        else:
+            raise ValueError(f"Unsupported attention_gate_type={self.gate_type!r}")
         if config.use_head_qk_norm:
             self.q_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
             self.k_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
@@ -572,7 +757,7 @@ class Olmo3MoeAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: tuple[torch.Tensor, torch.Tensor],
+        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]],
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
@@ -602,12 +787,16 @@ class Olmo3MoeAttention(nn.Module):
             query_states = self.q_norm(query_states.contiguous())
             key_states = self.k_norm(key_states.contiguous())
 
-        cos, sin = position_embeddings
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        cos: Optional[torch.Tensor] = None
+        sin: Optional[torch.Tensor] = None
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         if past_key_values is not None:
-            # sin and cos are specific to RoPE models; cache_position needed for the static cache
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            cache_kwargs = {"cache_position": cache_position}
+            if sin is not None and cos is not None:
+                cache_kwargs.update({"sin": sin, "cos": cos})
             key_states, value_states = past_key_values.update(
                 key_states, value_states, self.layer_idx, cache_kwargs
             )
@@ -629,6 +818,19 @@ class Olmo3MoeAttention(nn.Module):
         )
 
         attn_output = attn_output.reshape(*input_shape, -1).contiguous()
+        if self.g_proj is not None:
+            gate = self.g_proj(hidden_states)
+            if self.gate_full_precision:
+                gate = gate.float()
+            gate = torch.sigmoid(gate).to(attn_output.dtype)
+            if self.gate_type == "headwise":
+                attn_output = attn_output.view(
+                    *input_shape, self.config.num_attention_heads, self.head_dim
+                )
+                attn_output = attn_output * gate.unsqueeze(-1)
+                attn_output = attn_output.reshape(*input_shape, -1)
+            else:
+                attn_output = attn_output * gate
         attn_output = self.o_proj(attn_output)
         return attn_output, attn_weights
 
@@ -669,6 +871,25 @@ class Olmo3MoeRMSNorm(nn.Module):
         return f"{tuple(self.weight.shape)}, eps={self.variance_epsilon}"
 
 
+def _validate_linear_attention_mask(
+    attention_mask: Optional[torch.Tensor | dict[str, Optional[torch.Tensor]]],
+) -> None:
+    if attention_mask is None:
+        return
+    linear_attention_mask = (
+        attention_mask.get("linear_attention")
+        if isinstance(attention_mask, dict)
+        else attention_mask
+    )
+    if linear_attention_mask is not None and (
+        linear_attention_mask.ndim != 2 or not bool(torch.all(linear_attention_mask != 0))
+    ):
+        raise NotImplementedError(
+            "KDA attention-mask support is not implemented; only unpadded inputs "
+            "(or an all-ones 2D attention mask) are supported."
+        )
+
+
 @auto_docstring
 class Olmo3MoeModel(Olmo3MoePreTrainedModel):
     def __init__(self, config: Olmo3MoeConfig):
@@ -693,7 +914,9 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         )
         self.norm = Olmo3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.gradient_checkpointing = False
-        if _uses_layer_type_rope_parameters(config):
+        if not config.use_rope:
+            self.rotary_embs = None
+        elif _uses_layer_type_rope_parameters(config):
             # LC exports can use YaRN for full attention and default RoPE for
             # sliding attention, so cache one rotary module per layer type.
             self.rotary_embs = nn.ModuleDict(
@@ -720,6 +943,12 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         use_cache: Optional[bool] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
+        r"""
+        cache_position (`torch.Tensor`, *optional*):
+            Indices describing the positions of input tokens in the sequence. This is used to
+            update a static cache in the correct position and to infer `position_ids` when those
+            are not provided.
+        """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
@@ -730,6 +959,14 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             if self.embed_norm is not None:
                 inputs_embeds = self.embed_norm(inputs_embeds)
 
+        has_linear_attention = "linear_attention" in self.config.layer_types
+        if use_cache and has_linear_attention:
+            raise NotImplementedError(
+                "KDA recurrent-state caching is not implemented in the exported HF model; "
+                "run with use_cache=False."
+            )
+        if has_linear_attention:
+            _validate_linear_attention_mask(attention_mask)
         if use_cache and past_key_values is None:
             past_key_values = DynamicCache(config=self.config)
 
@@ -763,13 +1000,16 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             # Create the masks
             causal_mask_mapping = {
                 "full_attention": _create_mask_compat(create_causal_mask, **mask_kwargs),
-                "sliding_attention": _create_mask_compat(
-                    create_sliding_window_causal_mask, **mask_kwargs
-                ),
             }
+            if "sliding_attention" in self.config.layer_types:
+                causal_mask_mapping["sliding_attention"] = _create_mask_compat(
+                    create_sliding_window_causal_mask, **mask_kwargs
+                )
 
         hidden_states = inputs_embeds
-        if isinstance(self.rotary_embs, nn.ModuleDict):
+        if self.rotary_embs is None:
+            position_embeddings = None
+        elif isinstance(self.rotary_embs, nn.ModuleDict):
             position_embeddings = {
                 layer_type: rotary_emb(hidden_states, position_ids, layer_type=layer_type)
                 for layer_type, rotary_emb in self.rotary_embs.items()
@@ -784,9 +1024,10 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
                 continue
 
             decoder_layer = cast(Olmo3MoeDecoderLayer, decoder_layer)
-            attention_mask = causal_mask_mapping[decoder_layer.self_attn.attention_type]
+            attention_type = self.config.layer_types[decoder_layer.self_attn.layer_idx]
+            attention_mask = causal_mask_mapping.get(attention_type)
             layer_position_embeddings = (
-                position_embeddings[decoder_layer.self_attn.attention_type]
+                position_embeddings[attention_type]
                 if isinstance(position_embeddings, dict)
                 else position_embeddings
             )
@@ -837,6 +1078,11 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
+        r"""
+        cache_position (`torch.LongTensor`, *optional*):
+            Indices describing the positions of input tokens in the sequence. This is forwarded
+            to the base model for cache placement and position inference.
+        """
         outputs: BaseModelOutputWithPast = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
