@@ -151,6 +151,34 @@ def test_olmo3moe_kda_rejects_padding_mask_before_attention():
 
 
 @requires_olmo3moe
+def test_olmo3moe_dynamic_cache_has_kda_states_and_reorders_them():
+    from transformers.cache_utils import DynamicCache
+
+    config = _small_kda_emo_config()
+    cache = DynamicCache(config=config)
+    linear_layer = cache.layers[0]
+
+    assert linear_layer.number_of_states == 3
+    for state_idx, channels in enumerate((32, 32, 64)):
+        state = torch.arange(2 * channels * 4).view(2, channels, 4).float()
+        cache.update_conv_state(state, layer_idx=0, state_idx=state_idx)
+    recurrent = torch.arange(2 * 4 * 8 * 16).view(2, 4, 8, 16).float()
+    cache.update_recurrent_state(recurrent, layer_idx=0)
+    keys = torch.randn(2, 2, 5, 8)
+    values = torch.randn(2, 2, 5, 8)
+    cache.update(keys, values, layer_idx=1)
+
+    cache.reorder_cache(torch.tensor([1, 0, 1]))
+
+    assert cache.get_seq_length() == 5
+    torch.testing.assert_close(linear_layer.conv_states[0][0], linear_layer.conv_states[0][2])
+    torch.testing.assert_close(
+        linear_layer.recurrent_states[0][0], linear_layer.recurrent_states[0][2]
+    )
+    torch.testing.assert_close(cache.layers[1].keys[0], cache.layers[1].keys[2])
+
+
+@requires_olmo3moe
 @requires_gpu
 @requires_fla
 @requires_triton
@@ -176,6 +204,44 @@ def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
     assert torch.equal(kda.dt_bias, torch.zeros_like(kda.dt_bias))
 
     _assert_logprobs_match_after_conversion_roundtrip(config, torch.device("cuda"))
+
+
+@requires_olmo3moe
+@requires_gpu
+@requires_fla
+@requires_triton
+@pytest.mark.parametrize("decode_chunk_size", [1, 3])
+def test_olmo3moe_kda_emo_cached_logits_match_full_forward(decode_chunk_size: int):
+    """KDA convolution/recurrent state and attention KV cache compose correctly."""
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    torch.manual_seed(0)
+    config = _small_kda_emo_config()
+    config.use_cache = True
+    model = Olmo3MoeForCausalLM(config).cuda().eval()
+    input_ids = torch.randint(0, config.vocab_size, (2, 11), device="cuda")
+
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        reference = model(input_ids, use_cache=False).logits
+        prefill_length = 5
+        outputs = model(input_ids[:, :prefill_length], use_cache=True)
+        cached_logits = [outputs.logits]
+        cache = outputs.past_key_values
+        assert cache is not None
+        assert cache.get_seq_length() == prefill_length
+        assert cache.has_previous_state(layer_idx=0)
+
+        for start in range(prefill_length, input_ids.shape[1], decode_chunk_size):
+            outputs = model(
+                input_ids[:, start : start + decode_chunk_size],
+                past_key_values=cache,
+                use_cache=True,
+            )
+            cached_logits.append(outputs.logits)
+            assert outputs.past_key_values is cache
+
+    actual = torch.cat(cached_logits, dim=1)
+    torch.testing.assert_close(actual, reference, rtol=2e-2, atol=2e-2)
 
 
 @requires_olmo3moe
