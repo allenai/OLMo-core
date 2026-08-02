@@ -705,13 +705,84 @@ def _olmo3moe_dense_layer_indices(config: PretrainedConfig) -> set:
     return set(indices)
 
 
-def _require_no_peri_ln(config: PretrainedConfig) -> None:
-    if getattr(config, "use_peri_ln", False):
-        raise NotImplementedError(
-            "olmo3moe checkpoint conversion does not support use_peri_ln=True: the peri-LN "
-            "scheme maps the same OLMo-core norm parameter to different HF layernorms depending "
-            "on whether a layer is dense or MoE, which the conversion framework cannot express."
+def _require_exact_state_keys(state: Dict[str, Any], used: set[str], *, state_name: str) -> None:
+    unexpected = sorted(set(state) - used)
+    if unexpected:
+        raise KeyError(f"Unexpected {state_name} keys: {unexpected}")
+
+
+def _take(state: Dict[str, Any], used: set[str], key: str) -> Any:
+    used.add(key)
+    return state[key]
+
+
+def _olmo3moe_is_kda_layer(config: PretrainedConfig, layer_idx: int) -> bool:
+    layer_types = getattr(config, "layer_types", None) or []
+    return bool(layer_types and layer_types[layer_idx] == "linear_attention")
+
+
+def _convert_kda_layer_from_hf(
+    hf_state: Dict[str, Any],
+    used: set[str],
+    prefix: str,
+    olmo_prefix: str,
+) -> Dict[str, Any]:
+    key_map = {
+        "q_proj.weight": "w_q.weight",
+        "k_proj.weight": "w_k.weight",
+        "v_proj.weight": "w_v.weight",
+        "f_proj_1.weight": "f_proj_1.weight",
+        "f_proj_2.weight": "f_proj_2.weight",
+        "beta_proj.weight": "w_b.weight",
+        "A_log": "A_log",
+        "dt_bias": "dt_bias",
+        "q_conv1d.weight": "q_conv1d.weight",
+        "k_conv1d.weight": "k_conv1d.weight",
+        "v_conv1d.weight": "v_conv1d.weight",
+        "g_proj_1.weight": "g_proj_1.weight",
+        "g_proj_2.weight": "g_proj_2.weight",
+        "g_proj_2.bias": "g_proj_2.bias",
+        "o_norm.weight": "o_norm.weight",
+        "o_proj.weight": "w_out.weight",
+    }
+    return {
+        f"{olmo_prefix}attention.{olmo_suffix}": _take(
+            hf_state, used, f"{prefix}self_attn.{hf_suffix}"
         )
+        for hf_suffix, olmo_suffix in key_map.items()
+    }
+
+
+def _convert_kda_layer_to_hf(
+    olmo_state: Dict[str, Any],
+    used: set[str],
+    prefix: str,
+    olmo_prefix: str,
+) -> Dict[str, Any]:
+    key_map = {
+        "w_q.weight": "q_proj.weight",
+        "w_k.weight": "k_proj.weight",
+        "w_v.weight": "v_proj.weight",
+        "f_proj_1.weight": "f_proj_1.weight",
+        "f_proj_2.weight": "f_proj_2.weight",
+        "w_b.weight": "beta_proj.weight",
+        "A_log": "A_log",
+        "dt_bias": "dt_bias",
+        "q_conv1d.weight": "q_conv1d.weight",
+        "k_conv1d.weight": "k_conv1d.weight",
+        "v_conv1d.weight": "v_conv1d.weight",
+        "g_proj_1.weight": "g_proj_1.weight",
+        "g_proj_2.weight": "g_proj_2.weight",
+        "g_proj_2.bias": "g_proj_2.bias",
+        "o_norm.weight": "o_norm.weight",
+        "w_out.weight": "o_proj.weight",
+    }
+    return {
+        f"{prefix}self_attn.{hf_suffix}": _take(
+            olmo_state, used, f"{olmo_prefix}attention.{olmo_suffix}"
+        )
+        for olmo_suffix, hf_suffix in key_map.items()
+    }
 
 
 @beta_feature
@@ -728,105 +799,137 @@ def convert_olmo3moe_state_from_hf(
     :param config: The Hugging Face ``Olmo3MoeConfig``.
     :param hf_state: A model state dict in HF format.
     """
-    _require_no_peri_ln(config)
-
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
     dense_indices = _olmo3moe_dense_layer_indices(config)
     has_shared = getattr(config, "shared_expert_intermediate_size", None) is not None
+    latent_dim = getattr(config, "latent_moe_dim", None)
+    dense_layers_use_shared_expert = getattr(config, "dense_layers_use_shared_expert", False)
+    peri_ln = getattr(config, "use_peri_ln", False)
+    used: set[str] = set()
 
     olmo_state: Dict[str, Any] = {}
 
-    olmo_state["embeddings.weight"] = hf_state["model.embed_tokens.weight"]
-    olmo_state["lm_head.norm.weight"] = hf_state["model.norm.weight"]
+    olmo_state["embeddings.weight"] = _take(hf_state, used, "model.embed_tokens.weight")
+    olmo_state["lm_head.norm.weight"] = _take(hf_state, used, "model.norm.weight")
     # With tied embeddings transformers omits ``lm_head.weight``; fall back to the input embeddings.
-    olmo_state["lm_head.w_out.weight"] = hf_state.get(
-        "lm_head.weight", hf_state["model.embed_tokens.weight"]
-    )
+    if "lm_head.weight" in hf_state:
+        olmo_state["lm_head.w_out.weight"] = _take(hf_state, used, "lm_head.weight")
+    else:
+        olmo_state["lm_head.w_out.weight"] = hf_state["model.embed_tokens.weight"]
     if getattr(config, "embed_norm", False):
-        olmo_state["embedding_norm.weight"] = hf_state["model.embed_norm.weight"]
+        olmo_state["embedding_norm.weight"] = _take(hf_state, used, "model.embed_norm.weight")
 
     for layer_idx in range(n_layers):
         prefix = f"model.layers.{layer_idx}."
         olmo_prefix = f"blocks.{layer_idx}."
 
-        # Attention projections.
-        olmo_state[f"{olmo_prefix}attention.w_q.weight"] = hf_state[
-            f"{prefix}self_attn.q_proj.weight"
-        ]
-        olmo_state[f"{olmo_prefix}attention.w_k.weight"] = hf_state[
-            f"{prefix}self_attn.k_proj.weight"
-        ]
-        olmo_state[f"{olmo_prefix}attention.w_v.weight"] = hf_state[
-            f"{prefix}self_attn.v_proj.weight"
-        ]
-        olmo_state[f"{olmo_prefix}attention.w_out.weight"] = hf_state[
-            f"{prefix}self_attn.o_proj.weight"
-        ]
-        olmo_state[f"{olmo_prefix}attention.q_norm.weight"] = hf_state[
-            f"{prefix}self_attn.q_norm.weight"
-        ]
-        olmo_state[f"{olmo_prefix}attention.k_norm.weight"] = hf_state[
-            f"{prefix}self_attn.k_norm.weight"
-        ]
+        if _olmo3moe_is_kda_layer(config, layer_idx):
+            olmo_state.update(_convert_kda_layer_from_hf(hf_state, used, prefix, olmo_prefix))
+        else:
+            attention_map = {
+                "q_proj.weight": "w_q.weight",
+                "k_proj.weight": "w_k.weight",
+                "v_proj.weight": "w_v.weight",
+                "o_proj.weight": "w_out.weight",
+                "q_norm.weight": "q_norm.weight",
+                "k_norm.weight": "k_norm.weight",
+            }
+            if getattr(config, "attention_gate_type", None) is not None:
+                attention_map["g_proj.weight"] = "w_g.weight"
+            for hf_suffix, olmo_suffix in attention_map.items():
+                olmo_state[f"{olmo_prefix}attention.{olmo_suffix}"] = _take(
+                    hf_state, used, f"{prefix}self_attn.{hf_suffix}"
+                )
 
-        # Reordered norms (uniform across dense and MoE layers).
-        olmo_state[f"{olmo_prefix}attention_norm.weight"] = hf_state[
-            f"{prefix}post_attention_layernorm.weight"
-        ]
-        olmo_state[f"{olmo_prefix}feed_forward_norm.weight"] = hf_state[
-            f"{prefix}post_feedforward_layernorm.weight"
-        ]
+        olmo_state[f"{olmo_prefix}attention_norm.weight"] = _take(
+            hf_state, used, f"{prefix}post_attention_layernorm.weight"
+        )
+        olmo_state[f"{olmo_prefix}feed_forward_norm.weight"] = _take(
+            hf_state, used, f"{prefix}post_feedforward_layernorm.weight"
+        )
+        if peri_ln:
+            olmo_state[f"{olmo_prefix}attention_input_norm.weight"] = _take(
+                hf_state, used, f"{prefix}pre_attention_layernorm.weight"
+            )
+            olmo_state[f"{olmo_prefix}feed_forward_input_norm.weight"] = _take(
+                hf_state, used, f"{prefix}pre_feedforward_layernorm.weight"
+            )
 
         if layer_idx in dense_indices:
-            # Dense feed-forward.
-            olmo_state[f"{olmo_prefix}feed_forward.w1.weight"] = hf_state[
-                f"{prefix}mlp.gate_proj.weight"
-            ]
-            olmo_state[f"{olmo_prefix}feed_forward.w2.weight"] = hf_state[
-                f"{prefix}mlp.down_proj.weight"
-            ]
-            olmo_state[f"{olmo_prefix}feed_forward.w3.weight"] = hf_state[
-                f"{prefix}mlp.up_proj.weight"
-            ]
+            gate = _take(hf_state, used, f"{prefix}mlp.gate_proj.weight")
+            down = _take(hf_state, used, f"{prefix}mlp.down_proj.weight")
+            up = _take(hf_state, used, f"{prefix}mlp.up_proj.weight")
+            if not dense_layers_use_shared_expert:
+                olmo_state[f"{olmo_prefix}feed_forward.w1.weight"] = gate
+                olmo_state[f"{olmo_prefix}feed_forward.w2.weight"] = down
+                olmo_state[f"{olmo_prefix}feed_forward.w3.weight"] = up
+            else:
+                olmo_state[f"{olmo_prefix}shared_experts.w_up_gate"] = torch.cat(
+                    [up.T, gate.T], dim=1
+                ).contiguous()
+                olmo_state[f"{olmo_prefix}shared_experts.w_down"] = down.T.unsqueeze(0).contiguous()
             continue
 
-        # Router: HF gate weight is (E, D); OLMo-core stores it flattened (E * D,).
-        olmo_state[f"{olmo_prefix}routed_experts_router.weight"] = hf_state[
-            f"{prefix}mlp.router.gate.weight"
-        ].reshape(-1)
+        olmo_state[f"{olmo_prefix}routed_experts_router.weight"] = _take(
+            hf_state, used, f"{prefix}mlp.router.gate.weight"
+        ).reshape(-1)
 
-        # Routed experts: stack per-expert HF up/gate into fused (E, 2H, D), up first.
-        up_list = [hf_state[f"{prefix}mlp.experts.{e}.up_proj.weight"] for e in range(n_experts)]
+        up_list = [
+            _take(hf_state, used, f"{prefix}mlp.experts.{e}.up_proj.weight")
+            for e in range(n_experts)
+        ]
         gate_list = [
-            hf_state[f"{prefix}mlp.experts.{e}.gate_proj.weight"] for e in range(n_experts)
+            _take(hf_state, used, f"{prefix}mlp.experts.{e}.gate_proj.weight")
+            for e in range(n_experts)
         ]
         down_list = [
-            hf_state[f"{prefix}mlp.experts.{e}.down_proj.weight"] for e in range(n_experts)
+            _take(hf_state, used, f"{prefix}mlp.experts.{e}.down_proj.weight")
+            for e in range(n_experts)
         ]
 
-        w_up = torch.stack(up_list, dim=0)  # (E, H, D)
-        w_gate = torch.stack(gate_list, dim=0)  # (E, H, D)
+        w_up = torch.stack(up_list, dim=0)
+        w_gate = torch.stack(gate_list, dim=0)
         olmo_state[f"{olmo_prefix}routed_experts.w_up_gate"] = torch.cat(
             [w_up, w_gate], dim=1
-        ).contiguous()  # (E, 2H, D)
-        # HF down_proj is (D, H); OLMo-core w_down is (E, H, D).
+        ).contiguous()
         olmo_state[f"{olmo_prefix}routed_experts.w_down"] = torch.stack(
             [d.T for d in down_list], dim=0
-        ).contiguous()  # (E, H, D)
+        ).contiguous()
 
-        # Shared expert (single expert): HF up/gate (H, D) -> fused w_up_gate (D, 2H), up first.
+        if latent_dim is not None:
+            olmo_state[f"{olmo_prefix}latent_down_proj.weight"] = _take(
+                hf_state, used, f"{prefix}mlp.latent_down_proj.weight"
+            )
+            olmo_state[f"{olmo_prefix}latent_up_proj.weight"] = _take(
+                hf_state, used, f"{prefix}mlp.latent_up_proj.weight"
+            )
+            if getattr(config, "latent_moe_bias", False):
+                olmo_state[f"{olmo_prefix}latent_down_proj.bias"] = _take(
+                    hf_state, used, f"{prefix}mlp.latent_down_proj.bias"
+                )
+                olmo_state[f"{olmo_prefix}latent_up_proj.bias"] = _take(
+                    hf_state, used, f"{prefix}mlp.latent_up_proj.bias"
+                )
+            if getattr(config, "latent_moe_up_proj_input_norm", False):
+                olmo_state[f"{olmo_prefix}latent_up_proj_input_norm.weight"] = _take(
+                    hf_state,
+                    used,
+                    f"{prefix}mlp.latent_up_proj_input_norm.weight",
+                )
+
         if has_shared:
-            shared_up = hf_state[f"{prefix}mlp.shared_expert.up_proj.weight"]  # (H, D)
-            shared_gate = hf_state[f"{prefix}mlp.shared_expert.gate_proj.weight"]  # (H, D)
+            shared_up = _take(hf_state, used, f"{prefix}mlp.shared_expert.up_proj.weight")
+            shared_gate = _take(hf_state, used, f"{prefix}mlp.shared_expert.gate_proj.weight")
             olmo_state[f"{olmo_prefix}shared_experts.w_up_gate"] = torch.cat(
                 [shared_up.T, shared_gate.T], dim=1
-            ).contiguous()  # (D, 2H)
-            shared_down = hf_state[f"{prefix}mlp.shared_expert.down_proj.weight"]  # (D, H)
+            ).contiguous()
+            shared_down = _take(hf_state, used, f"{prefix}mlp.shared_expert.down_proj.weight")
             olmo_state[f"{olmo_prefix}shared_experts.w_down"] = shared_down.T.unsqueeze(
                 0
-            ).contiguous()  # (1, H, D)
+            ).contiguous()
 
+    _require_exact_state_keys(hf_state, used, state_name="HF")
     return olmo_state
 
 
@@ -845,108 +948,149 @@ def convert_olmo3moe_state_to_hf(
     :param config: The Hugging Face ``Olmo3MoeConfig``.
     :param olmo_core_state: An unsharded OLMo-core model state dict.
     """
-    _require_no_peri_ln(config)
-
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
     d_model: int = config.hidden_size
+    routed_d_model: int = getattr(config, "latent_moe_dim", None) or d_model
     moe_hidden: int = config.moe_intermediate_size
     dense_indices = _olmo3moe_dense_layer_indices(config)
     has_shared = getattr(config, "shared_expert_intermediate_size", None) is not None
     shared_hidden = getattr(config, "shared_expert_intermediate_size", None)
+    latent_dim = getattr(config, "latent_moe_dim", None)
+    dense_layers_use_shared_expert = getattr(config, "dense_layers_use_shared_expert", False)
+    peri_ln = getattr(config, "use_peri_ln", False)
+    used: set[str] = set()
 
     hf_state: Dict[str, Any] = {}
 
-    hf_state["model.embed_tokens.weight"] = olmo_core_state["embeddings.weight"]
-    hf_state["model.norm.weight"] = olmo_core_state["lm_head.norm.weight"]
-    hf_state["lm_head.weight"] = olmo_core_state["lm_head.w_out.weight"]
+    hf_state["model.embed_tokens.weight"] = _take(olmo_core_state, used, "embeddings.weight")
+    hf_state["model.norm.weight"] = _take(olmo_core_state, used, "lm_head.norm.weight")
+    hf_state["lm_head.weight"] = _take(olmo_core_state, used, "lm_head.w_out.weight")
     if getattr(config, "embed_norm", False):
-        hf_state["model.embed_norm.weight"] = olmo_core_state["embedding_norm.weight"]
+        hf_state["model.embed_norm.weight"] = _take(olmo_core_state, used, "embedding_norm.weight")
 
     for layer_idx in range(n_layers):
         prefix = f"model.layers.{layer_idx}."
         olmo_prefix = f"blocks.{layer_idx}."
 
-        hf_state[f"{prefix}self_attn.q_proj.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.w_q.weight"
-        ]
-        hf_state[f"{prefix}self_attn.k_proj.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.w_k.weight"
-        ]
-        hf_state[f"{prefix}self_attn.v_proj.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.w_v.weight"
-        ]
-        hf_state[f"{prefix}self_attn.o_proj.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.w_out.weight"
-        ]
-        hf_state[f"{prefix}self_attn.q_norm.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.q_norm.weight"
-        ]
-        hf_state[f"{prefix}self_attn.k_norm.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention.k_norm.weight"
-        ]
+        if _olmo3moe_is_kda_layer(config, layer_idx):
+            hf_state.update(_convert_kda_layer_to_hf(olmo_core_state, used, prefix, olmo_prefix))
+        else:
+            attention_map = {
+                "w_q.weight": "q_proj.weight",
+                "w_k.weight": "k_proj.weight",
+                "w_v.weight": "v_proj.weight",
+                "w_out.weight": "o_proj.weight",
+                "q_norm.weight": "q_norm.weight",
+                "k_norm.weight": "k_norm.weight",
+            }
+            if getattr(config, "attention_gate_type", None) is not None:
+                attention_map["w_g.weight"] = "g_proj.weight"
+            for olmo_suffix, hf_suffix in attention_map.items():
+                hf_state[f"{prefix}self_attn.{hf_suffix}"] = _take(
+                    olmo_core_state,
+                    used,
+                    f"{olmo_prefix}attention.{olmo_suffix}",
+                )
 
-        hf_state[f"{prefix}post_attention_layernorm.weight"] = olmo_core_state[
-            f"{olmo_prefix}attention_norm.weight"
-        ]
-        hf_state[f"{prefix}post_feedforward_layernorm.weight"] = olmo_core_state[
-            f"{olmo_prefix}feed_forward_norm.weight"
-        ]
+        hf_state[f"{prefix}post_attention_layernorm.weight"] = _take(
+            olmo_core_state, used, f"{olmo_prefix}attention_norm.weight"
+        )
+        hf_state[f"{prefix}post_feedforward_layernorm.weight"] = _take(
+            olmo_core_state, used, f"{olmo_prefix}feed_forward_norm.weight"
+        )
+        if peri_ln:
+            hf_state[f"{prefix}pre_attention_layernorm.weight"] = _take(
+                olmo_core_state, used, f"{olmo_prefix}attention_input_norm.weight"
+            )
+            hf_state[f"{prefix}pre_feedforward_layernorm.weight"] = _take(
+                olmo_core_state,
+                used,
+                f"{olmo_prefix}feed_forward_input_norm.weight",
+            )
 
         if layer_idx in dense_indices:
-            hf_state[f"{prefix}mlp.gate_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w1.weight"
-            ]
-            hf_state[f"{prefix}mlp.down_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w2.weight"
-            ]
-            hf_state[f"{prefix}mlp.up_proj.weight"] = olmo_core_state[
-                f"{olmo_prefix}feed_forward.w3.weight"
-            ]
+            if not dense_layers_use_shared_expert:
+                hf_state[f"{prefix}mlp.gate_proj.weight"] = _take(
+                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w1.weight"
+                )
+                hf_state[f"{prefix}mlp.down_proj.weight"] = _take(
+                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w2.weight"
+                )
+                hf_state[f"{prefix}mlp.up_proj.weight"] = _take(
+                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w3.weight"
+                )
+            else:
+                dense_hidden = config.dense_mlp_intermediate_size
+                w_up_gate = _take(
+                    olmo_core_state,
+                    used,
+                    f"{olmo_prefix}shared_experts.w_up_gate",
+                ).reshape(d_model, 2 * dense_hidden)
+                hf_state[f"{prefix}mlp.up_proj.weight"] = w_up_gate[:, :dense_hidden].T.contiguous()
+                hf_state[f"{prefix}mlp.gate_proj.weight"] = w_up_gate[
+                    :, dense_hidden:
+                ].T.contiguous()
+                hf_state[f"{prefix}mlp.down_proj.weight"] = (
+                    _take(olmo_core_state, used, f"{olmo_prefix}shared_experts.w_down")
+                    .reshape(dense_hidden, d_model)
+                    .T.contiguous()
+                )
             continue
 
-        # Router: OLMo-core stores it flattened (E * D,); HF gate weight is (E, D).
-        hf_state[f"{prefix}mlp.router.gate.weight"] = olmo_core_state[
-            f"{olmo_prefix}routed_experts_router.weight"
-        ].reshape(n_experts, d_model)
+        hf_state[f"{prefix}mlp.router.gate.weight"] = _take(
+            olmo_core_state, used, f"{olmo_prefix}routed_experts_router.weight"
+        ).reshape(n_experts, d_model)
 
-        # Routed experts: split fused (E, 2H, D) into per-expert up/gate (H, D), up first.
-        w_up_gate = olmo_core_state[f"{olmo_prefix}routed_experts.w_up_gate"].reshape(
-            n_experts, 2 * moe_hidden, d_model
+        w_up_gate = _take(olmo_core_state, used, f"{olmo_prefix}routed_experts.w_up_gate").reshape(
+            n_experts, 2 * moe_hidden, routed_d_model
         )
-        w_up = w_up_gate[:, :moe_hidden, :]  # (E, H, D)
-        w_gate = w_up_gate[:, moe_hidden:, :]  # (E, H, D)
-        w_down = olmo_core_state[f"{olmo_prefix}routed_experts.w_down"].reshape(
-            n_experts, moe_hidden, d_model
+        w_up = w_up_gate[:, :moe_hidden, :]
+        w_gate = w_up_gate[:, moe_hidden:, :]
+        w_down = _take(olmo_core_state, used, f"{olmo_prefix}routed_experts.w_down").reshape(
+            n_experts, moe_hidden, routed_d_model
         )
         for e in range(n_experts):
             hf_state[f"{prefix}mlp.experts.{e}.up_proj.weight"] = w_up[e].contiguous()
             hf_state[f"{prefix}mlp.experts.{e}.gate_proj.weight"] = w_gate[e].contiguous()
-            hf_state[f"{prefix}mlp.experts.{e}.down_proj.weight"] = w_down[
-                e
-            ].T.contiguous()  # (D, H)
+            hf_state[f"{prefix}mlp.experts.{e}.down_proj.weight"] = w_down[e].T.contiguous()
 
-        # Shared expert (single expert): fused (D, 2H) -> HF up/gate (H, D), up first.
+        if latent_dim is not None:
+            hf_state[f"{prefix}mlp.latent_down_proj.weight"] = _take(
+                olmo_core_state, used, f"{olmo_prefix}latent_down_proj.weight"
+            )
+            hf_state[f"{prefix}mlp.latent_up_proj.weight"] = _take(
+                olmo_core_state, used, f"{olmo_prefix}latent_up_proj.weight"
+            )
+            if getattr(config, "latent_moe_bias", False):
+                hf_state[f"{prefix}mlp.latent_down_proj.bias"] = _take(
+                    olmo_core_state, used, f"{olmo_prefix}latent_down_proj.bias"
+                )
+                hf_state[f"{prefix}mlp.latent_up_proj.bias"] = _take(
+                    olmo_core_state, used, f"{olmo_prefix}latent_up_proj.bias"
+                )
+            if getattr(config, "latent_moe_up_proj_input_norm", False):
+                hf_state[f"{prefix}mlp.latent_up_proj_input_norm.weight"] = _take(
+                    olmo_core_state,
+                    used,
+                    f"{olmo_prefix}latent_up_proj_input_norm.weight",
+                )
+
         if has_shared:
             assert shared_hidden is not None
-            shared_up_gate = olmo_core_state[f"{olmo_prefix}shared_experts.w_up_gate"].reshape(
-                d_model, 2 * shared_hidden
-            )
-            shared_up = shared_up_gate[:, :shared_hidden]  # (D, H)
-            shared_gate = shared_up_gate[:, shared_hidden:]  # (D, H)
-            hf_state[
-                f"{prefix}mlp.shared_expert.up_proj.weight"
-            ] = shared_up.T.contiguous()  # (H, D)
-            hf_state[
-                f"{prefix}mlp.shared_expert.gate_proj.weight"
-            ] = shared_gate.T.contiguous()  # (H, D)
-            shared_down = olmo_core_state[f"{olmo_prefix}shared_experts.w_down"].reshape(
-                shared_hidden, d_model
-            )
-            hf_state[
-                f"{prefix}mlp.shared_expert.down_proj.weight"
-            ] = shared_down.T.contiguous()  # (D, H)
+            shared_up_gate = _take(
+                olmo_core_state, used, f"{olmo_prefix}shared_experts.w_up_gate"
+            ).reshape(d_model, 2 * shared_hidden)
+            shared_up = shared_up_gate[:, :shared_hidden]
+            shared_gate = shared_up_gate[:, shared_hidden:]
+            hf_state[f"{prefix}mlp.shared_expert.up_proj.weight"] = shared_up.T.contiguous()
+            hf_state[f"{prefix}mlp.shared_expert.gate_proj.weight"] = shared_gate.T.contiguous()
+            shared_down = _take(
+                olmo_core_state, used, f"{olmo_prefix}shared_experts.w_down"
+            ).reshape(shared_hidden, d_model)
+            hf_state[f"{prefix}mlp.shared_expert.down_proj.weight"] = shared_down.T.contiguous()
 
+    _require_exact_state_keys(olmo_core_state, used, state_name="OLMo-core")
     return hf_state
 
 
