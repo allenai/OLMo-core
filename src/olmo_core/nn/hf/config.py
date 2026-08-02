@@ -229,6 +229,18 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     routed_experts = moe_block.routed_experts
     router = moe_block.routed_experts_router
+    for block in blocks:
+        if not isinstance(block, OLMoDDPTransformerBlock):
+            continue
+        block_router = block.routed_experts_router
+        block_experts = block.routed_experts
+        if block_router is None or block_experts is None or block_router.emo is None:
+            continue
+        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+            raise NotImplementedError(
+                "Plain olmo3moe HF export cannot represent a restricted EMO evaluation pool; "
+                "eval_document_expert_pool must span every routed expert."
+            )
     # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
     # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
     # path, so exporting any of these would silently diverge (or crash on the first HF forward).
