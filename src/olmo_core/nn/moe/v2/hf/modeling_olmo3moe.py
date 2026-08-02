@@ -569,14 +569,14 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         cache_layer = (
             past_key_values.layers[self.layer_idx] if past_key_values is not None else None
         )
-        has_previous_state = (
-            cache_layer is not None and cache_layer.has_previous_state[0]
-        )
-        initial_conv_states = (
-            [cache_layer.conv_states[i] for i in range(3)]
-            if has_previous_state
-            else [None, None, None]
-        )
+        has_previous_state = cache_layer is not None and cache_layer.has_previous_state
+        if has_previous_state:
+            assert cache_layer.conv_states is not None
+            initial_conv_states = list(
+                cache_layer.conv_states.split((self.key_dim, self.key_dim, self.value_dim), dim=1)
+            )
+        else:
+            initial_conv_states = [None, None, None]
         q, q_state = self.q_conv1d(
             self.q_proj(hidden_states), initial_conv_states[0], cache_layer is not None
         )
@@ -595,15 +595,12 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
-        initial_recurrent_state = (
-            cache_layer.recurrent_states[0] if has_previous_state else None
-        )
+        initial_recurrent_state = cache_layer.recurrent_states if has_previous_state else None
         if has_previous_state and seq_len == 1:
             # The chunk kernel can fuse this transform, while the recurrent
             # inference kernel expects the log-space decay directly.
             decay = -self.A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
-                raw_decay.float()
-                + self.dt_bias.float().view(1, 1, self.n_heads, self.head_k_dim)
+                raw_decay.float() + self.dt_bias.float().view(1, 1, self.n_heads, self.head_k_dim)
             )
             output, recurrent_state = fused_recurrent_kda(
                 q=q,
@@ -630,18 +627,13 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
                 use_gate_in_kernel=True,
             )
         if cache_layer is not None:
+            assert past_key_values is not None
             assert q_state is not None and k_state is not None and v_state is not None
             assert recurrent_state is not None
-            for state_idx, conv_state in enumerate((q_state, k_state, v_state)):
-                past_key_values.update_conv_state(
-                    conv_state,
-                    self.layer_idx,
-                    state_idx=state_idx,
-                    conv_kernel_size=self.q_conv1d.kernel_size[0],
-                )
-            past_key_values.update_recurrent_state(
-                recurrent_state, self.layer_idx, state_idx=0
+            past_key_values.update_conv_state(
+                torch.cat((q_state, k_state, v_state), dim=1), self.layer_idx
             )
+            past_key_values.update_recurrent_state(recurrent_state, self.layer_idx)
         output_gate = self.g_proj_2(self.g_proj_1(hidden_states)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
         )
