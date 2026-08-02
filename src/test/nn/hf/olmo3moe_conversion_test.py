@@ -15,6 +15,8 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_from_hf,
     convert_olmo3moe_state_to_hf,
 )
+from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.testing.utils import requires_fla, requires_gpu, requires_triton
 
 
 def _fake_config():
@@ -83,8 +85,92 @@ def test_olmo3moe_hf_conversion_roundtrips():
         assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
 
 
-def test_olmo3moe_conversion_rejects_peri_ln():
+def test_olmo3moe_full_width_shared_dense_conversion_roundtrips():
     config = _fake_config()
-    config.use_peri_ln = True
-    with pytest.raises(NotImplementedError, match="use_peri_ln"):
-        convert_olmo3moe_state_from_hf(config, {})
+    config.dense_layers_use_shared_expert = True
+    config.latent_moe_dim = None
+    config.dense_mlp_intermediate_size = 7
+    hf = _synthetic_hf_state(config)
+
+    olmo = convert_olmo3moe_state_from_hf(config, hf)
+    assert "blocks.0.shared_experts.w_up_gate" in olmo
+    assert "blocks.0.feed_forward.w1.weight" not in olmo
+
+    hf_roundtrip = convert_olmo3moe_state_to_hf(config, olmo)
+    assert set(hf_roundtrip) == set(hf)
+    for key, tensor in hf.items():
+        assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+
+
+def _small_kda_latent_config():
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+
+    return Olmo3MoeConfig(
+        vocab_size=32,
+        hidden_size=32,
+        attention_hidden_size=32,
+        head_dim=8,
+        dense_mlp_intermediate_size=24,
+        moe_intermediate_size=12,
+        shared_expert_intermediate_size=16,
+        n_routed_experts=4,
+        num_experts_per_tok=2,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        use_head_qk_norm=True,
+        use_rope=False,
+        attention_gate_type="elementwise",
+        linear_num_key_heads=4,
+        linear_num_value_heads=4,
+        linear_key_head_dim=8,
+        linear_value_head_dim=16,
+        linear_conv_kernel_dim=4,
+        linear_allow_neg_eigval=True,
+        latent_moe_dim=16,
+        latent_moe_bias=False,
+        layer_types=["linear_attention", "full_attention"],
+        dense_layers_indices=[0],
+        embed_norm=True,
+        use_peri_ln=True,
+    )
+
+
+@requires_gpu
+@requires_fla
+@requires_triton
+def test_olmo3moe_kda_latent_conversion_roundtrips_exactly():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    config = _small_kda_latent_config()
+    model = Olmo3MoeForCausalLM(config)
+    hf = {key: value.detach().clone() for key, value in model.state_dict().items()}
+
+    olmo = convert_olmo3moe_state_from_hf(config, hf)
+    hf_roundtrip = convert_olmo3moe_state_to_hf(config, olmo)
+
+    assert set(hf_roundtrip) == set(hf)
+    for key, tensor in hf.items():
+        assert torch.equal(hf_roundtrip[key], tensor), f"roundtrip mismatch for '{key}'"
+    model.load_state_dict(hf_roundtrip, strict=True)
+
+
+def test_olmo3moe_conversion_rejects_unexpected_source_key():
+    config = _fake_config()
+    hf = _synthetic_hf_state(config)
+    hf["silently.ignored.weight"] = torch.randn(1)
+    with pytest.raises(KeyError, match="Unexpected HF keys"):
+        convert_olmo3moe_state_from_hf(config, hf)
+
+
+def test_legacy_latent_moe_dimension_is_normalized():
+    config = {
+        "block": {
+            "latent_moe": {
+                "routed_expert_dim": 320,
+                "bias": False,
+            }
+        }
+    }
+    _normalize_legacy_latent_moe_config(config)
+    assert config["block"]["latent_moe"] == {"latent_dim": 320, "bias": False}
