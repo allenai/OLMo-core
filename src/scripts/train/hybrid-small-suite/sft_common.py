@@ -192,6 +192,7 @@ def run_sft(sft_configs: Dict[str, dict], dataset_path: str, tags: list[str]):
         "saturn": AttentionBackendName.flash_2,
         "jupiter": AttentionBackendName.flash_3,
         "titan": AttentionBackendName.flash_4,
+        "holmes": AttentionBackendName.flash_4,
     }
     cluster_arg = " ".join(sys.argv[2:4]).lower()
     attn_backend = AttentionBackendName.flash_3
