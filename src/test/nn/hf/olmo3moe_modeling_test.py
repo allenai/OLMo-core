@@ -169,7 +169,9 @@ def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
     assert config.global_load_balancing is True
 
     model = Olmo3MoeForCausalLM(config)
-    kda = next(module for module in model.modules() if isinstance(module, Olmo3MoeKimiDeltaAttention))
+    kda = next(
+        module for module in model.modules() if isinstance(module, Olmo3MoeKimiDeltaAttention)
+    )
     assert torch.isfinite(kda.A_log).all()
     assert torch.equal(kda.dt_bias, torch.zeros_like(kda.dt_bias))
 
