@@ -131,6 +131,9 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
         self.use_cache = use_cache
+        # KDA caches q/k/v convolution histories independently. Transformers uses
+        # this field when constructing LinearAttentionLayer entries in DynamicCache.
+        self.number_of_conv_states = 3
 
         self.sliding_window = sliding_window
         self.layer_types: List[str]
