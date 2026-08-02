@@ -135,6 +135,14 @@ class KimiDeltaAttention(SequenceMixer):
     ) -> torch.Tensor:
         del kwargs
         batch_size, seq_len, _ = x.shape
+        output_shape = (batch_size, seq_len, self.d_model)
+        if cu_doc_lens is not None and batch_size > 1:
+            # FLA's variable-length KDA and causal-convolution kernels represent packed
+            # sequences as a single flattened batch, with document boundaries supplied by
+            # ``cu_seqlens``. OLMo-core's mask builder likewise flattens boundaries across the
+            # entire batch, so flatten the payload here and restore its shape after KDA.
+            x = x.reshape(1, batch_size * seq_len, self.d_model)
+            batch_size, seq_len = 1, batch_size * seq_len
 
         q = self.q_conv1d(x=self.w_q(x), cu_seqlens=cu_doc_lens)
         k = self.k_conv1d(x=self.w_k(x), cu_seqlens=cu_doc_lens)
@@ -164,7 +172,9 @@ class KimiDeltaAttention(SequenceMixer):
         output_gate = self.g_proj_2(self.g_proj_1(x)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
         )
-        return self.w_out(self.o_norm(o, output_gate).view(batch_size, seq_len, -1))
+        return self.w_out(self.o_norm(o, output_gate).view(batch_size, seq_len, -1)).view(
+            output_shape
+        )
 
     def apply_tp(
         self,

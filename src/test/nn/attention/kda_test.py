@@ -26,11 +26,11 @@ def test_kimi_delta_attention_config_num_params(config: KimiDeltaAttentionConfig
 def test_kimi_delta_attention_fwd_bwd():
     device = "cuda"
     dtype = torch.bfloat16
-    d_model, seq_len, batch_size = 256, 128, 1
+    d_model, seq_len, batch_size = 256, 64, 2
     config = KimiDeltaAttentionConfig(n_heads=2, head_dim=128)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
-    cu_doc_lens = torch.tensor([0, 64, 128], dtype=torch.int32, device=device)
+    cu_doc_lens = torch.tensor([0, 32, 64, 96, 128], dtype=torch.int32, device=device)
 
     with torch.autocast(device_type=device, dtype=dtype):
         y = module(x, cu_doc_lens=cu_doc_lens)
