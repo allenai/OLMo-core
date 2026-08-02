@@ -379,7 +379,9 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         if block_router.bias is not None:
             raise NotImplementedError("Exporting KDA + EMo with a biased router is unsupported.")
         if block_experts.bias:
-            raise NotImplementedError("Exporting KDA + EMo with biased routed experts is unsupported.")
+            raise NotImplementedError(
+                "Exporting KDA + EMo with biased routed experts is unsupported."
+            )
         if block_experts.activation.value != "swiglu":
             raise NotImplementedError(
                 "Exporting KDA + EMo requires SwiGLU routed experts, got "
@@ -446,7 +448,9 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     if attention.rope is not None:
         rope_theta = attention.rope.theta
         if any(rope is None or rope.theta != rope_theta for rope in ropes):
-            raise NotImplementedError("Heterogeneous full-attention RoPE theta values are unsupported.")
+            raise NotImplementedError(
+                "Heterogeneous full-attention RoPE theta values are unsupported."
+            )
         rope_scaling = _get_and_validate_rope_scaling_config(attention_blocks)
     if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
         raise NotImplementedError("HF export requires head-wise QK norm.")
@@ -486,9 +490,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         "linear_attention" if isinstance(block.attention, KimiDeltaAttention) else "full_attention"
         for block in blocks
     ]
-    kda_norm_eps = float(
-        getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5))
-    )
+    kda_norm_eps = float(getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5)))
 
     return Olmo3MoeConfig(
         vocab_size=model.vocab_size,

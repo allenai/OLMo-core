@@ -14,7 +14,10 @@ from torch.distributed.tensor import Placement
 from olmo_core.config import DType
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda, has_fla
-from olmo_core.nn.attention.ring import RingContextParallelStyle, UlyssesContextParallelStyle
+from olmo_core.nn.attention.ring import (
+    RingContextParallelStyle,
+    UlyssesContextParallelStyle,
+)
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
