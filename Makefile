@@ -170,7 +170,7 @@ beaker-image : docker-image
 # Image build matrix
 #
 # Two CUDA families, each optionally layered with flash-attn 4 (FA4) and/or the symm-mem/RMA stack:
-#   * CUDA 12.8 (torch 2.10) — built for sm_90/100 (H100, B200).
+#   * CUDA 12.8 (torch 2.10, or 2.11 via the '-tch211' targets) — built for sm_90/100 (H100, B200).
 #   * CUDA 13.0 (torch 2.11) — built for sm_90/100/103, so ONE image serves H100 + B200 + B300.
 #     The tag carries no GPU generation (naming stays consistent with the older CUDA-12 images).
 #
@@ -195,6 +195,11 @@ CUDA13_ARGS = \
 	B300=1 \
 	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas \
 	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn"
+
+# torch 2.11 on the CUDA-12.8 family. Only the torch version changes: CUDA 12.8 has no sm_103
+# hardware to target and flash-attn 3 still builds, so the arch lists and smoke test stay as-is.
+TORCH211_ARGS = \
+	TORCH_VERSION=2.11.0
 
 # FA4 layer (CUDA-13 only): installs the flash_attn.cute wheel (AttentionBackendName.flash_4) and
 # appends it to the smoke test; adds the '-fa4' tag suffix (see FA4_TAG). The cutlass-dsl pin avoids
@@ -228,6 +233,17 @@ beaker-image-cu128 :
 .PHONY : beaker-image-cu128-rma
 beaker-image-cu128-rma :
 	$(MAKE) beaker-image $(RMA_CU12_ARGS)
+
+# ---- CUDA 12.8 family (H100, B200) — torch 2.11 -------------------------------------------------
+# olmo-core-tch2110cu128-<date>
+.PHONY : beaker-image-cu128-tch211
+beaker-image-cu128-tch211 :
+	$(MAKE) beaker-image $(TORCH211_ARGS)
+
+# olmo-core-tch2110cu128-rma-<date>
+.PHONY : beaker-image-cu128-tch211-rma
+beaker-image-cu128-tch211-rma :
+	$(MAKE) beaker-image $(TORCH211_ARGS) $(RMA_CU12_ARGS)
 
 # ---- CUDA 13.0 family (H100, B200, B300) — torch 2.11 ------------------------------------------
 # olmo-core-tch2110cu130-<date>
