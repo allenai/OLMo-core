@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -44,12 +44,18 @@ from olmo_core.utils import get_default_device, move_to_device, warn_once
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerDataParallelConfig
+from .config import OLMoDDPTrainModuleConfig, TransformerDataParallelConfig
+from .ddp_train_module import OLMoDDPTrainModule
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MultimodalTransformerTrainModule", "MultimodalTransformerTrainModuleConfig"]
+__all__ = [
+    "MultimodalTransformerTrainModule",
+    "MultimodalTransformerTrainModuleConfig",
+    "MultimodalOLMoDDPTrainModule",
+    "MultimodalOLMoDDPTrainModuleConfig",
+]
 
 
 class MultimodalTransformerTrainModule(TransformerTrainModule):
@@ -117,8 +123,8 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
 
         model.to(self.device)
         if compile_model:
-            log.info("Compiling model.lm ...")
-            model.lm = torch.compile(model.lm)  # type: ignore[assignment]
+            log.info("Compiling model.lm blocks ...")
+            model.lm.apply_compile()
         self.model = model
         self._model_mode = None
 
@@ -212,6 +218,11 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         loss_masks = batch.pop("loss_masks")
         return input_ids, labels, loss_masks, batch
 
+    def _set_model_mode(self, mode: Literal["train", "eval"]):
+        super()._set_model_mode(mode)
+        if mode == "train" and any(fnmatch(name, "vision.*") for name in self.freeze_params):
+            self._multimodal.vision.eval()
+
     # -- training step -----------------------------------------------------------
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
@@ -264,7 +275,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 flat_weights = mb_loss_masks.reshape(-1)
                 # Mask out non-loss positions from the CE target for safety.
                 flat_labels = torch.where(
-                    flat_weights > 0, flat_labels, flat_labels.new_full((), self.label_ignore_index)
+                    flat_weights > 0,
+                    flat_labels,
+                    flat_labels.new_full((), self.label_ignore_index),
                 )
 
                 ce_loss, z_loss = weighted_cross_entropy_loss(
@@ -306,9 +319,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             self.record_metric("Z loss", mean_z, ReduceType.mean, namespace="train")
 
         if hasattr(self._lm, "compute_auxiliary_metrics"):
-            for metric_name, (metric_val, reduction) in self._lm.compute_auxiliary_metrics(
-                reset=True
-            ).items():
+            for metric_name, (
+                metric_val,
+                reduction,
+            ) in self._lm.compute_auxiliary_metrics(reset=True).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
 
     def optim_step(self):
@@ -349,7 +363,11 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         images = batch.get("images")
         if images is None:
             return 0
-        b, t, n_patches = int(images.shape[0]), int(images.shape[1]), int(images.shape[2])
+        b, t, n_patches = (
+            int(images.shape[0]),
+            int(images.shape[1]),
+            int(images.shape[2]),
+        )
         n_pooled = int((batch["input_ids"] == self._multimodal.cfg.image_patch_token_id).sum())
         return self._multimodal.image_encoder_flops(b * t, n_patches, n_pooled)
 
@@ -384,3 +402,179 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
         if (load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**load_opts)
         return MultimodalTransformerTrainModule(model=model, device=device, **kwargs)
+
+
+class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
+    """OLMoDDP EP/DP training for a multimodal model with weighted token loss."""
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *args,
+        freeze_params: Optional[List[str]] = None,
+        vision_activation_checkpointing: bool = False,
+        connector_activation_checkpointing: bool = False,
+        response_logits_only: bool = False,
+        **kwargs,
+    ):
+        from olmo_core.nn.vision import MultimodalOLMoDDPModel
+
+        if not isinstance(model, MultimodalOLMoDDPModel):
+            raise TypeError(
+                f"{type(self).__name__} requires MultimodalOLMoDDPModel, "
+                f"got {type(model).__name__}"
+            )
+        unsupported = [
+            name for name in ("tp_config", "cp_config", "pp_config") if kwargs.get(name) is not None
+        ]
+        if unsupported:
+            raise OLMoConfigurationError(
+                "Multimodal OLMoDDP currently supports data and expert parallelism only; "
+                f"unset {', '.join(unsupported)}"
+            )
+        if model.tbo:
+            raise OLMoConfigurationError(
+                "Two-batch overlap is not supported for multimodal OLMoDDP"
+            )
+
+        self.freeze_params = freeze_params or []
+        frozen = []
+        for name, param in model.named_parameters():
+            if any(fnmatch(name, pattern) for pattern in self.freeze_params):
+                param.requires_grad_(False)
+                frozen.append(name)
+        if self.freeze_params:
+            log.info(
+                "Froze %d parameter tensors matching %s",
+                len(frozen),
+                self.freeze_params,
+            )
+        if vision_activation_checkpointing:
+            model.vision.apply_activation_checkpointing()
+            log.info("Applied activation checkpointing to the vision encoder")
+        if connector_activation_checkpointing:
+            model.connector.apply_activation_checkpointing()
+            log.info("Applied activation checkpointing to the vision connector")
+        self.response_logits_only = response_logits_only
+        super().__init__(model, *args, **kwargs)
+
+    @property
+    def multimodal_model(self):
+        model = self.model_parts[0]
+        return getattr(model, "module", model)
+
+    def _prepare_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        input_ids, labels, model_kwargs = super()._prepare_batch(batch, labels)
+        if self.response_logits_only:
+            model_kwargs["response_logits_only"] = True
+        return input_ids, labels, model_kwargs
+
+    def load_molmo2_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
+        """Strictly load the Molmo2 vision tower, leaving the connector untouched."""
+        from olmo_core.nn.vision import molmo2_hf_state_dict_to_vision
+
+        model = self.multimodal_model
+        vision_state = molmo2_hf_state_dict_to_vision(hf_state_dict, model.cfg.vision)
+        model.vision.load_state_dict(vision_state, strict=True)
+
+    @torch.no_grad()
+    def reset_image_token_rows(self, token_ids: List[int], *, seed: int) -> None:
+        """Initialize newly assigned image-token rows and update optimizer main state."""
+        if not token_ids or len(set(token_ids)) != len(token_ids):
+            raise ValueError("token_ids must be a non-empty list of unique IDs")
+
+        model = self.multimodal_model
+        lm = model.lm
+        if lm.embeddings is None or lm.lm_head is None:
+            raise RuntimeError("Image-token initialization requires LM embeddings and an LM head")
+        if min(token_ids) < 0 or max(token_ids) >= lm.vocab_size:
+            raise ValueError(
+                f"Image token IDs must be within [0, {lm.vocab_size}), got {token_ids}"
+            )
+
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+        row_count = len(token_ids)
+        embedding_rows = torch.nn.Embedding(
+            row_count,
+            lm.d_model,
+            device=self.device,
+            dtype=lm.embeddings.weight.dtype,
+        )
+        lm.init_method.init_embeddings(
+            embedding_rows,
+            d_model=lm.d_model,
+            embed_scale=lm.embed_scale,
+            std=lm.embedding_init_std if lm.embedding_init_std is not None else lm.init_std,
+            generator=generator,
+        )
+        row_index = torch.tensor(token_ids, device=self.device, dtype=torch.long)
+        lm.embeddings.weight.index_copy_(0, row_index, embedding_rows.weight)
+
+        if lm.lm_head.w_out.weight is not lm.embeddings.weight:
+            output_rows = torch.nn.Linear(
+                lm.d_model,
+                row_count,
+                bias=False,
+                device=self.device,
+                dtype=lm.lm_head.w_out.weight.dtype,
+            )
+            lm.init_method.init_final_w_out(
+                output_rows,
+                d_model=lm.d_model,
+                std=lm.init_std,
+                generator=generator,
+            )
+            lm.lm_head.w_out.weight.index_copy_(0, row_index, output_rows.weight)
+
+        optim = self._require_optimizer()
+        reset_params = {
+            name
+            for group in optim.param_groups
+            for name, param in group["named_params"].items()
+            if param is lm.embeddings.weight or param is lm.lm_head.w_out.weight
+        }
+        optim._copy_model_param_rows_to_main_params(reset_params, token_ids)
+
+    def _resolve_model_checkpoint_key(self, param_name: str, checkpoint_keys) -> Optional[str]:
+        checkpoint_key = super()._resolve_model_checkpoint_key(param_name, checkpoint_keys)
+        if checkpoint_key is not None:
+            return checkpoint_key
+
+        stripped = self._strip_wrapper_prefixes(param_name)
+        if stripped.startswith("lm."):
+            return super()._resolve_model_checkpoint_key(
+                stripped.removeprefix("lm."), checkpoint_keys
+            )
+        return None
+
+    def _resolve_optimizer_checkpoint_key(self, state_key: str, checkpoint_keys) -> Optional[str]:
+        checkpoint_key = super()._resolve_optimizer_checkpoint_key(state_key, checkpoint_keys)
+        if checkpoint_key is not None:
+            return checkpoint_key
+
+        candidates = []
+        for prefix in ("model.module.lm.", "model.lm.", "module.lm.", "lm."):
+            if state_key.startswith(prefix):
+                candidates.append(state_key.replace(prefix, prefix.replace("lm.", ""), 1))
+        for candidate in candidates:
+            if candidate in checkpoint_keys:
+                return candidate
+        return None
+
+    def _allow_missing_optimizer_checkpoint_key(self, state_key: str) -> bool:
+        return ".connector." in state_key or state_key.startswith("connector.")
+
+
+@dataclass
+class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
+    """Configuration for :class:`MultimodalOLMoDDPTrainModule`."""
+
+    freeze_params: Optional[List[str]] = None
+    vision_activation_checkpointing: bool = False
+    connector_activation_checkpointing: bool = False
+    response_logits_only: bool = False
+
+    def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
+        return MultimodalOLMoDDPTrainModule(**kwargs)

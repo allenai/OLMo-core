@@ -26,7 +26,7 @@ from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import olmo_symm_mem
 from olmo_core.kernels import symm_mem_vdev2d as symm_mem_vdev2d_kernels
-from olmo_core.utils import mark_dynamic
+from olmo_core.utils import mark_dynamic, move_to_device
 
 from ..lm_head import LMOutputWithLoss
 from ..moe.v2.checkpointing import checkpoint_recompute_context_fn
@@ -745,11 +745,13 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         reduce_grads_in_fp32: bool = True,
         bucket_cap_mb: Optional[int] = None,
         use_reduce_scatter: bool = False,
+        root_module: Optional[torch.nn.Module] = None,
     ):
         from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 
+        module = self if root_module is None else root_module
         self._ep_modules = [
-            m for m in self.modules() if getattr(m, "_ep_sharded", False)
+            m for m in module.modules() if getattr(m, "_ep_sharded", False)
         ]  # collect the ep sharded part based on `_ep_sharded` field (will be set to True in `apply_ep`)
         ep_sharded_params = set()
         for m in self._ep_modules:
@@ -759,7 +761,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # TODO(dtype): broad bf16 casting is a current MoE V2 shortcut. Replace
         # this with explicit dtype ownership so FP8 state, optimizer main params,
         # and normal model params are not coupled to a blanket module cast.
-        self.to(torch.bfloat16)
+        module.to(torch.bfloat16)
         self.disable_mxfp8_expert_anchor_grads()
 
         dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
@@ -792,7 +794,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         total_numel = 0
         ep_params = 0
         ep_numel = 0
-        for param in self.parameters():
+        for param in module.parameters():
             total_params += 1
             total_numel += param.numel()
             if param in ep_sharded_params:
@@ -815,7 +817,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         )
 
         ddp_model = MultiGroupDistributedDataParallel(
-            module=self,
+            module=module,
             dim=0,  # for scatter/gather
             init_sync=init_sync,
             process_group=dp_group,
@@ -1297,12 +1299,22 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self,
         input_ids: torch.Tensor,
         *,
+        input_embeddings: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
+        or_mask: Optional[torch.Tensor] = None,
+        and_mask: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[Any] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        pos_sin: Optional[torch.Tensor] = None,
+        pos_cos: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -1312,6 +1324,23 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        multimodal_inputs = (
+            input_embeddings,
+            or_mask,
+            and_mask,
+            flex_attn_is_image,
+            flex_attn_subsegment_ids,
+            flex_attn_example_ids,
+            flex_attn_block_mask,
+            position_ids,
+            pos_sin,
+            pos_cos,
+        )
+        if self.tbo and any(value is not None for value in multimodal_inputs):
+            raise OLMoConfigurationError(
+                "Precomputed embeddings and custom attention/position inputs are not supported "
+                "with two-batch overlap"
+            )
         if self.tbo:
             return self.forward_tbo(
                 input_ids,
@@ -1323,6 +1352,16 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 return_logits=return_logits,
                 **kwargs,
             )
+
+        if input_embeddings is not None and self._cp_load_balancer is not None:
+            raise OLMoConfigurationError(
+                "Precomputed input embeddings are not supported with context parallelism"
+            )
+        if any(value is not None for value in multimodal_inputs[1:]):
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "Custom attention and position inputs are not supported with context parallelism"
+                )
 
         (
             input_ids,
@@ -1341,7 +1380,34 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             **kwargs,
         )
 
-        h = self.forward_embed(input_ids)
+        if or_mask is not None:
+            all_block_kwargs["or_mask"] = move_to_device(or_mask, self.device)
+        if and_mask is not None:
+            all_block_kwargs["and_mask"] = move_to_device(and_mask, self.device)
+        if flex_attn_is_image is not None:
+            all_block_kwargs["flex_attn_is_image"] = move_to_device(flex_attn_is_image, self.device)
+        if flex_attn_subsegment_ids is not None:
+            all_block_kwargs["flex_attn_subsegment_ids"] = move_to_device(
+                flex_attn_subsegment_ids, self.device
+            )
+        if flex_attn_example_ids is not None:
+            all_block_kwargs["flex_attn_example_ids"] = move_to_device(
+                flex_attn_example_ids, self.device
+            )
+        if flex_attn_block_mask is not None:
+            all_block_kwargs["flex_attn_block_mask"] = flex_attn_block_mask
+        if position_ids is not None:
+            all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
+        if pos_sin is not None:
+            all_block_kwargs["pos_sin"] = move_to_device(pos_sin, self.device)
+        if pos_cos is not None:
+            all_block_kwargs["pos_cos"] = move_to_device(pos_cos, self.device)
+
+        h = (
+            move_to_device(input_embeddings, self.device)
+            if input_embeddings is not None
+            else self.forward_embed(input_ids)
+        )
 
         if self.recompute_all_blocks_by_chunk:
             h = checkpoint(

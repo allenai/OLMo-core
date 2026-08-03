@@ -39,6 +39,7 @@ Usage::
     model.load_state_dict(converted)
 """
 
+import json
 import logging
 from typing import Any, Dict, Optional, Tuple
 
@@ -54,7 +55,10 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "molmo2_hf_state_dict_to_multimodal_lm",
+    "molmo2_hf_state_dict_to_vision",
+    "load_molmo2_hf_vision_state_dict",
     "molmo2_config_from_hf_config",
+    "multimodal_config_from_molmo2_vision",
     "ensure_default_rope_registered",
     "reinit_rope_buffers",
 ]
@@ -62,6 +66,61 @@ __all__ = [
 
 class Molmo2LoaderError(RuntimeError):
     """Raised when the HF Molmo2 state dict can't be mapped to our model."""
+
+
+def load_molmo2_hf_vision_state_dict(
+    model_id: str,
+    *,
+    revision: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    local_files_only: bool = False,
+) -> Dict[str, torch.Tensor]:
+    """Load only Molmo2 vision tensors from a sharded HF safetensors checkpoint.
+
+    The shard file still has to be downloaded in full, but unrelated LM tensors are
+    never materialized. This avoids constructing a second language model alongside a
+    large external LM such as s002.
+    """
+    from huggingface_hub import hf_hub_download
+    from safetensors import safe_open
+
+    download_kwargs = dict(
+        repo_id=model_id,
+        revision=revision,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+    )
+    index_path = hf_hub_download(
+        filename="model.safetensors.index.json",
+        **download_kwargs,
+    )
+    with open(index_path) as f:
+        weight_map = json.load(f).get("weight_map", {})
+
+    prefix = "model.vision_backbone.image_vit."
+    vision_weight_map = {key: shard for key, shard in weight_map.items() if key.startswith(prefix)}
+    if not vision_weight_map:
+        raise Molmo2LoaderError(f"No weights beginning with {prefix!r} were found in {model_id!r}")
+
+    state_dict: Dict[str, torch.Tensor] = {}
+    for shard_name in sorted(set(vision_weight_map.values())):
+        shard_path = hf_hub_download(filename=shard_name, **download_kwargs)
+        shard_keys = {
+            key for key, mapped_shard in vision_weight_map.items() if mapped_shard == shard_name
+        }
+        with safe_open(shard_path, framework="pt", device="cpu") as shard:
+            missing = shard_keys - set(shard.keys())
+            if missing:
+                raise Molmo2LoaderError(
+                    f"Safetensors shard {shard_name!r} is missing indexed vision keys: "
+                    f"{sorted(missing)[:8]}"
+                )
+            for key in sorted(shard_keys):
+                state_dict[key] = shard.get_tensor(key)
+
+    if set(state_dict) != set(vision_weight_map):
+        raise Molmo2LoaderError("Failed to load the complete indexed Molmo2 vision state")
+    return state_dict
 
 
 def ensure_default_rope_registered() -> None:
@@ -190,6 +249,48 @@ def _convert_patch_embedding(hf_patch_weight: torch.Tensor, patch_size: int) -> 
     )
 
 
+def molmo2_hf_state_dict_to_vision(
+    hf_state_dict: Dict[str, torch.Tensor],
+    vision_cfg: VisionEncoderConfig,
+) -> Dict[str, torch.Tensor]:
+    """Convert only the Molmo2 vision encoder weights.
+
+    This is the initialization path for a Molmo2 vision tower paired with a language model
+    from a different checkpoint. Connector and LM weights are intentionally excluded.
+    """
+    out: Dict[str, torch.Tensor] = {}
+    p = vision_cfg.image_patch_size
+    hf_patch_w = _require(hf_state_dict, "model.vision_backbone.image_vit.patch_embedding.weight")
+    out["patch_embedding.weight"] = _convert_patch_embedding(hf_patch_w, p)
+    out["patch_embedding.bias"] = _require(
+        hf_state_dict, "model.vision_backbone.image_vit.patch_embedding.bias"
+    )
+    out["positional_embedding"] = _require(
+        hf_state_dict, "model.vision_backbone.image_vit.positional_embedding"
+    )
+
+    for i in range(vision_cfg.image_num_layers):
+        src = f"model.vision_backbone.image_vit.transformer.resblocks.{i}"
+        dst = f"blocks.{i}"
+        for hf_name, ours_name in (("attention_norm", "attn_norm"), ("ffn_norm", "ffn_norm")):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.{ours_name}.{suffix}"] = _require(
+                    hf_state_dict, f"{src}.{hf_name}.{suffix}"
+                )
+        for proj in ("wq", "wk", "wv", "wo"):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.attn.{proj}.{suffix}"] = _require(
+                    hf_state_dict, f"{src}.attention.{proj}.{suffix}"
+                )
+        for proj in ("w1", "w2"):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.ffn.{proj}.{suffix}"] = _require(
+                    hf_state_dict, f"{src}.feed_forward.{proj}.{suffix}"
+                )
+
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -305,40 +406,13 @@ def molmo2_hf_state_dict_to_multimodal_lm(
         out[f"{dst}.feed_forward.w1.weight"] = gate_w.contiguous()
         out[f"{dst}.feed_forward.w2.weight"] = _require(hf_state_dict, f"{src}.mlp.ff_out.weight")
 
-    # --- Vision: patch embedding + positional ---------------------------------
-    vit_layers = cfg.vision.image_num_layers
-    p = cfg.vision.image_patch_size
-    hf_patch_w = _require(hf_state_dict, "model.vision_backbone.image_vit.patch_embedding.weight")
-    out["vision.patch_embedding.weight"] = _convert_patch_embedding(hf_patch_w, p)
-    out["vision.patch_embedding.bias"] = _require(
-        hf_state_dict, "model.vision_backbone.image_vit.patch_embedding.bias"
+    # --- Vision ---------------------------------------------------------------
+    out.update(
+        {
+            f"vision.{name}": value
+            for name, value in molmo2_hf_state_dict_to_vision(hf_state_dict, cfg.vision).items()
+        }
     )
-    out["vision.positional_embedding"] = _require(
-        hf_state_dict, "model.vision_backbone.image_vit.positional_embedding"
-    )
-
-    # --- Vision: per-block ----------------------------------------------------
-    for i in range(vit_layers):
-        src = f"model.vision_backbone.image_vit.transformer.resblocks.{i}"
-        dst = f"vision.blocks.{i}"
-        # Norms.
-        for hf_name, ours_name in (("attention_norm", "attn_norm"), ("ffn_norm", "ffn_norm")):
-            for suffix in ("weight", "bias"):
-                out[f"{dst}.{ours_name}.{suffix}"] = _require(
-                    hf_state_dict, f"{src}.{hf_name}.{suffix}"
-                )
-        # QKV + output projection (no fusing on the vision side).
-        for proj in ("wq", "wk", "wv", "wo"):
-            for suffix in ("weight", "bias"):
-                out[f"{dst}.attn.{proj}.{suffix}"] = _require(
-                    hf_state_dict, f"{src}.attention.{proj}.{suffix}"
-                )
-        # Plain MLP (no SwiGLU in the ViT).
-        for proj in ("w1", "w2"):
-            for suffix in ("weight", "bias"):
-                out[f"{dst}.ffn.{proj}.{suffix}"] = _require(
-                    hf_state_dict, f"{src}.feed_forward.{proj}.{suffix}"
-                )
 
     # --- Connector: pooling cross-attention + projector SwiGLU --------------
     for proj in ("wq", "wk", "wv", "wo"):
@@ -480,7 +554,12 @@ def _build_vision_config(vit_cfg, vit_layers: list[int]) -> VisionEncoderConfig:
     )
 
 
-def _build_connector_config(adapter_cfg, vit_hidden_size: int) -> VisionConnectorConfig:
+def _build_connector_config(
+    adapter_cfg,
+    vit_hidden_size: int,
+    *,
+    output_dim: Optional[int] = None,
+) -> VisionConnectorConfig:
     """Build :class:`VisionConnectorConfig` from HF Molmo2 adapter_config.
 
     ``vit_layers`` in the adapter config tells us how many ViT layers are
@@ -493,13 +572,50 @@ def _build_connector_config(adapter_cfg, vit_hidden_size: int) -> VisionConnecto
         image_num_heads=adapter_cfg.num_attention_heads,
         image_num_key_value_heads=adapter_cfg.num_key_value_heads,
         image_head_dim=adapter_cfg.head_dim,
-        output_dim=adapter_cfg.text_hidden_size,
+        output_dim=adapter_cfg.text_hidden_size if output_dim is None else output_dim,
         num_input_layers=num_input_layers,
         pooling_type=ImagePoolingType.attention_meanq,
         pooling_attention_mask=adapter_cfg.pooling_attention_mask,
         projector_type=ImageProjectorType.mlp,
         mlp_hidden_size=adapter_cfg.intermediate_size,
         dtype=DType.float32,
+    )
+
+
+def _resolved_vit_layers(hf_config: Any) -> Tuple[int, ...]:
+    full_vit_layers = hf_config.vit_config.num_hidden_layers
+    return tuple(
+        layer if layer >= 0 else layer + full_vit_layers
+        for layer in hf_config.adapter_config.vit_layers
+    )
+
+
+def multimodal_config_from_molmo2_vision(
+    hf_config: Any,
+    lm_cfg: TransformerConfig,
+    *,
+    image_patch_token_id: int,
+) -> MultimodalLMConfig:
+    """Pair a Molmo2 vision tower with an arbitrary OLMo-core language model.
+
+    The connector architecture follows the Molmo2 adapter, except its output dimension is
+    changed to the target LM's ``d_model``. Consequently connector weights must be freshly
+    initialized rather than loaded from the Molmo2 checkpoint.
+    """
+    vit_cfg = hf_config.vit_config
+    adapter_cfg = hf_config.adapter_config
+    vis_cfg = _build_vision_config(vit_cfg, adapter_cfg.vit_layers)
+    conn_cfg = _build_connector_config(
+        adapter_cfg,
+        vit_hidden_size=vit_cfg.hidden_size,
+        output_dim=lm_cfg.d_model,
+    )
+    return MultimodalLMConfig(
+        lm=lm_cfg,
+        vision=vis_cfg,
+        connector=conn_cfg,
+        image_patch_token_id=image_patch_token_id,
+        vit_layers=_resolved_vit_layers(hf_config),
     )
 
 
@@ -513,32 +629,13 @@ def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalLMConfig:
         matches the HF Molmo2 layout, ready to receive converted weights.
     """
     text_cfg = hf_config.text_config
-    vit_cfg = hf_config.vit_config
-    adapter_cfg = hf_config.adapter_config
-
     # HF Molmo2 keeps the extra image-token embeddings in a separate
     # parameter (``new_embedding``); after concatenation our model needs the
     # combined vocab.
     total_vocab = text_cfg.vocab_size + text_cfg.additional_vocab_size
     lm_cfg = _build_lm_config(text_cfg, total_vocab_size=total_vocab)
-    vis_cfg = _build_vision_config(vit_cfg, adapter_cfg.vit_layers)
-    conn_cfg = _build_connector_config(adapter_cfg, vit_hidden_size=vit_cfg.hidden_size)
-
-    # Resolve vit_layers to **absolute** layer indices in the (possibly
-    # truncated) ViT we just built. HF Molmo2 stores ``vit_layers`` as
-    # negative indices into the *original* (untruncated) ViT, so e.g.
-    # ``[-3, -9]`` with 27 layers means absolute ``[24, 18]``. Once we
-    # truncate to 25 layers, our model's hidden_states list is 25 long and
-    # we want to read indices ``[24, 18]`` directly.
-    full_vit_layers = vit_cfg.num_hidden_layers
-    resolved_vit_layers = tuple(
-        layer if layer >= 0 else layer + full_vit_layers for layer in adapter_cfg.vit_layers
-    )
-
-    return MultimodalLMConfig(
-        lm=lm_cfg,
-        vision=vis_cfg,
-        connector=conn_cfg,
+    return multimodal_config_from_molmo2_vision(
+        hf_config,
+        lm_cfg,
         image_patch_token_id=hf_config.image_patch_id,
-        vit_layers=resolved_vit_layers,
     )

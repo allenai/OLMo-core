@@ -109,10 +109,14 @@ class FlatSavePlanner(DefaultSavePlanner):
     pass
 
 
+def _is_olmo_ddp_compatible(model: torch.nn.Module) -> bool:
+    return isinstance(model, OLMoDDPModel) or bool(getattr(model, "_olmo_ddp_compatible", False))
+
+
 class OLMoDDPTrainModule(TrainModule):
     def __init__(
         self,
-        model: OLMoDDPModel,
+        model: torch.nn.Module,
         optim: OLMoDDPOptimizerConfig,
         rank_microbatch_size: int,
         max_sequence_length: int,
@@ -138,7 +142,11 @@ class OLMoDDPTrainModule(TrainModule):
         eval_only: bool = False,
     ):
         super().__init__()
-        assert isinstance(model, OLMoDDPModel), "OLMoDDPTrainModule only supports OLMoDDPModel"
+        if not _is_olmo_ddp_compatible(model):
+            raise TypeError(
+                "OLMoDDPTrainModule requires an OLMoDDPModel or a compatible adapter, "
+                f"got {type(model).__name__}"
+            )
 
         ######################### Validate arguments. [BEGIN] #########################
         if rank_microbatch_size % max_sequence_length != 0:
@@ -1143,6 +1151,9 @@ class OLMoDDPTrainModule(TrainModule):
         for key, buffer in self._persistent_model_buffer_state_dict().items():
             assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
             save_dict[key] = buffer
+        for key, param in self._frozen_model_param_state_dict().items():
+            assert key not in save_dict, f"Frozen key '{key}' collides with checkpoint state"
+            save_dict[key] = param
 
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
         planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
@@ -1187,6 +1198,9 @@ class OLMoDDPTrainModule(TrainModule):
 
         metadata = reader.read_metadata()
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
+        frozen_checkpoint_params = self._frozen_checkpoint_param_state_dict_for_load(
+            checkpoint_keys
+        )
 
         if self.eval_only:
             sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
@@ -1213,6 +1227,7 @@ class OLMoDDPTrainModule(TrainModule):
                 optim, "reset_optimizer_moments_on_load", False
             )
             loaded_model_directly = False
+            loading_partial_optimizer_state = False
 
             if not load_optim_state and has_model_params:
                 log.info(
@@ -1226,8 +1241,6 @@ class OLMoDDPTrainModule(TrainModule):
                     process_group=process_group,
                 )
                 optim._copy_model_params_to_main_params()
-                optim._copy_main_params_to_mxfp8_weights()
-                optim._refresh_rowwise_fp8_caches_from_model_params()
                 loaded_model_directly = True
             elif not load_optim_state:
                 if not has_optimizer_main_params:
@@ -1240,6 +1253,7 @@ class OLMoDDPTrainModule(TrainModule):
                 sd_to_load = {
                     key: value for key, value in sd_to_load.items() if key.endswith(".main")
                 }
+                loading_partial_optimizer_state = True
             elif reset_optimizer_states_on_load:
                 log.info(
                     "Resetting optimizer states during checkpoint load; loading only optimizer main params"
@@ -1247,6 +1261,7 @@ class OLMoDDPTrainModule(TrainModule):
                 sd_to_load = {
                     key: value for key, value in sd_to_load.items() if key.endswith(".main")
                 }
+                loading_partial_optimizer_state = True
             else:
                 # Backward compatibility: old checkpoints won't have rolling skip-step stats.
                 for optional_key in (
@@ -1280,14 +1295,31 @@ class OLMoDDPTrainModule(TrainModule):
                             sd_to_load.pop(key)
 
             if not loaded_model_directly:
-                dist_cp.state_dict_loader.load(
+                frozen_param_ids = {id(param) for param in frozen_checkpoint_params.values()}
+                allowed_missing_keys = {
+                    f"{name}.main"
+                    for group in optim.param_groups
+                    for name, param in group["named_params"].items()
+                    if id(param) in frozen_param_ids
+                }
+                checkpoint_sd, checkpoint_to_current = self._optimizer_state_dict_for_load(
                     sd_to_load,
+                    checkpoint_keys,
+                    allow_component_missing=loading_partial_optimizer_state,
+                    allowed_missing_keys=allowed_missing_keys,
+                )
+                dist_cp.state_dict_loader.load(
+                    checkpoint_sd,
                     checkpoint_id=dir,
                     storage_reader=reader,
                     process_group=process_group,
                     # planner=FlatLoadPlanner(),
                 )
 
+                sd_to_load = {
+                    current_key: checkpoint_sd[checkpoint_key]
+                    for checkpoint_key, current_key in checkpoint_to_current.items()
+                }
                 optim.load_state_dict(sd_to_load)
 
                 # load into model params
@@ -1313,6 +1345,28 @@ class OLMoDDPTrainModule(TrainModule):
                 storage_reader=buffer_reader,
                 process_group=process_group,
             )
+
+        if frozen_checkpoint_params:
+            frozen_reader = RemoteFileSystemReader(
+                dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
+            )
+            dist_cp.state_dict_loader.load(
+                frozen_checkpoint_params,
+                checkpoint_id=dir,
+                storage_reader=frozen_reader,
+                process_group=process_group,
+            )
+            if not self.eval_only:
+                optim = self._require_optimizer()
+                frozen_param_ids = {id(param) for param in frozen_checkpoint_params.values()}
+                param_names = {
+                    name
+                    for group in optim.param_groups
+                    for name, param in group["named_params"].items()
+                    if id(param) in frozen_param_ids
+                }
+                if param_names:
+                    optim._copy_model_params_to_main_params(param_names)
 
         torch.cuda.empty_cache()
 
@@ -1389,6 +1443,7 @@ class OLMoDDPTrainModule(TrainModule):
         return tuple(reversed(stride))
 
     _MODEL_BUFFER_KEY_PREFIX: ClassVar[str] = "model_buffer."
+    _FROZEN_MODEL_PARAM_KEY_PREFIX: ClassVar[str] = "frozen_model."
 
     @staticmethod
     def _strip_wrapper_prefixes(name: str) -> str:
@@ -1424,6 +1479,94 @@ class OLMoDDPTrainModule(TrainModule):
                         )
                     buffer_state[key] = buffer
         return buffer_state
+
+    def _frozen_model_param_state_dict(self) -> Dict[str, torch.Tensor]:
+        frozen_state: Dict[str, torch.Tensor] = {}
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                if param.requires_grad:
+                    continue
+                key = self._FROZEN_MODEL_PARAM_KEY_PREFIX + self._strip_wrapper_prefixes(name)
+                if key in frozen_state:
+                    raise RuntimeError(
+                        f"Duplicate frozen parameter checkpoint key '{key}'; parameter names "
+                        "collide across model parts."
+                    )
+                frozen_state[key] = param
+        return frozen_state
+
+    def _frozen_checkpoint_param_state_dict_for_load(
+        self, checkpoint_keys: Collection[str]
+    ) -> Dict[str, torch.Tensor]:
+        """Map checkpointed frozen parameters onto the current model.
+
+        A parameter can be frozen when a checkpoint is saved and trainable when it is
+        loaded (for example, the vision tower between multimodal pretraining and SFT).
+        Match by stable model name rather than the current ``requires_grad`` value.
+        """
+        state: Dict[str, torch.Tensor] = {}
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                key = self._FROZEN_MODEL_PARAM_KEY_PREFIX + self._strip_wrapper_prefixes(name)
+                if key not in checkpoint_keys:
+                    continue
+                if key in state:
+                    raise RuntimeError(
+                        f"Duplicate frozen parameter checkpoint key '{key}'; parameter names "
+                        "collide across model parts."
+                    )
+                state[key] = param
+        return state
+
+    def _resolve_optimizer_checkpoint_key(
+        self, state_key: str, checkpoint_keys: Collection[str]
+    ) -> Optional[str]:
+        return state_key if state_key in checkpoint_keys else None
+
+    def _allow_missing_optimizer_checkpoint_key(self, state_key: str) -> bool:
+        del state_key
+        return False
+
+    def _optimizer_state_dict_for_load(
+        self,
+        state_dict: Dict[str, Any],
+        checkpoint_keys: Collection[str],
+        *,
+        allow_component_missing: bool,
+        allowed_missing_keys: Collection[str] = (),
+    ) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        checkpoint_state: Dict[str, Any] = {}
+        checkpoint_to_current: Dict[str, str] = {}
+        missing: List[str] = []
+        for current_key, value in state_dict.items():
+            checkpoint_key = self._resolve_optimizer_checkpoint_key(current_key, checkpoint_keys)
+            if checkpoint_key is None:
+                if not (
+                    allow_component_missing
+                    and (
+                        current_key in allowed_missing_keys
+                        or self._allow_missing_optimizer_checkpoint_key(current_key)
+                    )
+                ):
+                    missing.append(current_key)
+                continue
+            if checkpoint_key in checkpoint_state:
+                raise RuntimeError(
+                    f"Multiple optimizer state keys map to checkpoint key '{checkpoint_key}'"
+                )
+            checkpoint_state[checkpoint_key] = value
+            checkpoint_to_current[checkpoint_key] = current_key
+
+        if missing:
+            preview = ", ".join(repr(key) for key in missing[:8])
+            suffix = " ..." if len(missing) > 8 else ""
+            raise RuntimeError(
+                f"Checkpoint is missing {len(missing)} required optimizer state key(s): "
+                f"{preview}{suffix}"
+            )
+        if not checkpoint_state:
+            raise RuntimeError("Did not find any optimizer state tensors to load")
+        return checkpoint_state, checkpoint_to_current
 
     def _resolve_model_checkpoint_key(
         self, param_name: str, checkpoint_keys: Collection[str]
@@ -1505,6 +1648,29 @@ class OLMoDDPTrainModule(TrainModule):
                 flush=True,
             )
 
+    def _batch_loss_divisor(
+        self,
+        batch: Dict[str, Any],
+        labels: torch.Tensor,
+        instance_mask: Optional[torch.Tensor],
+        *,
+        account_for_masked_instances: bool,
+    ) -> torch.Tensor:
+        """Return the local loss normalization weight for a batch.
+
+        Multimodal batches carry float ``loss_masks`` whose positive values are
+        annotation weights, not merely a binary mask. Text batches retain the
+        existing count-of-non-ignored-labels behavior.
+        """
+        if (loss_masks := batch.get("loss_masks")) is not None:
+            loss_masks = loss_masks.float()
+            return (loss_masks * (loss_masks > 0)).sum()
+
+        divisor = (labels != self.label_ignore_index).sum()
+        if instance_mask is not None and account_for_masked_instances:
+            divisor += (~instance_mask).sum() * (labels.shape[1] - 1)
+        return divisor
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
@@ -1535,17 +1701,12 @@ class OLMoDDPTrainModule(TrainModule):
 
         if not self.pp_enabled:
             # Calculate how many tokens are going to be used in the loss.
-            batch_num_tokens_for_loss = (batch["labels"] != self.label_ignore_index).sum()
-
-            if instance_mask is not None:
-                # WARN: When we mask out instances with the instance filter, we count those tokens
-                # for the loss anyways. They will count as tokens with a zero loss. This means we
-                # get an artificially *low* loss for these batches. But it is really hard (and slow)
-                # to do this properly in a distributed setup. We add back in the full number of tokens
-                # for the loss so that each rank contributes to the loss calculation fairly.
-                batch_num_tokens_for_loss += (~instance_mask).sum() * (
-                    batch["labels"].shape[1] - 1
-                )  # shifted labels does not count last token
+            batch_num_tokens_for_loss = self._batch_loss_divisor(
+                batch,
+                batch["labels"],
+                instance_mask,
+                account_for_masked_instances=True,
+            )
 
             if batch_num_tokens_for_loss.item() == 0:
                 print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
@@ -1637,17 +1798,12 @@ class OLMoDDPTrainModule(TrainModule):
             dry_run_num_microbatches = None
 
             # Calculate how many tokens are going to be used in the loss.
-            batch_num_tokens_for_loss = (labels != self.label_ignore_index).sum()
-
-            if instance_mask is not None and not dry_run:
-                # WARN: When we mask out instances with the instance filter, we count those tokens
-                # for the loss anyways. They will count as tokens with a zero loss. This means we
-                # get an artificially *low* loss for these batches. But it is really hard (and slow)
-                # to do this properly in a distributed setup. We add back in the full number of tokens
-                # for the loss so that each rank contributes to the loss calculation fairly.
-                batch_num_tokens_for_loss += (~instance_mask).sum() * (
-                    batch["labels"].shape[1] - 1
-                )  # shifted labels does not count last token
+            batch_num_tokens_for_loss = self._batch_loss_divisor(
+                batch,
+                labels,
+                instance_mask,
+                account_for_masked_instances=not dry_run,
+            )
 
             if batch_num_tokens_for_loss.item() == 0:
                 print(f"[Warning] rank {dist.get_rank()} batch_num_tokens_for_loss == 0")
@@ -2509,7 +2665,7 @@ class OLMoDDPTrainModule(TrainModule):
 
     def parallelize_and_init_model(
         self,
-        model: OLMoDDPModel,  # the full model before sharding, the same on all ranks
+        model: torch.nn.Module,  # the full model before sharding, the same on all ranks
         *,
         compile_model: bool = False,
         float8_config: Optional[Float8Config] = None,
@@ -2521,7 +2677,11 @@ class OLMoDDPTrainModule(TrainModule):
         pp_config: Optional[TransformerPipelineParallelConfig] = None,
         eval_only: bool = False,
     ) -> List["OLMoDDPModel"]:
-        assert isinstance(model, OLMoDDPModel), "model must be an instance of OLMoDDPModel"
+        if not _is_olmo_ddp_compatible(model):
+            raise TypeError(
+                "model must be an OLMoDDPModel or a compatible adapter, "
+                f"got {type(model).__name__}"
+            )
 
         if tp_config is not None:
             raise NotImplementedError("TP not supported yet")

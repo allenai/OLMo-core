@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -15,6 +15,7 @@ from olmo_core.nn.vision.connector import VisionConnectorConfig
 __all__ = [
     "MultimodalLMConfig",
     "MultimodalLM",
+    "MultimodalOLMoDDPModel",
 ]
 
 
@@ -73,6 +74,10 @@ class MultimodalLMConfig(Config):
         :param init_device: Device string (e.g. ``"cpu"``, ``"meta"``).
         :returns: A :class:`MultimodalLM`.
         """
+        from olmo_core.nn.transformer import OLMoDDPModelConfig
+
+        if isinstance(self.lm, OLMoDDPModelConfig):
+            return MultimodalOLMoDDPModel(self, init_device=init_device)
         return MultimodalLM(self, init_device=init_device)
 
 
@@ -101,6 +106,20 @@ class MultimodalLM(nn.Module):
         self.lm = cfg.lm.build(init_device=init_device)
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
+        self._use_compact_flex_masks, self._flex_window_size = self._resolve_flex_mask_backend()
+
+    def _resolve_flex_mask_backend(self) -> Tuple[bool, Optional[Tuple[int, int]]]:
+        """Return whether every LM attention layer uses FlexAttention and its common window."""
+        from olmo_core.nn.attention import Attention
+        from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+        attention = [module for module in self.lm.modules() if isinstance(module, Attention)]
+        if not attention or not all(
+            isinstance(module.backend, FlexAttentionBackend) for module in attention
+        ):
+            return False, None
+        window_sizes = {module.backend.window_size for module in attention}
+        return True, next(iter(window_sizes)) if len(window_sizes) == 1 else None
 
     # -- model introspection (mirrors the Transformer API used by the trainer / callbacks) --
 
@@ -206,10 +225,12 @@ class MultimodalLM(nn.Module):
         images: Optional[torch.Tensor] = None,
         pooled_patches_idx: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        loss_masks: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         example_ids: Optional[torch.Tensor] = None,
+        response_logits_only: bool = False,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
@@ -273,7 +294,8 @@ class MultimodalLM(nn.Module):
             if pooled_patches_idx is None:
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
 
-            images = images.to(device)
+            vision_dtype = next(self.vision.parameters()).dtype
+            images = images.to(device=device, dtype=vision_dtype)
             pooled_patches_idx = pooled_patches_idx.to(device)
 
             image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
@@ -311,39 +333,62 @@ class MultimodalLM(nn.Module):
             # the contiguous ``h``, so the in-place add below propagates back into ``h``.
             h = h.contiguous()
             flat = h.view(-1, d)
+            image_features = image_features.to(flat.dtype)
             flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
 
-        # Build a bidirectional allow-mask among image tokens (causal elsewhere),
-        # matching HF Molmo2's `token_type_ids`-based mask. ``or_mask[b, 1, q, k]``
-        # is True where both q and k are image tokens, so they attend regardless of
-        # causal order; it is OR'd onto the causal base inside each attention block.
+        # FlexAttention consumes the O(S) metadata directly. For a common attention
+        # window, build its block mask once and reuse it across every LM layer. Other
+        # backends retain the equivalent dense ``(causal | or_mask) & and_mask`` path.
+        flex_attn_is_image: Optional[torch.Tensor] = None
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None
+        flex_attn_example_ids: Optional[torch.Tensor] = None
+        flex_attn_block_mask: Optional[Any] = None
         or_mask: Optional[torch.Tensor] = None
-        if token_type_ids is not None:
-            is_image = token_type_ids.to(device) != 0  # (B, S)
-            or_mask = (is_image[:, :, None] & is_image[:, None, :]).unsqueeze(1)  # (B, 1, S, S)
-
-        # Build a restrictive subsegment (branch-isolation) allow-mask: a query at
-        # position q may attend a key at position k only if ``subseg[q] <= subseg[k]``,
-        # matching mm_olmo's ``attention_mask & subsegment_mask``. The shared prefix uses
-        # the largest id so it only attends itself, while each branch attends the prefix
-        # and itself but not sibling branches.
-        # ``example_ids`` (sequence packing) adds a block-diagonal keep-mask so a token never
-        # attends across a packed-example boundary: AND ``example_ids[q] == example_ids[k]``
-        # onto the subsegment rule. For a single (unpacked) example every id is equal, so it
-        # is a no-op. The OR'd image mask is scoped too, since the whole expression is
-        # ``(causal | or_mask) & and_mask``.
         and_mask: Optional[torch.Tensor] = None
-        seg_rule: Optional[torch.Tensor] = None
-        if subsegment_ids is not None:
-            seg = subsegment_ids.to(device)
-            seg_rule = seg[:, :, None] <= seg[:, None, :]  # (B, S, S)
-        if example_ids is not None:
-            eid = example_ids.to(device)
-            same_example = eid[:, :, None] == eid[:, None, :]  # (B, S, S)
-            combined = same_example & seg_rule if seg_rule is not None else same_example
-            and_mask = combined.unsqueeze(1)  # (B, 1, S, S)
-        elif seg_rule is not None:
-            and_mask = seg_rule.unsqueeze(1)
+        if self._use_compact_flex_masks:
+            flex_attn_is_image = (
+                token_type_ids.to(device) != 0 if token_type_ids is not None else None
+            )
+            flex_attn_subsegment_ids = (
+                subsegment_ids.to(device) if subsegment_ids is not None else None
+            )
+            flex_attn_example_ids = example_ids.to(device) if example_ids is not None else None
+            if self._flex_window_size is not None and any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                )
+            ):
+                from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+                B, S = input_ids.shape
+                flex_attn_block_mask = FlexAttentionBackend.build_block_mask_from_vectors(
+                    B,
+                    S,
+                    device,
+                    is_image=flex_attn_is_image,
+                    subsegment_ids=flex_attn_subsegment_ids,
+                    example_id=flex_attn_example_ids,
+                    window_size=self._flex_window_size,
+                )
+        else:
+            if token_type_ids is not None:
+                is_image = token_type_ids.to(device) != 0
+                or_mask = (is_image[:, :, None] & is_image[:, None, :]).unsqueeze(1)
+
+            seg_rule: Optional[torch.Tensor] = None
+            if subsegment_ids is not None:
+                seg = subsegment_ids.to(device)
+                seg_rule = seg[:, :, None] <= seg[:, None, :]
+            if example_ids is not None:
+                eid = example_ids.to(device)
+                same_example = eid[:, :, None] == eid[:, None, :]
+                combined = same_example & seg_rule if seg_rule is not None else same_example
+                and_mask = combined.unsqueeze(1)
+            elif seg_rule is not None:
+                and_mask = seg_rule.unsqueeze(1)
 
         if position_ids is not None:
             position_ids = position_ids.to(device)
@@ -352,8 +397,141 @@ class MultimodalLM(nn.Module):
             input_ids,
             input_embeddings=h,
             labels=labels,
+            loss_weights=loss_masks,
+            response_logits_only=response_logits_only,
+            response_mask=(
+                loss_masks > 0 if response_logits_only and loss_masks is not None else None
+            ),
             or_mask=or_mask,
             and_mask=and_mask,
+            flex_attn_is_image=flex_attn_is_image,
+            flex_attn_subsegment_ids=flex_attn_subsegment_ids,
+            flex_attn_example_ids=flex_attn_example_ids,
+            flex_attn_block_mask=flex_attn_block_mask,
             position_ids=position_ids,
             **kwargs,
         )
+
+
+class MultimodalOLMoDDPModel(MultimodalLM):
+    """A :class:`MultimodalLM` backed by the fused OLMoDDP MoE model.
+
+    The OLMoDDP train module owns expert/data parallelism and its fused optimizer.
+    This adapter keeps the multimodal model compositional while forwarding the small
+    runtime surface that trainer needs to the language model. Pipeline, tensor, and
+    context parallelism are deliberately not exposed: multimodal masks and image
+    embeddings currently require the full sequence on each rank.
+    """
+
+    _olmo_ddp_compatible = True
+
+    def __init__(self, cfg: MultimodalLMConfig, init_device: str = "cpu"):
+        super().__init__(cfg, init_device=init_device)
+        from olmo_core.nn.ddp import OLMoDDPModel
+
+        if not isinstance(self.lm, OLMoDDPModel):
+            raise TypeError(
+                f"{type(self).__name__} requires an OLMoDDPModel language model, "
+                f"got {type(self.lm).__name__}"
+            )
+
+    @property
+    def _olmo_lm(self):
+        from olmo_core.nn.ddp import OLMoDDPModel
+
+        return cast(OLMoDDPModel, self.lm)
+
+    @property
+    def tbo(self) -> bool:
+        return self._olmo_lm.tbo
+
+    @property
+    def recompute_all_blocks_by_chunk(self) -> bool:
+        return self._olmo_lm.recompute_all_blocks_by_chunk
+
+    @property
+    def recompute_each_block(self) -> bool:
+        return self._olmo_lm.recompute_each_block
+
+    @property
+    def has_grad_accum_fp32_buffer(self) -> bool:
+        return self._olmo_lm.has_grad_accum_fp32_buffer
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if mode and not any(p.requires_grad for p in self.vision.parameters()):
+            self.vision.eval()
+        return self
+
+    def purge_cuda_events(self) -> None:
+        self._olmo_lm.purge_cuda_events()
+
+    def install_cuda_events(self) -> None:
+        self._olmo_lm.install_cuda_events()
+
+    def count_non_rowwise_ep_no_sync_blocks(self) -> int:
+        return self._olmo_lm.count_non_rowwise_ep_no_sync_blocks()
+
+    def count_ep_no_sync_blocks(self) -> int:
+        return self._olmo_lm.count_ep_no_sync_blocks()
+
+    def iter_ep_no_sync_symm_tensor_infos(self) -> Iterator[Any]:
+        yield from self._olmo_lm.iter_ep_no_sync_symm_tensor_infos()
+
+    def apply_fp8(self, *args, **kwargs) -> None:
+        self._olmo_lm.apply_fp8(*args, **kwargs)
+
+    def apply_cp(self, *args, **kwargs) -> None:
+        raise NotImplementedError("Context parallelism is not supported for multimodal OLMoDDP")
+
+    def apply_pp(self, *args, **kwargs) -> None:
+        raise NotImplementedError("Pipeline parallelism is not supported for multimodal OLMoDDP")
+
+    def apply_ep(self, *args, **kwargs):
+        return self._olmo_lm.apply_ep(*args, **kwargs)
+
+    def apply_activation_checkpointing(self, *args, **kwargs) -> None:
+        self._olmo_lm.apply_activation_checkpointing(*args, **kwargs)
+
+    def apply_compile(self) -> None:
+        self._olmo_lm.apply_compile()
+
+    def apply_dp(self, *args, **kwargs):
+        return self._olmo_lm.apply_dp(*args, root_module=self, **kwargs)
+
+    @torch.no_grad()
+    def init_weights(self, *args, device: Optional[torch.device] = None, **kwargs):
+        device = device or self._olmo_lm.device
+        generator = self._olmo_lm.init_weights(*args, device=device, **kwargs)
+        for module in (self.vision, self.connector):
+            module.to_empty(device=device)
+            module.reset_parameters()
+        return generator
+
+    def prewarm_deepep_v2_runtimes(self, *args, **kwargs) -> None:
+        self._olmo_lm.prewarm_deepep_v2_runtimes(*args, **kwargs)
+
+    def prewarm_ep_no_sync_symm_buffers(self, *args, **kwargs) -> None:
+        self._olmo_lm.prewarm_ep_no_sync_symm_buffers(*args, **kwargs)
+
+    def refresh_rowwise_fp8_cache(self) -> None:
+        self._olmo_lm.refresh_rowwise_fp8_cache()
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+        for name, weight in self._olmo_lm.named_fp8_weight_stores():
+            yield f"lm.{name}", weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
+        yield from self.named_fp8_weight_stores()
+
+    def post_batch(self, dry_run: bool = False) -> None:
+        self._olmo_lm.post_batch(dry_run=dry_run)
+
+    def post_optim_step(self) -> None:
+        self._olmo_lm.post_optim_step()
+
+    def compute_auxiliary_metrics(self, reset: bool = True) -> Dict[str, Tuple[torch.Tensor, Any]]:
+        return self._olmo_lm.compute_auxiliary_metrics(reset=reset)
+
+    def reset_auxiliary_metrics(self) -> None:
+        self._olmo_lm.reset_auxiliary_metrics()

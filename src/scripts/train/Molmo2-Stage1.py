@@ -1,5 +1,5 @@
 """
-Molmo2 "stage 1" caption-pretraining (reproduction of ``mm_olmo``'s captioner).
+Molmo2 "stage 1" caption-pretraining with an s002 OLMo3 MoE language model.
 
 Trains the connector + LM on PixMoCap captions/transcripts with the vision encoder
 **frozen**, using the float ``root_subsegments``-weighted loss and per-component
@@ -7,19 +7,21 @@ learning rates / warmups. In-loop evaluation is intentionally omitted.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
-    torchrun --nproc-per-node=1 src/scripts/train/Molmo2-Stage1.py train smoke \\
+    torchrun --nproc-per-node=8 src/scripts/train/Molmo2-Stage1.py train smoke \\
         --dataset.dataset_path=synthetic --trainer.max_duration.value=5 \\
         --trainer.max_duration.unit=steps
 
 .. note::
-    Single-GPU, DDP, and FSDP/HSDP data parallelism are supported. TP/CP/PP/EP of the
-    multimodal model are out of scope.
+    The production topology is PP=1, EP=8, with DDP over all ranks. A two-node Beaker
+    launch therefore has EP-DP=2. TP/CP/PP and two-batch overlap are intentionally disabled.
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import List, Optional, cast
 
 from olmo_core.config import Config, DType
@@ -37,12 +39,16 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.common import (
     build_launch_config,
-    get_beaker_username,
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
-from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, PerGroupScheduler
+from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
+from olmo_core.optim import (
+    CosWithWarmup,
+    OLMoDDPOptimizerConfig,
+    OptimGroupOverride,
+    PerGroupScheduler,
+)
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -59,10 +65,11 @@ from olmo_core.train.callbacks import (
     WandBCallback,
 )
 from olmo_core.train.train_module import (
-    MultimodalTransformerTrainModuleConfig,
+    MultimodalOLMoDDPTrainModuleConfig,
     TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
 )
-from olmo_core.utils import get_default_device, seed_all
+from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
@@ -70,13 +77,19 @@ log = logging.getLogger(__name__)
 #### CONFIGURATION ####
 #######################
 
-MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provides the tokenizer)
+BASE_CHECKPOINT = "/weka/oe-training-default/robertb/s002-step125500"
+VISION_MODEL_ID = "allenai/Molmo2-4B"
+VISION_REVISION = "042abfa7a38879a376cec03d949eff0aefaa0600"
+TOKENIZER_ID = "allenai/dolma2-tokenizer"
+HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
+EXPERIMENT_ROOT = "/weka/oe-training-default/rustin/experiments/vision-moe"
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
+EP_DEGREE = 8
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -89,7 +102,9 @@ MAX_CROPS = 8
 # system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
 
 # Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
-GLOBAL_BATCH_INSTANCES = 8
+# Sixteen keeps one instance/rank on the normal two-node (16 GPU) topology and
+# accumulates two one-instance microbatches/rank for an eight-GPU local run.
+GLOBAL_BATCH_INSTANCES = 16
 RANK_MICROBATCH_INSTANCES = 1
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
@@ -112,7 +127,7 @@ NLP_RATE = 0.10
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
-NUM_NODES = 1
+NUM_NODES = 2
 BEAKER_WORKSPACE = "ai2/OLMo-core"
 BEAKER_BUDGET = "ai2/oe-other"
 
@@ -134,36 +149,122 @@ class ExperimentConfig(Config):
     model: MultimodalLMConfig
     dataset: PixMoCapDatasetConfig
     collator: MultimodalCollatorConfig
-    train_module: MultimodalTransformerTrainModuleConfig
+    train_module: MultimodalOLMoDDPTrainModuleConfig
     trainer: TrainerConfig
-    model_id: str = MODEL_ID
+    base_checkpoint: str = BASE_CHECKPOINT
+    vision_model_id: str = VISION_MODEL_ID
+    vision_revision: str = VISION_REVISION
+    tokenizer_id: str = TOKENIZER_ID
+    hf_cache_dir: str = HF_CACHE_DIR
+    checkpoint_load_threads: int = 8
     data_seed: int = 34521
     init_seed: int = 12536
     global_batch_size: int = GLOBAL_BATCH_SIZE
     """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
     pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
+    pointing_rate: float = POINTING_RATE
+    """Fraction of mixture samples drawn from pointing and counting sources."""
+    nlp_rate: float = NLP_RATE
+    """Fraction of mixture samples drawn from Tulu4 text-only SFT."""
+    pack_sequences: bool = PACK_SEQUENCES
+    """Whether to pack multiple examples into each training sequence."""
 
 
-def _build_model_config() -> MultimodalLMConfig:
-    """Build the :class:`MultimodalLMConfig` from the HF Molmo2 config (no weights)."""
+def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
+    """Compose the exact native s002 LM architecture with the Molmo2 vision tower."""
+    import json
+
     from transformers import AutoConfig
 
-    from olmo_core.nn.vision.molmo2_loader import (
-        ensure_default_rope_registered,
-        molmo2_config_from_hf_config,
+    from olmo_core.nn.attention import AttentionConfig
+    from olmo_core.nn.attention.backend import AttentionBackendName
+    from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
+    from olmo_core.nn.transformer import OLMoDDPModelConfig
+    from olmo_core.nn.vision import multimodal_config_from_molmo2_vision
+
+    config_path = Path(BASE_CHECKPOINT) / "config.json"
+    with config_path.open() as f:
+        lm_config = OLMoDDPModelConfig.from_dict(json.load(f)["model"])
+
+    attention_backend = AttentionBackendName.flex if USE_FLEX_ATTN else AttentionBackendName.torch
+    block_configs = [lm_config.block, *(lm_config.block_overrides or {}).values()]
+    for block_config in block_configs:
+        if isinstance(block_config.sequence_mixer, AttentionConfig):
+            block_config.sequence_mixer.backend = attention_backend
+        if block_config.ep is not None:
+            block_config.ep.path = ExpertParallelPath.rowwise_nvshmem
+
+    # PP is unavailable for the composite model, so checkpoint each LM block to keep the
+    # full sequence on one rank without retaining all 31 blocks' activations.
+    lm_config.recompute_each_block = True
+    lm_config.recompute_all_blocks_by_chunk = False
+    lm_config.two_batch_overlap = False
+
+    hf_config = AutoConfig.from_pretrained(
+        VISION_MODEL_ID,
+        revision=VISION_REVISION,
+        cache_dir=HF_CACHE_DIR,
+        trust_remote_code=True,
+    )
+    return multimodal_config_from_molmo2_vision(
+        hf_config,
+        lm_config,
+        image_patch_token_id=token_ids.im_patch_id,
     )
 
-    ensure_default_rope_registered()
-    hf_config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
-    return molmo2_config_from_hf_config(hf_config)
+
+def _build_train_module_config(
+    *,
+    sequence_length: int = SEQUENCE_LENGTH,
+    rank_microbatch_size: int = RANK_MICROBATCH_SIZE,
+    ep_degree: int = EP_DEGREE,
+    compile_model: bool = COMPILE_MODEL,
+) -> MultimodalOLMoDDPTrainModuleConfig:
+    return MultimodalOLMoDDPTrainModuleConfig(
+        rank_microbatch_size=rank_microbatch_size,
+        max_sequence_length=sequence_length,
+        optim=OLMoDDPOptimizerConfig(
+            lr=LLM_LR,
+            betas=(0.9, 0.95),
+            eps=1e-6,
+            weight_decay=0.0,
+            group_overrides=[
+                OptimGroupOverride(
+                    params=["*connector.*"],
+                    opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+                ),
+            ],
+            compile=False,
+            foreach_chunk_size=50_000_000,
+            max_grad_norm=1.0,
+            check_nan_inf_grad=True,
+            use_distributed=True,
+        ),
+        freeze_params=["vision.*"],
+        response_logits_only=True,
+        z_loss_multiplier=1e-4,
+        max_grad_norm=1.0,
+        compile_model=compile_model,
+        scheduler=PerGroupScheduler(
+            schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},
+            default=CosWithWarmup(warmup=LLM_WARMUP, alpha_f=ALPHA_F),
+        ),
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.ddp,
+            reduce_dtype=DType.float32,
+            only_allreduce_last_microbatch=True,
+            reduce_grads_in_fp32=False,
+            accumulate_grads_in_fp32=False,
+        ),
+        ep_config=TransformerExpertParallelConfig(degree=ep_degree),
+    )
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
     root_dir = get_root_dir(BEAKER_CLUSTER)
-    beaker_user = get_beaker_username()
-    assert beaker_user is not None
 
-    model_config = _build_model_config()
+    tokenizer, token_ids = _load_tokenizer()
+    model_config = _build_model_config(token_ids)
 
     dataset_config = PixMoCapDatasetConfig(
         dataset_path=DATASET_PATH,
@@ -172,50 +273,23 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="root_subsegments",
         seed=34521,
+        token_ids=token_ids,
     )
 
-    # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a
-    # constant token count for the token-based Trainer.
+    if tokenizer.pad_token_id is None:
+        raise ValueError(f"Tokenizer {TOKENIZER_ID!r} does not define a pad token")
+    # Fixed-length padding keeps every batch compatible with the token-based Trainer.
     collator_config = MultimodalCollatorConfig(
-        pad_token_id=151643,
+        pad_token_id=int(tokenizer.pad_token_id),
         label_ignore_index=-100,
         pad_sequence_length=SEQUENCE_LENGTH,
     )
 
-    train_module_config = MultimodalTransformerTrainModuleConfig(
-        rank_microbatch_size=RANK_MICROBATCH_SIZE,
-        max_sequence_length=SEQUENCE_LENGTH,
-        optim=AdamWConfig(
-            lr=LLM_LR,
-            betas=(0.9, 0.95),
-            eps=1e-6,
-            weight_decay=0.0,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["connector.*"],
-                    opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
-                ),
-            ],
-        ),
-        freeze_params=["vision.*"],
-        z_loss_multiplier=1e-4,
-        max_grad_norm=1.0,
-        compile_model=COMPILE_MODEL,
-        autocast_precision=DType.bfloat16,
-        scheduler=PerGroupScheduler(
-            schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},
-            default=CosWithWarmup(warmup=LLM_WARMUP, alpha_f=ALPHA_F),
-        ),
-        dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
-            param_dtype=DType.bfloat16,
-            reduce_dtype=DType.float32,
-        ),
-    )
+    train_module_config = _build_train_module_config()
 
     trainer_config = (
         TrainerConfig(
-            save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
+            save_folder=f"{EXPERIMENT_ROOT}/checkpoints/{run_name}",
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
@@ -262,16 +336,25 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     launch_config.env_secrets = [
         s for s in launch_config.env_secrets if s.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
     ]
-    # The pointing/counting Arrow datasets on weka were saved with `datasets >= 4`, whose
-    # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
-    # package install (olmo-core does not pin `datasets`, so this is not clobbered).
-    launch_config.post_setup = "pip install -U 'datasets>=4,<6'"
-    # Optionally use the fused FlexAttention backend for the multimodal masks (~+8% MFU on
-    # the stage-1 mixture vs the dense `torch` backend; see USE_FLEX_ATTN).
-    if USE_FLEX_ATTN:
-        launch_config.env_vars = list(launch_config.env_vars) + [
-            BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
-        ]
+    # Reuse the repository's OLMoDDP image/setup contract (NVSHMEM + the symmetric-memory
+    # extension), then add the dataset-version requirement specific to these Arrow files.
+    from olmo_core.launch.beaker_presets import get_preset
+
+    preset = get_preset("olmo-ddp")
+    if preset.beaker_image is not None:
+        launch_config.beaker_image = preset.beaker_image
+    env = {item.name: item.value for item in launch_config.env_vars}
+    env.update(dict(preset.env_vars))
+    env.update(
+        {
+            "OLMO_USE_OWN_SYMM_MEM": "1",
+            "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
+            "OLMO_OWN_SYMM_PREWARM": "1",
+        }
+    )
+    launch_config.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
+    post_setup = [preset.post_setup, "pip install -U 'datasets>=4,<6'"]
+    launch_config.post_setup = " && ".join(step for step in post_setup if step)
 
     return ExperimentConfig(
         model=model_config,
@@ -283,31 +366,24 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     ).merge(overrides)
 
 
-def _load_tokenizer():
-    from transformers import AutoTokenizer
+def _load_tokenizer(
+    identifier: str = TOKENIZER_ID,
+    cache_dir: str = HF_CACHE_DIR,
+):
+    from transformers import GPT2Tokenizer
 
-    return AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+    from olmo_core.nn.vision import prepare_molmo2_tokenizer
+
+    # Dolma2 publishes tokenizer assets without a model config. Loading the declared GPT-2
+    # tokenizer class directly also works from an offline/shared HF cache.
+    tokenizer = GPT2Tokenizer.from_pretrained(identifier, cache_dir=cache_dir)
+    token_ids = prepare_molmo2_tokenizer(tokenizer, model_vocab_size=100352)
+    return tokenizer, token_ids
 
 
-def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) -> None:
-    """Load converted HF Molmo2 weights into the (meta-initialised) model."""
-    from transformers import AutoModelForImageTextToText
-
-    from olmo_core.nn.vision.molmo2_loader import (
-        ensure_default_rope_registered,
-        molmo2_hf_state_dict_to_multimodal_lm,
-        reinit_rope_buffers,
-    )
-
-    ensure_default_rope_registered()
-    log.info(f"Loading HF weights from {MODEL_ID} ...")
-    hf = AutoModelForImageTextToText.from_pretrained(MODEL_ID, trust_remote_code=True)
-    reinit_rope_buffers(hf)
-    converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), model_cfg)
-    del hf
-    model.to_empty(device=get_default_device())
-    model.load_state_dict(converted, strict=False)
-    del converted
+def _checkpoint_state_dir(checkpoint: str) -> str:
+    nested = Path(checkpoint) / "model_and_optim"
+    return str(nested if nested.is_dir() else Path(checkpoint))
 
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
@@ -316,16 +392,26 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     ``POINTING_RATE`` split by sqrt(size); NLP gets ``NLP_RATE``."""
     import numpy as np
 
-    p, n = POINTING_RATE, NLP_RATE
+    p, n = config.pointing_rate, config.nlp_rate
     datasets: List = [config.dataset.build(tokenizer)]  # caption
     weights: List[float] = [max(1.0 - p - n, 0.0)]
 
     if p > 0:
         pointing = [
-            PixMoPointsDatasetConfig(kind="basic", max_crops=MAX_CROPS).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
-            PixMoPointsDatasetConfig(kind="high_frequency", max_crops=MAX_CROPS).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
+            PixMoPointsDatasetConfig(
+                kind="basic", max_crops=MAX_CROPS, token_ids=config.dataset.token_ids
+            ).build(tokenizer),
+            PixMoCountDatasetConfig(max_crops=MAX_CROPS, token_ids=config.dataset.token_ids).build(
+                tokenizer
+            ),
+            PixMoPointsDatasetConfig(
+                kind="high_frequency",
+                max_crops=MAX_CROPS,
+                token_ids=config.dataset.token_ids,
+            ).build(tokenizer),
+            CoSynPointDatasetConfig(max_crops=MAX_CROPS, token_ids=config.dataset.token_ids).build(
+                tokenizer
+            ),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()
@@ -333,7 +419,12 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         weights += [p * float(f) for f in frac]
 
     if n > 0:
-        datasets.append(Tulu4DatasetConfig().build(tokenizer))
+        datasets.append(
+            Tulu4DatasetConfig(
+                max_sequence_length=config.dataset.max_sequence_length,
+                token_ids=config.dataset.token_ids,
+            ).build(tokenizer)
+        )
         weights.append(n)
 
     log.info(
@@ -344,14 +435,62 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 
 
 def train(config: ExperimentConfig):
+    # These are harmless when already set by the Beaker OLMoDDP preset and make the same
+    # rowwise-NVSHMEM path explicit for local torchrun launches.
+    os.environ.setdefault("OLMO_USE_OWN_SYMM_MEM", "1")
+    os.environ.setdefault("OLMO_EP_MP_HIGH_PRIORITY_GROUP", "1")
+    os.environ.setdefault("OLMO_OWN_SYMM_PREWARM", "1")
     seed_all(config.init_seed)
 
-    tokenizer = _load_tokenizer()
+    tokenizer, token_ids = _load_tokenizer(config.tokenizer_id, config.hf_cache_dir)
+    if token_ids != config.dataset.token_ids:
+        raise ValueError(
+            "Tokenizer image-token IDs do not match the serialized dataset/model config: "
+            f"{token_ids} != {config.dataset.token_ids}"
+        )
 
     model = config.model.build(init_device="meta")
-    _init_weights_from_hf(model, config.model)
-
     train_module = config.train_module.build(model)
+
+    import torch.distributed as dist
+
+    state_dir = _checkpoint_state_dir(config.base_checkpoint)
+    log.info("Loading s002 language-model weights from %s", state_dir)
+    train_module.load_state_dict_direct(
+        state_dir,
+        process_group=dist.group.WORLD,
+        thread_count=config.checkpoint_load_threads,
+        load_optim_state=False,
+    )
+
+    from olmo_core.nn.vision import load_molmo2_hf_vision_state_dict
+
+    log.info(
+        "Loading Molmo2 vision weights from %s at revision %s",
+        config.vision_model_id,
+        config.vision_revision,
+    )
+    vision_state = load_molmo2_hf_vision_state_dict(
+        config.vision_model_id,
+        revision=config.vision_revision,
+        cache_dir=config.hf_cache_dir,
+    )
+    train_module.load_molmo2_vision_state_dict(vision_state)
+    del vision_state
+
+    # The six image-format tokens occupy previously padded s002 vocabulary rows. Reset both
+    # embedding and LM-head rows, then synchronize those changes into optimizer main state.
+    train_module.reset_image_token_rows(
+        [
+            token_ids.im_start_id,
+            token_ids.im_end_id,
+            token_ids.im_patch_id,
+            token_ids.im_col_id,
+            token_ids.low_res_im_start_id,
+            token_ids.image_placeholder_id,
+        ],
+        seed=config.init_seed,
+    )
 
     collator = config.collator.build()
     # Derive the data-parallel world size / rank from the train module's DP process
@@ -359,7 +498,7 @@ def train(config: ExperimentConfig):
     dp_pg = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
 
-    if POINTING_RATE > 0 or NLP_RATE > 0:
+    if config.pointing_rate > 0 or config.nlp_rate > 0:
         datasets, weights = _build_mixture_sources(tokenizer, config)
         data_loader = MixtureDataLoader(
             datasets,
@@ -368,7 +507,7 @@ def train(config: ExperimentConfig):
             work_dir=config.trainer.save_folder,
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
-            pack=PACK_SEQUENCES,
+            pack=config.pack_sequences,
             prefetch_workers=DATA_PREFETCH_WORKERS,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
@@ -414,11 +553,11 @@ Print the config:
 › python {sys.argv[0]} dry_run molmo2-stage1
 
 Local synthetic smoke test:
-› torchrun --nproc-per-node=1 {sys.argv[0]} train smoke \\
+› torchrun --nproc-per-node=8 {sys.argv[0]} train smoke \\
       --dataset.dataset_path=synthetic --trainer.max_duration.value=5
 
 Launch on Beaker:
-› python {sys.argv[0]} launch molmo2-stage1 --launch.num_nodes=1
+› python {sys.argv[0]} launch molmo2-stage1
     """.strip()
 
     if len(sys.argv) < 3:

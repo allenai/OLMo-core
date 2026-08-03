@@ -199,6 +199,37 @@ def test_multi_crop():
     assert out.shape == (2, 16, _LM_VOCAB)
 
 
+def test_vision_connector_activation_checkpointing_matches_baseline():
+    torch.manual_seed(0)
+    baseline = _tiny_multimodal_cfg().build(init_device="cpu").train()
+    checkpointed = _tiny_multimodal_cfg().build(init_device="cpu").train()
+    checkpointed.load_state_dict(baseline.state_dict())
+    checkpointed.vision.apply_activation_checkpointing()
+    checkpointed.connector.apply_activation_checkpointing()
+
+    input_ids, images, idx = _make_inputs(batch=1, seq_len=8)
+    baseline_out = baseline(input_ids, images=images, pooled_patches_idx=idx)
+    checkpointed_out = checkpointed(input_ids, images=images, pooled_patches_idx=idx)
+    torch.testing.assert_close(checkpointed_out, baseline_out)
+
+    baseline_out.sum().backward()
+    checkpointed_out.sum().backward()
+    baseline_grads = [
+        param.grad
+        for module in (baseline.vision, baseline.connector)
+        for param in module.parameters()
+    ]
+    checkpointed_grads = [
+        param.grad
+        for module in (checkpointed.vision, checkpointed.connector)
+        for param in module.parameters()
+    ]
+    assert len(checkpointed_grads) == len(baseline_grads)
+    for actual, expected in zip(checkpointed_grads, baseline_grads):
+        assert actual is not None and expected is not None
+        torch.testing.assert_close(actual, expected)
+
+
 # ---------------------------------------------------------------------------
 # Meta device
 # ---------------------------------------------------------------------------
@@ -210,6 +241,24 @@ def test_meta_device():
     for p in model.parameters():
         assert p.device.type == "meta"
         break
+
+
+def test_multimodal_train_mode_keeps_frozen_vision_in_eval():
+    from olmo_core.optim import AdamWConfig
+    from olmo_core.train.train_module import MultimodalTransformerTrainModuleConfig
+
+    model = _tiny_multimodal_cfg().build(init_device="cpu")
+    train_module = MultimodalTransformerTrainModuleConfig(
+        rank_microbatch_size=8,
+        max_sequence_length=8,
+        optim=AdamWConfig(lr=1e-4),
+        freeze_params=["vision.*"],
+    ).build(model, device=torch.device("cpu"))
+
+    train_module._set_model_mode("train")
+    assert model.lm.training
+    assert model.connector.training
+    assert not model.vision.training
 
 
 # ---------------------------------------------------------------------------

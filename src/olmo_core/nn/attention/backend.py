@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Optional, Tuple, Type, Union
+from typing import Any, Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
@@ -640,6 +640,7 @@ class FlexAttentionBackend(AttentionBackend):
     def _build_mask_mod(
         self,
         is_image: Optional[torch.Tensor],
+        subsegment_ids: Optional[torch.Tensor],
         seg_code: Optional[torch.Tensor],
         example_id: Optional[torch.Tensor],
     ):
@@ -660,13 +661,39 @@ class FlexAttentionBackend(AttentionBackend):
             # `(causal | or_mask) & and_mask` from TorchAttentionBackend.
             if is_image is not None:
                 allow = allow | (is_image[b, q_idx] & is_image[b, kv_idx])
-            if seg_code is not None:
+            if subsegment_ids is not None:
+                allow = allow & (subsegment_ids[b, q_idx] <= subsegment_ids[b, kv_idx])
+            elif seg_code is not None:
                 allow = allow & (seg_code[b, q_idx] <= seg_code[b, kv_idx])
             if example_id is not None:
                 allow = allow & (example_id[b, q_idx] == example_id[b, kv_idx])
             return allow
 
         return mask_mod
+
+    @staticmethod
+    def build_block_mask_from_vectors(
+        B: int,
+        S: int,
+        device: torch.device,
+        *,
+        is_image: Optional[torch.Tensor] = None,
+        subsegment_ids: Optional[torch.Tensor] = None,
+        example_id: Optional[torch.Tensor] = None,
+        window_size: Tuple[int, int] = (-1, -1),
+    ):
+        """Build a FlexAttention block mask directly from O(S) token metadata."""
+        from torch.nn.attention.flex_attention import create_block_mask
+
+        helper = FlexAttentionBackend(
+            head_dim=1,
+            n_heads=1,
+            n_kv_heads=1,
+            scale=1.0,
+            window_size=window_size,
+        )
+        mask_mod = helper._build_mask_mod(is_image, subsegment_ids, None, example_id)
+        return create_block_mask(mask_mod, B=B, H=None, Q_LEN=S, KV_LEN=S, device=device)
 
     def forward(
         self,
@@ -682,6 +709,10 @@ class FlexAttentionBackend(AttentionBackend):
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
         sinks: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[Any] = None,
     ) -> torch.Tensor:
         from torch.nn.attention.flex_attention import create_block_mask
 
@@ -718,16 +749,45 @@ class FlexAttentionBackend(AttentionBackend):
 
         B, _, S_q, _ = q.shape
         S_kv = k.shape[2]
-        om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
-        am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
-        is_image, seg_code, example_id = self._per_token_from_masks(om, am)
-        mask_mod = self._build_mask_mod(is_image, seg_code, example_id)
-        # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids are
-        # per-example) but broadcasts over heads. Rebuilt each step since the masks are data
-        # dependent; block-sparsity makes this cheap.
-        block_mask = create_block_mask(
-            mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
-        )
+        if flex_attn_block_mask is not None:
+            block_mask = flex_attn_block_mask
+        else:
+            if any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                )
+            ):
+                is_image = (
+                    flex_attn_is_image.to(device=q.device, dtype=torch.bool)
+                    if flex_attn_is_image is not None
+                    else None
+                )
+                subsegment_ids = (
+                    flex_attn_subsegment_ids.to(device=q.device)
+                    if flex_attn_subsegment_ids is not None
+                    else None
+                )
+                seg_code = None
+                example_id = (
+                    flex_attn_example_ids.to(device=q.device)
+                    if flex_attn_example_ids is not None
+                    else None
+                )
+            else:
+                om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
+                am = (
+                    and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                )
+                is_image, seg_code, example_id = self._per_token_from_masks(om, am)
+                subsegment_ids = None
+            mask_mod = self._build_mask_mod(is_image, subsegment_ids, seg_code, example_id)
+            # `B`/`H=None` allows batch-dependent masks while broadcasting over heads.
+            block_mask = create_block_mask(
+                mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
+            )
         flex = _get_flex_attention(q.device)
         att = flex(q, k, v, block_mask=block_mask, scale=self.scale)
 

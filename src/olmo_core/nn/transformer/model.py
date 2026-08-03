@@ -441,12 +441,15 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
+        loss_weights: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        response_logits_only: bool = False,
+        response_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[
         torch.Tensor,
@@ -487,7 +490,16 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
+            response_logits_only=response_logits_only,
         )
+        if response_mask is not None:
+            lm_head_kwargs["response_mask"] = move_to_device(response_mask, self.device)
+        if loss_weights is not None:
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "Per-token loss weights are not supported with context parallelism"
+                )
+            lm_head_kwargs["loss_weights"] = move_to_device(loss_weights, self.device)
 
         if loss_div_factor is not None:
             loss_div_factor = move_to_device(loss_div_factor, self.device)
@@ -642,6 +654,10 @@ class Transformer(nn.Module):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[Any] = None,
         position_ids: Optional[torch.Tensor] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
@@ -684,6 +700,19 @@ class Transformer(nn.Module):
                 "`and_mask` is not supported with context parallelism: the full-size "
                 "(seq, seq) mask would misalign with the sequence-sharded hidden states."
             )
+        if (
+            any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                    flex_attn_block_mask,
+                )
+            )
+            and self._cp_load_balancer is not None
+        ):
+            raise RuntimeError("Compact FlexAttention masks are not supported with CP")
         if position_ids is not None and self._cp_load_balancer is not None:
             raise RuntimeError(
                 "Explicit `position_ids` are not supported with context parallelism, "
@@ -719,6 +748,19 @@ class Transformer(nn.Module):
         # each block's attention; only the dense SDPA backend honors it.
         if and_mask is not None:
             all_block_kwargs["and_mask"] = move_to_device(and_mask, self.device)
+
+        if flex_attn_is_image is not None:
+            all_block_kwargs["flex_attn_is_image"] = move_to_device(flex_attn_is_image, self.device)
+        if flex_attn_subsegment_ids is not None:
+            all_block_kwargs["flex_attn_subsegment_ids"] = move_to_device(
+                flex_attn_subsegment_ids, self.device
+            )
+        if flex_attn_example_ids is not None:
+            all_block_kwargs["flex_attn_example_ids"] = move_to_device(
+                flex_attn_example_ids, self.device
+            )
+        if flex_attn_block_mask is not None:
+            all_block_kwargs["flex_attn_block_mask"] = flex_attn_block_mask
 
         # Explicit per-token RoPE positions (e.g. parallel branches that share an
         # overlapping position range). Passed through to every attention block.

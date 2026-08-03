@@ -5,19 +5,26 @@ Ports ``Tulu4FilteredConfig`` (``mm_olmo/olmo/data/academic_datasets.py``): mult
 the loss on assistant turns only — no image block, no ``<im_patch>`` tokens.
 
 The training pipeline treats these as image-less examples: ``images`` is an empty
-``(0, n_patches, patch_dim)`` array, so the collator/model see no image for them (and the
-batch as a whole uses ``images=None`` when nothing in it has an image).
+``(0, n_patches, patch_dim)`` array. The collator supplies a dummy zero crop so every
+rank still executes the same vision/connector collectives, but no image features are
+spliced into the token sequence.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
 
 from olmo_core.config import Config
-from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
+from olmo_core.nn.vision.molmo2_tokens import (
+    N_PATCHES_SQ,
+    PATCH_DIM,
+    POOL_H,
+    POOL_W,
+    Molmo2TokenIds,
+)
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
@@ -60,6 +67,10 @@ class Tulu4DatasetConfig(Config):
     """``tulu4_max_2304``: filtered multi-turn text SFT."""
 
     max_first_msg_len: int = 2304
+    max_sequence_length: int = 4096
+    """Maximum length of a complete tokenized conversation."""
+    token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    """Image and chat token IDs for the selected language-model tokenizer."""
     use_code: bool = False
     use_non_english: bool = False
     use_reasoning: bool = False
@@ -122,8 +133,6 @@ class Tulu4Dataset:
         <|im_start|>assistant\\n`` (non-loss) followed by ``{a}<|im_end|>`` (loss). We build
         it explicitly because the Molmo2/Qwen chat template doesn't emit an
         ``assistant_masks`` (no ``{% generation %}`` marker)."""
-        from olmo_core.nn.vision.molmo2_tokens import IM_END_TURN_ID
-
         tok = self.tokenizer
         ids: List[int] = [tok.bos_token_id or tok.eos_token_id]
         asst: List[float] = [0.0]
@@ -135,7 +144,7 @@ class Tulu4Dataset:
                 ),
                 add_special_tokens=False,
             )
-            a_ids = tok.encode(a, add_special_tokens=False) + [IM_END_TURN_ID]
+            a_ids = tok.encode(a, add_special_tokens=False) + [self.config.token_ids.im_end_turn_id]
             ids += u_ids + a_ids
             asst += [0.0] * len(u_ids) + [1.0] * len(a_ids)
         input_ids = np.array(ids, dtype=np.int64)
@@ -165,4 +174,11 @@ class Tulu4Dataset:
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi."},
             ]
-        return self._text_sequence(messages)
+        seq = self._text_sequence(messages)
+        max_len = self.config.max_sequence_length
+        if max_len and len(seq["input_ids"]) > max_len:
+            seq = {
+                key: value[:max_len] if value.ndim == 1 and len(value) > max_len else value
+                for key, value in seq.items()
+            }
+        return seq

@@ -171,6 +171,12 @@ class OLMoDDPOptimizerConfig(Config):
 
     max_grad_norm: float = 1.0
 
+    foreach_chunk_size: int = 600_000_000
+    """
+    Maximum number of local parameter elements updated by one foreach AdamW call. A smaller
+    value reduces transient optimizer memory at the cost of launching more foreach kernels.
+    """
+
     use_distributed: bool = True
     reset_optimizer_moments_on_load: bool = False
     """
@@ -271,7 +277,8 @@ class OLMoDDPOptimizerConfig(Config):
         # Treat no overrides as its own override group
         overriden_param_names = {name for go in group_overrides for name in go.params}
         default_override = OptimGroupOverride(
-            [name for name in all_params.keys() if name not in overriden_param_names], {}
+            [name for name in all_params.keys() if name not in overriden_param_names],
+            {},
         )
         # group_overrides.append(default_override)
         group_overrides.insert(0, default_override)  # to ensure default is first
@@ -510,6 +517,7 @@ class OLMoDDPOptimizer:
         ep_dp_group: Optional[ProcessGroup] = None,
         broadcast_bucket_mb: int = 32,
         do_not_shard_tensor_smaller_than: int = 4096,
+        foreach_chunk_size: int = 600_000_000,
         use_distributed: bool = True,
         check_nan_inf_grad: bool = True,
         reset_optimizer_moments_on_load: bool = False,
@@ -521,6 +529,9 @@ class OLMoDDPOptimizer:
         self.model_has_grad_accum_fp32_buffer = model_has_grad_accum_fp32_buffer
         self.use_distributed = use_distributed
         self.reset_optimizer_moments_on_load = reset_optimizer_moments_on_load
+        if foreach_chunk_size <= 0:
+            raise ValueError("foreach_chunk_size must be positive")
+        self.foreach_chunk_size = foreach_chunk_size
 
         def _add_defaults_to_param_group(pg: Dict[str, Any]) -> Dict[str, Any]:
             for k, v in defaults.items():
@@ -600,7 +611,10 @@ class OLMoDDPOptimizer:
                         f"expected {device}, got {param.device}"
                     )
                 # float16 params:
-                if param.type() in ["torch.cuda.HalfTensor", "torch.cuda.BFloat16Tensor"]:
+                if param.type() in [
+                    "torch.cuda.HalfTensor",
+                    "torch.cuda.BFloat16Tensor",
+                ]:
                     has_bf16_param = True
                 elif param.type() in ["torch.cuda.FloatTensor"]:
                     has_fp32_param = True
@@ -644,7 +658,9 @@ class OLMoDDPOptimizer:
                     ), "Expect fp32 param when should_maintain_fp32_main_param is False"
                     # wrap in DTensor so it works with rest of the code
                     self.states[f"{name}.main"] = DTensor.from_local(
-                        param.data.view(-1), device_mesh=device_mesh, placements=[Replicate()]
+                        param.data.view(-1),
+                        device_mesh=device_mesh,
+                        placements=[Replicate()],
                     )
 
                 # exp avg
@@ -1745,7 +1761,10 @@ class OLMoDDPOptimizer:
             self._copy_fp8_model_grads_to_main_grads(param_group, fp8_entries)
 
     def narrow_tensor(
-        self, orignal: torch.Tensor, device_mesh: DeviceMesh, placements: List[Placement]
+        self,
+        orignal: torch.Tensor,
+        device_mesh: DeviceMesh,
+        placements: List[Placement],
     ):
         assert len(placements) == 1, "Only support 1D sharding"
         assert device_mesh.ndim == 1, "Only support 1D device mesh"
@@ -1763,6 +1782,77 @@ class OLMoDDPOptimizer:
         local_shard = orignal.narrow(0, start, shard_size)
 
         return local_shard
+
+    @torch.no_grad()
+    def _copy_model_params_to_main_params(self, param_names: Optional[Set[str]] = None) -> None:
+        """Copy current model weights into optimizer-owned FP32 main parameters.
+
+        This is used after a model-only checkpoint load and after deliberately
+        reinitializing selected parameter rows. ``param_names`` refers to the
+        optimizer's stable named-parameter keys; ``None`` copies every parameter.
+        """
+        copied: Set[str] = set()
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if param_names is not None and name not in param_names:
+                    continue
+                assign_full_tensor_to_dtensor(
+                    dst=self.states[f"{name}.main"],
+                    src=param.data.float().reshape(-1),
+                )
+                copied.add(name)
+
+        if param_names is not None and copied != param_names:
+            missing = sorted(param_names - copied)
+            raise KeyError(f"Optimizer does not contain requested parameter(s): {missing}")
+        self._copy_main_params_to_mxfp8_weights()
+        self._refresh_rowwise_fp8_caches_from_model_params()
+
+    @torch.no_grad()
+    def _copy_model_param_rows_to_main_params(
+        self, param_names: Set[str], row_indices: List[int]
+    ) -> None:
+        """Copy selected rows of model parameters into their FP32 main parameters."""
+        copied: Set[str] = set()
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if name not in param_names:
+                    continue
+                if _is_fp8_weight_store(param) or param.ndim < 2:
+                    raise ValueError(f"Cannot copy rows for optimizer parameter '{name}'")
+
+                main_param = self.states[f"{name}.main"]
+                if main_param.ndim != 1 or main_param.numel() != param.numel():
+                    raise ValueError(
+                        f"Expected a flat optimizer main parameter for '{name}', got "
+                        f"shape {tuple(main_param.shape)}"
+                    )
+
+                _, global_offset = compute_local_shape_and_global_offset(
+                    main_param.shape,
+                    main_param.device_mesh,
+                    main_param.placements,
+                )
+                local_main = main_param.to_local().reshape(-1)
+                local_start = global_offset[0]
+                local_end = local_start + local_main.numel()
+                row_width = param.numel() // param.shape[0]
+                flat_param = param.data.reshape(-1)
+
+                for row in row_indices:
+                    row_start = row * row_width
+                    row_end = row_start + row_width
+                    overlap_start = max(row_start, local_start)
+                    overlap_end = min(row_end, local_end)
+                    if overlap_start < overlap_end:
+                        local_main[overlap_start - local_start : overlap_end - local_start].copy_(
+                            flat_param[overlap_start:overlap_end]
+                        )
+                copied.add(name)
+
+        if copied != param_names:
+            missing = sorted(param_names - copied)
+            raise KeyError(f"Optimizer does not contain requested parameter(s): {missing}")
 
     @torch._dynamo.disable()
     @maybe_nvtx_annotate("OLMoDDPOptimizer._copy_main_params_to_model_params")
@@ -2065,9 +2155,6 @@ class OLMoDDPOptimizer:
         step_factor = cast(torch.Tensor, step_factor)
         self._step_skipped = 1 - step_factor
 
-        # Allow overriding via attribute; default to X elements.
-        CHUNK_ELEMS = getattr(self, "_foreach_chunk_threshold", 600_000_000)
-
         for group in self.param_groups:
             # Per-chunk accumulators
             main_params: list[torch.Tensor] = []
@@ -2153,7 +2240,7 @@ class OLMoDDPOptimizer:
 
                 running_elems += self.states[f"{name}.main"].to_local().numel()
                 # Flush when we reach/exceed the threshold. It's OK to overshoot with the last add.
-                if running_elems >= CHUNK_ELEMS:
+                if running_elems >= self.foreach_chunk_size:
                     flush_chunk()
                     maybe_copy_back_16bit_states()
                     reset_chunk_buffers()
@@ -2245,7 +2332,9 @@ class OLMoDDPOptimizer:
                                 # state (e.g. copy instead of swap). This becomes reachable once the
                                 # train module checkpoints mid-run.
                                 empty_local = torch.empty(
-                                    0, dtype=state_local.dtype, device=state_local.device
+                                    0,
+                                    dtype=state_local.dtype,
+                                    device=state_local.device,
                                 )
                                 self.states[state_key] = DTensor.from_local(
                                     empty_local,

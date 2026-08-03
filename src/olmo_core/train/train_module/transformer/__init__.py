@@ -15,6 +15,8 @@ from .config import (
 from .ddp_train_module import OLMoDDPTrainModule
 from .moe_train_module import MoEV2TransformerTrainModule
 from .multimodal_train_module import (
+    MultimodalOLMoDDPTrainModule,
+    MultimodalOLMoDDPTrainModuleConfig,
     MultimodalTransformerTrainModule,
     MultimodalTransformerTrainModuleConfig,
 )
@@ -31,6 +33,8 @@ __all__ = [
     "TransformerTrainModuleConfig",
     "MultimodalTransformerTrainModule",
     "MultimodalTransformerTrainModuleConfig",
+    "MultimodalOLMoDDPTrainModule",
+    "MultimodalOLMoDDPTrainModuleConfig",
     "TransformerPipelineTrainModule",
     "TransformerPipelineTrainModuleConfig",
     "OLMoDDPTrainModule",

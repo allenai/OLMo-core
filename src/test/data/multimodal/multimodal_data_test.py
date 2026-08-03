@@ -163,10 +163,55 @@ def _img_example(n_text: int, n_crops: int, tag: int):
     )
 
 
+def _text_example(n_text: int = 4, tag: int = 3):
+    return dict(
+        input_ids=np.full(n_text, tag, dtype=np.int64),
+        labels=np.full(n_text, tag, dtype=np.int64),
+        loss_masks=np.ones(n_text, dtype=np.float32),
+        position_ids=np.arange(n_text, dtype=np.int64),
+        token_type_ids=np.zeros(n_text, dtype=np.int64),
+        images=np.zeros((0, 729, _PATCH_DIM), dtype=np.float32),
+        pooled_patches_idx=np.full((0, 4), -1, dtype=np.int64),
+    )
+
+
 def test_greedy_pack_indices():
     # next-fit: [3,3]->ok(6), +5 overflows 8 -> new group, +2 fits(7)
     assert greedy_pack_indices([3, 3, 5, 2], seq_len=8) == [[0, 1], [2, 3]]
     assert greedy_pack_indices([10], seq_len=8) == [[0]]  # over-length example alone
+
+
+def test_iter_packs_keeps_image_and_text_examples_separate():
+    image = _img_example(n_text=2, n_crops=1, tag=5)
+    text = _text_example(n_text=3, tag=7)
+    packs = list(iter_packs([image, text, image], seq_len=32))
+    assert len(packs) == 3
+    assert packs[0]["images"].shape[0] == 1
+    assert packs[1]["images"].shape[0] == 0
+    assert packs[2]["images"].shape[0] == 1
+
+
+def test_tulu_conversation_is_bounded_by_sequence_length():
+    from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
+
+    dataset = object.__new__(Tulu4Dataset)
+    dataset.config = Tulu4DatasetConfig(max_sequence_length=12)
+    dataset.tokenizer = _FakeTok()
+    dataset._data = [
+        {
+            "messages": [
+                {"role": "user", "content": "a long user message"},
+                {"role": "assistant", "content": "a long assistant response"},
+            ]
+        }
+    ]
+    example = dataset[0]
+    assert len(example["input_ids"]) == 12
+    assert all(
+        value.ndim != 1 or len(value) <= 12
+        for value in example.values()
+        if isinstance(value, np.ndarray)
+    )
 
 
 def test_pack_examples_concat_and_offsets():

@@ -12,6 +12,8 @@ A separate ``@pytest.mark.slow`` numerical-parity test that requires a real
 HF Molmo2 checkpoint can be added later (task follow-up).
 """
 
+import json
+from types import SimpleNamespace
 from typing import Dict
 
 import pytest
@@ -28,7 +30,10 @@ from olmo_core.nn.vision import (
 )
 from olmo_core.nn.vision.molmo2_loader import (
     Molmo2LoaderError,
+    load_molmo2_hf_vision_state_dict,
     molmo2_hf_state_dict_to_multimodal_lm,
+    molmo2_hf_state_dict_to_vision,
+    multimodal_config_from_molmo2_vision,
 )
 
 # ---------------------------------------------------------------------------
@@ -205,6 +210,35 @@ def _synthetic_hf_state_dict(cfg: MultimodalLMConfig) -> Dict[str, torch.Tensor]
     return sd
 
 
+def _synthetic_hf_vision_config(cfg: MultimodalLMConfig):
+    vis = cfg.vision
+    conn = cfg.connector
+    return SimpleNamespace(
+        vit_config=SimpleNamespace(
+            image_default_input_size=vis.image_default_input_size,
+            image_patch_size=vis.image_patch_size,
+            hidden_size=vis.image_emb_dim,
+            num_attention_heads=vis.image_num_heads,
+            num_key_value_heads=vis.image_num_key_value_heads,
+            num_hidden_layers=vis.image_num_layers,
+            head_dim=vis.image_head_dim,
+            intermediate_size=vis.image_mlp_dim,
+            hidden_act=vis.image_mlp_activations,
+            image_num_pos=vis.image_num_pos,
+            layer_norm_eps=vis.image_norm_eps,
+        ),
+        adapter_config=SimpleNamespace(
+            vit_layers=[-1],
+            num_attention_heads=conn.image_num_heads,
+            num_key_value_heads=conn.image_num_key_value_heads,
+            head_dim=conn.image_head_dim,
+            text_hidden_size=999,
+            pooling_attention_mask=conn.pooling_attention_mask,
+            intermediate_size=conn.mlp_hidden_size,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -226,6 +260,64 @@ def test_converter_produces_every_required_key():
     model_param_keys = {k for k, _ in model.named_parameters()}
     extra_param = extra & model_param_keys
     assert not extra_param, f"converter produced unexpected param keys: {extra_param}"
+
+
+def test_vision_only_converter_loads_strictly_and_excludes_connector():
+    cfg = _tiny_cfg()
+    model = MultimodalLM(cfg, init_device="cpu")
+    converted = molmo2_hf_state_dict_to_vision(_synthetic_hf_state_dict(cfg), cfg.vision)
+
+    model.vision.load_state_dict(converted, strict=True)
+    assert set(converted) == set(model.vision.state_dict())
+    assert all(not key.startswith(("lm.", "connector.")) for key in converted)
+
+
+def test_selective_hf_vision_loader_materializes_only_vision_shard(tmp_path, monkeypatch):
+    from safetensors.torch import save_file
+
+    vision_key = "model.vision_backbone.image_vit.patch_embedding.weight"
+    lm_key = "model.transformer.blocks.0.self_attn.att_proj.weight"
+    vision_shard = tmp_path / "vision.safetensors"
+    lm_shard = tmp_path / "lm.safetensors"
+    save_file({vision_key: torch.randn(2, 3)}, vision_shard)
+    save_file({lm_key: torch.randn(2, 3)}, lm_shard)
+    index_path = tmp_path / "model.safetensors.index.json"
+    index_path.write_text(
+        json.dumps({"weight_map": {vision_key: vision_shard.name, lm_key: lm_shard.name}})
+    )
+
+    requested = []
+
+    def fake_download(*, filename, **kwargs):
+        del kwargs
+        requested.append(filename)
+        return str(tmp_path / filename)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    loaded = load_molmo2_hf_vision_state_dict("test/model", revision="fixed")
+
+    assert set(loaded) == {vision_key}
+    assert requested == [index_path.name, vision_shard.name]
+
+
+def test_hybrid_config_retargets_connector_to_external_lm():
+    source_cfg = _tiny_cfg()
+    external_lm = TransformerConfig.olmo2_1M(
+        vocab_size=256,
+        attn_backend=AttentionBackendName.torch,
+    )
+    cfg = multimodal_config_from_molmo2_vision(
+        _synthetic_hf_vision_config(source_cfg),
+        external_lm,
+        image_patch_token_id=200,
+    )
+
+    assert cfg.lm is external_lm
+    assert cfg.connector.output_dim == external_lm.d_model
+    assert cfg.connector.output_dim != 999
+    assert cfg.image_patch_token_id == 200
+    assert cfg.vision.image_emb_dim == source_cfg.vision.image_emb_dim
+    assert cfg.vit_layers == (source_cfg.vision.image_num_layers - 1,)
 
 
 def test_converter_shapes_match_model_load():

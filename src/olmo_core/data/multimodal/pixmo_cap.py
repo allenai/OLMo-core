@@ -21,12 +21,13 @@ Three data sources are supported via ``dataset_path``:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
+from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .sequence_builder import build_branched_sequence
 
@@ -83,6 +84,8 @@ class PixMoCapDatasetConfig(Config):
     max_crops: int = 8
     max_sequence_length: int = 5248
     loss_token_weighting: str = "root_subsegments"
+    token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    """Image and chat token IDs for the selected language-model tokenizer."""
     fixed_prompt: Optional[str] = None
     """If set, always use this user prompt instead of sampling from the pools.
     Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
@@ -218,7 +221,9 @@ class PixMoCapDataset:
         ids: List[int] = [self._bos_id]
         if image_grid is not None:
             resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
-            ids = ids + build_image_token_ids(resized_h, resized_w, h, w)
+            ids = ids + build_image_token_ids(
+                resized_h, resized_w, h, w, token_ids=self.config.token_ids
+            )
         return ids
 
     def _user_turn_ids(self, prompt: str) -> List[int]:
@@ -279,24 +284,25 @@ class PixMoCapDataset:
             prefix_ids,
             branch_pairs,
             eos_id=self._eos_id,
+            image_token_ids=cfg.token_ids.image_token_ids,
             loss_token_weighting=cfg.loss_token_weighting,
         )
 
         # Truncate to max_sequence_length, never cutting an <im_patch> token.
         if len(seq["input_ids"]) > cfg.max_sequence_length:
-            seq = _truncate(seq, cfg.max_sequence_length)
+            seq = _truncate(seq, cfg.max_sequence_length, cfg.token_ids.im_patch_id)
 
         seq["images"] = images
         seq["pooled_patches_idx"] = pooled
         return seq
 
 
-def _truncate(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]:
+def _truncate(
+    seq: Dict[str, np.ndarray], max_len: int, image_patch_token_id: int
+) -> Dict[str, np.ndarray]:
     """Right-truncate all per-token fields to ``max_len`` (asserting no image token cut)."""
-    from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
-
     keep = max_len
-    if np.any(seq["input_ids"][keep:] == IM_PATCH_ID):
+    if np.any(seq["input_ids"][keep:] == image_patch_token_id):
         raise ValueError(
             "max_sequence_length too small: truncation would drop <im_patch> tokens "
             "(the image block must fit entirely within the sequence)."

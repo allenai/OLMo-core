@@ -4,6 +4,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
@@ -336,6 +337,7 @@ class VisionConnector(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported projector type: {cfg.projector_type}")
 
+        self._activation_checkpointing = False
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -346,6 +348,10 @@ class VisionConnector(nn.Module):
             self.projector.reset_parameters()
         elif isinstance(self.projector, nn.Linear):
             nn.init.normal_(self.projector.weight, std=self.cfg.initializer_range)
+
+    def apply_activation_checkpointing(self) -> None:
+        """Checkpoint pooling and projection during training to reduce activation memory."""
+        self._activation_checkpointing = True
 
     def forward(
         self,
@@ -395,7 +401,17 @@ class VisionConnector(nn.Module):
                 query = flat.sum(dim=1, keepdim=True) / denom.unsqueeze(-1).to(flat.dtype)
             else:
                 query = flat.mean(dim=1, keepdim=True)
-            pooled = self.pooling(query, flat, attn_mask=attn_mask)  # (B*n_pooled, 1, emb_dim)
+            if self._activation_checkpointing and self.training:
+                pooled = checkpoint(
+                    self.pooling,
+                    query,
+                    flat,
+                    attn_mask,
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+            else:
+                pooled = self.pooling(query, flat, attn_mask=attn_mask)
             pooled = pooled.reshape(B, n_pooled, cfg.image_emb_dim)
         elif cfg.pooling_type == ImagePoolingType.none:
             # No pooling: pool_size must be 1, just squeeze.
@@ -404,4 +420,11 @@ class VisionConnector(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported pooling type: {cfg.pooling_type}")
 
+        if self._activation_checkpointing and self.training:
+            return checkpoint(
+                self.projector,
+                pooled,
+                use_reentrant=False,
+                preserve_rng_state=False,
+            )
         return self.projector(pooled)

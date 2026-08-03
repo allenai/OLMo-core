@@ -30,7 +30,12 @@ from typing import Dict, Iterable, Iterator, List, Sequence
 
 import numpy as np
 
-__all__ = ["pack_examples", "greedy_pack_indices", "iter_packs"]
+__all__ = ["pack_examples", "greedy_pack_indices", "iter_packs", "example_has_images"]
+
+
+def example_has_images(example: Dict[str, np.ndarray]) -> bool:
+    """Return whether an example contains real image crops."""
+    return example["images"].shape[0] > 0
 
 
 def greedy_pack_indices(lengths: Sequence[int], seq_len: int) -> List[List[int]]:
@@ -149,7 +154,9 @@ def iter_packs(
     cur_len = 0
     for ex in examples:
         length = len(ex["input_ids"])
-        if cur and cur_len + length > seq_len:
+        if cur and (
+            cur_len + length > seq_len or example_has_images(ex) != example_has_images(cur[0])
+        ):
             yield pack_examples(cur)
             cur, cur_len = [], 0
         cur.append(ex)

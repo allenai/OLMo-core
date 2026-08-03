@@ -16,12 +16,13 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
+from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .grounding import (
     POINT_COUNT_PROMPTS,
@@ -52,13 +53,13 @@ def _build_user_turn(tokenizer, question: str) -> List[int]:
     return tokenizer.encode(text, add_special_tokens=False)
 
 
-def _image_prefix(tokenizer, image_grid) -> List[int]:
+def _image_prefix(tokenizer, image_grid, token_ids: Molmo2TokenIds) -> List[int]:
     """BOS + expanded image-token block (the shared prefix for a pointing example)."""
     from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
 
     resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
     bos = tokenizer.bos_token_id or tokenizer.eos_token_id
-    return [bos] + build_image_token_ids(resized_h, resized_w, h, w)
+    return [bos] + build_image_token_ids(resized_h, resized_w, h, w, token_ids=token_ids)
 
 
 def _build_example(
@@ -68,6 +69,7 @@ def _build_example(
     *,
     max_crops: int,
     loss_token_weighting: str,
+    token_ids: Molmo2TokenIds,
 ) -> Dict[str, np.ndarray]:
     """Preprocess the image and assemble a (possibly multi-branch) pointing example.
 
@@ -80,7 +82,7 @@ def _build_example(
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
         pil_image, dtype=torch.float32, device=torch.device("cpu"), max_crops=max_crops
     )
-    prefix = _image_prefix(tokenizer, image_grid)
+    prefix = _image_prefix(tokenizer, image_grid, token_ids)
     branches = [
         (_build_user_turn(tokenizer, q), tokenizer.encode(a, add_special_tokens=False))
         for q, a in branches_text
@@ -89,6 +91,7 @@ def _build_example(
         prefix,
         branches,
         eos_id=tokenizer.eos_token_id,
+        image_token_ids=token_ids.image_token_ids,
         loss_token_weighting=loss_token_weighting,
     )
     seq["images"] = images_t[0].numpy()
@@ -124,6 +127,7 @@ class PixMoPointsDatasetConfig(Config):
     max_total_points_per_example: int = 60
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
@@ -189,6 +193,7 @@ class PixMoPointsDataset:
             branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            token_ids=self.config.token_ids,
         )
 
 
@@ -202,6 +207,7 @@ class PixMoCountDatasetConfig(Config):
     counting: str = "both"  # "both" interleaves point_count (even) / pointing (odd)
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCountDataset":
@@ -240,6 +246,7 @@ class PixMoCountDataset:
             [(prompt, answer)],
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            token_ids=self.config.token_ids,
         )
 
 
@@ -252,6 +259,7 @@ class PixMoCountDataset:
 class CoSynPointDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
+    token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     seed: int = 0
 
     def build(self, tokenizer) -> "CoSynPointDataset":
@@ -282,4 +290,5 @@ class CoSynPointDataset:
             branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
+            token_ids=self.config.token_ids,
         )
