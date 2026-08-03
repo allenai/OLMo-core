@@ -22,7 +22,9 @@ import sys
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
+
+import yaml
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import (
@@ -367,6 +369,67 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     ).merge(overrides)
 
 
+def _load_beaker_test_config(
+    overrides: List[str],
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """Load a checked-in test profile without forwarding its path to the worker command."""
+    prefix = "--beaker-test-config="
+    profile_args = [value for value in overrides if value.startswith(prefix)]
+    if len(profile_args) > 1:
+        raise ValueError("At most one --beaker-test-config may be supplied")
+    if not profile_args:
+        return None, overrides
+
+    profile_path = Path(profile_args[0][len(prefix) :])
+    with profile_path.open() as f:
+        profile = yaml.safe_load(f)
+    if not isinstance(profile, dict) or profile.get("version") != 1:
+        raise ValueError(f"Invalid Beaker test config {profile_path}: expected version: 1")
+    unknown = set(profile) - {"version", "name", "description", "launch", "overrides"}
+    if unknown:
+        raise ValueError(f"Unknown keys in Beaker test config {profile_path}: {sorted(unknown)}")
+    profile_overrides = profile.get("overrides", [])
+    if not isinstance(profile_overrides, list) or not all(
+        isinstance(value, str) and value.startswith("--") for value in profile_overrides
+    ):
+        raise ValueError(f"{profile_path}: overrides must be a list of '--key=value' strings")
+    cli_overrides = [value for value in overrides if not value.startswith(prefix)]
+    return profile, [*profile_overrides, *cli_overrides]
+
+
+def _apply_beaker_test_config(
+    config: ExperimentConfig, profile: Optional[Dict[str, Any]]
+) -> ExperimentConfig:
+    """Apply launch-only fields from a checked-in Beaker test profile."""
+    if profile is None:
+        return config
+    launch = profile.get("launch", {})
+    if not isinstance(launch, dict):
+        raise ValueError("Beaker test config 'launch' must be a mapping")
+    unknown = set(launch) - {
+        "num_nodes",
+        "num_gpus",
+        "workspace",
+        "cluster",
+        "budget",
+        "priority",
+        "min_runtime",
+    }
+    if unknown:
+        raise ValueError(f"Unknown Beaker test launch keys: {sorted(unknown)}")
+
+    config.launch.num_nodes = int(launch.get("num_nodes", config.launch.num_nodes))
+    config.launch.num_gpus = int(launch.get("num_gpus", config.launch.num_gpus))
+    config.launch.workspace = launch.get("workspace")
+    cluster = launch.get("cluster")
+    config.launch.clusters = [] if cluster is None else [str(cluster)]
+    config.launch.budget = launch.get("budget", config.launch.budget)
+    config.launch.priority = str(launch.get("priority", config.launch.priority))
+    config.launch.min_runtime = launch.get("min_runtime", config.launch.min_runtime)
+    config.launch.description = profile.get("description")
+    return config
+
+
 def _load_tokenizer(
     identifier: str = TOKENIZER_ID,
     cache_dir: str = HF_CACHE_DIR,
@@ -533,6 +596,11 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
+    if not config.launch.workspace or not config.launch.clusters:
+        raise RuntimeError(
+            "Beaker workspace and cluster are unset. Fill the approved target in the test config "
+            "before launching; no experiment was submitted."
+        )
     config.launch.launch(follow=True)
 
 
@@ -552,6 +620,10 @@ Examples
 
 Print the config:
 › python {sys.argv[0]} dry_run molmo2-stage1
+
+Print a submission-safe two-node test config:
+› python {sys.argv[0]} dry_run molmo2-stage1-gate \
+      --beaker-test-config=configs/vision_moe/stage1_ep8_2node_real_1step.yaml
 
 Local synthetic smoke test:
 › torchrun --nproc-per-node=8 {sys.argv[0]} train smoke \\
@@ -575,7 +647,9 @@ Launch on Beaker:
     else:
         prepare_cli_environment()
 
+    beaker_test_config, overrides = _load_beaker_test_config(overrides)
     config = build_config(script, run_name, overrides)
+    config = _apply_beaker_test_config(config, beaker_test_config)
     log.info(config)
 
     if cmd == "train":

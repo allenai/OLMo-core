@@ -151,6 +151,7 @@ class TestTextOnlyForward:
 
 class TestImageForward:
     def setup_method(self):
+        torch.manual_seed(0)
         self.cfg = _tiny_multimodal_cfg()
         self.model = self.cfg.build(init_device="cpu")
         self.model.eval()
@@ -167,6 +168,24 @@ class TestImageForward:
         out_text = self.model(input_ids)
         out_img = self.model(input_ids, images=images, pooled_patches_idx=idx)
         assert not torch.allclose(out_text, out_img)
+
+    def test_cached_image_features_match_direct_forward(self):
+        input_ids, images, idx = _make_inputs(batch=2, seq_len=16)
+        encoded = self.model.encode_images(images, idx)
+        direct = self.model(input_ids, images=images, pooled_patches_idx=idx)
+        cached = self.model(input_ids, encoded_image_features=encoded)
+        torch.testing.assert_close(cached, direct)
+
+    def test_images_and_cached_features_are_mutually_exclusive(self):
+        input_ids, images, idx = _make_inputs(batch=1, seq_len=16)
+        encoded = self.model.encode_images(images, idx)
+        with pytest.raises(ValueError, match="either `images` or `encoded_image_features`"):
+            self.model(
+                input_ids,
+                images=images,
+                pooled_patches_idx=idx,
+                encoded_image_features=encoded,
+            )
 
     def test_missing_idx_raises(self):
         input_ids, images, _ = _make_inputs(batch=1, seq_len=16)

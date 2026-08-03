@@ -304,6 +304,11 @@ class BeakerLaunchConfig(Config):
     If the job should be preemptible.
     """
 
+    min_runtime: str | None = None
+    """
+    Minimum guaranteed runtime before the job can be preempted, e.g. ``"1h"``.
+    """
+
     retries: int | None = None
     """
     The number of times to retry the experiment if it fails.
@@ -638,7 +643,8 @@ class BeakerLaunchConfig(Config):
             workspace=self.workspace,
             budget=self.budget,
             priority=self.priority,
-            preemptible=self.preemptible,
+            preemptible=self.preemptible if self.min_runtime is None else None,
+            min_runtime=self.min_runtime,
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),

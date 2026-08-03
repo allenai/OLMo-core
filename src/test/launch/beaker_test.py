@@ -2,7 +2,22 @@ import os
 
 import pytest
 
-from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage, get_beaker_client
+
+
+def test_min_runtime_uses_new_gantry_field(monkeypatch):
+    config = BeakerLaunchConfig(
+        name="test",
+        cmd=["echo", "ok"],
+        allow_dirty=True,
+        min_runtime="1h",
+    )
+    monkeypatch.setattr(config, "_resolve_beaker_image", lambda: "image")
+
+    recipe, _ = config._build_recipe(object(), follow=False, slack_notifications=False)
+
+    assert recipe.min_runtime == "1h"
+    assert recipe.preemptible is None
 
 
 def test_get_beaker_client_caching():

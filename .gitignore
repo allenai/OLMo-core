@@ -8,6 +8,7 @@ dist/
 pip-wheel-metadata/
 private/
 tmp/
+src/olmo_core/kernels/_symm_mem_vdev2d_ext_gpu*.so
 
 # dev tools
 

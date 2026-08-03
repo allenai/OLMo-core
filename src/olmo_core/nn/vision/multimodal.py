@@ -250,11 +250,34 @@ class MultimodalLM(nn.Module):
 
         return self.connector(features, pooled_patches_idx)
 
+    def encode_images(
+        self,
+        images: torch.Tensor,
+        pooled_patches_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode and compact image features for reuse across autoregressive forwards."""
+        device = self.lm.device
+        vision_dtype = next(self.vision.parameters()).dtype
+        images = images.to(device=device, dtype=vision_dtype)
+        pooled_patches_idx = pooled_patches_idx.to(device)
+        image_features = self._encode_images(images, pooled_patches_idx)
+
+        # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
+        # sync before the LM forward so all ranks enter its collectives together.
+        if is_distributed():
+            barrier()
+
+        # A row is padding iff all its patch indices are -1. Selecting in row-major
+        # order preserves alignment with the <im_patch> tokens in each sequence.
+        valid_rows = (pooled_patches_idx >= 0).any(dim=-1)
+        return image_features[valid_rows]
+
     def forward(
         self,
         input_ids: torch.Tensor,
         images: Optional[torch.Tensor] = None,
         pooled_patches_idx: Optional[torch.Tensor] = None,
+        encoded_image_features: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         loss_masks: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
@@ -277,6 +300,9 @@ class MultimodalLM(nn.Module):
             shape ``(B, n_pooled, pool_size)``. Required when *images* is not
             ``None``. ``n_pooled`` must equal the number of
             ``<im_patch>`` tokens per sequence.
+        :param encoded_image_features: Optional output of :meth:`encode_images`. This
+            avoids rerunning the frozen vision tower during no-KV-cache autoregressive
+            decoding. It is mutually exclusive with ``images``.
         :param labels: Target token IDs, shape ``(B, seq_len)``.
         :param token_type_ids: Optional ``(B, seq_len)`` tensor marking image tokens
             (non-zero) vs. text tokens (zero). When provided, image tokens attend to
@@ -325,15 +351,15 @@ class MultimodalLM(nn.Module):
         if self.lm.embedding_norm is not None:
             h = self.lm.embedding_norm(h)
 
+        if images is not None and encoded_image_features is not None:
+            raise ValueError("Pass either `images` or `encoded_image_features`, not both")
+
+        image_features = encoded_image_features
         if images is not None:
             if pooled_patches_idx is None:
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
 
-            vision_dtype = next(self.vision.parameters()).dtype
-            images = images.to(device=device, dtype=vision_dtype)
-            pooled_patches_idx = pooled_patches_idx.to(device)
-
-            image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
+            image_features = self.encode_images(images, pooled_patches_idx)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -343,21 +369,9 @@ class MultimodalLM(nn.Module):
             # across ranks regardless of how text-only vs image examples are distributed.
             h = h + 0.0 * image_features.sum().to(h.dtype)
 
-            # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
-            # sync before the LM FSDP forward so all-gather collectives stay aligned.
-            if is_distributed():
-                barrier()
-
-            # Keep only valid pooled rows (a row is padding iff *all* its patch
-            # indices are -1, e.g. added by a batch collator to equalize ``n_pooled``
-            # across examples). Selecting in row-major order keeps each example's
-            # features aligned with its ``<im_patch>`` positions, so batches with a
-            # variable number of image tokens per example work. For unpadded / B=1
-            # inputs every row is valid and this is a no-op.
-            valid_rows = (pooled_patches_idx >= 0).any(dim=-1)  # (B, n_pooled)
-            image_features = image_features[valid_rows]  # (total_valid, d)
-
+        if image_features is not None:
             # Splice into LM embeddings at every <im_patch> position.
+            image_features = image_features.to(device)
             is_image_patch = input_ids.view(-1) == self.cfg.image_patch_token_id
             n_patches_in_seq = int(is_image_patch.sum())
             n_features = image_features.shape[0]

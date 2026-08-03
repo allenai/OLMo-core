@@ -1,0 +1,25 @@
+version: 1
+name: stage1-ep8-2node-synthetic-1step
+description: >-
+  One optimizer-step Stage-1 topology and checkpoint-load gate on synthetic multimodal data.
+  Runs on two B300 nodes in Holmes with an urgent one-hour preemption guarantee.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 1h
+overrides:
+  - --dataset.dataset_path=synthetic
+  - --dataset.synthetic_size=64
+  - --pointing_rate=0.0
+  - --nlp_rate=0.0
+  - --trainer.max_duration.value=1
+  - --trainer.max_duration.unit=steps
+  - --trainer.callbacks.wandb.enabled=false
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=1
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --trainer.callbacks.checkpointer.max_checkpoints=1

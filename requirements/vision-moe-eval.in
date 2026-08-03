@@ -1,0 +1,17 @@
+-e .[eval,transformers]
+lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@cb45ac4d4a667ea5ef89c7a148bff69b3489b981
+torch==2.10.0
+torchvision==0.25.0
+transformers==5.4.0
+
+# Native s002 MoE evaluation uses the same EP kernels as training.
+grouped-gemm @ git+https://github.com/tgale96/grouped_gemm.git@f1429a3c44c98f7912aa4b00125144cdf4e7fdb2
+nvidia-nvshmem-cu12==3.4.5
+torch-c-dlpack-ext==0.1.5
+transformer-engine==2.9.0
+transformer-engine-cu12==2.9.0
+# Runtime dependencies of the manually built Transformer Engine Torch binding.
+onnx==1.22.0
+onnxscript==0.7.1
+cmake==4.4.0
+ninja==1.13.0
