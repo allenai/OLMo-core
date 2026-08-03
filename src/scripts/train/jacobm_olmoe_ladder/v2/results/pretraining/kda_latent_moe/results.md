@@ -1,6 +1,6 @@
 # KDA LatentMoE paper-matched pretraining
 
-Generated: `2026-08-01T18:57:50.125920+00:00`
+Generated: `2026-08-03T00:42:46.523064+00:00`
 
 Metric: final `250M`-token mean training CE. The best-of plot uses observed finished points only after a curve is bracketed.
 
@@ -31,5 +31,6 @@ Metric: final `250M`-token mean training CE. The best-of plot uses observed fini
 | LatentMoE L=2 (paper-matched) | 1p2b | Cx1 | 0.0004 | 2.213475 | 23.208B | [gh7zj1n8](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/gh7zj1n8) |
 | LatentMoE L=2 (paper-matched) | 1p2b | Cx2 | 0.0006 | 2.131599 | 46.415B | [5n8ngak5](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/5n8ngak5) |
 | LatentMoE L=2 (paper-matched) | 1p2b | Cx4 | 0.0003 | 2.051686 | 92.830B | [upmkyxzv](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upmkyxzv) |
+| LatentMoE L=2 (paper-matched) | 1p2b | Cx8 | 0.0004 | 1.985209 | 185.659B | [toag263k](https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/toag263k) |
 
 Uninitialized planned W&B runs: `0`.

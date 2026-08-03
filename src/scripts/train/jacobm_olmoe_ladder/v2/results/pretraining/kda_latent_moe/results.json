@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-01T18:57:50.125920+00:00",
+  "generated_at": "2026-08-03T00:42:46.523064+00:00",
   "project": "ai2-llm/jacobm-olmoe-ladder",
   "selection_metric": "mean train/CE loss over the final 250M tokens",
   "selection_rule": "LatentMoE enters the best-of plot only after its 275M Cx curve brackets a valid quadratic minimum. The plotted point remains the best observed finished LR; the fitted prediction is diagnostic only.",
@@ -1280,6 +1280,27 @@
       "deduplicated_samples": 0,
       "history_source": "wandb",
       "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 1.9852093207011432,
+      "state": "finished",
+      "tokens_b": 185.659293696,
+      "run_id": "toag263k",
+      "name": "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/toag263k",
+      "segment_run_ids": [
+        "toag263k"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
     }
   ],
   "results": [
@@ -1787,6 +1808,27 @@
       "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/upmkyxzv",
       "segment_run_ids": [
         "upmkyxzv"
+      ],
+      "token_resets": 0,
+      "deduplicated_samples": 0,
+      "history_source": "wandb",
+      "history_source_sha256": null
+    },
+    {
+      "model": "1p2b",
+      "variant": "geometry_kda_ev2_neg_nope_gated_latentmoe_l2_paper",
+      "variant_label": "LatentMoE L=2 (paper-matched)",
+      "cx": 8,
+      "lr": 0.0004,
+      "lr_tag": "0.0004",
+      "loss": 1.9852093207011432,
+      "state": "finished",
+      "tokens_b": 185.659293696,
+      "run_id": "toag263k",
+      "name": "pt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-lr4e-4-r1",
+      "url": "https://wandb.ai/ai2-llm/jacobm-olmoe-ladder/runs/toag263k",
+      "segment_run_ids": [
+        "toag263k"
       ],
       "token_resets": 0,
       "deduplicated_samples": 0,

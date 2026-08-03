@@ -325,10 +325,11 @@ KDA parent. The 810M Cx2 run subsequently finished at `2.223199`, versus
 `2.241873` for its KDA parent. The 480M Cx4 run then finished at `2.270144`,
 versus `2.291179` for its KDA parent. The 480M Cx8, 810M Cx4, and 810M Cx8
 cells have since finished at `2.203397`, `2.139766`, and `2.074273`,
-respectively. At the 2026-08-01 18:49 UTC audit, 1.2B Cx1/Cx2/Cx4 are also
-complete at `2.213475`, `2.131599`, and `2.051686`; only 1.2B Cx8 remains
-running. The Cx1/Cx2/Cx4 Beaker workers reported teardown SIGSEGVs only after
-their complete token budgets and strict final-250M histories were recorded.
+respectively. The 1.2B Cx1/Cx2/Cx4/Cx8 cells are now all complete at
+`2.213475`, `2.131599`, `2.051686`, and `1.985209`. The Cx8 result is
+`0.014527` lower than its non-latent KDA parent (`1.999736`). The 1.2B Beaker
+workers reached their complete token budgets and recorded intact strict
+final-250M histories despite post-training worker teardown failures.
 These scale results flow into
 [`plot_kda_latent_moe.py`](plot_kda_latent_moe.py) and the shared best-of plot.
 
