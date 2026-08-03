@@ -26,7 +26,7 @@ per example (and hence for the pack).
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Iterator, List, Sequence
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 
@@ -38,7 +38,18 @@ def example_has_images(ex: Dict[str, np.ndarray]) -> bool:
     return ex["images"].shape[0] > 0
 
 
-def greedy_pack_indices(lengths: Sequence[int], seq_len: int) -> List[List[int]]:
+def example_crop_count(ex: Dict[str, np.ndarray]) -> int:
+    """Number of image crops in an example (0 for text-only)."""
+    return int(ex["images"].shape[0])
+
+
+def greedy_pack_indices(
+    lengths: Sequence[int],
+    seq_len: int,
+    *,
+    crop_counts: Optional[Sequence[int]] = None,
+    max_crops_per_pack: Optional[int] = None,
+) -> List[List[int]]:
     """Greedily group example indices so each group's total length ``<= seq_len``.
 
     First-fit-decreasing is overkill here; a simple next-fit over the given order keeps the
@@ -46,18 +57,31 @@ def greedy_pack_indices(lengths: Sequence[int], seq_len: int) -> List[List[int]]
 
     :param lengths: real token length of each example, in the order they should be packed.
     :param seq_len: maximum packed length.
+    :param crop_counts: per-example crop counts (required when ``max_crops_per_pack`` is set).
+    :param max_crops_per_pack: maximum total crops in one pack (mm_olmo ``image_weight`` parity).
     :returns: a list of groups, each a list of indices into ``lengths``.
     """
+    if max_crops_per_pack is not None and crop_counts is None:
+        raise ValueError("crop_counts is required when max_crops_per_pack is set")
     groups: List[List[int]] = []
     cur: List[int] = []
     cur_len = 0
+    cur_crops = 0
     for i, n in enumerate(lengths):
         n = int(n)
-        if cur and cur_len + n > seq_len:
+        crops = int(crop_counts[i]) if crop_counts is not None else 0
+        over_tokens = cur and cur_len + n > seq_len
+        over_crops = (
+            max_crops_per_pack is not None
+            and cur
+            and cur_crops + crops > max_crops_per_pack
+        )
+        if over_tokens or over_crops:
             groups.append(cur)
-            cur, cur_len = [], 0
+            cur, cur_len, cur_crops = [], 0, 0
         cur.append(i)
         cur_len += n
+        cur_crops += crops
     if cur:
         groups.append(cur)
     return groups
@@ -101,6 +125,9 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
         axis=0,
     )
 
+    if any("_source_name" in ex for ex in examples):
+        out["pack_source_names"] = [ex.get("_source_name", "?") for ex in examples]
+
     # Images: concatenate crops; offset each example's pooled indices by the running
     # crop-patch count so they index into the concatenated (total_crops * n_patches) axis.
     images = [ex["images"] for ex in examples]
@@ -135,6 +162,8 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
 def iter_packs(
     examples: Iterable[Dict[str, np.ndarray]],
     seq_len: int,
+    *,
+    max_crops_per_pack: Optional[int] = None,
 ) -> Iterator[Dict[str, np.ndarray]]:
     """Greedily next-fit-pack a stream of example dicts into ``<= seq_len`` sequences.
 
@@ -149,21 +178,29 @@ def iter_packs(
     :param examples: iterator of per-example dicts (the heavy loading happens upstream, so it
         can be prefetched off the training thread).
     :param seq_len: target packed length.
+    :param max_crops_per_pack: cap total image crops per pack (mm_olmo crop-budget parity).
     """
     cur: List[Dict[str, np.ndarray]] = []
     cur_len = 0
+    cur_crops = 0
     for ex in examples:
         length = len(ex["input_ids"])
+        crops = example_crop_count(ex)
         # Do not mix text-only NLP (e.g. Tulu4) with image-bearing examples in one pack:
         # head-truncating a cross-modal pack can orphan <im_patch> tokens from their
         # pooled rows (mm_olmo uses separate packing constraints when NLP is enabled).
-        if cur and (
-            cur_len + length > seq_len
-            or example_has_images(ex) != example_has_images(cur[0])
-        ):
+        over_tokens = cur and cur_len + length > seq_len
+        over_crops = (
+            max_crops_per_pack is not None
+            and cur
+            and example_has_images(cur[0])
+            and cur_crops + crops > max_crops_per_pack
+        )
+        if cur and (over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])):
             yield pack_examples(cur)
-            cur, cur_len = [], 0
+            cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
         cur_len += length
+        cur_crops += crops
     if cur:
         yield pack_examples(cur)

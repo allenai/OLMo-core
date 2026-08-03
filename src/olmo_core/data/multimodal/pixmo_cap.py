@@ -2,9 +2,9 @@
 
 A dependency-free (no ``mm_olmo``) map-style :class:`torch.utils.data.Dataset` that
 turns PixMoCap image-caption examples into packed Molmo2 training sequences. Each
-example produces a shared prefix (BOS + image block) that branches into one or more
-``(user turn, assistant response)`` annotations (a long caption and/or a spoken
-transcript), assembled by
+example produces a shared prefix (qwen3 user header + image block) that branches into
+one or more ``(user turn, assistant response)`` annotations (a long caption and/or a
+spoken transcript), assembled by
 :func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Following
 mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn is prefixed with
 a ``"<style>[ <length-bucket>]:"`` tag derived from that branch's response length, so the
@@ -28,6 +28,7 @@ import numpy as np
 
 from olmo_core.config import Config
 
+from .qwen3_layout import branch_context_ids, image_prefix_ids
 from .sequence_builder import build_branched_sequence
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
@@ -129,7 +130,6 @@ class PixMoCapDataset:
             self._hf = ds[config.split] if config.split in ds else ds
 
         self._eos_id = tokenizer.eos_token_id
-        self._bos_id = tokenizer.bos_token_id or tokenizer.eos_token_id
 
     # -- length -----------------------------------------------------------------
 
@@ -216,25 +216,6 @@ class PixMoCapDataset:
         pool = TRANSCRIPT_PROMPTS if style == TRANSCRIPT_STYLE else CAPTION_PROMPTS
         return pool[rng.randint(len(pool))]
 
-    def _image_prefix_ids(self, image_grid: Optional[np.ndarray]) -> List[int]:
-        """The shared prefix every branch attends: BOS + image block (no user turn)."""
-        from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
-
-        ids: List[int] = [self._bos_id]
-        if image_grid is not None:
-            resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
-            ids = ids + build_image_token_ids(resized_h, resized_w, h, w)
-        return ids
-
-    def _user_turn_ids(self, prompt: str) -> List[int]:
-        """A branch's own user turn + assistant header (``<|im_start|>user … assistant\\n``)."""
-        text = self.tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt}],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        return self.tokenizer.encode(text, add_special_tokens=False)
-
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
         if self.config.mode == "sft_demo":
             return self._getitem_sft_demo(index)
@@ -265,11 +246,10 @@ class PixMoCapDataset:
         images = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
         pooled = pooling_t[0].numpy()  # (n_pool, pool_size)
 
-        # Shared prefix = BOS + image block; each (caption / transcript) branch carries its
-        # OWN user turn (mm_olmo branches right after the image), prefixed with the
-        # style_and_length_v2 length tag so each branch conditions on its own response length.
-        prefix_ids = self._image_prefix_ids(image_grid)
-        branch_pairs: List[Tuple[List[int], List[int]]] = []
+        # Shared prefix = qwen3 user header + image block; each branch carries its own
+        # user turn (full header when multi-branch, suffix-only when single-branch).
+        prefix_ids = image_prefix_ids(self.tokenizer, image_grid)
+        branch_specs: List[Tuple[str, List[int]]] = []
         for style, text in self._select_branches(row, rng):
             if cfg.fixed_prompt is not None:
                 prompt = cfg.fixed_prompt
@@ -279,9 +259,19 @@ class PixMoCapDataset:
                     prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
                 else:
                     prompt = base_prompt
-            context_ids = self._user_turn_ids(prompt)
             response_ids = self.tokenizer.encode(text, add_special_tokens=False)
-            branch_pairs.append((context_ids, response_ids))
+            branch_specs.append((prompt, response_ids))
+
+        multi_branch = len(branch_specs) > 1
+        branch_pairs = [
+            (
+                branch_context_ids(
+                    self.tokenizer, prompt, branch_index=i, multi_branch=multi_branch
+                ),
+                response_ids,
+            )
+            for i, (prompt, response_ids) in enumerate(branch_specs)
+        ]
 
         seq = build_branched_sequence(
             prefix_ids,
@@ -309,14 +299,15 @@ class PixMoCapDataset:
             "text": row.get("caption", ""),
         }
         assert self._sft_formatter is not None
-        turns = self._sft_formatter.format_turns(formatted, index=index)
+        rng = np.random.RandomState(self.config.seed + index)
+        turns = self._sft_formatter.format_turns(formatted, index=index, rng=rng)
         return encode_sft_example(
             self.tokenizer,
             pil,
             turns,
             max_crops=self.config.max_crops,
             loss_token_weighting="root_subsegments_root_tokens",
-            seed=self.config.seed + index,
+            shuffle_rng=rng,
         )
 
 

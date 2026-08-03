@@ -55,9 +55,9 @@ def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str
 
 @dataclass
 class Tulu4DatasetConfig(Config):
-    """``tulu4_max_2304``: filtered multi-turn text SFT."""
+    """Tulu4 filtered text SFT (matches mm_olmo ``get_dataset('tulu4')`` filter)."""
 
-    max_first_msg_len: int = 2304
+    max_first_msg_len: int = 4096
     max_sequence_length: int = 4096
     """Truncate the full tokenized conversation to this length (Tulu can exceed
     ``max_first_msg_len`` when it has many turns)."""
@@ -120,15 +120,17 @@ class Tulu4Dataset:
         """Tokenize the conversation turn-by-turn, with loss on assistant turns only.
 
         Each turn is the molmo2 chat layout: ``<|im_start|>user\\n{u}<|im_end|>\\n
-        <|im_start|>assistant\\n`` (non-loss) followed by ``{a}<|im_end|>`` (loss). We build
+        <|im_start|>assistant\\n`` (non-loss) followed by ``{a}`` (loss). We build
         it explicitly because the Molmo2/Qwen chat template doesn't emit an
         ``assistant_masks`` (no ``{% generation %}`` marker)."""
         from olmo_core.nn.vision.molmo2_tokens import IM_END_TURN_ID
 
         tok = self.tokenizer
-        ids: List[int] = [tok.bos_token_id or tok.eos_token_id]
-        asst: List[float] = [0.0]
-        for ix in range(0, len(messages) - 1, 2):
+        ids: List[int] = []
+        asst: List[float] = []
+        segment_ends: List[bool] = []
+        n_turns = (len(messages) - 1) // 2
+        for turn_ix, ix in enumerate(range(0, len(messages) - 1, 2)):
             u, a = messages[ix]["content"], messages[ix + 1]["content"]
             u_ids = tok.encode(
                 tok.apply_chat_template(
@@ -136,17 +138,28 @@ class Tulu4Dataset:
                 ),
                 add_special_tokens=False,
             )
-            a_ids = tok.encode(a, add_special_tokens=False) + [IM_END_TURN_ID]
+            a_ids = tok.encode(a, add_special_tokens=False)
+            if turn_ix < n_turns - 1:
+                a_ids = a_ids + [IM_END_TURN_ID]
             ids += u_ids + a_ids
             asst += [0.0] * len(u_ids) + [1.0] * len(a_ids)
+            seg_end = [False] * (len(u_ids) + len(a_ids))
+            seg_end[-1] = True
+            segment_ends += seg_end
+
         input_ids = np.array(ids, dtype=np.int64)
         asst_mask = np.array(asst, dtype=np.float32)
+        seg_ends = np.array(segment_ends, dtype=bool)
+        n_assistant = int(asst_mask.sum())
+        if n_assistant:
+            asst_mask *= 2.0 / np.sqrt(n_assistant + 1)
 
         labels = np.zeros_like(input_ids)
         labels[:-1] = input_ids[1:]
-        # Loss masks aligned to labels (predict-next): shift the assistant mask left by one.
+        labels[seg_ends] = tok.eos_token_id
         loss_masks = np.zeros_like(asst_mask)
         loss_masks[:-1] = asst_mask[1:]
+        loss_masks[seg_ends] = asst_mask[seg_ends]
         return {
             "input_ids": input_ids,
             "labels": labels,

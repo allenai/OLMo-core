@@ -178,12 +178,12 @@ def _text_example(n_text=4, tag=3):
 
 def test_iter_packs_homogeneous_image_text():
     """Text-only and image examples must not share a pack (stage-1 NLP + vision)."""
-    img = _img_example(n_text=2, n_crops=1, tag=5)  # len 4
+    img = _img_example(n_text=2, n_crops=1, tag=5)  # len 3
     txt = _text_example(n_text=3, tag=9)  # len 3
     packs = list(iter_packs([txt, img, txt], seq_len=16))
     assert len(packs) == 3
     assert len(packs[0]["input_ids"]) == 3
-    assert len(packs[1]["input_ids"]) == 4  # image example alone
+    assert len(packs[1]["input_ids"]) == 3  # image example alone
     assert len(packs[2]["input_ids"]) == 3
 
 
@@ -193,10 +193,35 @@ def test_greedy_pack_indices():
     assert greedy_pack_indices([10], seq_len=8) == [[0]]  # over-length example alone
 
 
+def test_greedy_pack_indices_crop_budget():
+    # token budget allows all four, crop budget splits after two crops.
+    assert greedy_pack_indices(
+        [4, 4, 4, 4],
+        seq_len=20,
+        crop_counts=[1, 1, 1, 1],
+        max_crops_per_pack=2,
+    ) == [[0, 1], [2, 3]]
+
+
+def test_iter_packs_crop_budget():
+    """Packed sequences must not exceed max_crops_per_pack."""
+    exs = [_img_example(n_text=2, n_crops=2, tag=i) for i in range(4)]  # len 4 each
+    packs = list(iter_packs(exs, seq_len=32, max_crops_per_pack=4))
+    assert len(packs) == 2
+    for pack in packs:
+        assert pack["images"].shape[0] <= 4
+    assert packs[0]["images"].shape[0] == 4
+    assert packs[1]["images"].shape[0] == 4
+
+
 def test_pack_examples_concat_and_offsets():
     a = _img_example(n_text=3, n_crops=1, tag=5)  # len 4, 1 crop
     b = _img_example(n_text=2, n_crops=2, tag=7)  # len 4, 2 crops
+    a["_source_name"] = "pixmo_points_train"
+    b["_source_name"] = "pixmo_count_train"
     packed = pack_examples([a, b])
+
+    assert packed["pack_source_names"] == ["pixmo_points_train", "pixmo_count_train"]
 
     assert packed["input_ids"].tolist() == [1, 5, 5, 5, 1, 1, 7, 7]
     assert packed["position_ids"].tolist() == [
@@ -283,8 +308,12 @@ class _FakeTok:
 
     def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
         prompt = messages[0]["content"]
-        self.prompts.append(prompt)
-        return f"<|user|>{prompt}<|assistant|>"
+        if prompt:
+            self.prompts.append(prompt)
+        text = f"<|im_start|>user\n{prompt}<|im_end|>\n"
+        if add_generation_prompt:
+            text += "<|im_start|>assistant\n"
+        return text
 
     def encode(self, text, add_special_tokens=False):
         return [(ord(c) % 90) + 10 for c in text]

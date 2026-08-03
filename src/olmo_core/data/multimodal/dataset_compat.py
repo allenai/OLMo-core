@@ -35,20 +35,23 @@ def _has_list_feature(path: Path) -> bool:
 
 
 def _load_arrow_split(split_dir: Path):
-    import pyarrow as pa
-    from datasets import Dataset
+    from datasets import Dataset, concatenate_datasets
 
     _patch_list_feature_type()
     arrow_files = sorted(glob.glob(str(split_dir / "*.arrow")))
-    arrow_files = [f for f in arrow_files if not os.path.basename(f).startswith("cache-")]
+    # Ignore HF filter/map cache shards; load the materialized data shards only.
+    arrow_files = [
+        f
+        for f in arrow_files
+        if os.path.basename(f).startswith("data-") and not os.path.basename(f).startswith("cache-")
+    ]
     if not arrow_files:
-        raise FileNotFoundError(f"No arrow files in {split_dir}")
-    tables = []
-    for f in arrow_files:
-        with open(f, "rb") as fh:
-            tables.append(pa.ipc.open_stream(fh).read_all())
-    table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
-    return Dataset(table)
+        raise FileNotFoundError(f"No data-*.arrow files in {split_dir}")
+    if len(arrow_files) == 1:
+        return Dataset.from_file(arrow_files[0])
+    # Memory-map each shard and concatenate virtually. ``pa.concat_tables`` on large
+    # list-typed columns (e.g. Tulu4 messages) overflows Arrow int32 offsets.
+    return concatenate_datasets([Dataset.from_file(f) for f in arrow_files])
 
 
 def load_from_disk_compat(path: Union[str, os.PathLike], **kwargs: Any):
