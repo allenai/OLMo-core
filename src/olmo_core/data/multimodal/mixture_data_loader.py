@@ -13,9 +13,15 @@ roughly ``weight`` of the examples. Batches are reported in *tokens*
 from __future__ import annotations
 
 import itertools
+import logging
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
+
+log = logging.getLogger(__name__)
+
+DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
+DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -49,11 +55,15 @@ class MixtureDataLoader(DataLoaderBase):
         seed: int = 0,
         epoch_instances: Optional[int] = None,
         pack: bool = False,
+        pack_max_crops: Optional[int] = None,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
+        max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
+        max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS,
         dp_world_size: int = 1,
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
+        dataset_names: Optional[Sequence[str]] = None,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -71,14 +81,27 @@ class MixtureDataLoader(DataLoaderBase):
                 "datasets and weights must be non-empty and the same length"
             )
         self.datasets = list(datasets)
+        if dataset_names is None:
+            self.dataset_names = [str(i) for i in range(len(datasets))]
+        elif len(dataset_names) != len(datasets):
+            raise OLMoConfigurationError(
+                "dataset_names must be the same length as datasets when provided"
+            )
+        else:
+            self.dataset_names = list(dataset_names)
         w = np.asarray(weights, dtype=np.float64)
         self.weights = (w / w.sum()).tolist()
         self.collator = collator
         self.seed = seed
         self.seq_len = collator.pad_sequence_length
         self.pack = pack
+        self.pack_max_crops = pack_max_crops
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
+        self.max_consecutive_data_errors = max_consecutive_data_errors
+        self.max_total_data_errors = max_total_data_errors
+        self._consecutive_data_errors = 0
+        self._total_data_errors = 0
         self._sizes = [len(d) for d in self.datasets]
         self.epoch_instances = epoch_instances or sum(self._sizes)
         self._order: Optional[List] = None  # list of (src_idx, example_idx)
@@ -138,7 +161,9 @@ class MixtureDataLoader(DataLoaderBase):
         n_batches = self.total_batches or 0
         if self.pack:
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            gen = iter_packs(self._example_stream(rank_refs), self.seq_len)
+            gen = iter_packs(
+                self._example_stream(rank_refs), self.seq_len, max_crops_per_pack=self.pack_max_crops
+            )
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
             for _ in range(self.batches_processed, n_batches):
@@ -148,18 +173,65 @@ class MixtureDataLoader(DataLoaderBase):
         for b in range(self.batches_processed, n_batches):
             global_slice = self._order[b * gi : (b + 1) * gi]
             rank_slice = global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
-            examples = [self.datasets[src][idx] for src, idx in rank_slice]
+            ref_iter: Iterator = itertools.chain(rank_slice, itertools.cycle(self._order))
+            examples = [self._load_example(ref_iter) for _ in range(ri)]
             yield self.collator(examples)
+
+    def _try_load_example(self, ref) -> Dict[str, Any]:
+        src_idx, example_idx = ref
+        ex = self.datasets[src_idx][example_idx]
+        out = dict(ex)
+        out["_source_name"] = self.dataset_names[src_idx]
+        return out
+
+    def _load_example(self, ref_iter: Iterator) -> Dict[str, Any]:
+        """Load the next valid example, skipping refs that fail formatting (mm_olmo parity)."""
+        while True:
+            ref = next(ref_iter)
+            try:
+                out = self._try_load_example(ref)
+                self._consecutive_data_errors = 0
+                return out
+            except Exception as e:
+                self._consecutive_data_errors += 1
+                self._total_data_errors += 1
+                if (
+                    self._consecutive_data_errors > self.max_consecutive_data_errors
+                    or self._total_data_errors > self.max_total_data_errors
+                ):
+                    src_idx, example_idx = ref
+                    e.add_note(
+                        f"Exceeded data error tolerance loading "
+                        f"{self.dataset_names[src_idx]}[{example_idx}] "
+                        f"(consecutive_data_errors={self._consecutive_data_errors}, "
+                        f"total_data_errors={self._total_data_errors})"
+                    )
+                    raise
+                src_idx, example_idx = ref
+                log.warning(
+                    "Skipping %s[%d] after error "
+                    "(consecutive_data_errors=%d, total_data_errors=%d): %r",
+                    self.dataset_names[src_idx],
+                    example_idx,
+                    self._consecutive_data_errors,
+                    self._total_data_errors,
+                    e,
+                )
 
     def _example_stream(self, rank_refs: Sequence) -> Iterator[Dict[str, Any]]:
         """Infinite stream of example dicts for this rank: cycle the refs, load each example
         (heavy image preprocessing) on a background thread pool when ``prefetch_workers > 0``
         so it overlaps the GPU step, yielding in order to keep packing deterministic."""
-        return prefetch_map(
-            lambda r: self.datasets[r[0]][r[1]],
-            itertools.cycle(rank_refs),
-            num_workers=self.prefetch_workers,
-        )
+        ref_iter = itertools.cycle(rank_refs)
+        if self.prefetch_workers <= 0:
+            while True:
+                yield self._load_example(ref_iter)
+        else:
+            yield from prefetch_map(
+                lambda _: self._load_example(ref_iter),
+                itertools.count(),
+                num_workers=self.prefetch_workers,
+            )
 
     def get_mock_batch(self) -> Dict[str, Any]:
         ri = max(self._rank_instances, 1)
@@ -168,7 +240,9 @@ class MixtureDataLoader(DataLoaderBase):
         size = max(self._sizes[src], 1)
         if self.pack:
             refs = [(src, i % size) for i in range(max(ri * 4, 4))]
-            gen = iter_packs(self._example_stream(refs), self.seq_len)
+            gen = iter_packs(
+                self._example_stream(refs), self.seq_len, max_crops_per_pack=self.pack_max_crops
+            )
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self.datasets[src][i % size] for i in range(ri)]
         return self.collator(examples)

@@ -257,3 +257,58 @@ def test_image_splice_forward_with_subsegments():
         logits, labels.reshape(-1), loss_masks.reshape(-1), ignore_index=-100
     )
     assert torch.isfinite(ce)
+
+
+def test_response_logits_only_matches_full_logits():
+    """Flattened response-only logits match the full forward on loss positions."""
+    torch.manual_seed(0)
+    model = _tiny_multimodal_cfg().build(init_device="cpu").eval()
+
+    prefix = [2, 3, 4, 5]
+    packed = build_packed_sequence(prefix, [[10, 11, 12], [20, 21]], eos_id=1)
+    input_ids = torch.tensor(packed["input_ids"]).unsqueeze(0)
+    subseg = torch.tensor(packed["subsegment_ids"]).unsqueeze(0)
+    pos = torch.tensor(packed["position_ids"]).unsqueeze(0)
+    loss_masks = torch.tensor(packed["loss_masks"], dtype=torch.float32).unsqueeze(0)
+
+    with torch.inference_mode():
+        full_logits = model(input_ids=input_ids, subsegment_ids=subseg, position_ids=pos)[0]
+        narrow_logits = model(
+            input_ids=input_ids,
+            subsegment_ids=subseg,
+            position_ids=pos,
+            response_logits_only=True,
+            loss_masks=loss_masks,
+        )
+
+    resp = loss_masks[0] > 0
+    torch.testing.assert_close(narrow_logits, full_logits[resp], atol=1e-5, rtol=1e-5)
+
+
+def test_response_logits_only_variable_response_counts_per_row():
+    """Two rows with different response lengths: narrowed logits match full forward."""
+    torch.manual_seed(1)
+    model = _tiny_multimodal_cfg().build(init_device="cpu").eval()
+
+    B, S = 2, 16
+    input_ids = torch.randint(6, _LM_VOCAB, (B, S))
+    loss_masks = torch.zeros(B, S, dtype=torch.float32)
+    loss_masks[0, [2, 5, 8, 12]] = 1.0
+    loss_masks[1, [1, 7]] = 1.0
+
+    with torch.inference_mode():
+        full_logits = model(input_ids=input_ids)
+        narrow_logits = model(
+            input_ids=input_ids,
+            response_logits_only=True,
+            loss_masks=loss_masks,
+        )
+
+    resp = loss_masks > 0
+    torch.testing.assert_close(
+        narrow_logits,
+        full_logits.view(-1, full_logits.shape[-1])[resp.view(-1)],
+        atol=1e-5,
+        rtol=1e-5,
+    )
+    assert int(resp.sum()) == 6

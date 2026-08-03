@@ -386,6 +386,8 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        response_logits_only: bool = False,
+        response_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> Tuple[
         torch.Tensor,
@@ -398,6 +400,9 @@ class Transformer(nn.Module):
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
+        if response_mask is not None:
+            response_mask = move_to_device(response_mask, self.device)
+
         all_block_kwargs: Dict[str, Any] = {}
         per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
         lm_head_kwargs: Dict[str, Any] = dict(
@@ -406,6 +411,8 @@ class Transformer(nn.Module):
             z_loss_multiplier=z_loss_multiplier,
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
+            response_logits_only=response_logits_only,
+            response_mask=response_mask,
         )
 
         if loss_div_factor is not None:
@@ -534,9 +541,15 @@ class Transformer(nn.Module):
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
         return_logits: Optional[bool] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
+        response_logits_only: bool = False,
+        response_mask: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[torch.Tensor] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         **kwargs,
@@ -559,6 +572,8 @@ class Transformer(nn.Module):
         :param return_logits: Whether to return logits along with the loss when labels are provided.
         :param logits_to_keep: Number of positions to keep from the end of the sequence (if int),
             or tensor specifying which positions to keep. Default is 0 (keep all).
+        :param response_logits_only: If True, only compute logits at ``response_mask`` positions.
+        :param response_mask: Boolean mask ``(batch_size, seq_len)`` for ``response_logits_only``.
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
@@ -599,6 +614,8 @@ class Transformer(nn.Module):
             loss_div_factor=loss_div_factor,
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
+            response_logits_only=response_logits_only,
+            response_mask=response_mask,
             **kwargs,
         )
 
@@ -613,6 +630,21 @@ class Transformer(nn.Module):
         # each block's attention; only the dense SDPA backend honors it.
         if and_mask is not None:
             all_block_kwargs["and_mask"] = move_to_device(and_mask, self.device)
+
+        if flex_attn_is_image is not None:
+            all_block_kwargs["flex_attn_is_image"] = move_to_device(
+                flex_attn_is_image, self.device
+            )
+        if flex_attn_subsegment_ids is not None:
+            all_block_kwargs["flex_attn_subsegment_ids"] = move_to_device(
+                flex_attn_subsegment_ids, self.device
+            )
+        if flex_attn_example_ids is not None:
+            all_block_kwargs["flex_attn_example_ids"] = move_to_device(
+                flex_attn_example_ids, self.device
+            )
+        if flex_attn_block_mask is not None:
+            all_block_kwargs["flex_attn_block_mask"] = flex_attn_block_mask
 
         # Explicit per-token RoPE positions (e.g. parallel branches that share an
         # overlapping position range). Passed through to every attention block.
