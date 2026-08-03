@@ -350,7 +350,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
 
 def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
-    """Build a fail-closed HF config for the KDA + full-width EMo ladder."""
+    """Build a fail-closed HF config for KDA MoE-v2 models."""
 
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
@@ -375,17 +375,25 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     routed_experts = representative.routed_experts
     router = representative.routed_experts_router
     assert routed_experts is not None and router is not None
+    latent_down_proj = representative.latent_down_proj
+    latent_up_proj = representative.latent_up_proj
+    latent_moe_dim = latent_down_proj.out_features if latent_down_proj is not None else None
+    latent_moe_bias = latent_down_proj is not None and latent_down_proj.bias is not None
+    if latent_up_proj is not None and (latent_up_proj.bias is not None) != latent_moe_bias:
+        raise NotImplementedError("LatentMoE down and up projections must use the same bias setting.")
+    latent_moe_up_proj_input_norm = representative.latent_up_proj_input_norm is not None
+    emo = router.emo
     sparse_signature = None
     for block in sparse_blocks:
         assert block.routed_experts is not None and block.routed_experts_router is not None
         block_router = block.routed_experts_router
         block_experts = block.routed_experts
         _validate_olmo3moe_router_selection(block_router)
-        if block.latent_down_proj is not None or block.latent_up_proj is not None:
-            raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
-        if block_router.emo is None:
-            raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
-        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+        has_latent_moe = block.latent_down_proj is not None
+        if has_latent_moe != (block.latent_up_proj is not None):
+            raise NotImplementedError("LatentMoE requires both down and up projections.")
+        block_emo = block_router.emo
+        if block_emo is not None and block_emo.eval_pool_size() != block_experts.num_experts:
             raise NotImplementedError(
                 "HF EMo export currently requires eval_document_expert_pool=num_experts."
             )
@@ -410,10 +418,17 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             block_router.normalize_expert_weights,
             block_router.restore_weight_scale,
             block_router.global_load_balancing,
-            block_router.emo.min_document_expert_pool,
-            block_router.emo.max_document_expert_pool,
-            block_router.emo.eval_pool_size(),
-            block_router.emo.eos_token_id,
+            (
+                block_emo.min_document_expert_pool,
+                block_emo.max_document_expert_pool,
+                block_emo.eval_pool_size(),
+                block_emo.eos_token_id,
+            )
+            if block_emo is not None
+            else None,
+            block.latent_down_proj.out_features if has_latent_moe else None,
+            block.latent_down_proj.bias is not None if has_latent_moe else False,
+            block.latent_up_proj_input_norm is not None if has_latent_moe else False,
             block.shared_experts.hidden_size if block.shared_experts is not None else None,
         )
         if sparse_signature is None:
@@ -567,7 +582,9 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         linear_conv_kernel_dim=kda.conv_size,
         linear_allow_neg_eigval=kda.allow_neg_eigval,
         linear_norm_eps=kda_norm_eps,
-        latent_moe_dim=None,
+        latent_moe_dim=latent_moe_dim,
+        latent_moe_bias=latent_moe_bias,
+        latent_moe_up_proj_input_norm=latent_moe_up_proj_input_norm,
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -576,15 +593,15 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         embed_norm=model.embedding_norm is not None,
         use_peri_ln=True,
         rms_norm_eps=representative.feed_forward_norm.eps,
-        emo_min_document_expert_pool=router.emo.min_document_expert_pool,
-        emo_max_document_expert_pool=router.emo.max_document_expert_pool,
-        emo_eval_document_expert_pool=router.emo.eval_pool_size(),
-        emo_eos_token_id=router.emo.eos_token_id,
+        emo_min_document_expert_pool=(emo.min_document_expert_pool if emo is not None else None),
+        emo_max_document_expert_pool=(emo.max_document_expert_pool if emo is not None else None),
+        emo_eval_document_expert_pool=(emo.eval_pool_size() if emo is not None else None),
+        emo_eos_token_id=(emo.eos_token_id if emo is not None else None),
         global_load_balancing=router.global_load_balancing,
         use_cache=False,
         pad_token_id=None,
         bos_token_id=None,
-        eos_token_id=router.emo.eos_token_id,
+        eos_token_id=(emo.eos_token_id if emo is not None else None),
         tie_word_embeddings=model.tie_word_embeddings,
     )
 
