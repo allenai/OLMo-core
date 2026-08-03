@@ -35,6 +35,7 @@ from olmo_core.data.multimodal import (
     PixMoPointsDatasetConfig,
     Tulu4DatasetConfig,
 )
+from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.common import (
@@ -117,8 +118,8 @@ LLM_WARMUP = 2000
 ALPHA_F = 0.1
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
-DATASET_PATH = "/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_datasets/cap"
-MAX_STEPS = 4000
+DATASET_PATH = f"{PIXMO_DATASETS}/cap"
+MAX_STEPS = 32000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
@@ -388,8 +389,8 @@ def _checkpoint_state_dir(checkpoint: str) -> str:
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     """Build the caption + pointing + NLP sources and their sampling weights (mm_olmo
-    SubMixture): caption gets ``1 - POINTING_RATE - NLP_RATE``; the pointing group shares
-    ``POINTING_RATE`` split by sqrt(size); NLP gets ``NLP_RATE``."""
+    SubMixture): caption gets ``1 - pointing_rate - nlp_rate``; the pointing group shares
+    ``pointing_rate`` split by sqrt(size); NLP gets ``nlp_rate``."""
     import numpy as np
 
     p, n = config.pointing_rate, config.nlp_rate

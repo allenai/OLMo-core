@@ -295,6 +295,10 @@ def preprocess_image_molmo2(
     image_size: int = 378,
     patch_size: int = 14,
     max_crops: int = 8,
+    high_res_max_crops: int = 24,
+    p_high_res: float = 0.0,
+    is_training: bool = True,
+    rng: np.random.RandomState | None = None,
     overlap_margins: tuple = (4, 4),
     pool_h: int = 2,
     pool_w: int = 2,
@@ -313,6 +317,10 @@ def preprocess_image_molmo2(
     :param image_size: Square base crop size in pixels (default 378).
     :param patch_size: ViT patch size in pixels (default 14).
     :param max_crops: Maximum number of high-res crops (default 8).
+    :param high_res_max_crops: Crop budget when high-res mode is sampled (default 24).
+    :param p_high_res: Training-time probability of using ``high_res_max_crops`` (default 0).
+    :param is_training: When False, always uses ``max_crops``.
+    :param rng: Optional ``numpy.random.RandomState`` for high-res sampling.
     :param overlap_margins: ``(left, right)`` overlap margins in patches (default ``(4, 4)``).
     :param pool_h: Pooling height (default 2).
     :param pool_w: Pooling width (default 2).
@@ -329,10 +337,15 @@ def preprocess_image_molmo2(
 
     base_hw = [image_size, image_size]
     margins = list(overlap_margins)
+    crop_budget = max_crops
+    if is_training and p_high_res > 0:
+        rng = rng if rng is not None else np.random.RandomState()
+        if rng.random() < p_high_res:
+            crop_budget = max(max_crops, high_res_max_crops)
 
     image_grid_batch, crops_cf, pooling_idx = _image_to_patches_and_grids(
         arr,
-        max_crops=max_crops,
+        max_crops=crop_budget,
         margins=margins,
         base_hw=base_hw,
         mean=mean,

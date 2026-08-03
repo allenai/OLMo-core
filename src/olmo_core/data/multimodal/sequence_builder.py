@@ -128,7 +128,7 @@ def build_packed_sequence(
             branch_tokens = [carry_over] + response
             branch_weight = 1.0
             if root_length:
-                n_resp = len(response) + 1  # +1 for EOS
+                n_resp = len(response) + 1 if n_branches == 1 else len(response)
                 branch_weight = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
             loss = np.zeros(len(branch_tokens), dtype=np.float32)
             loss[1:] = branch_weight  # carry-over (idx 0) is non-loss; response gets loss
@@ -227,7 +227,7 @@ def build_branched_sequence(
         tokens = context + response
         w = 1.0
         if root_length:
-            n_resp = len(response) + 1
+            n_resp = len(response) + (0 if multi else 1)
             w = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
         loss = np.zeros(len(tokens), dtype=np.float32)
         loss[len(context) :] = w  # loss only on the response (assistant) tokens

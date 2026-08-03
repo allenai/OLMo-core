@@ -1,12 +1,15 @@
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 
 from olmo_core.config import Config
+from olmo_core.distributed.utils import barrier, is_distributed
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
@@ -185,6 +188,21 @@ class MultimodalLM(nn.Module):
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 
+    def _vit_crop_microbatch(self) -> int:
+        """Max crops per ViT forward (0 = no chunking). Env: ``VIT_CROP_MICROBATCH``."""
+        raw = os.environ.get("VIT_CROP_MICROBATCH", "16")
+        return int(raw)
+
+    def _vit_forward_features(self, images: torch.Tensor) -> torch.Tensor:
+        """Run ViT on ``images`` ``(B*T, N, patch_dim)`` and return ``(B*T, n_patches, dim)``."""
+        hidden_states: List[torch.Tensor] = self.vision(images)
+        selected = [hidden_states[i] for i in self.cfg.vit_layers]
+        features = torch.cat(selected, dim=-1) if len(selected) > 1 else selected[0]
+        num_prefix = getattr(self.vision, "num_prefix_tokens", 0)
+        if num_prefix > 0:
+            features = features[:, num_prefix:]
+        return features
+
     def _encode_images(
         self,
         images: torch.Tensor,
@@ -200,22 +218,35 @@ class MultimodalLM(nn.Module):
         :returns: Shape ``(B, n_pooled, lm_d_model)``.
         """
         B, T, N, _ = images.shape
+        microbatch = self._vit_crop_microbatch()
 
-        # Flatten crop dim into batch dim for the ViT.
-        hidden_states: List[torch.Tensor] = self.vision(images.reshape(B * T, N, -1))
+        # Pad crop axis to the DP max so every rank runs the same number of ViT
+        # microbatch chunks (avoids FSDP collective desync when ``n_crops`` differs).
+        if is_distributed():
+            t_local = torch.tensor([T], device=images.device, dtype=torch.int32)
+            t_max = t_local.clone()
+            dist.all_reduce(t_max, op=dist.ReduceOp.MAX)
+            t_pad = int(t_max.item())
+            if t_pad > T:
+                pad = torch.zeros(
+                    (B, t_pad - T, N, images.shape[-1]),
+                    device=images.device,
+                    dtype=images.dtype,
+                )
+                images = torch.cat([images, pad], dim=1)
+                T = t_pad
 
-        # Select configured layers and concat along feature dim.
-        selected = [hidden_states[i] for i in self.cfg.vit_layers]
-        features = torch.cat(selected, dim=-1) if len(selected) > 1 else selected[0]
-
-        # Strip prefix tokens (CLS for CLIP-style).
-        num_prefix = getattr(self.vision, "num_prefix_tokens", 0)
-        if num_prefix > 0:
-            features = features[:, num_prefix:]
-
-        # Reshape back to (B, T*N, dim) — the connector indexes into the
-        # flat crop-patch axis.
-        features = features.reshape(B, T * features.shape[1], features.shape[-1])
+        if microbatch <= 0 or T <= microbatch:
+            features = self._vit_forward_features(images.reshape(B * T, N, -1))
+            features = features.reshape(B, T * features.shape[1], features.shape[-1])
+        else:
+            parts: List[torch.Tensor] = []
+            for start in range(0, T, microbatch):
+                end = min(start + microbatch, T)
+                chunk = images[:, start:end].reshape(B * (end - start), N, -1)
+                chunk_features = self._vit_forward_features(chunk)
+                parts.append(chunk_features.reshape(B, (end - start) * chunk_features.shape[1], -1))
+            features = torch.cat(parts, dim=1)
 
         return self.connector(features, pooled_patches_idx)
 
@@ -266,6 +297,10 @@ class MultimodalLM(nn.Module):
         """
         if subsegment_ids is not None and position_ids is None:
             raise ValueError("`position_ids` is required when `subsegment_ids` is provided")
+
+        if response_logits_only and loss_masks is None:
+            raise ValueError("`loss_masks` is required when `response_logits_only=True`")
+
         assert (
             self.lm.embeddings is not None
         ), "MultimodalLM requires the LM to have an embedding table"
@@ -307,6 +342,11 @@ class MultimodalLM(nn.Module):
             # all-gather — firing on every rank each step, so collectives stay in lockstep
             # across ranks regardless of how text-only vs image examples are distributed.
             h = h + 0.0 * image_features.sum().to(h.dtype)
+
+            # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
+            # sync before the LM FSDP forward so all-gather collectives stay aligned.
+            if is_distributed():
+                barrier()
 
             # Keep only valid pooled rows (a row is padding iff *all* its patch
             # indices are -1, e.g. added by a batch collator to equalize ``n_pooled``

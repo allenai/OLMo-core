@@ -278,8 +278,12 @@ class LMHead(nn.Module):
         :param loss_div_factor: (Optional) Divisor for the loss, can be a scalar or tensor.
         :param return_logits: If True, returns logits along with the loss when labels are provided.
         :param logits_to_keep: If nonzero, restricts computation to the last N positions (if int) or to specific positions (if tensor).
+        :param response_logits_only: If True, only compute logits at positions selected by
+            ``response_mask`` (or ``labels != ignore_index`` when labels are provided).
+        :param response_mask: Boolean mask ``(batch_size, seq_len)`` for ``response_logits_only``.
 
-        :returns: If ``labels`` is ``None``, returns the logits tensor of shape ``(batch_size, seq_len, vocab_size)``.
+        :returns: If ``labels`` is ``None``, returns the logits tensor of shape ``(batch_size, seq_len, vocab_size)``,
+                  or ``(N_response, vocab_size)`` when ``response_logits_only`` is True.
                   If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]

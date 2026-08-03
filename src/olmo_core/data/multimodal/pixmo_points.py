@@ -17,20 +17,17 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
-from .grounding import (
-    POINT_COUNT_PROMPTS,
-    POINTING_PROMPTS,
-    normalize_points,
-    pointing_answer,
-)
+from .grounding import normalize_points, pointing_answer
+from .qwen3_layout import branch_context_ids, image_prefix_ids
 from .sequence_builder import build_branched_sequence
+from .sft_formatter import SftFormatter
 
 __all__ = [
     "PixMoPointsDatasetConfig",
@@ -41,25 +38,7 @@ __all__ = [
     "CoSynPointDataset",
 ]
 
-_B = "/weka/oe-training-default/mm-olmo/torch_datasets/pixmo_datasets"
-
-
-def _build_user_turn(tokenizer, question: str) -> List[int]:
-    """Encode a single user turn + assistant header (no BOS/image): the non-loss context
-    of a branch. Matches the molmo2 chat layout for a turn after the shared image prefix."""
-    text = tokenizer.apply_chat_template(
-        [{"role": "user", "content": question}], tokenize=False, add_generation_prompt=True
-    )
-    return tokenizer.encode(text, add_special_tokens=False)
-
-
-def _image_prefix(tokenizer, image_grid, token_ids: Molmo2TokenIds) -> List[int]:
-    """BOS + expanded image-token block (the shared prefix for a pointing example)."""
-    from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
-
-    resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
-    bos = tokenizer.bos_token_id or tokenizer.eos_token_id
-    return [bos] + build_image_token_ids(resized_h, resized_w, h, w, token_ids=token_ids)
+from .paths import PIXMO_DATASETS
 
 
 def _build_example(
@@ -70,6 +49,10 @@ def _build_example(
     max_crops: int,
     loss_token_weighting: str,
     token_ids: Molmo2TokenIds,
+    message_weight: float | None = None,
+    p_high_res: float = 0.0,
+    shuffle_rng: np.random.RandomState | None = None,
+    seed: int = 0,
 ) -> Dict[str, np.ndarray]:
     """Preprocess the image and assemble a (possibly multi-branch) pointing example.
 
@@ -79,14 +62,34 @@ def _build_example(
 
     from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
+    branches_text = list(branches_text)
+    if len(branches_text) > 1:
+        order = np.arange(len(branches_text))
+        rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
+        rng.shuffle(order)
+        branches_text = [branches_text[i] for i in order]
+
+    preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
-        pil_image, dtype=torch.float32, device=torch.device("cpu"), max_crops=max_crops
+        pil_image,
+        dtype=torch.float32,
+        device=torch.device("cpu"),
+        max_crops=max_crops,
+        p_high_res=p_high_res,
+        is_training=True,
+        rng=preprocess_rng,
     )
-    prefix = _image_prefix(tokenizer, image_grid, token_ids)
+    prefix = image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
+    multi_branch = len(branches_text) > 1
     branches = [
-        (_build_user_turn(tokenizer, q), tokenizer.encode(a, add_special_tokens=False))
-        for q, a in branches_text
+        (
+            branch_context_ids(tokenizer, q, branch_index=i, multi_branch=multi_branch),
+            tokenizer.encode(a, add_special_tokens=False),
+        )
+        for i, (q, a) in enumerate(branches_text)
     ]
+    from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
+
     seq = build_branched_sequence(
         prefix,
         branches,
@@ -94,15 +97,22 @@ def _build_example(
         image_token_ids=token_ids.image_token_ids,
         loss_token_weighting=loss_token_weighting,
     )
+    subsegment_ids = seq.get("subsegment_ids")
+    from olmo_core.data.multimodal.message_weight import MessageWeight
+
+    mw = MessageWeight.from_string(loss_token_weighting).with_overrides(message_weight)
+    seq["loss_masks"] = apply_message_weight_to_loss_masks(
+        seq["loss_masks"], subsegment_ids, mw, branch_scaling_already_applied=True
+    )
     seq["images"] = images_t[0].numpy()
     seq["pooled_patches_idx"] = pooling_t[0].numpy()
     return seq
 
 
 def _load_split(path: str, split: str):
-    from datasets import load_from_disk
+    from .dataset_compat import load_from_disk_compat
 
-    ds = load_from_disk(path)
+    ds = load_from_disk_compat(path)
     return ds[split] if hasattr(ds, "keys") and split in ds else ds
 
 
@@ -128,6 +138,8 @@ class PixMoPointsDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
@@ -143,7 +155,9 @@ class PixMoPointsDataset:
         )
         from datasets import concatenate_datasets
 
-        self._data = concatenate_datasets([_load_split(f"{_B}/{s}", "train") for s in sub])
+        self._data = concatenate_datasets(
+            [_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub]
+        )
         # Pre-split each row's labels into sub-batches with <= max_total_points (mm_olmo).
         self._index = self._build_sub_index()
 
@@ -173,20 +187,25 @@ class PixMoPointsDataset:
         row_idx, label_idxs = self._index[i]
         rng = np.random.RandomState(self.config.seed + i)
         row = self._data[row_idx]
-        branches: List[Tuple[str, str]] = []
+        fmt = SftFormatter(seed=self.config.seed)
+        specs: List[Tuple[str, str, Any]] = []
         for li in label_idxs:
             label = row["label"][li]
             pts = row["points"][li]
-            xy = np.array([[p["x"], p["y"]] for p in pts], dtype=np.float64).reshape(-1, 2)
-            norm = normalize_points(xy, point_scale=100, image_size=None)
             if self.config.counting == "both":
                 style = rng.choice(["point_count", "pointing"])
             else:
                 style = "point_count" if self.config.counting else "pointing"
-            pool = POINT_COUNT_PROMPTS if style == "point_count" else POINTING_PROMPTS
-            prompt = pool[rng.randint(len(pool))].format(label=label)
-            answer = pointing_answer(norm, label.lower(), style, count=len(norm))
-            branches.append((prompt, answer))
+            specs.append((style, label, pts))
+        branches: List[Tuple[str, str]] = []
+        for style, label, pts in specs:
+            sub = {
+                "style": style,
+                "label": label,
+                "points": pts,
+                "point_scale": 100,
+            }
+            branches.append(fmt.format_turns(sub, index=i, rng=rng)[0])
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),
@@ -194,6 +213,9 @@ class PixMoPointsDataset:
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
+            shuffle_rng=rng,
         )
 
 
@@ -208,6 +230,8 @@ class PixMoCountDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCountDataset":
@@ -218,7 +242,7 @@ class PixMoCountDataset:
     def __init__(self, config: PixMoCountDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{_B}/count", "train")
+        self._data = _load_split(f"{PIXMO_DATASETS}/count", "train")
         self._n = len(self._data)
 
     def __len__(self) -> int:
@@ -234,12 +258,18 @@ class PixMoCountDataset:
         count = int(row["count"])
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
-        xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
-        norm = normalize_points(xy, point_scale=None, image_size=pil.size)  # pixel -> /(w,h)
-        pool = POINT_COUNT_PROMPTS if style == "point_count" else POINTING_PROMPTS
         rng = np.random.RandomState(self.config.seed + i)
-        prompt = pool[rng.randint(len(pool))].format(label=label)
-        answer = pointing_answer(norm, label.lower(), style, count=count)
+        fmt = SftFormatter(seed=self.config.seed)
+        xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
+        sub = {
+            "style": style,
+            "label": label,
+            "points": xy,
+            "point_scale": None,
+            "image_size": pil.size,
+            "count": count,
+        }
+        prompt, answer = fmt.format_turns(sub, index=i, rng=rng)[0]
         return _build_example(
             self.tokenizer,
             pil,
@@ -247,6 +277,9 @@ class PixMoCountDataset:
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
+            shuffle_rng=rng,
         )
 
 
@@ -260,6 +293,8 @@ class CoSynPointDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    message_weight: float | None = None
+    p_high_res: float = 0.0
     seed: int = 0
 
     def build(self, tokenizer) -> "CoSynPointDataset":
@@ -270,7 +305,7 @@ class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{_B}/cosyn-point", "train")
+        self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
 
     def __len__(self) -> int:
         return len(self._data)
@@ -282,7 +317,7 @@ class CoSynPointDataset:
             xy = np.array([points["x"], points["y"]], dtype=np.float64).T.reshape(-1, 2)
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
-            answer = pointing_answer(norm, name, "pointing", count=len(norm))
+            answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
             branches.append((question, answer))
         return _build_example(
             self.tokenizer,
@@ -291,4 +326,7 @@ class CoSynPointDataset:
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
+            message_weight=self.config.message_weight,
+            p_high_res=self.config.p_high_res,
+            shuffle_rng=np.random.RandomState(self.config.seed + i),
         )

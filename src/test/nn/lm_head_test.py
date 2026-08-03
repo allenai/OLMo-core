@@ -316,6 +316,47 @@ def test_lm_head_logits_to_keep(head_type):
 
 
 @pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
+def test_lm_head_response_logits_only(head_type):
+    seed_all(42)
+    device = torch.device("cpu")
+    d_model, vocab_size = 256, 1024
+    B, S = 2, 32
+
+    config = LMHeadConfig(name=head_type)
+    lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cpu")
+
+    inputs = torch.randn(B, S, d_model, device=device)
+    labels = torch.randint(0, vocab_size, (B, S), device=device)
+
+    response_mask = torch.zeros(B, S, dtype=torch.bool, device=device)
+    response_mask[0, [3, 7, 15, 22]] = True
+    response_mask[1, [1, 9, 18]] = True
+
+    masked_labels = labels.masked_fill(~response_mask, -100)
+    output_full = lm_head(inputs, labels=masked_labels, return_logits=True)
+    full_logits = output_full.logits
+    ref_logits = full_logits.view(-1, vocab_size)[response_mask.view(-1)]
+
+    narrow_logits = lm_head(
+        inputs,
+        labels=None,
+        response_logits_only=True,
+        response_mask=response_mask,
+    )
+    torch.testing.assert_close(narrow_logits, ref_logits)
+
+    output_narrow = lm_head(
+        inputs,
+        labels=labels,
+        response_logits_only=True,
+        response_mask=response_mask,
+        return_logits=True,
+    )
+    torch.testing.assert_close(output_narrow.logits, ref_logits)
+    torch.testing.assert_close(output_narrow.loss, output_full.loss)
+
+
+@pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
 @pytest.mark.parametrize(
     "loss_implementation", [LMLossImplementation.default, LMLossImplementation.fused_linear]
 )
