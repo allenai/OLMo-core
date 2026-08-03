@@ -5,8 +5,11 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.launch.beaker import BeakerEnvVar
+from olmo_core.launch.beaker_presets import get_preset
 
 
 def _load_stage2_module():
@@ -51,3 +54,22 @@ def test_s002_stage2_production_defaults():
     assert stage2.RANK_MICROBATCH_INSTANCES == 1
     assert stage2.MAX_STEPS == 30_000
     assert stage2.DEFAULT_LOAD_PATH.startswith("/weka/oe-training-default/rustin/")
+
+
+def test_stage2_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
+    stage2 = _load_stage2_module()
+    launch = SimpleNamespace(
+        beaker_image=None,
+        env_vars=[BeakerEnvVar(name="EXPLICIT_SETTING", value="kept")],
+        post_setup=None,
+    )
+
+    stage2._configure_launch_runtime(launch)
+
+    env = {item.name: item.value for item in launch.env_vars}
+    preset = get_preset("olmo-ddp")
+    assert launch.beaker_image == preset.beaker_image
+    assert launch.post_setup == preset.post_setup
+    assert "pip install" not in (launch.post_setup or "")
+    assert env["EXPLICIT_SETTING"] == "kept"
+    assert env["TORCH_LOGS"] == "-dynamo"

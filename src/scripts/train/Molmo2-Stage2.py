@@ -262,6 +262,31 @@ def _build_train_module_config(
     )
 
 
+def _configure_launch_runtime(launch_config: BeakerLaunchConfig) -> None:
+    """Apply the OLMoDDP runtime without mutating the image's pinned Python dependencies."""
+    from olmo_core.launch.beaker_presets import get_preset
+
+    preset = get_preset("olmo-ddp")
+    if preset.beaker_image is not None:
+        launch_config.beaker_image = preset.beaker_image
+    env = {item.name: item.value for item in launch_config.env_vars}
+    env.update(dict(preset.env_vars))
+    env.update(
+        {
+            "OLMO_USE_OWN_SYMM_MEM": "1",
+            "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
+            "OLMO_OWN_SYMM_PREWARM": "1",
+            # The launcher default enables verbose graph-break/recompile diagnostics. They are
+            # useful when debugging compilation but overwhelm normal multi-rank training logs.
+            "TORCH_LOGS": "-dynamo",
+        }
+    )
+    launch_config.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
+    # The image already pins datasets/pyarrow versions compatible with ai2-olmo-eval. The
+    # multimodal compatibility loader reads datasets-5-authored Arrow files on those pins.
+    launch_config.post_setup = preset.post_setup
+
+
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
     root_dir = get_root_dir(BEAKER_CLUSTER)
     tokenizer, token_ids = _load_tokenizer()
@@ -324,23 +349,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     launch_config.env_secrets = [
         s for s in launch_config.env_secrets if s.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
     ]
-    from olmo_core.launch.beaker_presets import get_preset
-
-    preset = get_preset("olmo-ddp")
-    if preset.beaker_image is not None:
-        launch_config.beaker_image = preset.beaker_image
-    env = {item.name: item.value for item in launch_config.env_vars}
-    env.update(dict(preset.env_vars))
-    env.update(
-        {
-            "OLMO_USE_OWN_SYMM_MEM": "1",
-            "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
-            "OLMO_OWN_SYMM_PREWARM": "1",
-        }
-    )
-    launch_config.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
-    post_setup = [preset.post_setup, "pip install -U 'datasets>=4,<6'"]
-    launch_config.post_setup = " && ".join(step for step in post_setup if step)
+    _configure_launch_runtime(launch_config)
 
     return ExperimentConfig(
         model=model_config,

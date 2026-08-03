@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.launch.beaker import BeakerEnvVar
+from olmo_core.launch.beaker_presets import get_preset
 
 
 def _load_stage1_module():
@@ -40,6 +42,25 @@ def test_s002_stage1_uses_olmo_ddp_ep8_and_freezes_only_vision():
     overrides = {tuple(group.params): group.opts for group in config.optim.group_overrides}
     assert overrides[("*connector.*",)]["lr"] == stage1.CONNECTOR_LR
     assert config.optim.lr == stage1.LLM_LR
+
+
+def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
+    stage1 = _load_stage1_module()
+    launch = SimpleNamespace(
+        beaker_image=None,
+        env_vars=[BeakerEnvVar(name="EXPLICIT_SETTING", value="kept")],
+        post_setup=None,
+    )
+
+    stage1._configure_launch_runtime(launch)
+
+    env = {item.name: item.value for item in launch.env_vars}
+    preset = get_preset("olmo-ddp")
+    assert launch.beaker_image == preset.beaker_image
+    assert launch.post_setup == preset.post_setup
+    assert "pip install" not in (launch.post_setup or "")
+    assert env["EXPLICIT_SETTING"] == "kept"
+    assert env["TORCH_LOGS"] == "-dynamo"
 
 
 @pytest.mark.parametrize(

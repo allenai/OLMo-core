@@ -18,14 +18,19 @@ so the ``@nvtx.annotate(...)`` annotations become no-ops when nvtx is not instal
 
 from __future__ import annotations
 
-from contextlib import ContextDecorator
 from typing import Any, Optional
 
 __all__ = ["nvtx", "maybe_nvtx_annotate"]
 
 
-class _NoOpRange(ContextDecorator):
+class _NoOpRange:
     """A do-nothing range usable as both a decorator and a context manager."""
+
+    def __call__(self, func: Any) -> Any:
+        # A no-op decorator should return the original callable instead of using
+        # ContextDecorator's wrapper. Besides avoiding needless Python overhead, this keeps
+        # TorchDynamo from seeing an unsupported _NoOpRange context manager in compiled hot paths.
+        return func
 
     def __enter__(self) -> "_NoOpRange":
         return self
