@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention.landmark import repeat_kv
 from olmo_core.nn.attention.landmark_kernel import has_landmark_kernel
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.testing import requires_gpu
@@ -28,11 +29,18 @@ requires_landmark_kernel = pytest.mark.skipif(
 )
 
 
-def _build(name: AttentionType, *, d_model: int = 64, device: str = "cuda"):
+def _build(
+    name: AttentionType,
+    *,
+    d_model: int = 64,
+    n_heads: int = 4,
+    n_kv_heads: int = 4,
+    device: str = "cuda",
+):
     attn = AttentionConfig(
         name=name,
-        n_heads=4,
-        n_kv_heads=4,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
         head_dim=16,
         bias=False,
         mem_freq=MEM_FREQ,
@@ -69,17 +77,23 @@ def _prefill(attn, x, *, chunk_size, max_seq_len):
     [AttentionType.fast_landmark, AttentionType.fast_compressive_landmark],
 )
 @pytest.mark.parametrize("chunk_blocks", [1, 2, 3])
-def test_landmark_chunked_prefill_matches_one_shot(attn_type: AttentionType, chunk_blocks: int):
+@pytest.mark.parametrize("n_kv_heads", [4, 1], ids=["mha", "gqa"])
+def test_landmark_chunked_prefill_matches_one_shot(
+    attn_type: AttentionType, chunk_blocks: int, n_kv_heads: int
+):
     """
     Block-aligned chunked prefill must reproduce the single-shot prefill exactly.
 
     ``chunk_blocks`` sweeps chunk sizes of 1, 2 and 3 blocks against a 5-block prompt, so the sweep
     covers chunk counts that both divide the prompt (1, 2 blocks -> ragged) and do not, and the
     ragged final chunk is exercised in every case where it can occur.
+
+    ``n_kv_heads`` covers both the plain (``n_rep == 1``) path and grouped-query attention, where
+    prefill expands one KV group at a time instead of the whole cache.
     """
     torch.manual_seed(0)
     device = "cuda"
-    attn = _build(attn_type, device=device)
+    attn = _build(attn_type, n_heads=4, n_kv_heads=n_kv_heads, device=device)
     seq = 5 * BLOCK
     x = torch.randn(1, seq, 64, device=device)
 
@@ -88,6 +102,44 @@ def test_landmark_chunked_prefill_matches_one_shot(attn_type: AttentionType, chu
 
     assert pos_chunked == pos_one_shot == seq
     torch.testing.assert_close(chunked, one_shot, atol=1e-4, rtol=1e-4)
+
+
+@requires_gpu
+@requires_landmark_kernel
+@pytest.mark.parametrize(
+    "attn_type",
+    [AttentionType.fast_landmark, AttentionType.fast_compressive_landmark],
+)
+@pytest.mark.parametrize("n_rep", [2, 4])
+def test_landmark_prefill_grouped_expansion_matches_full_expansion(
+    attn_type: AttentionType, n_rep: int
+):
+    """
+    Expanding KV groups one at a time must equal expanding them all up front.
+
+    This is the memory fix that lets the compressive model reach the 1M rung: ``repeat_kv``'s
+    reshape-after-expand materializes ``n_rep`` copies of the whole cache (16.5 GiB at 1M), and that
+    cost scales with the total cached length, not the chunk -- so chunked prefill alone did not
+    bound it. Since attention is independent per head, running one group at a time is exact, and
+    this test is what says so: it feeds identical inputs down both paths and demands they agree.
+    """
+    torch.manual_seed(0)
+    device = "cuda"
+    n_heads = 4
+    attn = _build(attn_type, n_heads=n_heads, n_kv_heads=n_heads // n_rep, device=device)
+
+    seq = 4 * BLOCK
+    q = torch.randn(1, n_heads, seq, 16, device=device)
+    k = torch.randn(1, n_heads // n_rep, seq, 16, device=device)
+    v = torch.randn(1, n_heads // n_rep, seq, 16, device=device)
+
+    with torch.no_grad():
+        grouped = attn._prefill(q, k, v, n_rep=n_rep)
+        # The old behavior: hand the kernel a fully materialized expansion.
+        expanded = attn._prefill(q, repeat_kv(k, n_rep), repeat_kv(v, n_rep), n_rep=1)
+
+    assert grouped.shape == expanded.shape == q.shape
+    torch.testing.assert_close(grouped, expanded, atol=1e-5, rtol=1e-5)
 
 
 @requires_gpu

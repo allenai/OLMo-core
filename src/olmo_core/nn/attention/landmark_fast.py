@@ -1003,15 +1003,25 @@ class FastLandmarkAttention(Attention):
                     f"(block_size={self.block_size}), got start_pos={start_pos}. Set "
                     f"GenerationConfig.prefill_chunk_size to a multiple of {self.block_size}."
                 )
-            kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)
-            vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
-            att = self._prefill(qh, kh, vh)
+            # Hand the prefill the *unexpanded* KV group heads. ``repeat_kv`` materializes a copy
+            # (its reshape-after-expand cannot be a view), which at full prompt length is n_rep x
+            # the cache -- 16.5 GiB at the 1M rung, and unlike the activations it scales with the
+            # total cached length rather than the chunk, so chunking does not bound it.
+            # :meth:`_prefill` expands one group at a time instead.
+            att = self._prefill(
+                qh,
+                kvm.k_cache[:, :total].transpose(1, 2),
+                kvm.v_cache[:, :total].transpose(1, 2),
+                n_rep=n_rep,
+            )
 
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
         att = self._apply_gate(att, x)
         return self.w_out(att)
 
-    def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    def _prefill(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, n_rep: int = 1
+    ) -> torch.Tensor:
         """Prefill over an arbitrary-length prompt: right-pad to a multiple of block_size, run the
         fused kernel, slice off the padded tail (padding is future-only, never attended causally).
 
@@ -1020,6 +1030,14 @@ class FastLandmarkAttention(Attention):
         leaves the kernel's implicit history ``len(k) - len(q)`` unchanged, and keeps both the
         history and the padded total a whole number of blocks (the caller guarantees the chunk
         starts on a block boundary).
+
+        :param n_rep: Grouped-query repeat factor. ``1`` means ``k``/``v`` already carry ``q``'s head
+            count. Above 1 they carry ``q.shape[1] // n_rep`` group heads and are expanded here **one
+            group at a time**: the kernel needs matching head counts, but materializing all of them
+            up front costs ``n_rep`` copies of the full-length cache (16.5 GiB at the 1M rung), and
+            that cost tracks the total cached length rather than the chunk, so chunked prefill would
+            not bound it. Per-group expansion cuts the transient to ``1 / n_kv_heads`` of that.
+            Attention is independent per head, so the result is unchanged.
         """
         T = q.shape[2]
         pad = (-T) % self.block_size
@@ -1027,7 +1045,22 @@ class FastLandmarkAttention(Attention):
             q = F.pad(q, (0, 0, 0, pad))
             k = F.pad(k, (0, 0, 0, pad))
             v = F.pad(v, (0, 0, 0, pad))
-        att = self._attn_core(q, k, v)
+        if n_rep == 1:
+            att = self._attn_core(q, k, v)
+        else:
+            # ``repeat_kv`` maps query head h to group head h // n_rep, so the groups are blocked,
+            # not interleaved -- slice q the same way.
+            att = torch.cat(
+                [
+                    self._attn_core(
+                        q[:, g * n_rep : (g + 1) * n_rep],
+                        k[:, g : g + 1].expand(-1, n_rep, -1, -1),
+                        v[:, g : g + 1].expand(-1, n_rep, -1, -1),
+                    )
+                    for g in range(k.shape[1])
+                ],
+                dim=1,
+            )
         return att[:, :, :T]
 
     def _decode_apply_topk_landmark_retrieval(
