@@ -382,7 +382,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     if latent_up_proj is not None and (latent_up_proj.bias is not None) != latent_moe_bias:
         raise NotImplementedError("LatentMoE down and up projections must use the same bias setting.")
     latent_moe_up_proj_input_norm = representative.latent_up_proj_input_norm is not None
-    emo = router.emo
+    emo = getattr(router, "emo", None)
     sparse_signature = None
     for block in sparse_blocks:
         assert block.routed_experts is not None and block.routed_experts_router is not None
@@ -392,7 +392,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         has_latent_moe = block.latent_down_proj is not None
         if has_latent_moe != (block.latent_up_proj is not None):
             raise NotImplementedError("LatentMoE requires both down and up projections.")
-        block_emo = block_router.emo
+        block_emo = getattr(block_router, "emo", None)
         if block_emo is not None and block_emo.eval_pool_size() != block_experts.num_experts:
             raise NotImplementedError(
                 "HF EMo export currently requires eval_document_expert_pool=num_experts."
