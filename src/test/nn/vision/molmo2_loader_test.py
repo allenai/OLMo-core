@@ -30,6 +30,7 @@ from olmo_core.nn.vision import (
 )
 from olmo_core.nn.vision.molmo2_loader import (
     Molmo2LoaderError,
+    load_molmo2_hf_vision_config,
     load_molmo2_hf_vision_state_dict,
     molmo2_hf_state_dict_to_multimodal_lm,
     molmo2_hf_state_dict_to_vision,
@@ -298,6 +299,32 @@ def test_selective_hf_vision_loader_materializes_only_vision_shard(tmp_path, mon
 
     assert set(loaded) == {vision_key}
     assert requested == [index_path.name, vision_shard.name]
+
+
+def test_hf_vision_config_loader_reads_only_declarative_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auto_map": {"AutoConfig": "configuration_molmo2.Molmo2Config"},
+                "vit_config": {"hidden_size": 1152, "num_hidden_layers": 27},
+                "adapter_config": {"vit_layers": [-3, -9], "text_hidden_size": 2560},
+            }
+        )
+    )
+    requested = []
+
+    def fake_download(*, filename, **kwargs):
+        requested.append((filename, kwargs))
+        return str(config_path)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", fake_download)
+    loaded = load_molmo2_hf_vision_config("test/model", revision="fixed")
+
+    assert loaded.vit_config.hidden_size == 1152
+    assert loaded.vit_config.num_hidden_layers == 27
+    assert loaded.adapter_config.vit_layers == [-3, -9]
+    assert requested == [("config.json", {"repo_id": "test/model", "revision": "fixed", "cache_dir": None, "local_files_only": False})]
 
 
 def test_hybrid_config_retargets_connector_to_external_lm():

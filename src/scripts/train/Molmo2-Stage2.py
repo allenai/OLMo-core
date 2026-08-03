@@ -141,13 +141,14 @@ def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
     """Compose the native s002 MoE LM with the Molmo2 vision tower."""
     import json
 
-    from transformers import AutoConfig
-
     from olmo_core.nn.attention import AttentionConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
     from olmo_core.nn.transformer import OLMoDDPModelConfig
-    from olmo_core.nn.vision import multimodal_config_from_molmo2_vision
+    from olmo_core.nn.vision import (
+        load_molmo2_hf_vision_config,
+        multimodal_config_from_molmo2_vision,
+    )
 
     with (Path(BASE_CHECKPOINT) / "config.json").open() as checkpoint_config:
         lm_config = OLMoDDPModelConfig.from_dict(json.load(checkpoint_config)["model"])
@@ -164,11 +165,10 @@ def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
     lm_config.recompute_all_blocks_by_chunk = False
     lm_config.two_batch_overlap = False
 
-    hf_config = AutoConfig.from_pretrained(
+    hf_config = load_molmo2_hf_vision_config(
         VISION_MODEL_ID,
         revision=VISION_REVISION,
         cache_dir=HF_CACHE_DIR,
-        trust_remote_code=True,
     )
     return multimodal_config_from_molmo2_vision(
         hf_config,

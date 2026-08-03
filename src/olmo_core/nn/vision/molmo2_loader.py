@@ -41,6 +41,7 @@ Usage::
 
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, Optional, Tuple
 
 import torch
@@ -56,6 +57,7 @@ log = logging.getLogger(__name__)
 __all__ = [
     "molmo2_hf_state_dict_to_multimodal_lm",
     "molmo2_hf_state_dict_to_vision",
+    "load_molmo2_hf_vision_config",
     "load_molmo2_hf_vision_state_dict",
     "molmo2_config_from_hf_config",
     "multimodal_config_from_molmo2_vision",
@@ -66,6 +68,43 @@ __all__ = [
 
 class Molmo2LoaderError(RuntimeError):
     """Raised when the HF Molmo2 state dict can't be mapped to our model."""
+
+
+def load_molmo2_hf_vision_config(
+    model_id: str,
+    *,
+    revision: Optional[str] = None,
+    cache_dir: Optional[str] = None,
+    local_files_only: bool = False,
+) -> Any:
+    """Load the Molmo2 vision configuration without executing HF remote code.
+
+    ``AutoConfig(..., trust_remote_code=True)`` copies the remote configuration module into a
+    shared module cache. Multiple torchrun workers doing that concurrently can observe a partially
+    initialized module. Stage 1/2 only need the declarative ``vit_config`` and ``adapter_config``
+    sections, so reading the pinned ``config.json`` directly is both sufficient and race-free.
+    """
+    from huggingface_hub import hf_hub_download
+
+    config_path = hf_hub_download(
+        repo_id=model_id,
+        filename="config.json",
+        revision=revision,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+    )
+    with open(config_path) as f:
+        config = json.load(f)
+    if not isinstance(config, dict):
+        raise Molmo2LoaderError(f"Expected an object in {model_id!r} config.json")
+
+    sections = {}
+    for name in ("vit_config", "adapter_config"):
+        section = config.get(name)
+        if not isinstance(section, dict):
+            raise Molmo2LoaderError(f"Missing or invalid {name!r} in {model_id!r} config.json")
+        sections[name] = SimpleNamespace(**section)
+    return SimpleNamespace(**sections)
 
 
 def load_molmo2_hf_vision_state_dict(
