@@ -27,7 +27,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase
 from .collator import MultimodalCollator
-from .packing import iter_packs
+from .packing import iter_dynamic_packs, iter_packs
 from .prefetch import prefetch_map
 
 __all__ = ["MixtureDataLoader"]
@@ -56,6 +56,8 @@ class MixtureDataLoader(DataLoaderBase):
         epoch_instances: Optional[int] = None,
         pack: bool = False,
         pack_max_crops: Optional[int] = None,
+        pack_buffer_size: int = 48,
+        pack_image_weight: float = 30.0,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
@@ -96,6 +98,8 @@ class MixtureDataLoader(DataLoaderBase):
         self.seq_len = collator.pad_sequence_length
         self.pack = pack
         self.pack_max_crops = pack_max_crops
+        self.pack_buffer_size = pack_buffer_size
+        self.pack_image_weight = pack_image_weight
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
         self.max_consecutive_data_errors = max_consecutive_data_errors
@@ -161,9 +165,7 @@ class MixtureDataLoader(DataLoaderBase):
         n_batches = self.total_batches or 0
         if self.pack:
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            gen = iter_packs(
-                self._example_stream(rank_refs), self.seq_len, max_crops_per_pack=self.pack_max_crops
-            )
+            gen = self._pack_stream(rank_refs)
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
             for _ in range(self.batches_processed, n_batches):
@@ -218,6 +220,27 @@ class MixtureDataLoader(DataLoaderBase):
                     e,
                 )
 
+    def _pack_stream(self, refs: Sequence) -> Iterator[Dict[str, Any]]:
+        """Packed-example stream over cycled ``refs``.
+
+        With ``pack_max_crops`` set this is mm_olmo's stage-2 packer: a buffer-48
+        2D-knapsack over (text tokens, image crops) that freely mixes text-only and
+        image examples in one pack. Without it, the legacy token-only next-fit
+        (stage-1 behaviour) is used. ``flush=False`` because the ref stream is
+        infinite (cycled).
+        """
+        stream = self._example_stream(refs)
+        if self.pack_max_crops is not None:
+            return iter_dynamic_packs(
+                stream,
+                self.seq_len,
+                max_crops_per_pack=self.pack_max_crops,
+                buffer_size=self.pack_buffer_size,
+                image_weight=self.pack_image_weight,
+                flush=False,
+            )
+        return iter_packs(stream, self.seq_len)
+
     def _example_stream(self, rank_refs: Sequence) -> Iterator[Dict[str, Any]]:
         """Infinite stream of example dicts for this rank: cycle the refs, load each example
         (heavy image preprocessing) on a background thread pool when ``prefetch_workers > 0``
@@ -240,9 +263,7 @@ class MixtureDataLoader(DataLoaderBase):
         size = max(self._sizes[src], 1)
         if self.pack:
             refs = [(src, i % size) for i in range(max(ri * 4, 4))]
-            gen = iter_packs(
-                self._example_stream(refs), self.seq_len, max_crops_per_pack=self.pack_max_crops
-            )
+            gen = self._pack_stream(refs)
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self.datasets[src][i % size] for i in range(ri)]
         return self.collator(examples)

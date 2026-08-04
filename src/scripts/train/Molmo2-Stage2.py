@@ -80,6 +80,12 @@ COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 4
 MAX_CROPS = 8
+# Per-pack crop capacity for the 2D-knapsack packer. mm_olmo derives this from the
+# preprocessor's max per-example output: 1 global + max(MAX_CROPS, high_res_max_crops=24)
+# local crops = 25 (pointing sources use p_high_res=0.30, so high-res examples occur).
+# Setting it below a single example's crop count would force that example into its own
+# 16k pack and waste most of the sequence as padding.
+PACK_MAX_CROPS = 1 + 24
 EST_TOKENS_PER_EXAMPLE = 1500  # packed 16k sequences; tune if batch counts look off
 
 # mm_olmo train_image_video_sft.py (image-only-v9): global 128, microbatch 2 per GPU.
@@ -131,7 +137,7 @@ class ExperimentConfig(Config):
     mixture: str = "debug"
     """Mixture tier — see ``VALIDATION_MIXTURES`` in ``image_only_v9.py``."""
     pack_sequences: bool = PACK_SEQUENCES
-    pack_max_crops: int = MAX_CROPS
+    pack_max_crops: int = PACK_MAX_CROPS
 
 
 def _build_model_config() -> MultimodalLMConfig:
