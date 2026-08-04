@@ -136,6 +136,9 @@ FINEVISION_RATES: dict = {
 FINEVISION_MIN_VISUAL_DEPENDENCY: Optional[int] = None
 
 # Default init: latest step under this OLMo-core stage-1 run (model weights only).
+# HARDCODED personal checkpoint (donovanc's stage-1 run on weka). Point this at your own
+# stage-1 run via --trainer.load_path=/path/to/run, or --trainer.load_path=null to
+# initialise from the released HF Molmo2-4B weights instead.
 DEFAULT_LOAD_PATH = (
     "/weka/oe-training-default/donovanc/molmofication/checkpoints/"
     "molmo2-pretraining-olmo-core/8-gpu-holmes/8-gpu-holmes-olmo-core-stable"

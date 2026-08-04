@@ -42,7 +42,13 @@ _PARITY_KEYS = (
     "images",
     "pooled_patches_idx",
 )
-_MM_OLMO_ROOT = "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+# HARDCODED personal paths (donovanc's mm_olmo checkout / conda / activate script on
+# weka), used only by this offline parity harness — never by training. Override via the
+# MM_OLMO_ROOT env var and the --conda / --mm-env / --mm-activate-script CLI flags to run
+# the mm_olmo export side from your own environment.
+_MM_OLMO_ROOT = os.environ.get(
+    "MM_OLMO_ROOT", "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+)
 _DEFAULT_CONDA = "/weka/oe-training-default/donovanc/miniconda3/bin/conda"
 _DEFAULT_MM_OLMO_ACTIVATE = "/weka/oe-training-default/donovanc/mm_olmo-activate.sh"
 _MM_OLMO_ENV_KEYS = (
