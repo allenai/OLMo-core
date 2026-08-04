@@ -44,7 +44,7 @@ def test_build_branched_sequence_root_length_single_branch():
 def test_mixture_weights_sum_to_one():
     lengths = {src.name: 1000 for g in IMAGE_ONLY_V9_SUBMIXTURES for src in g.datasets}
     flat = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
-    assert len(flat) == 32
+    assert len(flat) == 43
     assert abs(sum(w for _, w in flat) - 1.0) < 1e-6
 
 
@@ -61,10 +61,11 @@ def test_debug_mixture_subset_weights_renormalize():
     assert abs(sum(w for _, w in subset) - 1.0) < 1e-6
 
 
-def test_image_only_v9_has_32_datasets():
+def test_image_only_v9_has_43_datasets():
+    # 4 demo + 33 academic (incl. 3 mantis + 6 multidoc) + 5 pointing + tulu4
     names = [src.name for g in IMAGE_ONLY_V9_SUBMIXTURES for src in g.datasets]
-    assert len(names) == 32
-    assert len(set(names)) == 32
+    assert len(names) == 43
+    assert len(set(names)) == 43
 
 
 def test_sft_formatter_vqa_short_answer():

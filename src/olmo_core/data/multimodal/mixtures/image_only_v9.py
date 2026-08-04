@@ -37,14 +37,29 @@ DEMO_MIXTURE_DATASETS: Tuple[str, ...] = (
     "pixmo_ask_model_anything",
     "pixmo_cap",
     "pixmo_cap_qa_as_user_qa",
+    "correction_qa_multi_only_max5",
 )
 POINTING_MIXTURE_DATASETS: Tuple[str, ...] = (
+    "pixmo_multi_points",
     "pixmo_points_train",
     "pixmo_count_train",
     "pixmo_points_high_freq_train",
     "cosyn_point",
 )
 NLP_MIXTURE_DATASETS: Tuple[str, ...] = ("tulu4",)
+MULTI_IMAGE_MIXTURE_DATASETS: Tuple[str, ...] = (
+    "correction_qa_multi_only_max5",
+    "mantis_instruct_llava_665k_multi_multi_only",
+    "mantis_instruct_nlvr2_multi_only",
+    "mantis_instruct_spot-the-diff_multi_only",
+    "cosyn_multidoc_chart_exp",
+    "cosyn_multidoc_chemical_exp",
+    "cosyn_multidoc_diagram_exp",
+    "cosyn_multidoc_doc_exp",
+    "cosyn_multidoc_music_exp",
+    "cosyn_multidoc_table_exp",
+    "pixmo_multi_points",
+)
 
 IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
     SubMixture(
@@ -54,6 +69,7 @@ IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
             DatasetSource("pixmo_ask_model_anything"),
             DatasetSource("pixmo_cap", root_size_factor=100_000),
             DatasetSource("pixmo_cap_qa_as_user_qa"),
+            DatasetSource("correction_qa_multi_only_max5"),
         ],
     ),
     SubMixture(
@@ -73,6 +89,10 @@ IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
             DatasetSource("tabwmp_da"),
             DatasetSource("st_qa"),
             DatasetSource("tally_qa"),
+            # Multi-image (mm_olmo IMAGE_ACADEMIC_V2)
+            DatasetSource("mantis_instruct_llava_665k_multi_multi_only"),
+            DatasetSource("mantis_instruct_nlvr2_multi_only"),
+            DatasetSource("mantis_instruct_spot-the-diff_multi_only"),
             DatasetSource("pixmo_clocks", root_size_factor=250_000),
             DatasetSource("dv_qa", root_size_factor=10_000),
             DatasetSource("figure_qa", root_size_factor=10_000),
@@ -84,12 +104,24 @@ IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
             DatasetSource("cosyn_math_exp"),
             DatasetSource("cosyn_music_exp"),
             DatasetSource("cosyn_table_exp"),
+            DatasetSource("cosyn_multidoc_chart_exp"),
+            DatasetSource("cosyn_multidoc_chemical_exp"),
+            DatasetSource("cosyn_multidoc_diagram_exp"),
+            DatasetSource("cosyn_multidoc_doc_exp"),
+            DatasetSource("cosyn_multidoc_music_exp"),
+            DatasetSource("cosyn_multidoc_table_exp"),
         ],
     ),
     SubMixture(
         "image_pointing",
         0.166,
         [
+            DatasetSource(
+                "pixmo_multi_points",
+                root_size_factor=200_000,
+                message_weight=0.2,
+                override_p_high_res=0.30,
+            ),
             DatasetSource(
                 "pixmo_points_train",
                 message_weight=0.2,
@@ -127,6 +159,7 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "demo-pointing": DEMO_MIXTURE_DATASETS + POINTING_MIXTURE_DATASETS,
     "nlp-demo": NLP_MIXTURE_DATASETS + DEMO_MIXTURE_DATASETS,
     "academic": ACADEMIC_MIXTURE_DATASETS,
+    "multi-image": MULTI_IMAGE_MIXTURE_DATASETS,
     "image-only-v9": None,
     # Pointing bisect (one source each).
     "pixmo_points_train": (POINTING_MIXTURE_DATASETS[0],),
@@ -188,6 +221,31 @@ def build_image_only_v9_dataset(
         return Tulu4DatasetConfig(**tulu_kw).build(tokenizer)
 
     src = sources[name]
+    if name == "correction_qa_multi_only_max5":
+        from olmo_core.data.multimodal.multi_image_datasets import CorrectionQaDatasetConfig
+
+        return CorrectionQaDatasetConfig(seed=seed).build(tokenizer)
+    if name.startswith("mantis_instruct_"):
+        from olmo_core.data.multimodal.multi_image_datasets import MantisInstructDatasetConfig
+
+        subset = name[len("mantis_instruct_") :].replace("_multi_only", "")
+        return MantisInstructDatasetConfig(subset=subset, seed=seed).build(tokenizer)
+    if name.startswith("cosyn_multidoc_"):
+        from olmo_core.data.multimodal.multi_image_datasets import CoSynMultiDocDatasetConfig
+
+        doc_type = name[len("cosyn_multidoc_") :].replace("_exp", "")
+        return CoSynMultiDocDatasetConfig(
+            doc_type=doc_type, use_exp=name.endswith("_exp"), seed=seed
+        ).build(tokenizer)
+    if name == "pixmo_multi_points":
+        from olmo_core.data.multimodal.multi_image_datasets import PixMoMultiPointsDatasetConfig
+
+        return PixMoMultiPointsDatasetConfig(
+            loss_token_weighting="none",
+            message_weight=src.message_weight,
+            p_high_res=src.override_p_high_res or 0.0,
+            seed=seed,
+        ).build(tokenizer)
     if name == "pixmo_points_train":
         return PixMoPointsDatasetConfig(
             kind="basic",

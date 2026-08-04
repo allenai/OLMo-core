@@ -17,6 +17,7 @@ from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
 __all__ = [
     "branch_context_ids",
     "image_prefix_ids",
+    "multi_image_prefix_ids",
     "user_header_ids",
     "user_turn_continuation_ids",
     "user_turn_ids",
@@ -60,6 +61,24 @@ def image_prefix_ids(tokenizer, image_grid: np.ndarray) -> List[int]:
     """Shared qwen3 prefix: ``<|im_start|>user\\n`` + expanded image token block."""
     resized_h, resized_w, h, w = (int(image_grid[i]) for i in range(4))
     return user_header_ids(tokenizer) + build_image_token_ids(resized_h, resized_w, h, w)
+
+
+def multi_image_prefix_ids(tokenizer, image_grids: List[np.ndarray]) -> List[int]:
+    """Shared qwen3 prefix for several images.
+
+    mm_olmo's ``MultiImagePreprocessor`` prepends the text ``"Image {i+1}"`` to each
+    image's token block when the example holds more than one image (nothing extra for
+    a single image), and the blocks follow each other directly inside the first user
+    message: ``<|im_start|>user\\n Image 1 <blocks> Image 2 <blocks> ... {question}``.
+    """
+    ids = user_header_ids(tokenizer)
+    multi = len(image_grids) > 1
+    for i, grid in enumerate(image_grids):
+        if multi:
+            ids = ids + tokenizer.encode(f"Image {i + 1}", add_special_tokens=False)
+        resized_h, resized_w, h, w = (int(grid[j]) for j in range(4))
+        ids = ids + build_image_token_ids(resized_h, resized_w, h, w)
+    return ids
 
 
 def user_turn_continuation_ids(tokenizer) -> List[int]:

@@ -72,9 +72,10 @@ def test_artifact_comparison_reports_first_tensor_difference(tmp_path):
     assert differences == ["input_ids: first mismatch at (1,): mm_olmo=2, olmo_core=9"]
 
 
-def test_image_only_v9_registry_has_32_datasets():
+def test_image_only_v9_registry_has_43_datasets():
     module = _load_parity_script()
-    assert len(module.image_only_v9_dataset_names()) == 32
+    # 4 demo + 33 academic (incl. 3 mantis + 6 multidoc) + 5 pointing + tulu4
+    assert len(module.image_only_v9_dataset_names()) == 43
 
 
 def test_image_diagnostics_accepts_numpy_array():

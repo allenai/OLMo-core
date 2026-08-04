@@ -81,11 +81,12 @@ RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 4
 MAX_CROPS = 8
 # Per-pack crop capacity for the 2D-knapsack packer. mm_olmo derives this from the
-# preprocessor's max per-example output: 1 global + max(MAX_CROPS, high_res_max_crops=24)
-# local crops = 25 (pointing sources use p_high_res=0.30, so high-res examples occur).
-# Setting it below a single example's crop count would force that example into its own
-# 16k pack and waste most of the sequence as padding.
-PACK_MAX_CROPS = 1 + 24
+# preprocessor's max per-example output; with multi-image enabled that is
+# max_images * (1 global + max(MAX_CROPS, high_res_max_crops=24) local crops) =
+# 5 * 25 = 125. In practice the 16k token budget binds first; the crop capacity
+# mainly bounds worst-case collator/ViT memory. Setting it below a single example's
+# crop count would force that example into its own mostly-padding 16k pack.
+PACK_MAX_CROPS = 5 * (1 + 24)
 EST_TOKENS_PER_EXAMPLE = 1500  # packed 16k sequences; tune if batch counts look off
 
 # mm_olmo train_image_video_sft.py (image-only-v9): global 128, microbatch 2 per GPU.

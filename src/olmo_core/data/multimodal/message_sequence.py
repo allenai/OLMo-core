@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -13,7 +13,7 @@ from .message_weight import (
     apply_message_weight_to_loss_masks,
     loss_token_weighting_for_build,
 )
-from .qwen3_layout import branch_context_ids, image_prefix_ids
+from .qwen3_layout import branch_context_ids
 from .sequence_builder import build_branched_sequence
 
 __all__ = ["encode_sft_example", "encode_text_only_sft"]
@@ -25,28 +25,67 @@ def encode_sft_example(
     turns: Sequence[Tuple[str, str]],
     *,
     max_crops: int = 8,
+    max_images: int = 5,
+    p_high_res: float = 0.0,
+    high_res_max_crops: int = 24,
     loss_token_weighting: str = "root_subsegments_root_tokens",
     message_weight: Optional[MessageWeight] = None,
     seed: int = 0,
     shuffle_rng: Optional[np.random.RandomState] = None,
 ) -> Dict[str, np.ndarray]:
-    """Build a branched Molmo2 SFT example from (user, assistant) turn pairs."""
+    """Build a branched Molmo2 SFT example from (user, assistant) turn pairs.
+
+    ``pil_image`` may be a single image or a **list** of images (multi-image
+    example). Multi-image handling follows mm_olmo's ``MultiImagePreprocessor`` +
+    ``build_sequence``: at most ``max_images`` images, each preprocessed with the
+    same crop budget, ``"Image {i+1}"`` text prefixes when there is more than one
+    image, crops concatenated along the crop axis, and each image's pooled patch
+    indices offset by the running crop-patch count.
+    """
     import torch
 
-    images_t, pooling_t, image_grid = preprocess_image_molmo2(
-        pil_image, dtype=torch.float32, device=torch.device("cpu"), max_crops=max_crops
-    )
+    from .qwen3_layout import multi_image_prefix_ids
+
+    rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
+
+    pil_images = pil_image if isinstance(pil_image, (list, tuple)) else [pil_image]
+    pil_images = list(pil_images)[:max_images]
+
+    grids = []
+    crops_list = []
+    pooling_list = []
+    pooled_offset = 0
+    for img in pil_images:
+        images_t, pooling_t, image_grid = preprocess_image_molmo2(
+            img,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+            max_crops=max_crops,
+            p_high_res=p_high_res,
+            high_res_max_crops=high_res_max_crops,
+            is_training=True,
+            rng=rng,
+        )
+        crops = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
+        pooled = pooling_t[0].numpy()  # (n_pool, pool_size), indices local to this image
+        # Offset into the concatenated (total_crops * n_patches) axis
+        # (mm_olmo build_sequence: token_pooling_offset += prod(images.shape[:2])).
+        pooled = np.where(pooled >= 0, pooled + pooled_offset, pooled)
+        pooled_offset += int(np.prod(crops.shape[:2]))
+        grids.append(image_grid)
+        crops_list.append(crops)
+        pooling_list.append(pooled)
+
     turn_pairs = [(q, a) for q, a in turns if a]
     if not turn_pairs:
         raise ValueError("No valid (question, answer) branches")
 
     if len(turn_pairs) > 1:
         order = np.arange(len(turn_pairs))
-        rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
         rng.shuffle(order)
         turn_pairs = [turn_pairs[i] for i in order]
 
-    prefix = image_prefix_ids(tokenizer, image_grid)
+    prefix = multi_image_prefix_ids(tokenizer, grids)
     multi_branch = len(turn_pairs) > 1
     branches = [
         (
@@ -72,8 +111,12 @@ def encode_sft_example(
         mw,
         branch_scaling_already_applied=True,
     )
-    seq["images"] = images_t[0].numpy()
-    seq["pooled_patches_idx"] = pooling_t[0].numpy()
+    seq["images"] = (
+        np.concatenate(crops_list, axis=0) if len(crops_list) > 1 else crops_list[0]
+    )
+    seq["pooled_patches_idx"] = (
+        np.concatenate(pooling_list, axis=0) if len(pooling_list) > 1 else pooling_list[0]
+    )
     return seq
 
 
