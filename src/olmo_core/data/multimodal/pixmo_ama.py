@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-import numpy as np
 from PIL import Image
 
 from olmo_core.config import Config
 
 from .detect_counting_question import is_pixmo_point_and_count_question
+from .sequence_builder import example_rng
 from .message_sequence import encode_sft_example
 from .paths import PIXMO_DATASETS
 
@@ -75,7 +75,7 @@ class PixMoAmaDataset:
         return len(self._data)
 
     def __getitem__(self, index: int) -> Dict:
-        rng = np.random.RandomState(self.config.seed + index)
+        rng = example_rng(self.config.seed, index)
         row = self._data[index]
         turns: List[Tuple[str, str]] = []
         for q, a in zip(row["question"], row["answer"]):

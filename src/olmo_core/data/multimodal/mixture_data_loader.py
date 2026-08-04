@@ -14,14 +14,10 @@ from __future__ import annotations
 
 import itertools
 import logging
+import threading
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
-
-log = logging.getLogger(__name__)
-
-DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
-DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -29,6 +25,11 @@ from ..data_loader import DataLoaderBase
 from .collator import MultimodalCollator
 from .packing import iter_dynamic_packs, iter_packs
 from .prefetch import prefetch_map
+
+log = logging.getLogger(__name__)
+
+DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
+DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 
 __all__ = ["MixtureDataLoader"]
 
@@ -106,6 +107,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.max_total_data_errors = max_total_data_errors
         self._consecutive_data_errors = 0
         self._total_data_errors = 0
+        self._data_error_lock = threading.Lock()
         self._sizes = [len(d) for d in self.datasets]
         self.epoch_instances = epoch_instances or sum(self._sizes)
         self._order: Optional[List] = None  # list of (src_idx, example_idx)
@@ -186,40 +188,6 @@ class MixtureDataLoader(DataLoaderBase):
         out["_source_name"] = self.dataset_names[src_idx]
         return out
 
-    def _load_example(self, ref_iter: Iterator) -> Dict[str, Any]:
-        """Load the next valid example, skipping refs that fail formatting (mm_olmo parity)."""
-        while True:
-            ref = next(ref_iter)
-            try:
-                out = self._try_load_example(ref)
-                self._consecutive_data_errors = 0
-                return out
-            except Exception as e:
-                self._consecutive_data_errors += 1
-                self._total_data_errors += 1
-                if (
-                    self._consecutive_data_errors > self.max_consecutive_data_errors
-                    or self._total_data_errors > self.max_total_data_errors
-                ):
-                    src_idx, example_idx = ref
-                    e.add_note(
-                        f"Exceeded data error tolerance loading "
-                        f"{self.dataset_names[src_idx]}[{example_idx}] "
-                        f"(consecutive_data_errors={self._consecutive_data_errors}, "
-                        f"total_data_errors={self._total_data_errors})"
-                    )
-                    raise
-                src_idx, example_idx = ref
-                log.warning(
-                    "Skipping %s[%d] after error "
-                    "(consecutive_data_errors=%d, total_data_errors=%d): %r",
-                    self.dataset_names[src_idx],
-                    example_idx,
-                    self._consecutive_data_errors,
-                    self._total_data_errors,
-                    e,
-                )
-
     def _pack_stream(self, refs: Sequence) -> Iterator[Dict[str, Any]]:
         """Packed-example stream over cycled ``refs``.
 
@@ -241,20 +209,71 @@ class MixtureDataLoader(DataLoaderBase):
             )
         return iter_packs(stream, self.seq_len)
 
+    def _try_load_or_none(self, ref) -> Optional[Dict[str, Any]]:
+        """Load one ref, returning ``None`` on a tolerated data error.
+
+        Thread-safe: called from prefetch worker threads. The ref -> result mapping is
+        1:1, so results stay in ref order regardless of worker count — broken refs are
+        skipped downstream without perturbing the order of the surviving examples
+        (deterministic packing and resume replay depend on this).
+        """
+        try:
+            out = self._try_load_example(ref)
+        except Exception as e:
+            with self._data_error_lock:
+                self._consecutive_data_errors += 1
+                self._total_data_errors += 1
+                consecutive, total = self._consecutive_data_errors, self._total_data_errors
+            src_idx, example_idx = ref
+            if consecutive > self.max_consecutive_data_errors or total > self.max_total_data_errors:
+                e.add_note(
+                    f"Exceeded data error tolerance loading "
+                    f"{self.dataset_names[src_idx]}[{example_idx}] "
+                    f"(consecutive_data_errors={consecutive}, total_data_errors={total})"
+                )
+                raise
+            log.warning(
+                "Skipping %s[%d] after error "
+                "(consecutive_data_errors=%d, total_data_errors=%d): %r",
+                self.dataset_names[src_idx],
+                example_idx,
+                consecutive,
+                total,
+                e,
+            )
+            return None
+        with self._data_error_lock:
+            self._consecutive_data_errors = 0
+        return out
+
+    def _load_example(self, ref_iter: Iterator) -> Dict[str, Any]:
+        """Load the next valid example, skipping refs that fail formatting (mm_olmo parity)."""
+        while True:
+            out = self._try_load_or_none(next(ref_iter))
+            if out is not None:
+                return out
+
     def _example_stream(self, rank_refs: Sequence) -> Iterator[Dict[str, Any]]:
         """Infinite stream of example dicts for this rank: cycle the refs, load each example
         (heavy image preprocessing) on a background thread pool when ``prefetch_workers > 0``
-        so it overlaps the GPU step, yielding in order to keep packing deterministic."""
+        so it overlaps the GPU step.
+
+        Refs are pulled from the cycle on the *submitting* thread and results are yielded
+        in ref order (``prefetch_map`` preserves input order), so the example stream —
+        and therefore packing and resume replay — is deterministic for any worker count.
+        """
         ref_iter = itertools.cycle(rank_refs)
         if self.prefetch_workers <= 0:
             while True:
                 yield self._load_example(ref_iter)
         else:
-            yield from prefetch_map(
-                lambda _: self._load_example(ref_iter),
-                itertools.count(),
+            for out in prefetch_map(
+                self._try_load_or_none,
+                ref_iter,
                 num_workers=self.prefetch_workers,
-            )
+            ):
+                if out is not None:
+                    yield out
 
     def get_mock_batch(self) -> Dict[str, Any]:
         ri = max(self._rank_instances, 1)

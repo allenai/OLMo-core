@@ -33,6 +33,7 @@ from olmo_core.config import Config
 from .dataset_compat import load_from_disk_compat
 from .detect_counting_question import is_pixmo_point_and_count_question
 from .message_sequence import encode_sft_example
+from .sequence_builder import example_rng
 from .paths import ACADEMIC_DATASETS, PIXMO_DATASETS, TORCH_DATASETS
 from .pixmo_ama import NO_POINT_PREFIX
 from .sft_formatter import SftFormatter
@@ -73,10 +74,9 @@ class _MultiImageSftDataset:
         raise NotImplementedError
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
-        seed = self.config.seed + index
-        rng = np.random.RandomState(seed)
+        rng = example_rng(self.config.seed, index)
         formatted = self._format_row(self._rows[index], rng)
-        turns = self._formatter.format_turns(formatted, index=index, rng=rng)
+        turns = self._formatter.format_branches(formatted, index=index, rng=rng)
         images = _open_images(formatted["image"])
         return encode_sft_example(
             self.tokenizer,

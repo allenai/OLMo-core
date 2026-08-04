@@ -25,7 +25,7 @@ from olmo_core.config import Config
 
 from .grounding import normalize_points, pointing_answer
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import build_branched_sequence
+from .sequence_builder import example_rng, build_branched_sequence
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -181,7 +181,7 @@ class PixMoPointsDataset:
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         row_idx, label_idxs = self._index[i]
-        rng = np.random.RandomState(self.config.seed + i)
+        rng = example_rng(self.config.seed, i)
         row = self._data[row_idx]
         fmt = SftFormatter(seed=self.config.seed)
         specs: List[Tuple[str, str, Any]] = []
@@ -252,7 +252,7 @@ class PixMoCountDataset:
         count = int(row["count"])
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
-        rng = np.random.RandomState(self.config.seed + i)
+        rng = example_rng(self.config.seed, i)
         fmt = SftFormatter(seed=self.config.seed)
         xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
         sub = {
@@ -319,5 +319,5 @@ class CoSynPointDataset:
             loss_token_weighting=self.config.loss_token_weighting,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
-            shuffle_rng=np.random.RandomState(self.config.seed + i),
+            shuffle_rng=example_rng(self.config.seed, i),
         )

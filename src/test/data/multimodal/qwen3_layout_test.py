@@ -9,7 +9,6 @@ from olmo_core.data.multimodal.qwen3_layout import (
     branch_context_ids,
     image_prefix_ids,
     user_header_ids,
-    user_turn_continuation_ids,
     user_turn_ids,
     user_turn_suffix_ids,
 )

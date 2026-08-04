@@ -151,7 +151,11 @@ def _build_model_config() -> MultimodalLMConfig:
 
     ensure_default_rope_registered()
     hf_config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
-    return molmo2_config_from_hf_config(hf_config)
+    config = molmo2_config_from_hf_config(hf_config)
+    # mm_olmo SFT fine-tuning setting: llm.residual_dropout = 0.1 (with
+    # response_residual_dropout = 0.0, so a single residual-stream dropout matches).
+    config.lm.block.dropout = 0.1
+    return config
 
 
 def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:

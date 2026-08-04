@@ -9,7 +9,7 @@ from olmo_core.data.multimodal.message_weight import (
     apply_message_weight_to_loss_masks,
     loss_token_weighting_for_build,
 )
-from olmo_core.data.multimodal.mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
+from olmo_core.data.multimodal.mixture_weights import compute_flat_mixture_weights
 from olmo_core.data.multimodal.mixtures.image_only_v9 import IMAGE_ONLY_V9_SUBMIXTURES
 from olmo_core.data.multimodal.sft_formatter import SftFormatter
 

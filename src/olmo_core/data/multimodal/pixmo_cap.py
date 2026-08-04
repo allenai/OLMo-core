@@ -29,7 +29,7 @@ import numpy as np
 from olmo_core.config import Config
 
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import build_branched_sequence
+from .sequence_builder import example_rng, build_branched_sequence
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
 
@@ -223,7 +223,7 @@ class PixMoCapDataset:
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
         cfg = self.config
-        rng = np.random.RandomState(cfg.seed + index)
+        rng = example_rng(cfg.seed, index)
 
         import torch
 
@@ -299,7 +299,7 @@ class PixMoCapDataset:
             "text": row.get("caption", ""),
         }
         assert self._sft_formatter is not None
-        rng = np.random.RandomState(self.config.seed + index)
+        rng = example_rng(self.config.seed, index)
         turns = self._sft_formatter.format_turns(formatted, index=index, rng=rng)
         return encode_sft_example(
             self.tokenizer,
@@ -312,7 +312,20 @@ class PixMoCapDataset:
 
 
 def _truncate(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]:
-    """Right-truncate all per-token fields to ``max_len`` (asserting no image token cut)."""
+    """Right-truncate all per-token fields to ``max_len`` (asserting no image token cut).
+
+    Follows mm_olmo ``example_preprocessor.py:260-293``: truncation that removes every
+    loss token raises (the loader skips the example), and when whole branches are cut
+    the surviving branches' ``1/sqrt(n_subsegments)`` scaling is recomputed over the
+    *non-truncated* subsegments only.
+    """
+    loss_positions = np.nonzero(seq["loss_masks"][:max_len] > 0)[0]
+    if len(loss_positions) == 0:
+        raise ValueError(f"Truncation to {max_len} removed all loss tokens")
+    n_before = None
+    if "subsegment_ids" in seq:
+        uniq = np.unique(seq["subsegment_ids"])
+        n_before = len(uniq[uniq != 10000])  # exclude the ATTEND_ALL prefix id
     from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
 
     keep = max_len
@@ -324,4 +337,9 @@ def _truncate(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]
     out = {}
     for k, v in seq.items():
         out[k] = v[:keep] if v.ndim == 1 and len(v) >= keep else v
+    if n_before is not None and "subsegment_ids" in out:
+        uniq_after = np.unique(out["subsegment_ids"])
+        n_after = len(uniq_after[uniq_after != 10000])
+        if n_after and n_after != n_before:
+            out["loss_masks"] = out["loss_masks"] * np.sqrt(n_before / n_after)
     return out

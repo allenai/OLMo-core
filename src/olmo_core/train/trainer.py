@@ -1497,26 +1497,12 @@ class Trainer:
             if should_skip:
                 log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
             else:
-                t_train = time.monotonic()
                 self.train_module.train_batch(batch)
-                log.info(
-                    "trainer step=%d rank=%d train_batch done in %.2fs",
-                    self.global_step,
-                    get_rank(),
-                    time.monotonic() - t_train,
-                )
 
                 for callback in self._iter_callbacks():
                     callback.pre_optim_step()
 
-                t_optim = time.monotonic()
                 self.train_module.optim_step()
-                log.info(
-                    "trainer step=%d rank=%d optim_step done in %.2fs",
-                    self.global_step,
-                    get_rank(),
-                    time.monotonic() - t_optim,
-                )
                 self.train_module.zero_grads()
 
             for callback in self._iter_callbacks():

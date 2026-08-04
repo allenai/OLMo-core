@@ -16,6 +16,7 @@ from olmo_core.nn.vision.molmo2_tokens import build_image_token_ids
 
 __all__ = [
     "branch_context_ids",
+    "followup_turn_context_ids",
     "image_prefix_ids",
     "multi_image_prefix_ids",
     "user_header_ids",
@@ -85,6 +86,19 @@ def user_turn_continuation_ids(tokenizer) -> List[int]:
     """Token ids for ``<|im_end|>\\n<|im_start|>user\\n`` between branched user turns."""
     text = "<|im_end|>\n<|im_start|>user\n"
     return tokenizer.encode(text, add_special_tokens=False)
+
+
+def followup_turn_context_ids(tokenizer, question: str) -> List[int]:
+    """Context of turn 2+ in a multi-turn conversation.
+
+    mm_olmo's qwen3 ``apply_chat_template`` prefixes a user message that follows an
+    assistant message with ``<|im_end|>\\n`` (closing the previous assistant turn,
+    ``preprocessor_utils.py:267``), then the regular user turn follows:
+    ``<|im_end|>\\n<|im_start|>user\\n{q}<|im_end|>\\n<|im_start|>assistant\\n``.
+    """
+    return tokenizer.encode("<|im_end|>\n", add_special_tokens=False) + user_turn_ids(
+        tokenizer, question
+    )
 
 
 def branch_context_ids(

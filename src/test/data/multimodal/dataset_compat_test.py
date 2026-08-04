@@ -1,7 +1,6 @@
 """Tests for legacy Arrow dataset loading."""
 
 import pyarrow as pa
-import pytest
 from datasets import Dataset
 
 from olmo_core.data.multimodal.dataset_compat import _load_arrow_split

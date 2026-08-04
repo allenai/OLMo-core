@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import string
 
-import numpy as np
 
 __all__ = ["template_mc_question"]
 

@@ -377,20 +377,26 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
 
-                if not torch.isfinite(ce_loss):
-                    n_im_patch = int((input_ids == self._multimodal.cfg.image_patch_token_id).sum())
-                    err_msg = (
-                        f"Non-finite CE loss on rank {get_rank()}: ce={ce_loss.item()}, "
-                        f"local_weight={local_weight.item():.4f}, "
-                        f"logits_nan={bool(torch.isnan(logits).any())}, "
-                        f"logits_inf={bool(torch.isinf(logits).any())}, "
-                        f"im_patch_tokens={n_im_patch}, seq_len={input_ids.shape[1]}, "
-                        f"sources={pack_sources}"
-                    )
-                    if reduce_distributed_failure_flag(
-                        True, self.device, group=self.dp_process_group
-                    ):
-                        raise RuntimeError(err_msg)
+                # This flag is an all_reduce, so EVERY rank must call it on every
+                # microbatch — gating it on the local result would leave healthy ranks
+                # in backward's collectives while a failing rank calls this one
+                # (mismatched collectives -> NCCL hang).
+                local_failed = bool(not torch.isfinite(ce_loss))
+                if reduce_distributed_failure_flag(
+                    local_failed, self.device, group=self.dp_process_group
+                ):
+                    if local_failed:
+                        n_im_patch = int(
+                            (input_ids == self._multimodal.cfg.image_patch_token_id).sum()
+                        )
+                        raise RuntimeError(
+                            f"Non-finite CE loss on rank {get_rank()}: ce={ce_loss.item()}, "
+                            f"local_weight={local_weight.item():.4f}, "
+                            f"logits_nan={bool(torch.isnan(logits).any())}, "
+                            f"logits_inf={bool(torch.isinf(logits).any())}, "
+                            f"im_patch_tokens={n_im_patch}, seq_len={input_ids.shape[1]}, "
+                            f"sources={pack_sources}"
+                        )
                     raise RuntimeError(
                         f"Training failed on another rank (rank {get_rank()} had finite CE)"
                     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import string
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -32,9 +32,9 @@ DEMO_STYLES = frozenset(
         "long_caption",
         "short_caption",
         "text_sft",
-        "synthetic_qa",
-        "transcript",
         "correction_qa",
+        # NOTE: "synthetic_qa" (PixMoCapQa) and "transcript" are NOT demo styles in
+        # mm_olmo (data_formatter.py:930-962) — they get a "style:" prefix.
         # mm_olmo DEMO_STYLES also carries the multi-image pointing family
         # (data_formatter.py:958-961) — no "style:" prefix under demo_or_style_v2.
         "multi_image_pointing",
@@ -89,6 +89,21 @@ CAPTION_PROMPTS = (
     "Generate a long caption about this image.",
 )
 
+# mm_olmo GENERAL_PROMPTS_V1["short_caption"] (data_formatter.py:71-83), verbatim.
+SHORT_CAPTION_PROMPTS = (
+    "Caption the image with 1 or two sentences",
+    "Write a very short description of this image.",
+    "Briefly describe the image.",
+    "Look and this image, and then summarize it in a sentence or two.",
+    "Write a brief caption describing the image",
+    "Brief Caption:",
+    "A short image caption:",
+    "A short image description",
+    "Briefly describe the content of the image.",
+    "Can you give me one sentence summary of the picture?",
+    "How would you describe this image in a sentence or two?",
+)
+
 CHAIN_OF_THOUGHT_PROMPTS = (
     "{question} Provide reasoning steps and then give the short answer.",
 )
@@ -109,24 +124,26 @@ class SftFormatter:
     a random image subset (mm_olmo stage-2 sets 0.5)."""
 
     def style_prefix(self, style: str) -> str:
-        if style in DEMO_STYLES or style in IMAGE_MC_STYLES:
+        if not style or style in DEMO_STYLES or style in IMAGE_MC_STYLES:
             return ""
         return f"{style}:"
 
-    def select_vqa_answer(self, answers: Sequence[str], rng: np.random.RandomState) -> Optional[str]:
-        if answers is None:
-            return None
-        if isinstance(answers, str):
-            return answers if answers.strip() else None
-        answers = [a for a in answers if a and str(a).strip()]
-        if not answers:
-            return None
+    def select_vqa_answer(self, answers, rng: np.random.RandomState) -> Optional[str]:
+        """mm_olmo ``DataFormatter`` answer selection (data_formatter.py:1576-1587).
+
+        Blank answers participate in the "best" vote (and can win) exactly like
+        mm_olmo — filtering them would also shift the tie-break rng draw.
+        """
+        if answers is None or isinstance(answers, str):
+            return answers
         if self.select_answer == "first":
             return min(answers)
-        counts = Counter(answers)
-        m = max(counts.values())
-        cands = [k for k, v in counts.items() if v == m]
-        return cands[rng.randint(0, len(cands))]
+        if self.select_answer == "best":
+            counts = Counter(answers)
+            m = max(counts.values())
+            cands = [k for k, v in counts.items() if v == m]
+            return cands[rng.randint(0, len(cands))]
+        raise NotImplementedError(self.select_answer)
 
     def template_options(
         self, example: Dict[str, Any], is_training: bool, rng: np.random.RandomState
@@ -134,7 +151,11 @@ class SftFormatter:
         labelled = "options" in example
         allow_unlabelled = True
         if labelled and "answer_idx" in example:
-            allow_unlabelled = bool(str(example["options"][example["answer_idx"]]).strip())
+            idx = example["answer_idx"]
+            # mm_olmo only inspects the option when the idx is a plain int
+            # (data_formatter.py:1070-1073).
+            if isinstance(idx, int):
+                allow_unlabelled = bool(str(example["options"][idx]).strip())
 
         if not is_training or rng.random() < 0.1:
             if labelled:
@@ -156,11 +177,12 @@ class SftFormatter:
         else:
             question = example["question"]
             opts = example["options"] if labelled else example["unlabelled_options"]
+            # mm_olmo always calls template_mc_question with its default
+            # unlabelled=False, for `unlabelled_options` too (data_formatter.py:1101).
             question, option_names, outputs = template_mc_question(
                 question,
                 opts,
                 rng,
-                unlabelled=not labelled,
                 p_label_options=0.8 if allow_unlabelled else 1.0,
             )
 
@@ -187,15 +209,23 @@ class SftFormatter:
             xy = [[p["x"], p["y"]] for p in pts]
         else:
             xy = pts
-        label = example.get("label", example.get("label_cased", "")).lower()
+        # mm_olmo (data_formatter.py:1163-1168): "label" is lowercased,
+        # "label_cased" keeps its case, and "question" is the final fallback.
+        if "label" in example:
+            label = example["label"].lower()
+        elif "label_cased" in example:
+            label = example["label_cased"]
+        else:
+            label = example.get("question", "")
         point_scale = example["point_scale"] if "point_scale" in example else 100
         norm = normalize_points(
             xy, point_scale=point_scale, image_size=example.get("image_size")
         )
         style = example.get("style", "pointing")
-        count = example.get("count", len(norm))
-        if style == "point_count":
-            return pointing_answer(norm, label, "point_count", count=count)
+        # mm_olmo's count is always len(points) (data_formatter.py:1141) — never a
+        # dataset-provided "count" field, which its formatter cannot even see.
+        if style in ("point_count", "point_then_count"):
+            return pointing_answer(norm, label, "point_count")
         return pointing_answer(norm, label, "pointing")
 
     def _format_multi_image_points(
@@ -310,51 +340,59 @@ class SftFormatter:
             or style_str.startswith("cosyn_")
         )
 
-    def format_turns(
+    def format_branches(
         self,
         example: Dict[str, Any],
         *,
         is_training: bool = True,
         index: int = 0,
         rng: Optional[np.random.RandomState] = None,
-    ) -> List[Tuple[str, str]]:
-        """Return list of (user_text, assistant_text) turns for one image."""
+    ) -> List[List[Tuple[str, str]]]:
+        """Return the annotation branches of one example.
+
+        Each branch is a sequential list of ``(user_text, assistant_text)`` turns:
+        independent annotations (``message_list`` entries) become separate branches
+        (attention-isolated subsegments), while a ``{"messages": [...]}`` conversation
+        stays ONE branch so later turns attend earlier ones (mm_olmo
+        ``_format_example``, data_formatter.py:2013-2019). The style prefix applies to
+        a branch's first user turn only (mm_olmo data_formatter.py:2072-2075).
+        """
         if rng is None:
-            rng = np.random.RandomState(self.seed + index)
+            from .sequence_builder import example_rng
+
+            rng = example_rng(self.seed, index)
         style = example.get("style", "")
 
         if "message_list" in example:
-            turns: List[Tuple[str, str]] = []
+            branches: List[List[Tuple[str, str]]] = []
             for msg in example["message_list"]:
                 if "messages" in msg:
                     messages = msg["messages"]
-                    for u in range(0, len(messages) - 1, 2):
-                        turns.append((messages[u], messages[u + 1]))
-                elif "question" in msg and "answer" in msg and self._needs_formatted_message(msg):
-                    sub = {k: v for k, v in example.items() if k != "message_list"}
-                    sub.update(msg)
-                    turns.extend(
-                        self.format_turns(sub, is_training=is_training, index=index, rng=rng)
-                    )
-                elif "question" in msg and "answer" in msg:
-                    sub = {k: v for k, v in example.items() if k != "message_list"}
-                    sub.update(msg)
-                    turns.extend(
-                        self.format_turns(sub, is_training=is_training, index=index, rng=rng)
-                    )
-                elif "question" in msg and "answers" in msg:
-                    sub = {k: v for k, v in example.items() if k != "message_list"}
-                    sub.update(msg)
-                    turns.extend(
-                        self.format_turns(sub, is_training=is_training, index=index, rng=rng)
-                    )
+                    conv = [
+                        (messages[u], messages[u + 1])
+                        for u in range(0, len(messages) - 1, 2)
+                    ]
+                    conv = [(q, a) for q, a in conv if a and str(a).strip()]
+                    if conv:
+                        # Style prefix on the first user turn of the conversation.
+                        prefix = self.style_prefix(str(msg.get("style", style)))
+                        if prefix:
+                            q0, a0 = conv[0]
+                            conv[0] = ((f"{prefix} " if q0 else prefix) + q0, a0)
+                        branches.append(conv)
                 else:
-                    sub = {k: v for k, v in example.items() if k != "message_list"}
+                    # mm_olmo passes only the sub-message (plus the media fields) to
+                    # the formatter — not the whole top-level example.
+                    sub = {
+                        k: v
+                        for k, v in example.items()
+                        if k in ("image", "metadata", "point_scale", "clip_points", "image_size")
+                    }
                     sub.update(msg)
-                    turns.extend(
-                        self.format_turns(sub, is_training=is_training, index=index, rng=rng)
+                    branches.extend(
+                        self.format_branches(sub, is_training=is_training, index=index, rng=rng)
                     )
-            valid = [(q, a) for q, a in turns if a and str(a).strip()]
+            valid = [b for b in branches if b]
             if is_training and not valid:
                 raise ValueError("No valid (question, answer) branches")
             return valid
@@ -364,16 +402,32 @@ class SftFormatter:
             prompt, output = self._format_multi_image_points(example, rng, is_training)
             if is_training and (output is None or not str(output).strip()):
                 raise ValueError("No valid output in example")
-            return [(prompt, output)]
+            return [[(prompt, output)]]
+        elif "prompt" in example:
+            # mm_olmo honors an explicit "prompt" before any templating
+            # (data_formatter.py:1753-1755).
+            prompt = example["prompt"]
         elif style in ("long_caption", "short_caption") and "question" not in example:
-            prompt = rng.choice(CAPTION_PROMPTS)
+            pool = SHORT_CAPTION_PROMPTS if style == "short_caption" else CAPTION_PROMPTS
+            prompt = pool[rng.randint(len(pool))]
             output = example.get("text") or example.get("caption", "")
-        elif style in ("pointing", "point_count", "cosyn_point"):
-            label = example.get("label", example.get("label_cased", "")).lower()
+        elif style in ("pointing", "point_count", "point_then_count", "cosyn_point"):
             if "question" in example:
                 prompt = example["question"]
             else:
-                pool = POINT_COUNT_PROMPTS if style == "point_count" else POINTING_PROMPTS
+                # mm_olmo (data_formatter.py:1851-1857): "label" keeps its original
+                # case 50% of the time (one rng draw); "label_cased" is never lowered.
+                if "label" in example:
+                    label = example["label"]
+                    if rng.random() > 0.5:
+                        label = label.lower()
+                else:
+                    label = example["label_cased"]
+                pool = (
+                    POINT_COUNT_PROMPTS
+                    if style in ("point_count", "point_then_count")
+                    else POINTING_PROMPTS
+                )
                 prompt = pool[rng.randint(len(pool))].format(label=label)
             if not is_training:
                 output = None
@@ -385,8 +439,6 @@ class SftFormatter:
             prompt, output, _ = self.template_options(example, is_training, rng)
         elif "question" in example:
             prompt = example["question"]
-        elif "prompt" in example:
-            prompt = example["prompt"]
         else:
             prompt = ""
 
@@ -408,4 +460,22 @@ class SftFormatter:
 
         prefix = self.style_prefix(style)
         user_text = (f"{prefix} " if prefix and prompt else prefix) + prompt
-        return [(user_text, output)]
+        return [[(user_text, output)]]
+
+    def format_turns(
+        self,
+        example: Dict[str, Any],
+        *,
+        is_training: bool = True,
+        index: int = 0,
+        rng: Optional[np.random.RandomState] = None,
+    ) -> List[Tuple[str, str]]:
+        """Flattened view of :meth:`format_branches` (single-turn branches only).
+
+        Kept for callers that treat every turn as an independent branch; use
+        :meth:`format_branches` to preserve multi-turn conversations.
+        """
+        branches = self.format_branches(
+            example, is_training=is_training, index=index, rng=rng
+        )
+        return [turn for branch in branches for turn in branch]

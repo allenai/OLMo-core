@@ -162,10 +162,11 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "multi-image": MULTI_IMAGE_MIXTURE_DATASETS,
     "image-only-v9": None,
     # Pointing bisect (one source each).
-    "pixmo_points_train": (POINTING_MIXTURE_DATASETS[0],),
-    "pixmo_count_train": (POINTING_MIXTURE_DATASETS[1],),
-    "pixmo_points_high_freq_train": (POINTING_MIXTURE_DATASETS[2],),
-    "cosyn_point": (POINTING_MIXTURE_DATASETS[3],),
+    "pixmo_multi_points": ("pixmo_multi_points",),
+    "pixmo_points_train": ("pixmo_points_train",),
+    "pixmo_count_train": ("pixmo_count_train",),
+    "pixmo_points_high_freq_train": ("pixmo_points_high_freq_train",),
+    "cosyn_point": ("cosyn_point",),
 }
 
 
@@ -180,13 +181,6 @@ def _source_lookup() -> Dict[str, DatasetSource]:
 def get_image_only_v9_source(name: str) -> Optional[DatasetSource]:
     """Return mixture metadata for a dataset name, if it is in image-only-v9."""
     return _source_lookup().get(name)
-
-
-def image_only_v9_pointing_message_weight(weight: float) -> "MessageWeight":
-    """``MessageWeight`` for image-only-v9 pointing/count sources (matches mm training)."""
-    from olmo_core.data.multimodal.message_weight import MessageWeight
-
-    return MessageWeight(weight=weight, root_length=False, root_subsegments=False)
 
 
 def build_image_only_v9_dataset(

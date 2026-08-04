@@ -284,7 +284,6 @@ def _run_parity(args: argparse.Namespace) -> int:
                 executor.submit(_compare_one_task, kwargs): kwargs["dataset"] for kwargs in task_kwargs
             }
             for future in as_completed(futures):
-                dataset = futures[future]
                 result = future.result()
                 results.append(result)
                 status = "OK" if result.ok else "FAIL"
@@ -645,7 +644,10 @@ def _export_mm(args: argparse.Namespace) -> None:
         default_message_weight=MessageWeight.from_string("root_subsegments_root_tokens"),
         is_training=True,
     )
-    rng = np.random.RandomState(args.seed)
+    # mm_olmo per-example stream (dataset.py:68, epoch 0): one rng threads the
+    # dataset's format_example AND the formatter — identical to olmo-core's
+    # example_rng derivation, so artifacts align at every index.
+    rng = np.random.RandomState((args.seed * 195172 + args.index) % (2**32 - 1))
     formatted = data.get(args.index, rng)
     example_weight = _image_only_v9_example_weight(args.dataset)
     if example_weight is not None:
@@ -655,7 +657,7 @@ def _export_mm(args: argparse.Namespace) -> None:
         copy.deepcopy(formatted),
         is_training=True,
         for_inference=False,
-        rng=np.random.RandomState(args.seed),
+        rng=rng,
     )
     diagnostics = {
         "formatted": _json_safe(formatted),
@@ -693,14 +695,19 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
     example = datasets[args.dataset][args.index]
     diagnostics = None
     if args.dataset in ACADEMIC_REGISTRY:
+        from olmo_core.data.multimodal.sequence_builder import example_rng
+
+        diag_rng = example_rng(args.seed, args.index)
         formatted = format_academic_example(
             args.dataset,
             build_academic_data(args.dataset, split="train")[args.index],
-            args.seed + args.index,
+            diag_rng,
         )
         diagnostics = {
             "formatted": _json_safe(formatted),
-            "turns": SftFormatter(seed=args.seed).format_turns(formatted, index=args.index),
+            "turns": SftFormatter(seed=args.seed).format_branches(
+                formatted, index=args.index, rng=diag_rng
+            ),
         }
         image_diag = _safe_image_diagnostics(formatted)
         if image_diag is not None:

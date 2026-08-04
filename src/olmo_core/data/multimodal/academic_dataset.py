@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-import numpy as np
 
 from olmo_core.config import Config
 
 from .academic.registry import ACADEMIC_REGISTRY, build_academic_data, format_academic_example
 from .message_sequence import encode_sft_example
+from .sequence_builder import example_rng
 from .sft_formatter import SftFormatter
 
 __all__ = ["AcademicDatasetConfig", "AcademicDataset", "ACADEMIC_DATASET_NAMES"]
@@ -42,12 +42,13 @@ class AcademicDataset:
         return self._len
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
-        seed = self.config.seed + index
-        rng = np.random.RandomState(seed)
+        # One mm_olmo-derived rng threads the dataset formatter, prompt templating,
+        # and branch shuffle (mm_olmo dataset.py:68) — including pixmo_clocks, whose
+        # augmentation draws must vary per example.
+        rng = example_rng(self.config.seed, index)
         row = self._data[index]
-        format_seed = self.config.seed if self.config.name == "pixmo_clocks" else seed
-        formatted = format_academic_example(self.config.name, row, format_seed)
-        turns = self._formatter.format_turns(formatted, index=index, rng=rng)
+        formatted = format_academic_example(self.config.name, row, rng)
+        turns = self._formatter.format_branches(formatted, index=index, rng=rng)
         example_weight = formatted.get("weight")
         message_weight = example_weight if example_weight is not None else self.config.message_weight
         return encode_sft_example(

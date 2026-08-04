@@ -27,10 +27,13 @@ class SubMixture:
 
 
 def _dataset_size_factor(source: DatasetSource, dataset_len: int) -> float:
+    """mm_olmo root-size score (data_loader.py:264-271), all four branches."""
     if source.root_size_factor == 0:
         return 1.0
     if source.root_size_factor is None:
         return float(np.sqrt(max(dataset_len, 1)))
+    if source.root_size_factor < 1:
+        return float(np.sqrt(dataset_len * source.root_size_factor))
     return float(np.sqrt(source.root_size_factor))
 
 
