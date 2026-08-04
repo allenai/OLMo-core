@@ -173,6 +173,12 @@ class ExperimentConfig(Config):
     """Mixture tier — see ``VALIDATION_MIXTURES`` in ``image_only_v9.py``."""
     pack_sequences: bool = PACK_SEQUENCES
     pack_max_crops: int = PACK_MAX_CROPS
+    mmfinereason_rate: float = MMFINEREASON_RATE
+    """Mixture fraction for MMFineReason-SFT (0 disables). The official image-only-v9
+    sources are scaled by ``1 - (mmfinereason_rate + finevision_rate)``."""
+    finevision_rate: float = 0.0
+    """Total mixture fraction for the five verified FineVision configs, split evenly
+    across them via ``FINEVISION_RATES`` keys (0 disables)."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -373,7 +379,7 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
         if names_filter is None
         else list(names_filter)
     )
-    datasets, weights, names = _append_extra_sft_sources(tokenizer, datasets, weights, names)
+    datasets, weights, names = _append_extra_sft_sources(config, tokenizer, datasets, weights, names)
     log.info(
         "Mixture %s sources / weights: %s",
         config.mixture,
@@ -382,15 +388,26 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
     return datasets, weights, names
 
 
-def _append_extra_sft_sources(tokenizer, datasets, weights, names):
-    """Append MMFineReason / FineVision at their configured rates (no-op when all 0)."""
+def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, weights, names):
+    """Append MMFineReason / FineVision at their configured rates (no-op when all 0).
+
+    ``config.finevision_rate`` is split evenly across the configs named in
+    ``FINEVISION_RATES``; a per-config rate in that dict adds on top (module-level
+    fine-tuning knob for uneven splits).
+    """
     from olmo_core.data.multimodal import (
         FineVisionDatasetConfig,
         MMFineReasonDatasetConfig,
     )
 
-    fv = {name: rate for name, rate in FINEVISION_RATES.items() if rate > 0}
-    extra_total = MMFINEREASON_RATE + sum(fv.values())
+    per_config = config.finevision_rate / max(len(FINEVISION_RATES), 1)
+    fv = {
+        name: rate + per_config
+        for name, rate in FINEVISION_RATES.items()
+        if rate + per_config > 0
+    }
+    mmfr_rate = config.mmfinereason_rate
+    extra_total = mmfr_rate + sum(fv.values())
     if extra_total <= 0:
         return datasets, weights, names
     if extra_total >= 1:
@@ -399,13 +416,13 @@ def _append_extra_sft_sources(tokenizer, datasets, weights, names):
     datasets = list(datasets)
     weights = [w * (1.0 - extra_total) for w in weights]
     names = list(names)
-    if MMFINEREASON_RATE > 0:
+    if mmfr_rate > 0:
         datasets.append(
             MMFineReasonDatasetConfig(
                 max_crops=MAX_CROPS, max_sequence_length=SEQUENCE_LENGTH
             ).build(tokenizer)
         )
-        weights.append(MMFINEREASON_RATE)
+        weights.append(mmfr_rate)
         names.append("mmfinereason")
     for cfg_name, rate in fv.items():
         datasets.append(
