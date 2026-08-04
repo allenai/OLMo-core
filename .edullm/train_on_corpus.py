@@ -255,8 +255,39 @@ def leave_the_reason_in_wandb(*, run_name: str, stage: Stage, explanation: str) 
 # a 256-entry TokenizerConfig here would produce exactly the uint16 inference described above.
 # The platform already keeps that corpus off the submission form for the same reason; if a
 # byte tokenizer lands upstream, adding a line here is what makes the corpus runnable.
+#
+# TOKENIZER/GIGATOKEN-{BPE,SUPERBPE} ARE EXPLICIT CONFIGS, NOT from_hf. They are Plan A scale
+# tokenizers published under s3://edullm-data/tokenizer/gigatoken-*/v1/ with no HuggingFace
+# source identifier -- vocab 100000, no added special tokens, ids 0..99999. Packed Plan B
+# shards concatenate encode().ids with no inserted EOS, so TokenizerConfig still needs
+# eos/pad for OLMo-core's API; both use the last id (99999). Using from_hf here would invent
+# a Hub dependency that does not exist and refuse at build time.
+#
+# STYLE: callables rather than bound classmethods, matching smollm2. Lookup is separated from
+# build so a KeyError inside a factory exits 70 (config would not build) rather than 69
+# (unknown tokenizer) -- see the try block in corpus_from_manifest.
+def _gigatoken_bpe() -> TokenizerConfig:
+    return TokenizerConfig(
+        vocab_size=100000,
+        eos_token_id=99999,
+        pad_token_id=99999,
+        identifier="s3://edullm-data/tokenizer/gigatoken-bpe/v1/files/tokenizer.json",
+    )
+
+
+def _gigatoken_superbpe() -> TokenizerConfig:
+    return TokenizerConfig(
+        vocab_size=100000,
+        eos_token_id=99999,
+        pad_token_id=99999,
+        identifier="s3://edullm-data/tokenizer/gigatoken-superbpe/v1/files/tokenizer.json",
+    )
+
+
 TOKENIZERS = {
     "tokenizer/dolma2-bpe": TokenizerConfig.dolma2,
+    "tokenizer/gigatoken-bpe": _gigatoken_bpe,
+    "tokenizer/gigatoken-superbpe": _gigatoken_superbpe,
 }
 
 
@@ -326,14 +357,19 @@ def corpus_from_manifest(read, *, dataset_id: str, version: str, tokenizer_id: s
             "in-range-looking id.",
         )
 
+    # Lookup is outside the build call on purpose. A KeyError from TOKENIZERS[...] means the
+    # id is unknown (exit 69). A KeyError raised *inside* a factory (e.g. from_hf missing
+    # vocab_size) must not be rewritten as "unknown tokenizer" -- that lists the id it claims
+    # not to know and loses the real cause. Let factory failures propagate to exit 70.
     try:
-        tokenizer = TOKENIZERS[tokenizer_id]()
+        build_tokenizer = TOKENIZERS[tokenizer_id]
     except KeyError:
         known = ", ".join(sorted(TOKENIZERS)) or "none"
         raise Refusal(
             Stage.THIS_IMAGE_HAS_NO_CONFIG_FOR_THAT_TOKENIZER,
             f"no OLMo-core config for {tokenizer_id}; this image knows: {known}",
         ) from None
+    tokenizer = build_tokenizer()
 
     return Corpus(
         dataset_id=dataset_id,
