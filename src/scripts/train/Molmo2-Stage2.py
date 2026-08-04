@@ -104,6 +104,37 @@ ALPHA_F = 0.1
 
 MAX_STEPS = 300_000
 
+# Extra image-SFT sources beyond mm_olmo's image-only-v9 mixture, OFF by default.
+# Rates are fractions of the total mixture: the 43 official sources are scaled by
+# (1 - sum(extra rates)) and the extras are appended, so enabling them dilutes the
+# official recipe proportionally. All read parquet shards straight from weka.
+#
+# MMFineReason-SFT: multimodal reasoning; supervision is the `<answer>` content of
+# `original_answer` (the `<think>` trace is dropped) — see MMFineReasonDataset.
+MMFINEREASON_RATE = 0.0
+#
+# FineVision configs -> sampling rate. Any config downloaded under FINEVISION_ROOT works;
+# these five are verified. Rows are single-turn, one image each.
+#   visualwebinstruct(filtered)  263,581  web visual instruction
+#   mavis_math_rule_geo           99,986  synthetic geometry with CoT answers
+#   mavis_math_metagen            87,348  synthetic math with CoT answers
+#   geo170k(align)                35,297  geometry caption/alignment
+#   geo170k(qa)                   12,101  geometry multiple-choice
+# NOTE: ~13% of MMFineReason rows are re-annotations of visualwebinstruct(filtered) images,
+# so enabling both double-samples those images (with different answers).
+FINEVISION_RATES: dict = {
+    "visualwebinstruct(filtered)": 0.0,
+    "mavis_math_rule_geo": 0.0,
+    "mavis_math_metagen": 0.0,
+    "geo170k(align)": 0.0,
+    "geo170k(qa)": 0.0,
+}
+# Optional quality floor applied to every enabled FineVision config (1-5 per-row minimums;
+# None = keep all). `min_visual_dependency` is the most useful: it keeps answers that
+# actually need the image. Do NOT use `min_image_correspondence` here — it is 1 for 75% of
+# geo170k(qa) and 63% of mavis_math_metagen rows, which would discard most of them.
+FINEVISION_MIN_VISUAL_DEPENDENCY: Optional[int] = None
+
 # Default init: latest step under this OLMo-core stage-1 run (model weights only).
 DEFAULT_LOAD_PATH = (
     "/weka/oe-training-default/donovanc/molmofication/checkpoints/"
@@ -339,11 +370,51 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
         if names_filter is None
         else list(names_filter)
     )
+    datasets, weights, names = _append_extra_sft_sources(tokenizer, datasets, weights, names)
     log.info(
         "Mixture %s sources / weights: %s",
         config.mixture,
         list(zip(names, [round(w, 4) for w in weights])),
     )
+    return datasets, weights, names
+
+
+def _append_extra_sft_sources(tokenizer, datasets, weights, names):
+    """Append MMFineReason / FineVision at their configured rates (no-op when all 0)."""
+    from olmo_core.data.multimodal import (
+        FineVisionDatasetConfig,
+        MMFineReasonDatasetConfig,
+    )
+
+    fv = {name: rate for name, rate in FINEVISION_RATES.items() if rate > 0}
+    extra_total = MMFINEREASON_RATE + sum(fv.values())
+    if extra_total <= 0:
+        return datasets, weights, names
+    if extra_total >= 1:
+        raise ValueError(f"Extra SFT rates sum to {extra_total}; must be < 1")
+
+    datasets = list(datasets)
+    weights = [w * (1.0 - extra_total) for w in weights]
+    names = list(names)
+    if MMFINEREASON_RATE > 0:
+        datasets.append(
+            MMFineReasonDatasetConfig(
+                max_crops=MAX_CROPS, max_sequence_length=SEQUENCE_LENGTH
+            ).build(tokenizer)
+        )
+        weights.append(MMFINEREASON_RATE)
+        names.append("mmfinereason")
+    for cfg_name, rate in fv.items():
+        datasets.append(
+            FineVisionDatasetConfig(
+                config_name=cfg_name,
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+                min_visual_dependency=FINEVISION_MIN_VISUAL_DEPENDENCY,
+            ).build(tokenizer)
+        )
+        weights.append(rate)
+        names.append(f"finevision[{cfg_name}]")
     return datasets, weights, names
 
 

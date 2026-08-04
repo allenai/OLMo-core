@@ -17,7 +17,19 @@ packer), this carries variable-shape image tensors alongside the token sequence.
 
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
+from .finevision import (
+    FINEVISION_ROOT,
+    FineVisionDataset,
+    FineVisionDatasetConfig,
+    VisualWebInstructDataset,
+    VisualWebInstructDatasetConfig,
+)
 from .mixture_data_loader import MixtureDataLoader
+from .mmfinereason import (
+    MMFineReasonDataset,
+    MMFineReasonDatasetConfig,
+    extract_answer_text,
+)
 from .packing import pack_examples
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
 from .pixmo_points import (
@@ -49,6 +61,14 @@ from .sft_formatter import SftFormatter
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
+    "FineVisionDataset",
+    "FineVisionDatasetConfig",
+    "VisualWebInstructDataset",
+    "VisualWebInstructDatasetConfig",
+    "FINEVISION_ROOT",
+    "MMFineReasonDataset",
+    "MMFineReasonDatasetConfig",
+    "extract_answer_text",
     "PixMoCapDataset",
     "PixMoCapDatasetConfig",
     "PixMoPointsDataset",

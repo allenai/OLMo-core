@@ -22,6 +22,13 @@ def _patch_list_feature_type() -> None:
         return
     from datasets.features.features import Sequence, _FEATURE_TYPES
 
+    if "List" in _FEATURE_TYPES:
+        # datasets >= 5 has a native ``List`` feature — aliasing it to ``Sequence``
+        # would be actively harmful: ``Sequence`` re-orders a list-of-structs into a
+        # struct-of-lists, silently corrupting every later schema in the process that
+        # contains a list of dicts (the patch is process-global).
+        _LIST_PATCHED = True
+        return
     _FEATURE_TYPES["List"] = Sequence
     _LIST_PATCHED = True
 
