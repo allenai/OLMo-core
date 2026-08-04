@@ -258,29 +258,39 @@ def leave_the_reason_in_wandb(*, run_name: str, stage: Stage, explanation: str) 
 #
 # TOKENIZER/GIGATOKEN-{BPE,SUPERBPE} ARE EXPLICIT CONFIGS, NOT from_hf. They are Plan A scale
 # tokenizers published under s3://edullm-data/tokenizer/gigatoken-*/v1/ with no HuggingFace
-# source identifier -- vocab 100000, no added special tokens, ids 0..99999. Packed Plan B
-# shards concatenate encode().ids with no inserted EOS, so TokenizerConfig still needs
-# eos/pad for OLMo-core's API; both use the last id (99999). Using from_hf here would invent
-# a Hub dependency that does not exist and refuse at build time.
+# source -- vocab 100000 merge ids 0..99999, no added special tokens. Packed Plan B shards
+# concatenate encode().ids with no inserted EOS.
+#
+# identifier IS None ON PURPOSE. TokenizerConfig.identifier is consumed as a local path or
+# HuggingFace id by evaluator_callback (HFTokenizer), generate/chat (AutoTokenizer), and
+# convert_checkpoint -- none accept an s3:// URI. Training on pre-tokenized shards never
+# builds a concrete tokenizer from this field, so a fake s3 path would only fail later at
+# in-loop eval / HF export. Fail immediately if something asks for the files; vendor
+# tokenizer.json into the image and point identifier at that local dir before BPB evals.
+#
+# eos/pad sit PAST the merge range (100000 / 100001) with vocab_size=100002. Using 99999
+# would fingerprint a real merge as a special; nothing in this config emits those ids today
+# (generate_doc_lengths defaults False; labels come from label_mask), but the ids land in
+# the dataset fingerprint and the saved checkpoint config.
 #
 # STYLE: callables rather than bound classmethods, matching smollm2. Lookup is separated from
 # build so a KeyError inside a factory exits 70 (config would not build) rather than 69
 # (unknown tokenizer) -- see the try block in corpus_from_manifest.
 def _gigatoken_bpe() -> TokenizerConfig:
     return TokenizerConfig(
-        vocab_size=100000,
-        eos_token_id=99999,
-        pad_token_id=99999,
-        identifier="s3://edullm-data/tokenizer/gigatoken-bpe/v1/files/tokenizer.json",
+        vocab_size=100002,
+        eos_token_id=100000,
+        pad_token_id=100001,
+        identifier=None,
     )
 
 
 def _gigatoken_superbpe() -> TokenizerConfig:
     return TokenizerConfig(
-        vocab_size=100000,
-        eos_token_id=99999,
-        pad_token_id=99999,
-        identifier="s3://edullm-data/tokenizer/gigatoken-superbpe/v1/files/tokenizer.json",
+        vocab_size=100002,
+        eos_token_id=100000,
+        pad_token_id=100001,
+        identifier=None,
     )
 
 
