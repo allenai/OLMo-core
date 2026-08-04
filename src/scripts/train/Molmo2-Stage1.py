@@ -305,6 +305,7 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
         ensure_default_rope_registered,
         molmo2_hf_state_dict_to_multimodal_lm,
         reinit_rope_buffers,
+        retie_word_embeddings,
     )
 
     ensure_default_rope_registered()
@@ -315,6 +316,9 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
     del hf
     model.to_empty(device=get_default_device())
     model.load_state_dict(converted, strict=False)
+    # `to_empty` silently un-ties tied word embeddings (Molmo2-4B); restore the share so
+    # training updates the head and the embedding table as one parameter, like mm_olmo.
+    retie_word_embeddings(model)
     del converted
 
 

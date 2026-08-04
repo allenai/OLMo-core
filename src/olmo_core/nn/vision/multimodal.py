@@ -10,6 +10,7 @@ from torch.distributed.tensor import DTensor
 
 from olmo_core.config import Config
 from olmo_core.distributed.utils import barrier, is_distributed
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
@@ -69,6 +70,19 @@ class MultimodalLMConfig(Config):
     requires :attr:`connector.num_input_layers` to be ``2``.
     """
 
+    output_vocab_size: Optional[int] = None
+    """
+    Number of token IDs the model may *predict*. Molmo2 extends the base text vocab
+    with extra image-special tokens (``<im_patch>``, ``<im_start>``, …) that are
+    **inputs-only**: HF Molmo2's ``lm_head`` covers just the base vocab, so the extra
+    IDs can never be sampled and never enter the softmax. Our LM head spans the full
+    ``lm.vocab_size``, so when this is set (to the base vocab size), the forward pass
+    masks logit columns ``>= output_vocab_size`` to the dtype minimum — they contribute
+    exactly ``0`` to the softmax and receive exactly ``0`` gradient, reproducing a
+    base-vocab-only head for loss, sampling, and (tied-embedding) training dynamics.
+    ``None`` (default) disables masking.
+    """
+
     def build(self, init_device: str = "cpu") -> "MultimodalLM":
         """
         Instantiate the multimodal model on ``init_device``.
@@ -100,6 +114,13 @@ class MultimodalLM(nn.Module):
 
     def __init__(self, cfg: MultimodalLMConfig, init_device: str = "cpu"):
         super().__init__()
+        if cfg.output_vocab_size is not None and not (
+            0 < cfg.output_vocab_size <= cfg.lm.vocab_size
+        ):
+            raise OLMoConfigurationError(
+                f"output_vocab_size ({cfg.output_vocab_size}) must be in "
+                f"(0, lm.vocab_size={cfg.lm.vocab_size}]"
+            )
         self.cfg = cfg
         self.lm = cfg.lm.build(init_device=init_device)
         self.vision = cfg.vision.build(init_device=init_device)
@@ -287,6 +308,17 @@ class MultimodalLM(nn.Module):
                 raise ValueError("`loss_masks` is required when `response_logits_only=True`")
             response_mask = loss_masks > 0
 
+        if labels is not None and self.cfg.output_vocab_size is not None:
+            # The LM head would compute the loss internally over the full (padded) vocab,
+            # bypassing the output-vocab masking below and shifting the softmax
+            # denominator relative to mm_olmo / HF Molmo2 (whose lm_head has no columns
+            # for the extra image-special tokens).
+            raise OLMoConfigurationError(
+                "`labels` cannot be passed through MultimodalLM when `output_vocab_size` "
+                "is set: compute the loss externally on the (masked) logits instead, as "
+                "MultimodalTransformerTrainModule does."
+            )
+
         assert (
             self.lm.embeddings is not None
         ), "MultimodalLM requires the LM to have an embedding table"
@@ -410,7 +442,7 @@ class MultimodalLM(nn.Module):
         if position_ids is not None:
             position_ids = position_ids.to(device)
 
-        return self.lm(
+        out = self.lm(
             input_ids,
             input_embeddings=h,
             labels=labels,
@@ -422,3 +454,18 @@ class MultimodalLM(nn.Module):
             response_mask=response_mask,
             **kwargs,
         )
+
+        # Mask the logit columns of the inputs-only image-special tokens (see
+        # :attr:`MultimodalLMConfig.output_vocab_size`). ``finfo.min`` underflows to
+        # exactly 0 in the softmax, so loss / sampling / gradients match a
+        # base-vocab-only head bit-for-bit (mm_olmo computes logits against the base
+        # embedding table only, even under weight tying). Applies to both the full
+        # ``(B, S, V)`` logits and the ``(N_response, V)`` response-only logits.
+        output_vocab_size = self.cfg.output_vocab_size
+        if (
+            output_vocab_size is not None
+            and isinstance(out, torch.Tensor)
+            and out.shape[-1] > output_vocab_size
+        ):
+            out[..., output_vocab_size:] = torch.finfo(out.dtype).min
+        return out

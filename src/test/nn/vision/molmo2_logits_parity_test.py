@@ -32,6 +32,7 @@ from olmo_core.nn.vision.molmo2_loader import (
     molmo2_config_from_hf_config,
     molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
+    retie_word_embeddings,
 )
 from olmo_core.testing import requires_gpu
 
@@ -59,6 +60,7 @@ def _build_ours(model_id: str, device, dtype):
     ours = MultimodalLM(cfg, init_device="meta")
     ours.to_empty(device=torch.device("cpu"))
     ours.load_state_dict(converted, strict=False)
+    retie_word_embeddings(ours)  # `to_empty` breaks the tied-embedding share (Molmo2-4B)
     del converted
     ours = ours.to(device=device, dtype=dtype).eval()
     return hf, ours, cfg
@@ -146,8 +148,8 @@ def test_molmo2_lm_forward_parity(model_id: str):
         hf_out = hf(input_ids=input_ids, use_cache=False)
     hf_last = hf_out.logits[0, -1].float()
 
-    # Ours: full forward (no images). Our lm_head is padded with zero rows
-    # for the image-token positions, so compare only the base-vocab slice.
+    # Ours: full forward (no images). Our logits keep (masked) columns for the
+    # image-token positions, so compare only the base-vocab slice.
     with torch.inference_mode():
         our_logits = ours(input_ids=input_ids, logits_to_keep=1)
     our_last = our_logits[0, -1].float()[: hf_last.shape[0]]
