@@ -356,6 +356,9 @@ class BeakerLaunchConfig(Config):
     If not set, this will be initialized automatically from your working directory.
     """
 
+    gh_token_secret: str = "GITHUB_TOKEN"
+    """Name of the Beaker secret containing the GitHub token used to clone private repositories."""
+
     result_dir: str = BEAKER_RESULT_DIR
     """
     The directory of the Beaker results dataset.
@@ -667,6 +670,7 @@ class BeakerLaunchConfig(Config):
             post_setup=self.post_setup,
             # Git settings.
             git_repo=self.git,
+            gh_token_secret=self.gh_token_secret,
             allow_dirty=self.allow_dirty,
             # Resources.
             gpus=self.num_gpus,
