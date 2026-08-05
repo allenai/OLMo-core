@@ -436,7 +436,11 @@ class Olmo3MoeRouter(nn.Module):
         self.restore_weight_scale = config.restore_weight_scale
 
     def forward(self, x):
-        logits = self.gate(x)
+        # OLMo-core intentionally evaluates the router projection in float32 even when the
+        # transformer and router weights are stored in bf16.  Keeping the HF path in bf16 can
+        # perturb both the selected experts and their combine weights, which then compounds over
+        # layers.  Match ``MoERouterV2.get_expert_logits()`` exactly here.
+        logits = F.linear(x.float(), self.gate.weight.float())
 
         if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)

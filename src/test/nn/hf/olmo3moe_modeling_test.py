@@ -302,3 +302,36 @@ def test_olmo3moe_experts_can_force_reference_loop(monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("grouped_mm should not run in reference mode"),
     )
     torch.testing.assert_close(experts(hidden_states, topk_ids, topk_weights), expected)
+
+
+@requires_olmo3moe
+def test_olmo3moe_router_uses_float32_projection():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
+
+    config = _small_config()
+    router = Olmo3MoeRouter(config).to(dtype=torch.bfloat16)
+    hidden_states = torch.randn(2, 5, config.hidden_size, dtype=torch.bfloat16)
+
+    actual_weights, actual_indices = router(hidden_states)
+    logits = torch.nn.functional.linear(
+        hidden_states.float(), router.gate.weight.float()
+    )
+    scores = logits.softmax(dim=-1)
+    expected_weights, expected_indices = torch.topk(
+        scores, config.num_experts_per_tok, dim=-1
+    )
+    if config.normalize_expert_weights is not None:
+        expected_weights = expected_weights.div(
+            torch.norm(
+                expected_weights,
+                p=config.normalize_expert_weights,
+                dim=-1,
+                keepdim=True,
+            )
+        )
+    if config.restore_weight_scale:
+        expected_weights = expected_weights * config.num_experts_per_tok
+
+    assert actual_weights.dtype == torch.float32
+    assert torch.equal(actual_indices, expected_indices)
+    assert torch.equal(actual_weights, expected_weights)
