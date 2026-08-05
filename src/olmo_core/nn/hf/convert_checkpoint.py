@@ -22,6 +22,7 @@ import rich
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from cached_path import cached_path
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
@@ -540,9 +541,10 @@ def validate_conversion(
     # benchmark. Freezing the model and keeping grad mode enabled selects the plain
     # PyTorch SwiGLU path for MoE v2 instead of the forward-only valid-prefix Triton
     # kernel, which is not reliable on every new GPU architecture. Since no tensor
-    # requires gradients, this does not construct an autograd graph.
+    # requires gradients, this does not construct an autograd graph. Likewise,
+    # math SDPA keeps this correctness check independent of cuDNN plan support.
     model.requires_grad_(False)
-    with torch.enable_grad():
+    with torch.enable_grad(), sdpa_kernel(SDPBackend.MATH):
         logits = model(input_ids=input_ids)
 
     if debug:
