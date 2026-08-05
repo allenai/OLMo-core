@@ -24,7 +24,7 @@ def _load_stage1_module():
     return module
 
 
-def test_s002_stage1_uses_olmo_ddp_ep8_and_freezes_only_vision():
+def test_s002_stage1_uses_olmo_ddp_ep8_and_trains_all_components():
     stage1 = _load_stage1_module()
     config = stage1._build_train_module_config(
         sequence_length=64,
@@ -35,13 +35,66 @@ def test_s002_stage1_uses_olmo_ddp_ep8_and_freezes_only_vision():
 
     assert config.dp_config.name == DataParallelType.ddp
     assert config.ep_config.degree == 8
-    assert config.freeze_params == ["vision.*"]
+    assert config.freeze_params is None
+    assert config.vision_activation_checkpointing
+    assert config.connector_activation_checkpointing
     assert config.response_logits_only
     assert not config.compile_model
 
     overrides = {tuple(group.params): group.opts for group in config.optim.group_overrides}
     assert overrides[("*connector.*",)]["lr"] == stage1.CONNECTOR_LR
+    assert overrides[("*vision.*",)]["lr"] == stage1.VISION_LR
     assert config.optim.lr == stage1.LLM_LR
+
+
+def test_s002_stage1_matches_released_molmo2_scale_defaults():
+    stage1 = _load_stage1_module()
+
+    assert stage1.SEQUENCE_LENGTH == 2536
+    assert stage1.GLOBAL_BATCH_INSTANCES == 128
+    assert stage1.RANK_MICROBATCH_INSTANCES == 1
+    assert stage1.MAX_STEPS == 31_000
+    assert stage1.PACK_BUFFER_SIZE == 48
+    assert stage1.PACK_MAX_CROPS == 16
+    assert stage1.LOSS_TOKEN_WEIGHTING == "none"
+    assert stage1.BEAKER_CLUSTER == "ai2/holmes"
+    assert stage1.BEAKER_WORKSPACE == "ai2/molmofication"
+    assert stage1.BEAKER_BUDGET == "ai2/oe-other"
+
+
+def test_s002_stage1_disables_only_router_load_balancing():
+    stage1 = _load_stage1_module()
+    default_router = SimpleNamespace(lb_loss_weight=0.015, z_loss_weight=0.0001)
+    override_router = SimpleNamespace(lb_loss_weight=0.015, z_loss_weight=0.0001)
+    lm_config = SimpleNamespace(
+        block=SimpleNamespace(routed_experts_router=default_router),
+        block_overrides={
+            0: SimpleNamespace(routed_experts_router=None),
+            1: SimpleNamespace(routed_experts_router=override_router),
+        },
+    )
+
+    configured = stage1._configure_router_load_balancing(lm_config, None)
+
+    assert configured == 2
+    assert default_router.lb_loss_weight is None
+    assert override_router.lb_loss_weight is None
+    assert default_router.z_loss_weight == 0.0001
+    assert override_router.z_loss_weight == 0.0001
+
+
+def test_s002_stage1_router_load_balancing_is_overridable():
+    stage1 = _load_stage1_module()
+    router = SimpleNamespace(lb_loss_weight=None, z_loss_weight=0.0001)
+    lm_config = SimpleNamespace(
+        block=SimpleNamespace(routed_experts_router=router),
+        block_overrides=None,
+    )
+
+    stage1._configure_router_load_balancing(lm_config, 0.015)
+
+    assert router.lb_loss_weight == 0.015
+    assert router.z_loss_weight == 0.0001
 
 
 def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
@@ -64,13 +117,19 @@ def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
 
 
 @pytest.mark.parametrize(
-    "profile_name,expected_dataset",
+    "profile_name,expected_dataset,expected_min_runtime",
     [
-        ("stage1_ep8_2node_synthetic_1step.yaml", "--dataset.dataset_path=synthetic"),
-        ("stage1_ep8_2node_real_1step.yaml", None),
+        (
+            "stage1_ep8_2node_synthetic_1step.yaml",
+            "--dataset.dataset_path=synthetic",
+            "1h",
+        ),
+        ("stage1_ep8_2node_real_1step.yaml", None, None),
     ],
 )
-def test_beaker_gate_profiles_use_approved_holmes_target(profile_name, expected_dataset):
+def test_beaker_gate_profiles_use_approved_holmes_target(
+    profile_name, expected_dataset, expected_min_runtime
+):
     stage1 = _load_stage1_module()
     profile_path = Path(__file__).parents[3] / "configs" / "vision_moe" / profile_name
 
@@ -83,7 +142,7 @@ def test_beaker_gate_profiles_use_approved_holmes_target(profile_name, expected_
         "cluster": "ai2/holmes",
         "budget": "ai2/oe-other",
         "priority": "urgent",
-        "min_runtime": "1h",
+        "min_runtime": expected_min_runtime,
     }
     assert "--trainer.max_duration.value=1" in overrides
     assert expected_dataset is None or expected_dataset in overrides
@@ -107,7 +166,7 @@ def test_beaker_gate_profiles_use_approved_holmes_target(profile_name, expected_
     assert config.launch.clusters == ["ai2/holmes"]
     assert config.launch.budget == "ai2/oe-other"
     assert config.launch.priority == "urgent"
-    assert config.launch.min_runtime == "1h"
+    assert config.launch.min_runtime == expected_min_runtime
 
 
 def test_beaker_gate_refuses_an_unset_submission_target():
@@ -132,3 +191,33 @@ def test_beaker_gate_cli_overrides_take_precedence():
     )
 
     assert overrides[-1] == cli_override
+
+
+def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
+    stage1 = _load_stage1_module()
+    profile_path = (
+        Path(__file__).parents[3]
+        / "configs"
+        / "vision_moe"
+        / "stage1_ep8_2node_real_500step_pilot.yaml"
+    )
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"]["workspace"] == "ai2/molmofication"
+    assert profile["launch"]["cluster"] == "ai2/holmes"
+    assert profile["launch"]["budget"] == "ai2/oe-other"
+    assert profile["launch"]["priority"] == "urgent"
+    assert profile["launch"]["min_runtime"] == "1h"
+    assert "--trainer.max_duration.value=500" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=31000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=31000" in overrides
+    assert "--train_module.scheduler.default.t_max=31000" in overrides
+    assert not any("router_lb_loss_weight" in override for override in overrides)
+
+    control = "--router_lb_loss_weight=0.015"
+    _, control_overrides = stage1._load_beaker_test_config(
+        [f"--beaker-test-config={profile_path}", control]
+    )
+    assert control_overrides[-1] == control

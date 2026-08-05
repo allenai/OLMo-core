@@ -1523,7 +1523,7 @@ class Trainer:
                 for op_id in list(self._bookkeeping_queue[op_name].keys()):
                     future = self._bookkeeping_queue[op_name][op_id]
                     if future.cancel() or future.done():
-                        self._bookkeeping_queue[op_name].pop(op_id)
+                        self._bookkeeping_queue[op_name].pop(op_id, None)
                     else:
                         log.warning(
                             f"Attempted to submit bookkeeping op '{op_name}' while a previous invocation was already in progress. "

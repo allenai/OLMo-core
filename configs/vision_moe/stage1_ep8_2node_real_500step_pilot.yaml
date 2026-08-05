@@ -1,0 +1,25 @@
+version: 1
+name: stage1-ep8-2node-real-500step-pilot
+description: >-
+  Five-hundred-step Stage-1 recipe pilot on the production mixture. Run once with the
+  default router_lb_loss_weight=null and once with --router_lb_loss_weight=0.015 as the
+  otherwise-identical control. The scheduler horizon remains the production 31,000 steps.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 1h
+overrides:
+  - --trainer.max_duration.value=500
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=31000
+  - --train_module.scheduler.schedulers.vision.t_max=31000
+  - --train_module.scheduler.default.t_max=31000
+  - --trainer.callbacks.wandb.group=s002-stage1-matched-500-ab
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=500
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --trainer.callbacks.checkpointer.max_checkpoints=1

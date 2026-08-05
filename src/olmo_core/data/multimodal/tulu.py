@@ -26,6 +26,7 @@ from olmo_core.nn.vision.molmo2_tokens import (
     Molmo2TokenIds,
 )
 
+from .message_weight import MessageWeight
 from .paths import TULU4_DATA
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
@@ -67,6 +68,8 @@ class Tulu4DatasetConfig(Config):
     max_first_msg_len: int = 2304
     max_sequence_length: int = 4096
     """Maximum length of a complete tokenized conversation."""
+    loss_token_weighting: Optional[str] = "root_subsegments_root_tokens"
+    """Assistant-token weighting mode; the default preserves the existing SFT behavior."""
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     """Image and chat token IDs for the selected language-model tokenizer."""
     use_code: bool = False
@@ -157,7 +160,8 @@ class Tulu4Dataset:
         asst_mask = np.array(asst, dtype=np.float32)
         seg_ends = np.array(segment_ends, dtype=bool)
         n_assistant = int(asst_mask.sum())
-        if n_assistant:
+        message_weight = MessageWeight.from_string(self.config.loss_token_weighting)
+        if n_assistant and message_weight.root_length:
             asst_mask *= 2.0 / np.sqrt(n_assistant + 1)
 
         labels = np.zeros_like(input_ids)

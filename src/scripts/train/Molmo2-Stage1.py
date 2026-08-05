@@ -1,9 +1,9 @@
 """
 Molmo2 "stage 1" caption-pretraining with an s002 OLMo3 MoE language model.
 
-Trains the connector + LM on PixMoCap captions/transcripts with the vision encoder
-**frozen**, using the float ``root_subsegments``-weighted loss and per-component
-learning rates / warmups. In-loop evaluation is intentionally omitted.
+Trains the connector + LM + vision encoder on PixMoCap captions/transcripts, using binary
+response-token loss weights and per-component learning rates / warmups. In-loop evaluation
+is intentionally omitted.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -86,12 +86,16 @@ VISION_REVISION = "042abfa7a38879a376cec03d949eff0aefaa0600"
 TOKENIZER_ID = "allenai/dolma2-tokenizer"
 HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
 EXPERIMENT_ROOT = "/weka/oe-training-default/rustin/experiments/vision-moe"
-SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
+SEQUENCE_LENGTH = 2536  # released Molmo2 stage-1 sequence length
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
+PACK_BUFFER_SIZE = 48  # released Molmo2 dynamic-packing lookahead
+PACK_MAX_CROPS = 16  # released Molmo2 maximum frames/crops per packed sequence
+ROUTER_LB_LOSS_WEIGHT: Optional[float] = None  # OLMoE adaptation recipe; keep router z-loss
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
+LOSS_TOKEN_WEIGHTING = "none"
 EP_DEGREE = 8
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
@@ -104,24 +108,26 @@ EP_DEGREE = 8
 # reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
 # system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
 
-# Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
-# Sixteen keeps one instance/rank on the normal two-node (16 GPU) topology and
-# accumulates two one-instance microbatches/rank for an eight-GPU local run.
-GLOBAL_BATCH_INSTANCES = 16
+# Instance-based batching, expressed in tokens. Released Molmo2 uses global batch 128 and
+# device microbatch 4; the much larger s002 MoE keeps one sequence per microbatch and reaches
+# the same global batch through OLMo-core's native gradient accumulation.
+GLOBAL_BATCH_INSTANCES = 128
 RANK_MICROBATCH_INSTANCES = 1
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
 
 # Per-component LRs / warmups (mm_olmo train_captioner.py).
 CONNECTOR_LR = 2e-4
+VISION_LR = 6e-6
 LLM_LR = 2e-5
 CONNECTOR_WARMUP = 200
+VISION_WARMUP = 2000
 LLM_WARMUP = 2000
 ALPHA_F = 0.1
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
 DATASET_PATH = f"{PIXMO_DATASETS}/cap"
-MAX_STEPS = 32000
+MAX_STEPS = 31000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
@@ -129,9 +135,9 @@ POINTING_RATE = 0.30
 NLP_RATE = 0.10
 
 # Beaker.
-BEAKER_CLUSTER = "ai2/jupiter"
+BEAKER_CLUSTER = "ai2/holmes"
 NUM_NODES = 2
-BEAKER_WORKSPACE = "ai2/OLMo-core"
+BEAKER_WORKSPACE = "ai2/molmofication"
 BEAKER_BUDGET = "ai2/oe-other"
 
 # Logging. Set WANDB_PROJECT to None to disable W&B (requires the WANDB_API_KEY secret
@@ -171,6 +177,29 @@ class ExperimentConfig(Config):
     """Fraction of mixture samples drawn from Tulu4 text-only SFT."""
     pack_sequences: bool = PACK_SEQUENCES
     """Whether to pack multiple examples into each training sequence."""
+    pack_buffer_size: int = PACK_BUFFER_SIZE
+    """Examples considered by Molmo2's buffered two-constraint packing solver."""
+    pack_max_crops: int = PACK_MAX_CROPS
+    """Maximum total image crops in one packed sequence."""
+    router_lb_loss_weight: Optional[float] = ROUTER_LB_LOSS_WEIGHT
+    """Stage-1 router load-balancing weight; ``None`` disables the pretraining objective."""
+
+
+def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
+    """Set the routed-expert load-balancing weight on every s002 block-config variant."""
+    if weight is not None and weight < 0:
+        raise ValueError("router_lb_loss_weight must be non-negative or None")
+
+    configured = 0
+    block_configs = [lm_config.block, *(lm_config.block_overrides or {}).values()]
+    for block_config in block_configs:
+        router = getattr(block_config, "routed_experts_router", None)
+        if router is not None:
+            router.lb_loss_weight = weight
+            configured += 1
+    if configured == 0:
+        raise ValueError("The s002 Stage-1 language model has no routed-expert router configs")
+    return configured
 
 
 def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
@@ -236,6 +265,10 @@ def _build_train_module_config(
                     params=["*connector.*"],
                     opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
                 ),
+                OptimGroupOverride(
+                    params=["*vision.*"],
+                    opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
+                ),
             ],
             compile=False,
             foreach_chunk_size=50_000_000,
@@ -243,13 +276,18 @@ def _build_train_module_config(
             check_nan_inf_grad=True,
             use_distributed=True,
         ),
-        freeze_params=["vision.*"],
+        freeze_params=None,
+        vision_activation_checkpointing=True,
+        connector_activation_checkpointing=True,
         response_logits_only=True,
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=compile_model,
         scheduler=PerGroupScheduler(
-            schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},
+            schedulers={
+                "connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F),
+                "vision": CosWithWarmup(warmup=VISION_WARMUP, alpha_f=ALPHA_F),
+            },
             default=CosWithWarmup(warmup=LLM_WARMUP, alpha_f=ALPHA_F),
         ),
         dp_config=TransformerDataParallelConfig(
@@ -299,7 +337,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         mode="transcript_and_caption",
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
-        loss_token_weighting="root_subsegments",
+        loss_token_weighting=LOSS_TOKEN_WEIGHTING,
         seed=34521,
         token_ids=token_ids,
     )
@@ -367,7 +405,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # Reuse the repository's OLMoDDP image/setup contract (NVSHMEM + symmetric memory).
     _configure_launch_runtime(launch_config)
 
-    return ExperimentConfig(
+    config = ExperimentConfig(
         model=model_config,
         dataset=dataset_config,
         collator=collator_config,
@@ -375,6 +413,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         trainer=trainer_config,
         launch=launch_config,
     ).merge(overrides)
+    configured_routers = _configure_router_load_balancing(
+        config.model.lm, config.router_lb_loss_weight
+    )
+    log.info(
+        "Configured %d routed-expert block variants with lb_loss_weight=%s; "
+        "router z-loss remains checkpoint-native",
+        configured_routers,
+        config.router_lb_loss_weight,
+    )
+    return config
 
 
 def _load_beaker_test_config(
@@ -471,19 +519,27 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     if p > 0:
         pointing = [
             PixMoPointsDatasetConfig(
-                kind="basic", max_crops=MAX_CROPS, token_ids=config.dataset.token_ids
+                kind="basic",
+                max_crops=MAX_CROPS,
+                loss_token_weighting=config.dataset.loss_token_weighting,
+                token_ids=config.dataset.token_ids,
             ).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS, token_ids=config.dataset.token_ids).build(
-                tokenizer
-            ),
+            PixMoCountDatasetConfig(
+                max_crops=MAX_CROPS,
+                loss_token_weighting=config.dataset.loss_token_weighting,
+                token_ids=config.dataset.token_ids,
+            ).build(tokenizer),
             PixMoPointsDatasetConfig(
                 kind="high_frequency",
                 max_crops=MAX_CROPS,
+                loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
             ).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS, token_ids=config.dataset.token_ids).build(
-                tokenizer
-            ),
+            CoSynPointDatasetConfig(
+                max_crops=MAX_CROPS,
+                loss_token_weighting=config.dataset.loss_token_weighting,
+                token_ids=config.dataset.token_ids,
+            ).build(tokenizer),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()
@@ -494,6 +550,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         datasets.append(
             Tulu4DatasetConfig(
                 max_sequence_length=config.dataset.max_sequence_length,
+                loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
             ).build(tokenizer)
         )
@@ -572,6 +629,12 @@ def train(config: ExperimentConfig):
 
     if config.pointing_rate > 0 or config.nlp_rate > 0:
         datasets, weights = _build_mixture_sources(tokenizer, config)
+        log.info(
+            "Stage 1 packing: pack=%s buffer_size=%d max_crops=%d",
+            config.pack_sequences,
+            config.pack_buffer_size,
+            config.pack_max_crops,
+        )
         data_loader = MixtureDataLoader(
             datasets,
             weights,
@@ -580,6 +643,8 @@ def train(config: ExperimentConfig):
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
             pack=config.pack_sequences,
+            pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
+            pack_buffer_size=config.pack_buffer_size if config.pack_sequences else 0,
             prefetch_workers=DATA_PREFETCH_WORKERS,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,

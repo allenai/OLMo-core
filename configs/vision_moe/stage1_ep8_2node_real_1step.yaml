@@ -2,7 +2,7 @@ version: 1
 name: stage1-ep8-2node-real-1step
 description: >-
   One optimizer-step Stage-1 end-to-end gate with the production PixMoCap, pointing/counting,
-  and Tulu4 mixture on two B300 nodes in Holmes with an urgent one-hour preemption guarantee.
+  and Tulu4 mixture on two B300 nodes in Holmes at urgent priority.
 launch:
   num_nodes: 2
   num_gpus: 8
@@ -10,7 +10,7 @@ launch:
   cluster: ai2/holmes
   budget: ai2/oe-other
   priority: urgent
-  min_runtime: 1h
+  min_runtime: null
 overrides:
   - --trainer.max_duration.value=1
   - --trainer.max_duration.unit=steps

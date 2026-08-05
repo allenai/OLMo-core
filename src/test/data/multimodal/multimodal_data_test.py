@@ -207,6 +207,59 @@ def test_iter_packs_keeps_image_and_text_examples_separate():
     assert packs[2]["images"].shape[0] == 1
 
 
+def test_iter_packs_buffered_solver_improves_fill_and_flushes():
+    examples = [_text_example(n_text=n, tag=i + 2) for i, n in enumerate([6, 6, 4, 4])]
+    packs = list(
+        iter_packs(
+            examples,
+            seq_len=10,
+            max_crops_per_pack=1,
+            buffer_size=4,
+        )
+    )
+
+    assert [len(pack["input_ids"]) for pack in packs] == [10, 10]
+    assert sum(len(np.unique(pack["example_ids"])) for pack in packs) == len(examples)
+    np.testing.assert_array_equal(
+        np.sort(np.concatenate([pack["input_ids"] for pack in packs])),
+        np.sort(np.concatenate([example["input_ids"] for example in examples])),
+    )
+
+
+def test_iter_packs_buffered_solver_never_exceeds_unaligned_sequence_length():
+    packs = list(
+        iter_packs(
+            [_text_example(n_text=1024), _text_example(n_text=2)],
+            seq_len=1025,
+            max_crops_per_pack=1,
+            buffer_size=2,
+        )
+    )
+    assert [len(pack["input_ids"]) for pack in packs] == [1024, 2]
+
+
+def test_iter_packs_buffered_solver_respects_crop_budget_and_mixes_modalities():
+    image_a = _img_example(n_text=2, n_crops=2, tag=5)
+    text = _text_example(n_text=6, tag=7)
+    image_b = _img_example(n_text=2, n_crops=2, tag=9)
+    image_a["_source_name"] = "image-a"
+    text["_source_name"] = "text"
+    image_b["_source_name"] = "image-b"
+
+    packs = list(
+        iter_packs(
+            [image_a, text, image_b],
+            seq_len=10,
+            max_crops_per_pack=2,
+            buffer_size=3,
+        )
+    )
+
+    assert all(len(pack["input_ids"]) <= 10 for pack in packs)
+    assert all(pack["images"].shape[0] <= 2 for pack in packs)
+    assert any(set(pack["pack_source_names"]) == {"image-a", "text"} for pack in packs)
+
+
 def test_tulu_conversation_is_bounded_by_sequence_length():
     from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
 
@@ -228,6 +281,26 @@ def test_tulu_conversation_is_bounded_by_sequence_length():
         for value in example.values()
         if isinstance(value, np.ndarray)
     )
+
+
+def test_tulu_binary_response_loss_weighting():
+    from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
+
+    dataset = object.__new__(Tulu4Dataset)
+    dataset.config = Tulu4DatasetConfig(max_sequence_length=64, loss_token_weighting="none")
+    dataset.tokenizer = _FakeTok()
+    dataset._data = [
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        }
+    ]
+
+    positive = dataset[0]["loss_masks"]
+    positive = positive[positive > 0]
+    np.testing.assert_array_equal(positive, np.ones_like(positive))
 
 
 def test_pack_examples_concat_and_offsets():
@@ -297,6 +370,64 @@ def test_mixture_data_loader_packs(tmp_path):
     # _FakeDataset emits length-6 text-only examples; with _SEQ=8 only one fits per pack.
     assert tuple(batch["input_ids"].shape) == (2, _SEQ)
     assert "example_ids" in batch  # packing marks example membership
+
+
+def test_mixture_data_loader_buffered_packing(tmp_path):
+    ds = [_FakeDataset(200, 10), _FakeDataset(100, 20)]
+    coll = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    dl = MixtureDataLoader(
+        ds,
+        [0.5, 0.5],
+        coll,
+        work_dir=str(tmp_path),
+        global_batch_size=2 * _SEQ,
+        seed=0,
+        pack=True,
+        pack_max_crops=1,
+        pack_buffer_size=4,
+    )
+    dl.reshuffle(epoch=1)
+    batch = next(iter(dl))
+    assert tuple(batch["input_ids"].shape) == (2, _SEQ)
+    assert "example_ids" in batch
+
+
+def test_mixture_data_loader_buffered_packing_resumes_exactly(tmp_path):
+    datasets = [_FakeDataset(200, 10), _FakeDataset(100, 20)]
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir, prefetch_workers):
+        return MixtureDataLoader(
+            datasets,
+            [0.5, 0.5],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=17,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            prefetch_workers=prefetch_workers,
+        )
+
+    for prefetch_workers in (0, 4):
+        original = build_loader(tmp_path / f"original-{prefetch_workers}", prefetch_workers)
+        original.reshuffle(epoch=3)
+        original_iter = iter(original)
+        next(original_iter)
+        state = original.state_dict()
+        expected = next(original_iter)
+        original_iter.close()
+
+        restored = build_loader(tmp_path / f"restored-{prefetch_workers}", prefetch_workers)
+        restored.load_state_dict(state)
+        restored.reshuffle()
+        restored_iter = iter(restored)
+        actual = next(restored_iter)
+        restored_iter.close()
+
+        for key in ("input_ids", "example_ids", "loss_masks", "position_ids"):
+            np.testing.assert_array_equal(actual[key], expected[key])
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

@@ -52,8 +52,8 @@ def greedy_pack_indices(
 ) -> List[List[int]]:
     """Greedily group example indices so each group's total length ``<= seq_len``.
 
-    First-fit-decreasing is overkill here; a simple next-fit over the given order keeps the
-    sampling order stable (important for mixture proportions) and is what mm_olmo does.
+    A simple next-fit over the given order keeps the sampling order stable and remains the
+    default packing policy for backwards compatibility.
 
     :param lengths: real token length of each example, in the order they should be packed.
     :param seq_len: maximum packed length.
@@ -83,6 +83,81 @@ def greedy_pack_indices(
     if cur:
         groups.append(cur)
     return groups
+
+
+def _select_buffered_pack_indices(
+    lengths: Sequence[int],
+    crop_counts: Sequence[int],
+    seq_len: int,
+    max_crops_per_pack: int,
+) -> List[int]:
+    """Select one pack with Molmo2's two-constraint dynamic program."""
+    token_granularity = max(1, seq_len // 512)
+    token_values = np.asarray(
+        [(int(n) + token_granularity - 1) // token_granularity for n in lengths],
+        dtype=np.int64,
+    )
+    crop_values = np.asarray(crop_counts, dtype=np.int64)
+    # Use a conservative quantized capacity so selected examples are guaranteed to fit even
+    # when ``seq_len`` is not divisible by the granularity.
+    max_tokens = seq_len // token_granularity
+
+    # Match Molmo2's objective: useful text tokens plus image crops. The crop dimension is
+    # also a hard constraint, so the small image term only resolves otherwise similar packs.
+    objective = np.asarray(lengths, dtype=np.float32) + crop_values.astype(np.float32)
+    n_items = len(lengths)
+    dp = np.zeros((n_items + 1, max_tokens + 1, max_crops_per_pack + 1), dtype=np.float32)
+
+    for item in range(1, n_items + 1):
+        token_value = int(token_values[item - 1])
+        crop_value = int(crop_values[item - 1])
+        dp[item] = dp[item - 1]
+        if token_value <= max_tokens and crop_value <= max_crops_per_pack:
+            take = (
+                dp[
+                    item - 1,
+                    : max_tokens + 1 - token_value,
+                    : max_crops_per_pack + 1 - crop_value,
+                ]
+                + objective[item - 1]
+            )
+            dp[item, token_value:, crop_value:] = np.maximum(
+                dp[item, token_value:, crop_value:], take
+            )
+
+    selected: List[int] = []
+    tokens_left, crops_left = max_tokens, max_crops_per_pack
+    for item in range(n_items, 0, -1):
+        token_value = int(token_values[item - 1])
+        crop_value = int(crop_values[item - 1])
+        if (
+            token_value <= tokens_left
+            and crop_value <= crops_left
+            and dp[item, tokens_left, crops_left] != dp[item - 1, tokens_left, crops_left]
+        ):
+            selected.append(item - 1)
+            tokens_left -= token_value
+            crops_left -= crop_value
+    return selected
+
+
+def _pop_buffered_pack(
+    buffer: List[Dict[str, np.ndarray]],
+    seq_len: int,
+    max_crops_per_pack: int,
+) -> List[Dict[str, np.ndarray]]:
+    selected = _select_buffered_pack_indices(
+        [len(ex["input_ids"]) for ex in buffer],
+        [example_crop_count(ex) for ex in buffer],
+        seq_len,
+        max_crops_per_pack,
+    )
+    if not selected:
+        raise RuntimeError("Buffered packer could not select an example within its constraints")
+    packed = [buffer[i] for i in selected]
+    for i in sorted(selected, reverse=True):
+        buffer.pop(i)
+    return packed
 
 
 def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
@@ -162,22 +237,59 @@ def iter_packs(
     seq_len: int,
     *,
     max_crops_per_pack: Optional[int] = None,
+    buffer_size: int = 0,
 ) -> Iterator[Dict[str, np.ndarray]]:
-    """Greedily next-fit-pack a stream of example dicts into ``<= seq_len`` sequences.
+    """Pack a stream of example dicts into ``<= seq_len`` sequences.
 
     ``examples`` is an iterator of example dicts — typically an infinite, cycled (and
     optionally prefetched) stream, in which case this yields indefinitely and the caller
     caps the number of batches. Cycling in the caller keeps every data-parallel rank
     yielding the same number of batches regardless of how its examples pack (no collective
     desync). An example longer than ``seq_len`` is emitted alone (the collator tail-truncates
-    it; the image block at the front is preserved). A finite stream flushes a final partial
-    pack.
+    it; the image block at the front is preserved). A finite stream flushes all examples.
+
+    The default ``buffer_size=0`` retains the original deterministic next-fit behavior.
+    A positive buffer enables the same two-constraint knapsack policy used by Molmo2: it
+    selects examples that maximize useful tokens while respecting the token and crop
+    budgets. Buffered packing may safely mix image and text-only examples because selected
+    packs are guaranteed not to be tail-truncated.
 
     :param examples: iterator of per-example dicts (the heavy loading happens upstream, so it
         can be prefetched off the training thread).
     :param seq_len: target packed length.
     :param max_crops_per_pack: cap total image crops per pack (mm_olmo crop-budget parity).
+    :param buffer_size: number of examples considered by the dynamic packing solver; zero
+        keeps the original next-fit policy.
     """
+    if buffer_size < 0:
+        raise ValueError("buffer_size must be non-negative")
+    if buffer_size:
+        if max_crops_per_pack is None:
+            raise ValueError("max_crops_per_pack is required when buffer_size is positive")
+        if max_crops_per_pack <= 0:
+            raise ValueError("max_crops_per_pack must be positive")
+
+        buffer: List[Dict[str, np.ndarray]] = []
+        for ex in examples:
+            length = len(ex["input_ids"])
+            crops = example_crop_count(ex)
+            # Preserve the existing handling of an individually oversized example. Stage-1
+            # datasets are bounded by these constraints, but emitting alone is safer than
+            # allowing an invalid item to stall an infinite stream.
+            if length > seq_len or crops > max_crops_per_pack:
+                yield pack_examples([ex])
+                continue
+            if len(buffer) < buffer_size:
+                buffer.append(ex)
+                continue
+            packed = _pop_buffered_pack(buffer, seq_len, max_crops_per_pack)
+            buffer.append(ex)
+            yield pack_examples(packed)
+
+        while buffer:
+            yield pack_examples(_pop_buffered_pack(buffer, seq_len, max_crops_per_pack))
+        return
+
     cur: List[Dict[str, np.ndarray]] = []
     cur_len = 0
     cur_crops = 0

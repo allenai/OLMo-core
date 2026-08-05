@@ -55,6 +55,7 @@ class MixtureDataLoader(DataLoaderBase):
         epoch_instances: Optional[int] = None,
         pack: bool = False,
         pack_max_crops: Optional[int] = None,
+        pack_buffer_size: int = 0,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
@@ -79,6 +80,14 @@ class MixtureDataLoader(DataLoaderBase):
             raise OLMoConfigurationError(
                 "datasets and weights must be non-empty and the same length"
             )
+        if pack_buffer_size < 0:
+            raise OLMoConfigurationError("pack_buffer_size must be non-negative")
+        if pack_buffer_size and not pack:
+            raise OLMoConfigurationError("pack_buffer_size requires pack=True")
+        if pack_buffer_size and pack_max_crops is None:
+            raise OLMoConfigurationError(
+                "pack_max_crops is required when pack_buffer_size is positive"
+            )
         self.datasets = list(datasets)
         if dataset_names is None:
             self.dataset_names = [str(i) for i in range(len(datasets))]
@@ -95,6 +104,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.seq_len = collator.pad_sequence_length
         self.pack = pack
         self.pack_max_crops = pack_max_crops
+        self.pack_buffer_size = pack_buffer_size
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
         self.max_consecutive_data_errors = max_consecutive_data_errors
@@ -164,6 +174,7 @@ class MixtureDataLoader(DataLoaderBase):
                 self._example_stream(rank_refs),
                 self.seq_len,
                 max_crops_per_pack=self.pack_max_crops,
+                buffer_size=self.pack_buffer_size,
             )
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
@@ -242,7 +253,10 @@ class MixtureDataLoader(DataLoaderBase):
         if self.pack:
             refs = [(src, i % size) for i in range(max(ri * 4, 4))]
             gen = iter_packs(
-                self._example_stream(refs), self.seq_len, max_crops_per_pack=self.pack_max_crops
+                self._example_stream(refs),
+                self.seq_len,
+                max_crops_per_pack=self.pack_max_crops,
+                buffer_size=self.pack_buffer_size,
             )
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self.datasets[src][i % size] for i in range(ri)]
