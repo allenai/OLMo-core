@@ -19,21 +19,6 @@ from typing import Any, Dict, Iterator, List, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
-
-from olmo_core.data.multimodal.qwen3_layout import (
-    user_header_ids,
-    user_turn_ids,
-    user_turn_suffix_ids,
-)
-from olmo_core.distributed.utils import get_rank
-from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
-from olmo_core.nn.vision.molmo2_tokens import (
-    Molmo2TokenIds,
-    build_image_token_ids,
-    prepare_molmo2_tokenizer,
-)
-from olmo_core.train import prepare_training_environment, teardown_training_environment
-
 from s002_downstream import (
     DEFAULT_CHECKPOINT,
     DEFAULT_OUTPUT_ROOT,
@@ -43,6 +28,21 @@ from s002_downstream import (
     _config_path,
     _git_revision,
 )
+
+from olmo_core.data.multimodal.qwen3_layout import (
+    user_header_ids,
+    user_turn_ids,
+    user_turn_suffix_ids,
+)
+from olmo_core.distributed.utils import get_rank
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
+from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
+from olmo_core.nn.vision.molmo2_tokens import (
+    Molmo2TokenIds,
+    build_image_token_ids,
+    prepare_molmo2_tokenizer,
+)
+from olmo_core.train import prepare_training_environment, teardown_training_environment
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,15 @@ def _parse_args() -> argparse.Namespace:
         "--max-new-tokens",
         type=int,
         help="Override the task's generation limit (use only for smoke tests).",
+    )
+    parser.add_argument(
+        "--response-mode",
+        choices=("generate", "letter_logits"),
+        default="generate",
+        help=(
+            "Use normal greedy generation, or score the ten option letters with a single "
+            "forward pass. The latter is practical for pre-SFT checkpoints without a KV cache."
+        ),
     )
     parser.add_argument(
         "--sequence-bucket-size",
@@ -143,6 +152,7 @@ def _build_adapter_class():
             max_crops_total: int,
             max_new_tokens: int | None,
             sequence_bucket_size: int,
+            response_mode: str,
         ) -> None:
             super().__init__()
             self.train_module = train_module
@@ -153,6 +163,13 @@ def _build_adapter_class():
             self.max_crops_total = max_crops_total
             self.max_new_tokens_override = max_new_tokens
             self.sequence_bucket_size = sequence_bucket_size
+            self.response_mode = response_mode
+            option_encodings = [
+                self.tokenizer.encode(letter, add_special_tokens=False) for letter in "ABCDEFGHIJ"
+            ]
+            if any(len(encoding) != 1 for encoding in option_encodings):
+                raise ValueError("Each MMMU-Pro option letter must encode to one token")
+            self.option_token_ids = [encoding[0] for encoding in option_encodings]
             self._rank = 0
             self._world_size = 1
 
@@ -236,6 +253,8 @@ def _build_adapter_class():
             ]
 
         def _generation_length(self, generation_kwargs: Dict[str, Any]) -> int:
+            if self.response_mode == "letter_logits":
+                return 1
             value = self.max_new_tokens_override
             if value is None:
                 value = int(generation_kwargs.get("max_new_tokens", 256))
@@ -318,7 +337,14 @@ def _build_adapter_class():
                     )
                     if not isinstance(logits, torch.Tensor):
                         raise TypeError(f"Expected logits tensor, got {type(logits).__name__}")
-                    next_token = int(logits[0, 0].argmax(dim=-1).item())
+                    if self.response_mode == "letter_logits":
+                        option_ids = torch.tensor(
+                            self.option_token_ids, dtype=torch.long, device=self.device
+                        )
+                        option_index = int(logits[0, 0, option_ids].argmax(dim=-1).item())
+                        next_token = self.option_token_ids[option_index]
+                    else:
+                        next_token = int(logits[0, 0].argmax(dim=-1).item())
 
                     # Fail loudly if nominally replicated EP/DP groups ever diverge.
                     if dist.is_initialized() and dist.get_world_size() > 1:
@@ -334,6 +360,8 @@ def _build_adapter_class():
                             )
 
                     generated.append(next_token)
+                    if self.response_mode == "letter_logits":
+                        break
                     if next_token in {
                         self.tokenizer.eos_token_id,
                         self.token_ids.im_end_turn_id,
@@ -399,6 +427,8 @@ def main() -> None:
         raise ValueError("--max-crops-total must be positive")
     if args.max_new_tokens is not None and args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be positive")
+    if args.response_mode == "letter_logits" and args.max_new_tokens is not None:
+        raise ValueError("--max-new-tokens is incompatible with --response-mode=letter_logits")
     if args.sequence_bucket_size <= 0:
         raise ValueError("--sequence-bucket-size must be positive")
     if args.limit is not None and args.limit <= 0:
@@ -435,6 +465,10 @@ def main() -> None:
             ep_degree=args.ep_degree,
             max_sequence_length=args.max_sequence_length,
             rank_batch_size=args.max_sequence_length,
+            # The rowwise NVSHMEM path can leave its persistent kernels waiting
+            # indefinitely for batch-one autoregressive inference. The synchronized
+            # all-to-all path uses the same checkpoint sharding without that constraint.
+            ep_path=ExpertParallelPath.sync_1d,
         )
         if checkpoint_kind != "multimodal_stage1":
             raise ValueError(
@@ -482,6 +516,7 @@ def main() -> None:
             max_crops_total=args.max_crops_total,
             max_new_tokens=args.max_new_tokens,
             sequence_bucket_size=args.sequence_bucket_size,
+            response_mode=args.response_mode,
         )
 
         # The OLMo module is sharded with EP, not replicated data parallelism. lmms-eval's
@@ -529,13 +564,19 @@ def main() -> None:
                 "limit": args.limit,
                 "world_size": world_size,
                 "ep_degree": args.ep_degree,
+                "expert_parallel_path": ExpertParallelPath.sync_1d.value,
                 "logical_eval_replicas": 1,
                 "max_sequence_length": args.max_sequence_length,
                 "max_crops_total": args.max_crops_total,
                 "max_new_tokens_override": args.max_new_tokens,
                 "sequence_bucket_size": args.sequence_bucket_size,
                 "attention_backend": "flex",
-                "generation": "greedy_full_sequence_no_kv_cache",
+                "response_mode": args.response_mode,
+                "generation": (
+                    "single_forward_option_letter_logits"
+                    if args.response_mode == "letter_logits"
+                    else "greedy_full_sequence_no_kv_cache"
+                ),
             },
             "lmms_eval": results,
         }

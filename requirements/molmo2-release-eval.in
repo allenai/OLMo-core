@@ -1,0 +1,5 @@
+lmms-eval @ git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@cb45ac4d4a667ea5ef89c7a148bff69b3489b981
+torch==2.11.0
+torchvision==0.26.0
+transformers==4.57.1
+molmo-utils

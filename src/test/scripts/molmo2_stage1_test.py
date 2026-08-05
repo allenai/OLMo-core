@@ -209,7 +209,7 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
     assert profile["launch"]["cluster"] == "ai2/holmes"
     assert profile["launch"]["budget"] == "ai2/oe-other"
     assert profile["launch"]["priority"] == "urgent"
-    assert profile["launch"]["min_runtime"] == "1h"
+    assert profile["launch"]["min_runtime"] is None
     assert "--trainer.max_duration.value=500" in overrides
     assert "--train_module.scheduler.schedulers.connector.t_max=31000" in overrides
     assert "--train_module.scheduler.schedulers.vision.t_max=31000" in overrides
@@ -221,3 +221,32 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
         [f"--beaker-test-config={profile_path}", control]
     )
     assert control_overrides[-1] == control
+
+
+def test_stage1_resume_gate_restores_full_state_into_a_new_run():
+    stage1 = _load_stage1_module()
+    profile_path = (
+        Path(__file__).parents[3]
+        / "configs"
+        / "vision_moe"
+        / "stage1_ep8_2node_real_resume_2step.yaml"
+    )
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": None,
+    }
+    assert any(override.startswith("--trainer.load_path=") for override in overrides)
+    assert "--trainer.load_strategy=always" in overrides
+    assert "--trainer.load_optim_state=true" in overrides
+    assert "--trainer.load_trainer_state=true" in overrides
+    assert "--trainer.max_duration.value=2" in overrides
+    assert "--trainer.callbacks.checkpointer.save_interval=2" in overrides

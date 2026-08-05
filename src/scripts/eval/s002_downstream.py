@@ -102,14 +102,18 @@ def _config_path(checkpoint: Path, explicit: str | None) -> Path:
     return root / "config.json"
 
 
-def _configure_lm_for_eval(lm_config: OLMoDDPModelConfig) -> None:
+def _configure_lm_for_eval(
+    lm_config: OLMoDDPModelConfig,
+    *,
+    ep_path: ExpertParallelPath = ExpertParallelPath.rowwise_nvshmem,
+) -> None:
     """Select kernels available in the experiment image and remove training-only recompute."""
     blocks = [lm_config.block, *(lm_config.block_overrides or {}).values()]
     for block in blocks:
         if isinstance(block.sequence_mixer, AttentionConfig):
             block.sequence_mixer.backend = AttentionBackendName.flex
         if block.ep is not None:
-            block.ep.path = ExpertParallelPath.rowwise_nvshmem
+            block.ep.path = ep_path
     lm_config.recompute_each_block = False
     lm_config.recompute_all_blocks_by_chunk = False
     lm_config.two_batch_overlap = False
@@ -121,6 +125,7 @@ def _build_model_and_module_config(
     ep_degree: int,
     max_sequence_length: int,
     rank_batch_size: int,
+    ep_path: ExpertParallelPath = ExpertParallelPath.rowwise_nvshmem,
 ) -> Tuple[torch.nn.Module, OLMoDDPTrainModuleConfig, str]:
     model_dict = raw_config["model"]
     common = dict(
@@ -141,7 +146,7 @@ def _build_model_and_module_config(
             raise TypeError(
                 "The multimodal checkpoint does not contain an OLMoDDP language-model config"
             )
-        _configure_lm_for_eval(model_config.lm)
+        _configure_lm_for_eval(model_config.lm, ep_path=ep_path)
         model = model_config.build(init_device="meta")
         module_config = MultimodalOLMoDDPTrainModuleConfig(
             freeze_params=["vision.*"], response_logits_only=False, **common
@@ -149,7 +154,7 @@ def _build_model_and_module_config(
         return model, module_config, "multimodal_stage1"
 
     model_config = OLMoDDPModelConfig.from_dict(model_dict)
-    _configure_lm_for_eval(model_config)
+    _configure_lm_for_eval(model_config, ep_path=ep_path)
     model = model_config.build(init_device="meta")
     return model, OLMoDDPTrainModuleConfig(**common), "pretrained_lm"
 

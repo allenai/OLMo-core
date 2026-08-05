@@ -1,15 +1,21 @@
 # Vision-MoE Stage-1 launch gates
 
-These profiles exercise the production EP8 topology for one optimizer step on two
-8-GPU B300 nodes in `ai2/holmes`. They use workspace `ai2/molmofication`, budget
-`ai2/oe-other`, urgent priority, and a `1h` minimum guaranteed runtime. Holmes supplies
-the B300 hardware, so the profiles do not add a redundant GPU-type constraint.
+These profiles exercise the production EP8 topology on two 8-GPU B300 nodes in
+`ai2/holmes`. They use workspace `ai2/molmofication`, budget `ai2/oe-other`, and urgent
+priority. Real-data and pilot profiles request no minimum runtime. Holmes supplies the
+B300 hardware, so the profiles do not add a redundant GPU-type constraint.
 
 - `stage1_ep8_2node_synthetic_1step.yaml` checks distributed startup, native s002 loading,
   vision-weight loading, optimizer construction, forward/backward, and checkpoint writing
   without depending on the production datasets.
 - `stage1_ep8_2node_real_1step.yaml` adds the production PixMoCap, pointing/counting, and
   Tulu4 input mixture and is the final one-step gate before a longer Stage-1 run.
+- `stage1_ep8_2node_real_resume_2step.yaml` restores the real-data gate's full step-1
+  checkpoint into a separate run folder, executes step 2, and verifies that model,
+  optimizer, scheduler, data-loader, and trainer state are resumable.
+- `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 31,000-step
+  production schedule. Use it once as-is and once with `--router_lb_loss_weight=0.015` for
+  the matched router load-balancing control.
 
 Inspect the fully merged configuration without submitting:
 

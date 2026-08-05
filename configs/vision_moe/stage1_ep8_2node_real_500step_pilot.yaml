@@ -11,7 +11,7 @@ launch:
   cluster: ai2/holmes
   budget: ai2/oe-other
   priority: urgent
-  min_runtime: 1h
+  min_runtime: null
 overrides:
   - --trainer.max_duration.value=500
   - --trainer.max_duration.unit=steps
