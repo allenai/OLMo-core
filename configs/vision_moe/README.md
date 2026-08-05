@@ -14,8 +14,8 @@ B300 hardware, so the profiles do not add a redundant GPU-type constraint.
   checkpoint into a separate run folder, executes step 2, and verifies that model,
   optimizer, scheduler, data-loader, and trainer state are resumable.
 - `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 31,000-step
-  production schedule. Use it once as-is and once with `--router_lb_loss_weight=0.015` for
-  the matched router load-balancing control.
+  production schedule with the native s002 router loss weights, FP32 gradient
+  accumulation/reduction, and padding-excluded routed-expert traffic.
 
 Inspect the fully merged configuration without submitting:
 

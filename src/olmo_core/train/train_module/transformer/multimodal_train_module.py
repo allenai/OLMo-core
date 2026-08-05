@@ -598,9 +598,41 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         input_ids, labels, model_kwargs = super()._prepare_batch(batch, labels)
+        # A full microbatch needs no routing override and remains compatible with the ordinary
+        # sync/no-EP paths used by small tests and evaluation. A mask containing padding is kept
+        # and the routed block enforces the production rowwise path.
+        router_token_mask = model_kwargs.get("router_token_mask")
+        if router_token_mask is not None and bool(router_token_mask.all()):
+            model_kwargs.pop("router_token_mask")
         if self.response_logits_only:
             model_kwargs["response_logits_only"] = True
         return input_ids, labels, model_kwargs
+
+    def _batch_auxiliary_loss_kwargs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        token_mask = batch.get("router_token_mask")
+        if token_mask is None:
+            raise OLMoConfigurationError(
+                "Multimodal OLMoDDP batches require router_token_mask so padding is excluded "
+                "from MoE routing and auxiliary losses"
+            )
+        if token_mask.shape != batch["input_ids"].shape:
+            raise OLMoConfigurationError(
+                "router_token_mask must match input_ids: "
+                f"got {tuple(token_mask.shape)} and {tuple(batch['input_ids'].shape)}"
+            )
+
+        # Match OLMo-core's DDP loss-scaling convention: normalize by the global valid-token
+        # count divided by the DP world size, so subsequent averaged gradients have the same
+        # scale as a single global batch. This population is deliberately independent of the
+        # response-only CE loss weights.
+        router_loss_div_factor = move_to_device(token_mask.sum(dtype=torch.long), self.device)
+        if is_distributed():
+            dist.all_reduce(router_loss_div_factor, group=self.dp_process_group)
+            router_loss_div_factor = router_loss_div_factor.clamp_min(1)
+            router_loss_div_factor = router_loss_div_factor / get_world_size(self.dp_process_group)
+        else:
+            router_loss_div_factor = router_loss_div_factor.clamp_min(1)
+        return {"router_loss_div_factor": router_loss_div_factor}
 
     def load_molmo2_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
         """Strictly load the Molmo2 vision tower, leaving the connector untouched."""

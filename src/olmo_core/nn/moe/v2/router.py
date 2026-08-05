@@ -536,11 +536,16 @@ class MoERouterV2(nn.Module):
         scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        token_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[
         torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]
     ]:
         """
         Given the input ``x`` of shape ``(B, S, d_model)``, compute the experts assignment.
+
+        ``token_mask`` marks tensor slots that are real model inputs. Masked slots retain
+        fixed-shape routing outputs for collective safety, but are excluded from routing
+        histograms, auxiliary losses, and accumulated router metrics.
 
         :returns: The expert weights of shape ``(B, S, top_k)``,
             the expert indices of shape ``(B, S, top_k)``,
@@ -549,6 +554,13 @@ class MoERouterV2(nn.Module):
         """
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
+        B, S = x.shape[:2]
+        if token_mask is not None:
+            token_mask = token_mask.to(device=x.device, dtype=torch.bool)
+            if token_mask.shape != (B, S):
+                raise ValueError(
+                    f"token_mask must have shape {(B, S)}, got {tuple(token_mask.shape)}"
+                )
 
         # Keep activation in bf16/fp16 in forward graph, and only materialize fp32
         # router input through OutputDiscardCheckpoint so backward can recompute it.
@@ -667,6 +679,10 @@ class MoERouterV2(nn.Module):
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.
             # shape: (batch_size, seq_len, num_experts)
             batched_batch_size_per_expert = ops.batched_histc(expert_indices, self.num_experts)
+            if token_mask is not None:
+                batched_batch_size_per_expert = batched_batch_size_per_expert * (
+                    token_mask.unsqueeze(-1)
+                )
             # shape: (batch_size, num_experts)
             batched_batch_size_per_expert = batched_batch_size_per_expert.sum(dim=1)
             # shape: (num_experts,)
@@ -703,6 +719,7 @@ class MoERouterV2(nn.Module):
             batch_size_per_expert,
             batched_batch_size_per_expert,
             loss_div_factor,
+            token_mask,
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
@@ -714,6 +731,7 @@ class MoERouterV2(nn.Module):
         batch_size_per_expert,
         batched_batch_size_per_expert,
         loss_div_factor,
+        token_mask=None,
         *,
         accumulate_metrics: bool = True,
     ) -> Optional[torch.Tensor]:
@@ -737,6 +755,7 @@ class MoERouterV2(nn.Module):
                     loss_div_factor=loss_div_factor,
                     tp_mesh=self.tp_mesh,
                     cp_mesh=self.cp_mesh,
+                    token_mask=token_mask,
                 )
                 if accumulate_metrics:
                     self.load_balancing_loss += lb_loss.detach()
@@ -752,6 +771,7 @@ class MoERouterV2(nn.Module):
                     loss_div_factor=loss_div_factor,
                     tp_mesh=self.tp_mesh,
                     cp_mesh=self.cp_mesh,
+                    token_mask=token_mask,
                 )
                 if accumulate_metrics:
                     self.z_loss += z_loss.detach()

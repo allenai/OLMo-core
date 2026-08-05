@@ -40,10 +40,7 @@ from olmo_core.data.multimodal import (
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.internal.common import (
-    build_launch_config,
-    get_root_dir,
-)
+from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
 from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
 from olmo_core.optim import (
@@ -91,7 +88,7 @@ USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 PACK_BUFFER_SIZE = 48  # released Molmo2 dynamic-packing lookahead
 PACK_MAX_CROPS = 16  # released Molmo2 maximum frames/crops per packed sequence
-ROUTER_LB_LOSS_WEIGHT: Optional[float] = None  # OLMoE adaptation recipe; keep router z-loss
+ROUTER_LB_LOSS_WEIGHT: Optional[float] = 0.015  # native s002 pretraining objective
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
@@ -108,11 +105,11 @@ EP_DEGREE = 8
 # reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
 # system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
 
-# Instance-based batching, expressed in tokens. Released Molmo2 uses global batch 128 and
-# device microbatch 4; the much larger s002 MoE keeps one sequence per microbatch and reaches
-# the same global batch through OLMo-core's native gradient accumulation.
+# Instance-based batching, expressed in tokens. Keep released Molmo2's global batch 128 and
+# device microbatch 4. On the two-node EP8 topology this gives each rank eight sequences in two
+# microbatches, while increasing the routed-token population per forward toward s002 pretraining.
 GLOBAL_BATCH_INSTANCES = 128
-RANK_MICROBATCH_INSTANCES = 1
+RANK_MICROBATCH_INSTANCES = 4
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
 
@@ -182,7 +179,7 @@ class ExperimentConfig(Config):
     pack_max_crops: int = PACK_MAX_CROPS
     """Maximum total image crops in one packed sequence."""
     router_lb_loss_weight: Optional[float] = ROUTER_LB_LOSS_WEIGHT
-    """Stage-1 router load-balancing weight; ``None`` disables the pretraining objective."""
+    """Stage-1 router load-balancing weight; defaults to the native s002 value."""
 
 
 def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
@@ -272,6 +269,7 @@ def _build_train_module_config(
             ],
             compile=False,
             foreach_chunk_size=50_000_000,
+            sigma_factor=12,
             max_grad_norm=1.0,
             check_nan_inf_grad=True,
             use_distributed=True,
@@ -294,8 +292,8 @@ def _build_train_module_config(
             name=DataParallelType.ddp,
             reduce_dtype=DType.float32,
             only_allreduce_last_microbatch=True,
-            reduce_grads_in_fp32=False,
-            accumulate_grads_in_fp32=False,
+            reduce_grads_in_fp32=True,
+            accumulate_grads_in_fp32=True,
         ),
         ep_config=TransformerExpertParallelConfig(degree=ep_degree),
     )

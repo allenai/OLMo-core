@@ -1671,6 +1671,15 @@ class OLMoDDPTrainModule(TrainModule):
             divisor += (~instance_mask).sum() * (labels.shape[1] - 1)
         return divisor
 
+    def _batch_auxiliary_loss_kwargs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Return model kwargs whose normalization spans the full optimizer batch.
+
+        Subclasses can use this hook for auxiliary objectives whose token population differs
+        from the LM labels. It runs once before the rank batch is split into microbatches.
+        """
+        del batch
+        return {}
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
@@ -1722,6 +1731,8 @@ class OLMoDDPTrainModule(TrainModule):
             else:
                 batch_num_tokens_for_loss = batch_num_tokens_for_loss.clamp_min(1)
 
+            auxiliary_loss_kwargs = self._batch_auxiliary_loss_kwargs(batch)
+
             # Batch losses to record.
             ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
             z_batch_loss: Optional[torch.Tensor] = None
@@ -1757,6 +1768,7 @@ class OLMoDDPTrainModule(TrainModule):
                             z_loss_multiplier=self.z_loss_multiplier,
                             loss_div_factor=batch_num_tokens_for_loss,
                             return_logits=debug_dump_logits,
+                            **auxiliary_loss_kwargs,
                             **model_kwargs,
                         )
                         if debug_dump_logits:

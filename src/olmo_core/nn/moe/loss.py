@@ -37,6 +37,7 @@ def load_balancing_loss(
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     tp_mesh: Optional[dist.DeviceMesh] = None,
     cp_mesh: Optional[dist.DeviceMesh] = None,
+    token_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     expert_scores, batch_size_per_expert, batched_batch_size_per_expert = (
         get_local_tensor(expert_scores),
@@ -45,6 +46,14 @@ def load_balancing_loss(
     )
 
     B, S, _ = expert_scores.shape
+    if token_mask is not None:
+        if tp_mesh is not None or cp_mesh is not None:
+            raise NotImplementedError(
+                "Masked MoE router losses are not supported with tensor or context parallelism"
+            )
+        token_mask = get_local_tensor(token_mask).to(device=expert_scores.device, dtype=torch.bool)
+        if token_mask.shape != (B, S):
+            raise ValueError(f"token_mask must have shape {(B, S)}, got {tuple(token_mask.shape)}")
 
     loss: torch.Tensor
     if granularity == MoELoadBalancingLossGranularity.instance:
@@ -68,6 +77,13 @@ def load_balancing_loss(
             expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1, keepdim=True)
             # shape: (B, 1, num_experts) -> (B, num_experts)
             expert_scores = DTensor.from_local(expert_scores, tp_mesh, (Shard(1),)).mean(dim=1)
+        elif token_mask is not None:
+            # Average each instance over real tokens only. An all-masked instance has a zero
+            # routing histogram and therefore contributes zero regardless of this clamp.
+            valid_per_instance = token_mask.sum(dim=1, keepdim=True).clamp_min(1)
+            expert_scores = (expert_scores * token_mask.unsqueeze(-1)).sum(
+                dim=1
+            ) / valid_per_instance.to(dtype=expert_scores.dtype)
         else:
             # shape: (B * S, num_experts) -> (B, S, num_experts,) -> (B, num_experts)
             expert_scores = expert_scores.view(B, -1, num_experts).mean(dim=1)
@@ -87,7 +103,7 @@ def load_balancing_loss(
         # Due to that DTensor reduction, with TP the 'loss_div_factor' should be the total number
         # of tokens across the TP group, but not the CP group.
         if loss_div_factor is None:
-            loss_div_factor = B * S
+            loss_div_factor = token_mask.sum().clamp_min(1) if token_mask is not None else B * S
             if tp_mesh is not None:
                 loss_div_factor = loss_div_factor * tp_mesh.size()
         elif cp_mesh is not None:
@@ -95,10 +111,17 @@ def load_balancing_loss(
 
         # shape: (num_experts,)
         batch_size_per_expert = batch_size_per_expert.type_as(expert_scores)
-        # shape: (B, S, num_experts) -> (B * S, num_experts)
-        expert_scores = expert_scores.view(-1, num_experts)
-        # shape: (B * S, num_experts) -> (num_experts,)
-        expert_scores = expert_scores.mean(dim=0)
+        if token_mask is not None:
+            # shape: (B, S, num_experts) -> (num_experts,)
+            expert_scores = (expert_scores * token_mask.unsqueeze(-1)).sum(dim=(0, 1))
+            expert_scores = expert_scores / token_mask.sum().clamp_min(1).to(
+                dtype=expert_scores.dtype
+            )
+        else:
+            # shape: (B, S, num_experts) -> (B * S, num_experts)
+            expert_scores = expert_scores.view(-1, num_experts)
+            # shape: (B * S, num_experts) -> (num_experts,)
+            expert_scores = expert_scores.mean(dim=0)
         # shape: scalar
         loss = torch.dot(batch_size_per_expert, expert_scores) / loss_div_factor
         if tp_mesh is not None:
@@ -117,21 +140,33 @@ def router_z_loss(
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     tp_mesh: Optional[dist.DeviceMesh] = None,
     cp_mesh: Optional[dist.DeviceMesh] = None,
+    token_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     expert_logits = get_local_tensor(expert_logits)
     B, S, _ = expert_logits.shape
+    if token_mask is not None:
+        if tp_mesh is not None or cp_mesh is not None:
+            raise NotImplementedError(
+                "Masked MoE router losses are not supported with tensor or context parallelism"
+            )
+        token_mask = get_local_tensor(token_mask).to(device=expert_logits.device, dtype=torch.bool)
+        if token_mask.shape != (B, S):
+            raise ValueError(f"token_mask must have shape {(B, S)}, got {tuple(token_mask.shape)}")
 
     # NOTE: with TP, end result has to be a DTensor over the TP mesh, so we wrap as a DTensor
     # and reduce it. Due to this reduction, the 'loss_div_factor' should represent the total
     # number of tokens across the TP group (but not the CP group).
     if loss_div_factor is None:
-        loss_div_factor = B * S
+        loss_div_factor = token_mask.sum().clamp_min(1) if token_mask is not None else B * S
         if tp_mesh is not None:
             loss_div_factor = loss_div_factor * tp_mesh.size()
     elif cp_mesh is not None:
         loss_div_factor = loss_div_factor / cp_mesh.size()
 
-    loss = torch.logsumexp(expert_logits, dim=-1).square().sum() / loss_div_factor
+    per_token_loss = torch.logsumexp(expert_logits, dim=-1).square()
+    if token_mask is not None:
+        per_token_loss = per_token_loss * token_mask
+    loss = per_token_loss.sum() / loss_div_factor
     if tp_mesh is not None:
         loss = DTensor.from_local(loss.unsqueeze(0), tp_mesh, (Shard(0),)).sum()
 

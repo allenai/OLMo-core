@@ -1,9 +1,9 @@
 version: 1
 name: stage1-ep8-2node-real-500step-pilot
 description: >-
-  Five-hundred-step Stage-1 recipe pilot on the production mixture. Run once with the
-  default router_lb_loss_weight=null and once with --router_lb_loss_weight=0.015 as the
-  otherwise-identical control. The scheduler horizon remains the production 31,000 steps.
+  Five-hundred-step Stage-1 recipe pilot on the production mixture with padding-excluded
+  MoE routing and the native s002 router objectives / numerical-stability settings. The
+  scheduler horizon remains the production 31,000 steps.
 launch:
   num_nodes: 2
   num_gpus: 8

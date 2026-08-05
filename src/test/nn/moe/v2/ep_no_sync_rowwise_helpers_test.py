@@ -66,3 +66,19 @@ def test_ep_no_sync_rowwise_metrics_ignore_zero_capacity():
     out: dict = {}
     add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
     assert out == {}
+
+
+def test_ep_no_sync_rowwise_metrics_accept_tensor_valid_route_count():
+    block = _new_metric_state()
+
+    accumulate_ep_no_sync_rowwise_metrics(
+        block,
+        drop_token_cnt=torch.tensor(1),
+        num_out_tokens=torch.tensor(5),
+        recv_splits_by_src_local=torch.tensor([4]),
+        rank_capacity=8,
+    )
+
+    out: dict = {}
+    add_ep_no_sync_rowwise_metrics(block, out, ReduceType)
+    torch.testing.assert_close(out["token drop rate"][0], torch.tensor(0.2))

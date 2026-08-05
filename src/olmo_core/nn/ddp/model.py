@@ -1305,6 +1305,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        router_loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        router_token_mask: Optional[torch.Tensor] = None,
         return_logits: Optional[bool] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
@@ -1335,6 +1337,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             position_ids,
             pos_sin,
             pos_cos,
+            router_loss_div_factor,
+            router_token_mask,
         )
         if self.tbo and any(value is not None for value in multimodal_inputs):
             raise OLMoConfigurationError(
@@ -1402,6 +1406,18 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             all_block_kwargs["pos_sin"] = move_to_device(pos_sin, self.device)
         if pos_cos is not None:
             all_block_kwargs["pos_cos"] = move_to_device(pos_cos, self.device)
+        if router_loss_div_factor is not None:
+            all_block_kwargs["router_loss_div_factor"] = move_to_device(
+                router_loss_div_factor, self.device
+            )
+        if router_token_mask is not None:
+            router_token_mask = move_to_device(router_token_mask, self.device).to(dtype=torch.bool)
+            if router_token_mask.shape != input_ids.shape[:2]:
+                raise ValueError(
+                    "router_token_mask must match the first two input dimensions: "
+                    f"got {tuple(router_token_mask.shape)} for input {tuple(input_ids.shape)}"
+                )
+            all_block_kwargs["router_token_mask"] = router_token_mask
 
         h = (
             move_to_device(input_embeddings, self.device)

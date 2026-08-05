@@ -5,6 +5,7 @@ from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tenso
 
 from olmo_core.config import DType
 from olmo_core.distributed.utils import get_world_size
+from olmo_core.nn.moe.loss import MoELoadBalancingLossGranularity
 from olmo_core.nn.moe.router import MoERouterConfig, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -77,6 +78,64 @@ def test_router_uniform_expert_assignment_balances_experts():
         batch_size_per_expert,
         torch.full_like(batch_size_per_expert, expected),
     )
+
+
+@pytest.mark.parametrize(
+    "granularity",
+    [
+        MoELoadBalancingLossGranularity.local_batch,
+        MoELoadBalancingLossGranularity.instance,
+    ],
+)
+def test_router_token_mask_excludes_padding_from_counts_losses_and_gradients(granularity):
+    torch.manual_seed(0)
+    B, S, D, E, K = 2, 4, 16, 8, 2
+    router = _build(
+        top_k=K,
+        num_experts=E,
+        d_model=D,
+        lb_loss_weight=1.0,
+        lb_loss_granularity=granularity,
+        z_loss_weight=1.0,
+    )
+    router.train()
+    token_mask = torch.tensor(
+        [[True, True, False, False], [True, True, True, False]], dtype=torch.bool
+    )
+    x = torch.randn(B, S, D)
+    x_with_different_padding = x.clone()
+    x_with_different_padding[~token_mask] = 1000 * torch.randn_like(
+        x_with_different_padding[~token_mask]
+    )
+
+    _, indices, counts, aux = router(
+        x,
+        False,
+        loss_div_factor=token_mask.sum(),
+        token_mask=token_mask,
+    )
+    _, changed_indices, changed_counts, changed_aux = router(
+        x_with_different_padding,
+        False,
+        loss_div_factor=token_mask.sum(),
+        token_mask=token_mask,
+    )
+
+    expected_counts = torch.bincount(indices[token_mask].reshape(-1), minlength=E)
+    torch.testing.assert_close(counts, expected_counts)
+    torch.testing.assert_close(changed_counts, expected_counts)
+    assert int(counts.sum()) == int(token_mask.sum()) * K
+    assert torch.equal(indices[token_mask], changed_indices[token_mask])
+    assert aux is not None and changed_aux is not None
+    assert torch.equal(aux[-1], token_mask)
+
+    loss = router.compute_aux_loss(*aux, accumulate_metrics=False)
+    changed_loss = router.compute_aux_loss(*changed_aux, accumulate_metrics=False)
+    assert loss is not None and changed_loss is not None
+    torch.testing.assert_close(loss, changed_loss)
+    grad = torch.autograd.grad(loss, router.weight)[0]
+    changed_grad = torch.autograd.grad(changed_loss, router.weight)[0]
+    torch.testing.assert_close(grad, changed_grad)
 
 
 def test_router_restore_weight_scale_multiplies_by_top_k():

@@ -87,6 +87,16 @@ class MultimodalCollator:
             "input_ids": self._pad_1d(
                 [ex["input_ids"] for ex in examples], self.pad_token_id, max_len, np.int64
             ),
+            # Padding is attention-isolated below, but MoE routing needs the same boundary
+            # explicitly so padded tensor slots do not consume routed-expert capacity or
+            # contribute to router losses. Over-long examples are valid through the retained
+            # (tail-truncated) prefix.
+            "router_token_mask": self._pad_1d(
+                [np.ones(min(len(ex["input_ids"]), max_len), dtype=np.bool_) for ex in examples],
+                False,
+                max_len,
+                np.bool_,
+            ),
             "labels": self._pad_1d(
                 [ex["labels"] for ex in examples], self.label_ignore_index, max_len, np.int64
             ),

@@ -13,6 +13,8 @@ from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, Attent
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.moe.loss import MoELoadBalancingLossGranularity
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
@@ -295,6 +297,58 @@ def test_multimodal_loss_divisor_uses_float_weights():
     torch.testing.assert_close(divisor, torch.tensor(1.75))
 
 
+def test_multimodal_router_loss_divisor_uses_all_valid_tokens_not_response_weights():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.device = torch.device("cpu")
+    batch = {
+        "input_ids": torch.zeros((2, 4), dtype=torch.long),
+        "loss_masks": torch.tensor([[0.0, 1.0, 0.0, 0.0], [0.0, 0.5, 1.0, 0.0]]),
+        "router_token_mask": torch.tensor([[True, True, False, False], [True, True, True, False]]),
+    }
+
+    kwargs = train_module._batch_auxiliary_loss_kwargs(batch)
+
+    torch.testing.assert_close(kwargs["router_loss_div_factor"], torch.tensor(5))
+    assert kwargs["router_loss_div_factor"] != batch["loss_masks"].sum()
+
+
+def test_multimodal_router_loss_divisor_requires_explicit_token_mask():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.device = torch.device("cpu")
+    with pytest.raises(OLMoConfigurationError, match="require router_token_mask"):
+        train_module._batch_auxiliary_loss_kwargs(
+            {"input_ids": torch.zeros((1, 4), dtype=torch.long)}
+        )
+
+
+def _run_multimodal_router_loss_divisor_distributed():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.device = torch.device("cpu")
+    train_module.dp_group = dist.group.WORLD
+    rank = dist.get_rank()
+    token_mask = torch.zeros((1, 4), dtype=torch.bool)
+    token_mask[:, : 1 + 2 * rank] = True
+
+    kwargs = train_module._batch_auxiliary_loss_kwargs(
+        {
+            "input_ids": torch.zeros_like(token_mask, dtype=torch.long),
+            "router_token_mask": token_mask,
+        }
+    )
+
+    # Rank-local valid counts are 1 and 3; OLMo DDP uses their global average.
+    torch.testing.assert_close(kwargs["router_loss_div_factor"], torch.tensor(2.0))
+
+
+def test_multimodal_router_loss_divisor_uses_global_dp_average():
+    run_distributed_test(
+        _run_multimodal_router_loss_divisor_distributed,
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
+    )
+
+
 def _run_construct_no_ep():
     model = _tiny_model_config().build(init_device="cpu")
     config = OLMoDDPTrainModuleConfig(
@@ -344,8 +398,21 @@ def _run_construct_ep():
     assert train_module.num_flops_per_token(seq_len=512) > 0
 
 
-def _run_multimodal_ep_step_impl(*, freeze_vision: bool):
-    model = _tiny_multimodal_model_config().build(init_device="meta")
+def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: bool = False):
+    model_config = _tiny_multimodal_model_config()
+    if padded_router_compile:
+        model_config.lm.recompute_each_block = True
+        model_config.lm.block.ep = ExpertParallelConfig(
+            path=ExpertParallelPath.rowwise_nvshmem,
+            capacity_factor=8.0,
+            major_align=1,
+        )
+        router = model_config.lm.block.routed_experts_router
+        assert router is not None
+        router.lb_loss_weight = 0.015
+        router.lb_loss_granularity = MoELoadBalancingLossGranularity.instance
+        router.z_loss_weight = 0.0001
+    model = model_config.build(init_device="meta")
     config = MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=8,
         max_sequence_length=8,
@@ -360,6 +427,7 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool):
         vision_activation_checkpointing=not freeze_vision,
         connector_activation_checkpointing=not freeze_vision,
         response_logits_only=True,
+        compile_model=padded_router_compile,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
             only_allreduce_last_microbatch=True,
@@ -388,10 +456,18 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool):
     rank = dist.get_rank()
     input_ids = torch.tensor([[120, 2 + rank, 4, 5, 6, 7, 8, 9]], device="cuda", dtype=torch.long)
     labels = torch.tensor([[2 + rank, 4, 5, 6, 7, 8, 9, 10]], device="cuda", dtype=torch.long)
+    router_token_mask = torch.ones_like(input_ids, dtype=torch.bool)
+    loss_masks = torch.tensor([[0.0, 0.25, 1.0, 0.5, 1.0, 0.75, 1.0, 0.5]], device="cuda")
+    if padded_router_compile:
+        router_token_mask[:, -3:] = False
+        input_ids[:, -3:] = 0
+        labels[:, -3:] = -100
+        loss_masks[:, -3:] = 0
     batch = {
         "input_ids": input_ids,
         "labels": labels,
-        "loss_masks": torch.tensor([[0.0, 0.25, 1.0, 0.5, 1.0, 0.75, 1.0, 0.5]], device="cuda"),
+        "router_token_mask": router_token_mask,
+        "loss_masks": loss_masks,
         "token_type_ids": torch.tensor([[1, 0, 0, 0, 0, 0, 0, 0]], device="cuda", dtype=torch.long),
         "images": torch.randn(1, 1, 4, 14 * 14 * 3, device="cuda"),
         "pooled_patches_idx": torch.tensor([[[0, 1, 2, 3]]], device="cuda", dtype=torch.long),
@@ -414,7 +490,6 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool):
     assert any(
         param.grad is not None and torch.count_nonzero(param.grad) > 0 for param in routed_params
     )
-
     optim.latest_loss = torch.zeros((), device="cuda")
     optim.step()
     for model_part in train_module.model_parts:
@@ -443,6 +518,10 @@ def _run_multimodal_ep_unfrozen_vision_step():
     _run_multimodal_ep_step_impl(freeze_vision=False)
 
 
+def _run_multimodal_ep_padded_compile_step():
+    _run_multimodal_ep_step_impl(freeze_vision=True, padded_router_compile=True)
+
+
 @requires_multi_gpu
 def test_multimodal_olmo_ddp_ep_step():
     run_distributed_test(
@@ -457,6 +536,16 @@ def test_multimodal_olmo_ddp_ep_step():
 def test_multimodal_olmo_ddp_ep_unfrozen_vision_step():
     run_distributed_test(
         _run_multimodal_ep_unfrozen_vision_step,
+        world_size=2,
+        backend="nccl",
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+def test_multimodal_olmo_ddp_ep_padding_compile_and_checkpoint_step():
+    run_distributed_test(
+        _run_multimodal_ep_padded_compile_step,
         world_size=2,
         backend="nccl",
         start_method="spawn",

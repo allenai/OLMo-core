@@ -74,7 +74,7 @@ def _init_block_params(block: OLMoDDPTransformerBlock):
 
 def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
     def _make(router):
-        def _forward(local_x, scores_only, loss_div_factor=None):
+        def _forward(local_x, scores_only, loss_div_factor=None, token_mask=None):
             del loss_div_factor
             B, S, _ = local_x.shape
             if scores_only:
@@ -97,8 +97,13 @@ def _install_deterministic_topk_router(block: OLMoDDPTransformerBlock):
             weights = torch.arange(1, top_k + 1, device=local_x.device, dtype=local_x.dtype)
             weights = weights / weights.sum().clamp_min(1e-6)
             expert_weights = weights.view(1, 1, top_k).expand(B, S, top_k).contiguous()
+            counted_indices = (
+                expert_indices[token_mask.to(dtype=torch.bool)]
+                if token_mask is not None
+                else expert_indices
+            )
             batch_size_per_expert = torch.bincount(
-                expert_indices.reshape(-1), minlength=num_experts
+                counted_indices.reshape(-1), minlength=num_experts
             ).to(dtype=torch.long)
             return expert_weights, expert_indices, batch_size_per_expert, None
 
@@ -182,6 +187,51 @@ def _run_rowwise_ep_dropless_matches_no_ep():
     _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, atol=2e-2, rtol=2e-2)
 
 
+def _run_rowwise_ep_padding_mask_matches_valid_no_ep(*, compile_ep_block: bool = False):
+    ep_mesh = _build_ep_mesh()
+    no_ep_block = _build_block(ep_no_sync=False)
+    ep_block = _build_block(ep_no_sync=True)
+    ep_block.ep.path = ExpertParallelPath.rowwise_nvshmem
+    ep_block.ep.rowwise_get_nblocks = 128
+    ep_block.ep.rowwise_put_nblocks = 128
+    ep_block.ep.rowwise_weighted_put_nblocks = 128
+    ep_block.apply_ep(ep_mesh)
+
+    _init_block_params(no_ep_block)
+    _copy_no_ep_weights_to_ep_shard(no_ep_block, ep_block)
+    _install_deterministic_topk_router(no_ep_block)
+    _install_deterministic_topk_router(ep_block)
+    no_ep_block.to(dtype=torch.bfloat16).train()
+    ep_block.to(dtype=torch.bfloat16).train()
+    if compile_ep_block:
+        ep_block.apply_compile()
+
+    x = torch.randn(
+        1, 8, no_ep_block.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True
+    )
+    x_ep = x.detach().clone().requires_grad_(True)
+    token_mask = torch.tensor([[True, True, True, True, True, False, False, False]], device="cuda")
+
+    y_no_ep = no_ep_block(x)
+    y_ep = ep_block(
+        x_ep,
+        router_token_mask=token_mask,
+        router_loss_div_factor=token_mask.sum(),
+    )
+    torch.testing.assert_close(y_ep[token_mask], y_no_ep[token_mask], atol=2e-2, rtol=2e-2)
+
+    total_tokens_sum = ep_block._ep_no_sync_rowwise_total_tokens_sum
+    drop_tokens_sum = ep_block._ep_no_sync_rowwise_drop_tokens_sum
+    assert total_tokens_sum is not None and drop_tokens_sum is not None
+    assert unhide_from_torch(total_tokens_sum).item() == int(token_mask.sum()) * 2
+    assert unhide_from_torch(drop_tokens_sum).item() == 0
+
+    y_no_ep[token_mask].square().mean().backward()
+    y_ep[token_mask].square().mean().backward()
+    torch.testing.assert_close(x_ep.grad, x.grad, atol=2e-2, rtol=2e-2)
+    _assert_expert_grad_matches_no_ep_global_sum(no_ep_block, ep_block, atol=2e-2, rtol=2e-2)
+
+
 @requires_multi_gpu
 @requires_symm_mem_vdev2d
 def test_v2_rowwise_ep_dropless_matches_no_ep():
@@ -189,4 +239,26 @@ def test_v2_rowwise_ep_dropless_matches_no_ep():
         _run_rowwise_ep_dropless_matches_no_ep,
         backend="nccl",
         start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+@requires_symm_mem_vdev2d
+def test_v2_rowwise_ep_padding_mask_matches_valid_no_ep():
+    run_distributed_test(
+        _run_rowwise_ep_padding_mask_matches_valid_no_ep,
+        backend="nccl",
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+@requires_symm_mem_vdev2d
+def test_v2_rowwise_ep_padding_mask_apply_compile():
+    run_distributed_test(
+        _run_rowwise_ep_padding_mask_matches_valid_no_ep,
+        world_size=2,
+        backend="nccl",
+        start_method="spawn",
+        func_kwargs={"compile_ep_block": True},
     )

@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch.nn as nn
 
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.launch.beaker import BeakerEnvVar
@@ -45,6 +46,44 @@ def test_s002_stage1_uses_olmo_ddp_ep8_and_trains_all_components():
     assert overrides[("*connector.*",)]["lr"] == stage1.CONNECTOR_LR
     assert overrides[("*vision.*",)]["lr"] == stage1.VISION_LR
     assert config.optim.lr == stage1.LLM_LR
+    assert config.optim.sigma_factor == 12
+    assert config.dp_config.reduce_grads_in_fp32
+    assert config.dp_config.accumulate_grads_in_fp32
+
+
+def test_s002_stage1_optimizer_groups_cover_lm_connector_and_vision():
+    stage1 = _load_stage1_module()
+    config = stage1._build_train_module_config(
+        sequence_length=64,
+        rank_microbatch_size=64,
+        ep_degree=1,
+        compile_model=False,
+    )
+    model = nn.ModuleDict(
+        {
+            "lm": nn.Linear(4, 4),
+            "connector": nn.Linear(4, 4),
+            "vision": nn.Linear(4, 4),
+        }
+    )
+
+    groups = config.optim.build_groups([model])
+    grouped_names = {name: group for group in groups for name in group["named_params"]}
+
+    assert set(grouped_names) == dict(model.named_parameters()).keys()
+    assert all("lr" not in grouped_names[name] for name in grouped_names if name.startswith("lm."))
+    assert all(
+        grouped_names[name]["lr"] == stage1.CONNECTOR_LR
+        and grouped_names[name]["scheduler_name"] == "connector"
+        for name in grouped_names
+        if name.startswith("connector.")
+    )
+    assert all(
+        grouped_names[name]["lr"] == stage1.VISION_LR
+        and grouped_names[name]["scheduler_name"] == "vision"
+        for name in grouped_names
+        if name.startswith("vision.")
+    )
 
 
 def test_s002_stage1_matches_released_molmo2_scale_defaults():
@@ -52,7 +91,7 @@ def test_s002_stage1_matches_released_molmo2_scale_defaults():
 
     assert stage1.SEQUENCE_LENGTH == 2536
     assert stage1.GLOBAL_BATCH_INSTANCES == 128
-    assert stage1.RANK_MICROBATCH_INSTANCES == 1
+    assert stage1.RANK_MICROBATCH_INSTANCES == 4
     assert stage1.MAX_STEPS == 31_000
     assert stage1.PACK_BUFFER_SIZE == 48
     assert stage1.PACK_MAX_CROPS == 16
@@ -62,7 +101,7 @@ def test_s002_stage1_matches_released_molmo2_scale_defaults():
     assert stage1.BEAKER_BUDGET == "ai2/oe-other"
 
 
-def test_s002_stage1_disables_only_router_load_balancing():
+def test_s002_stage1_preserves_native_router_objectives():
     stage1 = _load_stage1_module()
     default_router = SimpleNamespace(lb_loss_weight=0.015, z_loss_weight=0.0001)
     override_router = SimpleNamespace(lb_loss_weight=0.015, z_loss_weight=0.0001)
@@ -74,11 +113,11 @@ def test_s002_stage1_disables_only_router_load_balancing():
         },
     )
 
-    configured = stage1._configure_router_load_balancing(lm_config, None)
+    configured = stage1._configure_router_load_balancing(lm_config, stage1.ROUTER_LB_LOSS_WEIGHT)
 
     assert configured == 2
-    assert default_router.lb_loss_weight is None
-    assert override_router.lb_loss_weight is None
+    assert default_router.lb_loss_weight == 0.015
+    assert override_router.lb_loss_weight == 0.015
     assert default_router.z_loss_weight == 0.0001
     assert override_router.z_loss_weight == 0.0001
 
@@ -216,11 +255,7 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
     assert "--train_module.scheduler.default.t_max=31000" in overrides
     assert not any("router_lb_loss_weight" in override for override in overrides)
 
-    control = "--router_lb_loss_weight=0.015"
-    _, control_overrides = stage1._load_beaker_test_config(
-        [f"--beaker-test-config={profile_path}", control]
-    )
-    assert control_overrides[-1] == control
+    assert stage1.ROUTER_LB_LOSS_WEIGHT == 0.015
 
 
 def test_stage1_resume_gate_restores_full_state_into_a_new_run():

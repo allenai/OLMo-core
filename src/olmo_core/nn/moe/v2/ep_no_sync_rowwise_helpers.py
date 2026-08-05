@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union
 
 import torch
 
@@ -69,7 +69,7 @@ def accumulate_ep_no_sync_rowwise_metrics(
     block: OLMoDDPTransformerBlock,
     *,
     drop_token_cnt: torch.Tensor,
-    num_out_tokens: int,
+    num_out_tokens: Union[int, torch.Tensor],
     recv_splits_by_src_local: torch.Tensor,
     rank_capacity: int,
 ) -> None:
@@ -77,7 +77,11 @@ def accumulate_ep_no_sync_rowwise_metrics(
         return
 
     drop_sum = drop_token_cnt.detach().to(dtype=torch.float32)
-    total_sum = torch.empty_like(drop_sum).fill_(num_out_tokens)
+    if isinstance(num_out_tokens, int):
+        # Preserve the original unmasked path exactly.
+        total_sum = torch.empty_like(drop_sum).fill_(num_out_tokens)
+    else:
+        total_sum = num_out_tokens.detach().to(device=drop_sum.device, dtype=torch.float32)
     util = recv_splits_by_src_local.detach().sum(dtype=torch.float32) * (1.0 / rank_capacity)
 
     if block._ep_no_sync_rowwise_drop_tokens_sum is None:

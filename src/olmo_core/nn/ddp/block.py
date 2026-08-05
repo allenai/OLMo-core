@@ -840,18 +840,37 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        router_loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        router_token_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         if not self.has_routed_experts:
             return self.combined_forward_shared_only(x, loss_div_factor=loss_div_factor, **kwargs)
 
+        if router_loss_div_factor is None:
+            router_loss_div_factor = loss_div_factor
+
+        if (
+            router_token_mask is not None
+            and self.training
+            and not (
+                self.ep_enabled
+                and self.ep.no_sync
+                and self.ep.path == ExpertParallelPath.rowwise_nvshmem
+            )
+        ):
+            raise RuntimeError(
+                "router_token_mask training currently requires the rowwise_nvshmem "
+                "no-sync expert-parallel path"
+            )
+
         if not self.ep_enabled:
-            return self.combined_forward_no_ep(x, loss_div_factor=loss_div_factor, **kwargs)
+            return self.combined_forward_no_ep(x, loss_div_factor=router_loss_div_factor, **kwargs)
 
         # In eval mode, different ranks might get different input token counts,
         # and no-sync can freeze. Fall back to the synced EP path there.
         if not (self.ep.no_sync and self.training):
-            return self.combined_forward_ep_1d(x, loss_div_factor=loss_div_factor, **kwargs)
+            return self.combined_forward_ep_1d(x, loss_div_factor=router_loss_div_factor, **kwargs)
 
         if self.ep.path == ExpertParallelPath.rowwise_wave:
             no_sync_forward = self.combined_forward_ep_no_sync_rowwise_wave
@@ -864,6 +883,10 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         else:
             raise RuntimeError(f"Unsupported EP no-sync path {self.ep.path!r}")
 
+        routed_kwargs = kwargs
+        if router_token_mask is not None:
+            routed_kwargs = {**kwargs, "router_token_mask": router_token_mask}
+
         # Keep the disabled-by-default activation diagnostic out of the compiled hot path. Its
         # per-layer block_idx key otherwise forces one Dynamo graph per block (and per grad mode
         # under reentrant checkpoint), eventually sending unmatched block forwards to eager.
@@ -871,13 +894,13 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             debug_out = maybe_dump_ep_no_sync_saved_activations(
                 self,
                 x,
-                loss_div_factor=loss_div_factor,
-                forward_kwargs=kwargs,
+                loss_div_factor=router_loss_div_factor,
+                forward_kwargs=routed_kwargs,
                 no_sync_forward=no_sync_forward,
             )
             if debug_out is not None:
                 return debug_out
-        return no_sync_forward(x, loss_div_factor=loss_div_factor, **kwargs)
+        return no_sync_forward(x, loss_div_factor=router_loss_div_factor, **routed_kwargs)
 
     def apply_pp(self, pp_mesh: DeviceMesh):
         pass  # nothing to do
@@ -1236,6 +1259,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         x: torch.Tensor,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        router_token_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         checkpoint_state = self._ep_no_sync_rowwise_static_checkpoint_state
@@ -1248,6 +1272,7 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
             activation_checkpointing=activation_checkpointing,
             accumulate_routed_aux_loss_metrics=accumulate_routed_aux_loss_metrics,
             loss_div_factor=loss_div_factor,
+            router_token_mask=router_token_mask,
             **kwargs,
         )
 

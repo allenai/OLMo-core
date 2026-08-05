@@ -2,6 +2,7 @@
 assembly, text-only handling, and the weighted mixture loader."""
 
 import numpy as np
+import torch
 
 from olmo_core.data.multimodal import (
     MixtureDataLoader,
@@ -173,6 +174,17 @@ def _text_example(n_text: int = 4, tag: int = 3):
         images=np.zeros((0, 729, _PATCH_DIM), dtype=np.float32),
         pooled_patches_idx=np.full((0, 4), -1, dtype=np.int64),
     )
+
+
+def test_multimodal_collator_marks_only_retained_real_tokens_for_routing():
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=8).build()
+    batch = collator([_text_example(n_text=3), _text_example(n_text=10)])
+
+    assert batch["router_token_mask"].dtype == torch.bool
+    assert batch["router_token_mask"].tolist() == [
+        [True, True, True, False, False, False, False, False],
+        [True, True, True, True, True, True, True, True],
+    ]
 
 
 def test_greedy_pack_indices():

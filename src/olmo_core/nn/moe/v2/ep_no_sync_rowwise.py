@@ -99,6 +99,7 @@ def combined_forward_ep_no_sync_rowwise(
     activation_checkpointing: Optional[bool] = None,
     accumulate_routed_aux_loss_metrics: Optional[bool] = None,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+    router_token_mask: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> torch.Tensor:
     """Forward with EP no-sync using row-wise NVSHMEM dispatch/combine."""
@@ -113,6 +114,13 @@ def combined_forward_ep_no_sync_rowwise(
     ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
+    if router_token_mask is not None:
+        router_token_mask = router_token_mask.to(device=x.device, dtype=torch.bool)
+        if router_token_mask.shape != (B, S):
+            raise ValueError(
+                f"router_token_mask must have shape {(B, S)}, "
+                f"got {tuple(router_token_mask.shape)}"
+            )
     rowwise_stage_debug_print(
         "rowwise:enter",
         block=self.block_idx,
@@ -129,16 +137,25 @@ def combined_forward_ep_no_sync_rowwise(
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)
 
+    if router_token_mask is None:
+        router_output = self.routed_experts_router(
+            moe_inp,
+            False,
+            loss_div_factor=loss_div_factor,
+        )
+    else:
+        router_output = self.routed_experts_router(
+            moe_inp,
+            False,
+            loss_div_factor=loss_div_factor,
+            token_mask=router_token_mask,
+        )
     (
         local_x_global_routed_expert_weights,
         local_x_global_routed_expert_indices,
         local_batch_size_per_global_routed_expert,
         routed_expert_router_aux_loss_info,
-    ) = self.routed_experts_router(
-        moe_inp,
-        False,
-        loss_div_factor=loss_div_factor,
-    )
+    ) = router_output
     rowwise_stage_debug_print(
         "rowwise:router-exit",
         block=self.block_idx,
@@ -226,6 +243,10 @@ def combined_forward_ep_no_sync_rowwise(
 
     with torch.no_grad():
         requested_splits = local_batch_size_per_global_routed_expert.to(dtype=torch.long)
+        # Keep the allocation capacity tied to the fixed physical route shape: valid-token
+        # counts can differ across EP ranks, while symmetric buffers must have identical sizes.
+        # Padding is already absent from requested_splits, so it consumes no capacity; its
+        # unused physical slots become safe headroom rather than routed traffic.
         rank_capacity = compute_ep_no_sync_rank_capacity(self, num_out_tokens)
         rowwise_stage_debug_print(
             "rowwise:sync-tail-enter",
@@ -257,10 +278,13 @@ def combined_forward_ep_no_sync_rowwise(
         combine_in_cap = rank_capacity
         combine_out_cap = num_input_tokens
         if should_accumulate_ep_no_sync_rowwise_metrics(accumulate_routed_aux_loss_metrics):
+            metric_num_out_tokens: Union[int, torch.Tensor] = num_out_tokens
+            if router_token_mask is not None:
+                metric_num_out_tokens = router_token_mask.sum(dtype=torch.long) * top_k
             accumulate_ep_no_sync_rowwise_metrics(
                 self,
                 drop_token_cnt=_drop_token_cnt,
-                num_out_tokens=num_out_tokens,
+                num_out_tokens=metric_num_out_tokens,
                 recv_splits_by_src_local=recv_splits_by_src_local,
                 rank_capacity=rank_capacity,
             )
@@ -473,6 +497,15 @@ def combined_forward_ep_no_sync_rowwise(
             rowwise_stage_debug_print("rowwise:leases-exit", block=self.block_idx)
 
     routing_map = local_x_global_routed_expert_indices.view(-1, top_k).int()
+    if router_token_mask is not None:
+        # Invalid expert IDs are an existing rowwise route-map sentinel. They keep tensor and
+        # symmetric-buffer shapes fixed across EP ranks while causing the dispatch/combine
+        # kernels to skip padded routes entirely.
+        routing_map = torch.where(
+            router_token_mask.reshape(-1, 1),
+            routing_map,
+            torch.full_like(routing_map, -1),
+        )
 
     with torch.no_grad():
         batch_size_per_local_expert = recv_splits_by_src_local.sum(dim=0, dtype=torch.long)
@@ -565,6 +598,8 @@ def combined_forward_ep_no_sync_rowwise(
         shared_out_up, shared_out_gate = None, None
 
     route_probs = local_x_global_routed_expert_weights.view(-1, self.routed_experts_router.top_k)
+    if router_token_mask is not None:
+        route_probs = route_probs * router_token_mask.reshape(-1, 1)
 
     if use_fused_rowwise_fp8:
         assert rowwise_fp8_cfg is not None
