@@ -538,13 +538,10 @@ def validate_conversion(
     model = model.to(device=device)
     model.eval()
     # Conversion validation is a semantic reference check, not an inference-kernel
-    # benchmark. Freezing the model and keeping grad mode enabled selects the plain
-    # PyTorch SwiGLU path for MoE v2 instead of the forward-only valid-prefix Triton
-    # kernel, which is not reliable on every new GPU architecture. Since no tensor
-    # requires gradients, this does not construct an autograd graph. Likewise,
-    # math SDPA keeps this correctness check independent of cuDNN plan support.
-    model.requires_grad_(False)
-    with torch.enable_grad(), sdpa_kernel(SDPBackend.MATH):
+    # benchmark. Math SDPA keeps it independent of cuDNN plan support. The conversion
+    # launcher also selects the established grouped-GEMM expert backend so this check
+    # does not depend on the newer torch grouped-MM inference path.
+    with torch.no_grad(), sdpa_kernel(SDPBackend.MATH):
         logits = model(input_ids=input_ids)
 
     if debug:
