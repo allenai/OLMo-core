@@ -305,6 +305,24 @@ def test_olmo3moe_experts_can_force_reference_loop(monkeypatch):
 
 
 @requires_olmo3moe
+def test_olmo3moe_experts_can_force_olmo_core_reference(monkeypatch):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeExpert, Olmo3MoeExperts
+
+    experts = Olmo3MoeExperts(
+        Olmo3MoeExpert(hidden_size=32, moe_intermediate_size=16, hidden_act="silu")
+        for _ in range(4)
+    )
+    hidden_states = torch.randn(7, 32)
+    topk_ids = torch.randint(0, 4, (7, 2))
+    topk_weights = torch.rand(7, 2)
+    expected = torch.randn_like(hidden_states)
+
+    monkeypatch.setenv("OLMO_HF_MOE_CORE_REFERENCE", "1")
+    monkeypatch.setattr(experts, "_forward_olmo_core_reference", lambda *_args: expected)
+    assert experts(hidden_states, topk_ids, topk_weights) is expected
+
+
+@requires_olmo3moe
 def test_olmo3moe_router_uses_float32_projection():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
 

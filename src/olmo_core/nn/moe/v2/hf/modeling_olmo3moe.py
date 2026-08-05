@@ -301,12 +301,85 @@ class Olmo3MoeExperts(nn.ModuleList):
         weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
         return weighted_y.reshape(N, K, H).sum(dim=1)
 
+    def _forward_olmo_core_reference(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run the exact OLMo-core no-EP expert layout for conversion validation.
+
+        The ordinary HF eager loop is semantically equivalent, but it launches one GEMM per
+        expert and accumulates routed rows in a different order.  In bf16 those differences can
+        compound enough to obscure a strict checkpoint-conversion check.  This opt-in path uses
+        the same permutation, grouped GEMM, SwiGLU layout, and unpermutation as OLMo-core while
+        retaining the converted HF parameters as the source of truth.
+        """
+        from olmo_core.nn.moe.utils import moe_permute_no_compile, moe_unpermute_no_compile
+        from olmo_core.nn.moe.v2.routed_experts import gmm, requires_host_side_split_sizes
+
+        N, H = hidden_states.shape
+        K = topk_ids.shape[-1]
+        num_experts = len(self)
+        routing_map = topk_ids.reshape(N, K).int()
+        permuted, reverse_mapping = moe_permute_no_compile(
+            inp=hidden_states,
+            routing_map=routing_map,
+            num_out_tokens=N * K,
+            map_type="index",
+        )
+
+        batch_size_per_expert = torch.bincount(
+            routing_map.reshape(-1), minlength=num_experts
+        )
+        if requires_host_side_split_sizes():
+            batch_size_per_expert = batch_size_per_expert.to(device="cpu", dtype=torch.int64)
+        else:
+            batch_size_per_expert = batch_size_per_expert.to(dtype=torch.int32)
+
+        w_up_gate = torch.stack(
+            [
+                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
+                for expert in self
+            ]
+        )
+        up_gate = gmm(
+            permuted,
+            w_up_gate,
+            batch_size_per_expert,
+            trans_b=True,
+        )
+        up, gate = up_gate.chunk(2, dim=-1)
+        activated = up * F.silu(gate)
+        w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
+        expert_out = gmm(
+            activated,
+            w_down,
+            batch_size_per_expert,
+            trans_b=False,
+        )
+        return moe_unpermute_no_compile(
+            inp=expert_out,
+            row_id_map=reverse_mapping,
+            restore_shape=hidden_states.shape,
+            map_type="index",
+            merging_probs=topk_weights.reshape(N, K),
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,  # (N, H)
         topk_ids: torch.Tensor,  # (N, K)
         topk_weights: torch.Tensor,  # (N, K)
     ) -> torch.Tensor:
+        if os.environ.get("OLMO_HF_MOE_CORE_REFERENCE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_olmo_core_reference(hidden_states, topk_ids, topk_weights)
+
         # Conversion validation needs a deterministic reference path. In particular, a failed
         # CUDA grouped_mm launch may poison the CUDA context before the RuntimeError below can be
         # caught, making the eager fallback fail at an unrelated later operation.
