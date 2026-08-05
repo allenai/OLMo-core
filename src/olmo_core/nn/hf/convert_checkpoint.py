@@ -509,9 +509,10 @@ def validate_conversion(
             hf_path,
             torch_dtype="auto",
             config=hf_config,
-            # Validation is a deterministic correctness check. Eager attention also avoids
-            # cuDNN SDPA plan-selection failures on newer GPU architectures such as B300.
-            attn_implementation="eager",
+            # Validation is a deterministic correctness check. The forward below pins SDPA to
+            # its math backend so HF and OLMo-core use the same portable attention operation and
+            # never ask cuDNN to select a plan on newer GPU architectures such as B300.
+            attn_implementation="sdpa",
         )
         .to(device)
         .eval()
@@ -523,7 +524,7 @@ def validate_conversion(
         olmo_core_state, hf_state = _register_debug_hooks(hf_model, model)
 
     log.info("Running OLMo core and HF models for validation...")
-    with torch.no_grad():
+    with torch.no_grad(), sdpa_kernel(SDPBackend.MATH):
         hf_logits = hf_model(input_ids=input_ids).logits
 
     del hf_model
