@@ -131,6 +131,33 @@ COPY . .
 # dev extra, which would drag in pytest, mypy, sphinx and the rest of a contributor's
 # toolchain -- none of which belongs in an image an untrusted training command runs inside.
 #
+# botocore's `crt` EXTRA IS BESIDE boto3 BECAUSE THE CHECKSUM A CHECKPOINT WRITE ASKS FOR IS
+# NOT IN botocore ITSELF. The platform commits a checkpoint by putting the payload with
+# `ChecksumAlgorithm="CRC32C"` and then a `_SUCCESS` object carrying the digest S3 attested
+# back; its reader compares the two and calls a checkpoint it cannot verify corrupt. So the
+# algorithm is load-bearing rather than incidental, and CRC-32C is the one S3 offers as a
+# whole-object checksum on a multipart upload where SHA-256 is composite-only. botocore has
+# no pure-Python CRC-32C: `botocore.httpchecksum` adds it to the supported set only when
+# `awscrt` imports, which is what the extra installs.
+#
+# Found the way these things are, again, and at the end rather than the start. Run
+# run_019fcf53 on 2026-08-05 pulled the image, built the model, trained twenty steps on a
+# T4, logged every one of them to W&B, and then died on the first line after the training
+# loop with `botocore.exceptions.MissingDependencyException: Missing Dependency: Using
+# CRC32C requires an additional dependency. You will need to pip install botocore[crt]
+# before proceeding.` A whole run's compute, and nothing kept.
+#
+# NAMED HERE RATHER THAN LEFT TO boto3, which depends on botocore without extras, and no
+# other dependency in this image asks for this one. It sits on the same pip invocation as
+# boto3 deliberately: one resolution then picks the botocore both agree on, where a separate
+# later install can move botocore under boto3's feet.
+#
+# UNPINNED, LIKE boto3 ABOVE AND UNLIKE torch BELOW, AND THE LINE BETWEEN THEM IS WHAT A
+# RESOLVED VERSION CHANGES. A different torch changes what the model computes and so what a
+# rebuild of one commit produces. A different awscrt changes how fast a CRC-32C is arrived
+# at, not what it is -- the value is Castagnoli's and is fixed by the standard, which is why
+# the check value below can be written down here at all.
+#
 # THE ASSERTION IS THE POINT OF THIS STEP, not the install. pip is free to decide some
 # dependency's metadata is better served by a different torch and replace a CUDA build with
 # a CPU wheel. Nothing would fail: the image builds, the container starts, the job runs, and
@@ -176,13 +203,35 @@ COPY . .
 #
 # So it names what a training workload actually reaches for. Anything that breaks between
 # the pinned torch and this library now breaks the build, where it costs a runner minute.
+#
+# THE CRC-32C LINE IS THE FAILED RUN, MADE INTO A BUILD STEP, AND IT IS TWO CHECKS BECAUSE
+# THERE ARE TWO WAYS TO GET THIS WRONG. `pip install botocore[crt]` succeeding proves a
+# distribution is on disk; it does not prove botocore reached it. botocore imports awscrt
+# inside a try/except and sets HAS_CRT False on any failure -- an incompatible version, a
+# wheel built for another libc -- so an image can carry awscrt and refuse CRC32C anyway,
+# silently, until a training run has already been paid for.
+#
+# The first check is therefore the exact call that died: put_object with
+# ChecksumAlgorithm="CRC32C". Stubber answers it, so it costs no network, no credentials and
+# no bucket -- but botocore resolves the checksum before the stub is consulted, which is
+# precisely the frame the run's traceback names, so the check raises the run's own
+# MissingDependencyException when the CRT is not reachable. Verified both ways on
+# 2026-08-05: it raises on the image published from this file's parent commit and passes
+# once the extra is installed.
+#
+# The second is awscrt's own answer to CRC-32C of b"123456789", which the standard fixes at
+# 0xE3069283 and the platform's checkpoints.py asserts against the same constant. It costs a
+# microsecond and it is the difference between "botocore will use this" and "and the number
+# it gets is right".
 RUN set -eux; \
     python -m pip install --no-cache-dir "torch==2.9.0"; \
-    python -m pip install --no-cache-dir ".[wandb]" boto3; \
+    python -m pip install --no-cache-dir ".[wandb]" boto3 "botocore[crt]"; \
     python -m pip install --no-cache-dir "edullm-data @ https://github.com/edu-llm/edullm-data/archive/38bf831a6c3f445e394784018441fd59288b876c.tar.gz"; \
     python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'torch was moved off the pin: {torch.__version__}'"; \
     python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
     python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"; \
+    python -c "import boto3; from botocore import UNSIGNED; from botocore.config import Config; from botocore.stub import Stubber; client = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED)); stub = Stubber(client); stub.add_response('put_object', {}); stub.activate(); client.put_object(Bucket='b', Key='k', Body=b'123456789', ChecksumAlgorithm='CRC32C')"; \
+    python -c "from awscrt.checksums import crc32c; assert crc32c(b'123456789') == 0xE3069283, 'awscrt computes something other than CRC-32C'"; \
     python -c "from edullm_data.read import dataset_paths, resolve_latest; print(dataset_paths.__module__)"
 
 # No CMD. The entrypoint of the registered base is inherited deliberately, so swapping the
