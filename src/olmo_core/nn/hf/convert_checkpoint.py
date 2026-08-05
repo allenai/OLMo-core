@@ -508,7 +508,9 @@ def validate_conversion(
             hf_path,
             torch_dtype="auto",
             config=hf_config,
-            attn_implementation="sdpa",
+            # Validation is a deterministic correctness check. Eager attention also avoids
+            # cuDNN SDPA plan-selection failures on newer GPU architectures such as B300.
+            attn_implementation="eager",
         )
         .to(device)
         .eval()
