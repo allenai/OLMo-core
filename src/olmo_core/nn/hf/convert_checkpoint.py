@@ -536,7 +536,13 @@ def validate_conversion(
         model = model.to(dtype.as_pt())
     model = model.to(device=device)
     model.eval()
-    with torch.no_grad():
+    # Conversion validation is a semantic reference check, not an inference-kernel
+    # benchmark. Freezing the model and keeping grad mode enabled selects the plain
+    # PyTorch SwiGLU path for MoE v2 instead of the forward-only valid-prefix Triton
+    # kernel, which is not reliable on every new GPU architecture. Since no tensor
+    # requires gradients, this does not construct an autograd graph.
+    model.requires_grad_(False)
+    with torch.enable_grad():
         logits = model(input_ids=input_ids)
 
     if debug:
