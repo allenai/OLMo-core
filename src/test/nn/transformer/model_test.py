@@ -1,4 +1,5 @@
 import logging
+import warnings
 from dataclasses import replace
 from test.nn.attention.attention_test import BF16_ATOL, BF16_RTOL
 from typing import Optional, cast
@@ -9,7 +10,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.tensor import DTensor, Shard, init_device_mesh
 
+import olmo_core.nn.transformer.model as transformer_model
 from olmo_core.config import DType
+from olmo_core.data.utils import get_labels
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -887,3 +890,54 @@ def test_fsdp_tied_word_embeddings():
         backend="nccl",
         start_method="spawn",
     )
+
+
+def build_tiny_transformer_on_cpu():
+    config = TransformerConfig.llama_like(d_model=64, vocab_size=128, n_layers=1, n_heads=2)
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"), max_seq_len=16)
+    return model
+
+
+@pytest.fixture
+def arm_unshifted_labels_warning(monkeypatch):
+    """
+    Re-arm the one-shot gate on the unshifted-labels warning, which any earlier labelled
+    forward pass in this session would otherwise have already spent.
+    """
+    monkeypatch.setattr(transformer_model, "CHECKED_LABELS_FOR_SHIFT", False)
+
+
+def test_forward_warns_when_labels_are_the_input_ids(arm_unshifted_labels_warning):
+    model = build_tiny_transformer_on_cpu()
+    input_ids = torch.arange(0, 16).unsqueeze(0)
+
+    with pytest.warns(UserWarning, match="labels were never shifted") as caught:
+        model(input_ids, labels=input_ids)
+
+    # The warning has to name the function that does the shift, or it tells a researcher
+    # they have a problem without telling them where the fix lives.
+    assert "olmo_core.data.utils.get_labels" in str(caught[0].message)
+
+    # The gate is one-shot, so the same mistake on the next step says nothing.
+    with warnings.catch_warnings(record=True) as caught_again:
+        warnings.simplefilter("always")
+        model(input_ids, labels=input_ids)
+    assert not [w for w in caught_again if "never shifted" in str(w.message)]
+
+
+def test_forward_does_not_warn_on_shifted_labels(arm_unshifted_labels_warning):
+    model = build_tiny_transformer_on_cpu()
+    input_ids = torch.arange(0, 16).unsqueeze(0)
+    labels = get_labels({"input_ids": input_ids})
+
+    # The shift pads the last position with the ignore index, which is not a token id, so
+    # correctly shifted labels can never be bit-identical to the inputs.
+    assert labels[..., -1].item() == -100
+    assert not torch.equal(labels, input_ids)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model(input_ids, labels=labels)
+
+    assert not [w for w in caught if "never shifted" in str(w.message)]

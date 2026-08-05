@@ -1,4 +1,5 @@
 import logging
+import warnings
 from collections import defaultdict
 from functools import cached_property
 from typing import (
@@ -77,6 +78,11 @@ __all__ = [
 
 
 log = logging.getLogger(__name__)
+
+# Set by the first Transformer.forward() that is given labels, so that the unshifted-labels
+# check below costs one tensor comparison per process rather than one per training step.
+# Reset it to False to arm the check again, which is what the test for it does.
+CHECKED_LABELS_FOR_SHIFT = False
 
 
 class Transformer(nn.Module):
@@ -544,7 +550,11 @@ class Transformer(nn.Module):
             scale, and norm steps are all skipped.  Intended for multimodal use-cases
             where image features have already been spliced into the embedding sequence.
             Not supported with context parallelism.
-        :param labels: The token labels, shape ``(batch_size, seq_len)``.
+        :param labels: The token labels, shape ``(batch_size, seq_len)``. The caller is
+            responsible for shifting these one position left of ``input_ids``; this method does
+            not shift them. :func:`olmo_core.data.utils.get_labels` performs the shift, and
+            :meth:`~olmo_core.train.train_module.TrainModule.train_batch` calls it for a batch
+            that carries no ``labels`` key.
         :param ignore_index: The index to ignore in the loss computation. Default is -100.
         :param loss_reduction: The reduction method for the loss. Can be "mean", "sum", or "none".
         :param z_loss_multiplier: Optional multiplier for the z-loss regularization term.
@@ -561,6 +571,32 @@ class Transformer(nn.Module):
                 "shards `input_ids`/`labels`/RoPE while `input_embeddings` stays full-size, which "
                 "would misalign the hidden states."
             )
+
+        # Labels equal to the inputs mean nobody shifted them, and that turns training into a
+        # copy task the model solves in a handful of steps. Nothing crashes and the loss just
+        # collapses, so this warns rather than refuses. `get_labels` ends every row with the
+        # label ignore index, so at the default -100, which is not a token id, correctly
+        # shifted labels can never reach this branch.
+        global CHECKED_LABELS_FOR_SHIFT
+        if not CHECKED_LABELS_FOR_SHIFT and labels is not None:
+            CHECKED_LABELS_FOR_SHIFT = True
+            if (
+                labels.shape == input_ids.shape
+                and labels.device == input_ids.device
+                and torch.equal(labels, input_ids)
+            ):
+                warnings.warn(
+                    "`labels` is identical to `input_ids`, so the labels were never shifted. "
+                    "The model is being asked to predict a token its own context already "
+                    "contains, which is a copy task, and the loss will collapse without any "
+                    "error being raised. `olmo_core.nn.transformer.Transformer.forward` does "
+                    "not shift labels. `olmo_core.data.utils.get_labels` does, and "
+                    "`TrainModule.train_batch` calls it for you when the batch carries no "
+                    "'labels' key. Drop 'labels' from the batch and let the trainer build "
+                    "them, or call `get_labels` yourself. Ignore this if a copy task is what "
+                    "you meant to train.",
+                    UserWarning,
+                )
 
         (
             input_ids,
