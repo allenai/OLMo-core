@@ -248,6 +248,12 @@ def test_multimodal_olmo_ddp_config_and_native_checkpoint_aliases():
     assert train_module._allow_missing_optimizer_checkpoint_key(
         "module.connector.projector.w1.weight.main"
     )
+    assert train_module._allow_missing_optimizer_checkpoint_key(
+        "module.vision.patch_embedding.weight.main"
+    )
+    assert not train_module._allow_missing_optimizer_checkpoint_key(
+        "module.lm.embeddings.weight.main"
+    )
 
 
 def test_multimodal_checkpoint_frozen_params_can_become_trainable():
@@ -475,6 +481,23 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     native_model = getattr(native.model_parts[0], "module", native.model_parts[0])
     expected_lm = {name: param.detach().clone() for name, param in native_model.named_parameters()}
     native.save_state_dict_direct(native_dir)
+
+    unfrozen_hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_vision=False)
+    unfrozen_model = unfrozen_hybrid.multimodal_model
+    unfrozen_vision_before = {
+        name: param.detach().clone() for name, param in unfrozen_model.vision.named_parameters()
+    }
+    unfrozen_connector_before = {
+        name: param.detach().clone() for name, param in unfrozen_model.connector.named_parameters()
+    }
+    unfrozen_hybrid.load_state_dict_direct(native_dir, load_optim_state=False)
+    for name, param in unfrozen_model.lm.named_parameters():
+        torch.testing.assert_close(param, expected_lm[name], rtol=0, atol=0)
+    for name, param in unfrozen_model.vision.named_parameters():
+        torch.testing.assert_close(param, unfrozen_vision_before[name], rtol=0, atol=0)
+    for name, param in unfrozen_model.connector.named_parameters():
+        torch.testing.assert_close(param, unfrozen_connector_before[name], rtol=0, atol=0)
+    unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
     hybrid = _build_multimodal_ddp_train_module_for_checkpoint()
     multimodal = hybrid.multimodal_model

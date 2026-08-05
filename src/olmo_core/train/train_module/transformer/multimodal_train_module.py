@@ -695,7 +695,10 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         return None
 
     def _allow_missing_optimizer_checkpoint_key(self, state_key: str) -> bool:
-        return ".connector." in state_key or state_key.startswith("connector.")
+        return any(
+            f".{component}." in state_key or state_key.startswith(f"{component}.")
+            for component in ("connector", "vision")
+        )
 
 
 @dataclass
