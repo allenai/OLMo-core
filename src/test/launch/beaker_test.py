@@ -2,7 +2,9 @@ import os
 
 import pytest
 
-from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
+from gantry.api import GitRepoState
+
+from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage, get_beaker_client
 
 
 def test_get_beaker_client_caching():
@@ -29,6 +31,24 @@ def test_get_beaker_client_caching():
         # Should get different client this time we requested a different workspace.
         with get_beaker_client(workspace="ai2/gantry-testing") as beaker2:
             assert beaker1 is not beaker2
+
+
+def test_build_recipe_propagates_github_token_secret(monkeypatch):
+    monkeypatch.setattr(BeakerLaunchConfig, "_resolve_beaker_image", lambda self: "image-id")
+    config = BeakerLaunchConfig(
+        name="test",
+        cmd=["true"],
+        git=GitRepoState(
+            repo="OLMo-core",
+            repo_url="https://github.com/allenai/OLMo-core.git",
+            ref="deadbeef",
+        ),
+        gh_token_secret="jacobm_GITHUB_TOKEN",
+    )
+
+    recipe, _ = config._build_recipe(object(), follow=False)
+
+    assert recipe.gh_token_secret == "jacobm_GITHUB_TOKEN"
 
 
 @pytest.fixture(scope="session")
