@@ -6,10 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OLMo-core is AI2's training library for the Open Language Model (OLMo) series. It provides modular components for transformer architectures, distributed training, data loading, and evaluation.
 
+This repository is a hard fork maintained by `edu-llm`. It does not sync with `allenai/OLMo-core`. GPU work runs on the eduLLM platform, not on Beaker — see [Running on GPUs](#running-on-gpus) before launching anything.
+
 ## Commands
 
 ```bash
-# Install (development)
+# Install (development, for local tests and linting only — not how a GPU run starts)
 pip install -e '.[all]'
 
 # Run all tests (GPU tests auto-skip without GPU)
@@ -30,6 +32,54 @@ make style-check     # isort + black
 make lint-check      # ruff
 make type-check      # mypy
 ```
+
+## Running on GPUs
+
+Every GPU run goes through the eduLLM platform's `edullm` CLI. Beaker, `ai2/jupiter` and the other `ai2/*` clusters named throughout this repository belong to AI2 and are unreachable from here.
+
+```bash
+# Install the CLI. Re-run to upgrade; `uv tool upgrade` does not work on a git install.
+uv tool install --force git+https://github.com/edu-llm/platform
+
+# Price a run and list every refusal. No network, no queue, nothing dispatched.
+edullm check --json --experiment <slug> --dataset <release-or-none>
+
+# Same checks, then dispatch. Keep the run id it prints.
+edullm submit --experiment <slug> --dataset <release-or-none>
+edullm status --json <run-id>
+```
+
+- `check` writes a first `.edullm/run.yaml` if there is none, and that file holds the command. Edit it, commit it, push to a branch named `edullm/<something>`.
+- Read `check --json` on stdout and branch on the exit code: 0 stands, 1 is refused on the merits, 2 means the command was wrong, 3 means retry. Match on the `code` of each refusal, never on its prose.
+- Never write a script that calls AWS. No `boto3`, no `aws` CLI. The credentials live in workflows and a laptop cannot get one.
+- Never quote a price, a runtime bound or an approver count from this file. Read them out of `check --json`.
+
+### bfloat16 is set in code, and the platform cannot see it
+
+`.edullm/train_on_corpus.py` builds its data-parallel config in `bfloat16` unless told otherwise. The platform's precision guard reads the words of the command, so a command that merely runs that program carries no bfloat16 token and is accepted on any shape — including a T4, which is Turing and has no bfloat16 in the hardware at all. `torch.cuda.is_bf16_supported()` returns true there, so nothing warns you.
+
+Put the dtype in the command. A run that names it is refused for free at `check` time instead of dying on the first kernel that needs the format, after the machine has been billed.
+
+```bash
+# In .edullm/run.yaml, either spelling is read by the guard:
+python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" train_module.dp_config.param_dtype=bfloat16
+python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --param-dtype bfloat16   # or float32 on a T4
+```
+
+`train_on_corpus.py` also checks its own built config against the visible devices and exits 73 in the first seconds when they cannot do the requested format. That check only protects commits that carry it, so a research branch that has not merged it has nothing in front of the failure but the command text.
+
+### The skill for your coding agent
+
+The platform ships a skill covering all nine verbs, every refusal code and what a clean check does not promise. It is maintained in the platform repository and deliberately not copied here.
+
+```bash
+# Claude Code (swap .claude for .cursor, or ~/.codex, per your host)
+mkdir -p .claude/skills/edullm-platform && curl -fsSL \
+  https://raw.githubusercontent.com/edu-llm/platform/main/skills/edullm-platform/SKILL.md \
+  -o .claude/skills/edullm-platform/SKILL.md
+```
+
+Install lines for all three hosts are in [`skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md). `.claude/skills/edullm-platform/` is gitignored here so the copy you install stays yours and cannot go stale in this repository.
 
 ## Code Style
 
@@ -127,7 +177,11 @@ python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
 python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
 ```
 
-## Docker and Beaker Launch
+The cluster arguments above are AI2's and cannot be reached from this organization. The `launch` command needs Beaker; `dry_run` and `train_single` do not. See [Running on GPUs](#running-on-gpus) for how a run actually starts here.
+
+## Docker and Beaker Launch (upstream AI2 — not usable here)
+
+Everything in this section describes `allenai/OLMo-core`'s own launch path. The code is still in `src/olmo_core/launch/beaker.py` and still imports, so it is documented rather than deleted, but nothing in this organization can authenticate to Beaker or pull a Beaker image. Do not follow it, and do not offer it to a researcher. The eduLLM route is [Running on GPUs](#running-on-gpus).
 
 The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
 
