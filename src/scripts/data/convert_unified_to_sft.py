@@ -44,8 +44,16 @@ logging.basicConfig(
 log = logging.getLogger("convert_unified")
 
 DEFAULT_TOKENIZER = "Qwen/Qwen3-0.6B"
-EOS_TOKEN_ID = 151643  # <|endoftext|> -- OLMo-core document separator (Qwen3 turns end in <|im_end|>)
-LANDMARK_TOKEN_ID = 151860  # reserved id inserted later by the landmark sources; must NOT appear
+# Defaults are the Qwen3 ids; override both via --eos-token-id/--landmark-token-id when converting
+# for another vocabulary (Qwen3.5: 248044 / 248200 -- see convert_dolci_instruct_sft.py).
+DEFAULT_EOS_TOKEN_ID = (
+    151643  # <|endoftext|> -- OLMo-core document separator (Qwen3 turns end in <|im_end|>)
+)
+DEFAULT_LANDMARK_TOKEN_ID = (
+    151860  # reserved id inserted later by the landmark sources; must NOT appear
+)
+EOS_TOKEN_ID = DEFAULT_EOS_TOKEN_ID
+LANDMARK_TOKEN_ID = DEFAULT_LANDMARK_TOKEN_ID
 TOKEN_DTYPE = np.uint32
 MASK_DTYPE = np.bool_
 
@@ -61,7 +69,8 @@ def tokenize_instance(
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Tokenize one (user, assistant) chat instance -> (token_ids, labels_mask), or None if the body
     contains a reserved id. Loss mask is char-offset derived (every token starting at/after the
-    assistant header boundary), so it covers the whole assistant turn incl. the closing ``<|im_end|>``."""
+    assistant header boundary), so it covers the whole assistant turn incl. the closing ``<|im_end|>``.
+    """
     messages = [{"role": "user", "content": user_content}]
     prompt_str = render_chat(tok, messages, add_generation_prompt=True)
     full_str = render_chat(
@@ -165,27 +174,55 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--input-jsonl", nargs="+", required=True, help="unified JSONL path(s)/glob(s)")
+    parser.add_argument(
+        "--input-jsonl", nargs="+", required=True, help="unified JSONL path(s)/glob(s)"
+    )
     parser.add_argument("--out-dir", required=True)
     parser.add_argument(
-        "--task", default=None,
+        "--task",
+        default=None,
         help="task type for every row (single-task file). Per-row '_task' overrides this.",
     )
     parser.add_argument(
-        "--cot-mode", default="label",
+        "--cot-mode",
+        default="label",
         help="cot_mode for every row. Per-row '_cot_mode' overrides this.",
     )
     parser.add_argument(
-        "--query-position", default="both", choices=("before", "after", "both"),
+        "--query-position",
+        default="both",
+        choices=("before", "after", "both"),
         help="where the task ask sits relative to the context (must match the eval setting).",
     )
     parser.add_argument("--max-seq-len", type=int, default=64512)
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
+    parser.add_argument(
+        "--eos-token-id",
+        type=int,
+        default=DEFAULT_EOS_TOKEN_ID,
+        help="Document separator appended after every instance. Must equal the training "
+        "TokenizerConfig's eos_token_id (Qwen3: 151643, Qwen3.5: 248044).",
+    )
+    parser.add_argument(
+        "--landmark-token-id",
+        type=int,
+        default=DEFAULT_LANDMARK_TOKEN_ID,
+        help="Reserved id the landmark instance sources insert; instances containing it are "
+        "dropped (Qwen3: 151860, Qwen3.5: 248200).",
+    )
     parser.add_argument("--flush-tokens", type=int, default=100_000_000)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--limit-per-file", type=int, default=0)
     parser.add_argument("--print-examples", type=int, default=2)
     args = parser.parse_args()
+
+    global EOS_TOKEN_ID, LANDMARK_TOKEN_ID
+    EOS_TOKEN_ID = args.eos_token_id
+    LANDMARK_TOKEN_ID = args.landmark_token_id
+    log.info(
+        f"tokenizer={args.tokenizer} eos_token_id={EOS_TOKEN_ID} "
+        f"landmark_token_id={LANDMARK_TOKEN_ID}"
+    )
 
     if args.task is None:
         log.info("--task not set; every row must carry a '_task' field (combined multitask file).")
@@ -208,8 +245,11 @@ def main() -> None:
             raise ValueError("Row has no '_task' and --task was not provided.")
         try:
             user_content, answer = build_prompt(
-                example, task=task, query_position=args.query_position,
-                use_alpaca=False, cot_mode=cot_mode,
+                example,
+                task=task,
+                query_position=args.query_position,
+                use_alpaca=False,
+                cot_mode=cot_mode,
             )
         except (KeyError, ValueError, TypeError, IndexError) as e:
             # Schema/build mismatch (e.g. a HELMET-rerank row tagged `rerank` lacks `documents`).
@@ -217,7 +257,12 @@ def main() -> None:
             n_skipped_build += 1
             skipped_build_by_task[task] = skipped_build_by_task.get(task, 0) + 1
             if skipped_build_by_task[task] <= 3:
-                log.warning("build_prompt failed for _task=%s (%s: %s); skipping row.", task, type(e).__name__, e)
+                log.warning(
+                    "build_prompt failed for _task=%s (%s: %s); skipping row.",
+                    task,
+                    type(e).__name__,
+                    e,
+                )
             continue
         # Cheap pre-filter before paying for a long tokenization.
         if len(user_content) + len(answer) > args.max_seq_len * 8:
@@ -238,7 +283,11 @@ def main() -> None:
         if n_written < args.print_examples:
             log.info(
                 "EXAMPLE %d [%s/%s] (%d tokens, %d loss):\n%s",
-                n_written, task, cot_mode, token_ids.size, int(mask.sum()),
+                n_written,
+                task,
+                cot_mode,
+                token_ids.size,
+                int(mask.sum()),
                 tok.decode(token_ids[:800].tolist()),
             )
         writer.add(token_ids, mask)
@@ -255,6 +304,7 @@ def main() -> None:
         "query_position": args.query_position,
         "tokenizer": args.tokenizer,
         "eos_token_id": EOS_TOKEN_ID,
+        "landmark_token_id": LANDMARK_TOKEN_ID,
         "dtype": "uint32",
         "mask_dtype": "bool",
         "max_seq_len": args.max_seq_len,
