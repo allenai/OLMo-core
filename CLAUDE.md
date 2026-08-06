@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -68,18 +70,11 @@ python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --param-dtype bfloat16   # or
 
 `train_on_corpus.py` also checks its own built config against the visible devices and exits 73 in the first seconds when they cannot do the requested format. That check only protects commits that carry it, so a research branch that has not merged it has nothing in front of the failure but the command text.
 
-### The skill for your coding agent
+### The skills for your coding agent
 
-The platform ships a skill covering all nine verbs, every refusal code and what a clean check does not promise. It is maintained in the platform repository and deliberately not copied here.
+There is nothing to install. This repository carries them, at `.agents/skills/submitting-a-run/` and `.agents/skills/registering-a-repository/`, with `.claude/skills/` symlinked onto the same files because Claude Code reads no other directory. Cursor and Codex read `.agents/skills/` directly.
 
-```bash
-# Claude Code (swap .claude for .cursor, or ~/.codex, per your host)
-mkdir -p .claude/skills/edullm-platform && curl -fsSL \
-  https://raw.githubusercontent.com/edu-llm/platform/main/skills/edullm-platform/SKILL.md \
-  -o .claude/skills/edullm-platform/SKILL.md
-```
-
-Install lines for all three hosts are in [`skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md). `.claude/skills/edullm-platform/` is gitignored here so the copy you install stays yours and cannot go stale in this repository.
+The curl line that used to be here has gone, along with the gitignore entry under it. A copy each person installs for themselves is a copy nobody can see, nobody updates and nothing compares, and the observed result was that most people never installed one at all and their agents wrote AWS calls. The copies here are held byte-identical to [edu-llm/platform](https://github.com/edu-llm/platform) by a workflow that runs daily; do not edit them in this repository, because the edit is reverted and turns that workflow red in the meantime.
 
 ## Code Style
 

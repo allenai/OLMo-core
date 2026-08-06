@@ -55,11 +55,6 @@ __pycache__
 docs/build
 site/
 
-# the platform's agent skill, installed per-checkout and maintained in edu-llm/platform.
-# Committing a copy here would be a second thing to keep true; re-run the curl line in
-# CLAUDE.md to refresh it. .cursor/ is already ignored above, which covers that host.
-.claude/skills/edullm-platform/
-
 # runs
 /runs/
 /wandb/
