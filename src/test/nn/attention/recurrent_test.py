@@ -11,7 +11,11 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_size
-from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    GatedDeltaNetConfig,
+    KimiDeltaAttentionConfig,
+)
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import requires_gpu, run_distributed_test
@@ -40,6 +44,81 @@ def test_gated_delta_net_config_num_params(recurrent_config: GatedDeltaNetConfig
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in module.parameters())
     assert recurrent_config.num_params(d_model) == n_params
+
+
+@requires_fla
+@pytest.mark.parametrize(
+    "recurrent_config",
+    [
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8), id="default"),
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8, n_v_heads=16), id="GVA"),
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8, head_dim=32), id="head_dim=32"),
+        pytest.param(KimiDeltaAttentionConfig(n_heads=8, expand_v=2.0), id="expand_v=2.0"),
+        pytest.param(
+            KimiDeltaAttentionConfig(n_heads=8, conv_size=8, conv_bias=True), id="conv_bias"
+        ),
+        pytest.param(
+            KimiDeltaAttentionConfig(n_heads=8, safe_gate=True, lower_bound=-5.0),
+            id="safe_gate",
+        ),
+    ],
+)
+def test_kimi_delta_attention_config_num_params(recurrent_config: KimiDeltaAttentionConfig):
+    d_model = 512
+    module = recurrent_config.build(d_model, layer_idx=0, n_layers=12, init_device="meta")
+    assert recurrent_config.num_params(d_model) == sum(p.numel() for p in module.parameters())
+
+
+@requires_fla
+def test_kimi_delta_attention_num_flops_per_token():
+    d_model, n_heads, seq_len = 256, 2, 8192
+    kda = KimiDeltaAttentionConfig(n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=1, init_device="meta"
+    )
+    attn = AttentionConfig(n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=1, init_device="meta"
+    )
+    assert 0 < kda.num_flops_per_token(seq_len) < attn.num_flops_per_token(seq_len)  # type: ignore
+
+
+@requires_fla
+@requires_gpu
+@pytest.mark.parametrize("packed", [False, True])
+def test_kimi_delta_attention_matches_fla(packed: bool):
+    from fla.layers.kda import KimiDeltaAttention as FLAKimiDeltaAttention
+
+    device = "cuda"
+    dtype = torch.bfloat16
+    d_model, n_heads, head_dim, seq_len = 64, 2, 32, 64
+
+    reference = FLAKimiDeltaAttention(
+        hidden_size=d_model,
+        num_heads=n_heads,
+        num_v_heads=n_heads,
+        head_dim=head_dim,
+        expand_v=2.0,
+    ).to(device)
+    module = KimiDeltaAttentionConfig(
+        n_heads=n_heads,
+        n_v_heads=n_heads,
+        head_dim=head_dim,
+        expand_v=2.0,
+    ).build(d_model, layer_idx=0, n_layers=1, init_device=device)
+    module.load_state_dict(reference.state_dict())
+    reference.train()
+    module.train()
+
+    x = torch.randn(1, seq_len, d_model, device=device, dtype=dtype)
+    cu_seqlens = (
+        torch.tensor([0, seq_len // 2, seq_len], device=device, dtype=torch.int32)
+        if packed
+        else None
+    )
+    with torch.autocast(device_type=device, dtype=dtype):
+        expected, _, _ = reference(x, cu_seqlens=cu_seqlens)
+        actual = module(x, cu_doc_lens=cu_seqlens)
+
+    torch.testing.assert_close(actual, expected, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_fla

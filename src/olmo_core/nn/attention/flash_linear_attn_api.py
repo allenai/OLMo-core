@@ -42,6 +42,43 @@ def dispatch_chunk_gated_delta_rule(
     )
 
 
+def dispatch_chunk_kda(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+    *,
+    allow_neg_eigval: bool = False,
+    safe_gate: bool = False,
+    lower_bound: float | None = None,
+    cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    assert has_fla()
+    from fla.ops.kda import chunk_kda
+
+    return chunk_kda(
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        A_log=A_log,
+        dt_bias=dt_bias,
+        output_final_state=False,
+        use_qk_l2norm_in_kernel=True,
+        use_gate_in_kernel=True,
+        use_beta_sigmoid_in_kernel=True,
+        allow_neg_eigval=allow_neg_eigval,
+        safe_gate=safe_gate,
+        lower_bound=lower_bound,
+        state_v_first=True,
+        cu_seqlens=cu_seqlens,
+    )
+
+
 def dispatch_causal_conv1d(
     x: torch.Tensor,
     weight: torch.Tensor,
