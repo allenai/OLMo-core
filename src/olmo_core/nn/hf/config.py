@@ -167,13 +167,20 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
 
-    # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
+    # Identify the dense (non-MoE) layers and pick representative sparse and dense blocks. Older
+    # OLMo-DDP checkpoints represented their dense first layer as a shared-only OLMoDDP block;
+    # newer configs may use a reordered-norm TransformerBlock instead.
     dense_layers_indices: List[int] = []
     moe_block: Optional[OLMoDDPTransformerBlock] = None
     dense_block: Optional[TransformerBlock] = None
+    shared_dense_block: Optional[OLMoDDPTransformerBlock] = None
     for idx, block in enumerate(blocks):
         if isinstance(block, OLMoDDPTransformerBlock):
-            if moe_block is None:
+            if block.routed_experts is None:
+                dense_layers_indices.append(idx)
+                if shared_dense_block is None:
+                    shared_dense_block = block
+            elif moe_block is None:
                 moe_block = block
         else:
             # olmo3moe places the layernorms after attention/MLP (reordered norm); a standard
@@ -193,9 +200,17 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
             f"{model.__class__.__name__}"
         )
 
-    if moe_block.use_peri_norm:
+    ddp_blocks = [block for block in blocks if isinstance(block, OLMoDDPTransformerBlock)]
+    use_peri_ln = moe_block.use_peri_norm
+    if any(block.use_peri_norm != use_peri_ln for block in ddp_blocks):
+        raise NotImplementedError("All OLMoDDP blocks must use the same peri-LN setting for export.")
+    if use_peri_ln and dense_block is not None:
         raise NotImplementedError(
-            "Building an Olmo3MoeConfig is not supported for peri-LN (use_peri_norm=True) models."
+            "Peri-LN olmo3moe export requires dense layers to use shared-only OLMoDDP blocks."
+        )
+    if dense_block is not None and shared_dense_block is not None:
+        raise NotImplementedError(
+            "Exporting a mix of reordered-norm and shared-only OLMoDDP dense layers is unsupported."
         )
 
     attention = moe_block.attention
@@ -280,6 +295,18 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
                 "Exporting olmo3moe with biased dense feed-forward layers is not supported."
             )
         dense_mlp_intermediate_size = dense_block.feed_forward.hidden_size
+    elif shared_dense_block is not None:
+        if shared_dense_block.shared_experts is None:
+            raise NotImplementedError("Dense OLMoDDP block is missing its shared expert.")
+        if shared_dense_block.shared_experts.num_experts != 1:
+            raise NotImplementedError(
+                "Dense OLMoDDP block must contain exactly one shared expert for HF export."
+            )
+        if shared_dense_block.shared_experts.activation.value != "swiglu":
+            raise NotImplementedError(
+                "Exporting a dense OLMoDDP block requires a SwiGLU shared expert."
+            )
+        dense_mlp_intermediate_size = shared_dense_block.shared_experts.hidden_size
 
     # Shared experts (optional). The HF model has a single shared expert.
     shared_expert_intermediate_size: Optional[int] = None
@@ -339,9 +366,10 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
+        dense_layers_use_shared_expert=shared_dense_block is not None,
         embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
         embed_norm=model.embedding_norm is not None,
-        use_peri_ln=False,
+        use_peri_ln=use_peri_ln,
         pad_token_id=None,  # type: ignore
         bos_token_id=None,
         eos_token_id=None,  # type: ignore
