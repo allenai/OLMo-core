@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
+from olmo_core.exceptions import OLMoConfigurationError
+
 
 def _load():
     path = Path(__file__).parent.parent.parent / ".edullm" / "train_on_corpus.py"
@@ -312,7 +314,7 @@ def submitted(monkeypatch):
 def on_a(card: str, capability: Tuple[int, int], *, count: int, monkeypatch):
     """Answer as a host carrying ``count`` of this card would, without one being present.
 
-    The three functions patched are the whole of what ``devices_without_bfloat16`` reads,
+    The three functions patched are the whole of what ``get_devices_without_bfloat16`` reads,
     which is the point: the decision rests on the compute capability the driver reports and
     on nothing that a container, a CUDA version or a torch build could change.
     """
@@ -322,65 +324,34 @@ def on_a(card: str, capability: Tuple[int, int], *, count: int, monkeypatch):
     monkeypatch.setattr(entry.torch.cuda, "get_device_capability", lambda index=None: capability)
 
 
+def refusal_for(config) -> Optional[str]:
+    """What this file's early call says about ``config``, or ``None`` when it says nothing."""
+    try:
+        entry.validate_precision_support(config)
+    except OLMoConfigurationError as refused:
+        return str(refused)
+    return None
+
+
 T4 = ("Tesla T4", (7, 5))
-A10G = ("NVIDIA A10G", (8, 6))
-L4 = ("NVIDIA L4", (8, 9))
-H100 = ("NVIDIA H100 80GB HBM3", (9, 0))
 
 
-def test_a_run_that_would_work_is_not_refused_on_any_card_that_has_the_format(corpus, monkeypatch):
-    """The requirement that matters most, because there is no waiver past this refusal.
+def test_the_check_is_the_library_one_rather_than_a_copy_kept_here(corpus):
+    """Mutation: paste the check back into this file and call the local copy.
 
-    A false positive here does not cost somebody a message they can ignore, it stops the run.
-    Ampere, Ada and Hopper all have bfloat16 and all must see nothing at all, and so must a
-    host with no CUDA -- which is a ``--dry-run`` on a laptop, and is also this test suite.
+    Two implementations is how one of them goes stale. This file is not the only entry point
+    in this repository and it is not the one most branches are cut from, so the check lives
+    where a train module is built and this file imports it.
     """
-    _, config = configure()
+    from olmo_core.train.train_module.config import validate_precision_support
 
-    for card, capability in (A10G, L4, H100):
-        on_a(card, capability, count=8, monkeypatch=monkeypatch)
-        assert entry.devices_without_bfloat16() == []
-        assert entry.a_precision_this_hardware_does_not_have(config) is None
-
-    monkeypatch.setattr(entry.torch.cuda, "is_available", lambda: False)
-    assert entry.a_precision_this_hardware_does_not_have(config) is None
-
-
-def test_a_rocm_build_is_left_alone_because_its_numbers_mean_something_else(corpus, monkeypatch):
-    # AMD reports its own architecture numbering through the same call, where 7.5 is not
-    # Turing and the comparison is meaningless. Nothing on this platform is ROCm, which is
-    # exactly why a wrong answer there would go unnoticed.
-    _, config = configure()
-    on_a(*T4, count=8, monkeypatch=monkeypatch)
-    monkeypatch.setattr(entry.torch.version, "hip", "6.2.0")
-
-    assert entry.a_precision_this_hardware_does_not_have(config) is None
-
-
-def test_a_check_that_cannot_read_the_device_gets_out_of_the_way(corpus, monkeypatch, capsys):
-    """Mutation: let whatever the driver raises propagate.
-
-    This runs in front of every training run in the repository, and several people are on
-    their own branches at once. Missing a Turing card costs what today already costs; raising
-    on a host this did not anticipate stops runs that were fine, which is strictly worse and
-    is the failure mode a startup check is most likely to have.
-    """
-    _, config = configure()
-
-    def unreadable(index=None):
-        raise RuntimeError("no CUDA-capable device is detected")
-
-    monkeypatch.setattr(entry.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(entry.torch.cuda, "device_count", lambda: 8)
-    monkeypatch.setattr(entry.torch.cuda, "get_device_capability", unreadable)
-
-    assert entry.a_precision_this_hardware_does_not_have(config) is None
-    assert "bfloat16 check is not running" in capsys.readouterr().err
+    assert entry.validate_precision_support is validate_precision_support
 
 
 def test_the_documented_command_is_refused_on_a_t4_although_it_says_no_dtype(corpus, monkeypatch):
-    """The hole this exists to close, in the exact shape it arrives in.
+    """Mutation: look for a bfloat16 token in ``argv`` instead of in the built config.
 
+    The hole this exists to close, in the exact shape it arrives in.
     ``python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"`` carries no bfloat16 token, so the
     platform's submission-time guard reads the command, finds nothing, and admits it onto
     ``gpu-8xt4`` -- which the 2026-08-04 capacity measurement leaves as the only multi-card
@@ -390,42 +361,23 @@ def test_the_documented_command_is_refused_on_a_t4_although_it_says_no_dtype(cor
     on_a(*T4, count=8, monkeypatch=monkeypatch)
     _, config = configure()
 
-    refusal = entry.a_precision_this_hardware_does_not_have(config)
+    refusal = refusal_for(config)
     assert refusal is not None
     assert "train_module.dp_config.param_dtype" in refusal
-
-
-def test_the_refusal_names_the_card_the_reason_and_both_ways_out(corpus, monkeypatch):
-    """Mutation: say "bfloat16 is not supported on this device" and stop.
-
-    Somebody reads this on a dead container with no access to its log stream and one
-    question: what do I do now. The card and the capability say it is the hardware rather
-    than the image, so nobody goes looking for a driver. The two remedies are the whole of
-    what can be done about it, and naming them is the difference between a refusal and an
-    obstacle -- the platform's own refusals are written this way.
-
-    is_bf16_supported is named because a reviewer or a researcher who does not know it lies
-    on this card will conclude the check is redundant and remove it.
-    """
-    on_a(*T4, count=8, monkeypatch=monkeypatch)
-    _, config = configure()
-
-    refusal = entry.a_precision_this_hardware_does_not_have(config)
-    assert refusal is not None
-    assert "Tesla T4" in refusal and "7.5" in refusal
-    assert "is_bf16_supported" in refusal
-    assert "--param-dtype float32" in refusal
-    assert "Ampere or newer" in refusal
+    assert "Tesla T4" in refusal
 
 
 def test_choosing_a_precision_the_card_has_is_the_way_past_it(corpus, monkeypatch):
-    """There is no waiver, so the flag has to be a real way out rather than a gesture."""
+    """Mutation: refuse on a pre-Ampere card whatever precision was asked for.
+
+    There is no waiver, so the flag has to be a real way out rather than a gesture.
+    """
     on_a(*T4, count=8, monkeypatch=monkeypatch)
 
     for chosen in ("float32", "float16"):
         _, config = configure("--param-dtype", chosen)
         assert config.train_module.dp_config.param_dtype == chosen
-        assert entry.a_precision_this_hardware_does_not_have(config) is None
+        assert refusal_for(config) is None
 
 
 def test_the_default_is_the_dtype_this_file_used_before_the_flag_existed(corpus):
@@ -442,9 +394,9 @@ def test_the_default_is_the_dtype_this_file_used_before_the_flag_existed(corpus)
 def test_bfloat16_reached_through_an_override_rather_than_the_flag_is_still_found(
     corpus, monkeypatch
 ):
-    """Why this reads the built config instead of argv.
+    """Mutation: recognise only ``param_dtype`` and let the other two precision fields through.
 
-    Three spellings reach the same field -- the flag, the dotted override, and the default
+    Why this reads the built config instead of argv. Three spellings reach the same field -- the flag, the dotted override, and the default
     nobody typed -- and a fourth is one edit away. After ``Config.merge`` they are one value,
     so there is nothing left to recognise. ``reduce_dtype`` and ``autocast_precision`` are
     here because neither has a flag and both are reachable, which is the case a check written
@@ -452,28 +404,30 @@ def test_bfloat16_reached_through_an_override_rather_than_the_flag_is_still_foun
     """
     on_a(*T4, count=8, monkeypatch=monkeypatch)
 
-    _, config = configure("--param-dtype", "float32", "train_module.dp_config.param_dtype=bfloat16")
-    assert entry.bfloat16_settings_in(config) == ["train_module.dp_config.param_dtype"]
-
-    _, config = configure(
-        "--param-dtype", "float32", "train_module.dp_config.reduce_dtype=bfloat16"
-    )
-    assert entry.bfloat16_settings_in(config) == ["train_module.dp_config.reduce_dtype"]
-
-    _, config = configure("--param-dtype", "float32", "train_module.autocast_precision=bfloat16")
-    assert entry.bfloat16_settings_in(config) == ["train_module.autocast_precision"]
+    for setting in (
+        "train_module.dp_config.param_dtype",
+        "train_module.dp_config.reduce_dtype",
+        "train_module.autocast_precision",
+    ):
+        _, config = configure("--param-dtype", "float32", f"{setting}=bfloat16")
+        refusal = refusal_for(config)
+        assert refusal is not None and setting in refusal
 
 
-def test_a_field_that_merely_holds_the_word_is_not_a_precision_request(corpus):
+def test_a_field_that_merely_holds_the_word_is_not_a_precision_request(corpus, monkeypatch):
     """Mutation: match the value anywhere in the config and ignore what the key is called.
 
     There is no waiver past this refusal, so a false positive is a run that cannot be made to
     start. A dataset version, a run name or a save folder whose whole value happens to be that
     string is not somebody asking a T4 for bfloat16, and the key is what tells them apart.
+
+    ``dataset_version`` is also outside ``train_module`` entirely, which is what this file
+    hands the check and the train module's own call cannot see.
     """
+    on_a(*T4, count=8, monkeypatch=monkeypatch)
     _, config = configure("--param-dtype", "float32", "dataset_version=bfloat16")
 
-    assert entry.bfloat16_settings_in(config) == []
+    assert refusal_for(config) is None
 
 
 def test_the_refusal_carries_a_stage_of_its_own_rather_than_exit_one(

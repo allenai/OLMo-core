@@ -46,8 +46,12 @@ with tensor cores and without that format. That failure is loud, and it is loud 
 and one billed instance too late, because every stage before the first bfloat16 kernel
 succeeds. The obvious guard does not work either -- ``torch.cuda.is_bf16_supported()`` returns
 true on a T4. So ``main`` reads the device's compute capability against the config it has just
-built and refuses in the first seconds. See ``a_precision_this_hardware_does_not_have``, and
-``--param-dtype`` for asking for something the card does have.
+built and refuses in the first seconds. The check is
+``olmo_core.train.train_module.validate_precision_support``, which lives in the library rather
+than in this file so that every entry point in this repository inherits it when a train module
+is built -- this file is not the only one, and a branch that has never touched
+``src/olmo_core/`` still gets it on the rebase it has to do anyway. See ``--param-dtype`` for
+asking for something the card does have.
 
 HOW THIS SAYS WHAT WENT WRONG, GIVEN THAT NOBODY CAN READ ITS LOG. A container that fails
 before training writes its explanation to a CloudWatch stream that no credential on the
@@ -74,7 +78,7 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass, replace
-from typing import Dict, Iterator, List, Optional, Tuple, cast
+from typing import Dict, Iterator, List, Optional, cast
 
 import rich
 import torch
@@ -88,6 +92,7 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import barrier, get_rank
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import clear_directory, list_directory, normalize_path
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride
@@ -108,6 +113,7 @@ from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module import (
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
+    validate_precision_support,
 )
 from olmo_core.utils import seed_all
 
@@ -708,179 +714,6 @@ def build_config(opts, overrides: List[str]):
     return config.merge(overrides)
 
 
-# ---------------------------------------------------------------------------------------
-# Whether this card can do the number format this run is about to ask it for
-# ---------------------------------------------------------------------------------------
-#
-# WHY THIS IS IN THE CONTAINER AND NOT IN FRONT OF IT. The platform refuses a bfloat16
-# command on a T4 shape at submission time, which is the right place for the runs it can
-# see. It reads the words of the command and nothing else, and the dtype above is set in
-# code -- so `python .edullm/train_on_corpus.py "$EDULLM_RUN_ID"`, the command the guide
-# prints, is a bfloat16 run carrying no bfloat16 token. Nothing outside this process can
-# know that. This process can.
-#
-# WHAT IT COSTS TO FIND OUT LATE. Every stage before the first bfloat16 kernel succeeds:
-# the image pulls, the corpus resolves, the model builds, the distributed group forms. The
-# failure lands minutes in, on an instance that has been classified, released by a lead,
-# admitted and billed. `gpu-8xt4` is $7.824/hour and, as of the 2026-08-04 capacity
-# measurement, the only shape above four cards this account can obtain -- so the most
-# likely multi-GPU submission on this platform is the one this catches.
-
-#: The compute capability at which NVIDIA put bfloat16 into the silicon. 8.0 is Ampere.
-#: Turing -- the T4, 7.5 -- is the one generation with tensor cores and without this format,
-#: and everything below Turing lacks it too. No 8.x or later part omits it, so a single
-#: threshold answers the whole question and there is no table of card names to go stale.
-BFLOAT16_NEEDS_COMPUTE_CAPABILITY: Tuple[int, int] = (8, 0)
-
-#: How ``Config.as_config_dict`` writes :class:`~olmo_core.config.DType.bfloat16`, which is
-#: the string this looks for in the built config.
-BFLOAT16 = DType.bfloat16.value
-
-#: What makes a config key a precision setting: ``param_dtype``, ``reduce_dtype``,
-#: ``autocast_precision``, ``dtype``. Required in addition to the value, and the extra
-#: condition is deliberate. There is no waiver for this refusal -- a waived bfloat16 run on
-#: a Turing card does not work, so an escape would only record a decision to spend an
-#: approval on a job that cannot start -- and a check nobody can get past has to be narrow
-#: instead. A field whose whole value is the string "bfloat16" and whose name says nothing
-#: about precision is not a precision request, and refusing it would block a run that works.
-PRECISION_SETTING_WORDS = ("dtype", "precision")
-
-
-def devices_without_bfloat16() -> List[Tuple[int, str, Tuple[int, int]]]:
-    """Every visible CUDA device whose silicon has no bfloat16, as (index, name, capability).
-
-    **NOT** ``torch.cuda.is_bf16_supported()``, WHICH RETURNS TRUE ON A T4. That function
-    tries the capability test first and, when it fails, falls back to allocating a
-    ``torch.bfloat16`` tensor on the device -- and that allocation succeeds on Turing,
-    because PyTorch implements bfloat16 storage and conversion in software on every
-    architecture it builds for. What Turing lacks is the arithmetic. So the one function a
-    careful program would call before committing to a dtype answers yes, and the run dies
-    later anyway. The fallback is the ``including_emulation=True`` default, present in every
-    torch from 2.5 through 2.10, and ``including_emulation=False`` would be the honest call
-    -- but it is a keyword this file would be silently wrong about on any torch that drops
-    it, and the capability read below is the thing the keyword is a wrapper around.
-
-    Compute capability is a property of the die reported by the driver. It cannot be
-    emulated, it does not depend on the CUDA version or the container, and OLMo-core already
-    decides the same class of question this way -- see
-    :func:`olmo_core.utils.has_compute_capability`, which is how the float8 path refuses a
-    pre-Blackwell card.
-
-    THREE WAYS THIS DECLINES TO ANSWER, EACH OF WHICH WOULD OTHERWISE BE A FALSE POSITIVE.
-    No CUDA at all is the ``--dry-run`` on a laptop and this repository's own test suite. A
-    ROCm build numbers its architectures on a different scale entirely, where 7.5 is not
-    Turing and the comparison below is meaningless. Nothing here is the platform's hardware,
-    and refusing a run on either would be this file inventing a problem.
-
-    Every visible device rather than the current one, because before
-    ``prepare_training_environment`` no rank has called ``torch.cuda.set_device`` and every
-    rank would read device 0. On the homogeneous nodes Batch provides that is the same
-    answer eight times; on anything else it is the wrong answer seven times.
-
-    AND IT FAILS OPEN, WHICH IS THE OPPOSITE OF WHAT A GUARD USUALLY DOES. This runs in front
-    of everybody's training run in a repository where several people are on their own
-    branches at once, so the way this check can do the most damage is not by missing a
-    Turing card -- that is today's behaviour, which the platform's submission-time refusal
-    still partly covers -- but by throwing on a host it did not expect and stopping runs that
-    were fine. If the driver, a future torch, or a device this cannot query answers strangely,
-    it says so on stderr and gets out of the way.
-    """
-    try:
-        if not torch.cuda.is_available() or torch.version.hip:
-            return []
-        return [
-            (index, torch.cuda.get_device_name(index), capability)
-            for index in range(torch.cuda.device_count())
-            if (capability := torch.cuda.get_device_capability(index))
-            < BFLOAT16_NEEDS_COMPUTE_CAPABILITY
-        ]
-    except BaseException as exc:  # noqa: BLE001 -- see the docstring
-        print(
-            f"could not read this host's compute capability, so the bfloat16 check is not "
-            f"running: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-        return []
-
-
-def bfloat16_settings_in(config) -> List[str]:
-    """The dotted paths in this config that ask for bfloat16, or an empty list.
-
-    READ OFF THE BUILT CONFIG RATHER THAN OFF ``argv``, WHICH IS THE WHOLE POINT. By the
-    time this runs the flag defaults are applied and every dotted override is merged, so
-    what it reads is what the trainer is going to be handed -- ``--param-dtype bfloat16``,
-    ``train_module.dp_config.param_dtype=bfloat16``, the default nobody typed, and any field
-    a future edit adds are one fact by then rather than four spellings to recognise. This is
-    the thing the platform's submission-time guard cannot do and says so on its own refusals.
-
-    ``as_config_dict`` is the same serialization the config saver writes beside the
-    checkpoint, so a path named here is a path a reader can find in that file.
-    """
-    found: List[str] = []
-
-    def walk(node, path: str) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                walk(value, f"{path}.{key}" if path else str(key))
-        elif isinstance(node, (list, tuple)):
-            for position, value in enumerate(node):
-                walk(value, f"{path}[{position}]")
-        elif isinstance(node, str) and node == BFLOAT16:
-            name = path.rsplit(".", 1)[-1]
-            if any(word in name for word in PRECISION_SETTING_WORDS):
-                found.append(path)
-
-    walk(config.as_config_dict(), "")
-    return sorted(found)
-
-
-def a_precision_this_hardware_does_not_have(config) -> Optional[str]:
-    """What to tell somebody whose run cannot start, or ``None`` when it can.
-
-    A message rather than a raise, because the caller decides what to do with it: a real run
-    is refused and a ``--dry-run`` is warned. A dry run resolves the corpus, prints the
-    config and trains nothing, so it would succeed on a T4 and must not be stopped -- but the
-    person doing one on the shape they are about to submit against is exactly who should be
-    told, and this is the cheapest place they will ever hear it.
-    """
-    unusable = devices_without_bfloat16()
-    if not unusable:
-        return None
-    asked_at = bfloat16_settings_in(config)
-    if not asked_at:
-        return None
-
-    _, name, (major, minor) = unusable[0]
-    cards = (
-        f"all {len(unusable)} of this host's devices are {name}"
-        if len(unusable) == torch.cuda.device_count() and len({n for _, n, _ in unusable}) == 1
-        else f"device {', '.join(str(index) for index, _, _ in unusable)} is a {name}"
-    )
-    return (
-        f"{cards}, compute capability {major}.{minor}. bfloat16 arithmetic starts at "
-        f"{BFLOAT16_NEEDS_COMPUTE_CAPABILITY[0]}.{BFLOAT16_NEEDS_COMPUTE_CAPABILITY[1]} -- "
-        f"Ampere -- so there is none in this hardware, and this run asks for bfloat16 at "
-        f"{', '.join(asked_at)}. Refusing here, seconds in and before the process group, the "
-        "model or a single step, rather than on the first kernel that wants the format: "
-        "everything up to that kernel succeeds, so the run would otherwise pull its image, "
-        "resolve its corpus, build its model and start, on an instance somebody is already "
-        "paying for.\n\n"
-        "torch.cuda.is_bf16_supported() returns True on this card, which is why nothing "
-        "before this caught it. When the capability test fails it falls back to allocating a "
-        "bfloat16 tensor, and that succeeds here -- PyTorch implements the storage and the "
-        "conversions in software on every architecture, and it is the arithmetic that is "
-        "missing. The capability above is read straight off the device for that reason.\n\n"
-        "Two ways forward. Move to a compute profile whose cards are Ampere or newer: the "
-        "A10G, L4, L40S, A100 and H100 shapes all are, and the T4 shapes are the ones that "
-        "are not -- the table is in the platform's guides/olmo-core.md. Or keep the shape and "
-        "change the recipe: --param-dtype float32 trains this model in full fp32, which is "
-        "what a T4 is for, and --param-dtype float16 is the half precision this card does "
-        "have. fp16 is not a drop-in -- OLMo-core ships no gradient scaler, so it is fp16 "
-        "with no loss scaling and small gradients underflow to zero -- and either way it is a "
-        "deviation for you to declare rather than one this file makes on your behalf."
-    )
-
-
 class LossWatcher(Callback):
     """Keeps what the summary can only learn while the run is still going.
 
@@ -1070,20 +903,32 @@ def main() -> None:
     with during(Stage.THE_CONFIG_WOULD_NOT_BUILD):
         config = build_config(opts, overrides)
 
+    # THE CHECK ITSELF LIVES IN olmo_core, AND IS CALLED AGAIN FROM
+    # TransformerTrainModuleConfig.build, WHICH IS WHERE IT CATCHES EVERY OTHER ENTRY POINT
+    # IN THIS REPOSITORY. It is called here too because two things are only true here: this
+    # is before the process group rather than after it, and this file has a stage number and
+    # a W&B write to turn the refusal into something visible from outside a dead container.
+    #
     # AFTER build_config BECAUSE IT NEEDS THE MERGED CONFIG, AND STILL BEFORE ANYTHING
     # EXPENSIVE. Everything above this line is local except a HEAD and a GET against the
     # manifest, so the whole of it is a few seconds; everything below it is the process
     # group, the model, the data loader and the run. This is the last point at which a
     # container costs nothing to stop, and the first at which what it is going to do is
     # settled -- reading argv earlier would be guessing at the same fact from its spelling.
-    unusable = a_precision_this_hardware_does_not_have(config)
-    if unusable is not None:
+    #
+    # The whole config rather than config.train_module, because a `model.dtype=bfloat16`
+    # override is reachable from the command line and is not a field of the train module.
+    try:
+        validate_precision_support(config)
+    except OLMoConfigurationError as unusable:
         # A dry run trains nothing and would succeed on this card, so stopping it would be
         # this file refusing a run that works. Saying so is still the point of a dry run.
         if opts.dry_run:
             log.warning("%s", unusable)
         else:
-            raise Refusal(Stage.THE_DEVICE_CANNOT_DO_THE_REQUESTED_PRECISION, unusable)
+            raise Refusal(
+                Stage.THE_DEVICE_CANNOT_DO_THE_REQUESTED_PRECISION, str(unusable)
+            ) from None
 
     if opts.dry_run:
         show(config)

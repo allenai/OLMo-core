@@ -14,7 +14,18 @@ from functools import lru_cache
 from itertools import cycle, islice
 from queue import Queue
 from threading import Thread
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypeVar, Union, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import rich
 import torch
@@ -159,6 +170,53 @@ def has_compute_capability(major: int, minor: int) -> bool:
         major,
         minor,
     )
+
+
+BFLOAT16_MIN_COMPUTE_CAPABILITY = (8, 0)
+"""
+The compute capability at which NVIDIA put bfloat16 arithmetic into the silicon, i.e. Ampere.
+Turing (7.5, the T4) is the one generation with tensor cores and without this format, and
+everything older lacks it too, so a single threshold answers the whole question.
+"""
+
+
+def get_devices_without_bfloat16() -> List[Tuple[int, str, Tuple[int, int]]]:
+    """
+    Every visible CUDA device whose silicon has no bfloat16 arithmetic, as
+    ``(index, name, compute capability)``. Empty on hardware that has it.
+
+    .. warning::
+        This is deliberately not ``torch.cuda.is_bf16_supported()``, which returns ``True`` on a
+        T4. When its capability test fails that function falls back to allocating a bfloat16
+        tensor, and the allocation succeeds on Turing because PyTorch implements bfloat16 storage
+        and conversion in software on every architecture it builds for. What Turing lacks is the
+        arithmetic, so we read the capability off the device the same way
+        :func:`has_compute_capability` does.
+
+    Every visible device rather than the current one, since callers may run before any rank has
+    called ``torch.cuda.set_device``.
+
+    Returns an empty list rather than raising in three cases that are not this question: no CUDA
+    at all, a ROCm build (whose architecture numbers are on a different scale entirely), and a
+    device that cannot be queried. The last one fails open on purpose -- this runs in front of
+    every training run, so stopping a job on a host it did not anticipate is worse than missing
+    a Turing card.
+    """
+    try:
+        if not torch.cuda.is_available() or torch.version.hip:
+            return []
+        return [
+            (index, torch.cuda.get_device_name(index), capability)
+            for index in range(torch.cuda.device_count())
+            if (capability := torch.cuda.get_device_capability(index))
+            < BFLOAT16_MIN_COMPUTE_CAPABILITY
+        ]
+    except BaseException as exc:  # noqa: BLE001 -- see the docstring
+        log.warning(
+            "Could not read this host's compute capability, so the bfloat16 check is not "
+            f"running: {type(exc).__name__}: {exc}"
+        )
+        return []
 
 
 def seed_all(seed: int):
