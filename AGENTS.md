@@ -64,19 +64,45 @@ profile, no SSO session and no VPN, for anything on this path.
 and not the submission path: nothing on them is checked, priced, approved or recorded.
 
 **Start with `edullm check --json`.** It costs a fraction of a second, reaches no network and
-lists every refusal at once. Read the JSON on stdout rather than the prose, and **match on
-`code`** — the `detail` beside it is written for a person and gets reworded. Exit 0 stands,
-1 is refused on the merits, 2 means the command or the install is wrong, 3 means the platform
-could not be asked and is the only one worth retrying.
+lists every refusal at once. **Match on `code`** and act on the `detail` beside it, which
+names the field and usually the file; the detail is written for a person and gets reworded, so
+do not match on it. Exit 0 stands, 1 is refused on the merits, 2 means the command or the
+install is wrong, 3 means the platform could not be asked and is the only one worth retrying.
+
+**Read stdout on its own.** The first check in a repository with no `.edullm/run.yaml` writes
+one and says so on stderr, so `edullm check --json 2>&1 | ...` turns that note into a parse
+error on the one run where you least want one.
+
+Four things the refusals will not tell you until they have cost something.
+
+- **The platform takes a commit, not a working tree.** The image is built from the last
+  commit, so anything uncommitted is not part of the run, and it is a push to a branch named
+  `edullm/<something>` that builds the image at all.
+- **For `--dataset`, absent and `none` are different answers.** Pass the literal word `none`
+  where the run reads no corpus, which is what a smoke test, a tokenization or an evaluation
+  over existing checkpoints does. Only one of the two is a statement.
+- **Write the dtype into the command.** The guard behind `bfloat16_not_in_the_hardware` reads
+  the text of the command and cannot see a precision the program sets in code, so a card with
+  no bfloat16 in hardware refuses the first kernel that needs it — after the run has been
+  priced, released, admitted and given a machine. Naming it turns a dead machine into a free
+  refusal: `bash -lc 'python train.py train_module.dp_config.param_dtype=bfloat16'`.
+- **`edullm status --json` is free and `edullm status` is not.** The former answers from
+  GitHub, dispatches nothing and may be polled. Without `--json`, and `edullm logs`, a
+  workflow has to start, so both are slow by construction and neither belongs in a loop.
 
 **Never quote a price, a runtime bound, a cost ceiling or who has to approve something from
 memory or from a document, this one included.** Those live in reviewed configuration that
 changes without anybody being told. Run `edullm check --json` and read `cost` and
 `approval_class` out of the output.
 
-Two skills carry the detail and your agent should reach for them by name rather than working
-it out here: **submitting-a-run** for anything that runs, and **registering-a-repository**
-when `check` refuses with `unregistered_repository`.
+One skill carries what this cannot: **registering-a-repository**, for when `check` refuses
+with `unregistered_repository`. It is not committed here, because this repository is
+registered and so is one of the places that refusal cannot arise; it installs once per person,
+and [edu-llm/platform's `skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md)
+says where each host reads one from. Everything else about submitting is above, or is in the
+`detail` of the refusal you are looking at. There is no skill for it and that is deliberate:
+a table of refusal codes here would be a copy of what `edullm check --json` already prints
+beside every one of them.
 
 Also never: pass `--force` to get past a refusal, edit `.edullm/run.yaml` to silence a
 refusal without reading what it says, or commit a secret into this repository — the image is

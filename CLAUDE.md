@@ -70,11 +70,13 @@ python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --param-dtype bfloat16   # or
 
 `train_on_corpus.py` also checks its own built config against the visible devices and exits 73 in the first seconds when they cannot do the requested format. That check only protects commits that carry it, so a research branch that has not merged it has nothing in front of the failure but the command text.
 
-### The skills for your coding agent
+### What your coding agent reads about the platform
 
-There is nothing to install. This repository carries them, at `.agents/skills/submitting-a-run/` and `.agents/skills/registering-a-repository/`, with `.claude/skills/` symlinked onto the same files because Claude Code reads no other directory. Cursor and Codex read `.agents/skills/` directly.
+There is nothing to install. The first line of this file imports `AGENTS.md`, which carries the binary, its verbs, the exit codes, `--json` and the rule against calling AWS directly. That is what an agent needs for anything on the platform, and it is read every session without being invoked. It is held byte-identical to [edu-llm/platform](https://github.com/edu-llm/platform) by a workflow that runs daily, so do not edit the marked block: the edit is reverted and turns that workflow red in the meantime. Everything outside the markers is this repository's own.
 
-The curl line that used to be here has gone, along with the gitignore entry under it. A copy each person installs for themselves is a copy nobody can see, nobody updates and nothing compares, and the observed result was that most people never installed one at all and their agents wrote AWS calls. The copies here are held byte-identical to [edu-llm/platform](https://github.com/edu-llm/platform) by a workflow that runs daily; do not edit them in this repository, because the edit is reverted and turns that workflow red in the meantime.
+The curl line that used to be here has gone, along with the gitignore entry under it. A copy each person installs for themselves is a copy nobody can see, nobody updates and nothing compares, and the observed result was that most people never installed one at all and their agents wrote AWS calls.
+
+There is deliberately no skill here for submitting a run. `AGENTS.md` and the `detail` printed beside every refusal are the whole of it. The platform's one skill, `registering-a-repository`, is not here either and that is not an omission: it fires when a codebase is *not* on the platform, so this repository is one of the places it can never be needed. It installs once per person at user level, and [`skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md) says where each host reads one from.
 
 ## Code Style
 
