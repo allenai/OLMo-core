@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -68,18 +70,13 @@ python .edullm/train_on_corpus.py "$EDULLM_RUN_ID" --param-dtype bfloat16   # or
 
 `train_on_corpus.py` also checks its own built config against the visible devices and exits 73 in the first seconds when they cannot do the requested format. That check only protects commits that carry it, so a research branch that has not merged it has nothing in front of the failure but the command text.
 
-### The skill for your coding agent
+### What your coding agent reads about the platform
 
-The platform ships a skill covering all nine verbs, every refusal code and what a clean check does not promise. It is maintained in the platform repository and deliberately not copied here.
+There is nothing to install. The first line of this file imports `AGENTS.md`, which carries the binary, its verbs, the exit codes, `--json` and the rule against calling AWS directly. That is what an agent needs for anything on the platform, and it is read every session without being invoked. It is held byte-identical to [edu-llm/platform](https://github.com/edu-llm/platform) by a workflow that runs daily, so do not edit the marked block: the edit is reverted and turns that workflow red in the meantime. Everything outside the markers is this repository's own.
 
-```bash
-# Claude Code (swap .claude for .cursor, or ~/.codex, per your host)
-mkdir -p .claude/skills/edullm-platform && curl -fsSL \
-  https://raw.githubusercontent.com/edu-llm/platform/main/skills/edullm-platform/SKILL.md \
-  -o .claude/skills/edullm-platform/SKILL.md
-```
+The curl line that used to be here has gone, along with the gitignore entry under it. A copy each person installs for themselves is a copy nobody can see, nobody updates and nothing compares, and the observed result was that most people never installed one at all and their agents wrote AWS calls.
 
-Install lines for all three hosts are in [`skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md). `.claude/skills/edullm-platform/` is gitignored here so the copy you install stays yours and cannot go stale in this repository.
+There is deliberately no skill here for submitting a run. `AGENTS.md` and the `detail` printed beside every refusal are the whole of it. The platform's one skill, `registering-a-repository`, is not here either and that is not an omission: it fires when a codebase is *not* on the platform, so this repository is one of the places it can never be needed. It installs once per person at user level, and [`skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md) says where each host reads one from.
 
 ## Code Style
 
