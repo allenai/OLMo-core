@@ -177,7 +177,16 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier|rerank|oolong)
-      RUNGS="$RUNGS,$XLONG_RUNGS"; BATCH_SIZE=1
+      # XLONG_ONLY=1 REPLACES the base rungs instead of appending, for when the base-rung pass has
+      # already been run separately -- otherwise every xlong job re-runs 2k-32k first, at the bs=1
+      # the xlong path forces, which is both wasted GPU time and a duplicate of results already on
+      # weka (the two passes differ by EVAL_TAG, so they do not overwrite each other).
+      if [ "${XLONG_ONLY:-0}" = "1" ]; then
+        RUNGS="$XLONG_RUNGS"
+      else
+        RUNGS="$RUNGS,$XLONG_RUNGS"
+      fi
+      BATCH_SIZE=1
       # Built prompts run ~0.4-4% OVER the rung label (doc count calibrated from a median, plus the
       # instruction/query/marker wrap), so these caps carry a ~10% margin. The old 256k value of
       # 263168 (= label + 1024) truncated the prompt TAIL -- where the question lives -- scoring

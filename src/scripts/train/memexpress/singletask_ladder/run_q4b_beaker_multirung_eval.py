@@ -86,6 +86,7 @@ def build_eval_launch_config(
     priority,
     ladder_version,
     xlong,
+    xlong_only,
     xlong_rungs,
     cot_mode,
     tokenizer="",
@@ -118,7 +119,8 @@ def build_eval_launch_config(
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
-        f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
+        f"LADDER_XLONG={int(xlong)} XLONG_ONLY={int(xlong_only)} "
+        f"XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
         f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
         f"LANDMARK_DECODE_GATE_MODE='{landmark_decode_gate_mode or ''}' "
         f"EVAL_TAG='{eval_tag}' "
@@ -246,6 +248,13 @@ def main():
         default="none",
         help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
         "checkpoint); default 'none' keeps the no-CoT eval byte-identical.",
+    )
+    ap.add_argument(
+        "--xlong-only",
+        action="store_true",
+        help="with --xlong: run ONLY the xlong rungs, instead of appending them to the base rungs. "
+        "Use when the base-rung pass has already been submitted separately -- otherwise each xlong "
+        "job re-runs 2k-32k first at the bs=1 the xlong path forces.",
     )
     ap.add_argument(
         "--xlong",
@@ -391,6 +400,7 @@ def main():
             priority=args.priority,
             ladder_version=args.ladder_version,
             xlong=args.xlong,
+            xlong_only=args.xlong_only,
             xlong_rungs=args.xlong_rungs,
             cot_mode=args.cot_mode,
             landmark_top_k_blocks=args.landmark_top_k_blocks,
