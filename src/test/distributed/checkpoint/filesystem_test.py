@@ -9,7 +9,11 @@ from olmo_core.distributed.checkpoint.filesystem import (
     RemoteFileSystemWriter,
 )
 from olmo_core.io import dir_is_empty
-from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.testing import (
+    BACKENDS,
+    remote_store_access_or_skip,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device
 
 
@@ -77,12 +81,8 @@ def test_save_and_load_locally_with_dtensors(backend, tmp_path, thread_count, pr
 def test_save_and_load_remotely_to_s3_with_dtensors(
     backend, s3_checkpoint_dir, thread_count, process_count, throttle
 ):
-    from botocore.exceptions import NoCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(s3_checkpoint_dir)
-    except NoCredentialsError:
-        pytest.skip("Requires AWS credentials")
 
     run_distributed_test(
         run_save_and_load_with_dtensors,
@@ -99,12 +99,8 @@ def test_save_and_load_remotely_to_s3_with_dtensors(
 def test_save_and_load_remotely_to_gcs_with_dtensors(
     backend, gcs_checkpoint_dir, thread_count, process_count, throttle
 ):
-    from google.auth.exceptions import DefaultCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(gcs_checkpoint_dir)
-    except DefaultCredentialsError:
-        pytest.skip("Requires authentication with Google Cloud")
 
     run_distributed_test(
         run_save_and_load_with_dtensors,

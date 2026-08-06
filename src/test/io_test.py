@@ -14,6 +14,7 @@ from olmo_core.io import (
     serialize_to_tensor,
     upload,
 )
+from olmo_core.testing import remote_store_access_or_skip
 
 
 def test_serde_from_tensor():
@@ -151,21 +152,13 @@ def _run_remote_functionality(tmp_path, remote_dir):
 
 
 def test_s3_functionality(tmp_path, s3_checkpoint_dir):
-    from botocore.exceptions import NoCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         _run_remote_functionality(tmp_path, s3_checkpoint_dir)
-    except NoCredentialsError:
-        pytest.skip("Requires AWS credentials")
 
 
 def test_gcs_functionality(tmp_path, gcs_checkpoint_dir):
-    from google.auth.exceptions import DefaultCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         _run_remote_functionality(tmp_path, gcs_checkpoint_dir)
-    except DefaultCredentialsError:
-        pytest.skip("Requires authentication with Google Cloud")
 
 
 def test_glob_directory():

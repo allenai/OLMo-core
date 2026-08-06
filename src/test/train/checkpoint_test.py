@@ -1,13 +1,12 @@
 import os
 import time
 
-import pytest
 import torch
 import torch.distributed as dist
 
 from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
-from olmo_core.testing import run_distributed_test
+from olmo_core.testing import remote_store_access_or_skip, run_distributed_test
 from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module import BasicTrainModule
 
@@ -49,12 +48,8 @@ def test_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 
 
 def test_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
-    from botocore.exceptions import NoCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(s3_checkpoint_dir)
-    except NoCredentialsError:
-        pytest.skip("Requires AWS credentials")
 
     run_distributed_test(
         run_checkpointer,
@@ -64,12 +59,8 @@ def test_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model
 
 
 def test_checkpointer_with_remote_gcs_dir(gcs_checkpoint_dir, tmp_path, tiny_model_factory):
-    from google.auth.exceptions import DefaultCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(gcs_checkpoint_dir)
-    except DefaultCredentialsError:
-        pytest.skip("Requires authentication with Google Cloud")
 
     run_distributed_test(
         run_checkpointer,
@@ -115,12 +106,8 @@ def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 
 
 def test_async_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
-    from botocore.exceptions import NoCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(s3_checkpoint_dir)
-    except NoCredentialsError:
-        pytest.skip("Requires AWS credentials")
 
     run_distributed_test(
         run_async_checkpointer,
@@ -130,12 +117,8 @@ def test_async_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny
 
 
 def test_async_checkpointer_with_remote_gcs_dir(gcs_checkpoint_dir, tmp_path, tiny_model_factory):
-    from google.auth.exceptions import DefaultCredentialsError
-
-    try:
+    with remote_store_access_or_skip():
         dir_is_empty(gcs_checkpoint_dir)
-    except DefaultCredentialsError:
-        pytest.skip("Requires authentication with Google Cloud")
 
     run_distributed_test(
         run_async_checkpointer,

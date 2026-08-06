@@ -3,8 +3,10 @@ import os
 import pytest
 
 from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.testing import requires_beaker
 
 
+@requires_beaker
 def test_get_beaker_client_caching():
     with get_beaker_client(workspace="ai2/OLMo-core") as beaker1:
         # Should get the same client since we're requesting the same workspace.

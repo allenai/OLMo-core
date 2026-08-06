@@ -1,5 +1,7 @@
 import logging
 import os
+from contextlib import contextmanager
+from typing import Generator
 
 import pytest
 import torch
@@ -207,6 +209,71 @@ requires_hf_token = pytest.mark.skipif(
     HF_TOKEN is None,
     reason="HF_TOKEN environment variable not set - required for accessing gated models",
 )
+
+requires_beaker = pytest.mark.skipif(
+    os.environ.get("BEAKER_TOKEN", "") == "", reason="Missing 'BEAKER_TOKEN' env var"
+)
+
+
+def _is_refused_by_the_store(exc: BaseException) -> bool:
+    """Whether ``exc``, or anything it was raised from, is the store declining to serve us."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+
+        try:
+            from botocore.exceptions import ClientError, NoCredentialsError
+
+            if isinstance(exc, NoCredentialsError):
+                return True
+            if isinstance(exc, ClientError):
+                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if status in (401, 403):
+                    return True
+        except ImportError:
+            pass
+
+        try:
+            from google.auth.exceptions import DefaultCredentialsError, RefreshError
+
+            if isinstance(exc, (DefaultCredentialsError, RefreshError)):
+                return True
+        except ImportError:
+            pass
+
+        try:
+            from google.api_core.exceptions import Forbidden, Unauthorized
+
+            if isinstance(exc, (Forbidden, Unauthorized)):
+                return True
+        except ImportError:
+            pass
+
+        exc = exc.__cause__ or exc.__context__  # type: ignore[assignment]
+
+    return False
+
+
+@contextmanager
+def remote_store_access_or_skip() -> Generator[None, None, None]:
+    """
+    Skip, rather than fail, when the object store will not serve the credentials we have.
+
+    The tests that use this read and write real buckets, and each of them already skipped when
+    boto3 or google-auth found no credentials at all. Credentials for a *different* account get
+    past that branch and are refused by the bucket instead, with a 401 or a 403, which is the
+    same "there is no bucket here we can use" and not a defect in the code under test. Anything
+    else propagates, so a genuine failure against a bucket we can reach still fails.
+
+    Name a bucket this account can write to in ``OLMO_CORE_TEST_S3_BUCKET`` (or
+    ``OLMO_CORE_TEST_GCS_BUCKET``) and these tests run again.
+    """
+    try:
+        yield
+    except BaseException as exc:
+        if not _is_refused_by_the_store(exc):
+            raise
+        pytest.skip(f"Object store refused these credentials: {type(exc).__name__}: {exc}")
 
 
 INIT_DEVICES = [

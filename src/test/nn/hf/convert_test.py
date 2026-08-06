@@ -363,8 +363,15 @@ def test_llama_tiny_roundtrip_pre_norm():
     ],
 )
 def test_logprobs_match_after_roundtrip(model_id: str, model_type: str):
-    hf_config = AutoConfig.from_pretrained(model_id)
-    hf_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
+    try:
+        hf_config = AutoConfig.from_pretrained(model_id)
+        hf_model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32)
+    except OSError as exc:
+        # Some of these are gated, and a token that has not accepted that model's licence is
+        # refused here rather than told there is no token. Not a defect in the conversion.
+        if not any(word in str(exc) for word in ("gated", "401", "403")):
+            raise
+        pytest.skip(f"No access to {model_id}: {exc}")
     hf_model.eval()
 
     input_ids = torch.randint(
