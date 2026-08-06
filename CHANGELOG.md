@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `iter_document_indices` no longer resolves a data file as its own document-boundary metadata file. The metadata name is derived by swapping a `.npy` suffix for `.csv.gz`, and `str.replace` on a name with no `.npy` in it returns the name unchanged, so a corpus of (for example) `.u32le.bin` shards downloaded every shard in full and then handed a gigabyte of tokens to `gzip.open`. Where no metadata file exists the document boundaries are now read out of the token array itself, in byte ranges, so a remote array is scanned without a local copy of it. `find_document_metadata` and `iter_document_indices_from_array` are public.
+- A failure while gathering dataset indices now abandons the queued work instead of letting the process pool drain it on the way out. `Executor.shutdown` waits for everything already submitted, so on a large corpus the rank that knew what went wrong reported it long after the ranks holding `prepare()`'s barrier had reported a timeout.
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.

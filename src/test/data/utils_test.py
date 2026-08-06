@@ -9,10 +9,12 @@ from olmo_core.data.utils import (
     SegmentTree,
     attention_mask_to_cache_leftpad,
     bucket_documents,
+    find_document_metadata,
     get_cumulative_document_lengths,
     get_document_lengths,
     iter_batched,
     iter_document_indices,
+    iter_document_indices_from_array,
     melt_batch,
     pack_documents_into_instances,
     segment_documents_into_instances,
@@ -63,6 +65,96 @@ def test_iter_document_indices(tmp_path):
     assert list(
         iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=True)
     ) == [(0, 9), (9, len(data))]
+
+
+def test_find_document_metadata_ignores_a_data_file_that_is_not_a_npy(tmp_path):
+    # The name is derived by swapping '.npy' for '.csv.gz', and str.replace on a name with no
+    # '.npy' in it returns the name unchanged -- which used to resolve a shard as its own
+    # metadata file, download all of it, and hand it to gzip.
+    npy_path = tmp_path / "data.npy"
+    npy_path.write_bytes(b"")
+    (tmp_path / "data.csv.gz").write_bytes(b"")
+    assert find_document_metadata(npy_path) == tmp_path / "data.csv.gz"
+
+    bin_path = tmp_path / "train-00000.u32le.bin"
+    bin_path.write_bytes(b"")
+    assert find_document_metadata(bin_path) is None
+
+
+def test_find_document_metadata_when_the_sidecar_is_absent(tmp_path):
+    data_path = tmp_path / "data.npy"
+    data_path.write_bytes(b"")
+    assert find_document_metadata(data_path) is None
+
+
+@pytest.mark.parametrize("chunk_tokens", [3, 4, 5, 8, 1024])
+def test_iter_document_indices_from_array(tmp_path, chunk_tokens: int):
+    data = [1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0]
+    data_path = tmp_path / "train-00000.u32le.bin"
+    np.array(data, dtype=np.uint16).tofile(data_path)
+    assert list(
+        iter_document_indices_from_array(
+            data_path, eos_token_id=0, dtype=np.uint16, chunk_tokens=chunk_tokens
+        )
+    ) == [(0, 9), (9, len(data))]
+
+
+@pytest.mark.parametrize("chunk_tokens", [3, 4, 5, 8, 1024])
+@pytest.mark.parametrize("bos_token_id, eos_token_id", [(98, 99), (99, 99)])
+def test_iter_document_indices_from_array_with_bos_token_id(
+    tmp_path, chunk_tokens: int, bos_token_id: int, eos_token_id: int
+):
+    data = [bos_token_id, 2, 3, 4, 5, 6, 7, 8, eos_token_id, bos_token_id, 2, 3, 4, 5, eos_token_id]
+    data_path = tmp_path / "train-00000.u32le.bin"
+    np.array(data, dtype=np.uint16).tofile(data_path)
+    # Every chunk size has to agree, including the ones that split the EOS/BOS pair.
+    assert list(
+        iter_document_indices_from_array(
+            data_path,
+            eos_token_id=eos_token_id,
+            bos_token_id=bos_token_id,
+            dtype=np.uint16,
+            chunk_tokens=chunk_tokens,
+        )
+    ) == [(0, 9), (9, len(data))]
+
+
+def test_iter_document_indices_from_array_agrees_with_the_metadata_file(tmp_path):
+    rng = np.random.default_rng(0)
+    data = rng.integers(1, 500, size=20_000, dtype=np.uint16)
+    data[::37] = 0
+    data_path = tmp_path / "data.npy"
+    np.memmap(data_path, mode="w+", dtype=np.uint16, shape=data.shape)[:] = data
+    write_document_indices(data_path, dtype=np.uint16, eos_token_id=0)
+
+    from_metadata = list(
+        iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=False)
+    )
+    from_array = list(
+        iter_document_indices_from_array(
+            data_path, eos_token_id=0, dtype=np.uint16, chunk_tokens=997
+        )
+    )
+    assert from_array == from_metadata
+
+
+def test_iter_document_indices_falls_back_to_the_array_without_a_metadata_file(tmp_path):
+    data = [1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 0]
+    # Not a '.npy', so no metadata file name can be derived. This is the shape of a sealed
+    # corpus shard, and 'use_array_if_local=False' is how a local path takes the same branch
+    # a URL takes.
+    data_path = tmp_path / "train-00000.u32le.bin"
+    np.array(data, dtype=np.uint16).tofile(data_path)
+    assert list(
+        iter_document_indices(data_path, eos_token_id=0, dtype=np.uint16, use_array_if_local=False)
+    ) == [(0, 9), (9, len(data))]
+
+
+def test_iter_document_indices_still_refuses_when_it_cannot_read_the_array(tmp_path):
+    data_path = tmp_path / "train-00000.u32le.bin"
+    np.array([1, 2, 0], dtype=np.uint16).tofile(data_path)
+    with pytest.raises(RuntimeError, match="No source metadata file was found"):
+        list(iter_document_indices(data_path, use_array_if_local=False))
 
 
 @pytest.mark.parametrize("bos_token_id, eos_token_id", [(98, 99), (99, 99)])

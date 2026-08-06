@@ -1,5 +1,6 @@
 import functools as ft
 import gzip
+import logging
 import math
 import os
 import random
@@ -33,11 +34,19 @@ from olmo_core.io import (
     get_bytes_range,
     get_file_size,
     is_url,
+    normalize_path,
     resource_path,
 )
 from olmo_core.utils import capped_powers_of_2
 
 from .types import LongDocStrategy
+
+log = logging.getLogger(__name__)
+
+#: How many tokens to pull at a time when scanning an array for document boundaries without
+#: a local copy of it. 16M uint32 tokens is 64 MiB per read, which is large enough that the
+#: per-request overhead disappears and small enough that a shard never has to be resident.
+DOCUMENT_SCAN_CHUNK_TOKENS = 16 * 1024 * 1024
 
 
 def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Dict[str, Any]]:
@@ -167,6 +176,85 @@ def write_document_indices(data_path: Path, *, dtype, eos_token_id: int) -> Path
     return metadata_path
 
 
+def find_document_metadata(
+    data_path: PathOrStr, *, local_cache: Optional[PathOrStr] = None
+) -> Optional[Path]:
+    """
+    Locate the Dolma toolkit metadata file that records the document boundaries of a data
+    file, if this data file can have one and it is there.
+
+    The name is derived by swapping a ``.npy`` suffix for ``.csv.gz``, so a source file that
+    is not a ``.npy`` has no metadata name to derive and gets ``None``. That case used to be
+    indistinguishable from a data file whose sidecar happened to be missing, because
+    ``str.replace`` on a name with no ``.npy`` in it returns the name unchanged: a corpus of
+    ``.u32le.bin`` shards resolved every shard as its own metadata file, downloaded the whole
+    of it, and then handed a gigabyte of tokens to :func:`gzip.open`.
+
+    :returns: The local path to the metadata file, or ``None`` if there is not one.
+    """
+    name = os.path.basename(normalize_path(data_path))
+    if not name.endswith(".npy"):
+        return None
+    metadata_filename = name[: -len(".npy")] + ".csv.gz"
+    try:
+        return resource_path(os.path.dirname(data_path), metadata_filename, local_cache=local_cache)
+    except FileNotFoundError:
+        return None
+
+
+def iter_document_indices_from_array(
+    data_path: PathOrStr,
+    *,
+    eos_token_id: int,
+    dtype,
+    bos_token_id: Optional[int] = None,
+    chunk_tokens: int = DOCUMENT_SCAN_CHUNK_TOKENS,
+) -> Generator[Tuple[int, int], None, None]:
+    """
+    Read document boundaries out of the token array itself, a chunk at a time.
+
+    Equivalent to memory-mapping the array and scanning it for ``eos_token_id``, but it reads
+    byte ranges instead, so it works on a remote array and never needs a copy of one. That
+    matters at the scale these arrays come in: pulling a corpus down to local disk to find its
+    document boundaries costs the whole corpus in disk and in time, on every run, and gets
+    thrown away with the container.
+
+    :param data_path: Path/URL to the token array.
+    :param eos_token_id: The EOS token ID, which is what marks a document boundary.
+    :param dtype: The data type of the token array.
+    :param bos_token_id: When provided, a boundary is an EOS followed by a BOS.
+    :param chunk_tokens: How many tokens to read at a time.
+    """
+    total_tokens = get_file_size(data_path) // dtype(0).itemsize
+    start_idx = 0
+    offset = 0
+    final_token: Optional[int] = None
+    while offset < total_tokens:
+        end = min(offset + chunk_tokens, total_tokens)
+        # One token of overlap when the boundary is a pair, so that an EOS in the last
+        # position of this chunk is still tested against the BOS that opens the next one.
+        read_end = min(end + 1, total_tokens) if bos_token_id is not None else end
+        chunk = load_array_slice(data_path, offset, read_end, dtype)
+        if bos_token_id is None:
+            boundaries = (chunk == eos_token_id).nonzero()[0]
+        else:
+            boundaries = np.logical_and(
+                chunk[:-1] == eos_token_id, chunk[1:] == bos_token_id
+            ).nonzero()[0]
+        for boundary in boundaries:
+            end_idx = offset + int(boundary) + 1
+            yield start_idx, end_idx
+            start_idx = end_idx
+        if read_end == total_tokens and len(chunk):
+            final_token = int(chunk[-1])
+        offset = end
+
+    # A trailing EOS closes the last document even though it has no BOS after it. Only in
+    # the paired case; without a BOS the loop above has already seen it.
+    if bos_token_id is not None and final_token == eos_token_id and start_idx < total_tokens:
+        yield start_idx, total_tokens
+
+
 def iter_document_indices(
     data_path: PathOrStr,
     *,
@@ -177,18 +265,22 @@ def iter_document_indices(
     dtype=None,
 ) -> Generator[Tuple[int, int], None, None]:
     """
-    Given a ".npy" data path from the Dolma toolkit, get the list of document start/end indices within
-    the array.
+    Given a data path, get the list of document start/end indices within the array.
 
-    :param data_path: Path to a ".npy" Dolma toolkit data file.
+    A ".npy" file from the Dolma toolkit carries its document boundaries in a ".csv.gz"
+    metadata file beside it, and that is read when it is there. When there is no such file --
+    because the array is not a ".npy", or because nobody wrote one -- the boundaries are read
+    out of the array itself, which needs ``eos_token_id`` and ``dtype`` and nothing else.
+
+    :param data_path: Path/URL to the data file.
     :param local_cache: Local directory to put downloads into.
     :param use_array_if_local: Use the numpy data array to find the document indices if the array
         is on the local filesystem and ``eos_token_id`` and ``dtype`` are provided.
         This can be a lot faster. Otherwise relies on the metadata file.
     :param eos_token_id: The EOS token ID.
-        Required to use the local data array instead of the metadata file.
+        Required to read the document indices out of the data array.
     :param dtype: The data type of the numpy data array.
-        Required to use the local data array instead of the metadata file.
+        Required to read the document indices out of the data array.
     """
     if use_array_if_local is None:
         if eos_token_id is not None and dtype is not None and not is_url(data_path):
@@ -214,19 +306,22 @@ def iter_document_indices(
             yield start_idx, end_idx
             start_idx = end_idx
     else:
-        metadata_filename = os.path.basename(data_path).replace(".npy", ".csv.gz")
-        try:
-            metadata_path = resource_path(
-                os.path.dirname(data_path),
-                metadata_filename,
-                local_cache=local_cache,
+        metadata_path = find_document_metadata(data_path, local_cache=local_cache)
+        if metadata_path is None:
+            if eos_token_id is None or dtype is None:
+                raise RuntimeError(
+                    f"No source metadata file was found for '{data_path}', so the document "
+                    "indices have to be read out of the source array, and that needs "
+                    "'eos_token_id' and 'dtype', neither of which was provided."
+                )
+            log.info(f"No source metadata file for '{data_path}'; scanning the array instead")
+            yield from iter_document_indices_from_array(
+                data_path,
+                eos_token_id=eos_token_id,
+                bos_token_id=bos_token_id,
+                dtype=dtype,
             )
-        except FileNotFoundError as e:
-            raise RuntimeError(
-                f"Source metadata file '{metadata_filename}' is required to calculate document indices for '{data_path}'. "
-                "If the source data file is local (on-disk) and 'eos_token_id' and 'dtype' are provided, then the document "
-                "indices can be inferred from the source file."
-            ) from e
+            return
 
         total_tokens: Optional[int] = None
         if dtype is not None:

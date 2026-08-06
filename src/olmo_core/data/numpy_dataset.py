@@ -8,6 +8,7 @@ import os
 import random
 import tempfile
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -16,6 +17,7 @@ from typing import (
     Any,
     Callable,
     Dict,
+    Iterator,
     List,
     Literal,
     Optional,
@@ -94,6 +96,26 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+@contextmanager
+def _abandon_remaining_work(executor: concurrent.futures.Executor) -> Iterator[None]:
+    """Drop the queued work when one task fails, instead of draining it on the way out.
+
+    :meth:`Executor.shutdown` waits for everything already submitted, so an exception raised
+    out of a ``with`` block over a pool does not surface until the whole queue has run. Every
+    ``prepare()`` below is called on one rank while the others hold a barrier with a fixed
+    deadline, and a queue of thousands of shards takes far longer to drain than the deadline
+    allows -- so the rank that knows what went wrong reports a data error long after the
+    ranks that do not have reported a timeout, and the timeout is what gets diagnosed.
+
+    Tasks already running are left to finish, because a process pool cannot interrupt one.
+    """
+    try:
+        yield
+    except BaseException:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
 
 
 @dataclass
@@ -794,15 +816,16 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                         )
                         futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                with _abandon_remaining_work(executor):
+                    concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
-                # Log results.
-                for path, future in zip([item[0] for item in paths_needed], futures):
-                    _, total_instances = future.result()
-                    log.info(
-                        f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{path}'"
-                    )
+                    # Log results.
+                    for path, future in zip([item[0] for item in paths_needed], futures):
+                        _, total_instances = future.result()
+                        log.info(
+                            f"Created {total_instances:,d} instances of sequence length up to "
+                            f"{self.sequence_length} from '{path}'"
+                        )
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
     #     indices_path = self._get_instance_indices_path(path)
@@ -968,15 +991,16 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                with _abandon_remaining_work(executor):
+                    concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
-                # Log results.
-                for path, future in zip(paths_needed, futures):
-                    _, total_instances = future.result()
-                    log.info(
-                        f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{path}'"
-                    )
+                    # Log results.
+                    for path, future in zip(paths_needed, futures):
+                        _, total_instances = future.result()
+                        log.info(
+                            f"Created {total_instances:,d} instances of sequence length up to "
+                            f"{self.sequence_length} from '{path}'"
+                        )
 
 
 class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
@@ -1326,18 +1350,19 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                with _abandon_remaining_work(executor):
+                    concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
-                # Log results.
-                for source_paths, future in zip(sources_needed, futures):
-                    total_instances, total_tokens = future.result()
-                    total_padding = self.sequence_length * total_instances - total_tokens
-                    avg_padding = total_padding / total_instances
-                    log.info(
-                        f"Packed {total_tokens:,} tokens from {source_paths} into {total_instances:,d} instances "
-                        f"of sequence length {self.sequence_length:,d} using an average of "
-                        f"{avg_padding:.1f} padding tokens per instance."
-                    )
+                    # Log results.
+                    for source_paths, future in zip(sources_needed, futures):
+                        total_instances, total_tokens = future.result()
+                        total_padding = self.sequence_length * total_instances - total_tokens
+                        avg_padding = total_padding / total_instances
+                        log.info(
+                            f"Packed {total_tokens:,} tokens from {source_paths} into {total_instances:,d} instances "
+                            f"of sequence length {self.sequence_length:,d} using an average of "
+                            f"{avg_padding:.1f} padding tokens per instance."
+                        )
 
 
 class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
@@ -2127,15 +2152,16 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                     )
                     futures.append(future)
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                with _abandon_remaining_work(executor):
+                    concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
-                # Log results.
-                for path, future in zip(paths_needed, futures):
-                    total_og_docs, total_bucketed_docs = future.result()
-                    log.info(
-                        f"Created {total_bucketed_docs:,d} bucketed documents by sequence length from "
-                        f"{total_og_docs:,d} original documents in '{path}'"
-                    )
+                    # Log results.
+                    for path, future in zip(paths_needed, futures):
+                        total_og_docs, total_bucketed_docs = future.result()
+                        log.info(
+                            f"Created {total_bucketed_docs:,d} bucketed documents by sequence length from "
+                            f"{total_og_docs:,d} original documents in '{path}'"
+                        )
 
     def _write_instance_lengths(self):
         instance_lengths_path = self._get_instance_lengths_path()
