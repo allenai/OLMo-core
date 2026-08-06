@@ -83,8 +83,15 @@ LANDMARK_TOKEN_ID = 248200  # Qwen3.5 unused embedding row (vocab 248320); same 
 CP_DEGREE = 8
 NUM_NODES = 2
 GPUS_PER_NODE = 8
-DP_DEGREE = NUM_NODES * GPUS_PER_NODE // CP_DEGREE  # 2
-SHARD_DEGREE = DP_DEGREE  # shard params+grads+optim across all DP ranks, as the 256k runs did
+
+# The sparse-landmark arm cannot run at CP=8. ``SparseLandmarkAttention.apply_cp()`` still calls the
+# pre-2026-08-01 ``all_to_all_cp2hp``, whose ``h_out = h_in // world_size`` gives 0 when
+# cp > n_kv_heads, so it (correctly) rejects any CP degree that does not divide n_kv_heads=4 --
+# ``FastLandmarkAttention`` was migrated to the KV-replicating ``all_to_all_qkv_cp2hp`` in commit
+# 4cf4a38 but ``landmark_sparse.py`` was missed. Until that migration lands, this arm runs CP=4 on
+# ONE node, which still yields DP=2 and therefore the *same* global batch and step count as the
+# other arms -- only the wall-clock differs.
+_ARM_TOPOLOGY = {"sparse-landmark": dict(cp_degree=4, num_nodes=1)}
 
 _CPT_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/amandab"
 
@@ -159,7 +166,11 @@ def arm_geometry(arm: str) -> Dict[str, Any]:
     """
     spec = _ARMS[arm]
     seq_len = int(spec["sequence_length"])
-    global_batch_size = DP_DEGREE * seq_len  # one window per DP replica per step, grad-accum 1
+    topo = _ARM_TOPOLOGY.get(arm, dict(cp_degree=CP_DEGREE, num_nodes=NUM_NODES))
+    cp_degree = int(topo["cp_degree"])
+    num_nodes = int(topo["num_nodes"])
+    dp_degree = num_nodes * GPUS_PER_NODE // cp_degree
+    global_batch_size = dp_degree * seq_len  # one window per DP replica per step, grad-accum 1
     max_steps = max(1, round(int(spec["target_tokens"]) / global_batch_size))
 
     w = dict(spec["weights"])
@@ -175,6 +186,10 @@ def arm_geometry(arm: str) -> Dict[str, Any]:
         attn_type=spec["attn_type"],
         is_landmark=spec["attn_type"] is not None,
         sequence_length=seq_len,
+        cp_degree=cp_degree,
+        num_nodes=num_nodes,
+        dp_degree=dp_degree,
+        shard_degree=dp_degree,  # shard params+grads+optim across all DP ranks
         global_batch_size=global_batch_size,
         max_steps=max_steps,
         checkpoint=spec["checkpoint"],
@@ -213,7 +228,7 @@ def build_qwen35_sft_experiment(cli_context: CliContext, *, arm: str) -> Experim
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=NUM_NODES,
+        num_nodes=geom["num_nodes"],
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
@@ -256,11 +271,11 @@ def build_qwen35_sft_experiment(cli_context: CliContext, *, arm: str) -> Experim
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=SHARD_DEGREE,
+            shard_degree=geom["shard_degree"],
         ),
         # Ulysses ONLY: GatedDeltaNet.apply_cp() rejects ring/zigzag CP, and GatedDeltaNet.apply_tp()
         # raises NotImplementedError, so this is the only parallelism axis besides DP.
-        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
+        cp_config=TransformerContextParallelConfig.ulysses(degree=geom["cp_degree"]),
         # FULL activation checkpointing -- budget mode requires torch.compile, which is off here.
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full,
