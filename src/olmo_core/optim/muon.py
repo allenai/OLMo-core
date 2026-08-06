@@ -14,6 +14,7 @@ from olmo_core.distributed.parallel import (
     get_dp_shard_mesh,
     get_world_mesh,
 )
+from olmo_core.nn.attention import Attention, FusedAttention
 from olmo_core.nn.transformer import Transformer
 
 from .config import MatrixAwareOptimConfig, OptimConfig, OptimGroupOverride
@@ -99,13 +100,42 @@ class MuonConfig(MatrixAwareOptimConfig):
     def default_group_overrides(self, model: torch.nn.Module) -> list[OptimGroupOverride]:
         """
         Split the model parameters into Adam and Muon groups.
-        Only >=2d, internal parameters are meant to be optimized with Muon.
+
+        Only >=2d, internal parameters are meant to be optimized with Muon. Query, key, and
+        value projection matrices are further grouped by their number of attention heads so that
+        Dion applies Newton-Schulz independently to each head.
         """
         assert isinstance(model, Transformer)
         params = self.categorize_parameters(model)
 
-        # Matrix parameters are optimized with Muon.
-        matrix_override = OptimGroupOverride(params=params["matrix"], opts=dict())
+        # Attention projection matrices are optimized independently per head. Dion splits a 2D
+        # parameter evenly along dim 0 according to the group's `num_heads` option. A fused Wqkv
+        # contains Q, K, and V heads consecutively, hence 3 * n_heads splits.
+        attention_params_by_num_heads: dict[int, list[str]] = {}
+        matrix_params = set(params["matrix"])
+
+        def add_attention_param(module_name: str, param_name: str, num_heads: int) -> None:
+            fqn = f"blocks.{module_name}.{param_name}"
+            if num_heads > 1 and fqn in matrix_params:
+                attention_params_by_num_heads.setdefault(num_heads, []).append(fqn)
+                matrix_params.remove(fqn)
+
+        for module_name, module in model.blocks.named_modules():
+            if isinstance(module, Attention):
+                add_attention_param(module_name, "w_q.weight", module.n_heads)
+                add_attention_param(module_name, "w_k.weight", module.n_kv_heads)
+                add_attention_param(module_name, "w_v.weight", module.n_kv_heads)
+            elif isinstance(module, FusedAttention):
+                add_attention_param(module_name, "w_qkv.weight", 3 * module.n_heads)
+
+        # All other matrix parameters are optimized as whole matrices with Muon.
+        matrix_override = OptimGroupOverride(
+            params=[name for name in params["matrix"] if name in matrix_params], opts=dict()
+        )
+        attention_overrides = [
+            OptimGroupOverride(params=head_params, opts=dict(num_heads=num_heads))
+            for num_heads, head_params in attention_params_by_num_heads.items()
+        ]
 
         # Vector, embedding, and lm_head parameters are optimized with AdamW.
         embed_override = OptimGroupOverride(
@@ -116,7 +146,13 @@ class MuonConfig(MatrixAwareOptimConfig):
             params=params["lm_head"], opts=dict(algorithm="adamw")
         )
 
-        return [matrix_override, vector_override, embed_override, lm_head_override]
+        return [
+            matrix_override,
+            *attention_overrides,
+            vector_override,
+            embed_override,
+            lm_head_override,
+        ]
 
     def build_groups(
         self, model: torch.nn.Module, strict: bool = True
