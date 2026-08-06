@@ -134,12 +134,19 @@ def _register_olmo3moe_auto_classes() -> None:
     checkpoint with ``trust_remote_code=True``. In-memory registration is idempotent —
     transformers raises :class:`ValueError` on a duplicate.
     """
-    from transformers import AutoConfig, AutoModelForCausalLM
+    from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
-    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeForCausalLM,
+        Olmo3MoeModel,
+    )
 
     try:
         AutoConfig.register("olmo3moe", Olmo3MoeConfig)
+    except ValueError:
+        pass  # already registered
+    try:
+        AutoModel.register(Olmo3MoeConfig, Olmo3MoeModel)
     except ValueError:
         pass  # already registered
     try:
@@ -148,6 +155,7 @@ def _register_olmo3moe_auto_classes() -> None:
         pass  # already registered
 
     Olmo3MoeConfig.register_for_auto_class("AutoConfig")
+    Olmo3MoeModel.register_for_auto_class("AutoModel")
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
