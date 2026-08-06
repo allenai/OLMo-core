@@ -335,6 +335,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
     head_dim: Optional[int] = None
+    d_attn: Optional[int] = None
+    """
+    Deprecated total query-attention width. Kept for compatibility with native checkpoints
+    serialized before ``head_dim`` replaced it.
+    """
     bias: Optional[bool] = None
     gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None
@@ -379,6 +384,21 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         transposes Q/K/V (a view -> still packed) but for GQA (``n_kv_heads < n_heads``) it also
         repeats K/V into fresh storage before SDPA, so only Q is packed for GQA on that backend.
     """
+
+    def __post_init__(self, *_: Any) -> None:
+        if self.d_attn is None:
+            return
+        if self.d_attn % self.n_heads:
+            raise OLMoConfigurationError(
+                f"d_attn ({self.d_attn}) must be divisible by n_heads ({self.n_heads})"
+            )
+        legacy_head_dim = self.d_attn // self.n_heads
+        if self.head_dim is not None and self.head_dim != legacy_head_dim:
+            raise OLMoConfigurationError(
+                f"Conflicting attention dimensions: head_dim={self.head_dim}, "
+                f"d_attn={self.d_attn}, n_heads={self.n_heads}"
+            )
+        self.head_dim = legacy_head_dim
 
     def num_params(self, d_model: int) -> int:
         """
@@ -455,6 +475,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("d_attn", None)
 
         sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
             "sliding_window", None
