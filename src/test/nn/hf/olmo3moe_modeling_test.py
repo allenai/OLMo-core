@@ -7,6 +7,8 @@ logprobs. This exercises the ``modeling_olmo3moe`` forward and validates the con
 model's real parameter set (strict ``load_state_dict``). Requires ``transformers``.
 """
 
+import json
+
 import pytest
 import torch
 
@@ -27,6 +29,30 @@ def _has_olmo3moe() -> bool:
 requires_olmo3moe = pytest.mark.skipif(
     not _has_olmo3moe(), reason="requires transformers (for the olmo3moe HF model)"
 )
+
+
+@requires_olmo3moe
+def test_olmo3moe_registers_base_and_causal_auto_models(tmp_path):
+    from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeModel
+
+    _register_olmo3moe_auto_classes()
+    Olmo3MoeModel(_small_config()).save_pretrained(tmp_path)
+
+    with (tmp_path / "config.json").open() as config_file:
+        auto_map = json.load(config_file)["auto_map"]
+
+    assert auto_map["AutoConfig"] == "configuration_olmo3moe.Olmo3MoeConfig"
+    assert auto_map["AutoModel"] == "modeling_olmo3moe.Olmo3MoeModel"
+
+
+@requires_olmo3moe
+def test_olmo3moe_remote_code_does_not_require_olmo_core():
+    from transformers.dynamic_module_utils import get_imports
+
+    from olmo_core.nn.moe.v2.hf import modeling_olmo3moe
+
+    assert "olmo_core" not in get_imports(modeling_olmo3moe.__file__)
 
 
 def _small_config():

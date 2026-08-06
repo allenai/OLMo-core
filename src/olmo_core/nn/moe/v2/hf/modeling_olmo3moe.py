@@ -315,8 +315,24 @@ class Olmo3MoeExperts(nn.ModuleList):
         the same permutation, grouped GEMM, SwiGLU layout, and unpermutation as OLMo-core while
         retaining the converted HF parameters as the source of truth.
         """
-        from olmo_core.nn.moe.utils import moe_permute_no_compile, moe_unpermute_no_compile
-        from olmo_core.nn.moe.v2.routed_experts import gmm, requires_host_side_split_sizes
+        # This is an opt-in conversion-validation path, so keep OLMo-core an optional
+        # dependency of the otherwise standalone exported HF module. Transformers'
+        # remote-code loader deliberately ignores imports guarded by ``try`` while
+        # checking dependencies; without the guard, vLLM's generic Transformers
+        # backend refuses to load an export even though this path is disabled.
+        try:
+            from olmo_core.nn.moe.utils import (
+                moe_permute_no_compile,
+                moe_unpermute_no_compile,
+            )
+            from olmo_core.nn.moe.v2.routed_experts import (
+                gmm,
+                requires_host_side_split_sizes,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "OLMO_HF_MOE_CORE_REFERENCE requires the ai2-olmo-core package"
+            ) from exc
 
         N, H = hidden_states.shape
         K = topk_ids.shape[-1]
