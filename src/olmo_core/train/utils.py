@@ -153,38 +153,44 @@ def move_metrics(
     return target
 
 
-def get_metrics_reduce_type_by_step(
+def gather_metrics_by_step(
     metrics: Dict[int, Dict[str, torch.Tensor]],
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     process_group: Optional[dist.ProcessGroup] = None,
-) -> Dict[int, Dict[str, Optional[ReduceType]]]:
-    all_ranks_metrics_reduce_type = all_gather_object(metrics_reduce_type, group=process_group)
+) -> Tuple[Dict[int, Dict[str, Optional[ReduceType]]], Dict[int, Dict[str, int]]]:
+    """
+    Agree across ranks on which steps are being reduced, which metrics each of them carries and
+    how each of those is to be reduced.
 
-    out: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
-    for step in metrics.keys():
-        for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
-            for metric_name, reduce_type in rank_metrics_reduce_type.items():
-                out[step][metric_name] = reduce_type
+    :func:`reduce_metrics` shapes the tensors it all-reduces from the steps and the metric names
+    it was handed, so those have to be the same on every rank. A rank that recorded nothing this
+    time round, or recorded a different set of names, would otherwise either enter the collective
+    with a differently shaped tensor or not enter it at all, and the ranks that did enter would
+    then wait out the process group's whole deadline for a peer that is never coming.
 
-    return out
+    The reduce type travels with the name because a rank that did not record a metric has no way
+    to look up how to reduce it, and guessing wrong puts that rank's contribution in a different
+    tensor from everybody else's, which is the same shape mismatch by a quieter route.
 
+    :returns: The reduce type of every metric of every step any rank holds, and, beside it, how
+        many ranks actually contributed a value. That count is the divisor a mean needs, and it
+        is the world size whenever every rank did contribute.
+    """
+    local: Dict[int, Dict[str, Optional[ReduceType]]] = {
+        step: {name: metrics_reduce_type.get(name) for name in step_metrics}
+        for step, step_metrics in metrics.items()
+    }
+    all_ranks = all_gather_object(local, group=process_group)
 
-def get_metric_world_sizes_by_step(
-    metrics: Dict[int, Dict[str, torch.Tensor]],
-    metrics_reduce_type: Dict[str, Optional[ReduceType]],
-    process_group: Optional[dist.ProcessGroup] = None,
-) -> Dict[int, Dict[str, int]]:
-    all_ranks_metrics_reduce_type: List[Dict[str, Optional[ReduceType]]] = all_gather_object(
-        metrics_reduce_type, group=process_group
-    )
+    reduce_type_by_step: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
+    contributors: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for rank_metrics in all_ranks:
+        for step, step_reduce_types in rank_metrics.items():
+            for name, reduce_type in step_reduce_types.items():
+                reduce_type_by_step[step][name] = reduce_type
+                contributors[step][name] += 1
 
-    all_steps_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for step in metrics.keys():
-        for rank_metrics_reduce_type in all_ranks_metrics_reduce_type:
-            for metric_name in rank_metrics_reduce_type.keys():
-                all_steps_world_sizes[step][metric_name] += 1
-
-    return all_steps_world_sizes
+    return reduce_type_by_step, contributors
 
 
 def check_metrics_consistent(
@@ -207,6 +213,18 @@ def reduce_metrics(
     process_group: Optional[dist.ProcessGroup] = None,
     metrics_consistent: bool = True,
 ) -> Dict[int, Dict[str, float]]:
+    """
+    Reduce recorded metrics across ranks.
+
+    Every rank must call this, and a rank with nothing recorded is not an exception: the reduce
+    is a collective and a rank that stays out of it strands the ones that went in.
+
+    :param metrics_consistent: Retained for callers. What is being reduced is now settled between
+        the ranks rather than assumed from one rank's view, so this no longer changes the result;
+        :func:`check_metrics_consistent` remains the way to warn a user that their metrics differ.
+    """
+    del metrics_consistent
+
     metrics = move_metrics(metrics, device)
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
 
@@ -218,19 +236,18 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
-    all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
-    all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
-    if not metrics_consistent:
-        all_steps_metric_world_sizes = get_metric_world_sizes_by_step(
-            metrics,
-            metrics_reduce_type,
-            process_group=process_group,
-        )
-        all_steps_metrics_reduce_type = get_metrics_reduce_type_by_step(
-            metrics,
-            metrics_reduce_type,
-            process_group=process_group,
-        )
+
+    # NOTE: every rank has to reach this, including one holding no metrics at all, because
+    # everything from here down is a collective. Whether a rank takes part must not depend on
+    # what that rank happens to be carrying.
+    reduce_type_by_step, contributors_by_step = gather_metrics_by_step(
+        metrics, metrics_reduce_type, process_group=process_group
+    )
+    if not reduce_type_by_step:
+        # No rank has anything, which every rank now knows, so every rank stops here together.
+        return out
+
+    steps = sorted(reduce_type_by_step.keys())
 
     # Flattened metrics by step and reduce type.
     sum_metric_names: List[List[str]] = []
@@ -238,24 +255,16 @@ def reduce_metrics(
     max_metric_names: List[List[str]] = []
     max_metric_values: List[torch.Tensor] = []
 
-    for step in sorted(metrics.keys()):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+    for step in steps:
+        step_metrics_reduce_type = reduce_type_by_step[step]
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
         step_max_metric_values: List[torch.Tensor] = []
 
-        step_metrics = metrics[step]
+        step_metrics = metrics.get(step, {})
 
-        sorted_metric_names: List[str]
-        if not metrics_consistent:
-            sorted_metric_names = sorted(all_steps_metric_world_sizes[step].keys())
-        else:
-            sorted_metric_names = sorted(step_metrics.keys())
-
-        for name in sorted_metric_names:
+        for name in sorted(step_metrics_reduce_type.keys()):
             value = step_metrics.get(name)
             reduce_type = step_metrics_reduce_type[name]
             if reduce_type in (ReduceType.mean, ReduceType.sum):
@@ -328,17 +337,17 @@ def reduce_metrics(
     all_sum_metrics = all_sum_metrics.cpu()
     all_max_metrics = all_max_metrics.cpu()
 
-    for i, step in enumerate(sorted(metrics.keys())):
-        step_metrics_reduce_type = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+    for i, step in enumerate(steps):
+        step_metrics_reduce_type = reduce_type_by_step[step]
         step_sum_metric_names = sum_metric_names[i]
         step_sum_metric_items = all_sum_metrics[i].tolist()
         step_max_metric_names = max_metric_names[i]
         step_max_metric_items = all_max_metrics[i].tolist()
         for name, item in zip(step_sum_metric_names, step_sum_metric_items):
             item = item * divide_factor
-            reduce_type = step_metrics_reduce_type[name]
+            reduce_type = step_metrics_reduce_type.get(name)
             if reduce_type == ReduceType.mean:
-                item = item / all_steps_metric_world_sizes.get(step, {}).get(name, world_size)
+                item = item / contributors_by_step[step].get(name, world_size)
             elif reduce_type == ReduceType.l2_norm:
                 item = math.sqrt(item)
             out[step][name] = item
