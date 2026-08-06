@@ -7,7 +7,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.parallel import DataParallelType, build_world_mesh
-from olmo_core.nn.attention import FusedAttention
+from olmo_core.nn.attention import Attention, FusedAttention
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.muon import MuonConfig
@@ -73,6 +73,41 @@ def test_muon_splits_fused_qkv_projection_by_head():
     parameter_options = _parameter_options(MuonConfig(), model)
 
     assert parameter_options["blocks.0.attention.w_qkv.weight"]["num_heads"] == 12
+    assert "num_heads" not in parameter_options["blocks.0.attention.w_out.weight"]
+
+
+def test_muon_splits_mla_up_projections_by_head():
+    model = TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=1,
+        n_heads=4,
+        hidden_size_multiple_of=8,
+    ).build()
+
+    # Model an external MLA Attention subclass without adding it as an OLMo-core dependency.
+    class _MLAAttention(Attention):
+        pass
+
+    attention = _MLAAttention.__new__(_MLAAttention)
+    nn.Module.__init__(attention)
+    attention.n_heads = 4
+    attention.n_kv_heads = 2
+    attention.w_q_a = nn.Linear(64, 32, bias=False)
+    attention.w_q_b = nn.Linear(32, 4 * 24, bias=False)
+    attention.w_kv_a = nn.Linear(64, 16 + 8, bias=False)
+    attention.w_k_b = nn.Linear(16, 2 * 16, bias=False)
+    attention.w_v_b = nn.Linear(16, 2 * 16, bias=False)
+    attention.w_out = nn.Linear(4 * 16, 64, bias=False)
+    model.blocks["0"].attention = attention
+
+    parameter_options = _parameter_options(MuonConfig(), model)
+
+    assert parameter_options["blocks.0.attention.w_q_b.weight"]["num_heads"] == 4
+    assert parameter_options["blocks.0.attention.w_k_b.weight"]["num_heads"] == 2
+    assert parameter_options["blocks.0.attention.w_v_b.weight"]["num_heads"] == 2
+    assert "num_heads" not in parameter_options["blocks.0.attention.w_q_a.weight"]
+    assert "num_heads" not in parameter_options["blocks.0.attention.w_kv_a.weight"]
     assert "num_heads" not in parameter_options["blocks.0.attention.w_out.weight"]
 
 

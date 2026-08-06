@@ -125,6 +125,9 @@ class MuonConfig(MatrixAwareOptimConfig):
                 add_attention_param(module_name, "w_q.weight", module.n_heads)
                 add_attention_param(module_name, "w_k.weight", module.n_kv_heads)
                 add_attention_param(module_name, "w_v.weight", module.n_kv_heads)
+                add_attention_param(module_name, "w_q_b.weight", module.n_heads)
+                add_attention_param(module_name, "w_k_b.weight", module.n_kv_heads)
+                add_attention_param(module_name, "w_v_b.weight", module.n_kv_heads)
             elif isinstance(module, FusedAttention):
                 add_attention_param(module_name, "w_qkv.weight", 3 * module.n_heads)
 
