@@ -221,6 +221,56 @@ RUN set -eux; \
     rm /tmp/dependencies.txt; \
     python -m pip install --no-cache-dir "edullm-data @ https://github.com/edu-llm/edullm-data/archive/38bf831a6c3f445e394784018441fd59288b876c.tar.gz"
 
+# FLASH-ATTENTION, AS A PREBUILT WHEEL, BECAUSE THE olmo3_* CONFIGS CANNOT BE BUILT WITHOUT IT.
+#
+# All fourteen olmo3_* factories in TransformerConfig pass
+# attn_backend=AttentionBackendName.flash_2, and Attention.__init__ calls
+# backend.assert_supported() during construction. On a machine with a GPU that raises before
+# step 1: run run_019fde30-1d27-7096-8bd9-3ef9b7748d7b died eleven seconds after starting with
+#
+#   RuntimeError: 'FlashAttention2Backend' is missing the flash-attn package or is not
+#   supported on this platform.
+#     File ".../olmo_core/nn/attention/__init__.py", line 470, in __init__
+#       backend.assert_supported()
+#
+# so it is not a slow path, it is "the model cannot be instantiated", and it costs whoever
+# hits it the queue wait plus a billed allocation. flash-attn reaches this project only
+# through the unused `fa4` extra, so nothing here was ever going to install it.
+#
+# The olmo2_* factories are unaffected: they leave attn_backend at None, which resolves to the
+# torch backend, which is why the olmo2_190M construction in the assertion block below has
+# been passing on an image that cannot build a single olmo3 model.
+#
+# A WHEEL AND NOT `pip install flash-attn`, WHICH CANNOT WORK ON THIS BASE. The sdist compiles
+# CUDA sources and needs nvcc and the CUDA toolkit; the registered base is a bare python image
+# carrying neither, and the C compiler added above is for torch.compile, not for nvcc. A source
+# build would also take a standard runner far past its budget. A prebuilt wheel only unpacks,
+# so it installs on a CPU runner with no GPU and no toolkit.
+#
+# WHY THIS EXACT FILENAME. flash-attn publishes one wheel per (flash version, CUDA major, torch
+# minor, C++ ABI, python, arch) and they are not interchangeable -- a mismatched field installs
+# cleanly and then fails to import at run time, which is the same eleven-second death by a
+# slower route. cu12 because torch 2.9.0's PyPI wheel pins nvidia-*-cu12==12.8.x; torch2.9 from
+# the pin above; cp312 because the registered base is Debian trixie carrying python 3.12.13;
+# abiTRUE because it is the only ABI flash-attn publishes for torch 2.9. The CUDA-major
+# assertion runs before the install so that a future repin of torch fails the build here with a
+# sentence about why, rather than installing a wheel that cannot import.
+#
+# 253 MB of wheel, taking the image from ~2.94 GB to roughly 3.2 GB. That is the cost of the
+# kernel the registered configs name.
+#
+# ABOVE THE SOURCE COPY, WITH THE REST OF THE DEPENDENCIES, FOR THE REASON THE BLOCK ABOVE
+# GIVES. 253 MB below `COPY . .` would be another per-image layer keyed on the commit, sharing
+# with nothing -- the exact shape the dependency/source split was introduced to stop. Here it is
+# keyed on the wheel URL and this file, so every image built from one dependency set shares one
+# blob. Its own layer rather than the RUN above so that a repin re-downloads the wheel and not
+# the four gigabytes beside it.
+ARG FLASH_ATTN_WHEEL=https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+RUN set -eux; \
+    python -c "import torch; cu = torch.version.cuda or ''; assert cu.startswith('12'), f'the pinned wheel is cu12 but torch reports CUDA {cu!r} -- repin FLASH_ATTN_WHEEL'"; \
+    python -m pip install --no-cache-dir "${FLASH_ATTN_WHEEL}"; \
+    python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'the flash-attn install moved torch off the pin: {torch.__version__}'"
+
 # The build context is the repository root, so the root .dockerignore is what keeps .git
 # out of this layer, and out of the context entirely.
 COPY . .
@@ -287,11 +337,46 @@ COPY . .
 # 0xE3069283 and the platform's checkpoints.py asserts against the same constant. It costs a
 # microsecond and it is the difference between "botocore will use this" and "and the number
 # it gets is right".
+#
+# THE FLASH-ATTENTION LINE IS THE BACKEND PREDICATE ITSELF, AND NOT A MODEL CONSTRUCTION, WHICH
+# IS THE WHOLE SUBTLETY OF CHECKING THIS ON A BUILDER.
+#
+# The obvious check -- build an olmo3_* config here and let it raise -- cannot work and is worse
+# than nothing, because it passes either way. Attention.__init__ reaches this, four lines above
+# the assert_supported() that killed the run:
+#
+#   if not torch.cuda.is_available() and backend != AttentionBackendName.torch:
+#       warnings.warn(...); backend = AttentionBackendName.torch
+#
+# A build runner has no GPU, so a constructed olmo3 config is silently downgraded to the torch
+# backend and never asks whether flash-attn is installed. That is exactly why nothing in this
+# repository noticed: this image has been building olmo2_190M green while being unable to run a
+# single olmo3 rung.
+#
+# FlashAttention2Backend.assert_supported() is device-free -- it is has_flash_attn_2(), which is
+# `flash_attn_2 is not None` against a module-level import and nothing else -- so calling the
+# backend's own assertion directly checks the real condition on a machine with no GPU. That is
+# the predicate that failed on the A10G, evaluated where a failure costs a runner minute.
+#
+# IT IS FATAL RATHER THAN A WARNING, AND THE ONE THING IT LEANS ON IS WORTH NAMING. The check
+# only reports honestly if `import flash_attn` succeeds on a driverless builder, and the way it
+# would not is dlopen of the compiled extension wanting libcuda.so.1, which no CPU-only machine
+# has. Read out of the wheel rather than assumed: flash_attn_2_cuda...so declares libc10.so,
+# libtorch_cpu.so, libtorch_python.so, libcudart.so.12, libc10_cuda.so, libtorch_cuda.so,
+# libstdc++, libgcc_s and libc -- and libtorch_cuda.so in turn declares only CUDA *runtime*
+# libraries (cudart, cublas, cudnn, nccl and the rest), every one of them shipped by the
+# nvidia-*-cu12 wheels torch pulls in. Neither names the driver. So the load resolves from pip
+# and the assertion is answerable here.
+#
+# If that reading is wrong the build goes red on this line, which is the safe direction: a red
+# build costs a runner minute, and the image it refuses to publish is one that cannot train.
 RUN set -eux; \
     python -m pip install --no-cache-dir ".[wandb]"; \
     python -c "import torch; assert torch.__version__.startswith('2.9.0'), f'torch was moved off the pin: {torch.__version__}'"; \
     python -c "import torch; assert torch.version.cuda, 'the CUDA build of torch was replaced by a CPU wheel'"; \
     python -c "import boto3, wandb; from olmo_core.data import TokenizerConfig; from olmo_core.nn.transformer import TransformerConfig; print(TransformerConfig.olmo2_190M(vocab_size=TokenizerConfig.gpt2().padded_vocab_size()).__class__.__name__)"; \
+    python -c "from importlib.metadata import version; print('flash_attn dist:', version('flash_attn'))"; \
+    python -c "from olmo_core.nn.attention.backend import AttentionBackendName; AttentionBackendName.flash_2.assert_supported(); print('flash_2 backend supported')"; \
     python -c "import boto3; from botocore import UNSIGNED; from botocore.config import Config; from botocore.stub import Stubber; client = boto3.client('s3', region_name='us-east-1', config=Config(signature_version=UNSIGNED)); stub = Stubber(client); stub.add_response('put_object', {}); stub.activate(); client.put_object(Bucket='b', Key='k', Body=b'123456789', ChecksumAlgorithm='CRC32C')"; \
     python -c "from awscrt.checksums import crc32c; assert crc32c(b'123456789') == 0xE3069283, 'awscrt computes something other than CRC-32C'"; \
     python -c "from edullm_data.read import dataset_paths, resolve_latest; print(dataset_paths.__module__)"
