@@ -92,7 +92,7 @@ class WandBCallback(Callback):
     auto_resume: bool = False
     """
     If ``True``, persist the W&B run ID in trainer checkpoints and resume the same run
-    from the checkpoint step after a restart.
+    after a restart.
     """
 
     run_id: Optional[str] = None
@@ -171,15 +171,17 @@ class WandBCallback(Callback):
                     resume_step = self.step
                 if resume_step is not None:
                     log.info(
-                        "Resuming W&B run '%s' from checkpoint step %s",
+                        "Resuming W&B run '%s' for training checkpoint step %s",
                         self.run_id,
                         resume_step,
                     )
-                    init_kwargs["resume_from"] = f"{self.run_id}?_step={resume_step}"
                 else:
                     log.info("Resuming W&B run '%s'", self.run_id)
-                    init_kwargs.update(id=self.run_id, resume="allow")
-                init_kwargs["allow_val_change"] = True
+                init_kwargs.update(
+                    id=self.run_id,
+                    resume="allow",
+                    allow_val_change=True,
+                )
 
             self.wandb.init(
                 dir=wandb_dir,

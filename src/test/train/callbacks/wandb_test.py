@@ -45,7 +45,7 @@ def test_wandb_run_id_and_checkpoint_step_roundtrip(tmp_path, monkeypatch):
     }
 
 
-def test_wandb_auto_resume_rewinds_to_checkpoint_step(tmp_path, monkeypatch):
+def test_wandb_auto_resume_continues_existing_run(tmp_path, monkeypatch):
     monkeypatch.setenv(WANDB_API_KEY_ENV_VAR, "test-key")
     wandb = MockWandB()
     callback = _callback(tmp_path, wandb, step=25)
@@ -61,9 +61,10 @@ def test_wandb_auto_resume_rewinds_to_checkpoint_step(tmp_path, monkeypatch):
 
     callback.pre_train()
 
-    assert wandb.init_calls[0]["resume_from"] == "run-123?_step=20"
+    assert wandb.init_calls[0]["id"] == "run-123"
+    assert wandb.init_calls[0]["resume"] == "allow"
     assert wandb.init_calls[0]["allow_val_change"] is True
-    assert "resume" not in wandb.init_calls[0]
+    assert "resume_from" not in wandb.init_calls[0]
 
 
 def test_wandb_auto_resume_rejects_different_run_identity(tmp_path, monkeypatch):
@@ -82,6 +83,8 @@ def test_wandb_auto_resume_rejects_different_run_identity(tmp_path, monkeypatch)
 
     callback.pre_train()
 
+    assert "id" not in wandb.init_calls[0]
+    assert "resume" not in wandb.init_calls[0]
     assert "resume_from" not in wandb.init_calls[0]
     assert callback.state_dict()["run_id"] == "new-run"
 
@@ -96,4 +99,6 @@ def test_wandb_explicit_run_id_migrates_legacy_checkpoint(tmp_path, monkeypatch)
 
     callback.pre_train()
 
-    assert wandb.init_calls[0]["resume_from"] == "legacy-run?_step=4000"
+    assert wandb.init_calls[0]["id"] == "legacy-run"
+    assert wandb.init_calls[0]["resume"] == "allow"
+    assert "resume_from" not in wandb.init_calls[0]
