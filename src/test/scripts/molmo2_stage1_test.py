@@ -108,6 +108,15 @@ def test_s002_stage1_matches_released_molmo2_scale_defaults():
     assert stage1.EVAL_EXAMPLES == 2048
     assert stage1.EVAL_RANK_BATCH_INSTANCES == 4
     assert stage1.EVAL_SEED == 6198
+    assert stage1.FAST_VISION_EVAL_INTERVAL == 2000
+    assert stage1.FAST_VISION_EVAL_EXAMPLES == 256
+    assert stage1.FAST_LANGUAGE_EVAL_INTERVAL == 4000
+    assert stage1.FAST_LANGUAGE_EVAL_TASKS == (
+        "arc_challenge_test_mc_5shot_fast",
+        "basic_skills_arithmetic_rc_5shot",
+        "copycolors_10way_fast",
+        "hellaswag_bpb_5shot",
+    )
     assert stage1.BEAKER_CLUSTER == "ai2/holmes"
     assert stage1.BEAKER_WORKSPACE == "ai2/molmofication"
     assert stage1.BEAKER_BUDGET == "ai2/oe-other"
@@ -244,6 +253,102 @@ def test_stage1_validation_matches_released_loader_seed_without_reseeding_augmen
     assert captured["loader_kwargs"]["global_batch_size"] == 8 * stage1.SEQUENCE_LENGTH
     assert captured["callback_name"] == "pixmo_cap_validation"
     assert captured["callback_kwargs"]["eval_duration"] == stage1.Duration.steps(256)
+
+
+def test_stage1_fast_vision_validation_uses_held_out_task_splits(monkeypatch):
+    stage1 = _load_stage1_module()
+    captured = {"loaders": [], "evaluators": []}
+
+    base_dataset = stage1.PixMoCapDatasetConfig(dataset_path="synthetic")
+    monkeypatch.setattr(stage1.PixMoCapDatasetConfig, "build", lambda self, tokenizer: self)
+    monkeypatch.setattr(stage1.PixMoCountDatasetConfig, "build", lambda self, tokenizer: self)
+    monkeypatch.setattr(stage1.PixMoPointsDatasetConfig, "build", lambda self, tokenizer: self)
+
+    class Loader:
+        def __init__(self, dataset, collator, **kwargs):
+            self.dataset = dataset
+            captured["loaders"].append((dataset, kwargs))
+
+    class Evaluator:
+        def __init__(self, **kwargs):
+            self.name = kwargs["name"]
+            captured["evaluators"].append(kwargs)
+
+    class Callback:
+        def __init__(self, **kwargs):
+            captured["callback_kwargs"] = kwargs
+
+    trainer = SimpleNamespace(
+        work_dir=Path("/tmp/stage1-fast-vision-test"),
+        device="cpu",
+        dp_process_group=None,
+        add_callback=lambda name, callback: captured.update(callback_name=name, callback=callback),
+    )
+    config = SimpleNamespace(
+        dataset=base_dataset,
+        fast_vision_eval_interval=stage1.FAST_VISION_EVAL_INTERVAL,
+        fast_vision_eval_examples=stage1.FAST_VISION_EVAL_EXAMPLES,
+        eval_rank_batch_instances=stage1.EVAL_RANK_BATCH_INSTANCES,
+        eval_seed=stage1.EVAL_SEED,
+    )
+    collator = SimpleNamespace(pad_sequence_length=stage1.SEQUENCE_LENGTH)
+    monkeypatch.setattr(stage1, "MultimodalDataLoader", Loader)
+    monkeypatch.setattr(stage1, "MultimodalLMEvaluator", Evaluator)
+    monkeypatch.setattr(stage1, "EvaluatorCallback", Callback)
+
+    stage1._add_fast_vision_validation_callback(
+        trainer,
+        tokenizer=object(),
+        config=config,
+        collator=collator,
+        dp_world_size=2,
+        dp_rank=0,
+    )
+
+    datasets = [dataset for dataset, _ in captured["loaders"]]
+    assert [evaluator["name"] for evaluator in captured["evaluators"]] == [
+        "pixmo-cap-caption-validation",
+        "pixmo-count-validation",
+        "pixmo-points-validation",
+    ]
+    assert all(dataset.split == "validation" for dataset in datasets)
+    assert datasets[0].mode == "caption"
+    assert datasets[1].counting == "both"
+    assert datasets[2].kind == "basic"
+    assert all(kwargs["shuffle"] is False for _, kwargs in captured["loaders"])
+    assert captured["callback_name"] == "fast_vision_validation"
+    assert captured["callback_kwargs"]["eval_interval"] == 2000
+    assert captured["callback_kwargs"]["eval_duration"] == stage1.Duration.steps(32)
+
+
+def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypatch):
+    stage1 = _load_stage1_module()
+    captured = {}
+    callback = object()
+
+    class CallbackConfig:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+        def build(self, trainer):
+            captured["built_with"] = trainer
+            return callback
+
+    trainer = SimpleNamespace(
+        add_callback=lambda name, value: captured.update(callback_name=name, callback=value)
+    )
+    config = SimpleNamespace(fast_language_eval_interval=4000)
+    monkeypatch.setattr(stage1, "DownstreamEvaluatorCallbackConfig", CallbackConfig)
+
+    stage1._add_fast_language_validation_callback(trainer, config)
+
+    assert captured["built_with"] is trainer
+    assert captured["kwargs"]["tasks"] == list(stage1.FAST_LANGUAGE_EVAL_TASKS)
+    assert captured["kwargs"]["tokenizer"] == stage1.TokenizerConfig.dolma2()
+    assert captured["kwargs"]["eval_interval"] == 4000
+    assert captured["kwargs"]["lazy"] is True
+    assert captured["callback_name"] == "fast_language_validation"
+    assert captured["callback"] is callback
 
 
 @pytest.mark.parametrize(

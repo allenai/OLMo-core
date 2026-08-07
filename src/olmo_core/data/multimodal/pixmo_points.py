@@ -24,8 +24,8 @@ import numpy as np
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
-from .grounding import normalize_points, pointing_answer
 from .document_layout import branch_context_ids, image_prefix_ids, response_ids
+from .grounding import normalize_points, pointing_answer
 from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
 from .sft_formatter import SftFormatter
@@ -86,7 +86,9 @@ def _build_example(
         )
         for question, answer in branches_text
     ]
-    from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
+    from olmo_core.data.multimodal.message_weight import (
+        apply_message_weight_to_loss_masks,
+    )
 
     seq = build_branched_sequence(
         prefix,
@@ -129,6 +131,7 @@ def _open_image(p):
 class PixMoPointsDatasetConfig(Config):
     """``pixmo_points_train`` (kind=basic) / ``pixmo_points_high_freq_train`` (high_frequency)."""
 
+    split: str = "train"
     kind: str = "both"  # "basic" (points-pointing) | "high_frequency" (points-counting) | "both"
     counting: str = "both"  # "both" duplicates each example in point_count/pointing styles
     max_points: int = 60
@@ -154,7 +157,7 @@ class PixMoPointsDataset:
         from datasets import concatenate_datasets
 
         self._data = concatenate_datasets(
-            [_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub]
+            [_load_split(f"{PIXMO_DATASETS}/{s}", config.split) for s in sub]
         )
         # Pre-split each row's labels into sub-batches with <= max_total_points (mm_olmo).
         self._index = self._build_sub_index()
@@ -236,6 +239,7 @@ class PixMoPointsDataset:
 
 @dataclass
 class PixMoCountDatasetConfig(Config):
+    split: str = "train"
     counting: str = "both"  # "both" interleaves point_count (even) / pointing (odd)
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
@@ -252,7 +256,7 @@ class PixMoCountDataset:
     def __init__(self, config: PixMoCountDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{PIXMO_DATASETS}/count", "train")
+        self._data = _load_split(f"{PIXMO_DATASETS}/count", config.split)
         self._n = len(self._data)
 
     def __len__(self) -> int:

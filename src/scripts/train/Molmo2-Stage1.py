@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import yaml
 
 from olmo_core.config import Config, DType
+from olmo_core.data import TokenizerConfig
 from olmo_core.data.data_loader import DataLoaderBase
 from olmo_core.data.multimodal import (
     CoSynPointDatasetConfig,
@@ -63,6 +64,7 @@ from olmo_core.train.callbacks import (
     CheckpointerCallback,
     ConfigSaverCallback,
     ConsoleLoggerCallback,
+    DownstreamEvaluatorCallbackConfig,
     EvaluatorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
@@ -106,6 +108,18 @@ EVAL_INTERVAL = 1000
 EVAL_EXAMPLES = 2048
 EVAL_RANK_BATCH_INSTANCES = 4
 EVAL_SEED = 6198
+FAST_VISION_EVAL_INTERVAL = 2000
+FAST_VISION_EVAL_EXAMPLES = 256
+FAST_LANGUAGE_EVAL_INTERVAL = 4000
+# The complete repository "fast" group took about 2.6 hours on the step-4k s002 artifact.
+# These four low-cost sentinels retain MCQA, generative BPB, arithmetic, and task-format
+# coverage while full OLMES remains an external checkpoint evaluation.
+FAST_LANGUAGE_EVAL_TASKS = (
+    "arc_challenge_test_mc_5shot_fast",
+    "basic_skills_arithmetic_rc_5shot",
+    "copycolors_10way_fast",
+    "hellaswag_bpb_5shot",
+)
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -205,6 +219,12 @@ class ExperimentConfig(Config):
     eval_rank_batch_instances: int = EVAL_RANK_BATCH_INSTANCES
     """Validation instances per DP rank and forward pass."""
     eval_seed: int = EVAL_SEED
+    fast_vision_eval_interval: Optional[int] = FAST_VISION_EVAL_INTERVAL
+    """Run caption-only, counting, and pointing validation every this many steps."""
+    fast_vision_eval_examples: int = FAST_VISION_EVAL_EXAMPLES
+    """Deterministic examples per fast vision evaluator."""
+    fast_language_eval_interval: Optional[int] = FAST_LANGUAGE_EVAL_INTERVAL
+    """Run the compact language-retention sentinel every this many steps."""
 
 
 def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
@@ -701,6 +721,114 @@ def _add_validation_callback(
     )
 
 
+def _add_fast_vision_validation_callback(
+    trainer,
+    tokenizer,
+    config: ExperimentConfig,
+    collator,
+    *,
+    dp_world_size: int,
+    dp_rank: int,
+) -> None:
+    """Add low-cost held-out caption, counting, and pointing health signals."""
+    interval = config.fast_vision_eval_interval
+    if interval is None:
+        return
+    if interval <= 0:
+        raise ValueError("fast_vision_eval_interval must be positive or None")
+    if config.fast_vision_eval_examples <= 0:
+        raise ValueError("fast_vision_eval_examples must be positive")
+    if config.eval_rank_batch_instances <= 0:
+        raise ValueError("eval_rank_batch_instances must be positive")
+    if collator.pad_sequence_length is None:
+        raise ValueError("Stage 1 validation requires fixed-length padding")
+
+    global_eval_instances = config.eval_rank_batch_instances * dp_world_size
+    if config.fast_vision_eval_examples % global_eval_instances != 0:
+        raise ValueError(
+            f"fast_vision_eval_examples ({config.fast_vision_eval_examples}) must be divisible "
+            f"by the global validation batch ({global_eval_instances} instances)"
+        )
+    eval_batches = config.fast_vision_eval_examples // global_eval_instances
+
+    common = {
+        "max_crops": config.dataset.max_crops,
+        "loss_token_weighting": config.dataset.loss_token_weighting,
+        "token_ids": config.dataset.token_ids,
+        "seed": config.dataset.seed,
+    }
+    dataset_configs = [
+        (
+            "pixmo-cap-caption-validation",
+            replace(config.dataset, split="validation", mode="caption"),
+        ),
+        (
+            "pixmo-count-validation",
+            PixMoCountDatasetConfig(split="validation", counting="both", **common),
+        ),
+        (
+            "pixmo-points-validation",
+            PixMoPointsDatasetConfig(split="validation", kind="basic", counting="both", **common),
+        ),
+    ]
+
+    evaluators = []
+    for name, dataset_config in dataset_configs:
+        loader = MultimodalDataLoader(
+            dataset_config.build(tokenizer),
+            collator,
+            work_dir=trainer.work_dir / name,
+            global_batch_size=(global_eval_instances * collator.pad_sequence_length),
+            seed=config.eval_seed,
+            shuffle=False,
+            dp_world_size=dp_world_size,
+            dp_rank=dp_rank,
+        )
+        evaluators.append(
+            MultimodalLMEvaluator(
+                name=name,
+                batches=loader,
+                device=trainer.device,
+                process_group=trainer.dp_process_group,
+                deterministic=True,
+            )
+        )
+
+    trainer.add_callback(
+        "fast_vision_validation",
+        EvaluatorCallback(
+            evaluators=evaluators,
+            eval_interval=interval,
+            eval_duration=Duration.steps(eval_batches),
+            eval_on_startup=False,
+            eval_on_finish=False,
+            log_interval=max(eval_batches // 4, 1),
+        ),
+    )
+
+
+def _add_fast_language_validation_callback(trainer, config: ExperimentConfig) -> None:
+    """Add a compact OLMES language-retention sentinel to in-loop reporting."""
+    interval = config.fast_language_eval_interval
+    if interval is None:
+        return
+    if interval <= 0:
+        raise ValueError("fast_language_eval_interval must be positive or None")
+
+    callback = DownstreamEvaluatorCallbackConfig(
+        tasks=list(FAST_LANGUAGE_EVAL_TASKS),
+        tokenizer=TokenizerConfig.dolma2(),
+        eval_interval=interval,
+        eval_on_startup=False,
+        eval_on_finish=False,
+        log_interval=20,
+        lazy=True,
+    ).build(trainer)
+    if callback is None:
+        raise RuntimeError("Fast language evaluator callback was unexpectedly disabled")
+    trainer.add_callback("fast_language_validation", callback)
+
+
 def train(config: ExperimentConfig):
     if config.data_prefetch_workers < 0:
         raise ValueError("data_prefetch_workers must be non-negative")
@@ -833,6 +961,15 @@ def train(config: ExperimentConfig):
         dp_world_size=dp_world_size,
         dp_rank=dp_rank,
     )
+    _add_fast_vision_validation_callback(
+        trainer,
+        tokenizer,
+        config,
+        collator,
+        dp_world_size=dp_world_size,
+        dp_rank=dp_rank,
+    )
+    _add_fast_language_validation_callback(trainer, config)
 
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict

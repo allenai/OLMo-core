@@ -18,6 +18,7 @@ three ways:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -618,9 +619,42 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         router_token_mask = model_kwargs.get("router_token_mask")
         if router_token_mask is not None and bool(router_token_mask.all()):
             model_kwargs.pop("router_token_mask")
-        if self.response_logits_only:
+        # Response-only logits are specific to multimodal batches carrying loss weights.
+        # Ordinary downstream LM evaluators do not provide ``loss_masks`` and require full
+        # sequence logits, even when the training module uses response-only logits for Stage 1.
+        if self.response_logits_only and "loss_masks" in batch:
             model_kwargs["response_logits_only"] = True
         return input_ids, labels, model_kwargs
+
+    @contextlib.contextmanager
+    def _eval_batch_context(self):
+        # Downstream text batches use synchronized EP because rank-local sequence shapes may
+        # differ. Torch 2.11 Inductor cannot lower several valid OLMES shapes, while the eager EP
+        # path is correct. Force the complete text forward eager, including attention and the LM
+        # head, without changing the compiled training model. Keep grad mode enabled because the
+        # torch 2.11 no-grad specialization can produce incorrect attention outputs on B300.
+        with torch.enable_grad(), torch.compiler.set_stance("force_eager"):
+            yield
+
+    @contextlib.contextmanager
+    def _multimodal_eval_batch_context(self):
+        # Multimodal eval batches have the same fixed, padded shape and router token mask as
+        # training batches. Keep the routed blocks on their proven no-sync rowwise path and in the
+        # same grad-enabled compile regime. On B300 with torch 2.11, compiled no-grad attention can
+        # produce wrong logits and compiled EP can access memory illegally. Setting only the
+        # block's dispatch flag does not recursively enable training behavior in its children, and
+        # OLMoDDP blocks do not support dropout. Returned losses are detached below so the
+        # unconsumed graph is released before control returns to the evaluator.
+        training_modes = []
+        for block in self.multimodal_model.lm.routed_blocks():
+            training_modes.append((block, block.training))
+            block.training = True
+        try:
+            with torch.enable_grad():
+                yield
+        finally:
+            for block, training in training_modes:
+                block.training = training
 
     def _batch_auxiliary_loss_kwargs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         token_mask = batch.get("router_token_mask")
@@ -779,7 +813,22 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> LMOutputWithLoss:
-        """Evaluate summed response-token CE without materializing full-sequence logits."""
+        """Evaluate multimodal response loss or delegate ordinary LM evaluation.
+
+        Multimodal Stage 1 batches carry ``loss_masks`` and use a scalar summed response-token
+        loss without materializing full-sequence logits. Text-only downstream batches do not
+        carry ``loss_masks`` and need the standard OLMoDDP path so evaluators receive logits.
+        """
+        if "loss_masks" not in batch:
+            output = super().eval_batch(batch, labels=labels)
+            assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
+            return output._replace(
+                logits=output.logits.detach() if output.logits is not None else None,
+                loss=output.loss.detach(),
+                ce_loss=output.ce_loss.detach(),
+                z_loss=output.z_loss.detach() if output.z_loss is not None else None,
+            )
+
         if self.cp_enabled or self.tp_enabled or self.pp_enabled:
             raise RuntimeError(
                 f"{self.__class__.__name__}.eval_batch() only supports the Stage 1 EP/DP topology"
@@ -799,7 +848,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             model_part.eval()
 
         try:
-            with self._eval_batch_context():
+            with self._multimodal_eval_batch_context():
                 output = self.model_forward_no_pipeline(
                     input_ids,
                     labels=labels,
@@ -809,7 +858,11 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                     **model_kwargs,
                 )
                 assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
-                return output
+                return output._replace(
+                    loss=output.loss.detach(),
+                    ce_loss=output.ce_loss.detach(),
+                    z_loss=output.z_loss.detach() if output.z_loss is not None else None,
+                )
         finally:
             # Router metrics from held-out data must not leak into the next training window.
             for model_part in self.model_parts:
