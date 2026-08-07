@@ -359,6 +359,19 @@ def main():
     prepare_cli_environment()
 
     variant = args.variant or variant_from_run_name(args.run_name)
+
+    # Resolve the eval tokenizer by MODEL FAMILY when not given explicitly. The eval must tokenize
+    # with the vocabulary the checkpoint was trained on: Qwen3.5 is 248320 tokens, Qwen3 is 151936.
+    # Getting this wrong does NOT error -- the prompt renders fine, the model receives ids from the
+    # wrong vocab, and every task scores ~0.000 with fluent-looking prompts and degenerate outputs.
+    # (Same family inference as scripts/launch_long_context_evals.sh.)
+    tokenizer = args.tokenizer
+    if not tokenizer:
+        _hay = f"{args.ckpt or ''} {args.run_name}".lower()
+        if any(k in _hay for k in ("qwen3.5", "qwen35", "qwen3_5", "q35")):
+            tokenizer = "Qwen/Qwen3.5-0.8B"
+            print(f"[tokenizer] inferred Qwen3.5 family -> {tokenizer}", file=sys.stderr)
+
     tasks = (
         ALL_TASKS if args.task == "all" else [t.strip() for t in args.task.split(",") if t.strip()]
     )
@@ -392,7 +405,7 @@ def main():
             ckpt=args.ckpt,
             results_dir=args.results_dir,
             prompt_format=args.prompt_format,
-            tokenizer=args.tokenizer,
+            tokenizer=tokenizer,
             ngpu=args.ngpu,
             max_test=args.max_test,
             max_length=args.max_length,
