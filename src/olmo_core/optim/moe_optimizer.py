@@ -323,6 +323,44 @@ class OLMoDDPOptimizerConfig(Config):
                                 ep_param_ids.add(id(p))
         return ep_param_ids
 
+    def _build_partitioned_groups(
+        self,
+        model_parts: List[nn.Module],
+        *,
+        strict: bool,
+        param_filter=None,
+    ) -> List[Dict[str, Any]]:
+        """Expand overrides globally, then partition the resulting groups by process group."""
+        ep_param_ids = self._collect_ep_param_ids(model_parts)
+        groups = self.build_groups(
+            model_parts,
+            strict=strict,
+            param_filter=param_filter,
+        )
+        assert isinstance(groups, list)
+
+        dp_groups: List[Dict[str, Any]] = []
+        ep_groups: List[Dict[str, Any]] = []
+        for group in groups:
+            opts = {key: value for key, value in group.items() if key != "named_params"}
+            dp_named_params = {
+                name: param
+                for name, param in group["named_params"].items()
+                if id(param) not in ep_param_ids
+            }
+            ep_named_params = {
+                name: param
+                for name, param in group["named_params"].items()
+                if id(param) in ep_param_ids
+            }
+            if dp_named_params:
+                dp_groups.append({"named_params": dp_named_params, **opts, "pg": "dp"})
+            if ep_named_params:
+                ep_groups.append({"named_params": ep_named_params, **opts, "pg": "ep_dp"})
+
+        # Preserve the previous ordering: all dense groups, then all EP groups.
+        return dp_groups + ep_groups
+
     def build(  # type: ignore[override]
         self,
         model_parts: List,
@@ -348,29 +386,13 @@ class OLMoDDPOptimizerConfig(Config):
         kwargs.pop("compile")
         kwargs.pop("fixed_fields")
 
-        # Stable parameter order (by name) for each partition, used by all ranks for packing/broadcast.
-        ep_param_ids = self._collect_ep_param_ids(model_parts)
-
-        # Build param groups for the two PGs by filtering.
-        # TODO(moe-optim-group-overrides-strict): each build_groups() call sees only one partition
-        # (dense vs. EP), so with strict=True a `group_overrides` pattern that matches only EP params
-        # (or only dense params) raises in the other partition's pass even though it does match
-        # globally. Collect matches across both partitions before enforcing strict. This becomes
-        # reachable once the MoE train module drives build().
-        dp_groups = self.build_groups(
-            model_parts, strict=strict, param_filter=lambda p: id(p) not in ep_param_ids
+        # Expand overrides against the whole model so a valid dense-only or EP-only pattern does
+        # not produce a false warning in the other partition. Partition only after validation.
+        all_groups = self._build_partitioned_groups(
+            model_parts,
+            strict=strict,
+            param_filter=param_filter,
         )
-        for g in dp_groups:
-            g["pg"] = "dp"  # type: ignore
-
-        ep_groups = self.build_groups(
-            model_parts, strict=strict, param_filter=lambda p: id(p) in ep_param_ids
-        )
-        for g in ep_groups:
-            g["pg"] = "ep_dp"  # type: ignore
-
-        # Concatenate, ensuring the "default" groups remain first in each partition (already ensured by build_groups()).
-        all_groups: List[Dict[str, Any]] = list(dp_groups) + list(ep_groups)  # type: ignore
 
         from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 
@@ -593,6 +615,8 @@ class OLMoDDPOptimizer:
         # the optimizer through _copy_model_grads_to_main_grads().
         self._use_reduce_scatter_grads = False
         self.main_grad: Dict[str, torch.Tensor] = {}
+        self.latest_component_grad_norms: Dict[str, torch.Tensor] = {}
+        self._component_grad_norm_patterns: Optional[Dict[str, Tuple[str, ...]]] = None
         self._flat_model_sync_groups: "OrderedDict[str, _FlatModelParamSyncGroup]" = OrderedDict()
 
         # check
@@ -908,9 +932,19 @@ class OLMoDDPOptimizer:
 
         self._refresh_rowwise_fp8_caches_from_model_params()
 
-    def _check_model_param_main_param_the_same(self):
+    def _check_model_param_main_param_the_same(
+        self, param_names: Optional[Set[str]] = None
+    ) -> None:
+        """Check that model parameters match their optimizer-owned FP32 masters.
+
+        :param param_names: Optional optimizer parameter names to check. When omitted, every
+            parameter is checked.
+        """
+        checked: Set[str] = set()
         for param_group in self.param_groups:
             for name, param in param_group["named_params"].items():
+                if param_names is not None and name not in param_names:
+                    continue
                 main_param = self.states[f"{name}.main"]
                 # get global tensor from DTensor
                 main_param_full = main_param.full_tensor().reshape(-1)
@@ -919,6 +953,11 @@ class OLMoDDPOptimizer:
                     raise ValueError(
                         f"{name}: Model param {param} and main param {main_param} are not close"
                     )
+                checked.add(name)
+
+        if param_names is not None and checked != param_names:
+            missing = sorted(param_names - checked)
+            raise KeyError(f"Optimizer does not contain requested parameter(s): {missing}")
 
     def _distribute_tensor(
         self,
@@ -1032,6 +1071,79 @@ class OLMoDDPOptimizer:
                     params.add(param)
         return params
 
+    def set_component_grad_norm_patterns(
+        self, patterns: Optional[Dict[str, Tuple[str, ...]]]
+    ) -> None:
+        """Configure optional named-parameter patterns for the next gradient-norm report.
+
+        :param patterns: Mapping from metric component name to ``fnmatch`` patterns, or ``None``
+            to disable component diagnostics. The total clipping norm is unchanged.
+        """
+        if patterns is not None:
+            for component, component_patterns in patterns.items():
+                if not component or not component_patterns:
+                    raise ValueError("Component gradient-norm patterns must be non-empty")
+        self._component_grad_norm_patterns = patterns
+
+    def _partition_main_grads(
+        self, param_names: Optional[Set[str]] = None
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
+        dp_grads_replicated: List[torch.Tensor] = []
+        dp_grads_sharded: List[torch.Tensor] = []
+        ep_dp_grads_replicated: List[torch.Tensor] = []
+        ep_dp_grads_sharded: List[torch.Tensor] = []
+
+        for param_group in self.param_groups:
+            for name, param in param_group["named_params"].items():
+                if not param.requires_grad or (param_names is not None and name not in param_names):
+                    continue
+                placements = self.states[f"{name}.main"].placements
+                assert len(placements) == 1, "Expect only one placement per tensor"
+                main_grad = self.main_grad[name]
+
+                if param_group["pg"] == "dp":
+                    if placements[0].is_shard():
+                        dp_grads_sharded.append(main_grad)
+                    else:
+                        dp_grads_replicated.append(main_grad)
+                elif param_group["pg"] == "ep_dp":
+                    if placements[0].is_shard():
+                        ep_dp_grads_sharded.append(main_grad)
+                    else:
+                        ep_dp_grads_replicated.append(main_grad)
+        return (
+            dp_grads_replicated,
+            dp_grads_sharded,
+            ep_dp_grads_replicated,
+            ep_dp_grads_sharded,
+        )
+
+    def _compute_component_grad_norms(self) -> Dict[str, torch.Tensor]:
+        patterns = self._component_grad_norm_patterns
+        if patterns is None:
+            return {}
+
+        norms: Dict[str, torch.Tensor] = {}
+        all_names = {
+            name
+            for param_group in self.param_groups
+            for name, param in param_group["named_params"].items()
+            if param.requires_grad
+        }
+        for component, component_patterns in patterns.items():
+            names = {
+                name
+                for name in all_names
+                if any(fnmatch(name, pattern) for pattern in component_patterns)
+            }
+            if not names:
+                raise ValueError(
+                    f"No trainable optimizer parameters match component {component!r} patterns "
+                    f"{component_patterns!r}"
+                )
+            norms[component] = self._compute_total_grad_norm(*self._partition_main_grads(names))
+        return norms
+
     def _clip_grad(self) -> torch.Tensor:
         """
         We need to first compute the grad norm for the FULL model.
@@ -1049,30 +1161,12 @@ class OLMoDDPOptimizer:
 
         """
 
-        # separate DP and EP_DP grads
-        dp_grads_replicated = []
-        dp_grads_sharded = []
-        ep_dp_grads_replicated = []
-        ep_dp_grads_sharded = []
-
-        for param_group in self.param_groups:
-            for name, param in param_group["named_params"].items():
-                if not param.requires_grad:
-                    continue
-                placements = self.states[f"{name}.main"].placements
-                assert len(placements) == 1, "Expect only one placement per tensor"
-                main_grad = self.main_grad[name]
-
-                if param_group["pg"] == "dp":
-                    if placements[0].is_shard():
-                        dp_grads_sharded.append(main_grad)
-                    else:
-                        dp_grads_replicated.append(main_grad)
-                elif param_group["pg"] == "ep_dp":
-                    if placements[0].is_shard():
-                        ep_dp_grads_sharded.append(main_grad)
-                    else:
-                        ep_dp_grads_replicated.append(main_grad)
+        (
+            dp_grads_replicated,
+            dp_grads_sharded,
+            ep_dp_grads_replicated,
+            ep_dp_grads_sharded,
+        ) = self._partition_main_grads()
 
         total_grad_norm = self._compute_total_grad_norm(
             dp_grads_replicated,
@@ -1239,6 +1333,8 @@ class OLMoDDPOptimizer:
 
         if self.check_nan_inf_grad and self.latest_loss is not None:
             _assert_finite_async(self.latest_loss, "loss")
+
+        self.latest_component_grad_norms = self._compute_component_grad_norms()
 
         # _clip_grad() also asserts the total grad norm is finite when check_nan_inf_grad is set.
         total_grad_norm = self._clip_grad()

@@ -21,6 +21,12 @@ __all__ = [
     "MultimodalOLMoDDPModel",
 ]
 
+_INPUT_DIAGNOSTIC_NAMES = (
+    "text embedding RMS",
+    "connector output RMS",
+    "spliced image embedding RMS",
+)
+
 
 @dataclass
 class MultimodalLMConfig(Config):
@@ -95,9 +101,10 @@ class MultimodalLM(nn.Module):
        configured ViT layers, optionally strip the CLS / register prefix, and
        gather/pool/project via the connector to produce one feature per
        ``<im_patch>`` placeholder token.
-    3. Add the projected image features back into the LM embedding sequence
+    3. Add the projected image features to the raw LM token embeddings
        at every position where ``input_ids == image_patch_token_id``.
-    4. Run the LM with the modified embeddings.
+    4. Apply the LM's native embedding scale and embedding norm to the combined
+       stream, then run the LM with the preconditioned embeddings.
 
     :param cfg: Multimodal model configuration.
     :param init_device: Device on which to initialise parameters.
@@ -110,6 +117,65 @@ class MultimodalLM(nn.Module):
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
         self._use_compact_flex_masks, self._flex_window_size = self._resolve_flex_mask_backend()
+        self._collect_input_diagnostics = False
+        self._input_diagnostic_sums: Dict[str, torch.Tensor] = {}
+        self._input_diagnostic_counts: Dict[str, int] = {}
+
+    def set_input_diagnostics(self, enabled: bool) -> None:
+        """Enable or disable detached embedding-scale diagnostics for the next forwards."""
+        self._collect_input_diagnostics = enabled
+        self._input_diagnostic_sums.clear()
+        self._input_diagnostic_counts.clear()
+
+    @torch.no_grad()
+    def _record_input_diagnostic(self, name: str, values: torch.Tensor) -> None:
+        if not self._collect_input_diagnostics or values.numel() == 0:
+            return
+        sum_squares = values.detach().float().square().sum()
+        if name in self._input_diagnostic_sums:
+            self._input_diagnostic_sums[name] += sum_squares
+            self._input_diagnostic_counts[name] += values.numel()
+        else:
+            self._input_diagnostic_sums[name] = sum_squares
+            self._input_diagnostic_counts[name] = values.numel()
+
+    @torch.no_grad()
+    def pop_input_diagnostics(
+        self,
+        *,
+        reduce_across_process_group: bool = False,
+        process_group: Optional[dist.ProcessGroup] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Return accumulated RMS values and disable collection.
+
+        :param reduce_across_process_group: Reduce sums and counts before computing each RMS.
+        :param process_group: The process group to reduce across. ``None`` uses the default group.
+        """
+        if reduce_across_process_group:
+            if not is_distributed():
+                raise RuntimeError("cannot reduce input diagnostics outside distributed training")
+            device = next(self.parameters()).device
+            n_metrics = len(_INPUT_DIAGNOSTIC_NAMES)
+            stats = torch.zeros(2 * n_metrics, dtype=torch.float64, device=device)
+            for idx, name in enumerate(_INPUT_DIAGNOSTIC_NAMES):
+                if name in self._input_diagnostic_sums:
+                    stats[idx] = self._input_diagnostic_sums[name].double()
+                    stats[n_metrics + idx] = self._input_diagnostic_counts[name]
+            self.set_input_diagnostics(False)
+            dist.all_reduce(stats, group=process_group)
+            return {
+                name: torch.sqrt(stats[idx] / stats[n_metrics + idx])
+                for idx, name in enumerate(_INPUT_DIAGNOSTIC_NAMES)
+                if stats[n_metrics + idx] > 0
+            }
+
+        diagnostics = {
+            name: torch.sqrt(sum_squares / self._input_diagnostic_counts[name])
+            for name, sum_squares in self._input_diagnostic_sums.items()
+        }
+        self.set_input_diagnostics(False)
+        return diagnostics
 
     def _resolve_flex_mask_backend(self) -> Tuple[bool, Optional[Tuple[int, int]]]:
         """Return whether every LM attention layer uses FlexAttention and its common window."""
@@ -172,10 +238,10 @@ class MultimodalLM(nn.Module):
         """Idealized FLOPs for the vision half of one batch, for MFU accounting.
 
         The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
-        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
-        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
-        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
-        (fwd+bwd) per pooled output token.
+        full ``B * n_crops`` of the images tensor. Trainable parameters use the standard
+        forward-plus-backward multiplier of 6; a frozen encoder uses the forward-only
+        multiplier of 2. Attention score/context FLOPs are scaled by the same ratio. The
+        connector is trained and uses 6 FLOPs/parameter per pooled output token.
 
         :param n_crops: total number of image crops processed by the ViT this batch.
         :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
@@ -184,7 +250,14 @@ class MultimodalLM(nn.Module):
         d = self.cfg.vision.image_emb_dim
         n_layers = self.cfg.vision.image_num_layers
         n_raw = n_crops * n_patches_per_crop
-        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vision_multiplier = (
+            6 if any(param.requires_grad for param in self.vision.parameters()) else 2
+        )
+        attention_multiplier = 12 if vision_multiplier == 6 else 4
+        vit = n_raw * (
+            vision_multiplier * self._n_vision_params
+            + attention_multiplier * n_layers * n_patches_per_crop * d
+        )
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 
@@ -336,8 +409,8 @@ class MultimodalLM(nn.Module):
         if labels is not None:
             labels = labels.to(device)
 
-        # Compute LM token embeddings with any configured scale / norm. We embed here
-        # (rather than inside ``self.lm``) so image features can be spliced in below.
+        # Compute raw LM token embeddings. We embed here (rather than inside ``self.lm``)
+        # so image features can be spliced in before the LM's native input preconditioning.
         # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
         # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
         # DDP / single-GPU where the weight is already a plain tensor).
@@ -346,10 +419,6 @@ class MultimodalLM(nn.Module):
         if isinstance(emb_weight, DTensor):
             emb_weight = emb_weight.full_tensor()
         h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
-        if self.lm.embed_scale is not None:
-            h = h * self.lm.embed_scale
-        if self.lm.embedding_norm is not None:
-            h = self.lm.embedding_norm(h)
 
         if images is not None and encoded_image_features is not None:
             raise ValueError("Pass either `images` or `encoded_image_features`, not both")
@@ -360,6 +429,7 @@ class MultimodalLM(nn.Module):
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
 
             image_features = self.encode_images(images, pooled_patches_idx)
+            self._record_input_diagnostic("connector output RMS", image_features)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -369,8 +439,10 @@ class MultimodalLM(nn.Module):
             # across ranks regardless of how text-only vs image examples are distributed.
             h = h + 0.0 * image_features.sum().to(h.dtype)
 
+        is_image_patch: Optional[torch.Tensor] = None
         if image_features is not None:
-            # Splice into LM embeddings at every <im_patch> position.
+            # Splice into raw LM embeddings at every <im_patch> position. The combined stream
+            # is scaled and normalized below exactly as it would be in the native LM forward.
             image_features = image_features.to(device)
             is_image_patch = input_ids.view(-1) == self.cfg.image_patch_token_id
             n_patches_in_seq = int(is_image_patch.sum())
@@ -389,6 +461,28 @@ class MultimodalLM(nn.Module):
             flat = h.view(-1, d)
             image_features = image_features.to(flat.dtype)
             flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
+
+        if self.lm.embed_scale is not None:
+            h = h * self.lm.embed_scale
+        if self.lm.embedding_norm is not None:
+            h = self.lm.embedding_norm(h)
+
+        if self._collect_input_diagnostics:
+            valid_tokens = kwargs.get("router_token_mask")
+            if valid_tokens is None:
+                valid_tokens = torch.ones_like(input_ids, dtype=torch.bool)
+            else:
+                valid_tokens = valid_tokens.to(device=device, dtype=torch.bool)
+            if token_type_ids is not None:
+                valid_tokens = valid_tokens & (token_type_ids.to(device) == 0)
+            elif is_image_patch is not None:
+                valid_tokens = valid_tokens.view(-1) & ~is_image_patch
+                valid_tokens = valid_tokens.view_as(input_ids)
+            self._record_input_diagnostic("text embedding RMS", h[valid_tokens])
+            if is_image_patch is not None:
+                self._record_input_diagnostic(
+                    "spliced image embedding RMS", h.reshape(-1, h.shape[-1])[is_image_patch]
+                )
 
         # FlexAttention consumes the O(S) metadata directly. For a common attention
         # window, build its block mask once and reuse it across every LM layer. Other

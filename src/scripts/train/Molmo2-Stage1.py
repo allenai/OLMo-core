@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import yaml
 
 from olmo_core.config import Config, DType
+from olmo_core.data.data_loader import DataLoaderBase
 from olmo_core.data.multimodal import (
     CoSynPointDatasetConfig,
     MixtureDataLoader,
@@ -61,6 +62,7 @@ from olmo_core.train.callbacks import (
     BeakerCallback,
     CheckpointerCallback,
     ConfigSaverCallback,
+    ConsoleLoggerCallback,
     EvaluatorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
@@ -80,26 +82,30 @@ log = logging.getLogger(__name__)
 #######################
 
 BASE_CHECKPOINT = "/weka/oe-training-default/robertb/s002-step125500"
-VISION_MODEL_ID = "allenai/Molmo2-4B"
-VISION_REVISION = "042abfa7a38879a376cec03d949eff0aefaa0600"
+MOLMO2_CONFIG_MODEL_ID = "allenai/Molmo2-4B"
+MOLMO2_CONFIG_REVISION = "042abfa7a38879a376cec03d949eff0aefaa0600"
+VISION_MODEL_ID = "google/siglip2-so400m-patch14-384"
+VISION_REVISION = "e8e487298228002f3d8a82e0cd5c8ea9c567f57f"
+VISION_FINGERPRINT = "9d9257ea672527b2e37cae7f61734afdf9280d3e77680f2c2d13d4da60aba6bf"
 TOKENIZER_ID = "allenai/dolma2-tokenizer"
 HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
 EXPERIMENT_ROOT = "/weka/oe-training-default/rustin/experiments/vision-moe"
-SEQUENCE_LENGTH = 2536  # released Molmo2 stage-1 sequence length
+SEQUENCE_LENGTH = 2560  # released 32k Molmo2 stage-1 artifact sequence length
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
-PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
+PACK_SEQUENCES = True  # pack several examples into each fixed-length training sequence
 PACK_BUFFER_SIZE = 48  # released Molmo2 dynamic-packing lookahead
-PACK_MAX_CROPS = 16  # released Molmo2 maximum frames/crops per packed sequence
+PACK_MAX_CROPS = 16  # released Molmo2 composite image/video packing budget
 ROUTER_LB_LOSS_WEIGHT: Optional[float] = 0.015  # native s002 pretraining objective
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
-DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
+DATA_PREFETCH_WORKERS = 8  # B300 gate: prevents deterministic packing-stream load stalls
+DIAGNOSTICS_INTERVAL = 100  # connector/input scales and per-component gradient norms
 MAX_CROPS = 8
 LOSS_TOKEN_WEIGHTING = "none"
 EP_DEGREE = 8
 EVAL_INTERVAL = 1000
-EVAL_EXAMPLES = 64
-EVAL_RANK_BATCH_INSTANCES = 1
-EVAL_SEED = 9265
+EVAL_EXAMPLES = 2048
+EVAL_RANK_BATCH_INSTANCES = 4
+EVAL_SEED = 6198
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -107,9 +113,10 @@ EVAL_SEED = 9265
 # with `mask_p`). OLMo-core's `TransformerBlock` has a single uniform `nn.Dropout` (default
 # 0.0) with no per-token/response path, so this regularizer is intentionally NOT applied
 # here — adding it would require threading a response drop-mask through the core transformer
-# block. Low impact for the short benchmark runs; revisit for a full-fidelity stage-1
-# reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
-# system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
+# block. This remains a known fidelity delta for the 32k run and should receive a separate,
+# targeted core design and validation rather than an approximate uniform-dropout substitute.
+# (The other mm_olmo delta, the `style_and_length_v2` length conditioning, IS implemented;
+# see PixMoCapDataset.style_length_conditioning.)
 
 # Instance-based batching, expressed in tokens. Keep released Molmo2's global batch 128 and
 # device microbatch 4. On the two-node EP8 topology this gives each rank eight sequences in two
@@ -130,7 +137,7 @@ ALPHA_F = 0.1
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
 DATASET_PATH = f"{PIXMO_DATASETS}/cap"
-MAX_STEPS = 31000
+MAX_STEPS = 32000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
@@ -164,13 +171,16 @@ class ExperimentConfig(Config):
     train_module: MultimodalOLMoDDPTrainModuleConfig
     trainer: TrainerConfig
     base_checkpoint: str = BASE_CHECKPOINT
+    molmo2_config_model_id: str = MOLMO2_CONFIG_MODEL_ID
+    molmo2_config_revision: str = MOLMO2_CONFIG_REVISION
     vision_model_id: str = VISION_MODEL_ID
     vision_revision: str = VISION_REVISION
+    vision_fingerprint: str = VISION_FINGERPRINT
     tokenizer_id: str = TOKENIZER_ID
     hf_cache_dir: str = HF_CACHE_DIR
     checkpoint_load_threads: int = 8
-    data_seed: int = 34521
-    init_seed: int = 12536
+    data_seed: int = 95818
+    init_seed: int = 6198
     global_batch_size: int = GLOBAL_BATCH_SIZE
     """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
     pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
@@ -215,11 +225,12 @@ def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
 
 
 def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
-    """Compose the exact native s002 LM architecture with the Molmo2 vision tower."""
+    """Compose the native s002 LM with Molmo2's connector and SigLIP2 architecture."""
     import json
 
     from olmo_core.nn.attention import AttentionConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
     from olmo_core.nn.transformer import OLMoDDPModelConfig
     from olmo_core.nn.vision import (
@@ -234,6 +245,10 @@ def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
     attention_backend = AttentionBackendName.flex if USE_FLEX_ATTN else AttentionBackendName.torch
     block_configs = [lm_config.block, *(lm_config.block_overrides or {}).values()]
     for block_config in block_configs:
+        if not isinstance(block_config, OLMoDDPTransformerBlockConfig):
+            raise TypeError(
+                "The s002 checkpoint must use OLMoDDPTransformerBlockConfig for every block"
+            )
         if isinstance(block_config.sequence_mixer, AttentionConfig):
             block_config.sequence_mixer.backend = attention_backend
         if block_config.ep is not None:
@@ -246,8 +261,8 @@ def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
     lm_config.two_batch_overlap = False
 
     hf_config = load_molmo2_hf_vision_config(
-        VISION_MODEL_ID,
-        revision=VISION_REVISION,
+        MOLMO2_CONFIG_MODEL_ID,
+        revision=MOLMO2_CONFIG_REVISION,
         cache_dir=HF_CACHE_DIR,
     )
     return multimodal_config_from_molmo2_vision(
@@ -293,6 +308,7 @@ def _build_train_module_config(
         vision_activation_checkpointing=True,
         connector_activation_checkpointing=True,
         response_logits_only=True,
+        diagnostics_interval=DIAGNOSTICS_INTERVAL,
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=compile_model,
@@ -343,6 +359,19 @@ def _configure_launch_runtime(launch_config: BeakerLaunchConfig) -> None:
     launch_config.post_setup = preset.post_setup
 
 
+def _build_console_logger() -> ConsoleLoggerCallback:
+    """Retain OLMo's standard console metrics and expose Stage 1 diagnostics."""
+    callback = ConsoleLoggerCallback()
+    callback.metrics.extend(
+        [
+            "data/*",
+            "multimodal/*",
+            "optim/* grad norm",
+        ]
+    )
+    return callback
+
+
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
     root_dir = get_root_dir(BEAKER_CLUSTER)
 
@@ -355,7 +384,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting=LOSS_TOKEN_WEIGHTING,
-        seed=34521,
+        # Molmo2 derives augmentation from (example index, source epoch). The mixture loader's
+        # separate data_seed controls source sampling and permutations.
+        seed=0,
         token_ids=token_ids,
     )
 
@@ -400,6 +431,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
+        .with_callback("console_logger", _build_console_logger())
     )
 
     launch_config = build_launch_config(
@@ -531,11 +563,16 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     import numpy as np
 
     p, n = config.pointing_rate, config.nlp_rate
-    datasets: List = [config.dataset.build(tokenizer)]  # caption
-    weights: List[float] = [max(1.0 - p - n, 0.0)]
+    sources: List[Tuple[str, Any, float]] = [
+        (
+            "pixmo_cap_with_transcripts",
+            config.dataset.build(tokenizer),
+            max(1.0 - p - n, 0.0),
+        )
+    ]
 
     if p > 0:
-        pointing = [
+        pointing: List[Any] = [
             PixMoPointsDatasetConfig(
                 kind="basic",
                 max_crops=MAX_CROPS,
@@ -561,24 +598,46 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()
-        datasets += pointing
-        weights += [p * float(f) for f in frac]
+        sources.extend(
+            (name, dataset, p * float(weight))
+            for name, dataset, weight in zip(
+                [
+                    "pixmo_points_train",
+                    "pixmo_count_train",
+                    "pixmo_points_high_freq_train",
+                    "cosyn_point",
+                ],
+                pointing,
+                frac,
+            )
+        )
 
     if n > 0:
-        datasets.append(
-            Tulu4DatasetConfig(
-                max_sequence_length=config.dataset.max_sequence_length,
-                loss_token_weighting=config.dataset.loss_token_weighting,
-                token_ids=config.dataset.token_ids,
-            ).build(tokenizer)
+        sources.append(
+            (
+                "tulu4_max_2304",
+                Tulu4DatasetConfig(
+                    max_sequence_length=config.dataset.max_sequence_length,
+                    loss_token_weighting=config.dataset.loss_token_weighting,
+                    token_ids=config.dataset.token_ids,
+                ).build(tokenizer),
+                n,
+            )
         )
-        weights.append(n)
+
+    # mm_olmo sorts the flattened KwargsMixture by dataset name before handing the rates to
+    # IterableDatasetMixture. Source index is part of the seeded multinomial stream, so retain
+    # that order exactly rather than relying on construction order.
+    sources.sort(key=lambda source: source[0])
+    names = [name for name, _, _ in sources]
+    datasets = [dataset for _, dataset, _ in sources]
+    weights = [weight for _, _, weight in sources]
 
     log.info(
         "Mixture sources / weights: %s",
-        [(type(d).__name__, round(w, 3)) for d, w in zip(datasets, weights)],
+        [(name, type(d).__name__, round(w, 3)) for name, d, w in zip(names, datasets, weights)],
     )
-    return datasets, weights
+    return datasets, weights, names
 
 
 def _add_validation_callback(
@@ -601,11 +660,10 @@ def _add_validation_callback(
     if collator.pad_sequence_length is None:
         raise ValueError("Stage 1 validation requires fixed-length padding")
 
-    eval_dataset_config = replace(
-        config.dataset,
-        split="validation",
-        seed=config.eval_seed,
-    )
+    # Keep the dataset's example/epoch augmentation seed unchanged. The released Molmo2
+    # evaluator's seed controls the loader; mm_olmo's DeterministicDataset derives example
+    # augmentation independently from (index, epoch).
+    eval_dataset_config = replace(config.dataset, split="validation")
     global_eval_instances = config.eval_rank_batch_instances * dp_world_size
     if config.eval_examples % global_eval_instances != 0:
         raise ValueError(
@@ -675,20 +733,40 @@ def train(config: ExperimentConfig):
         load_optim_state=False,
     )
 
-    from olmo_core.nn.vision import load_molmo2_hf_vision_state_dict
+    from olmo_core.nn.vision import (
+        load_siglip_hf_vision_state_dict,
+        siglip_hf_state_dict_to_vision,
+        vision_state_fingerprint,
+    )
 
     log.info(
-        "Loading Molmo2 vision weights from %s at revision %s",
+        "Loading pristine SigLIP2 vision weights from %s at revision %s",
         config.vision_model_id,
         config.vision_revision,
     )
-    vision_state = load_molmo2_hf_vision_state_dict(
+    hf_vision_state = load_siglip_hf_vision_state_dict(
         config.vision_model_id,
         revision=config.vision_revision,
         cache_dir=config.hf_cache_dir,
     )
-    train_module.load_molmo2_vision_state_dict(vision_state)
-    del vision_state
+    vision_state = siglip_hf_state_dict_to_vision(
+        hf_vision_state, train_module.multimodal_model.cfg.vision
+    )
+    fingerprint = vision_state_fingerprint(vision_state)
+    if fingerprint != config.vision_fingerprint:
+        raise ValueError(
+            "SigLIP2 vision checkpoint fingerprint mismatch: "
+            f"expected {config.vision_fingerprint}, got {fingerprint}"
+        )
+    log.info(
+        "Verified SigLIP2 vision fingerprint %s; patch RMS=%.6f, position RMS=%.6f",
+        fingerprint,
+        vision_state["patch_embedding.weight"].float().square().mean().sqrt().item(),
+        vision_state["positional_embedding"].float().square().mean().sqrt().item(),
+    )
+    train_module.load_vision_state_dict(vision_state)
+    train_module.assert_vision_optimizer_state_synced()
+    del hf_vision_state, vision_state
 
     # The six image-format tokens occupy previously padded s002 vocabulary rows. Reset both
     # embedding and LM-head rows, then synchronize those changes into optimizer main state.
@@ -710,8 +788,9 @@ def train(config: ExperimentConfig):
     dp_pg = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
 
+    data_loader: DataLoaderBase
     if config.pointing_rate > 0 or config.nlp_rate > 0:
-        datasets, weights = _build_mixture_sources(tokenizer, config)
+        datasets, weights, dataset_names = _build_mixture_sources(tokenizer, config)
         log.info(
             "Stage 1 packing: pack=%s buffer_size=%d max_crops=%d prefetch_workers=%d",
             config.pack_sequences,
@@ -730,6 +809,7 @@ def train(config: ExperimentConfig):
             pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
             pack_buffer_size=config.pack_buffer_size if config.pack_sequences else 0,
             prefetch_workers=config.data_prefetch_workers,
+            dataset_names=dataset_names,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )

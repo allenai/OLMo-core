@@ -1,6 +1,8 @@
 """CPU tests for the Molmo2 stage-1 data pipeline: grounding format, branched-sequence
 assembly, text-only handling, and the weighted mixture loader."""
 
+import itertools
+
 import numpy as np
 import torch
 
@@ -20,6 +22,7 @@ from olmo_core.data.multimodal.packing import (
     pack_examples,
 )
 from olmo_core.data.multimodal.prefetch import prefetch_map
+from olmo_core.data.multimodal.rng import make_random_state
 
 _SEQ = 8
 _PATCH_DIM = 14 * 14 * 3
@@ -151,6 +154,16 @@ class _FailingFakeDataset(_CountingFakeDataset):
         return super().__getitem__(i)
 
 
+class _EpochAwareFakeDataset(_FakeDataset):
+    def __init__(self, n: int, tag: int):
+        super().__init__(n, tag)
+        self.requests = []
+
+    def get(self, i: int, epoch: int):
+        self.requests.append((i, epoch))
+        return super().__getitem__(i)
+
+
 def test_mixture_data_loader_weighted_sampling(tmp_path):
     ds = [_FakeDataset(1000, 10), _FakeDataset(500, 20), _FakeDataset(200, 30)]
     weights = [0.6, 0.3, 0.1]
@@ -160,7 +173,7 @@ def test_mixture_data_loader_weighted_sampling(tmp_path):
     )
     dl.reshuffle(epoch=1)
     order = dl._order
-    counts = np.bincount([s for s, _ in order], minlength=3) / len(order)
+    counts = np.bincount([source for source, _, _ in order], minlength=3) / len(order)
     np.testing.assert_allclose(counts, weights, atol=0.05)
 
     batch = next(iter(dl))
@@ -170,6 +183,26 @@ def test_mixture_data_loader_weighted_sampling(tmp_path):
     # keeping FSDP collectives in lockstep. Nothing is spliced (no <im_patch> tokens).
     assert tuple(batch["images"].shape) == (4, 1, 729, _PATCH_DIM)
     assert (batch["pooled_patches_idx"] == -1).all()
+
+
+def test_mixture_data_loader_tracks_source_epoch_for_augmentation(tmp_path):
+    dataset = _EpochAwareFakeDataset(2, 10)
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    loader = MixtureDataLoader(
+        [dataset],
+        [1.0],
+        collator,
+        work_dir=str(tmp_path),
+        global_batch_size=2 * _SEQ,
+        epoch_instances=6,
+        seed=3,
+    )
+    loader.reshuffle(epoch=1)
+
+    assert [source_epoch for _, _, source_epoch in loader._order] == [0, 0, 1, 1, 2, 2]
+    for ref in loader._order:
+        loader._try_load_example(ref)
+    assert [epoch for _, epoch in dataset.requests] == [0, 0, 1, 1, 2, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +244,8 @@ def test_multimodal_collator_marks_only_retained_real_tokens_for_routing():
         [True, True, True, False, False, False, False, False],
         [True, True, True, True, True, True, True, True],
     ]
+    assert batch["image_crop_counts"].tolist() == [0, 0]
+    assert batch["pooled_token_counts"].tolist() == [0, 0]
 
 
 def test_greedy_pack_indices():
@@ -341,6 +376,29 @@ def test_tulu_binary_response_loss_weighting():
     np.testing.assert_array_equal(positive, np.ones_like(positive))
 
 
+def test_tulu_uses_s002_document_boundaries_without_chat_headers():
+    from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
+
+    dataset = object.__new__(Tulu4Dataset)
+    dataset.config = Tulu4DatasetConfig(max_sequence_length=128, loss_token_weighting="none")
+    dataset.tokenizer = _FakeTok()
+    dataset._data = [
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        }
+    ]
+
+    example = dataset.get(0, 0)
+    assert example["input_ids"][0] == dataset.tokenizer.eos_token_id
+    assert example["labels"][-1] == dataset.tokenizer.eos_token_id
+    assert example["loss_masks"][-1] == 1
+    assert dataset.tokenizer.prompts[0].startswith("text_sft")
+    assert all("<|im_start|>" not in prompt for prompt in dataset.tokenizer.prompts)
+
+
 def test_pack_examples_concat_and_offsets():
     a = _img_example(n_text=3, n_crops=1, tag=5)  # len 4, 1 crop
     b = _img_example(n_text=2, n_crops=2, tag=7)  # len 4, 2 crops
@@ -425,6 +483,7 @@ def test_mixture_data_loader_buffered_packing(tmp_path):
         pack_buffer_size=4,
     )
     dl.reshuffle(epoch=1)
+    assert dl.total_batches is None
     batch = next(iter(dl))
     assert tuple(batch["input_ids"].shape) == (2, _SEQ)
     assert "example_ids" in batch
@@ -548,7 +607,8 @@ def test_mixture_data_loader_prefetch_skips_errors_in_reference_order(tmp_path):
             prefetch_workers=workers,
         )
         loader.reshuffle(epoch=2)
-        dataset.fail_indices = {loader._order[0][1], loader._order[2][1]}
+        refs = list(itertools.islice(loader._rank_refs_from_cursor(), 3))
+        dataset.fail_indices = {refs[0][1], refs[2][1]}
         return loader
 
     sync = build_loader(tmp_path / "sync", 0)
@@ -580,6 +640,56 @@ def test_mixture_data_loader_normalizes_weights(tmp_path):
     np.testing.assert_allclose(dl.weights, [0.75, 0.25])
 
 
+def test_buffered_mixture_reference_stream_matches_molmo2(tmp_path):
+    sizes = [7, 5, 11]
+    weights = [0.6, 0.3, 0.1]
+    seed = 95818
+    world_size = 4
+    n_per_rank = 80
+
+    def molmo2_refs():
+        rates = np.asarray(weights, dtype=np.float64)
+        rates = np.asarray(rates / rates.sum(), dtype=np.float32)
+        rng = np.random.RandomState(seed)
+        counts = np.zeros(len(sizes), dtype=np.int64)
+        shuffled = [(None, None) for _ in sizes]
+        while True:
+            source = int(rng.choice(len(sizes), p=rates))
+            source_count = int(counts[source])
+            counts[source] += 1
+            source_epoch = source_count // sizes[source]
+            shuffled_for, order = shuffled[source]
+            if shuffled_for != source_epoch:
+                order = np.arange(sizes[source], dtype=np.int32)
+                make_random_state(seed, source_epoch, 1).shuffle(order)
+                shuffled[source] = (source_epoch, order)
+            yield source, int(order[source_count % sizes[source]]), source_epoch
+
+    expected = list(itertools.islice(molmo2_refs(), world_size * n_per_rank))
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    actual_by_rank = []
+    for rank in range(world_size):
+        loader = MixtureDataLoader(
+            [_FakeDataset(size, 10 + i) for i, size in enumerate(sizes)],
+            weights,
+            collator,
+            work_dir=tmp_path / str(rank),
+            global_batch_size=world_size * _SEQ,
+            seed=seed,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            dp_world_size=world_size,
+            dp_rank=rank,
+        )
+        actual_by_rank.append(list(itertools.islice(loader._rank_refs_from_cursor(), n_per_rank)))
+        resumed = list(itertools.islice(loader._rank_refs_from_cursor(17), 10))
+        assert resumed == expected[rank + 17 * world_size :: world_size][:10]
+
+    actual = [actual_by_rank[rank][i] for i in range(n_per_rank) for rank in range(world_size)]
+    assert actual == expected
+
+
 # ---------------------------------------------------------------------------
 # PixMoCap style_and_length_v2 conditioning (Gap 1 vs mm_olmo)
 # ---------------------------------------------------------------------------
@@ -604,6 +714,8 @@ class _FakeTok:
         return text
 
     def encode(self, text, add_special_tokens=False):
+        if not text.startswith(" "):
+            self.prompts.append(text)
         return [(ord(c) % 90) + 10 for c in text]
 
 
@@ -665,6 +777,45 @@ def test_pixmo_cap_conditioning_off():
     _ = ds[0]
     # prompt is sampled from the pool verbatim, with no "long_caption ...:" prefix
     assert all(not p.startswith("long_caption") for p in ds.tokenizer.prompts)
+
+
+def test_pointing_formats_messages_before_image_augmentation(monkeypatch):
+    """Match Molmo2's shared-RNG order: dataset/formatter, shuffle, then image processor."""
+    from olmo_core.data.multimodal.pixmo_points import _build_example
+    from olmo_core.nn.vision import molmo2_image_processor
+    from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
+
+    events = []
+    rng = np.random.RandomState(7)
+
+    def build_branches(branch_rng):
+        events.append(("format", int(branch_rng.randint(2**31))))
+        return [("Locate it", "Here")]
+
+    def fake_preprocess(*args, rng, **kwargs):
+        events.append(("image", int(rng.randint(2**31))))
+        return (
+            torch.zeros(1, 1, 729, _PATCH_DIM),
+            torch.zeros(1, 1, 4, dtype=torch.long),
+            np.array([1, 1, 1, 1], dtype=np.int32),
+        )
+
+    monkeypatch.setattr(molmo2_image_processor, "preprocess_image_molmo2", fake_preprocess)
+    _build_example(
+        _FakeTok(),
+        None,
+        build_branches,
+        max_crops=8,
+        loss_token_weighting="none",
+        token_ids=Molmo2TokenIds(),
+        rng=rng,
+    )
+
+    reference_rng = np.random.RandomState(7)
+    assert events == [
+        ("format", int(reference_rng.randint(2**31))),
+        ("image", int(reference_rng.randint(2**31))),
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
@@ -25,7 +25,8 @@ from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .grounding import normalize_points, pointing_answer
-from .qwen3_layout import branch_context_ids, image_prefix_ids
+from .document_layout import branch_context_ids, image_prefix_ids, response_ids
+from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
 from .sft_formatter import SftFormatter
 
@@ -44,32 +45,30 @@ from .paths import PIXMO_DATASETS
 def _build_example(
     tokenizer,
     pil_image,
-    branches_text: List[Tuple[str, str]],
+    build_branches: Callable[[np.random.RandomState], List[Tuple[str, str]]],
     *,
     max_crops: int,
     loss_token_weighting: str,
     token_ids: Molmo2TokenIds,
     message_weight: float | None = None,
     p_high_res: float = 0.0,
-    shuffle_rng: np.random.RandomState | None = None,
-    seed: int = 0,
+    rng: np.random.RandomState,
 ) -> Dict[str, np.ndarray]:
-    """Preprocess the image and assemble a (possibly multi-branch) pointing example.
+    """Format and assemble a (possibly multi-branch) pointing example.
 
-    :param branches_text: list of ``(user_question, assistant_answer)`` strings.
+    :param build_branches: Builds ``(user_question, assistant_answer)`` strings before image
+        augmentation, preserving Molmo2's random-number consumption order.
     """
     import torch
 
     from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
-    branches_text = list(branches_text)
+    branches_text = list(build_branches(rng))
     if len(branches_text) > 1:
         order = np.arange(len(branches_text))
-        rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
         rng.shuffle(order)
         branches_text = [branches_text[i] for i in order]
 
-    preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
         pil_image,
         dtype=torch.float32,
@@ -77,16 +76,15 @@ def _build_example(
         max_crops=max_crops,
         p_high_res=p_high_res,
         is_training=True,
-        rng=preprocess_rng,
+        rng=rng,
     )
     prefix = image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
-    multi_branch = len(branches_text) > 1
     branches = [
         (
-            branch_context_ids(tokenizer, q, branch_index=i, multi_branch=multi_branch),
-            tokenizer.encode(a, add_special_tokens=False),
+            branch_context_ids(tokenizer, question),
+            response_ids(tokenizer, answer),
         )
-        for i, (q, a) in enumerate(branches_text)
+        for question, answer in branches_text
     ]
     from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
 
@@ -132,7 +130,7 @@ class PixMoPointsDatasetConfig(Config):
     """``pixmo_points_train`` (kind=basic) / ``pixmo_points_high_freq_train`` (high_frequency)."""
 
     kind: str = "both"  # "basic" (points-pointing) | "high_frequency" (points-counting) | "both"
-    counting: str = "both"  # "both" -> random pointing/point_count per branch
+    counting: str = "both"  # "both" duplicates each example in point_count/pointing styles
     max_points: int = 60
     max_total_points_per_example: int = 60
     max_crops: int = 8
@@ -181,41 +179,53 @@ class PixMoPointsDataset:
         return index
 
     def __len__(self) -> int:
-        return len(self._index)
+        size = len(self._index)
+        return size * 2 if self.config.counting == "both" else size
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
-        row_idx, label_idxs = self._index[i]
-        rng = np.random.RandomState(self.config.seed + i)
+        return self.get(i, 0)
+
+    def get(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+        """Build one deterministically augmented example for a source epoch."""
+        if self.config.counting == "both":
+            example_idx = i // 2
+            style = "point_count" if i % 2 == 0 else "pointing"
+        else:
+            example_idx = i
+            style = "point_count" if self.config.counting else "pointing"
+        row_idx, label_idxs = self._index[example_idx]
+        rng = make_random_state(self.config.seed + i, epoch)
         row = self._data[row_idx]
         fmt = SftFormatter(seed=self.config.seed)
         specs: List[Tuple[str, str, Any]] = []
         for li in label_idxs:
             label = row["label"][li]
             pts = row["points"][li]
-            if self.config.counting == "both":
-                style = rng.choice(["point_count", "pointing"])
-            else:
-                style = "point_count" if self.config.counting else "pointing"
             specs.append((style, label, pts))
-        branches: List[Tuple[str, str]] = []
-        for style, label, pts in specs:
-            sub = {
-                "style": style,
-                "label": label,
-                "points": pts,
-                "point_scale": 100,
-            }
-            branches.append(fmt.format_turns(sub, index=i, rng=rng)[0])
+
+        def build_branches(branch_rng: np.random.RandomState) -> List[Tuple[str, str]]:
+            branches: List[Tuple[str, str]] = []
+            for branch_style, label, points in specs:
+                sub = {
+                    "style": branch_style,
+                    "label": label,
+                    "points": points,
+                    "point_scale": 100,
+                }
+                prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
+                branches.append((f"{branch_style}: {prompt}", answer))
+            return branches
+
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),
-            branches,
+            build_branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
-            shuffle_rng=rng,
+            rng=rng,
         )
 
 
@@ -249,6 +259,10 @@ class PixMoCountDataset:
         return self._n * 2 if self.config.counting == "both" else self._n
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
+        return self.get(i, 0)
+
+    def get(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+        """Build one deterministically augmented example for a source epoch."""
         if self.config.counting == "both":
             row_idx, style = i // 2, ("point_count" if i % 2 == 0 else "pointing")
         else:
@@ -258,7 +272,7 @@ class PixMoCountDataset:
         count = int(row["count"])
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
-        rng = np.random.RandomState(self.config.seed + i)
+        rng = make_random_state(self.config.seed + i, epoch)
         fmt = SftFormatter(seed=self.config.seed)
         xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
         sub = {
@@ -269,17 +283,21 @@ class PixMoCountDataset:
             "image_size": pil.size,
             "count": count,
         }
-        prompt, answer = fmt.format_turns(sub, index=i, rng=rng)[0]
+
+        def build_branches(branch_rng: np.random.RandomState) -> List[Tuple[str, str]]:
+            prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
+            return [(f"{style}: {prompt}", answer)]
+
         return _build_example(
             self.tokenizer,
             pil,
-            [(prompt, answer)],
+            build_branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
-            shuffle_rng=rng,
+            rng=rng,
         )
 
 
@@ -311,6 +329,10 @@ class CoSynPointDataset:
         return len(self._data)
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
+        return self.get(i, 0)
+
+    def get(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+        """Build one deterministically augmented example for a source epoch."""
         row = self._data[i]
         branches: List[Tuple[str, str]] = []
         for question, points, name in zip(row["questions"], row["answer_points"], row["names"]):
@@ -318,15 +340,15 @@ class CoSynPointDataset:
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
             answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
-            branches.append((question, answer))
+            branches.append((f"cosyn_point: {question}", answer))
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),
-            branches,
+            lambda branch_rng: branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
-            shuffle_rng=np.random.RandomState(self.config.seed + i),
+            rng=make_random_state(self.config.seed + i, epoch),
         )

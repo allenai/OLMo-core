@@ -102,6 +102,8 @@ generation override is partial and must not be reported as the benchmark score. 
 MMMU-Pro inference uses the synchronized 1D all-to-all expert-parallel path: the rowwise
 NVSHMEM path's persistent kernels are intended for steady-state training batches and can wait
 indefinitely on batch-one autoregressive inference.
+The native runner uses s002's Dolma2 document layout, with no Qwen role headers, and scores
+leading-space option tokens to match the Stage-1 response serialization.
 
 There are two complete protocols:
 

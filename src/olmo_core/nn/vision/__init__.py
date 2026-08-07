@@ -25,6 +25,11 @@ from .molmo2_loader import (
 )
 from .molmo2_tokens import Molmo2TokenIds, prepare_molmo2_tokenizer
 from .multimodal import MultimodalLM, MultimodalLMConfig, MultimodalOLMoDDPModel
+from .siglip_loader import (
+    load_siglip_hf_vision_state_dict,
+    siglip_hf_state_dict_to_vision,
+    vision_state_fingerprint,
+)
 
 __all__ = [
     "VisionEncoderType",
@@ -50,4 +55,7 @@ __all__ = [
     "preprocess_image_molmo2",
     "Molmo2TokenIds",
     "prepare_molmo2_tokenizer",
+    "load_siglip_hf_vision_state_dict",
+    "siglip_hf_state_dict_to_vision",
+    "vision_state_fingerprint",
 ]

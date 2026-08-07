@@ -22,11 +22,13 @@ import logging
 import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
+from functools import lru_cache
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from torch.optim import Optimizer
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
@@ -77,6 +79,8 @@ def _mm_train_verbose_logs() -> bool:
 
 class MultimodalTransformerTrainModule(TransformerTrainModule):
     """A :class:`TrainModule` for :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training."""
+
+    optim: Optimizer
 
     def __init__(
         self,
@@ -192,6 +196,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         # DDP/FSDP keep the model's type, attributes, and (prefix-free) parameter names,
         # and FSDP additionally needs the optimizer built on the sharded DTensor params.
         if self.world_mesh is not None:
+            assert dp_config is not None
             self._parallelize(dp_config)
 
         log.info("Building optimizer...")
@@ -258,6 +263,8 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         loss_masks = batch.pop("loss_masks")
         batch.pop("pack_source_names", None)
+        batch.pop("image_crop_counts", None)
+        batch.pop("pooled_token_counts", None)
         return input_ids, labels, loss_masks, batch
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
@@ -476,6 +483,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             "(stage-1 training runs without in-loop eval)."
         )
 
+    @lru_cache
     def num_flops_per_token(self, seq_len: int) -> Optional[int]:
         try:
             if hasattr(self._lm, "num_flops_per_token"):
@@ -547,6 +555,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         vision_activation_checkpointing: bool = False,
         connector_activation_checkpointing: bool = False,
         response_logits_only: bool = False,
+        diagnostics_interval: Optional[int] = None,
         **kwargs,
     ):
         from olmo_core.nn.vision import MultimodalOLMoDDPModel
@@ -567,6 +576,8 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             raise OLMoConfigurationError(
                 "Two-batch overlap is not supported for multimodal OLMoDDP"
             )
+        if diagnostics_interval is not None and diagnostics_interval <= 0:
+            raise OLMoConfigurationError("diagnostics_interval must be positive or None")
 
         self.freeze_params = freeze_params or []
         frozen = []
@@ -587,6 +598,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             model.connector.apply_activation_checkpointing()
             log.info("Applied activation checkpointing to the vision connector")
         self.response_logits_only = response_logits_only
+        self.diagnostics_interval = diagnostics_interval
         super().__init__(model, *args, **kwargs)
 
     @property
@@ -598,6 +610,8 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         input_ids, labels, model_kwargs = super()._prepare_batch(batch, labels)
+        model_kwargs.pop("image_crop_counts", None)
+        model_kwargs.pop("pooled_token_counts", None)
         # A full microbatch needs no routing override and remains compatible with the ordinary
         # sync/no-EP paths used by small tests and evaluation. A mask containing padding is kept
         # and the routed block enforces the production rowwise path.
@@ -668,10 +682,99 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 namespace="data",
             )
 
+        if (crop_counts := batch.get("image_crop_counts")) is not None:
+            self.record_metric(
+                "real crops per sequence",
+                crop_counts.float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+            images = batch.get("images")
+            if images is not None:
+                padded_crops = int(images.shape[1])
+                utilization = crop_counts.float().sum() / max(
+                    int(crop_counts.numel()) * padded_crops, 1
+                )
+                self.record_metric(
+                    "padded crops per sequence",
+                    torch.tensor(float(padded_crops), device=crop_counts.device),
+                    ReduceType.mean,
+                    namespace="data",
+                )
+                self.record_metric(
+                    "crop utilization",
+                    utilization,
+                    ReduceType.mean,
+                    namespace="data",
+                )
+        if (pooled_counts := batch.get("pooled_token_counts")) is not None:
+            self.record_metric(
+                "pooled image tokens per sequence",
+                pooled_counts.float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+
+    def _diagnostics_enabled_for_step(self) -> bool:
+        return bool(
+            self.diagnostics_interval is not None
+            and self._trainer is not None
+            and self.trainer.global_step % self.diagnostics_interval == 0
+        )
+
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         if not dry_run:
             self._record_data_metrics(batch)
-        return super().train_batch(batch, dry_run=dry_run)
+        collect_diagnostics = not dry_run and self._diagnostics_enabled_for_step()
+        if collect_diagnostics:
+            self.multimodal_model.set_input_diagnostics(True)
+        try:
+            result = super().train_batch(batch, dry_run=dry_run)
+        except BaseException:
+            if collect_diagnostics:
+                self.multimodal_model.set_input_diagnostics(False)
+            raise
+        if collect_diagnostics:
+            diagnostics = self.multimodal_model.pop_input_diagnostics(
+                reduce_across_process_group=is_distributed(),
+                process_group=self.dp_process_group,
+            )
+            for name, value in diagnostics.items():
+                self.record_metric(name, value, reduce_type=None, namespace="multimodal")
+        return result
+
+    def optim_step(self):
+        optim = self._require_optimizer()
+        collect_diagnostics = self._diagnostics_enabled_for_step()
+        if collect_diagnostics:
+            optim.set_component_grad_norm_patterns(
+                {
+                    "vision": ("vision.*", "*vision.*"),
+                    "connector": ("connector.*", "*connector.*"),
+                    "language model": ("lm.*", "*lm.*"),
+                }
+            )
+        try:
+            super().optim_step()
+            if collect_diagnostics:
+                for component, value in optim.latest_component_grad_norms.items():
+                    self.record_metric(
+                        f"{component} grad norm",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+        finally:
+            optim.set_component_grad_norm_patterns(None)
+
+    def extra_flops_per_batch(self, batch: Dict[str, Any]) -> int:
+        """Return vision and connector FLOPs for speed-monitor MFU accounting."""
+        images = batch.get("images")
+        if images is None:
+            return 0
+        batch_size, crops, patches = (int(value) for value in images.shape[:3])
+        pooled = int((batch["input_ids"] == self.multimodal_model.cfg.image_patch_token_id).sum())
+        return self.multimodal_model.image_encoder_flops(batch_size * crops, patches, pooled)
 
     def eval_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
@@ -718,7 +821,74 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
 
         model = self.multimodal_model
         vision_state = molmo2_hf_state_dict_to_vision(hf_state_dict, model.cfg.vision)
+        self.load_vision_state_dict(vision_state)
+
+    def load_siglip_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
+        """Strictly load a SigLIP vision tower and synchronize optimizer masters."""
+        from olmo_core.nn.vision import siglip_hf_state_dict_to_vision
+
+        model = self.multimodal_model
+        vision_state = siglip_hf_state_dict_to_vision(hf_state_dict, model.cfg.vision)
+        self.load_vision_state_dict(vision_state)
+
+    @torch.no_grad()
+    def load_vision_state_dict(self, vision_state: Dict[str, torch.Tensor]) -> None:
+        """Strictly load vision weights and synchronize trainable optimizer masters.
+
+        OLMoDDP creates FP32 optimizer master parameters when the train module is built. Any
+        model-only load performed afterwards must update those masters before the first optimizer
+        step, otherwise that step copies the stale initialization back into the vision tower.
+
+        :param vision_state: State dictionary in the native vision encoder format.
+        """
+        model = self.multimodal_model
         model.vision.load_state_dict(vision_state, strict=True)
+
+        if self.optim is None:
+            return
+
+        trainable_vision_params = {
+            id(param) for param in model.vision.parameters() if param.requires_grad
+        }
+        if not trainable_vision_params:
+            return
+
+        optim = self._require_optimizer()
+        vision_param_names = {
+            name
+            for param_group in optim.param_groups
+            for name, param in param_group["named_params"].items()
+            if id(param) in trainable_vision_params
+        }
+        if len(vision_param_names) != len(trainable_vision_params):
+            raise RuntimeError(
+                "Could not map every trainable vision parameter to its optimizer master: "
+                f"found {len(vision_param_names)} of {len(trainable_vision_params)}"
+            )
+        optim._copy_model_params_to_main_params(vision_param_names)
+        optim._check_model_param_main_param_the_same(vision_param_names)
+
+    def assert_vision_optimizer_state_synced(self) -> None:
+        """Check every trainable vision tensor against its optimizer-owned FP32 master."""
+        if self.optim is None:
+            raise RuntimeError("Cannot check optimizer state on an eval-only train module")
+
+        model = self.multimodal_model
+        trainable_vision_params = {
+            id(param) for param in model.vision.parameters() if param.requires_grad
+        }
+        vision_param_names = {
+            name
+            for param_group in self.optim.param_groups
+            for name, param in param_group["named_params"].items()
+            if id(param) in trainable_vision_params
+        }
+        if len(vision_param_names) != len(trainable_vision_params):
+            raise RuntimeError(
+                "Could not map every trainable vision parameter to its optimizer master: "
+                f"found {len(vision_param_names)} of {len(trainable_vision_params)}"
+            )
+        self.optim._check_model_param_main_param_the_same(vision_param_names)
 
     @torch.no_grad()
     def reset_image_token_rows(self, token_ids: List[int], *, seed: int) -> None:
@@ -819,6 +989,7 @@ class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
     vision_activation_checkpointing: bool = False
     connector_activation_checkpointing: bool = False
     response_logits_only: bool = False
+    diagnostics_interval: Optional[int] = None
 
     def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
         return MultimodalOLMoDDPTrainModule(**kwargs)

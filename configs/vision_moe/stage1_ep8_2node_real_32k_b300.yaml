@@ -1,0 +1,26 @@
+version: 1
+name: stage1-ep8-2node-real-32k-b300
+description: >-
+  Clean 32,000-step s002 Stage-1 run on the production PixMoCap, pointing/counting,
+  and Tulu4 mixture. Starts from the base language-model checkpoint and pristine pinned
+  SigLIP2 vision checkpoint on two B300 nodes in Holmes.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --trainer.max_duration.value=32000
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=32000
+  - --train_module.scheduler.schedulers.vision.t_max=32000
+  - --train_module.scheduler.default.t_max=32000
+  - --model.lm.recompute_each_block=false
+  - --trainer.callbacks.wandb.group=s002-stage1-corrected-32k
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=2000
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=500
+  - --trainer.callbacks.checkpointer.max_checkpoints=2

@@ -348,7 +348,7 @@ class OLMoDDPTrainModule(TrainModule):
             self.optim = optim.build(
                 self.model_parts,
                 self,
-                strict=False,  # group_overrides might only be matched in one group, strict=False allows it to not match in one group (could match in some other group),
+                strict=True,
             )
 
             # MultiGroupDDP owns normal-parameter reduction. Keep the optimizer's

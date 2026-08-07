@@ -29,11 +29,7 @@ from s002_downstream import (
     _git_revision,
 )
 
-from olmo_core.data.multimodal.qwen3_layout import (
-    user_header_ids,
-    user_turn_ids,
-    user_turn_suffix_ids,
-)
+from olmo_core.data.multimodal.document_layout import document_prompt_ids, response_ids
 from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
@@ -164,9 +160,10 @@ def _build_adapter_class():
             self.max_new_tokens_override = max_new_tokens
             self.sequence_bucket_size = sequence_bucket_size
             self.response_mode = response_mode
-            option_encodings = [
-                self.tokenizer.encode(letter, add_special_tokens=False) for letter in "ABCDEFGHIJ"
-            ]
+            # Stage 1 uses Molmo's role-free message format, where every response is the second
+            # message and therefore begins with one space. Score the tokens the model was trained
+            # to predict, not the bare Qwen-style option letters.
+            option_encodings = [response_ids(self.tokenizer, letter) for letter in "ABCDEFGHIJ"]
             if any(len(encoding) != 1 for encoding in option_encodings):
                 raise ValueError("Each MMMU-Pro option letter must encode to one token")
             self.option_token_ids = [encoding[0] for encoding in option_encodings]
@@ -244,13 +241,7 @@ def _build_adapter_class():
 
         def _prompt_ids(self, context: str, image_ids: Sequence[int]) -> List[int]:
             context = _clean_context(context)
-            if not image_ids:
-                return list(user_turn_ids(self.tokenizer, context))
-            return [
-                *user_header_ids(self.tokenizer),
-                *image_ids,
-                *user_turn_suffix_ids(self.tokenizer, context),
-            ]
+            return document_prompt_ids(self.tokenizer, context, image_ids=image_ids)
 
         def _generation_length(self, generation_kwargs: Dict[str, Any]) -> int:
             if self.response_mode == "letter_logits":
@@ -362,10 +353,7 @@ def _build_adapter_class():
                     generated.append(next_token)
                     if self.response_mode == "letter_logits":
                         break
-                    if next_token in {
-                        self.tokenizer.eos_token_id,
-                        self.token_ids.im_end_turn_id,
-                    }:
+                    if next_token == self.tokenizer.eos_token_id:
                         break
                     if current_length >= buffer_length:
                         break
@@ -571,6 +559,8 @@ def main() -> None:
                 "max_new_tokens_override": args.max_new_tokens,
                 "sequence_bucket_size": args.sequence_bucket_size,
                 "attention_backend": "flex",
+                "prompt_layout": "s002_dolma2_document",
+                "response_separator": "single_leading_space",
                 "response_mode": args.response_mode,
                 "generation": (
                     "single_forward_option_letter_logits"

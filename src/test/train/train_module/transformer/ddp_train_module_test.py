@@ -427,7 +427,11 @@ def _run_construct_ep():
 
 
 def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: bool = False):
-    model_config = _tiny_multimodal_model_config()
+    # The production Stage 1 model uses BF16 parameters backed by FP32 optimizer masters. Keep
+    # the unfrozen test on that path so a post-optimizer vision load cannot silently regress.
+    model_config = _tiny_multimodal_model_config(
+        dtype=DType.float32 if freeze_vision else DType.bfloat16
+    )
     if padded_router_compile:
         model_config.lm.recompute_each_block = True
         model_config.lm.block.ep = ExpertParallelConfig(
@@ -472,6 +476,29 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     assert optim.foreach_chunk_size == 32
     optim._check_model_param_main_param_the_same()
 
+    if not freeze_vision:
+        external_vision_state = {
+            name: tensor.detach().clone() + 0.125
+            if tensor.is_floating_point()
+            else tensor.detach().clone()
+            for name, tensor in multimodal.vision.state_dict().items()
+        }
+        train_module.load_vision_state_dict(external_vision_state)
+        train_module.assert_vision_optimizer_state_synced()
+
+        # An optimizer step starts by copying the masters into the model. Exercise that operation
+        # directly and prove it preserves the externally loaded tower exactly.
+        optim._copy_main_params_to_model_params()
+        for name, tensor in multimodal.vision.state_dict().items():
+            torch.testing.assert_close(tensor, external_vision_state[name], rtol=0, atol=0)
+        optim.set_component_grad_norm_patterns(
+            {
+                "vision": ("vision.*", "*vision.*"),
+                "connector": ("connector.*", "*connector.*"),
+                "language model": ("lm.*", "*lm.*"),
+            }
+        )
+
     vision_params = list(multimodal.vision.parameters())
     connector_params = list(multimodal.connector.parameters())
     routed_params = [
@@ -502,6 +529,8 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     }
 
     train_module.zero_grads()
+    if not freeze_vision:
+        multimodal.set_input_diagnostics(True)
     train_module.train_batch(batch, dry_run=True)
     if freeze_vision:
         assert all(param.grad is None for param in vision_params)
@@ -512,6 +541,16 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
             for param in vision_params
         )
         assert multimodal.vision.training
+        diagnostics = multimodal.pop_input_diagnostics(
+            reduce_across_process_group=True,
+            process_group=train_module.dp_process_group,
+        )
+        assert set(diagnostics) == {
+            "text embedding RMS",
+            "connector output RMS",
+            "spliced image embedding RMS",
+        }
+        assert all(torch.isfinite(value) and value > 0 for value in diagnostics.values())
     assert any(
         param.grad is not None and torch.count_nonzero(param.grad) > 0 for param in connector_params
     )
@@ -520,6 +559,15 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     )
     optim.latest_loss = torch.zeros((), device="cuda")
     optim.step()
+    if not freeze_vision:
+        assert set(optim.latest_component_grad_norms) == {
+            "vision",
+            "connector",
+            "language model",
+        }
+        assert all(
+            torch.isfinite(norm) and norm > 0 for norm in optim.latest_component_grad_norms.values()
+        )
     for model_part in train_module.model_parts:
         model_part.post_optim_step()
 

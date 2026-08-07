@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -89,24 +90,32 @@ def test_s002_stage1_optimizer_groups_cover_lm_connector_and_vision():
 def test_s002_stage1_matches_released_molmo2_scale_defaults():
     stage1 = _load_stage1_module()
 
-    assert stage1.SEQUENCE_LENGTH == 2536
+    assert stage1.SEQUENCE_LENGTH == 2560
     assert stage1.GLOBAL_BATCH_INSTANCES == 128
     assert stage1.RANK_MICROBATCH_INSTANCES == 4
-    assert stage1.MAX_STEPS == 31_000
+    assert stage1.MAX_STEPS == 32_000
+    assert stage1.ExperimentConfig.__dataclass_fields__["data_seed"].default == 95818
+    assert stage1.ExperimentConfig.__dataclass_fields__["init_seed"].default == 6198
     assert stage1.PACK_BUFFER_SIZE == 48
     assert stage1.PACK_MAX_CROPS == 16
-    assert stage1.DATA_PREFETCH_WORKERS == 4
+    assert stage1.DATA_PREFETCH_WORKERS == 8
     assert (
         stage1.ExperimentConfig.__dataclass_fields__["data_prefetch_workers"].default
         == stage1.DATA_PREFETCH_WORKERS
     )
     assert stage1.LOSS_TOKEN_WEIGHTING == "none"
     assert stage1.EVAL_INTERVAL == 1000
-    assert stage1.EVAL_EXAMPLES == 64
-    assert stage1.EVAL_RANK_BATCH_INSTANCES == 1
+    assert stage1.EVAL_EXAMPLES == 2048
+    assert stage1.EVAL_RANK_BATCH_INSTANCES == 4
+    assert stage1.EVAL_SEED == 6198
     assert stage1.BEAKER_CLUSTER == "ai2/holmes"
     assert stage1.BEAKER_WORKSPACE == "ai2/molmofication"
     assert stage1.BEAKER_BUDGET == "ai2/oe-other"
+    assert stage1.MOLMO2_CONFIG_REVISION == "042abfa7a38879a376cec03d949eff0aefaa0600"
+    assert stage1.VISION_REVISION == "e8e487298228002f3d8a82e0cd5c8ea9c567f57f"
+    assert stage1.VISION_FINGERPRINT == (
+        "9d9257ea672527b2e37cae7f61734afdf9280d3e77680f2c2d13d4da60aba6bf"
+    )
 
 
 def test_s002_stage1_preserves_native_router_objectives():
@@ -162,6 +171,79 @@ def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     assert env["EXPLICIT_SETTING"] == "kept"
     assert env["TORCHINDUCTOR_COMPILE_THREADS"] == "8"
     assert env["TORCH_LOGS"] == "-dynamo"
+
+
+def test_stage1_console_includes_multimodal_diagnostics():
+    stage1 = _load_stage1_module()
+    logger = stage1._build_console_logger()
+
+    assert "data/*" in logger.metrics
+    assert "multimodal/*" in logger.metrics
+    assert "optim/* grad norm" in logger.metrics
+
+
+def test_stage1_validation_matches_released_loader_seed_without_reseeding_augmentation(
+    monkeypatch,
+):
+    stage1 = _load_stage1_module()
+    captured = {}
+
+    @dataclass
+    class DatasetConfig:
+        split: str = "train"
+        seed: int = 0
+
+        def build(self, tokenizer):
+            captured["dataset_config"] = self
+            return self
+
+    class Loader:
+        def __init__(self, dataset, collator, **kwargs):
+            captured["loader_dataset"] = dataset
+            captured["loader_kwargs"] = kwargs
+
+    class Evaluator:
+        def __init__(self, **kwargs):
+            captured["evaluator_kwargs"] = kwargs
+
+    class Callback:
+        def __init__(self, **kwargs):
+            captured["callback_kwargs"] = kwargs
+
+    trainer = SimpleNamespace(
+        work_dir=Path("/tmp/stage1-validation-test"),
+        device="cpu",
+        dp_process_group=None,
+        add_callback=lambda name, callback: captured.update(callback_name=name, callback=callback),
+    )
+    config = SimpleNamespace(
+        dataset=DatasetConfig(),
+        eval_interval=stage1.EVAL_INTERVAL,
+        eval_examples=stage1.EVAL_EXAMPLES,
+        eval_rank_batch_instances=stage1.EVAL_RANK_BATCH_INSTANCES,
+        eval_seed=stage1.EVAL_SEED,
+    )
+    collator = SimpleNamespace(pad_sequence_length=stage1.SEQUENCE_LENGTH)
+    monkeypatch.setattr(stage1, "MultimodalDataLoader", Loader)
+    monkeypatch.setattr(stage1, "MultimodalLMEvaluator", Evaluator)
+    monkeypatch.setattr(stage1, "EvaluatorCallback", Callback)
+
+    stage1._add_validation_callback(
+        trainer,
+        tokenizer=object(),
+        config=config,
+        collator=collator,
+        dp_world_size=2,
+        dp_rank=0,
+    )
+
+    assert captured["dataset_config"].split == "validation"
+    assert captured["dataset_config"].seed == 0
+    assert captured["loader_kwargs"]["seed"] == 6198
+    assert captured["loader_kwargs"]["shuffle"] is False
+    assert captured["loader_kwargs"]["global_batch_size"] == 8 * stage1.SEQUENCE_LENGTH
+    assert captured["callback_name"] == "pixmo_cap_validation"
+    assert captured["callback_kwargs"]["eval_duration"] == stage1.Duration.steps(256)
 
 
 @pytest.mark.parametrize(
@@ -259,6 +341,37 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
     assert profile["launch"]["priority"] == "urgent"
     assert profile["launch"]["min_runtime"] is None
     assert "--trainer.max_duration.value=500" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
+    assert "--train_module.scheduler.default.t_max=32000" in overrides
+
+
+def test_stage1_clean_b300_run_uses_the_full_32k_horizon():
+    stage1 = _load_stage1_module()
+    profile_path = (
+        Path(__file__).parents[3] / "configs" / "vision_moe" / "stage1_ep8_2node_real_32k_b300.yaml"
+    )
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    assert "--trainer.max_duration.value=32000" in overrides
+    assert "--trainer.max_duration.unit=steps" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
+    assert "--train_module.scheduler.default.t_max=32000" in overrides
+    assert "--model.lm.recompute_each_block=false" in overrides
+    assert not any(override.startswith("--trainer.load_path=") for override in overrides)
+    assert not any("wandb.run_id" in override for override in overrides)
 
 
 def test_stage1_b300_continuation_restores_step4000_and_runs_to8000():
@@ -290,10 +403,11 @@ def test_stage1_b300_continuation_restores_step4000_and_runs_to8000():
     assert "--trainer.load_trainer_state=true" in overrides
     assert "--trainer.max_duration.value=8000" in overrides
     assert "--model.lm.recompute_each_block=false" in overrides
+    assert "--data_prefetch_workers=8" in overrides
     assert "--trainer.callbacks.wandb.run_id=d7jwkm8w" in overrides
-    assert "--train_module.scheduler.schedulers.connector.t_max=31000" in overrides
-    assert "--train_module.scheduler.schedulers.vision.t_max=31000" in overrides
-    assert "--train_module.scheduler.default.t_max=31000" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
+    assert "--train_module.scheduler.default.t_max=32000" in overrides
     assert not any("router_lb_loss_weight" in override for override in overrides)
 
     assert stage1.ROUTER_LB_LOSS_WEIGHT == 0.015

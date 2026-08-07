@@ -3,7 +3,7 @@ name: stage1-ep8-2node-real-resume-to8000-b300
 description: >-
   Continue the corrected s002 Stage-1 run from step 4000 to step 8000 on two B300 nodes.
   Restore full model, optimizer, scheduler, trainer, and packed-loader state; retain the
-  31,000-step LR horizon; and use the validated B300 memory headroom to disable LM block
+  32,000-step LR horizon; and use the validated B300 memory headroom to disable LM block
   recomputation while retaining vision and connector activation checkpointing.
 launch:
   num_nodes: 2
@@ -20,11 +20,11 @@ overrides:
   - --trainer.load_trainer_state=true
   - --trainer.max_duration.value=8000
   - --trainer.max_duration.unit=steps
-  - --train_module.scheduler.schedulers.connector.t_max=31000
-  - --train_module.scheduler.schedulers.vision.t_max=31000
-  - --train_module.scheduler.default.t_max=31000
+  - --train_module.scheduler.schedulers.connector.t_max=32000
+  - --train_module.scheduler.schedulers.vision.t_max=32000
+  - --train_module.scheduler.default.t_max=32000
   - --model.lm.recompute_each_block=false
-  - --data_prefetch_workers=4
+  - --data_prefetch_workers=8
   - --eval_interval=1000
   - --trainer.callbacks.wandb.name=s002-stage1-padding-safe-real-resume-to4000-20260806
   - --trainer.callbacks.wandb.group=s002-stage1-padding-safe-continuation

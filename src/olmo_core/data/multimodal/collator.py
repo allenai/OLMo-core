@@ -109,6 +109,14 @@ class MultimodalCollator:
             "token_type_ids": self._pad_1d(
                 [ex["token_type_ids"] for ex in examples], 0, max_len, np.int64
             ),
+            # Diagnostic-only metadata. The train module records these before removing them
+            # from model kwargs, so they cannot change the forward signature.
+            "image_crop_counts": torch.tensor(
+                [ex["images"].shape[0] for ex in examples], dtype=torch.int64
+            ),
+            "pooled_token_counts": torch.tensor(
+                [ex["pooled_patches_idx"].shape[0] for ex in examples], dtype=torch.int64
+            ),
         }
 
         # Images. Text-only examples contribute 0 real crops / 0 pooled rows. We *always*

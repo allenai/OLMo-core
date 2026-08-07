@@ -96,13 +96,19 @@ class MultimodalDataLoader(DataLoaderBase):
         for b in range(start_batch, n_batches):
             global_slice = order[b * gi : (b + 1) * gi]
             rank_slice = global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
-            examples = [self.dataset[int(i)] for i in rank_slice]
+            source_epoch = max((self._epoch or 1) - 1, 0)
+            get = getattr(self.dataset, "get", None)
+            examples = [
+                get(int(i), source_epoch) if get is not None else self.dataset[int(i)]
+                for i in rank_slice
+            ]
             yield self.collator(examples)
 
     def get_mock_batch(self) -> Dict[str, Any]:
         ri = max(self._rank_instances, 1)
         n = min(ri, len(self.dataset))
-        examples = [self.dataset[i] for i in range(n)]
+        get = getattr(self.dataset, "get", None)
+        examples = [get(i, 0) if get is not None else self.dataset[i] for i in range(n)]
         while len(examples) < ri:
             examples.append(examples[-1])
         return self.collator(examples)

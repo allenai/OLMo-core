@@ -4,10 +4,10 @@ Drives the :class:`~olmo_core.train.Trainer` over several map-style multimodal d
 sampled by per-source weights — the OLMo-core analogue of mm_olmo's ``SubMixture`` /
 ``IterableDatasetMixture``. Used for the caption + pointing + NLP stage-1 mixture.
 
-Each epoch interleaves examples by drawing a source per slot from ``weights`` (multinomial)
-and cycling through a shuffled permutation of that source, so each source contributes
-roughly ``weight`` of the examples. Batches are reported in *tokens*
-(``instances × pad_sequence_length``) like :class:`MultimodalDataLoader`.
+The production buffered-packing path follows Molmo2's continuous multinomial source stream
+and per-source shuffled epochs. Step-bounded training therefore never resets source RNG state
+at an artificial OLMo-core epoch boundary. Batches are reported in *tokens* (``instances ×
+pad_sequence_length``) like :class:`MultimodalDataLoader`.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from .packing import (
     pack_examples,
 )
 from .prefetch import prefetch_map
+from .rng import make_random_state
 
 log = logging.getLogger(__name__)
 
@@ -37,46 +38,30 @@ DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 
 __all__ = ["MixtureDataLoader"]
 
-ExampleRef = Tuple[int, int]
+ExampleRef = Tuple[int, int, int]
 LoadedExample = Tuple[ExampleRef, Optional[Dict[str, Any]], Optional[Exception]]
 
 
 class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
-    """Load a cyclic reference stream in a deterministic order and track its cursor."""
+    """Load the exact Molmo2 mixture stream in order and track its consumed cursor."""
 
     def __init__(
         self,
         loader: "MixtureDataLoader",
-        rank_refs: Sequence[ExampleRef],
         *,
         refs_consumed: int = 0,
     ):
-        if not rank_refs:
-            raise OLMoConfigurationError("No examples are available for this data-parallel rank")
         if refs_consumed < 0:
             raise OLMoConfigurationError("refs_consumed must be non-negative")
         self.loader = loader
-        self.rank_refs = rank_refs
         self.refs_consumed = refs_consumed
         self._results = iter(
             prefetch_map(
                 loader._try_load_ref,
-                self._refs_from_cursor(refs_consumed),
+                loader._rank_refs_from_cursor(refs_consumed),
                 num_workers=loader.prefetch_workers,
             )
         )
-
-    def _refs_from_cursor(self, cursor: int) -> Iterator[ExampleRef]:
-        index = cursor % len(self.rank_refs)
-        while True:
-            yield self.rank_refs[index]
-            index += 1
-            if index == len(self.rank_refs):
-                index = 0
-
-    @property
-    def next_ref(self) -> ExampleRef:
-        return self.rank_refs[self.refs_consumed % len(self.rank_refs)]
 
     def __iter__(self) -> "_OrderedExampleStream":
         return self
@@ -127,7 +112,11 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
             ref, example = next(self.example_stream)
             length = len(example["input_ids"])
             crops = example_crop_count(example)
-            if length > self.seq_len or crops > self.max_crops_per_pack:
+            token_granularity = max(1, self.seq_len // 512)
+            at_token_capacity = (length + token_granularity - 1) // token_granularity >= (
+                self.seq_len + token_granularity - 1
+            ) // token_granularity
+            if at_token_capacity or crops > self.max_crops_per_pack:
                 self.packs_emitted += 1
                 return pack_examples([example])
             if len(self.buffer) < self.buffer_size:
@@ -154,8 +143,6 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
     def state_dict(self) -> Dict[str, Any]:
         return {
             "refs_consumed": self.example_stream.refs_consumed,
-            "rank_refs_len": len(self.example_stream.rank_refs),
-            "next_ref": self.example_stream.next_ref,
             "buffer_refs": [ref for ref, _ in self.buffer],
             "packs_emitted": self.packs_emitted,
         }
@@ -174,6 +161,8 @@ class MixtureDataLoader(DataLoaderBase):
     :param epoch_instances: number of (global) instances that make up one epoch; defaults to
         the sum of the source lengths.
     """
+
+    _epoch: Optional[int]
 
     def __init__(
         self,
@@ -231,6 +220,9 @@ class MixtureDataLoader(DataLoaderBase):
             self.dataset_names = list(dataset_names)
         w = np.asarray(weights, dtype=np.float64)
         self.weights = (w / w.sum()).tolist()
+        # Molmo2 casts the normalized rates to float32 in IterableDatasetMixture. Keep that
+        # exact dtype because it determines the multinomial source-choice boundaries.
+        self._sampling_weights = np.asarray(self.weights, dtype=np.float32)
         self.collator = collator
         self.seed = seed
         self.seq_len = collator.pad_sequence_length
@@ -259,6 +251,11 @@ class MixtureDataLoader(DataLoaderBase):
 
     @property
     def total_batches(self) -> Optional[int]:
+        if self.pack and self.pack_buffer_size:
+            # Molmo2's packed IterableDatasetMixture is infinite and the trainer is bounded
+            # by steps. Returning None keeps one continuous source RNG/count stream for the
+            # whole run instead of introducing artificial OLMo-core epoch boundaries.
+            return None
         if self.pack:
             # Examples are packed several-per-sequence, so an epoch is fewer batches. Estimate
             # the pack count from the average real length (exact count is data-dependent; the
@@ -271,6 +268,9 @@ class MixtureDataLoader(DataLoaderBase):
         if epoch is not None:
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
+        if self.pack and self.pack_buffer_size:
+            self._order = None
+            return
         rng = np.random.RandomState(self.seed + epoch)
         # Number of example refs to draw. When packing, an epoch consumes ~all examples
         # (several per packed sequence), so draw a full epoch of examples; otherwise draw
@@ -281,11 +281,16 @@ class MixtureDataLoader(DataLoaderBase):
             else (self.total_batches or 0) * self._global_instances
         )
         # Per-source shuffled cycles (sampling within a source without replacement until
-        # exhausted, then reshuffle — covers sources smaller than their sampled count).
+        # exhausted, then reshuffle). The third reference coordinate is the source epoch,
+        # which drives deterministic per-example augmentation without freezing it forever.
         perms = [rng.permutation(s) if s else np.array([], dtype=int) for s in self._sizes]
         cursors = [0] * len(self.datasets)
+        source_epochs = [
+            (epoch - 1) * ((self.epoch_instances + size - 1) // size + 1) if size else 0
+            for size in self._sizes
+        ]
         src_choices = rng.choice(len(self.datasets), size=n, p=self.weights)
-        order: List = []
+        order: List[ExampleRef] = []
         for src in src_choices:
             size = self._sizes[src]
             if size == 0:
@@ -293,39 +298,40 @@ class MixtureDataLoader(DataLoaderBase):
             if cursors[src] >= size:
                 perms[src] = rng.permutation(size)
                 cursors[src] = 0
-            order.append((int(src), int(perms[src][cursors[src]])))
+                source_epochs[src] += 1
+            order.append((int(src), int(perms[src][cursors[src]]), int(source_epochs[src])))
             cursors[src] += 1
         self._order = order
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+        ri = self._rank_instances
+        if self.pack and self.pack_buffer_size:
+            packer = self._build_buffered_packer()
+            self._active_packer = packer
+            try:
+                if self._packing_state is None:
+                    packs_to_replay = self.batches_processed * ri
+                    if packs_to_replay:
+                        log.warning(
+                            "Packed-loader checkpoint has no cursor state; replaying %d "
+                            "previously consumed packs once for backwards compatibility",
+                            packs_to_replay,
+                        )
+                    for _ in range(packs_to_replay):
+                        next(packer)
+                while True:
+                    yield self.collator([next(packer) for _ in range(ri)])
+            finally:
+                self._packing_state = self._buffered_packing_state(packer)
+                self._active_packer = None
+                packer.close()
+            return
+
         if self._order is None:
             raise RuntimeError("call reshuffle() before iterating")
-        ri = self._rank_instances
         n_batches = self.total_batches or 0
         if self.pack:
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            if self.pack_buffer_size:
-                packer = self._build_buffered_packer(rank_refs)
-                self._active_packer = packer
-                try:
-                    if self._packing_state is None:
-                        packs_to_replay = self.batches_processed * ri
-                        if packs_to_replay:
-                            log.warning(
-                                "Packed-loader checkpoint has no cursor state; replaying %d "
-                                "previously consumed packs once for backwards compatibility",
-                                packs_to_replay,
-                            )
-                        for _ in range(packs_to_replay):
-                            next(packer)
-                    for _ in range(self.batches_processed, n_batches):
-                        yield self.collator([next(packer) for _ in range(ri)])
-                finally:
-                    self._packing_state = self._buffered_packing_state(packer)
-                    self._active_packer = None
-                    packer.close()
-                return
-
             gen = iter_packs(
                 self._example_stream(rank_refs),
                 self.seq_len,
@@ -346,8 +352,10 @@ class MixtureDataLoader(DataLoaderBase):
             yield self.collator(examples)
 
     def _try_load_example(self, ref) -> Dict[str, Any]:
-        src_idx, example_idx = ref
-        ex = self.datasets[src_idx][example_idx]
+        src_idx, example_idx, source_epoch = ref
+        dataset = self.datasets[src_idx]
+        get = getattr(dataset, "get", None)
+        ex = get(example_idx, source_epoch) if get is not None else dataset[example_idx]
         out = dict(ex)
         out["_source_name"] = self.dataset_names[src_idx]
         return out
@@ -359,26 +367,80 @@ class MixtureDataLoader(DataLoaderBase):
         except Exception as error:
             return ref, None, error
 
+    def _rank_refs_from_cursor(self, refs_consumed: int = 0) -> Iterator[ExampleRef]:
+        """Yield this rank's slice of Molmo2's continuous global reference stream.
+
+        Source selection exactly follows ``IterableDatasetMixture``: MT19937 seeded once,
+        float32 multinomial rates, a global per-source count, and a source permutation from
+        ``make_random_state(seed, source_epoch, 1)``. Vectorized fast-forwarding makes exact
+        checkpoint resume practical without storing or replaying preprocessed examples.
+        """
+        if refs_consumed < 0:
+            raise OLMoConfigurationError("refs_consumed must be non-negative")
+        if any(size <= 0 for size in self._sizes):
+            raise OLMoConfigurationError("Every sampled mixture source must be non-empty")
+
+        rng = np.random.RandomState(self.seed)
+        counts = np.zeros(len(self.datasets), dtype=np.int64)
+        global_cursor = self.dp_rank + refs_consumed * self.dp_world_size
+        remaining = global_cursor
+        while remaining:
+            chunk_size = min(remaining, 1_000_000)
+            choices = rng.choice(len(self.datasets), size=chunk_size, p=self._sampling_weights)
+            counts += np.bincount(choices, minlength=len(self.datasets))
+            remaining -= chunk_size
+
+        shuffled_orders: List[Tuple[Optional[int], Optional[np.ndarray]]] = [
+            (None, None) for _ in self.datasets
+        ]
+        while True:
+            # Generate this rank's global slot plus the intervening slots assigned to the
+            # other ranks. Batched choice is bit-identical to repeated scalar choice for
+            # RandomState and leaves the MT19937 state at the same position.
+            choices = np.asarray(
+                rng.choice(
+                    len(self.datasets),
+                    size=self.dp_world_size,
+                    p=self._sampling_weights,
+                ),
+                dtype=np.int64,
+            )
+            source = int(choices[0])
+            source_count = int(counts[source])
+            counts += np.bincount(choices, minlength=len(self.datasets))
+
+            size = self._sizes[source]
+            source_epoch = source_count // size
+            shuffled_for, shuffled_order = shuffled_orders[source]
+            if shuffled_for != source_epoch:
+                shuffled_order = np.arange(size, dtype=np.int32)
+                make_random_state(self.seed, source_epoch, 1).shuffle(shuffled_order)
+                shuffled_orders[source] = (source_epoch, shuffled_order)
+            assert shuffled_order is not None
+            yield source, int(shuffled_order[source_count % size]), source_epoch
+
     def _handle_data_error(self, ref: ExampleRef, error: Exception):
         """Apply data-error tolerance in reference order on the consumer thread."""
         self._consecutive_data_errors += 1
         self._total_data_errors += 1
-        src_idx, example_idx = ref
+        src_idx, example_idx, source_epoch = ref
         if (
             self._consecutive_data_errors > self.max_consecutive_data_errors
             or self._total_data_errors > self.max_total_data_errors
         ):
             error.add_note(
                 f"Exceeded data error tolerance loading "
-                f"{self.dataset_names[src_idx]}[{example_idx}] "
+                f"{self.dataset_names[src_idx]}[{example_idx}] at source epoch {source_epoch} "
                 f"(consecutive_data_errors={self._consecutive_data_errors}, "
                 f"total_data_errors={self._total_data_errors})"
             )
             raise error
         log.warning(
-            "Skipping %s[%d] after error " "(consecutive_data_errors=%d, total_data_errors=%d): %r",
+            "Skipping %s[%d] at source epoch %d after error "
+            "(consecutive_data_errors=%d, total_data_errors=%d): %r",
             self.dataset_names[src_idx],
             example_idx,
+            source_epoch,
             self._consecutive_data_errors,
             self._total_data_errors,
             error,
@@ -399,22 +461,35 @@ class MixtureDataLoader(DataLoaderBase):
         """Infinite stream of example dicts for this rank: cycle the refs, load each example
         (heavy image preprocessing) on a background thread pool when ``prefetch_workers > 0``
         so it overlaps the GPU step, yielding in order to keep packing deterministic."""
-        stream = _OrderedExampleStream(self, rank_refs)
-        try:
-            while True:
-                _, example = next(stream)
-                yield example
-        finally:
-            stream.close()
-
-    def _build_buffered_packer(self, rank_refs: Sequence[ExampleRef]) -> _BufferedPackingIterator:
         if not rank_refs:
             raise OLMoConfigurationError("No examples are available for this data-parallel rank")
+        results = iter(
+            prefetch_map(
+                self._try_load_ref,
+                itertools.cycle(rank_refs),
+                num_workers=self.prefetch_workers,
+            )
+        )
+        try:
+            while True:
+                ref, example, error = next(results)
+                if error is None:
+                    assert example is not None
+                    self._consecutive_data_errors = 0
+                    yield example
+                else:
+                    self._handle_data_error(ref, error)
+        finally:
+            close = getattr(results, "close", None)
+            if close is not None:
+                close()
+
+    def _build_buffered_packer(self) -> _BufferedPackingIterator:
         if self.pack_max_crops is None:
             raise OLMoConfigurationError("Buffered packing requires pack_max_crops")
         if self._packing_state is None:
             return _BufferedPackingIterator(
-                _OrderedExampleStream(self, rank_refs),
+                _OrderedExampleStream(self),
                 seq_len=self.seq_len,
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
@@ -422,7 +497,7 @@ class MixtureDataLoader(DataLoaderBase):
 
         state = self._packing_state
         expected = {
-            "version": 1,
+            "version": 3,
             "epoch": self._epoch,
             "seed": self.seed,
             "dp_world_size": self.dp_world_size,
@@ -431,7 +506,6 @@ class MixtureDataLoader(DataLoaderBase):
             "seq_len": self.seq_len,
             "pack_buffer_size": self.pack_buffer_size,
             "pack_max_crops": self.pack_max_crops,
-            "rank_refs_len": len(rank_refs),
             "dataset_sizes": self._sizes,
             "dataset_names": self.dataset_names,
             "weights": self.weights,
@@ -455,12 +529,6 @@ class MixtureDataLoader(DataLoaderBase):
                 f"Packed-loader resume state contains {packs_emitted} packs, but "
                 f"batches_processed requires {expected_packs}"
             )
-        next_ref = self._ref_from_state(state["next_ref"])
-        if next_ref != rank_refs[refs_consumed % len(rank_refs)]:
-            raise OLMoConfigurationError(
-                "Packed-loader reference order changed since the checkpoint was written"
-            )
-
         buffer_refs = [self._ref_from_state(ref) for ref in state["buffer_refs"]]
         if len(buffer_refs) > self.pack_buffer_size:
             raise OLMoConfigurationError(
@@ -478,7 +546,7 @@ class MixtureDataLoader(DataLoaderBase):
                 raise
 
         return _BufferedPackingIterator(
-            _OrderedExampleStream(self, rank_refs, refs_consumed=refs_consumed),
+            _OrderedExampleStream(self, refs_consumed=refs_consumed),
             seq_len=self.seq_len,
             max_crops_per_pack=self.pack_max_crops,
             buffer_size=self.pack_buffer_size,
@@ -489,18 +557,18 @@ class MixtureDataLoader(DataLoaderBase):
     @staticmethod
     def _ref_from_state(value: Any) -> ExampleRef:
         try:
-            src_idx, example_idx = value
+            src_idx, example_idx, source_epoch = value
         except (TypeError, ValueError) as error:
             raise OLMoConfigurationError(
                 f"Invalid example reference in packed-loader state: {value!r}"
             ) from error
-        return int(src_idx), int(example_idx)
+        return int(src_idx), int(example_idx), int(source_epoch)
 
     def _buffered_packing_state(self, packer: _BufferedPackingIterator) -> Dict[str, Any]:
         state = packer.state_dict()
         state.update(
             {
-                "version": 1,
+                "version": 3,
                 "epoch": self._epoch,
                 "seed": self.seed,
                 "dp_world_size": self.dp_world_size,
@@ -522,7 +590,7 @@ class MixtureDataLoader(DataLoaderBase):
         src = next((i for i, s in enumerate(self._sizes) if s), 0)
         size = max(self._sizes[src], 1)
         if self.pack:
-            refs = [(src, i % size) for i in range(max(ri * 4, 4))]
+            refs = [(src, i % size, 0) for i in range(max(ri * 4, 4))]
             gen = iter_packs(
                 self._example_stream(refs),
                 self.seq_len,
@@ -530,7 +598,7 @@ class MixtureDataLoader(DataLoaderBase):
                 buffer_size=self.pack_buffer_size,
             )
             return self.collator([next(gen) for _ in range(ri)])
-        examples = [self.datasets[src][i % size] for i in range(ri)]
+        examples = [self._try_load_example((src, i % size, 0)) for i in range(ri)]
         return self.collator(examples)
 
     def global_num_tokens_in_batch(self, batch: Dict[str, Any]) -> Optional[int]:
@@ -553,7 +621,8 @@ class MixtureDataLoader(DataLoaderBase):
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.batches_processed = state_dict.get("batches_processed", 0)
-        self._epoch = state_dict.get("epoch")
+        epoch = state_dict.get("epoch")
+        self._epoch = None if epoch is None else int(epoch)
         self.seed = state_dict.get("seed", self.seed)
         self._consecutive_data_errors = state_dict.get("consecutive_data_errors", 0)
         self._total_data_errors = state_dict.get("total_data_errors", 0)

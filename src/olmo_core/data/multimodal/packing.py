@@ -98,8 +98,9 @@ def _select_buffered_pack_indices(
         dtype=np.int64,
     )
     crop_values = np.asarray(crop_counts, dtype=np.int64)
-    # Use a conservative quantized capacity so selected examples are guaranteed to fit even
-    # when ``seq_len`` is not divisible by the granularity.
+    # The released 2,560-token recipe is evenly divisible by this granularity and therefore
+    # matches Molmo2 exactly. For custom unaligned lengths, floor division is deliberately
+    # conservative so quantization can never select a pack whose real tokens exceed seq_len.
     max_tokens = seq_len // token_granularity
 
     # Match Molmo2's objective: useful text tokens plus image crops. The crop dimension is
@@ -273,10 +274,14 @@ def iter_packs(
         for ex in examples:
             length = len(ex["input_ids"])
             crops = example_crop_count(ex)
+            token_granularity = max(1, seq_len // 512)
+            at_token_capacity = (length + token_granularity - 1) // token_granularity >= (
+                seq_len + token_granularity - 1
+            ) // token_granularity
             # Preserve the existing handling of an individually oversized example. Stage-1
             # datasets are bounded by these constraints, but emitting alone is safer than
             # allowing an invalid item to stall an infinite stream.
-            if length > seq_len or crops > max_crops_per_pack:
+            if at_token_capacity or crops > max_crops_per_pack:
                 yield pack_examples([ex])
                 continue
             if len(buffer) < buffer_size:

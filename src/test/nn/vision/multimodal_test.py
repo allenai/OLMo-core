@@ -1,6 +1,9 @@
 import pytest
 import torch
+import torch.nn.functional as F
 
+import olmo_core.nn.vision.multimodal as multimodal_module
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision import (
     MultimodalLM,
@@ -200,6 +203,80 @@ class TestImageForward:
         with pytest.raises(ValueError, match="match the number of projected image features"):
             self.model(input_ids, images=images, pooled_patches_idx=idx)
 
+    def test_input_scale_diagnostics_cover_connector_and_splice(self):
+        input_ids, images, idx = _make_inputs(batch=1, seq_len=16)
+        self.model.set_input_diagnostics(True)
+        self.model(
+            input_ids,
+            images=images,
+            pooled_patches_idx=idx,
+            token_type_ids=input_ids == _IMAGE_PATCH_TOKEN,
+        )
+        diagnostics = self.model.pop_input_diagnostics()
+
+        assert set(diagnostics) == {
+            "text embedding RMS",
+            "connector output RMS",
+            "spliced image embedding RMS",
+        }
+        assert all(torch.isfinite(value) and value > 0 for value in diagnostics.values())
+        assert self.model.pop_input_diagnostics() == {}
+
+    def test_embedding_preconditioning_is_applied_after_image_splice(self):
+        cfg = _tiny_multimodal_cfg()
+        cfg.lm.embed_scale = 3.0
+        cfg.lm.embedding_norm = LayerNormConfig(
+            name=LayerNormType.rms,
+            eps=1e-6,
+            bias=False,
+        )
+        model = cfg.build(init_device="cpu").eval()
+        input_ids = torch.tensor([[_IMAGE_PATCH_TOKEN, 2, 3]])
+        image_features = torch.arange(1, _LM_D_MODEL + 1, dtype=torch.float32).unsqueeze(0)
+        captured = {}
+
+        def capture_lm_input(_module, _args, kwargs):
+            captured["input_embeddings"] = kwargs["input_embeddings"].detach().clone()
+
+        handle = model.lm.register_forward_pre_hook(capture_lm_input, with_kwargs=True)
+        try:
+            model(input_ids, encoded_image_features=image_features)
+        finally:
+            handle.remove()
+
+        raw = F.embedding(input_ids, model.lm.embeddings.weight)
+        raw[:, 0] += image_features
+        expected = model.lm.embedding_norm(raw * model.lm.embed_scale)
+        torch.testing.assert_close(captured["input_embeddings"], expected)
+
+    def test_input_scale_diagnostics_reduce_sums_and_counts(self, monkeypatch):
+        self.model.set_input_diagnostics(True)
+        self.model._record_input_diagnostic("text embedding RMS", torch.tensor([1.0, 3.0]))
+        remote_stats = torch.tensor([16.0, 9.0, 0.0, 4.0, 1.0, 0.0], dtype=torch.float64)
+        process_group = object()
+
+        monkeypatch.setattr(multimodal_module, "is_distributed", lambda: True)
+
+        def fake_all_reduce(stats, group):
+            assert group is process_group
+            stats.add_(remote_stats)
+
+        monkeypatch.setattr(multimodal_module.dist, "all_reduce", fake_all_reduce)
+        diagnostics = self.model.pop_input_diagnostics(
+            reduce_across_process_group=True,
+            process_group=process_group,
+        )
+
+        torch.testing.assert_close(
+            diagnostics["text embedding RMS"],
+            torch.sqrt(torch.tensor(26.0 / 6.0, dtype=torch.float64)),
+        )
+        torch.testing.assert_close(
+            diagnostics["connector output RMS"], torch.tensor(3.0, dtype=torch.float64)
+        )
+        assert "spliced image embedding RMS" not in diagnostics
+        assert self.model.pop_input_diagnostics() == {}
+
 
 # ---------------------------------------------------------------------------
 # Multi-crop image input
@@ -216,6 +293,16 @@ def test_multi_crop():
     )
     out = model(input_ids, images=images, pooled_patches_idx=idx)
     assert out.shape == (2, 16, _LM_VOCAB)
+
+
+def test_image_flops_account_for_trainable_vision_backward():
+    model = _tiny_multimodal_cfg().build(init_device="cpu")
+    trainable_flops = model.image_encoder_flops(2, 4, 2)
+    for parameter in model.vision.parameters():
+        parameter.requires_grad_(False)
+    frozen_flops = model.image_encoder_flops(2, 4, 2)
+
+    assert trainable_flops > frozen_flops
 
 
 def test_vision_connector_activation_checkpointing_matches_baseline():

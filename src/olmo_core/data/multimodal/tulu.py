@@ -1,8 +1,8 @@
 """Tulu4 text-only NLP SFT dataset for the Molmo2 stage-1 mixture.
 
 Ports ``Tulu4FilteredConfig`` (``mm_olmo/olmo/data/academic_datasets.py``): multi-turn,
-**text-only** instruction data (no image). Examples produce a standard chat sequence with
-the loss on assistant turns only — no image block, no ``<im_patch>`` tokens.
+**text-only** instruction data (no image). Examples use the same unlabelled Dolma2 document
+layout as the s002 pretraining checkpoint, with loss on response turns only and no image block.
 
 The training pipeline treats these as image-less examples: ``images`` is an empty
 ``(0, n_patches, patch_dim)`` array. The collator supplies a dummy zero crop so every
@@ -28,6 +28,7 @@ from olmo_core.nn.vision.molmo2_tokens import (
 
 from .message_weight import MessageWeight
 from .paths import TULU4_DATA
+from .rng import make_random_state
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
@@ -71,7 +72,7 @@ class Tulu4DatasetConfig(Config):
     loss_token_weighting: Optional[str] = "root_subsegments_root_tokens"
     """Assistant-token weighting mode; the default preserves the existing SFT behavior."""
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
-    """Image and chat token IDs for the selected language-model tokenizer."""
+    """Image token IDs reserved by the selected language-model tokenizer."""
     use_code: bool = False
     use_non_english: bool = False
     use_reasoning: bool = False
@@ -127,49 +128,53 @@ class Tulu4Dataset:
     def __len__(self) -> int:
         return len(self._data)
 
-    def _text_sequence(self, messages: List[Dict[str, str]]) -> Dict[str, np.ndarray]:
-        """Tokenize the conversation turn-by-turn, with loss on assistant turns only.
+    def _text_sequence(
+        self, messages: List[Dict[str, str]], rng: np.random.RandomState
+    ) -> Dict[str, np.ndarray]:
+        """Tokenize a role-free Dolma2 document with loss on response messages only.
 
-        Each turn is the molmo2 chat layout: ``<|im_start|>user\\n{u}<|im_end|>\\n
-        <|im_start|>assistant\\n`` (non-loss) followed by ``{a}`` (loss). We build
-        it explicitly because the Molmo2/Qwen chat template doesn't emit an
-        ``assistant_masks`` (no ``{% generation %}`` marker)."""
+        This is Molmo's ``message_format=none`` path: the document begins with EOS, the first
+        message is unchanged, and each subsequent message gets one leading space. Assistant
+        messages also end in EOS so the final response predicts the native document boundary.
+        """
         tok = self.tokenizer
-        ids: List[int] = []
-        asst: List[float] = []
-        segment_ends: List[bool] = []
-        n_turns = (len(messages) - 1) // 2
-        for turn_ix, ix in enumerate(range(0, len(messages) - 1, 2)):
-            u, a = messages[ix]["content"], messages[ix + 1]["content"]
-            u_ids = tok.encode(
-                tok.apply_chat_template(
-                    [{"role": "user", "content": u}], tokenize=False, add_generation_prompt=True
-                ),
-                add_special_tokens=False,
-            )
-            a_ids = tok.encode(a, add_special_tokens=False)
-            if turn_ix < n_turns - 1:
-                a_ids.append(self.config.token_ids.im_end_turn_id)
-            ids += u_ids + a_ids
-            asst += [0.0] * len(u_ids) + [1.0] * len(a_ids)
-            seg_end = [False] * (len(u_ids) + len(a_ids))
-            seg_end[-1] = True
-            segment_ends += seg_end
+        if tok.eos_token_id is None:
+            raise ValueError("The s002 document layout requires an EOS token")
 
-        input_ids = np.array(ids, dtype=np.int64)
-        asst_mask = np.array(asst, dtype=np.float32)
-        seg_ends = np.array(segment_ends, dtype=bool)
+        messages = [dict(message) for message in messages]
+        if rng.random() > 0.10:
+            noisy_length = len(messages[-1]["content"]) + int(rng.normal(scale=25.0))
+            style_prefix = f"text_sft {noisy_length // 15}:"
+        else:
+            style_prefix = "text_sft:"
+        first_content = messages[0]["content"]
+        messages[0]["content"] = (
+            f"{style_prefix} {first_content}" if first_content else style_prefix
+        )
+
+        ids: List[int] = [int(tok.eos_token_id)]
+        asst: List[float] = [0.0]
+        for message_index, message in enumerate(messages):
+            text = message["content"] if message_index == 0 else " " + message["content"]
+            message_ids = tok.encode(text, add_special_tokens=False)
+            is_assistant = message["role"] == "assistant"
+            if is_assistant:
+                message_ids.append(int(tok.eos_token_id))
+            ids.extend(message_ids)
+            asst.extend([float(is_assistant)] * len(message_ids))
+
+        all_ids = np.asarray(ids, dtype=np.int64)
+        asst_mask = np.asarray(asst, dtype=np.float32)
         n_assistant = int(asst_mask.sum())
         message_weight = MessageWeight.from_string(self.config.loss_token_weighting)
         if n_assistant and message_weight.root_length:
-            asst_mask *= 2.0 / np.sqrt(n_assistant + 1)
+            asst_mask *= 2.0 / np.sqrt(n_assistant)
+        if message_weight.weight is not None:
+            asst_mask *= message_weight.weight
 
-        labels = np.zeros_like(input_ids)
-        labels[:-1] = input_ids[1:]
-        labels[seg_ends] = tok.eos_token_id
-        loss_masks = np.zeros_like(asst_mask)
-        loss_masks[:-1] = asst_mask[1:]
-        loss_masks[seg_ends] = asst_mask[seg_ends]
+        input_ids = all_ids[:-1]
+        labels = all_ids[1:]
+        loss_masks = asst_mask[1:]
         return {
             "input_ids": input_ids,
             "labels": labels,
@@ -182,6 +187,10 @@ class Tulu4Dataset:
         }
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
+        return self.get(i, 0)
+
+    def get(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+        """Build one deterministically formatted conversation for a source epoch."""
         messages = _format_messages(list(self._data[i]["messages"]))
         if messages is None:
             # Filtered datasets should not contain these, but guard: fall back to next.
@@ -189,7 +198,7 @@ class Tulu4Dataset:
                 {"role": "user", "content": "Hello"},
                 {"role": "assistant", "content": "Hi."},
             ]
-        seq = self._text_sequence(messages)
+        seq = self._text_sequence(messages, make_random_state(self.config.seed + i, epoch))
         max_len = self.config.max_sequence_length
         if max_len and len(seq["input_ids"]) > max_len:
             seq = {

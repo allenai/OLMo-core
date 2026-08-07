@@ -2,8 +2,8 @@
 
 A dependency-free (no ``mm_olmo``) map-style :class:`torch.utils.data.Dataset` that
 turns PixMoCap image-caption examples into packed Molmo2 training sequences. Each
-example produces a shared prefix (qwen3 user header + image block) that branches into
-one or more ``(user turn, assistant response)`` annotations (a long caption and/or a
+example produces a shared prefix (s002 document boundary + image block) that branches
+into one or more plain ``(task prompt, response)`` annotations (a long caption and/or a
 spoken transcript), assembled by
 :func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Following
 mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn is prefixed with
@@ -29,7 +29,8 @@ import numpy as np
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
-from .qwen3_layout import branch_context_ids, image_prefix_ids
+from .document_layout import branch_context_ids, image_prefix_ids, response_ids
+from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
@@ -39,18 +40,34 @@ __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANS
 CAPTION_PROMPTS = (
     "Describe this image.",
     "Describe this image",
+    "describe the image",
     "Write a long description of this image.",
+    "caption the picture",
+    "Caption",
+    "caption",
     "Construct a long caption for this image",
     "Generate a caption",
     "Create a detailed caption",
     "Write a long caption",
     "Describe this image in detail",
+    "Describe this",
+    "describe this",
+    "Caption this",
+    "What can be seen in this image?",
+    "What do you see in the image?",
+    "Look at this photo carefully and then tell me about it in detail",
+    "Write a long description of this image",
+    "Tell me about this picture.",
+    "Write a paragraph about this image.",
+    "Look at this image carefully and then describe it in detail",
+    "Generate a long caption about this image.",
 )
 TRANSCRIPT_PROMPTS = (
     "Describe this image as if you are a person speaking",
     "Imagine you are a person talking about this image. Generate a transcript of what you would say.",
     "Generate an audio transcript of a person describing this image",
     "Create a transcript of a human describing this image out load",
+    "Describe this in this style of a human talking",
 )
 
 _MODES = ("caption", "transcript", "transcript_and_caption", "sft_demo")
@@ -142,6 +159,7 @@ class PixMoCapDataset:
         if self._kind == "jsonl":
             assert self._rows is not None
             return len(self._rows)
+        assert self._hf is not None
         return len(self._hf)
 
     # -- loading helpers --------------------------------------------------------
@@ -162,6 +180,7 @@ class PixMoCapDataset:
         if self._kind == "jsonl":
             assert self._rows is not None
             return self._rows[index]
+        assert self._hf is not None
         return self._hf[index]
 
     def _load_image(self, row: Dict[str, Any]):
@@ -220,13 +239,17 @@ class PixMoCapDataset:
         return pool[rng.randint(len(pool))]
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
+        return self.get(index, 0)
+
+    def get(self, index: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+        """Build one deterministically augmented example for a source epoch."""
         if self.config.mode == "sft_demo":
             return self._getitem_sft_demo(index)
 
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
         cfg = self.config
-        rng = np.random.RandomState(cfg.seed + index)
+        rng = make_random_state(cfg.seed + index, epoch)
 
         import torch
 
@@ -243,15 +266,6 @@ class PixMoCapDataset:
             row = self._get_row(index)
             pil = self._load_image(row)
 
-        images_t, pooling_t, image_grid = preprocess_image_molmo2(
-            pil, dtype=torch.float32, device=torch.device("cpu"), max_crops=cfg.max_crops
-        )
-        images = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
-        pooled = pooling_t[0].numpy()  # (n_pool, pool_size)
-
-        # Shared prefix = qwen3 user header + image block; each branch carries its own
-        # user turn (full header when multi-branch, suffix-only when single-branch).
-        prefix_ids = image_prefix_ids(self.tokenizer, image_grid, token_ids=cfg.token_ids)
         branch_specs: List[Tuple[str, List[int]]] = []
         for style, text in self._select_branches(row, rng):
             if cfg.fixed_prompt is not None:
@@ -262,18 +276,28 @@ class PixMoCapDataset:
                     prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
                 else:
                     prompt = base_prompt
-            response_ids = self.tokenizer.encode(text, add_special_tokens=False)
-            branch_specs.append((prompt, response_ids))
+            branch_specs.append((prompt, response_ids(self.tokenizer, text)))
 
-        multi_branch = len(branch_specs) > 1
+        if len(branch_specs) > 1:
+            rng.shuffle(branch_specs)
+
+        # Molmo2 formats and shuffles messages before image augmentation, sharing one RNG.
+        images_t, pooling_t, image_grid = preprocess_image_molmo2(
+            pil,
+            dtype=torch.float32,
+            device=torch.device("cpu"),
+            max_crops=cfg.max_crops,
+            rng=rng,
+        )
+        images = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
+        pooled = pooling_t[0].numpy()  # (n_pool, pool_size)
+
+        # Shared prefix = native EOS document boundary + image block. Each branch is plain
+        # non-role text and its response receives Molmo's one-space message separator.
+        prefix_ids = image_prefix_ids(self.tokenizer, image_grid, token_ids=cfg.token_ids)
         branch_pairs = [
-            (
-                branch_context_ids(
-                    self.tokenizer, prompt, branch_index=i, multi_branch=multi_branch
-                ),
-                response_ids,
-            )
-            for i, (prompt, response_ids) in enumerate(branch_specs)
+            (branch_context_ids(self.tokenizer, prompt), encoded_response)
+            for prompt, encoded_response in branch_specs
         ]
 
         seq = build_branched_sequence(

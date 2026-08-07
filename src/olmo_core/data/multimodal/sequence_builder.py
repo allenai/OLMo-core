@@ -3,8 +3,8 @@
 This is a dependency-free port of the sequence-assembly performed by ``mm_olmo``'s
 ``RefactoredExamplePreprocessor`` (``flatten_tree`` + ``build_sequence`` in
 ``olmo/models/molmo2/example_preprocessor.py``) for the common case of a single
-shared prefix (BOS + image block + user prompt + assistant header) that branches
-into one or more assistant responses (e.g. a caption plus a transcript).
+shared prefix (document boundary + image block + task prompt) that branches
+into one or more responses (e.g. a caption plus a transcript).
 
 Multiple branches that share one image are packed into a single sequence where
 each branch is *isolated* from its siblings via subsegment attention and the
@@ -43,8 +43,7 @@ def build_packed_sequence(
 ) -> Dict[str, np.ndarray]:
     """Assemble a packed training example from a shared prefix and response branches.
 
-    :param prefix_ids: Token IDs of the shared prefix, ending with the assistant
-        header (e.g. ``…<|im_start|>assistant\\n``). The final token is "carried over"
+    :param prefix_ids: Token IDs of the shared prefix. The final token is "carried over"
         into each branch as a non-loss token so each branch copy can predict its own
         first response token (matching mm_olmo).
     :param response_id_lists: One token-ID list per annotation (e.g. caption,
@@ -86,11 +85,11 @@ def build_packed_sequence(
     if n_branches == 1:
         # No branching: a single causal sequence (prefix + response), sequential
         # positions, no subsegments. Weight is binary unless root_length.
-        response = list(response_id_lists[0])
-        tokens = prefix_ids + response
+        single_response = list(response_id_lists[0])
+        tokens = prefix_ids + single_response
         weight = 1.0
         if root_length:
-            n_resp = len(response) + 1  # +1 for EOS
+            n_resp = len(single_response) + 1  # +1 for EOS
             weight = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
         loss = np.zeros(len(tokens), dtype=np.float32)
         loss[len(prefix_ids) :] = weight  # response tokens get loss
@@ -124,11 +123,11 @@ def build_packed_sequence(
             )
         )
         for branch_idx, response in enumerate(response_id_lists):
-            response = list(response)
-            branch_tokens = [carry_over] + response
+            response_ids = list(response)
+            branch_tokens = [carry_over] + response_ids
             branch_weight = 1.0
             if root_length:
-                n_resp = len(response) + 1 if n_branches == 1 else len(response)
+                n_resp = len(response_ids) + 1 if n_branches == 1 else len(response_ids)
                 branch_weight = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
             loss = np.zeros(len(branch_tokens), dtype=np.float32)
             loss[1:] = branch_weight  # carry-over (idx 0) is non-loss; response gets loss
@@ -197,15 +196,14 @@ def build_branched_sequence(
 
     Unlike :func:`build_packed_sequence` (caption: a shared prompt in the prefix, branches
     are assistant-only and carry over the prefix's last token), this handles the
-    pointing/counting layout where the shared prefix is just ``BOS + image block`` and each
-    branch is a full ``(user-turn, assistant-answer)`` pair. Branches are isolated by
+    pointing/counting layout where the shared prefix is the document boundary and image block,
+    and each branch is a full ``(task prompt, response)`` pair. Branches are isolated by
     subsegment and share an overlapping position range starting right after the prefix (no
     carry-over, since each branch begins with its own user turn).
 
-    :param prefix_ids: Shared prefix token IDs (BOS + image block), all non-loss.
+    :param prefix_ids: Shared prefix token IDs (document boundary + image block), all non-loss.
     :param branches: One ``(context_ids, response_ids)`` per annotation — ``context_ids`` is
-        the non-loss user turn (e.g. ``<|im_start|>user\\n{q}<|im_end|>\\n<|im_start|>assistant\\n``),
-        ``response_ids`` is the loss-bearing assistant answer.
+        the non-loss plain task prompt and ``response_ids`` is the loss-bearing response.
     :param eos_id: EOS token id (target at each branch end).
     :param loss_token_weighting: as in :func:`build_packed_sequence`.
 
