@@ -44,6 +44,7 @@ from olmo_core.testing import (
     run_distributed_test,
 )
 from olmo_core.testing.utils import requires_compute_capability
+from olmo_core.train.common import ReduceType
 from olmo_core.utils import get_default_device, seed_all
 
 BF16_RTOL = 1e-5
@@ -1061,6 +1062,58 @@ def test_attention_gating(
     with torch.autocast(device.type, dtype=dtype, enabled=dtype != torch.float32):
         y = attention(x)
         y.sum().backward()
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_attention_gate_mean_metric(device: torch.device):
+    seed_all(0)
+
+    d_model = 64
+    n_heads = 4
+    seq_len = 8
+    batch_size = 2
+
+    attention = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        gate=GateConfig(granularity=GateGranularity.headwise, full_precision=True),
+        backend=AttentionBackendName.torch,
+        init_device=device.type,
+    )
+    attention.train()
+
+    x = torch.randn(batch_size, seq_len, d_model, device=device, requires_grad=True)
+    y = attention(x)
+    y.sum().backward()
+
+    with torch.no_grad():
+        expected = torch.sigmoid(attention.w_g(x).float()).mean()
+
+    metrics = attention.compute_metrics(reset=False)
+    assert "gate mean" in metrics
+    gate_mean, reduce_type = metrics["gate mean"]
+    assert reduce_type == ReduceType.mean
+    assert 0.0 < gate_mean.item() < 1.0
+    torch.testing.assert_close(gate_mean, expected)
+
+    # Second micro-batch should accumulate into the running mean.
+    x2 = torch.randn(batch_size, seq_len, d_model, device=device, requires_grad=True)
+    y2 = attention(x2)
+    y2.sum().backward()
+    with torch.no_grad():
+        expected2 = (
+            torch.sigmoid(attention.w_g(x).float()).sum()
+            + torch.sigmoid(attention.w_g(x2).float()).sum()
+        ) / (2 * batch_size * seq_len * n_heads)
+
+    metrics = attention.compute_metrics(reset=True)
+    gate_mean, _ = metrics["gate mean"]
+    torch.testing.assert_close(gate_mean, expected2)
+
+    # After reset, buffers are cleared.
+    metrics = attention.compute_metrics(reset=False)
+    gate_mean, _ = metrics["gate mean"]
+    assert gate_mean.item() == 0.0
 
 
 def _run_tensor_parallel_attention(

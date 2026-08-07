@@ -457,14 +457,14 @@ class TransformerTrainModule(TrainModule):
             )
 
         # And additional metrics.
-        for metric_name, (metric_val, reduction) in self.model.compute_auxiliary_metrics(
+        for metric_name, (metric_val, reduction, namespace) in self.model.compute_auxiliary_metrics(
             reset=True
         ).items():
             self.record_metric(
                 metric_name,
                 metric_val,
                 reduction,
-                namespace="train",
+                namespace=namespace,
             )
 
     def eval_batch(

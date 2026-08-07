@@ -446,7 +446,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # And additional metrics.
         for model in self.model_parts:
-            for metric_name, (metric_val, reduction) in model.compute_auxiliary_metrics(
+            for metric_name, (metric_val, reduction, namespace) in model.compute_auxiliary_metrics(
                 reset=True,
             ).items():
                 merge_strategy = MetricMergeStrategy.warn
@@ -458,7 +458,7 @@ class TransformerPipelineTrainModule(TrainModule):
                     metric_name,
                     metric_val,
                     reduction,
-                    namespace="train",
+                    namespace=namespace,
                     merge_strategy=merge_strategy,
                 )
 

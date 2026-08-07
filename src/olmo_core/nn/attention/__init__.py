@@ -2,7 +2,7 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -12,6 +12,7 @@ from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
+from olmo_core.distributed.utils import _HiddenTensor, hide_from_torch, unhide_from_torch
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
@@ -51,6 +52,7 @@ from .ring import (
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+    from olmo_core.train.common import ReduceType
 
 __all__ = [
     "SlidingWindowAttentionConfig",
@@ -391,6 +393,11 @@ class Attention(SequenceMixer):
 
         self.gate = gate
         self.w_g: Optional[nn.Linear] = None
+        # NOTE: we don't use buffers for these because we don't want FSDP to manage them, and we
+        # don't use a BufferCache because `torch.compile()` doesn't handle that well when we're
+        # modifying values in the cache.
+        self._gate_sum: Optional[_HiddenTensor] = None
+        self._gate_count: Optional[_HiddenTensor] = None
         if gate is not None:
             if gate.granularity == GateGranularity.headwise:
                 self.w_g = nn.Linear(
@@ -404,6 +411,8 @@ class Attention(SequenceMixer):
                     dtype=dtype,
                     device=init_device,
                 )
+            self._gate_sum = hide_from_torch(torch.zeros([], device=init_device))
+            self._gate_count = hide_from_torch(torch.zeros([], device=init_device))
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
@@ -635,6 +644,8 @@ class Attention(SequenceMixer):
 
         if self.gate is not None:
             assert self.w_g is not None
+            assert self._gate_sum is not None
+            assert self._gate_count is not None
             g = self.w_g(x)
             if self.gate.full_precision:
                 g = g.float()
@@ -647,11 +658,48 @@ class Attention(SequenceMixer):
                 att = att.view(B, T, -1) * gate_values
                 # the following att.view op is redundant (a no-op)
 
+            # Accumulate gating-score stats for logging (mean across all heads / elements).
+            if self.training and torch.is_grad_enabled():
+                gate_sum = unhide_from_torch(self._gate_sum)
+                gate_count = unhide_from_torch(self._gate_count)
+                if gate_sum.device != gate_values.device:
+                    gate_sum = gate_sum.to(gate_values.device)
+                    gate_count = gate_count.to(gate_values.device)
+                gate_fp = gate_values.detach().float()
+                self._gate_sum = hide_from_torch(gate_sum + gate_fp.sum())
+                self._gate_count = hide_from_torch(gate_count + gate_fp.numel())
+
         # shape: (batch_size, seq_len, d_model)
         att = att.view(B, T, -1)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def compute_metrics(
+        self, reset: bool = True
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+        from olmo_core.train.common import ReduceType
+
+        out: Dict[str, Tuple[torch.Tensor, Optional[ReduceType]]] = {}
+        if self.gate is None:
+            return out
+
+        assert self._gate_sum is not None
+        assert self._gate_count is not None
+        gate_sum = unhide_from_torch(self._gate_sum)
+        gate_count = unhide_from_torch(self._gate_count)
+        out["gate mean"] = (gate_sum / gate_count.clamp_min(1.0), ReduceType.mean)
+
+        if reset:
+            self.reset_metrics()
+
+        return out
+
+    def reset_metrics(self):
+        if self._gate_sum is not None:
+            unhide_from_torch(self._gate_sum).zero_()
+        if self._gate_count is not None:
+            unhide_from_torch(self._gate_count).zero_()
 
     def apply_tp(
         self,

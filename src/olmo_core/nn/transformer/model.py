@@ -202,12 +202,27 @@ class Transformer(nn.Module):
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
-        del reset
-        return {}
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"], str]]:
+        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"], str]] = {}
+        for block_idx, block in self.blocks.items():
+            attention = getattr(block, "attention", None)
+            if not isinstance(attention, Attention) or attention.gate is None:
+                continue
+            for metric_name, (metric_val, reduce_type) in attention.compute_metrics(
+                reset=reset
+            ).items():
+                out[f"block {int(block_idx):02d}/{metric_name}"] = (
+                    metric_val,
+                    reduce_type,
+                    "gated_attn",
+                )
+        return out
 
     def reset_auxiliary_metrics(self):
-        pass
+        for block in self.blocks.values():
+            attention = getattr(block, "attention", None)
+            if isinstance(attention, Attention) and attention.gate is not None:
+                attention.reset_metrics()
 
     @property
     def pp_enabled(self) -> bool:
@@ -1113,7 +1128,7 @@ class MoETransformer(Transformer):
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
-    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]]:
+    ) -> Dict[str, Tuple[torch.Tensor, Optional["ReduceType"], str]]:
         from olmo_core.train.common import ReduceType
 
         mean_offset = 1.0
@@ -1121,7 +1136,7 @@ class MoETransformer(Transformer):
             # Change the divisor to 'world_size // pp_group_size'
             mean_offset = self._pp_group_size
 
-        out: Dict[str, Tuple[torch.Tensor, Optional["ReduceType"]]] = {}
+        out = super().compute_auxiliary_metrics(reset=reset)
         for block_idx, block in self.blocks.items():
             if not block.is_moe:
                 continue
@@ -1131,28 +1146,32 @@ class MoETransformer(Transformer):
                 out[f"block {int(block_idx):02d}/{metric_name}"] = (
                     metric_val,
                     reduce_type,
+                    "train",
                 )
 
                 if self.pp_enabled and reduce_type == ReduceType.mean:
                     metric_val = metric_val.float() * mean_offset
 
                 if metric_name not in out:
-                    out[metric_name] = (metric_val, reduce_type)
+                    out[metric_name] = (metric_val, reduce_type, "train")
                 elif reduce_type in (ReduceType.mean, ReduceType.sum):
                     out[metric_name] = (
                         out[metric_name][0] + metric_val,
                         reduce_type,
+                        "train",
                     )
                 elif reduce_type == ReduceType.max:
                     out[metric_name] = (
                         torch.max(out[metric_name][0], metric_val),
                         reduce_type,
+                        "train",
                     )
                 else:
                     raise NotImplementedError(reduce_type)
         return out
 
     def reset_auxiliary_metrics(self):
+        super().reset_auxiliary_metrics()
         for block in self.blocks.values():
             if not block.is_moe:
                 continue
