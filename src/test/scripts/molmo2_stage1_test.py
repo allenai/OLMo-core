@@ -95,7 +95,15 @@ def test_s002_stage1_matches_released_molmo2_scale_defaults():
     assert stage1.MAX_STEPS == 31_000
     assert stage1.PACK_BUFFER_SIZE == 48
     assert stage1.PACK_MAX_CROPS == 16
+    assert stage1.DATA_PREFETCH_WORKERS == 4
+    assert (
+        stage1.ExperimentConfig.__dataclass_fields__["data_prefetch_workers"].default
+        == stage1.DATA_PREFETCH_WORKERS
+    )
     assert stage1.LOSS_TOKEN_WEIGHTING == "none"
+    assert stage1.EVAL_INTERVAL == 1000
+    assert stage1.EVAL_EXAMPLES == 64
+    assert stage1.EVAL_RANK_BATCH_INSTANCES == 1
     assert stage1.BEAKER_CLUSTER == "ai2/holmes"
     assert stage1.BEAKER_WORKSPACE == "ai2/molmofication"
     assert stage1.BEAKER_BUDGET == "ai2/oe-other"
@@ -152,6 +160,7 @@ def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     assert launch.post_setup == preset.post_setup
     assert "pip install" not in (launch.post_setup or "")
     assert env["EXPLICIT_SETTING"] == "kept"
+    assert env["TORCHINDUCTOR_COMPILE_THREADS"] == "8"
     assert env["TORCH_LOGS"] == "-dynamo"
 
 
@@ -250,6 +259,38 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
     assert profile["launch"]["priority"] == "urgent"
     assert profile["launch"]["min_runtime"] is None
     assert "--trainer.max_duration.value=500" in overrides
+
+
+def test_stage1_b300_continuation_restores_step4000_and_runs_to8000():
+    stage1 = _load_stage1_module()
+    profile_path = (
+        Path(__file__).parents[3]
+        / "configs"
+        / "vision_moe"
+        / "stage1_ep8_2node_real_resume_to8000_b300.yaml"
+    )
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    assert (
+        "--trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/"
+        "checkpoints/s002-stage1-padding-safe-real-resume-to4000-20260806/step4000" in overrides
+    )
+    assert "--trainer.load_optim_state=true" in overrides
+    assert "--trainer.load_trainer_state=true" in overrides
+    assert "--trainer.max_duration.value=8000" in overrides
+    assert "--model.lm.recompute_each_block=false" in overrides
+    assert "--trainer.callbacks.wandb.run_id=d7jwkm8w" in overrides
     assert "--train_module.scheduler.schedulers.connector.t_max=31000" in overrides
     assert "--train_module.scheduler.schedulers.vision.t_max=31000" in overrides
     assert "--train_module.scheduler.default.t_max=31000" in overrides

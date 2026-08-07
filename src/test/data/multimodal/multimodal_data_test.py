@@ -125,6 +125,32 @@ class _FakeDataset:
         )
 
 
+class _CountingFakeDataset(_FakeDataset):
+    """Fake dataset that makes each ref observable and counts preprocessing calls."""
+
+    def __init__(self, n: int, tag: int):
+        super().__init__(n, tag)
+        self.loads = 0
+
+    def __getitem__(self, i):
+        self.loads += 1
+        out = super().__getitem__(i)
+        out["input_ids"] = np.full(len(out["input_ids"]), self.tag + i, dtype=np.int64)
+        return out
+
+
+class _FailingFakeDataset(_CountingFakeDataset):
+    def __init__(self, n: int, tag: int):
+        super().__init__(n, tag)
+        self.fail_indices = set()
+
+    def __getitem__(self, i):
+        if i in self.fail_indices:
+            self.loads += 1
+            raise ValueError(f"synthetic failure for {i}")
+        return super().__getitem__(i)
+
+
 def test_mixture_data_loader_weighted_sampling(tmp_path):
     ds = [_FakeDataset(1000, 10), _FakeDataset(500, 20), _FakeDataset(200, 30)]
     weights = [0.6, 0.3, 0.1]
@@ -422,8 +448,8 @@ def test_mixture_data_loader_buffered_packing_resumes_exactly(tmp_path):
             prefetch_workers=prefetch_workers,
         )
 
-    for prefetch_workers in (0, 4):
-        original = build_loader(tmp_path / f"original-{prefetch_workers}", prefetch_workers)
+    for original_workers, restored_workers in ((0, 0), (0, 4), (4, 0), (4, 4)):
+        original = build_loader(tmp_path / f"original-{original_workers}", original_workers)
         original.reshuffle(epoch=3)
         original_iter = iter(original)
         next(original_iter)
@@ -431,7 +457,7 @@ def test_mixture_data_loader_buffered_packing_resumes_exactly(tmp_path):
         expected = next(original_iter)
         original_iter.close()
 
-        restored = build_loader(tmp_path / f"restored-{prefetch_workers}", prefetch_workers)
+        restored = build_loader(tmp_path / f"restored-{restored_workers}", restored_workers)
         restored.load_state_dict(state)
         restored.reshuffle()
         restored_iter = iter(restored)
@@ -440,6 +466,109 @@ def test_mixture_data_loader_buffered_packing_resumes_exactly(tmp_path):
 
         for key in ("input_ids", "example_ids", "loss_masks", "position_ids"):
             np.testing.assert_array_equal(actual[key], expected[key])
+
+
+def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_path):
+    datasets = [_CountingFakeDataset(200, 1000), _CountingFakeDataset(100, 2000)]
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir):
+        return MixtureDataLoader(
+            datasets,
+            [0.5, 0.5],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=23,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            prefetch_workers=0,
+        )
+
+    original = build_loader(tmp_path / "original")
+    original.reshuffle(epoch=2)
+    original_iter = iter(original)
+    for _ in range(10):
+        next(original_iter)
+    state = original.state_dict()
+    expected = next(original_iter)
+    original_iter.close()
+
+    packing_state = state["packing_state"]
+    assert packing_state["packs_emitted"] == 20
+    assert len(packing_state["buffer_refs"]) <= 4
+
+    for dataset in datasets:
+        dataset.loads = 0
+    restored = build_loader(tmp_path / "restored")
+    restored.load_state_dict(state)
+    restored.reshuffle()
+    restored_iter = iter(restored)
+    actual = next(restored_iter)
+    restored_iter.close()
+    fast_resume_loads = sum(dataset.loads for dataset in datasets)
+
+    for key in ("input_ids", "example_ids", "loss_masks", "position_ids"):
+        np.testing.assert_array_equal(actual[key], expected[key])
+    assert fast_resume_loads == len(packing_state["buffer_refs"]) + 2
+
+    # Checkpoints written before cursor state was added remain resumable. They replay the
+    # old prefix once, then subsequent checkpoints use the bounded path above.
+    legacy_state = dict(state)
+    legacy_state.pop("packing_state")
+    for dataset in datasets:
+        dataset.loads = 0
+    legacy = build_loader(tmp_path / "legacy")
+    legacy.load_state_dict(legacy_state)
+    legacy.reshuffle()
+    legacy_iter = iter(legacy)
+    legacy_actual = next(legacy_iter)
+    legacy_iter.close()
+
+    np.testing.assert_array_equal(legacy_actual["input_ids"], expected["input_ids"])
+    assert sum(dataset.loads for dataset in datasets) > fast_resume_loads
+
+
+def test_mixture_data_loader_prefetch_skips_errors_in_reference_order(tmp_path):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir, workers):
+        dataset = _FailingFakeDataset(200, 1000)
+        loader = MixtureDataLoader(
+            [dataset],
+            [1.0],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=31,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            prefetch_workers=workers,
+        )
+        loader.reshuffle(epoch=2)
+        dataset.fail_indices = {loader._order[0][1], loader._order[2][1]}
+        return loader
+
+    sync = build_loader(tmp_path / "sync", 0)
+    sync_iter = iter(sync)
+    expected = next(sync_iter)
+    sync_state = sync.state_dict()
+    sync_iter.close()
+
+    threaded = build_loader(tmp_path / "threaded", 4)
+    threaded_iter = iter(threaded)
+    actual = next(threaded_iter)
+    threaded_state = threaded.state_dict()
+    threaded_iter.close()
+
+    np.testing.assert_array_equal(actual["input_ids"], expected["input_ids"])
+    assert sync_state["total_data_errors"] == threaded_state["total_data_errors"] == 2
+    assert (
+        sync_state["packing_state"]["refs_consumed"]
+        == threaded_state["packing_state"]["refs_consumed"]
+    )
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

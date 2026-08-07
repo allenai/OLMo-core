@@ -2,8 +2,8 @@
 Molmo2 "stage 1" caption-pretraining with an s002 OLMo3 MoE language model.
 
 Trains the connector + LM + vision encoder on PixMoCap captions/transcripts, using binary
-response-token loss weights and per-component learning rates / warmups. In-loop evaluation
-is intentionally omitted.
+response-token loss weights and per-component learning rates / warmups. A deterministic
+held-out PixMoCap slice reports response-token loss and perplexity during training.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -19,7 +19,7 @@ Run without arguments for usage. Quick local smoke test on synthetic data::
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -40,6 +40,7 @@ from olmo_core.data.multimodal import (
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.eval import MultimodalLMEvaluator
 from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
 from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
@@ -60,6 +61,7 @@ from olmo_core.train.callbacks import (
     BeakerCallback,
     CheckpointerCallback,
     ConfigSaverCallback,
+    EvaluatorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     WandBCallback,
@@ -94,6 +96,10 @@ DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = sync
 MAX_CROPS = 8
 LOSS_TOKEN_WEIGHTING = "none"
 EP_DEGREE = 8
+EVAL_INTERVAL = 1000
+EVAL_EXAMPLES = 64
+EVAL_RANK_BATCH_INSTANCES = 1
+EVAL_SEED = 9265
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -178,8 +184,17 @@ class ExperimentConfig(Config):
     """Examples considered by Molmo2's buffered two-constraint packing solver."""
     pack_max_crops: int = PACK_MAX_CROPS
     """Maximum total image crops in one packed sequence."""
+    data_prefetch_workers: int = DATA_PREFETCH_WORKERS
+    """Background data-preprocessing threads per rank; zero disables prefetching."""
     router_lb_loss_weight: Optional[float] = ROUTER_LB_LOSS_WEIGHT
     """Stage-1 router load-balancing weight; defaults to the native s002 value."""
+    eval_interval: Optional[int] = EVAL_INTERVAL
+    """Run held-out PixMoCap loss/PPL every this many steps; ``None`` disables it."""
+    eval_examples: int = EVAL_EXAMPLES
+    """Number of deterministic validation examples per evaluation."""
+    eval_rank_batch_instances: int = EVAL_RANK_BATCH_INSTANCES
+    """Validation instances per DP rank and forward pass."""
+    eval_seed: int = EVAL_SEED
 
 
 def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
@@ -313,6 +328,10 @@ def _configure_launch_runtime(launch_config: BeakerLaunchConfig) -> None:
             "OLMO_USE_OWN_SYMM_MEM": "1",
             "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
             "OLMO_OWN_SYMM_PREWARM": "1",
+            # Eight ranks times Inductor's default worker count oversubscribes a B300 node
+            # during the compile warmup. Eight workers per rank keeps compilation parallel
+            # without starving the training and data-loader processes.
+            "TORCHINDUCTOR_COMPILE_THREADS": "8",
             # The launcher default enables verbose graph-break/recompile diagnostics. They are
             # useful when debugging compilation but overwhelm normal multi-rank training logs.
             "TORCH_LOGS": "-dynamo",
@@ -375,12 +394,13 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 project=WANDB_PROJECT,
                 enabled=WANDB_PROJECT is not None,
                 cancel_check_interval=10,
+                auto_resume=True,
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
-    )  # NOTE: no in-loop eval callbacks (out of scope for stage 1).
+    )
 
     launch_config = build_launch_config(
         name=run_name,
@@ -561,7 +581,72 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     return datasets, weights
 
 
+def _add_validation_callback(
+    trainer,
+    tokenizer,
+    config: ExperimentConfig,
+    collator,
+    *,
+    dp_world_size: int,
+    dp_rank: int,
+) -> None:
+    if config.eval_interval is None:
+        return
+    if config.eval_interval <= 0:
+        raise ValueError("eval_interval must be positive or None")
+    if config.eval_examples <= 0:
+        raise ValueError("eval_examples must be positive")
+    if config.eval_rank_batch_instances <= 0:
+        raise ValueError("eval_rank_batch_instances must be positive")
+    if collator.pad_sequence_length is None:
+        raise ValueError("Stage 1 validation requires fixed-length padding")
+
+    eval_dataset_config = replace(
+        config.dataset,
+        split="validation",
+        seed=config.eval_seed,
+    )
+    global_eval_instances = config.eval_rank_batch_instances * dp_world_size
+    if config.eval_examples % global_eval_instances != 0:
+        raise ValueError(
+            f"eval_examples ({config.eval_examples}) must be divisible by the global "
+            f"validation batch ({global_eval_instances} instances)"
+        )
+    eval_batches = config.eval_examples // global_eval_instances
+    eval_loader = MultimodalDataLoader(
+        eval_dataset_config.build(tokenizer),
+        collator,
+        work_dir=trainer.work_dir / "pixmo_cap_validation",
+        global_batch_size=(global_eval_instances * collator.pad_sequence_length),
+        seed=config.eval_seed,
+        shuffle=False,
+        dp_world_size=dp_world_size,
+        dp_rank=dp_rank,
+    )
+    evaluator = MultimodalLMEvaluator(
+        name="pixmo-cap-validation",
+        batches=eval_loader,
+        device=trainer.device,
+        process_group=trainer.dp_process_group,
+        deterministic=True,
+    )
+    trainer.add_callback(
+        "pixmo_cap_validation",
+        EvaluatorCallback(
+            evaluators=[evaluator],
+            eval_interval=config.eval_interval,
+            eval_duration=Duration.steps(eval_batches),
+            eval_on_startup=False,
+            eval_on_finish=False,
+            log_interval=max(eval_batches // 4, 1),
+        ),
+    )
+
+
 def train(config: ExperimentConfig):
+    if config.data_prefetch_workers < 0:
+        raise ValueError("data_prefetch_workers must be non-negative")
+
     # These are harmless when already set by the Beaker OLMoDDP preset and make the same
     # rowwise-NVSHMEM path explicit for local torchrun launches.
     os.environ.setdefault("OLMO_USE_OWN_SYMM_MEM", "1")
@@ -628,10 +713,11 @@ def train(config: ExperimentConfig):
     if config.pointing_rate > 0 or config.nlp_rate > 0:
         datasets, weights = _build_mixture_sources(tokenizer, config)
         log.info(
-            "Stage 1 packing: pack=%s buffer_size=%d max_crops=%d",
+            "Stage 1 packing: pack=%s buffer_size=%d max_crops=%d prefetch_workers=%d",
             config.pack_sequences,
             config.pack_buffer_size,
             config.pack_max_crops,
+            config.data_prefetch_workers,
         )
         data_loader = MixtureDataLoader(
             datasets,
@@ -643,7 +729,7 @@ def train(config: ExperimentConfig):
             pack=config.pack_sequences,
             pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
             pack_buffer_size=config.pack_buffer_size if config.pack_sequences else 0,
-            prefetch_workers=DATA_PREFETCH_WORKERS,
+            prefetch_workers=config.data_prefetch_workers,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )
@@ -659,9 +745,18 @@ def train(config: ExperimentConfig):
         )
 
     trainer = config.trainer.build(train_module, data_loader)
+    _add_validation_callback(
+        trainer,
+        tokenizer,
+        config,
+        collator,
+        dp_world_size=dp_world_size,
+        dp_rank=dp_rank,
+    )
 
     config_dict = config.as_config_dict()
     cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+    cast(WandBCallback, trainer.callbacks["wandb"]).config = config_dict
 
     trainer.fit()
 

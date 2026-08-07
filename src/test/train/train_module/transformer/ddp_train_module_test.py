@@ -31,6 +31,7 @@ from olmo_core.nn.vision import (
 )
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
+from olmo_core.train import ReduceType
 from olmo_core.train.train_module import (
     MultimodalOLMoDDPTrainModule,
     MultimodalOLMoDDPTrainModuleConfig,
@@ -310,6 +311,33 @@ def test_multimodal_router_loss_divisor_uses_all_valid_tokens_not_response_weigh
 
     torch.testing.assert_close(kwargs["router_loss_div_factor"], torch.tensor(5))
     assert kwargs["router_loss_div_factor"] != batch["loss_masks"].sum()
+
+
+def test_multimodal_data_metrics_report_packing_and_token_density():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    recorded = {}
+
+    def record_metric(name, value, reduce_type=None, namespace=None, **kwargs):
+        del kwargs
+        recorded[f"{namespace}/{name}"] = (value, reduce_type)
+
+    train_module.record_metric = record_metric
+    train_module._record_data_metrics(
+        {
+            "router_token_mask": torch.tensor(
+                [[True, True, True, False], [True, True, False, False]]
+            ),
+            "loss_masks": torch.tensor([[0.0, 1.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
+            "token_type_ids": torch.tensor([[1, 1, 0, 0], [0, 0, 0, 0]]),
+            "example_ids": torch.tensor([[0, 0, 1, -1], [0, 0, -1, -1]]),
+        }
+    )
+
+    torch.testing.assert_close(recorded["data/packing fill"][0], torch.tensor(5 / 8))
+    torch.testing.assert_close(recorded["data/response token density"][0], torch.tensor(3 / 8))
+    torch.testing.assert_close(recorded["data/image token density"][0], torch.tensor(2 / 8))
+    torch.testing.assert_close(recorded["data/examples per sequence"][0], torch.tensor(1.5))
+    assert all(reduction == ReduceType.mean for _, reduction in recorded.values())
 
 
 def test_multimodal_router_loss_divisor_requires_explicit_token_mask():

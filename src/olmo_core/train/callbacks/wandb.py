@@ -89,8 +89,21 @@ class WandBCallback(Callback):
     :data:`olmo_core.train.Trainer.cancel_check_interval`.
     """
 
+    auto_resume: bool = False
+    """
+    If ``True``, persist the W&B run ID in trainer checkpoints and resume the same run
+    from the checkpoint step after a restart.
+    """
+
+    run_id: Optional[str] = None
+    """
+    An optional existing W&B run ID to resume. This is useful when loading a legacy
+    checkpoint created before callback state included the run ID.
+    """
+
     _wandb = None
     _run_path = None
+    _resume_step = None
     _finalized: bool = False
 
     @property
@@ -113,6 +126,27 @@ class WandBCallback(Callback):
     def finalized(self) -> bool:
         return self._finalized
 
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "step": self.step,
+            "name": self.name,
+            "project": self.project,
+            "entity": self.entity,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]):
+        identity = (self.name, self.project, self.entity)
+        saved_identity = (
+            state_dict.get("name"),
+            state_dict.get("project"),
+            state_dict.get("entity"),
+        )
+        if self.auto_resume and identity == saved_identity:
+            if (run_id := state_dict.get("run_id")) is not None:
+                self.run_id = run_id
+                self._resume_step = state_dict.get("step")
+
     def finalize(self, exit_code: int = 0):
         if not self.finalized:
             if exit_code > 0:
@@ -130,6 +164,23 @@ class WandBCallback(Callback):
             self.wandb
             wandb_dir = self.trainer.work_dir / "wandb"
             wandb_dir.mkdir(parents=True, exist_ok=True)
+            init_kwargs: Dict[str, Any] = {}
+            if self.auto_resume and self.run_id is not None:
+                resume_step = self._resume_step
+                if resume_step is None and getattr(self.trainer, "checkpoint_loaded", False):
+                    resume_step = self.step
+                if resume_step is not None:
+                    log.info(
+                        "Resuming W&B run '%s' from checkpoint step %s",
+                        self.run_id,
+                        resume_step,
+                    )
+                    init_kwargs["resume_from"] = f"{self.run_id}?_step={resume_step}"
+                else:
+                    log.info("Resuming W&B run '%s'", self.run_id)
+                    init_kwargs.update(id=self.run_id, resume="allow")
+                init_kwargs["allow_val_change"] = True
+
             self.wandb.init(
                 dir=wandb_dir,
                 project=self.project,
@@ -139,7 +190,9 @@ class WandBCallback(Callback):
                 tags=self.tags,
                 notes=self.notes,
                 config=self.config,
+                **init_kwargs,
             )
+            self.run_id = self.run.id
             self._run_path = self.run.path  # type: ignore
 
     def log_metrics(self, step: int, metrics: Dict[str, float]):

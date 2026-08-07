@@ -3,7 +3,8 @@
 These profiles exercise the production EP8 topology on two 8-GPU B300 nodes in
 `ai2/holmes`. They use workspace `ai2/molmofication`, budget `ai2/oe-other`, and urgent
 priority. Real-data and pilot profiles request no minimum runtime. Holmes supplies the
-B300 hardware, so the profiles do not add a redundant GPU-type constraint.
+B300 hardware, so the profiles do not add a redundant GPU-type constraint. The 4k-to-8k
+continuation profile requests an eight-hour minimum runtime.
 
 - `stage1_ep8_2node_synthetic_1step.yaml` checks distributed startup, native s002 loading,
   vision-weight loading, optimizer construction, forward/backward, and checkpoint writing
@@ -16,6 +17,9 @@ B300 hardware, so the profiles do not add a redundant GPU-type constraint.
 - `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 31,000-step
   production schedule with the native s002 router loss weights, FP32 gradient
   accumulation/reduction, and padding-excluded routed-expert traffic.
+- `stage1_ep8_2node_real_resume_to8000_b300.yaml` restores the corrected step-4000 model,
+  optimizer, scheduler, trainer, and data state, then continues to step 8000. It disables
+  LM block recomputation on B300 while retaining vision and connector checkpointing.
 
 Inspect the fully merged configuration without submitting:
 

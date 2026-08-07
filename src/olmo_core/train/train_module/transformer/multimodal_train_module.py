@@ -44,6 +44,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
+from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, move_to_device, warn_once
@@ -552,8 +553,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
 
         if not isinstance(model, MultimodalOLMoDDPModel):
             raise TypeError(
-                f"{type(self).__name__} requires MultimodalOLMoDDPModel, "
-                f"got {type(model).__name__}"
+                f"{type(self).__name__} requires MultimodalOLMoDDPModel, got {type(model).__name__}"
             )
         unsupported = [
             name for name in ("tp_config", "cp_config", "pp_config") if kwargs.get(name) is not None
@@ -633,6 +633,84 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         else:
             router_loss_div_factor = router_loss_div_factor.clamp_min(1)
         return {"router_loss_div_factor": router_loss_div_factor}
+
+    def _record_data_metrics(self, batch: Dict[str, Any]) -> None:
+        """Record packing and supervision density without synchronizing CUDA."""
+        token_mask = batch.get("router_token_mask")
+        if token_mask is None:
+            return
+        self.record_metric(
+            "packing fill",
+            token_mask.float().mean(),
+            ReduceType.mean,
+            namespace="data",
+        )
+
+        if (loss_masks := batch.get("loss_masks")) is not None:
+            self.record_metric(
+                "response token density",
+                ((loss_masks > 0) & token_mask).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+        if (token_type_ids := batch.get("token_type_ids")) is not None:
+            self.record_metric(
+                "image token density",
+                ((token_type_ids != 0) & token_mask).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+        if (example_ids := batch.get("example_ids")) is not None:
+            self.record_metric(
+                "examples per sequence",
+                (example_ids.amax(dim=1) + 1).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+
+    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        if not dry_run:
+            self._record_data_metrics(batch)
+        return super().train_batch(batch, dry_run=dry_run)
+
+    def eval_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> LMOutputWithLoss:
+        """Evaluate summed response-token CE without materializing full-sequence logits."""
+        if self.cp_enabled or self.tp_enabled or self.pp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() only supports the Stage 1 EP/DP topology"
+            )
+
+        # EvaluatorCallback derives ordinary LM labels from input_ids, but multimodal batches
+        # carry branch-aware, already-shifted labels. Prefer those and leave the original batch
+        # intact so the evaluator can use its loss weights after the forward pass.
+        model_batch = dict(batch)
+        if (batch_labels := model_batch.pop("labels", None)) is not None:
+            labels = batch_labels
+        input_ids, labels, model_kwargs = self._prepare_batch(model_batch, labels)
+        if labels is None:
+            raise OLMoConfigurationError("Multimodal evaluation batches require labels")
+
+        for model_part in self.model_parts:
+            model_part.eval()
+
+        try:
+            with self._eval_batch_context():
+                output = self.model_forward_no_pipeline(
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="sum",
+                    return_logits=False,
+                    **model_kwargs,
+                )
+                assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
+                return output
+        finally:
+            # Router metrics from held-out data must not leak into the next training window.
+            for model_part in self.model_parts:
+                model_part.reset_auxiliary_metrics()
 
     def load_molmo2_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
         """Strictly load the Molmo2 vision tower, leaving the connector untouched."""
