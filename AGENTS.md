@@ -1,160 +1,110 @@
 # AGENTS.md
 
-This file provides guidance to agents like Claude Code (claude.ai/code) and Codex (chatgpt.com/codex) when working with code in this repository.
+Read [`CLAUDE.md`](CLAUDE.md). It is the guidance for this repository and it applies to
+every coding agent, not only Claude Code. This file exists because Cursor and Codex read
+`AGENTS.md` and would otherwise find nothing.
 
-## Overview
+Two things worth knowing before you read it:
 
-OLMo-core is AI2's training library for the Open Language Model (OLMo) series. It provides modular components for transformer architectures, distributed training, data loading, and evaluation.
+- **GPU runs go through the eduLLM platform's `edullm` CLI, not Beaker.** The `ai2/*`
+  clusters named throughout this repository belong to AI2 and cannot be reached from here.
+  See "Running on GPUs" in `CLAUDE.md`.
+- **`.edullm/train_on_corpus.py` trains in bfloat16 by default, and the platform cannot see
+  a dtype that is set in code.** Write it into the command. A T4 has no bfloat16 in the
+  hardware, and a command that does not name the dtype is accepted onto one.
 
-## Commands
+<!-- edullm:begin -->
+<!-- Managed by edu-llm/platform. Edit skills/agents-md-block.md there and re-run
+     tools/distribute_agent_layer.py; an edit made here is reverted and, until it is,
+     tests/test_agent_layer_is_distributed.py is red. Text outside the markers is
+     this repository's own and is never touched. -->
 
-```bash
-# Install (development)
-pip install -e '.[all]'
+## Running anything on a GPU: use `edullm`, never AWS
 
-# Run all tests (GPU tests auto-skip without GPU)
-pytest -v src/
+This codebase is registered with the eduLLM platform. `edullm` is the only supported way to
+reach the cluster from a laptop, and it holds no cloud credential of its own: every AWS
+credential lives in a workflow whose trust policy pins it to one file on `main`.
 
-# Run a specific test file
-pytest -v src/test/path/to/test_file.py
-
-# Filter to specific tests by keywords
-pytest -v src/test/path/to/test_file.py -k 'keyword'
-
-# Auto-format code
-make style
-
-# Check formatting, lint, and types
-make checks          # all three at once
-make style-check     # isort + black
-make lint-check      # ruff
-make type-check      # mypy
-```
-
-## Code Style
-
-- Line length: 100
-- Formatting: `isort` (profile=black) + `black`
-- Linting: `ruff` (ignores F403, F405, E501; F401 ignored in `__init__.py`)
-- Type checking: `mypy` with `ignore_missing_imports = true`
-
-## Docstrings
-
-- Docstrings should be included on all public classes, methods, and functions.
-- We use Sphinx to automatically build API docs by pulling from those docstrings.
-- The syntax of the docstrings is a superset of reStructuredText with additional Sphinx-specific syntax for things like:
-  - Cross-document links, e.g.:
-    ```
-    :class:`foo.Foo`  <- links to the class named 'Foo' in the module 'foo'
-    :mod:`foo`        <- links to the module named 'foo'
-    :func:`foo.bar`   <- links to the function named 'bar' in the module named 'foo'
-    ```
-  - Documenting parameters (`:param ...:`), return values (`:returns:`), or expected exceptions (`:raises ...:`).
-
-Here's a toy example for a function:
-
-```python
-def read_file(path: str) -> str:
-    """
-    Read a file from disk.
-
-    :param path: The path to the file.
-
-    :returns: The contents of the file.
-
-    :raises FileNotFoundError: If the file doesn't exist.
-    """
-    pass
-```
-
-## Architecture
-
-### Configuration System (`src/olmo_core/config.py`)
-
-Everything is configured via `@dataclass` classes inheriting from `Config`. This is the central design pattern:
-- Configs support YAML/JSON serialization, command-line overrides via dot notation (`--train_module.optim.lr=6e-3`), and `merge()` with dotlists.
-- The `Registrable` mixin (from `dataclass-extensions`) enables polymorphic config fields — a base config class can resolve to different subclasses at runtime based on a `type` field. Used in optimizers, schedulers, attention backends, and data loaders.
-- Nested configs compose modularly: `TrainerConfig` contains `CheckpointerConfig`, `OptimConfig`, etc.
-
-### Training Pipeline (`src/olmo_core/train/`)
-
-- `Trainer` / `TrainerConfig`: Core training loop with checkpointing, evaluation, and an extensible callback system (`callbacks/`).
-- `TrainModule`: Wraps the model with forward/backward logic and optimizer. The main concrete implementation is `TransformerTrainModule` / `TransformerTrainModuleConfig`, which handles parallelism setup (DP, TP, PP, CP, EP configs all live here).
-
-### Model Architecture (`src/olmo_core/nn/`)
-
-- `transformer/`: Core transformer with configurable blocks. `TransformerConfig` has factory methods like `olmo2_32B()` for predefined architectures.
-- `attention/`: Multi-head attention with backends (flash attention, ring attention, etc.).
-- `moe/`: Mixture of Experts with expert parallelism.
-- `feed_forward.py`, `layer_norm.py`, `rope.py`, `lm_head.py`: Standard components.
-
-### Data Loading (`src/olmo_core/data/`)
-
-- `NumpyDataset` variants: Memory-mapped numpy datasets for pre-tokenized data (`.npy` files).
-- `composable/`: The preferred data loading API, built on a pipeline of `TokenSource` -> `InstanceSource` -> `ComposableDataLoader`. Sources can be sliced, sampled, mixed with ratios, and split for curriculum learning. Use `InstanceSource.visualize()` to inspect the source tree. See the module docstring in `src/olmo_core/data/composable/__init__.py` for detailed examples.
-- `mixes/`: Predefined data mixture configs (dolma17, OLMoE-mix-0824, etc.) with paths to tokenized data by source and tokenizer.
-- Training data is stored on AI2 infrastructure (Weka filesystem, GCS). For local development, use small validation sets or synthetic data.
-
-### Distributed Training (`src/olmo_core/distributed/`)
-
-- `parallel/`: Implementations of data (FSDP/HSDP/DDP), tensor, pipeline, context (ring attention), and expert parallelism. These can be combined for multi-dimensional parallelism.
-- `checkpoint/`: Distributed checkpointing with various filesystem backends.
-
-### Optimization (`src/olmo_core/optim/`)
-
-- Optimizer configs (`AdamWConfig`, `SkipStepAdamWConfig`, `LionConfig`) and LR schedulers (`CosWithWarmup`, etc.).
-- `SkipStepOptimizer`: Wrapper for gradient clipping with loss spike detection.
-
-### Examples (src/examples)
-
-Runnable, self-contained examples and reference scripts.
-
-### Training Scripts
-
-Two patterns exist:
-
-**Official scripts** (`src/scripts/official/`): Use `ExperimentConfig` + `main()` from `src/olmo_core/script_utils.py`. Launched with `torchrun` or Beaker. These reproduce published model runs.
+**Do not write a script that calls AWS.** No `boto3`, no `aws` CLI, no `curl` at an AWS
+endpoint. For the people here who hold no AWS role that fails, and for the few who do it
+succeeds and leaves no run anybody can cite, which is the worse of the two.
 
 ```bash
-torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py \
-  --save-folder=/path/to/checkpoints
+uv tool install --force git+https://github.com/edu-llm/platform
+edullm --version
 ```
 
-**Internal scripts** (`src/scripts/train/`): Use `prepare_cli_environment()` with commands (`launch`, `train`, `train_single`, `prep`, `dry_run`). See `template.py` for the starting point.
+Unpinned on purpose, and **re-running that line is the upgrade**. Do not reach for `pip` or
+`pipx`, and do not reach for `uv tool upgrade`: what it does depends on how the tool was
+installed, so from a release note's pinned line it answers `Nothing to upgrade` and exits 0
+however far behind the install is. `uv tool install edullm` is the other near miss and uv
+answers `not found in the package registry`, because nothing is published to an index under
+that name; the line above installs from git.
 
-```bash
-python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
-python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
-```
+If this machine installed before the distribution was renamed, run `uv tool uninstall
+edullm-platform` **before** the install line and not after. Both own the same `edullm`
+executable and uv deletes it along with the old entry, which leaves a healthy-looking
+`uv tool list` and no command.
 
-## Docker and Beaker Launch
+It needs `gh` logged in and a clone with an `origin` remote, and nothing else — no AWS
+profile, no SSO session and no VPN, for anything on this path.
 
-The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
+| Verb | What it does |
+| --- | --- |
+| `edullm check` | Prices a submission from this working tree and lists every refusal. Reaches no network. |
+| `edullm submit` | Runs those checks and dispatches the submission workflow. |
+| `edullm status` | Names your recent submissions, or describes one run. |
+| `edullm logs` | The last lines one run printed. |
+| `edullm cancel` | Stops one admitted run, with a reason that goes on the record. |
+| `edullm add` | Teaches the platform about a repository, dataset, shape, model or person. |
+| `edullm ask` | Files one ask for something you need yourself. |
+| `edullm run` / `edullm shell` | Ships this tree to a machine of your own. Ungated, and no run anybody can cite. |
 
-```bash
-# Build locally (versions configured in Makefile)
-make docker-image
+`edullm <verb> --help` prints what that verb takes. The last two are the exploration route
+and not the submission path: nothing on them is checked, priced, approved or recorded.
 
-# Push to GHCR
-make ghcr-image
+**Start with `edullm check --json`.** It costs a fraction of a second, reaches no network and
+lists every refusal at once. **Match on `code`** and act on the `detail` beside it, which
+names the field and usually the file; the detail is written for a person and gets reworded, so
+do not match on it. Exit 0 stands, 1 is refused on the merits, 2 means the command or the
+install is wrong, 3 means the platform could not be asked and is the only one worth retrying.
 
-# Create Beaker image
-make beaker-image
-```
+**Read stdout on its own.** The first check in a repository with no `.edullm/run.yaml` writes
+one and says so on stderr, so `edullm check --json 2>&1 | ...` turns that note into a parse
+error on the one run where you least want one.
 
-**How launch works**: When a training script uses the `launch` command (or `BeakerLaunchConfig.launch()`), it creates a Gantry recipe that:
-1. Starts a container from a pre-built Beaker image (default: `OLMoCoreBeakerImage.stable` in `src/olmo_core/launch/beaker.py`)
-2. Clones the git repo at the current commit into the container (requires clean working tree unless `allow_dirty=True`)
-3. Installs the package from source (`pip install -e .`)
-4. Runs the training command, optionally wrapped with `torchrun` for multi-GPU/multi-node
+Four things the refusals will not tell you until they have cost something.
 
-Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/launch/beaker.py`, tagged by torch version and CUDA version (e.g., `tch2100cu128`). The `stable` image tracks the default torch/CUDA versions. When updating default images, also update `.github/workflows/main.yml`.
+- **The platform takes a commit, not a working tree.** The image is built from the last
+  commit, so anything uncommitted is not part of the run, and it is a push to a branch named
+  `edullm/<something>` that builds the image at all.
+- **For `--dataset`, absent and `none` are different answers.** Pass the literal word `none`
+  where the run reads no corpus, which is what a smoke test, a tokenization or an evaluation
+  over existing checkpoints does. Only one of the two is a statement.
+- **Write the dtype into the command.** The guard behind `bfloat16_not_in_the_hardware` reads
+  the text of the command and cannot see a precision the program sets in code, so a card with
+  no bfloat16 in hardware refuses the first kernel that needs it — after the run has been
+  priced, released, admitted and given a machine. Naming it turns a dead machine into a free
+  refusal: `bash -lc 'python train.py train_module.dp_config.param_dtype=bfloat16'`.
+- **`edullm status --json` is free and `edullm status` is not.** The former answers from
+  GitHub, dispatches nothing and may be polled. Without `--json`, and `edullm logs`, a
+  workflow has to start, so both are slow by construction and neither belongs in a loop.
 
-`BeakerLaunchConfig` also supports `pre_setup` and `post_setup` hooks for running commands before/after the package install step, Weka bucket mounts, and multi-node settings (replicas, leader selection, host networking).
+**Never quote a price, a runtime bound, a cost ceiling or who has to approve something from
+memory or from a document, this one included.** Those live in reviewed configuration that
+changes without anybody being told. Run `edullm check --json` and read `cost` and
+`approval_class` out of the output.
 
-## Testing
+One skill carries what this cannot: **registering-a-repository**, for when `check` refuses
+with `unregistered_repository`. It is not committed here, because this repository is
+registered and so is one of the places that refusal cannot arise; it installs once per person,
+and [edu-llm/platform's `skills/README.md`](https://github.com/edu-llm/platform/blob/main/skills/README.md)
+says where each host reads one from. Everything else about submitting is above, or is in the
+`detail` of the refusal you are looking at. There is no skill for it and that is deliberate:
+a table of refusal codes here would be a copy of what `edullm check --json` already prints
+beside every one of them.
 
-- Tests in `src/test/` mirror the source structure.
-- Name individual test functions `test_*` and prefer `pytest.mark.parametrize` to cover multiple inputs or configurations without duplicating code.
-- GPU tests use `@pytest.mark.gpu` and are skipped without a GPU.
-- Distributed tests use helpers in `src/olmo_core/testing/distributed.py`.
+Also never: pass `--force` to get past a refusal, edit `.edullm/run.yaml` to silence a
+refusal without reading what it says, or commit a secret into this repository — the image is
+built from the commit.
+<!-- edullm:end -->
