@@ -31,7 +31,10 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.train.train_module.config import TrainModuleConfig
+from olmo_core.train.train_module.config import (
+    TrainModuleConfig,
+    validate_precision_support,
+)
 
 if TYPE_CHECKING:
     from .pipeline_train_module import TransformerPipelineTrainModule
@@ -348,9 +351,17 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
+
+        :raises OLMoConfigurationError: If this config asks for a precision the local hardware
+            has no arithmetic for.
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
+
+        # Before the model is placed, parallelized or stepped, which is the whole point: every
+        # stage up to the first kernel that wants the format succeeds on a card that has no
+        # bfloat16, so this is the last cheap place to find out.
+        validate_precision_support(self, model)
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:

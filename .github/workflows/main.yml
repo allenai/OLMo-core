@@ -252,6 +252,15 @@ jobs:
           echo "COMMIT_SHA=$GITHUB_SHA" >> $GITHUB_ENV
           echo "BRANCH_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
 
+      # Say so in the log, because a job that reports success having run nothing is worse than
+      # one that reports failure. These need a Beaker cluster, which this fork has no token
+      # for; the checks below are green and empty until it does.
+      - name: No GPU tests ran
+        if: env.BEAKER_TOKEN == ''
+        run: |
+          echo "::warning title=No GPU tests ran::BEAKER_TOKEN is not set in this repository, so"
+          echo "::warning::'${{ matrix.task.name }}' launched nothing. This check is green and empty."
+
       - name: GPU Tests
         if: env.BEAKER_TOKEN != ''
         run: |

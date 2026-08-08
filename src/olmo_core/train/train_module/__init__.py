@@ -1,4 +1,4 @@
-from .config import TrainModuleConfig
+from .config import TrainModuleConfig, validate_precision_support
 from .train_module import (
     BasicTrainModule,
     EvalBatchSizeUnit,
@@ -22,6 +22,7 @@ from .transformer import (
 
 __all__ = [
     "TrainModuleConfig",
+    "validate_precision_support",
     "TrainModule",
     "EvalBatchSpec",
     "EvalBatchSizeUnit",

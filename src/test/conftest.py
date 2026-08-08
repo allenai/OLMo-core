@@ -1,3 +1,4 @@
+import os
 import uuid
 from functools import partial
 from typing import Generator
@@ -11,12 +12,18 @@ from olmo_core.io import clear_directory
 
 @pytest.fixture
 def bucket_name() -> str:
-    return "ai2-olmo-testing"
+    """A bucket the running credentials may write to.
+
+    Overridable because the default is AI2's, and a fork whose CI holds credentials for another
+    account cannot use it. The tests that read it skip when the store refuses them, so naming a
+    bucket here is the whole of what it takes to get that coverage back.
+    """
+    return os.environ.get("OLMO_CORE_TEST_S3_BUCKET", "ai2-olmo-testing")
 
 
 @pytest.fixture
 def gcs_bucket_name() -> str:
-    return "ai2-olmo-testing"
+    return os.environ.get("OLMO_CORE_TEST_GCS_BUCKET", "ai2-olmo-testing")
 
 
 @pytest.fixture

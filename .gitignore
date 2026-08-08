@@ -16,6 +16,7 @@ tmp/
 .idea
 .venv/
 .vscode/
+.worktrees/
 .cursor/
 /*.iml
 pyrightconfig.json

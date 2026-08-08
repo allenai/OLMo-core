@@ -294,6 +294,7 @@ class Trainer:
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
     _canceled: bool = False
+    _canceled_by_error: bool = False
     _cancel_reason: Optional[str] = None
     _canceling_rank: Optional[int] = None
     _error: Optional[BaseException] = None
@@ -419,17 +420,21 @@ class Trainer:
 
     @property
     def training_complete(self) -> bool:
-        if self._error is not None:
-            raise RuntimeError("An error occurred") from self._error
+        # NOTE: a bookkeeping op that failed is news this rank has and its peers do not. Raising
+        # on it here would take this rank out of the loop on its own, and the ranks still in the
+        # loop would then wait out a deadline in the next collective they reach -- so the ranks
+        # that do not know what went wrong report a timeout and the one that does reports the
+        # cause. Asking for the run to be canceled instead puts the decision through the one
+        # collective every rank runs together, and 'fit' raises once they have all left.
+        self._note_bookkeeping_error()
 
-        if (
-            not self._canceled
-            and self.global_step > 0
-            and self.global_step % self.cancel_check_interval == 0
-        ):
+        # NOTE: not gated on 'self._canceled'. The check is a collective, and 'canceled' only
+        # becomes true inside it, so gating on it is one more chance for the ranks to disagree
+        # about who is taking part.
+        if self.global_step > 0 and self.global_step % self.cancel_check_interval == 0:
             self.check_if_canceled()
 
-        if self.is_canceled:
+        if self._canceled:
             return True
         elif self._duration_due(self.max_duration):
             return True
@@ -440,8 +445,8 @@ class Trainer:
 
     @property
     def is_canceled(self) -> bool:
-        if self._error is not None:
-            raise RuntimeError("An error occurred") from self._error
+        # NOTE: this does not raise on a rank-local '_error'. See 'training_complete' for why a
+        # bookkeeping failure becomes a cancellation rather than an exception on one rank.
         return self._canceled
 
     @property
@@ -656,6 +661,15 @@ class Trainer:
             log.warning(f"Run canceled from all ranks. Reason: {reason}")
             barrier()
 
+    def _note_bookkeeping_error(self):
+        """
+        Turn a bookkeeping op that failed on this rank into a request to cancel the run, so that
+        every rank leaves the training loop at the same collective.
+        """
+        if self._error is not None and self._canceling_rank is None:
+            self._canceling_rank = get_rank()
+            self._cancel_reason = f"{type(self._error).__name__} raised by a bookkeeping op"
+
     def check_if_canceled(self):
         """
         Asynchronously check if the run is canceled. Use :data:`is_canceled` to see the result.
@@ -672,6 +686,7 @@ class Trainer:
         :data:`load_strategy`.
         """
         self._canceled = False
+        self._canceled_by_error = False
         self._cancel_reason = None
         self._canceling_rank = None
 
@@ -741,6 +756,24 @@ class Trainer:
             # Iterate over epochs until done.
             while not self.training_complete:
                 self._fit_epoch()
+
+            # One last agreed check, because a bookkeeping op can fail after the final scheduled
+            # one and the loop can end for its own reasons. Without this, that failure would be
+            # news a single rank raises on while the others walk into the collectives waiting in
+            # 'post_train' and '_shutdown' -- or, if it went unraised, no news at all.
+            self._note_bookkeeping_error()
+            self._check_if_canceled()
+
+            # A bookkeeping op that failed took the run down through cancellation so that every
+            # rank left the loop together. Now that they have, raise on all of them: the rank
+            # that holds the exception chains it, the rest name what they were told.
+            if self._canceled_by_error:
+                if self._error is not None:
+                    raise RuntimeError("A bookkeeping op failed") from self._error
+                raise RuntimeError(
+                    f"A bookkeeping op failed on rank {self._canceling_rank}: "
+                    f"{self._cancel_reason}"
+                )
         except BaseException as exc:
             self._error = exc
             log.error(f"Training failed due to:\n{type(exc).__name__}: {exc}")
@@ -1285,6 +1318,20 @@ class Trainer:
             )
             allow_multiple = not cancel_in_progress
 
+        if not allow_multiple and distributed:
+            # Whether a previous invocation is still running is a question about this rank's
+            # timing, and the answer differs between ranks. Letting it decide whether to submit
+            # a collective is how one rank ends up outside a collective the rest are inside,
+            # which is a deadlock until the process group's deadline expires. 'check_if_canceled'
+            # already carries this warning in a comment; this makes it something a caller cannot
+            # get wrong.
+            raise OLMoConfigurationError(
+                f"bookkeeping op '{op_name or op.__qualname__}' cannot set 'allow_multiple=False' "
+                "while 'distributed=True', because skipping an invocation is a decision this rank "
+                "makes alone and a collective is a decision every rank has to make together. Pass "
+                "'distributed=False' if the op does no distributed communication."
+            )
+
         if op_name is None:
             op_name = op.__qualname__
 
@@ -1367,9 +1414,10 @@ class Trainer:
         log.info("All bookkeeping ops complete")
 
     def _check_if_canceled(self):
-        if self._canceled:
-            return
-
+        # NOTE: no early return for a rank that already knows the run is canceled. 'canceled' is
+        # only set from inside the all-reduce below, so every rank arrives holding the same
+        # answer, and a rank that returned here on its own would be a rank missing from a
+        # collective the others are in.
         canceling_rank = self._canceling_rank if self._canceling_rank is not None else -1
         # NOTE: this is a known host-device sync (potentially) so we don't need the warning
         with cuda_sync_debug_mode(0):
@@ -1380,20 +1428,32 @@ class Trainer:
                 group=self.bookkeeping_pg,
             )
             if canceling_rank >= 0:
-                cancel_reason = broadcast_object(
-                    self._cancel_reason,
+                # NOTE: whether this cancellation is a failure travels with the reason, so that
+                # every rank leaves 'fit' by the same door. Without it the rank that failed would
+                # raise and shut down ungracefully while the others shut down gracefully, and the
+                # graceful path ends in a barrier the failed rank is never going to reach.
+                canceled_by_error = broadcast_object(
+                    (self._cancel_reason, self._error is not None),
                     src=get_global_rank(canceling_rank, group=self.bookkeeping_pg),
                     group=self.bookkeeping_pg,
                 )
+                assert canceled_by_error is not None
+                cancel_reason, is_error = canceled_by_error
                 assert cancel_reason is not None
                 self._canceled = True
+                self._canceled_by_error = is_error
                 self._canceling_rank = canceling_rank
                 self._cancel_reason = cancel_reason
                 log.warning(f"Run canceled from rank {canceling_rank}. Reason: {cancel_reason}")
 
     def _log_metrics(self):
-        if not self._metrics:
-            return
+        # NOTE: no early return when this rank has nothing recorded. 'reduce_metrics' is a
+        # collective, so a rank that skips it leaves the ranks that entered it waiting out the
+        # bookkeeping group's whole deadline -- half an hour, and then a quarter of an hour more
+        # at the shutdown barrier -- for a peer that already moved on. Whether a rank takes part
+        # in a collective must not depend on that rank's data. 'reduce_metrics' settles what is
+        # being reduced between the ranks and returns early on all of them when nobody has
+        # anything, so an empty flush costs one small gather rather than a deadlock.
 
         # Prep metrics to reduce by moving to bookkeeping device all at once.
         # NOTE: if training on GPU and `bookkeeping_device` is CPU, this triggers

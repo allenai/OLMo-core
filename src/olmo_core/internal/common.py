@@ -33,13 +33,25 @@ def get_beaker_username() -> Optional[str]:
 
 def get_root_dir(cluster: str) -> str:
     if cluster.startswith("ai2/"):
-        with get_beaker_client() as beaker:
-            cl = beaker.cluster.get(cluster)
-            tags = set(cl.tags)
-            if "storage:weka" in tags:
-                return "/weka/oe-training-default/ai2-llm"
-            else:
-                return "gs://ai2-llm"
+        # Beaker is asked one question here -- does this cluster mount weka -- and the answer
+        # only picks between two save folders. Without a token there is no way to ask, and the
+        # same fallback every other branch of this function takes is a better answer than
+        # refusing to build the config: `... ladder dry-run`, which launches nothing and prints
+        # what it built, is the caller that most often has no token.
+        try:
+            with get_beaker_client() as beaker:
+                cl = beaker.cluster.get(cluster)
+                tags = set(cl.tags)
+                if "storage:weka" in tags:
+                    return "/weka/oe-training-default/ai2-llm"
+                else:
+                    return "gs://ai2-llm"
+        except BeakerError as exc:
+            log.warning(
+                f"Could not ask Beaker whether {cluster} mounts weka, so the root directory "
+                f"falls back to gs://ai2-llm: {type(exc).__name__}: {exc}"
+            )
+            return "gs://ai2-llm"
     else:
         return "gs://ai2-llm"
 
