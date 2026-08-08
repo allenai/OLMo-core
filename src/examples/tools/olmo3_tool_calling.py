@@ -74,11 +74,20 @@ def convert_checkpoint(hf_model: str, model_arch: str, output_dir: Path, validat
         log.info("Reusing the converted checkpoint at %s", output_dir)
         return
 
+    # The converter resolves the architecture from a config file, and reaches it with
+    # cached_path(f"{input}/config.json"), which a bare Hub repo id is not a valid path for.
+    # Fetching it first and naming it outright is what makes a repo id usable here.
+    from huggingface_hub import hf_hub_download
+
+    hf_config = hf_hub_download(repo_id=hf_model, filename="config.json")
+
     command = [
         sys.executable,
         str(CONVERT_SCRIPT),
         "--checkpoint-input-path",
         hf_model,
+        "--config-path",
+        hf_config,
         "--output-dir",
         str(output_dir),
         "--model-arch",
@@ -175,8 +184,13 @@ def build_generation_module(
 
     :returns: The generation module.
     """
+    from olmo_core.nn.attention.flash_attn_api import has_flash_attn_2
+
     tokenizer_config = TokenizerConfig.dolma2()
     on_gpu = device.type == "cuda"
+    # The checkpoint's own config asks for flash attention, which is not on every machine.
+    # Only the flash backends support the KV cache, so falling back costs the cache too.
+    use_flash = on_gpu and has_flash_attn_2()
 
     generation_config = GenerationConfig(
         pad_token_id=tokenizer_config.pad_token_id,
@@ -184,8 +198,7 @@ def build_generation_module(
         max_new_tokens=max_new_tokens,
         do_sample=False,
         temperature=0.0,
-        # The KV cache needs an attention backend that supports it, which rules out CPU.
-        use_cache=on_gpu,
+        use_cache=use_flash,
         stop_token_ids=stop_token_ids or None,
     )
 
@@ -194,7 +207,7 @@ def build_generation_module(
         generation_config=generation_config,
         device=device,
         dtype=DType.bfloat16 if on_gpu else DType.float32,
-        attention_backend=None if on_gpu else AttentionBackendName.torch,
+        attention_backend=None if use_flash else AttentionBackendName.torch,
     )
 
 
