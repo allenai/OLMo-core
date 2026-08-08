@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
 - Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
+- Added `olmo_core.tools`, which lets a tool-tuned model call tools during generation. Includes a `ToolRegistry`, three tools (`calculator`, `symbolic_math` and `web_search`, the latter with pluggable `ddgs`/Tavily/Serper backends), a parser for the `<function_calls>` format the OLMo 3 instruct models emit, and `run_tool_loop`, which executes calls and feeds results back as `environment` turns. `sympy` and `ddgs` are available under the new `tools` extra.
+- `python -m olmo_core.generate.chat` accepts `--tools` to enable tool calling, and `--chat-template` now defaults to `auto`, meaning the tokenizer's own chat template is used when it has one (previously the messages were always concatenated, which discards roles).
 
 
 ### Fixed

@@ -13,6 +13,9 @@ Example usage:
 
     # Example usage from a Mac M4 with a public checkpoint (`--attention-backend torch --no-use-cache` to avoid flash attn dependency)
     python -m olmo_core.generate.chat https://olmo-checkpoints.org/ai2-llm/Olmo-3-1025-7B/stage2/step47684/ --attention-backend torch --no-use-cache
+
+    # With tools, which needs a checkpoint tuned for tool use
+    python -m olmo_core.generate.chat path/to/instruct/checkpoint --tools calculator symbolic_math
 """
 
 import argparse
@@ -35,6 +38,13 @@ from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.generate import GenerationConfig, TransformerGenerationModule
 from olmo_core.io import join_path, normalize_path
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.tools import (
+    ToolCall,
+    ToolConfig,
+    ToolRegistry,
+    ToolResult,
+    run_tool_loop,
+)
 from olmo_core.utils import get_default_device, log_or_print, prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -42,6 +52,9 @@ console = Console()
 
 # Just concatenate the messages, no system prompt, no assistant prompt.
 DEFAULT_CHAT_TEMPLATE = """{% for message in messages %}{{ message['content'] }}{% endfor %}"""
+
+AUTO_CHAT_TEMPLATE = "auto"
+"""Use the tokenizer's own chat template, falling back to :data:`DEFAULT_CHAT_TEMPLATE`."""
 
 
 def render_assistant_message(message: str) -> Panel:
@@ -68,6 +81,61 @@ def render_system_message(message: str) -> Panel:
         padding=(0, 1),
         width=None,
     )
+
+
+def render_tool_call(call: ToolCall, result: ToolResult) -> Panel:
+    """Render a tool call and its result as a chat bubble."""
+    arguments = ", ".join(f"{key}={value!r}" for key, value in call.arguments.items())
+    text = Text()
+    text.append(f"{call.name}({arguments})\n", style="bold cyan")
+    if result.ok:
+        text.append(result.content, style="default")
+    else:
+        text.append(result.error or "", style="red")
+
+    return Panel(
+        text,
+        title="[bold cyan]Tool[/bold cyan]",
+        title_align="left",
+        border_style="red" if not result.ok else "cyan",
+        padding=(0, 1),
+        width=None,
+    )
+
+
+def resolve_chat_template(tokenizer, chat_template: str) -> Optional[str]:
+    """
+    Work out which chat template to render conversations with.
+
+    :param tokenizer: The loaded tokenizer.
+    :param chat_template: The value of ``--chat-template``.
+
+    :returns: The template to pass to ``apply_chat_template``, where ``None`` means the
+        tokenizer's own.
+    """
+    if chat_template != AUTO_CHAT_TEMPLATE:
+        return chat_template
+    # Base-model tokenizers carry no template, and asking one to apply the template it does not
+    # have is an error rather than a fallback.
+    return None if getattr(tokenizer, "chat_template", None) else DEFAULT_CHAT_TEMPLATE
+
+
+def build_tool_configs(names: list, backend: Optional[str] = None) -> list:
+    """
+    Build tool configs from the names given on the command line.
+
+    :param names: The registered tool names.
+    :param backend: The web search backend to use, if any.
+
+    :returns: The configs.
+    """
+    configs = []
+    for name in names:
+        spec: dict = {"type": name}
+        if name == "web_search" and backend is not None:
+            spec["backend"] = {"type": backend}
+        configs.append(ToolConfig.from_dict(spec))
+    return configs
 
 
 def render_tokenizer_info(
@@ -199,6 +267,10 @@ Examples:
   # Override attention backend
   python -m olmo_core.generate.chat /path/to/checkpoint \\
       --attention-backend torch
+
+  # Let the model call tools (requires a tool-tuned checkpoint)
+  python -m olmo_core.generate.chat /path/to/checkpoint \\
+      --tools calculator symbolic_math web_search
         """,
     )
     parser.add_argument(
@@ -277,8 +349,36 @@ Examples:
     parser.add_argument(
         "--chat-template",
         type=str,
-        default=DEFAULT_CHAT_TEMPLATE,
-        help="Jinja2 chat template string. The default is to just concatenate the messages, no system prompt, no assistant prompt.",
+        default=AUTO_CHAT_TEMPLATE,
+        help=(
+            f"Jinja2 chat template string, or '{AUTO_CHAT_TEMPLATE}' (default) to use the "
+            "tokenizer's own template, falling back to concatenating the messages for "
+            "tokenizers that have none."
+        ),
+    )
+    parser.add_argument(
+        "--tools",
+        type=str,
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        choices=sorted(ToolConfig.get_registered_names()),
+        help=(
+            "Tools the model may call, e.g. --tools calculator symbolic_math. Requires a "
+            "checkpoint tuned for tool use and a chat template that renders tools."
+        ),
+    )
+    parser.add_argument(
+        "--tool-backend",
+        type=str,
+        default=None,
+        help="Web search backend to use, e.g. 'ddgs', 'tavily' or 'serper'.",
+    )
+    parser.add_argument(
+        "--max-tool-iterations",
+        type=int,
+        default=5,
+        help="Maximum rounds of tool calling per turn (default: 5)",
     )
     parser.add_argument(
         "--verbosity",
@@ -308,8 +408,27 @@ Examples:
         )
         raise e
 
+    chat_template = resolve_chat_template(tokenizer, args.chat_template)
+
+    registry: Optional[ToolRegistry] = None
+    if args.tools:
+        if chat_template == DEFAULT_CHAT_TEMPLATE:
+            console.print(
+                "[bold red]Cannot use tools:[/bold red] this tokenizer has no chat template, "
+                "and the fallback template drops the tool definitions. Pass --chat-template "
+                "with a template that renders them."
+            )
+            sys.exit(1)
+        try:
+            registry = ToolRegistry.from_configs(build_tool_configs(args.tools, args.tool_backend))
+        except Exception as e:
+            console.print(f"[bold red]Failed to build tools:[/bold red] {e}")
+            sys.exit(1)
+
     # Display tokenizer info
-    console.print(render_tokenizer_info(tokenizer_config, tokenizer, args.chat_template))
+    console.print(
+        render_tokenizer_info(tokenizer_config, tokenizer, chat_template or "<tokenizer default>")
+    )
     console.print()
 
     generation_config = GenerationConfig(
@@ -417,27 +536,45 @@ Examples:
             # Add user message to conversation history
             conversation_history.append({"role": "user", "content": user_input})
 
-            # Build prompt using chat template
-            prompt = tokenizer.apply_chat_template(
-                conversation_history,
-                tokenize=False,
-                add_generation_prompt=True,
-                chat_template=args.chat_template,
-            )
-
             try:
-                with console.status("[dim]Generating response...", spinner="dots"):
-                    input_ids = tokenizer.encode(prompt, return_tensors="pt")
-                    generated_ids, _, _ = generation_module.generate_batch(
-                        input_ids, completions_only=True, log_timing=False
+                if registry is not None:
+
+                    def on_tool_call(call: ToolCall, result: ToolResult):
+                        console.print()
+                        console.print(render_tool_call(call, result))
+
+                    with console.status("[dim]Generating response...", spinner="dots"):
+                        loop_result = run_tool_loop(
+                            generation_module,
+                            tokenizer,
+                            conversation_history,
+                            registry,
+                            max_iterations=args.max_tool_iterations,
+                            chat_template=chat_template,
+                            on_tool_call=on_tool_call,
+                            log_timing=False,
+                        )
+                    conversation_history = loop_result.messages
+                    response_text = loop_result.content
+                else:
+                    prompt = tokenizer.apply_chat_template(
+                        conversation_history,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                        chat_template=chat_template,
                     )
-                    response_text = tokenizer.decode(
-                        generated_ids[0], skip_special_tokens=not args.show_special_tokens
-                    )
+                    with console.status("[dim]Generating response...", spinner="dots"):
+                        input_ids = tokenizer.encode(prompt, return_tensors="pt")
+                        generated_ids, _, _ = generation_module.generate_batch(
+                            input_ids, completions_only=True, log_timing=False
+                        )
+                        response_text = tokenizer.decode(
+                            generated_ids[0], skip_special_tokens=not args.show_special_tokens
+                        )
+                    conversation_history.append({"role": "assistant", "content": response_text})
 
                 console.print()
                 console.print(render_assistant_message(response_text))
-                conversation_history.append({"role": "assistant", "content": response_text})
 
             except Exception as e:
                 log_or_print(log, f"Generation error: {e}", level=logging.ERROR)

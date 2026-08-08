@@ -60,6 +60,7 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    nn/index
    optim
    testing
+   tools/index
    train/index
    utils
 

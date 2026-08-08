@@ -32,6 +32,10 @@ class OLMoCLIError(OLMoError):
     pass
 
 
+class ToolCallParseError(OLMoError):
+    pass
+
+
 class OLMoThreadError(OLMoError):
     pass
 
