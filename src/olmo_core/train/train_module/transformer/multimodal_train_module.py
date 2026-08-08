@@ -645,16 +645,26 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         # block's dispatch flag does not recursively enable training behavior in its children, and
         # OLMoDDP blocks do not support dropout. Returned losses are detached below so the
         # unconsumed graph is released before control returns to the evaluator.
-        training_modes = []
+        block_modes = []
         for block in self.multimodal_model.lm.routed_blocks():
-            training_modes.append((block, block.training))
+            block_modes.append(
+                (
+                    block,
+                    block.training,
+                    block._ep_no_sync_force_scratch_lifetime_buffers,
+                )
+            )
             block.training = True
+            # This is a forward-only graph, so no backward pass exists to release the rowwise
+            # lifetime leases used by training. Use the prewarmed static scratch buffers instead.
+            block._ep_no_sync_force_scratch_lifetime_buffers = True
         try:
             with torch.enable_grad():
                 yield
         finally:
-            for block, training in training_modes:
+            for block, training, force_scratch in block_modes:
                 block.training = training
+                block._ep_no_sync_force_scratch_lifetime_buffers = force_scratch
 
     def _batch_auxiliary_loss_kwargs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         token_mask = batch.get("router_token_mask")

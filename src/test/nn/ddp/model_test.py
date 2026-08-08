@@ -5,6 +5,7 @@ import pytest
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.ddp import model as ddp_model_module
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -61,3 +62,55 @@ def test_deepep_rejects_chunk_recompute():
     config.block.ep = ExpertParallelConfig(path=ExpertParallelPath.deepep_v2)
     with pytest.raises(OLMoConfigurationError, match="recompute_all_blocks_by_chunk"):
         config.build(init_device="cpu")
+
+
+def test_rowwise_prewarm_can_include_forward_only_scratch_buffers(monkeypatch):
+    config = _build_model_config(n_layers=1)
+    assert isinstance(config.block, OLMoDDPTransformerBlockConfig)
+    config.block.ep = ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem)
+    model = config.build(init_device="cpu")
+    block = next(model.routed_blocks())
+    block.ep_pg = object()  # type: ignore[assignment]
+
+    buffer_calls = []
+    lease_calls = []
+    monkeypatch.setattr(ddp_model_module, "compute_ep_no_sync_rank_capacity", lambda *_: 8)
+    monkeypatch.setattr(
+        ddp_model_module,
+        "get_ep_no_sync_buffers",
+        lambda _block, **kwargs: buffer_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        ddp_model_module,
+        "prewarm_ep_no_sync_rowwise_lifetime_leases",
+        lambda _block, **kwargs: lease_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        ddp_model_module,
+        "use_ep_no_sync_rowwise_symm_dispatch_in",
+        lambda _block: False,
+    )
+    monkeypatch.setattr(
+        ddp_model_module,
+        "use_ep_no_sync_rowwise_symm_combine_out",
+        lambda _block: False,
+    )
+    monkeypatch.setattr(
+        ddp_model_module,
+        "use_ep_no_sync_rowwise_symm_combine_gather",
+        lambda _block: False,
+    )
+
+    model.prewarm_ep_no_sync_symm_buffers(
+        max_local_microbatch_size=8,
+        pad_to_block_count=1,
+    )
+    model.prewarm_ep_no_sync_symm_buffers(
+        max_local_microbatch_size=8,
+        pad_to_block_count=1,
+        prewarm_rowwise_scratch_buffers=True,
+    )
+
+    assert [call["need_dispatch_out"] for call in buffer_calls] == [False, True]
+    assert all(call["need_dispatch_out"] for call in lease_calls)
+    assert block._ep_no_sync_force_scratch_lifetime_buffers is False

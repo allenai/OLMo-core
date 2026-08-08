@@ -369,7 +369,16 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         max_local_microbatch_size: int,
         pad_to_block_count: int,
         rowwise_lifetime_lease_slots: Optional[int] = None,
+        prewarm_rowwise_scratch_buffers: bool = False,
     ) -> None:
+        """Preallocate symmetric buffers required by EP no-sync blocks.
+
+        :param max_local_microbatch_size: Maximum local token count for one microbatch.
+        :param pad_to_block_count: Allocation count used to align model parts.
+        :param rowwise_lifetime_lease_slots: Optional number of lifetime-lease slots.
+        :param prewarm_rowwise_scratch_buffers: Also preallocate the static rowwise buffers used
+            by grad-enabled forward-only passes, which cannot release lifetime leases in backward.
+        """
         ep_blocks = list(self.named_ep_no_sync_blocks())
         if not ep_blocks:
             if pad_to_block_count != 0:
@@ -495,7 +504,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                         slot_idx=slot_idx,
                         need_dispatch_in=use_symm_dispatch_in,
                         need_dispatch_meta=False,
-                        need_dispatch_out=(not use_rowwise_fp8) and not lease_dispatch_out,
+                        need_dispatch_out=(not use_rowwise_fp8)
+                        and (not lease_dispatch_out or prewarm_rowwise_scratch_buffers),
                         need_combine_in=not use_rowwise_fp8,
                         need_combine_meta=False,
                         need_combine_out=use_symm_combine_out and not lease_combine_out,
@@ -534,8 +544,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                         device=device,
                         lease_combine_gather=False,
                         need_dispatch_in=use_fp8_symm_dispatch_in,
-                        need_dispatch_out=not lease_dispatch_out,
-                        need_combine_gather=not lease_combine_gather,
+                        need_dispatch_out=(
+                            not lease_dispatch_out or prewarm_rowwise_scratch_buffers
+                        ),
+                        need_combine_gather=(
+                            not lease_combine_gather or prewarm_rowwise_scratch_buffers
+                        ),
                     )
             else:
                 get_ep_no_sync_buffers(

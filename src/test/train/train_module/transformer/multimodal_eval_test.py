@@ -117,6 +117,7 @@ def test_multimodal_olmo_ddp_eval_uses_training_routing_dispatch_only():
 
     class Block:
         training = False
+        _ep_no_sync_force_scratch_lifetime_buffers = False
 
     block = Block()
 
@@ -133,9 +134,11 @@ def test_multimodal_olmo_ddp_eval_uses_training_routing_dispatch_only():
     with torch.no_grad():
         with train_module._multimodal_eval_batch_context():
             assert block.training is True
+            assert block._ep_no_sync_force_scratch_lifetime_buffers is True
             assert torch.is_grad_enabled()
 
     assert block.training is False
+    assert block._ep_no_sync_force_scratch_lifetime_buffers is False
 
 
 def test_multimodal_olmo_ddp_text_eval_forces_eager_with_grad_enabled(monkeypatch):

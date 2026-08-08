@@ -10,6 +10,7 @@ from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
+from olmo_core.nn.ddp import OLMoDDPModel
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -159,6 +160,31 @@ def test_multimodal_olmo_ddp_model_materializes_all_components():
     assert model.lm.training
     assert model.connector.training
     assert not model.vision.training
+
+
+def test_multimodal_olmo_ddp_prewarms_forward_only_rowwise_scratch(monkeypatch):
+    model = _tiny_multimodal_model_config().build(init_device="meta")
+    assert isinstance(model, MultimodalOLMoDDPModel)
+    captured = {}
+
+    def prewarm(_self, *args, **kwargs):
+        captured.update(args=args, kwargs=kwargs)
+
+    monkeypatch.setattr(OLMoDDPModel, "prewarm_ep_no_sync_symm_buffers", prewarm)
+
+    model.prewarm_ep_no_sync_symm_buffers(
+        max_local_microbatch_size=16,
+        pad_to_block_count=2,
+        rowwise_lifetime_lease_slots=1,
+    )
+
+    assert captured["args"] == ()
+    assert captured["kwargs"] == {
+        "max_local_microbatch_size": 16,
+        "pad_to_block_count": 2,
+        "rowwise_lifetime_lease_slots": 1,
+        "prewarm_rowwise_scratch_buffers": True,
+    }
 
 
 def test_multimodal_olmo_ddp_routes_compact_flex_masks(monkeypatch):

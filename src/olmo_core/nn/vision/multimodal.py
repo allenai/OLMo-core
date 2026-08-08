@@ -660,6 +660,11 @@ class MultimodalOLMoDDPModel(MultimodalLM):
         self._olmo_lm.prewarm_deepep_v2_runtimes(*args, **kwargs)
 
     def prewarm_ep_no_sync_symm_buffers(self, *args, **kwargs) -> None:
+        """Prewarm LM expert-parallel buffers, including forward-only evaluation scratch."""
+        # Multimodal evaluation keeps grad mode enabled for B300 attention correctness but does
+        # not run backward. Prewarm the rowwise scratch path so eval never consumes the
+        # training-only lifetime leases that backward normally releases.
+        kwargs["prewarm_rowwise_scratch_buffers"] = True
         self._olmo_lm.prewarm_ep_no_sync_symm_buffers(*args, **kwargs)
 
     def refresh_rowwise_fp8_cache(self) -> None:
