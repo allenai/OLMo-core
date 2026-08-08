@@ -46,11 +46,13 @@ from .protocol import (
     FUNCTION_CALLS_START,
     FUNCTIONS_END,
     FUNCTIONS_START,
+    TURN_END,
     build_tool_schemas,
     contains_function_call,
     parse_function_calls,
     render_environment_message,
     resolve_tool_stop_token_ids,
+    resolve_turn_end_token_ids,
 )
 from .registry import ToolRegistry
 from .symbolic import SymbolicMathTool, SymbolicMathToolConfig, has_sympy
@@ -103,9 +105,11 @@ __all__ = [
     "FUNCTION_CALLS_START",
     "FUNCTION_CALLS_END",
     "ENVIRONMENT_ROLE",
+    "TURN_END",
     "contains_function_call",
     "parse_function_calls",
     "render_environment_message",
     "resolve_tool_stop_token_ids",
+    "resolve_turn_end_token_ids",
     "build_tool_schemas",
 ]

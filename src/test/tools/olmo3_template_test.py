@@ -14,11 +14,13 @@ from olmo_core.tools import (
     parse_function_calls,
     render_environment_message,
     resolve_tool_stop_token_ids,
+    resolve_turn_end_token_ids,
 )
 
 TOKENIZER = "allenai/Olmo-3-7B-Instruct"
 
 CLOSE_FUNCTION_CALLS_TOKEN_ID = 100269
+TURN_END_TOKEN_ID = 100265
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +40,11 @@ def registry():
 def test_closing_tag_is_a_single_token(tokenizer):
     """Generation stops on this token, which only works because it is one token."""
     assert resolve_tool_stop_token_ids(tokenizer) == [CLOSE_FUNCTION_CALLS_TOKEN_ID]
+
+
+def test_turn_marker_resolves(tokenizer):
+    """A reply that calls no tool ends here, so generation has to stop on it too."""
+    assert resolve_turn_end_token_ids(tokenizer) == [TURN_END_TOKEN_ID]
 
 
 def test_schemas_reach_the_system_turn(tokenizer, registry):

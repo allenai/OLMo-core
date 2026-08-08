@@ -26,10 +26,12 @@ __all__ = [
     "FUNCTION_CALLS_START",
     "FUNCTION_CALLS_END",
     "ENVIRONMENT_ROLE",
+    "TURN_END",
     "contains_function_call",
     "parse_function_calls",
     "render_environment_message",
     "resolve_tool_stop_token_ids",
+    "resolve_turn_end_token_ids",
     "build_tool_schemas",
 ]
 
@@ -47,6 +49,9 @@ FUNCTION_CALLS_END = "</function_calls>"
 
 ENVIRONMENT_ROLE = "environment"
 """The role tool results are fed back under."""
+
+TURN_END = "<|im_end|>"
+"""The marker that ends a turn in the chat template."""
 
 # Jinja's `tojson` filter writes these, and Python's parser reads them as names rather than
 # literals, so `ast.literal_eval` alone rejects any call carrying a boolean or a null.
@@ -178,6 +183,19 @@ def render_environment_message(results: Sequence[ToolResult]) -> Dict[str, str]:
     return {"role": ENVIRONMENT_ROLE, "content": "\n".join(parts)}
 
 
+def _resolve_token_id(tokenizer: Any, token: str) -> Optional[int]:
+    token_id = tokenizer.convert_tokens_to_ids(token)
+    if token_id is None:
+        return None
+
+    # Tokenizers answer with the unknown-token ID for strings they do not carry, so confirm the
+    # round trip rather than trusting the lookup.
+    if tokenizer.convert_ids_to_tokens(token_id) != token:
+        return None
+
+    return token_id
+
+
 def resolve_tool_stop_token_ids(tokenizer: Any) -> List[int]:
     """
     Look up the token IDs that mark the end of a tool call block.
@@ -190,16 +208,24 @@ def resolve_tool_stop_token_ids(tokenizer: Any) -> List[int]:
     :returns: The matching token IDs, or an empty list if the tokenizer has no dedicated token
         for the closing tag.
     """
-    token_id = tokenizer.convert_tokens_to_ids(FUNCTION_CALLS_END)
-    if token_id is None:
-        return []
+    token_id = _resolve_token_id(tokenizer, FUNCTION_CALLS_END)
+    return [] if token_id is None else [token_id]
 
-    # Tokenizers answer with the unknown-token ID for strings they do not carry, so confirm the
-    # round trip rather than trusting the lookup.
-    if tokenizer.convert_ids_to_tokens(token_id) != FUNCTION_CALLS_END:
-        return []
 
-    return [token_id]
+def resolve_turn_end_token_ids(tokenizer: Any) -> List[int]:
+    """
+    Look up the token IDs that mark the end of an assistant turn.
+
+    A reply that calls no tool ends the turn rather than a tool call block, so generation has to
+    stop on this too. Without it the model runs on past its own turn marker and into whatever
+    role comes next, until it hits the token limit.
+
+    :param tokenizer: A Hugging Face tokenizer.
+
+    :returns: The matching token IDs, or an empty list if the tokenizer does not use this marker.
+    """
+    token_id = _resolve_token_id(tokenizer, TURN_END)
+    return [] if token_id is None else [token_id]
 
 
 def build_tool_schemas(tools: Iterable[Any]) -> List[Dict[str, Any]]:

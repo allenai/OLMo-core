@@ -5,6 +5,7 @@ import torch
 from olmo_core.tools import CalculatorToolConfig, ToolRegistry, run_tool_loop
 
 CLOSE_TOKEN_ID = 100269
+TURN_END_TOKEN_ID = 100265
 
 
 class StubTokenizer:
@@ -30,11 +31,13 @@ class StubTokenizer:
     def decode(self, ids, skip_special_tokens=True) -> str:
         return self.completions[int(ids[0])]
 
+    VOCAB = {"</function_calls>": CLOSE_TOKEN_ID, "<|im_end|>": TURN_END_TOKEN_ID}
+
     def convert_tokens_to_ids(self, token):
-        return CLOSE_TOKEN_ID if token == "</function_calls>" else None
+        return self.VOCAB.get(token)
 
     def convert_ids_to_tokens(self, token_id):
-        return "</function_calls>" if token_id == CLOSE_TOKEN_ID else None
+        return {v: k for k, v in self.VOCAB.items()}.get(token_id)
 
 
 class StubGenerationModule:
@@ -104,12 +107,33 @@ def test_several_rounds_of_tool_calling():
 
 def test_generation_stops_on_the_closing_tool_token():
     _, _, module = _run(["done"])
-    assert module.generate_kwargs[0]["stop_token_ids"] == [CLOSE_TOKEN_ID]
+    assert CLOSE_TOKEN_ID in module.generate_kwargs[0]["stop_token_ids"]
+
+
+def test_generation_stops_at_the_end_of_the_assistant_turn():
+    """A reply that calls no tool ends at the turn marker, not at '</function_calls>'.
+
+    Without this the model runs past its own turn marker into the next role and on to the token
+    limit. The per-call value replaces the module's configured one, so the loop cannot rely on
+    the caller having set it.
+    """
+    _, _, module = _run(["done"])
+    assert TURN_END_TOKEN_ID in module.generate_kwargs[0]["stop_token_ids"]
+
+
+def test_both_stop_tokens_are_sent_together():
+    _, _, module = _run(["done"])
+    assert module.generate_kwargs[0]["stop_token_ids"] == [CLOSE_TOKEN_ID, TURN_END_TOKEN_ID]
 
 
 def test_caller_stop_tokens_are_kept():
     _, _, module = _run(["done"], stop_token_ids=[7])
-    assert module.generate_kwargs[0]["stop_token_ids"] == [7, CLOSE_TOKEN_ID]
+    assert module.generate_kwargs[0]["stop_token_ids"] == [7, CLOSE_TOKEN_ID, TURN_END_TOKEN_ID]
+
+
+def test_stop_tokens_are_not_duplicated():
+    _, _, module = _run(["done"], stop_token_ids=[TURN_END_TOKEN_ID])
+    assert module.generate_kwargs[0]["stop_token_ids"] == [TURN_END_TOKEN_ID, CLOSE_TOKEN_ID]
 
 
 def test_tool_schemas_reach_the_chat_template():

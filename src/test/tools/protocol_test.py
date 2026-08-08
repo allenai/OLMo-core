@@ -8,6 +8,7 @@ from olmo_core.tools import (
     parse_function_calls,
     render_environment_message,
     resolve_tool_stop_token_ids,
+    resolve_turn_end_token_ids,
 )
 
 
@@ -135,6 +136,15 @@ def test_resolve_tool_stop_token_ids():
 
 def test_resolve_tool_stop_token_ids_without_the_token():
     assert resolve_tool_stop_token_ids(_Tokenizer({})) == []
+
+
+def test_resolve_turn_end_token_ids():
+    assert resolve_turn_end_token_ids(_Tokenizer({"<|im_end|>": 100265})) == [100265]
+
+
+def test_resolve_turn_end_token_ids_without_the_token():
+    """A tokenizer that does not use this marker contributes no stop token rather than failing."""
+    assert resolve_turn_end_token_ids(_Tokenizer({})) == []
 
 
 def test_resolve_tool_stop_token_ids_ignores_unknown_token_fallback():

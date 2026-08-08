@@ -261,9 +261,9 @@ def main():
     )
     log.info("Tools available: %s", ", ".join(registry.names))
 
-    # The instruct model ends a turn with <|im_end|> rather than the base EOS.
-    turn_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
-    stop_token_ids = [turn_end] if isinstance(turn_end, int) else []
+    # run_tool_loop resolves both the tool-call and turn-end markers itself and passes them on
+    # every call, so nothing has to be seeded here.
+    stop_token_ids: List[int] = []
 
     if args.backend == "hf":
         generation_module = build_hf_module(args.hf_model, device, args.max_new_tokens, tokenizer)

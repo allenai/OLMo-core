@@ -9,6 +9,7 @@ from .protocol import (
     parse_function_calls,
     render_environment_message,
     resolve_tool_stop_token_ids,
+    resolve_turn_end_token_ids,
 )
 from .registry import ToolRegistry
 
@@ -92,11 +93,17 @@ def run_tool_loop(
     conversation: List[Dict[str, str]] = [dict(message) for message in messages]
     schemas = registry.schemas()
 
+    # Both markers matter and for different reasons: a turn that calls a tool ends at
+    # '</function_calls>', and one that does not ends at the turn marker. Stopping on only the
+    # first lets a final reply run past its own turn marker into the next role and on to the
+    # token limit. A per-call value replaces the module's configured one rather than adding to
+    # it, so this list has to be complete on its own.
     stop_token_ids = list(generation_kwargs.pop("stop_token_ids", None) or [])
-    for token_id in resolve_tool_stop_token_ids(tokenizer):
+    tool_stops = resolve_tool_stop_token_ids(tokenizer)
+    for token_id in (*tool_stops, *resolve_turn_end_token_ids(tokenizer)):
         if token_id not in stop_token_ids:
             stop_token_ids.append(token_id)
-    if not stop_token_ids:
+    if not tool_stops:
         log.warning(
             "This tokenizer has no dedicated token for '</function_calls>', so generation cannot "
             "stop as soon as a tool call is complete."
