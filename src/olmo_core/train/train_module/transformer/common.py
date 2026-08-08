@@ -1,8 +1,10 @@
 import logging
+from collections.abc import Iterable
 from typing import List, Optional, TypeVar, cast
 
 import torch
 from torch.distributed import DeviceMesh
+from torch.optim import Optimizer
 
 from olmo_core.distributed.parallel import (
     DataParallelType,
@@ -29,6 +31,36 @@ log = logging.getLogger(__name__)
 
 
 M = TypeVar("M", Transformer, List[Transformer])
+
+_MUON_ALGORITHMS = frozenset({"muon", "normuon"})
+
+
+def get_parameters_for_gradient_clipping(
+    optimizers: Iterable[Optimizer],
+) -> tuple[list[torch.Tensor], bool]:
+    """
+    Get the parameters that should participate in gradient clipping.
+
+    Muon and NorMuon orthogonalize their matrix updates and should not have their gradients
+    clipped. When either algorithm is present, only parameters in AdamW groups are returned.
+    Otherwise all optimizer parameters are returned.
+
+    :returns: The parameters to clip and whether they were restricted to AdamW groups.
+    """
+    param_groups = [group for optim in optimizers for group in optim.param_groups]
+    adamw_only = any(group.get("algorithm") in _MUON_ALGORITHMS for group in param_groups)
+    if adamw_only:
+        return (
+            [
+                param
+                for group in param_groups
+                if group.get("algorithm") == "adamw"
+                for param in group["params"]
+            ],
+            True,
+        )
+    else:
+        return [param for group in param_groups for param in group["params"]], False
 
 
 def parallelize_model(

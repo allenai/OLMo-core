@@ -310,6 +310,10 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
 
     optim: OptimConfig
     max_grad_norm: Optional[float] = None
+    """
+    Clip gradient norms to this value. With Muon or NorMuon, only the AdamW parameter groups are
+    clipped.
+    """
     scheduler: Optional[Scheduler] = None
 
     # Model settings.

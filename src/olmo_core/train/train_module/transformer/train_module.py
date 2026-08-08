@@ -50,7 +50,7 @@ from olmo_core.utils import (
 
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
-from .common import parallelize_model
+from .common import get_parameters_for_gradient_clipping, parallelize_model
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -88,7 +88,8 @@ class TransformerTrainModule(TrainModule):
     :param ac_config: Activation checkpointing configuration for the model.
     :param z_loss_multiplier: Use Z-loss with this multiplier.
     :param autocast_precision: Enable AMP with this data type.
-    :param max_grad_norm: Clip gradient norms to this value.
+    :param max_grad_norm: Clip gradient norms to this value. With Muon or NorMuon, only the
+        AdamW parameter groups are clipped.
     :param scheduler: Optional learning rate scheduler for the optimizer.
     :param device: The device to train on.
     :param state_dict_save_opts: Can be used to override the state dict options used
@@ -611,12 +612,13 @@ class TransformerTrainModule(TrainModule):
     def _clip_grad_norm(
         self, max_grad_norm: float, norm_type: float = 2.0, foreach: Optional[bool] = None
     ) -> torch.Tensor:
-        if isinstance(self.model, FSDP):
+        parameters, adamw_only = get_parameters_for_gradient_clipping([self.optim])
+
+        if isinstance(self.model, FSDP) and not adamw_only:
             return self.model.clip_grad_norm_(max_grad_norm)
 
         # Adapted from https://github.com/pytorch/torchtitan/blob/2a4437014e66bcf88a3f0419b816266e6326d539/torchtitan/utils.py#L348
 
-        parameters = [p for p in self.model.parameters()]
         grads = [p.grad for p in parameters if p.grad is not None]
 
         total_norm = nn.utils.get_total_norm(
