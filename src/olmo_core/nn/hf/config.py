@@ -380,7 +380,9 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     latent_moe_dim = latent_down_proj.out_features if latent_down_proj is not None else None
     latent_moe_bias = latent_down_proj is not None and latent_down_proj.bias is not None
     if latent_up_proj is not None and (latent_up_proj.bias is not None) != latent_moe_bias:
-        raise NotImplementedError("LatentMoE down and up projections must use the same bias setting.")
+        raise NotImplementedError(
+            "LatentMoE down and up projections must use the same bias setting."
+        )
     latent_moe_up_proj_input_norm = representative.latent_up_proj_input_norm is not None
     emo = getattr(router, "emo", None)
     sparse_signature = None
