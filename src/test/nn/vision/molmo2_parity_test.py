@@ -21,8 +21,6 @@ These tests auto-skip when the corresponding HF checkpoint is not cached
 locally — they're not meant for default CI.
 """
 
-import os
-
 import pytest
 import torch
 
@@ -32,12 +30,13 @@ from olmo_core.nn.vision.molmo2_loader import (
     molmo2_config_from_hf_config,
     molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
+    retie_word_embeddings,
 )
 from olmo_core.testing import requires_gpu
 
-transformers = pytest.importorskip("transformers")
-
 from ._molmo2_common import MOLMO2_VARIANTS, _hf_cache_has  # noqa: F401 (re-exported)
+
+transformers = pytest.importorskip("transformers")
 
 
 def _load_hf(model_id: str):
@@ -103,6 +102,7 @@ def test_molmo2_converter_loads_and_vision_matches(model_id: str):
     model = MultimodalLM(cfg, init_device="meta")
     model.to_empty(device=torch.device("cpu"))
     missing, unexpected = model.load_state_dict(converted, strict=False)
+    retie_word_embeddings(model)  # `to_empty` breaks the tied-embedding share (Molmo2-4B)
     del converted
 
     # Strict on parameters: no LM / vision / connector weight may be unloaded.

@@ -645,6 +645,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         pointing: List[Any] = [
             PixMoPointsDatasetConfig(
                 kind="basic",
+                both_mode="duplicate",
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
@@ -658,6 +659,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
             ).build(tokenizer),
             PixMoPointsDatasetConfig(
                 kind="high_frequency",
+                both_mode="duplicate",
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
@@ -691,10 +693,12 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
             (
                 "tulu4_max_2304",
                 Tulu4DatasetConfig(
+                    max_first_msg_len=2304,
                     max_sequence_length=config.dataset.max_sequence_length,
                     loss_token_weighting=config.dataset.loss_token_weighting,
                     token_ids=config.dataset.token_ids,
                     message_format=config.dataset.message_format,
+                    style_length_conditioning=True,
                 ).build(tokenizer),
                 n,
             )
@@ -824,7 +828,13 @@ def _add_fast_vision_validation_callback(
         ),
         (
             "pixmo-points-validation",
-            PixMoPointsDatasetConfig(split="validation", kind="basic", counting="both", **common),
+            PixMoPointsDatasetConfig(
+                split="validation",
+                kind="basic",
+                counting="both",
+                both_mode="duplicate",
+                **common,
+            ),
         ),
     ]
 

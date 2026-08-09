@@ -17,22 +17,16 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Literal, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
-from .document_layout import branch_context_ids, image_prefix_ids, response_ids
 from .grounding import normalize_points, pointing_answer
-from .olmo3_layout import (
-    MessageFormat,
-    validate_message_format,
-    validate_olmo3_chat_tokenizer,
-)
-from .rng import make_random_state
-from .sequence_builder import build_branched_sequence
+from .message_sequence import encode_sft_example
+from .sft_common import SftMessageFormat, sft_example_rng, validate_sft_message_format
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -57,7 +51,7 @@ def _build_example(
     token_ids: Molmo2TokenIds,
     message_weight: float | None = None,
     p_high_res: float = 0.0,
-    message_format: MessageFormat = "document",
+    message_format: SftMessageFormat = "qwen3",
     rng: np.random.RandomState,
 ) -> Dict[str, np.ndarray]:
     """Format and assemble a (possibly multi-branch) pointing example.
@@ -65,67 +59,19 @@ def _build_example(
     :param build_branches: Builds ``(user_question, assistant_answer)`` strings before image
         augmentation, preserving Molmo2's random-number consumption order.
     """
-    import torch
-
-    from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
-
     branches_text = list(build_branches(rng))
-    if len(branches_text) > 1:
-        order = np.arange(len(branches_text))
-        rng.shuffle(order)
-        branches_text = [branches_text[i] for i in order]
-
-    images_t, pooling_t, image_grid = preprocess_image_molmo2(
+    return encode_sft_example(
+        tokenizer,
         pil_image,
-        dtype=torch.float32,
-        device=torch.device("cpu"),
+        branches_text,
         max_crops=max_crops,
         p_high_res=p_high_res,
-        is_training=True,
-        rng=rng,
-    )
-    if message_format == "olmo3_chat":
-        from .olmo3_layout import branch_context_ids as chat_branch_context_ids
-        from .olmo3_layout import image_prefix_ids as chat_image_prefix_ids
-
-        prefix = chat_image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
-        branches = [
-            (
-                chat_branch_context_ids(tokenizer, question, token_ids=token_ids),
-                tokenizer.encode(answer, add_special_tokens=False),
-            )
-            for question, answer in branches_text
-        ]
-    else:
-        prefix = image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
-        branches = [
-            (
-                branch_context_ids(tokenizer, question),
-                response_ids(tokenizer, answer),
-            )
-            for question, answer in branches_text
-        ]
-    from olmo_core.data.multimodal.message_weight import (
-        apply_message_weight_to_loss_masks,
-    )
-
-    seq = build_branched_sequence(
-        prefix,
-        branches,
-        eos_id=tokenizer.eos_token_id,
-        image_token_ids=token_ids.image_token_ids,
         loss_token_weighting=loss_token_weighting,
+        token_ids=token_ids,
+        message_format=message_format,
+        message_weight=message_weight,
+        shuffle_rng=rng,
     )
-    subsegment_ids = seq.get("subsegment_ids")
-    from olmo_core.data.multimodal.message_weight import MessageWeight
-
-    mw = MessageWeight.from_string(loss_token_weighting).with_overrides(message_weight)
-    seq["loss_masks"] = apply_message_weight_to_loss_masks(
-        seq["loss_masks"], subsegment_ids, mw, branch_scaling_already_applied=True
-    )
-    seq["images"] = images_t[0].numpy()
-    seq["pooled_patches_idx"] = pooling_t[0].numpy()
-    return seq
 
 
 def _load_split(path: str, split: str):
@@ -152,7 +98,11 @@ class PixMoPointsDatasetConfig(Config):
 
     split: str = "train"
     kind: str = "both"  # "basic" (points-pointing) | "high_frequency" (points-counting) | "both"
-    counting: str = "both"  # "both" duplicates each example in point_count/pointing styles
+    counting: str = "both"  # "both" randomly selects point_count/pointing per annotation
+    both_mode: Literal["per_annotation", "duplicate"] = "per_annotation"
+    """How ``counting='both'`` is sampled. Stage 2 follows mm_olmo and samples a style
+    per annotation. The Stage 1 recipe explicitly selects ``duplicate`` for compatibility
+    with its existing two-style dataset expansion."""
     max_points: int = 60
     max_total_points_per_example: int = 60
     max_crops: int = 8
@@ -160,7 +110,7 @@ class PixMoPointsDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
-    message_format: MessageFormat = "document"
+    message_format: SftMessageFormat = "qwen3"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
@@ -169,9 +119,13 @@ class PixMoPointsDatasetConfig(Config):
 
 class PixMoPointsDataset:
     def __init__(self, config: PixMoPointsDatasetConfig, tokenizer):
-        validate_message_format(config.message_format)
-        if config.message_format == "olmo3_chat":
-            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
+        if config.both_mode not in ("per_annotation", "duplicate"):
+            raise ValueError(f"Unknown PixMo points both_mode {config.both_mode!r}")
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         sub = {"basic": ["points-pointing"], "high_frequency": ["points-counting"]}.get(
@@ -206,27 +160,35 @@ class PixMoPointsDataset:
 
     def __len__(self) -> int:
         size = len(self._index)
-        return size * 2 if self.config.counting == "both" else size
+        if self.config.counting == "both" and self.config.both_mode == "duplicate":
+            return size * 2
+        return size
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         return self.get(i, 0)
 
     def get(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         """Build one deterministically augmented example for a source epoch."""
-        if self.config.counting == "both":
+        fixed_style = None
+        if self.config.counting == "both" and self.config.both_mode == "duplicate":
             example_idx = i // 2
-            style = "point_count" if i % 2 == 0 else "pointing"
+            fixed_style = "point_count" if i % 2 == 0 else "pointing"
         else:
             example_idx = i
-            style = "point_count" if self.config.counting else "pointing"
         row_idx, label_idxs = self._index[example_idx]
-        rng = make_random_state(self.config.seed + i, epoch)
+        rng = sft_example_rng(self.config.seed, i, epoch, self.config.message_format)
         row = self._data[row_idx]
         fmt = SftFormatter(seed=self.config.seed)
         specs: List[Tuple[str, str, Any]] = []
         for li in label_idxs:
             label = row["label"][li]
             pts = row["points"][li]
+            if fixed_style is not None:
+                style = fixed_style
+            elif self.config.counting == "both":
+                style = rng.choice(["point_count", "pointing"])
+            else:
+                style = "point_count" if self.config.counting else "pointing"
             specs.append((style, label, pts))
 
         def build_branches(branch_rng: np.random.RandomState) -> List[Tuple[str, str]]:
@@ -239,7 +201,7 @@ class PixMoPointsDataset:
                     "point_scale": 100,
                 }
                 prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
-                branches.append((f"{branch_style}: {prompt}", answer))
+                branches.append((prompt, answer))
             return branches
 
         return _build_example(
@@ -270,7 +232,7 @@ class PixMoCountDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
-    message_format: MessageFormat = "document"
+    message_format: SftMessageFormat = "qwen3"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCountDataset":
@@ -279,9 +241,11 @@ class PixMoCountDatasetConfig(Config):
 
 class PixMoCountDataset:
     def __init__(self, config: PixMoCountDatasetConfig, tokenizer):
-        validate_message_format(config.message_format)
-        if config.message_format == "olmo3_chat":
-            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(f"{PIXMO_DATASETS}/count", config.split)
@@ -301,10 +265,9 @@ class PixMoCountDataset:
             row_idx, style = i, ("point_count" if self.config.counting else "pointing")
         row = self._data[row_idx]
         label = row["label"]
-        count = int(row["count"])
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
-        rng = make_random_state(self.config.seed + i, epoch)
+        rng = sft_example_rng(self.config.seed, i, epoch, self.config.message_format)
         fmt = SftFormatter(seed=self.config.seed)
         xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
         sub = {
@@ -313,12 +276,11 @@ class PixMoCountDataset:
             "points": xy,
             "point_scale": None,
             "image_size": pil.size,
-            "count": count,
         }
 
         def build_branches(branch_rng: np.random.RandomState) -> List[Tuple[str, str]]:
             prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
-            return [(f"{style}: {prompt}", answer)]
+            return [(prompt, answer)]
 
         return _build_example(
             self.tokenizer,
@@ -346,7 +308,7 @@ class CoSynPointDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
-    message_format: MessageFormat = "document"
+    message_format: SftMessageFormat = "qwen3"
     seed: int = 0
 
     def build(self, tokenizer) -> "CoSynPointDataset":
@@ -355,9 +317,11 @@ class CoSynPointDatasetConfig(Config):
 
 class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
-        validate_message_format(config.message_format)
-        if config.message_format == "olmo3_chat":
-            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
@@ -377,7 +341,7 @@ class CoSynPointDataset:
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
             answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
-            branches.append((f"cosyn_point: {question}", answer))
+            branches.append((question, answer))
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),
@@ -388,5 +352,5 @@ class CoSynPointDataset:
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
             message_format=self.config.message_format,
-            rng=make_random_state(self.config.seed + i, epoch),
+            rng=sft_example_rng(self.config.seed, i, epoch, self.config.message_format),
         )

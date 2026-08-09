@@ -33,6 +33,19 @@ ATTEND_ALL_SUBSEGMENT_ID = 10000
 LOSS_TOKEN_WEIGHTINGS = ("none", "root_subsegments", "root_subsegments_root_tokens")
 
 
+def example_rng(seed: int, index: int) -> np.random.RandomState:
+    """Per-example Stage 2 RNG stream (mm_olmo ``dataset.py:68``, epoch 0).
+
+    The vendor wrapper derives augmentation from ``(index, epoch)`` and does not consume
+    its stored dataset seed. ``seed`` remains in this compatibility signature for callers
+    that also use it to configure source sampling.
+    """
+    del seed
+    from .rng import make_random_state
+
+    return make_random_state(index, 0)
+
+
 def build_packed_sequence(
     prefix_ids: Sequence[int],
     response_id_lists: Sequence[Sequence[int]],
@@ -201,9 +214,16 @@ def build_branched_sequence(
     subsegment and share an overlapping position range starting right after the prefix (no
     carry-over, since each branch begins with its own user turn).
 
-    :param prefix_ids: Shared prefix token IDs (document boundary + image block), all non-loss.
-    :param branches: One ``(context_ids, response_ids)`` per annotation — ``context_ids`` is
-        the non-loss plain task prompt and ``response_ids`` is the loss-bearing response.
+    :param prefix_ids: Shared prefix token IDs (document or chat boundary plus image block),
+        all non-loss.
+    :param branches: One entry per annotation. Each entry is either a single
+        ``(context_ids, response_ids)`` pair, where ``context_ids`` is the non-loss prompt
+        or serialized user turn and ``response_ids`` is the loss-bearing assistant answer,
+        or a **list** of such pairs
+        forming one sequential multi-turn conversation (mm_olmo keeps a
+        ``{"messages": [...]}`` annotation as one branch: turn 2 attends turn 1, loss on
+        every assistant span, and only the final token is a segment end / EOS target, so
+        intermediate assistant spans get no mid-sequence EOS loss).
     :param eos_id: EOS token id (target at each branch end).
     :param loss_token_weighting: as in :func:`build_packed_sequence`.
 
@@ -220,23 +240,37 @@ def build_branched_sequence(
     parts: List[dict] = []
     multi = n_branches > 1
 
-    def _branch_part(context, response, subseg_id):
-        context, response = list(context), list(response)
-        tokens = context + response
+    def _as_segments(branch):
+        """Normalize a branch to a list of (context, response) turn segments."""
+        if len(branch) == 2 and len(branch[0]) > 0 and isinstance(branch[0][0], (int, np.integer)):
+            return [branch]
+        return list(branch)
+
+    def _branch_part(branch, subseg_id):
+        segments = [(list(c), list(r)) for c, r in _as_segments(branch)]
+        tokens: List[int] = []
+        loss_spans: List[tuple] = []  # (start, end) of each response span
+        for context, response in segments:
+            tokens.extend(context)
+            loss_spans.append((len(tokens), len(tokens) + len(response)))
+            tokens.extend(response)
+        total_resp = sum(e - s for s, e in loss_spans)
         w = 1.0
         if root_length:
-            n_resp = len(response) + (0 if multi else 1)
+            # mm_olmo flatten_tree: n = total assistant tokens (+1 for EOS when the
+            # example has a single annotation).
+            n_resp = total_resp + (0 if multi else 1)
             w = 2.0 / np.sqrt(n_resp) if n_resp else 0.0
         loss = np.zeros(len(tokens), dtype=np.float32)
-        loss[len(context) :] = w  # loss only on the response (assistant) tokens
+        for s, e in loss_spans:
+            loss[s:e] = w
         seg_end = np.zeros(len(tokens), dtype=bool)
-        seg_end[-1] = True
+        seg_end[-1] = True  # only the branch's final token is a segment end (leaf)
         return dict(loss=loss, seg_end=seg_end, subsegment_id=subseg_id, tokens=tokens)
 
     if not multi:
-        # Single turn: prefix + context + response, fully causal, no subsegments.
-        ctx, resp = branches[0]
-        bp = _branch_part(ctx, resp, None)
+        # Single annotation: prefix + conversation, fully causal, no subsegments.
+        bp = _branch_part(branches[0], None)
         tokens = prefix_ids + bp["tokens"]
         loss = np.concatenate([np.zeros(len(prefix_ids), dtype=np.float32), bp["loss"]])
         seg_end = np.concatenate([np.zeros(len(prefix_ids), dtype=bool), bp["seg_end"]])
@@ -260,8 +294,8 @@ def build_branched_sequence(
                 seg_end=np.zeros(len(prefix_ids), dtype=bool),
             )
         )
-        for branch_idx, (ctx, resp) in enumerate(branches):
-            bp = _branch_part(ctx, resp, branch_idx)
+        for branch_idx, branch in enumerate(branches):
+            bp = _branch_part(branch, branch_idx)
             n = len(bp["tokens"])
             parts.append(
                 dict(

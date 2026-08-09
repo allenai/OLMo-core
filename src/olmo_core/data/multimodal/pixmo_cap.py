@@ -30,13 +30,8 @@ from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .document_layout import branch_context_ids, image_prefix_ids, response_ids
-from .olmo3_layout import (
-    MessageFormat,
-    validate_message_format,
-    validate_olmo3_chat_tokenizer,
-)
-from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
+from .sft_common import SftMessageFormat, sft_example_rng, validate_sft_message_format
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
 
@@ -109,8 +104,8 @@ class PixMoCapDatasetConfig(Config):
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     """Image and chat token IDs for the selected language-model tokenizer."""
-    message_format: MessageFormat = "document"
-    """Use native pretraining documents or the exact s002 SFT chat template."""
+    message_format: SftMessageFormat = "qwen3"
+    """Use released Qwen, native pretraining document, or s002 instruction layout."""
     fixed_prompt: Optional[str] = None
     """If set, always use this user prompt instead of sampling from the pools.
     Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
@@ -133,9 +128,11 @@ class PixMoCapDataset:
     def __init__(self, config: PixMoCapDatasetConfig, tokenizer):
         if config.mode not in _MODES:
             raise ValueError(f"Unknown mode {config.mode!r}; expected one of {_MODES}")
-        validate_message_format(config.message_format)
-        if config.message_format == "olmo3_chat":
-            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         self._rows: Optional[List[Dict[str, Any]]] = None
@@ -254,12 +251,12 @@ class PixMoCapDataset:
     def get(self, index: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         """Build one deterministically augmented example for a source epoch."""
         if self.config.mode == "sft_demo":
-            return self._getitem_sft_demo(index)
+            return self._getitem_sft_demo(index, epoch)
 
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
         cfg = self.config
-        rng = make_random_state(cfg.seed + index, epoch)
+        rng = sft_example_rng(cfg.seed, index, epoch, cfg.message_format)
 
         import torch
 
@@ -286,7 +283,7 @@ class PixMoCapDataset:
                     prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
                 else:
                     prompt = base_prompt
-            if cfg.message_format == "olmo3_chat":
+            if cfg.message_format in ("qwen3", "olmo3_chat"):
                 encoded_response = self.tokenizer.encode(text, add_special_tokens=False)
             else:
                 encoded_response = response_ids(self.tokenizer, text)
@@ -318,6 +315,28 @@ class PixMoCapDataset:
                 )
                 for prompt, encoded_response in branch_specs
             ]
+        elif cfg.message_format == "qwen3":
+            from .qwen3_layout import branch_context_ids as qwen_branch_context_ids
+            from .qwen3_layout import image_prefix_ids as qwen_image_prefix_ids
+
+            prefix_ids = qwen_image_prefix_ids(
+                self.tokenizer,
+                image_grid,
+                token_ids=cfg.token_ids,
+            )
+            multi_branch = len(branch_specs) > 1
+            branch_pairs = [
+                (
+                    qwen_branch_context_ids(
+                        self.tokenizer,
+                        prompt,
+                        branch_index=branch_index,
+                        multi_branch=multi_branch,
+                    ),
+                    encoded_response,
+                )
+                for branch_index, (prompt, encoded_response) in enumerate(branch_specs)
+            ]
         else:
             # Shared prefix = native EOS document boundary + image block. Each branch is plain
             # non-role text and its response receives Molmo's one-space message separator.
@@ -343,7 +362,7 @@ class PixMoCapDataset:
         seq["pooled_patches_idx"] = pooled
         return seq
 
-    def _getitem_sft_demo(self, index: int) -> Dict[str, np.ndarray]:
+    def _getitem_sft_demo(self, index: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         from .message_sequence import encode_sft_example
 
         row = self._get_row(index)
@@ -354,7 +373,12 @@ class PixMoCapDataset:
             "text": row.get("caption", ""),
         }
         assert self._sft_formatter is not None
-        rng = np.random.RandomState(self.config.seed + index)
+        rng = sft_example_rng(
+            self.config.seed,
+            index,
+            epoch,
+            self.config.message_format,
+        )
         turns = self._sft_formatter.format_turns(formatted, index=index, rng=rng)
         return encode_sft_example(
             self.tokenizer,
@@ -363,6 +387,7 @@ class PixMoCapDataset:
             max_crops=self.config.max_crops,
             loss_token_weighting="root_subsegments_root_tokens",
             token_ids=self.config.token_ids,
+            message_format=self.config.message_format,
             shuffle_rng=rng,
         )
 
@@ -370,7 +395,20 @@ class PixMoCapDataset:
 def _truncate(
     seq: Dict[str, np.ndarray], max_len: int, image_patch_token_id: int
 ) -> Dict[str, np.ndarray]:
-    """Right-truncate all per-token fields to ``max_len`` (asserting no image token cut)."""
+    """Right-truncate all per-token fields to ``max_len`` (asserting no image token cut).
+
+    Follows mm_olmo ``example_preprocessor.py:260-293``: truncation that removes every
+    loss token raises (the loader skips the example), and when whole branches are cut
+    the surviving branches' ``1/sqrt(n_subsegments)`` scaling is recomputed over the
+    *non-truncated* subsegments only.
+    """
+    loss_positions = np.nonzero(seq["loss_masks"][:max_len] > 0)[0]
+    if len(loss_positions) == 0:
+        raise ValueError(f"Truncation to {max_len} removed all loss tokens")
+    n_before = None
+    if "subsegment_ids" in seq:
+        uniq = np.unique(seq["subsegment_ids"])
+        n_before = len(uniq[uniq != 10000])  # exclude the ATTEND_ALL prefix id
     keep = max_len
     if np.any(seq["input_ids"][keep:] == image_patch_token_id):
         raise ValueError(
@@ -380,4 +418,9 @@ def _truncate(
     out = {}
     for k, v in seq.items():
         out[k] = v[:keep] if v.ndim == 1 and len(v) >= keep else v
+    if n_before is not None and "subsegment_ids" in out:
+        uniq_after = np.unique(out["subsegment_ids"])
+        n_after = len(uniq_after[uniq_after != 10000])
+        if n_after and n_after != n_before:
+            out["loss_masks"] = out["loss_masks"] * np.sqrt(n_before / n_after)
     return out

@@ -230,7 +230,7 @@ def test_conversation_mask_matches_cached_sft_header_and_end_token_semantics():
     assert ids[assistant_mask > 0].tolist() == expected_loss_ids
 
 
-def test_tulu_chat_preserves_explicit_system_and_styles_first_user():
+def test_stage2_tulu_chat_preserves_explicit_system_without_stage1_style():
     tokenizer = _ExactChatTokenizer()
     dataset = object.__new__(Tulu4Dataset)
     dataset.config = Tulu4DatasetConfig(
@@ -238,6 +238,7 @@ def test_tulu_chat_preserves_explicit_system_and_styles_first_user():
         loss_token_weighting="none",
         token_ids=_TOKEN_IDS,
         message_format="olmo3_chat",
+        style_length_conditioning=False,
     )
     dataset.tokenizer = tokenizer
     raw = [
@@ -258,8 +259,12 @@ def test_tulu_chat_preserves_explicit_system_and_styles_first_user():
     assert stream[: len(tokenizer.encode(DEFAULT_SYSTEM_PREFIX, add_special_tokens=False))] != (
         tokenizer.encode(DEFAULT_SYSTEM_PREFIX, add_special_tokens=False)
     )
-    assert tokenizer.encode("text_sft", add_special_tokens=False) in [
+    assert tokenizer.encode("text_sft", add_special_tokens=False) not in [
         stream[i : i + len(tokenizer.encode("text_sft", add_special_tokens=False))]
+        for i in range(len(stream))
+    ]
+    assert tokenizer.encode("Question", add_special_tokens=False) in [
+        stream[i : i + len(tokenizer.encode("Question", add_special_tokens=False))]
         for i in range(len(stream))
     ]
     assert sequence["labels"][sequence["loss_masks"] > 0].tolist() == [

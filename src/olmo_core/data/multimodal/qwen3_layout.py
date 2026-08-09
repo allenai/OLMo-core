@@ -16,7 +16,9 @@ from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds, build_image_token_
 
 __all__ = [
     "branch_context_ids",
+    "followup_turn_context_ids",
     "image_prefix_ids",
+    "multi_image_prefix_ids",
     "user_header_ids",
     "user_turn_continuation_ids",
     "user_turn_ids",
@@ -69,10 +71,41 @@ def image_prefix_ids(
     )
 
 
+def multi_image_prefix_ids(tokenizer, image_grids: List[np.ndarray]) -> List[int]:
+    """Shared qwen3 prefix for several images.
+
+    mm_olmo's ``MultiImagePreprocessor`` prepends the text ``"Image {i+1}"`` to each
+    image's token block when the example holds more than one image (nothing extra for
+    a single image), and the blocks follow each other directly inside the first user
+    message: ``<|im_start|>user\\n Image 1 <blocks> Image 2 <blocks> ... {question}``.
+    """
+    ids = user_header_ids(tokenizer)
+    multi = len(image_grids) > 1
+    for i, grid in enumerate(image_grids):
+        if multi:
+            ids = ids + tokenizer.encode(f"Image {i + 1}", add_special_tokens=False)
+        resized_h, resized_w, h, w = (int(grid[j]) for j in range(4))
+        ids = ids + build_image_token_ids(resized_h, resized_w, h, w)
+    return ids
+
+
 def user_turn_continuation_ids(tokenizer) -> List[int]:
     """Token ids for ``<|im_end|>\\n<|im_start|>user\\n`` between branched user turns."""
     text = "<|im_end|>\n<|im_start|>user\n"
     return tokenizer.encode(text, add_special_tokens=False)
+
+
+def followup_turn_context_ids(tokenizer, question: str) -> List[int]:
+    """Context of turn 2+ in a multi-turn conversation.
+
+    mm_olmo's qwen3 ``apply_chat_template`` prefixes a user message that follows an
+    assistant message with ``<|im_end|>\\n`` (closing the previous assistant turn,
+    ``preprocessor_utils.py:267``), then the regular user turn follows:
+    ``<|im_end|>\\n<|im_start|>user\\n{q}<|im_end|>\\n<|im_start|>assistant\\n``.
+    """
+    return tokenizer.encode("<|im_end|>\n", add_special_tokens=False) + user_turn_ids(
+        tokenizer, question
+    )
 
 
 def branch_context_ids(

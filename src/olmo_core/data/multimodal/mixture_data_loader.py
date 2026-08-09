@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import math
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -94,6 +95,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
         seq_len: int,
         max_crops_per_pack: int,
         buffer_size: int,
+        image_weight: float = 1.0,
         buffer: Optional[Sequence[Tuple[ExampleRef, Dict[str, Any]]]] = None,
         packs_emitted: int = 0,
     ):
@@ -101,6 +103,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
         self.seq_len = seq_len
         self.max_crops_per_pack = max_crops_per_pack
         self.buffer_size = buffer_size
+        self.image_weight = image_weight
         self.buffer = list(buffer or [])
         self.packs_emitted = packs_emitted
 
@@ -128,6 +131,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
                 [example_crop_count(buffered_example) for _, buffered_example in self.buffer],
                 self.seq_len,
                 self.max_crops_per_pack,
+                self.image_weight,
             )
             if not selected:
                 raise RuntimeError(
@@ -177,6 +181,7 @@ class MixtureDataLoader(DataLoaderBase):
         pack: bool = False,
         pack_max_crops: Optional[int] = None,
         pack_buffer_size: int = 0,
+        pack_image_weight: float = 1.0,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
@@ -209,6 +214,8 @@ class MixtureDataLoader(DataLoaderBase):
             raise OLMoConfigurationError(
                 "pack_max_crops is required when pack_buffer_size is positive"
             )
+        if not math.isfinite(pack_image_weight) or pack_image_weight < 0:
+            raise OLMoConfigurationError("pack_image_weight must be finite and non-negative")
         self.datasets = list(datasets)
         if dataset_names is None:
             self.dataset_names = [str(i) for i in range(len(datasets))]
@@ -229,6 +236,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.pack = pack
         self.pack_max_crops = pack_max_crops
         self.pack_buffer_size = pack_buffer_size
+        self.pack_image_weight = pack_image_weight
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
         self.max_consecutive_data_errors = max_consecutive_data_errors
@@ -337,6 +345,7 @@ class MixtureDataLoader(DataLoaderBase):
                 self.seq_len,
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
+                image_weight=self.pack_image_weight,
             )
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
@@ -493,11 +502,19 @@ class MixtureDataLoader(DataLoaderBase):
                 seq_len=self.seq_len,
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
+                image_weight=self.pack_image_weight,
             )
 
         state = self._packing_state
+        state_version = int(state.get("version", 0))
+        if state_version == 3:
+            if self.pack_image_weight != 1.0:
+                raise OLMoConfigurationError(
+                    "Version-3 packed-loader state implies pack_image_weight=1.0"
+                )
+        elif state_version != 4:
+            raise OLMoConfigurationError(f"Unsupported packed-loader state version {state_version}")
         expected = {
-            "version": 3,
             "epoch": self._epoch,
             "seed": self.seed,
             "dp_world_size": self.dp_world_size,
@@ -510,6 +527,8 @@ class MixtureDataLoader(DataLoaderBase):
             "dataset_names": self.dataset_names,
             "weights": self.weights,
         }
+        if state_version >= 4:
+            expected["pack_image_weight"] = self.pack_image_weight
         for key, expected_value in expected.items():
             if state.get(key) != expected_value:
                 raise OLMoConfigurationError(
@@ -550,6 +569,7 @@ class MixtureDataLoader(DataLoaderBase):
             seq_len=self.seq_len,
             max_crops_per_pack=self.pack_max_crops,
             buffer_size=self.pack_buffer_size,
+            image_weight=self.pack_image_weight,
             buffer=buffer,
             packs_emitted=packs_emitted,
         )
@@ -568,7 +588,7 @@ class MixtureDataLoader(DataLoaderBase):
         state = packer.state_dict()
         state.update(
             {
-                "version": 3,
+                "version": 4,
                 "epoch": self._epoch,
                 "seed": self.seed,
                 "dp_world_size": self.dp_world_size,
@@ -577,6 +597,7 @@ class MixtureDataLoader(DataLoaderBase):
                 "seq_len": self.seq_len,
                 "pack_buffer_size": self.pack_buffer_size,
                 "pack_max_crops": self.pack_max_crops,
+                "pack_image_weight": self.pack_image_weight,
                 "dataset_sizes": self._sizes,
                 "dataset_names": self.dataset_names,
                 "weights": self.weights,
@@ -596,6 +617,7 @@ class MixtureDataLoader(DataLoaderBase):
                 self.seq_len,
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
+                image_weight=self.pack_image_weight,
             )
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self._try_load_example((src, i % size, 0)) for i in range(ri)]

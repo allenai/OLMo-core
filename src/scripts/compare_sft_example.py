@@ -42,7 +42,13 @@ _PARITY_KEYS = (
     "images",
     "pooled_patches_idx",
 )
-_MM_OLMO_ROOT = "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+# HARDCODED personal paths (donovanc's mm_olmo checkout / conda / activate script on
+# weka), used only by this offline parity harness — never by training. Override via the
+# MM_OLMO_ROOT env var and the --conda / --mm-env / --mm-activate-script CLI flags to run
+# the mm_olmo export side from your own environment.
+_MM_OLMO_ROOT = os.environ.get(
+    "MM_OLMO_ROOT", "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+)
 _DEFAULT_CONDA = "/weka/oe-training-default/donovanc/miniconda3/bin/conda"
 _DEFAULT_MM_OLMO_ACTIVATE = "/weka/oe-training-default/donovanc/mm_olmo-activate.sh"
 _MM_OLMO_ENV_KEYS = (
@@ -65,7 +71,9 @@ class ParityResult:
 
 
 def image_only_v9_dataset_names() -> list[str]:
-    from olmo_core.data.multimodal.mixtures.image_only_v9 import IMAGE_ONLY_V9_SUBMIXTURES
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+        IMAGE_ONLY_V9_SUBMIXTURES,
+    )
 
     return [src.name for group in IMAGE_ONLY_V9_SUBMIXTURES for src in group.datasets]
 
@@ -648,7 +656,11 @@ def _export_mm(args: argparse.Namespace) -> None:
         default_message_weight=MessageWeight.from_string("root_subsegments_root_tokens"),
         is_training=True,
     )
-    rng = np.random.RandomState(args.seed)
+    # mm_olmo DeterministicDataset (dataset.py:68, epoch 0) threads this one RNG through
+    # the dataset formatter and preprocessor. Its stored dataset seed is not consumed.
+    from olmo_core.data.multimodal.rng import make_random_state
+
+    rng = make_random_state(args.index, 0)
     formatted = data.get(args.index, rng)
     example_weight = _image_only_v9_example_weight(args.dataset)
     if example_weight is not None:
@@ -658,7 +670,7 @@ def _export_mm(args: argparse.Namespace) -> None:
         copy.deepcopy(formatted),
         is_training=True,
         for_inference=False,
-        rng=np.random.RandomState(args.seed),
+        rng=rng,
     )
     diagnostics = {
         "formatted": _json_safe(formatted),
@@ -688,7 +700,9 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
         build_academic_data,
         format_academic_example,
     )
-    from olmo_core.data.multimodal.mixtures.image_only_v9 import build_image_only_v9_datasets
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+        build_image_only_v9_datasets,
+    )
     from olmo_core.data.multimodal.sft_formatter import SftFormatter
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/Molmo2-4B", trust_remote_code=True)
@@ -696,14 +710,19 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
     example = datasets[args.dataset][args.index]
     diagnostics = None
     if args.dataset in ACADEMIC_REGISTRY:
+        from olmo_core.data.multimodal.sequence_builder import example_rng
+
+        diag_rng = example_rng(args.seed, args.index)
         formatted = format_academic_example(
             args.dataset,
             build_academic_data(args.dataset, split="train")[args.index],
-            args.seed + args.index,
+            diag_rng,
         )
         diagnostics = {
             "formatted": _json_safe(formatted),
-            "turns": SftFormatter(seed=args.seed).format_turns(formatted, index=args.index),
+            "turns": SftFormatter(seed=args.seed).format_branches(
+                formatted, index=args.index, rng=diag_rng
+            ),
         }
         image_diag = _safe_image_diagnostics(formatted)
         if image_diag is not None:

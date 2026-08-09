@@ -35,6 +35,7 @@ from olmo_core.nn.vision.molmo2_loader import (
     molmo2_hf_state_dict_to_multimodal_lm,
     molmo2_hf_state_dict_to_vision,
     multimodal_config_from_molmo2_vision,
+    retie_word_embeddings,
 )
 
 # ---------------------------------------------------------------------------
@@ -53,17 +54,20 @@ _FULL_VOCAB = _BASE_VOCAB + _EXTRA_VOCAB  # 128
 _IMAGE_PATCH_ID = _BASE_VOCAB  # first extra id
 
 
-def _tiny_cfg() -> MultimodalLMConfig:
+def _tiny_cfg(tie_word_embeddings: bool = False) -> MultimodalLMConfig:
     """A tiny stand-in for Molmo2-O-7B: olmo3_1M LM + small SigLIP-style ViT.
 
     Architecturally analogous (fused QKV, fused SwiGLU, ViT, attention-pooled
-    connector with SwiGLU projector); just small enough to load on CPU."""
+    connector with SwiGLU projector); just small enough to load on CPU.
+    ``tie_word_embeddings=True`` mimics the Molmo2-4B (Qwen3-4B backbone) layout
+    where the LM head shares storage with the embedding table."""
     # olmo3_1M shares the same block layout as olmo3_7B (fused att_proj +
     # fused ff_proj + qk_norm), just with d_model=12. Force the `torch`
     # SDPA backend so the tiny test config builds without a CUDA flash-attn.
     lm_cfg = TransformerConfig.olmo3_1M(
         vocab_size=_FULL_VOCAB,
         attn_backend=AttentionBackendName.torch,
+        tie_word_embeddings=tie_word_embeddings,
     )
     vis_cfg = VisionEncoderConfig(
         name=VisionEncoderType.siglip,
@@ -89,6 +93,7 @@ def _tiny_cfg() -> MultimodalLMConfig:
         vision=vis_cfg,
         connector=conn_cfg,
         image_patch_token_id=_IMAGE_PATCH_ID,
+        output_vocab_size=_BASE_VOCAB,
     )
 
 
@@ -136,16 +141,21 @@ def _synthetic_hf_state_dict(cfg: MultimodalLMConfig) -> Dict[str, torch.Tensor]
 
     has_qk_norm = _has_qk_norm(lm_cfg)
 
-    # Vocab: HF Molmo2 keeps base + extra vocab in separate buffers.
+    # Vocab: HF Molmo2 keeps base + extra vocab in separate buffers, and its
+    # lm_head predicts only the *base* vocab (the extras are input-only).
     # Our config has lm.vocab_size == base + extra (already padded). Split
-    # at the same boundary that the converter uses.
+    # at the same boundary that the converter uses. Tied configs export
+    # lm_head.weight as a copy of wte.embedding, so mirror that.
     full_vocab = lm_cfg.vocab_size
     new_vocab = _EXTRA_VOCAB
     base_vocab = full_vocab - new_vocab
     sd["model.transformer.wte.embedding"] = torch.randn(base_vocab, d_model)
     sd["model.transformer.wte.new_embedding"] = torch.randn(new_vocab, d_model)
     sd["model.transformer.ln_f.weight"] = torch.randn(d_model)
-    sd["lm_head.weight"] = torch.randn(full_vocab, d_model)
+    if lm_cfg.tie_word_embeddings:
+        sd["lm_head.weight"] = sd["model.transformer.wte.embedding"].clone()
+    else:
+        sd["lm_head.weight"] = torch.randn(base_vocab, d_model)
 
     fused_qkv_out = n_heads * head_dim + 2 * n_kv * head_dim
     for i in range(n_layers):
@@ -324,7 +334,17 @@ def test_hf_vision_config_loader_reads_only_declarative_config(tmp_path, monkeyp
     assert loaded.vit_config.hidden_size == 1152
     assert loaded.vit_config.num_hidden_layers == 27
     assert loaded.adapter_config.vit_layers == [-3, -9]
-    assert requested == [("config.json", {"repo_id": "test/model", "revision": "fixed", "cache_dir": None, "local_files_only": False})]
+    assert requested == [
+        (
+            "config.json",
+            {
+                "repo_id": "test/model",
+                "revision": "fixed",
+                "cache_dir": None,
+                "local_files_only": False,
+            },
+        )
+    ]
 
 
 def test_hybrid_config_retargets_connector_to_external_lm():
@@ -345,6 +365,7 @@ def test_hybrid_config_retargets_connector_to_external_lm():
     assert cfg.image_patch_token_id == 200
     assert cfg.vision.image_emb_dim == source_cfg.vision.image_emb_dim
     assert cfg.vit_layers == (source_cfg.vision.image_num_layers - 1,)
+    assert cfg.output_vocab_size is None
 
 
 def test_converter_shapes_match_model_load():
@@ -441,7 +462,8 @@ def test_missing_key_raises_helpful_error():
 
 
 def test_forward_runs_with_converted_weights():
-    """Sanity: a model loaded with converter output runs a forward without errors."""
+    """Sanity: a model loaded with converter output runs a forward without errors,
+    and the inputs-only extra-vocab logit columns come out masked."""
     cfg = _tiny_cfg()
     model = MultimodalLM(cfg, init_device="cpu")
     hf_sd = _synthetic_hf_state_dict(cfg)
@@ -451,4 +473,79 @@ def test_forward_runs_with_converted_weights():
     # Text-only forward.
     out = model(input_ids=torch.randint(0, 100, (1, 8)))
     assert out.shape == (1, 8, cfg.lm.vocab_size)
-    assert torch.isfinite(out).all()
+    # Base-vocab logits are real; extra-vocab columns are masked to the dtype
+    # minimum so they carry zero softmax mass and can never be sampled.
+    assert torch.isfinite(out[..., :_BASE_VOCAB]).all()
+    assert (out[..., _BASE_VOCAB:] == torch.finfo(out.dtype).min).all()
+
+
+# ---------------------------------------------------------------------------
+# Tied word embeddings (Molmo2-4B layout) + output-vocab masking
+# ---------------------------------------------------------------------------
+
+
+def test_tied_lm_head_shares_embedding_table_and_preserves_new_embedding():
+    """For a tied LM the converter must emit one consistent table for both keys.
+
+    Regression test: zero-padding the lm_head of a *tied* model used to clobber
+    the ``new_embedding`` input rows on ``load_state_dict`` (both state-dict keys
+    copy into the same shared tensor, last write wins)."""
+    cfg = _tiny_cfg(tie_word_embeddings=True)
+    hf_sd = _synthetic_hf_state_dict(cfg)
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
+
+    # Both keys hold the same concatenated table.
+    assert converted["lm.lm_head.w_out.weight"] is converted["lm.embeddings.weight"]
+
+    # Loading into a truly tied model (built on CPU, tie intact) must keep the
+    # new_embedding rows in the shared table.
+    model = MultimodalLM(cfg, init_device="cpu")
+    assert model.lm.lm_head.w_out.weight is model.lm.embeddings.weight
+    model.load_state_dict(converted, strict=False)
+    torch.testing.assert_close(
+        model.lm.embeddings.weight[_BASE_VOCAB:],
+        hf_sd["model.transformer.wte.new_embedding"],
+    )
+    torch.testing.assert_close(
+        model.lm.embeddings.weight[:_BASE_VOCAB],
+        hf_sd["model.transformer.wte.embedding"],
+    )
+
+
+def test_tied_lm_head_mismatch_raises():
+    """A tied LM config with an HF checkpoint whose lm_head differs from the base
+    embedding cannot be represented — the converter must say so."""
+    cfg = _tiny_cfg(tie_word_embeddings=True)
+    hf_sd = _synthetic_hf_state_dict(cfg)
+    hf_sd["lm_head.weight"] = torch.randn(_BASE_VOCAB, cfg.lm.d_model)
+    with pytest.raises(Molmo2LoaderError, match="tie_word_embeddings"):
+        molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
+
+
+def test_retie_word_embeddings_after_to_empty():
+    """``Module.to_empty`` silently breaks the tie; the helper restores it and the
+    re-tied model still holds the converted weights."""
+    cfg = _tiny_cfg(tie_word_embeddings=True)
+    hf_sd = _synthetic_hf_state_dict(cfg)
+    converted = molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
+
+    model = MultimodalLM(cfg, init_device="meta")
+    model.to_empty(device=torch.device("cpu"))
+    assert model.lm.lm_head.w_out.weight is not model.lm.embeddings.weight  # broken tie
+    model.load_state_dict(converted, strict=False)
+    retie_word_embeddings(model)
+    assert model.lm.lm_head.w_out.weight is model.lm.embeddings.weight
+    torch.testing.assert_close(
+        model.lm.embeddings.weight[_BASE_VOCAB:],
+        hf_sd["model.transformer.wte.new_embedding"],
+    )
+
+
+def test_labels_path_guarded_when_output_vocab_masked():
+    """Passing ``labels`` through MultimodalLM would compute the loss over the
+    full padded vocab, bypassing the output-vocab masking — must raise."""
+    cfg = _tiny_cfg()
+    model = MultimodalLM(cfg, init_device="cpu")
+    input_ids = torch.randint(0, _BASE_VOCAB, (1, 8))
+    with pytest.raises(Exception, match="output_vocab_size"):
+        model(input_ids=input_ids, labels=input_ids.clone())

@@ -32,3 +32,14 @@ def test_pointing_dataset_configs_forward_the_requested_split(monkeypatch):
         (f"{pixmo_points.PIXMO_DATASETS}/points-pointing", "validation"),
         (f"{pixmo_points.PIXMO_DATASETS}/count", "validation"),
     ]
+
+
+def test_points_both_mode_controls_dataset_expansion():
+    dataset = object.__new__(pixmo_points.PixMoPointsDataset)
+    dataset._index = [(0, [0]), (1, [0]), (2, [0])]
+
+    dataset.config = pixmo_points.PixMoPointsDatasetConfig(both_mode="per_annotation")
+    assert len(dataset) == 3
+
+    dataset.config = pixmo_points.PixMoPointsDatasetConfig(both_mode="duplicate")
+    assert len(dataset) == 6

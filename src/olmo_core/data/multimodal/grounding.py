@@ -21,9 +21,13 @@ import numpy as np
 
 __all__ = [
     "format_points_tag",
+    "format_multi_image_points_tag",
     "pointing_answer",
+    "multi_image_pointing_answer",
     "POINTING_PROMPTS",
     "POINT_COUNT_PROMPTS",
+    "MULTI_IMAGE_POINTING_PROMPTS",
+    "MULTI_IMAGE_POINT_COUNT_PROMPTS",
 ]
 
 
@@ -210,4 +214,99 @@ POINT_COUNT_PROMPTS: Tuple[str, ...] = (
     "Are there any {label} in the image? How many are there?",
     "If you see any {label} in the image, give me the count. Otherwise, say 'There are none.'",
     "Object: {label}\nInstruction: How many are there?",
+)
+
+
+# ---------------------------------------------------------------------------
+# Multi-image pointing (mm_olmo UnifiedPointFormatter.format_multi_image_points,
+# pointing_format="html-v2": image groups joined by ";")
+# ---------------------------------------------------------------------------
+
+# Per-image group separator inside ``coords="..."``. mm_olmo html-v1 uses "\t",
+# html-v2 (Molmo2 stage-2, ``get_model``) uses ";". Single-image answers are
+# identical under both.
+MULTI_IMAGE_COORD_SEP = ";"
+
+
+def format_multi_image_points_tag(
+    points_by_image: Sequence[Tuple[int, Sequence[Sequence[float]]]],
+    label: str,
+) -> str:
+    """Render normalized points spanning several images as one ``<points>`` tag.
+
+    Matches mm_olmo ``_build_multi_image_coordinates``: each image contributes
+    ``"{image_index} {i x y ...}"`` with per-image (x, y)-sorted points and point
+    indices *continuing* across images; groups are joined by
+    :data:`MULTI_IMAGE_COORD_SEP`.
+
+    :param points_by_image: ``[(image_index_1based, points_norm), ...]`` in display
+        order; ``points_norm`` are already-normalized ``(x, y)`` in [0, 1].
+    :param label: text inside the tag.
+    """
+    on = 1
+    groups = []
+    for image_index, pts_norm in points_by_image:
+        pts = [_scale_point(x, y) for x, y in pts_norm]
+        pts.sort()
+        body = " ".join(f"{i} {x:03d} {y:03d}" for i, (x, y) in enumerate(pts, start=on))
+        on += len(pts)
+        groups.append(f"{image_index} {body}")
+    coord_str = MULTI_IMAGE_COORD_SEP.join(groups)
+    return f'<points coords="{coord_str}">{label}</points>'
+
+
+def multi_image_pointing_answer(
+    points_by_image: Sequence[Tuple[int, Sequence[Sequence[float]]]],
+    label: str,
+    style: str,
+) -> str:
+    """Assemble the assistant answer for multi-image pointing styles.
+
+    Same phrasing as the single-image :func:`pointing_answer`
+    (mm_olmo ``build_point_output``), with the count summed over all images.
+    """
+    n = sum(len(p) for _, p in points_by_image)
+    if n == 0:
+        return "There are none."
+    tag = format_multi_image_points_tag(points_by_image, label)
+    if style in ("multi_image_point_then_count", "point_then_count", "point_count"):
+        return f"Counting the {tag} shows a total of {n}."
+    if style in ("multi_image_count_then_point", "count_then_point"):
+        return f"There are {n} {tag}."
+    if style in ("multi_image_counting", "count"):
+        return str(n)
+    return tag
+
+
+# Verbatim active entries of mm_olmo GENERAL_PROMPTS_V1["multi_image_pointing"] /
+# ["multi_image_point_then_count"] (data_formatter.py:414-460; commented-out
+# entries omitted). `{selected_images}` is "all images" or "image_1, image_2, ...".
+MULTI_IMAGE_POINTING_PROMPTS: Tuple[str, ...] = (
+    "Find {selected_label} in {selected_images}.",
+    "find {selected_label} in {selected_images}.",
+    "Point to {selected_label} in {selected_images}.",
+    "Point to any {selected_label} in {selected_images}.",
+    "Point to all {selected_label} in {selected_images}.",
+    'Point to all occurrences of "{selected_label}" in {selected_images}.',
+    "Can you point to {selected_label} in {selected_images}?",
+    "Show me where the {selected_label} are in {selected_images}?",
+    "Show me where a {selected_label} is in {selected_images}?",
+    "Show me where a {selected_label} is in {selected_images}.",
+    "In {selected_images}, point to {selected_label}.",
+)
+MULTI_IMAGE_POINT_COUNT_PROMPTS: Tuple[str, ...] = (
+    "How many {selected_label} are there in {selected_images}?",
+    "how many {selected_label} are there in {selected_images}?",
+    "How many {selected_label} are there in {selected_images}.",
+    "count {selected_label} in {selected_images}?",
+    "count every {selected_label} in {selected_images}?",
+    "count each {selected_label} in {selected_images}?",
+    "count {selected_label} in {selected_images}.",
+    "Count the {selected_label} in {selected_images}.",
+    "Point then count {selected_label} in {selected_images}.",
+    "Point and count {selected_label} in {selected_images}.",
+    "Can you point and count {selected_label} in {selected_images}?",
+    "Can you point then count {selected_label} in {selected_images}?",
+    "Point to {selected_label} in {selected_images}, then count them.",
+    "Point to all {selected_label} in {selected_images}, then count them.",
 )

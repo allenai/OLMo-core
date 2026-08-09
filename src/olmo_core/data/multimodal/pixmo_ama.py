@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-import numpy as np
 from PIL import Image
 
 from olmo_core.config import Config
@@ -14,6 +13,7 @@ from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 from .detect_counting_question import is_pixmo_point_and_count_question
 from .message_sequence import encode_sft_example
 from .paths import PIXMO_DATASETS
+from .sft_common import SftMessageFormat, sft_example_rng, validate_sft_message_format
 
 __all__ = ["PixMoAmaDatasetConfig", "PixMoAmaDataset"]
 
@@ -58,6 +58,7 @@ class PixMoAmaDatasetConfig(Config):
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments_root_tokens"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    message_format: SftMessageFormat = "qwen3"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoAmaDataset":
@@ -68,6 +69,11 @@ class PixMoAmaDataset:
     def __init__(self, config: PixMoAmaDatasetConfig, tokenizer):
         from .dataset_compat import load_from_disk_compat
 
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         ds = load_from_disk_compat(f"{PIXMO_DATASETS}/ask-model-anything")
@@ -77,7 +83,16 @@ class PixMoAmaDataset:
         return len(self._data)
 
     def __getitem__(self, index: int) -> Dict:
-        rng = np.random.RandomState(self.config.seed + index)
+        return self.get(index, 0)
+
+    def get(self, index: int, epoch: int = 0) -> Dict:
+        """Build one example with the released epoch-aware Stage 2 RNG stream."""
+        rng = sft_example_rng(
+            self.config.seed,
+            index,
+            epoch,
+            self.config.message_format,
+        )
         row = self._data[index]
         turns: List[Tuple[str, str]] = []
         for q, a in zip(row["question"], row["answer"]):
@@ -95,5 +110,6 @@ class PixMoAmaDataset:
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
+            message_format=self.config.message_format,
             shuffle_rng=rng,
         )

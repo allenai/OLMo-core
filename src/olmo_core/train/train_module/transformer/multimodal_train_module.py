@@ -402,6 +402,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
 
+                # Every rank must enter the distributed failure reduction on every
+                # microbatch. Otherwise a failing rank could issue this collective while
+                # healthy ranks continue into backward collectives and hang NCCL.
                 local_failed = not bool(torch.isfinite(ce_loss).item())
                 if reduce_distributed_failure_flag(
                     local_failed, self.device, group=self.dp_process_group
@@ -841,6 +844,10 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                     "vision": ("vision.*", "*vision.*"),
                     "connector": ("connector.*", "*connector.*"),
                     "input embeddings": ("lm.embeddings.weight", "*lm.embeddings.weight"),
+                    "LM output head": (
+                        "lm.lm_head.w_out.*",
+                        "*lm.lm_head.w_out.*",
+                    ),
                     "LM attention": ("lm.blocks.*.attention.*", "*lm.blocks.*.attention.*"),
                     "LM routed experts": (
                         "lm.blocks.*.routed_experts.*",

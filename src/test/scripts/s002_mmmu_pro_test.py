@@ -18,10 +18,19 @@ def _load_module():
 
 class _Tokenizer:
     eos_token_id = 0
+    image_placeholder_id = 999
 
     def encode(self, text, add_special_tokens=False):
         assert not add_special_tokens
-        return [ord(character) for character in text]
+        marker = "<|image|>"
+        if marker not in text:
+            return [ord(character) for character in text]
+        before, after = text.split(marker)
+        return [*map(ord, before), self.image_placeholder_id, *map(ord, after)]
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        assert not tokenize and add_generation_prompt
+        return f"S{messages[0]['content']}A"
 
 
 @pytest.fixture(scope="module")
@@ -43,16 +52,22 @@ def mmmu():
                 *map(ord, "Q<|im_end|>\n<|im_start|>assistant\n"),
             ],
         ),
+        ("olmo3_chat", [ord("S"), 91, ord("Q"), ord("A")]),
     ],
 )
 def test_prompt_layouts(mmmu, layout, expected):
-    assert mmmu._prompt_ids_for_layout(_Tokenizer(), "Q", [91], layout=layout) == expected
+    token_ids = mmmu.Molmo2TokenIds(image_placeholder_id=_Tokenizer.image_placeholder_id)
+    assert (
+        mmmu._prompt_ids_for_layout(_Tokenizer(), "Q", [91], layout=layout, token_ids=token_ids)
+        == expected
+    )
 
 
 def test_candidate_separator_tracks_layout(mmmu):
     tokenizer = _Tokenizer()
     assert mmmu._candidate_ids_for_layout(tokenizer, "A", layout="document") == [32, 65]
     assert mmmu._candidate_ids_for_layout(tokenizer, "A", layout="bare_chat") == [65]
+    assert mmmu._candidate_ids_for_layout(tokenizer, "A", layout="olmo3_chat") == [65]
 
 
 def test_parse_option_texts(mmmu):

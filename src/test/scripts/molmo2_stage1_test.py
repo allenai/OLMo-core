@@ -392,6 +392,8 @@ def test_stage1_mixture_propagates_message_format_to_every_source(monkeypatch):
     assert sum(weights) == pytest.approx(1.0)
     assert len(created) == 5
     assert all(kwargs["message_format"] == "olmo3_chat" for kwargs in created)
+    assert created[-1]["max_first_msg_len"] == 2304
+    assert created[-1]["style_length_conditioning"] is True
 
 
 def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypatch):

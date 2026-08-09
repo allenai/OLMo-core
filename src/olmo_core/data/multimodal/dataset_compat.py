@@ -20,8 +20,15 @@ def _patch_list_feature_type() -> None:
     global _LIST_PATCHED
     if _LIST_PATCHED:
         return
-    from datasets.features.features import Sequence, _FEATURE_TYPES
+    from datasets.features.features import _FEATURE_TYPES, Sequence
 
+    if "List" in _FEATURE_TYPES:
+        # datasets >= 5 has a native ``List`` feature — aliasing it to ``Sequence``
+        # would be actively harmful: ``Sequence`` re-orders a list-of-structs into a
+        # struct-of-lists, silently corrupting every later schema in the process that
+        # contains a list of dicts (the patch is process-global).
+        _LIST_PATCHED = True
+        return
     _FEATURE_TYPES["List"] = Sequence
     _LIST_PATCHED = True
 
@@ -63,15 +70,24 @@ def load_from_disk_compat(path: Union[str, os.PathLike], **kwargs: Any):
 
         meta = json.loads(dict_json.read_text())
         splits = meta.get("splits", [])
+        legacy_splits = {split for split in splits if _has_list_feature(path / split)}
+        if not legacy_splits:
+            from datasets import load_from_disk
+
+            return load_from_disk(str(path), **kwargs)
+
+        # A DatasetDict may mix old List-authored and ordinary splits. Loading the root
+        # eagerly parses every split, including the incompatible one, so load each split
+        # independently whenever any split needs the Arrow fallback.
         out = {}
         for split in splits:
             split_dir = path / split
-            if _has_list_feature(split_dir):
+            if split in legacy_splits:
                 out[split] = _load_arrow_split(split_dir)
             else:
                 from datasets import load_from_disk
 
-                return load_from_disk(str(path), **kwargs)
+                out[split] = load_from_disk(str(split_dir), **kwargs)
         return DatasetDict(out)
 
     if _has_list_feature(path):

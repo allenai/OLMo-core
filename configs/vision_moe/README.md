@@ -1,4 +1,6 @@
-# Vision-MoE Stage-1 launch gates
+# Vision-MoE launch profiles
+
+## Stage 1
 
 These profiles exercise EP8 topology on one or two 8-GPU B300 nodes in
 `ai2/holmes`. They use workspace `ai2/molmofication`, budget `ai2/oe-other`, and urgent
@@ -49,3 +51,45 @@ python src/scripts/train/Molmo2-Stage1.py dry_run stage1-real-gate \
 After reviewing the dry run and receiving explicit submission approval, replace `dry_run`
 with `launch`. Explicit CLI overrides come after the profile's training overrides and
 therefore take precedence. Launch topology and target fields are taken from the profile.
+
+## Stage 2 pilot
+
+The Stage 2 pilot is split into two profiles for one logical run named
+`s002-stage2-image-only-v9-pilot`:
+
+- `stage2_ep8_2node_image_only_v9_to50.yaml` starts from the canonical completed Stage 1
+  `step32000` checkpoint and trains through step 50.
+- `stage2_ep8_2node_image_only_v9_resume_to200.yaml` resumes the same run and trains through
+  step 200. Use exactly the same run name so the trainer finds the latest checkpoint in the
+  existing save folder before considering the Stage 1 fallback path.
+
+Both profiles use two 8-GPU Holmes nodes, EP8, urgent priority, an eight-hour minimum runtime,
+and the approved workspace and budget. They run the complete 43-source `image-only-v9`
+mixture with OLMo 3 chat serialization, 16k sequences, MoE capacity factor 2, sigma factor 12,
+diagnostics every 10 steps, and held-out vision evaluation every 50 steps. The scheduler keeps
+the full 30,000-step horizon in both phases. No inline language evaluator is enabled.
+
+The checkpointer saves permanent milestones at steps 50 and 200, keeps both, and maintains one
+rolling ephemeral checkpoint every 25 steps for preemption recovery. It does not write a
+pre-train checkpoint. The first command assumes the run's save folder is empty. Repeating it
+with an existing checkpoint intentionally resumes that run because save-folder checkpoints
+take precedence over `trainer.load_path`.
+
+Inspect the fresh profile without submitting:
+
+```bash
+PATH=/weka/oe-training-default/rustin/envs/olmo-core-vision/bin:$PATH \
+python src/scripts/train/Molmo2-Stage2.py dry_run s002-stage2-image-only-v9-pilot \
+  --beaker-test-config=configs/vision_moe/stage2_ep8_2node_image_only_v9_to50.yaml
+```
+
+After step 50 is complete, inspect the continuation with the same run name:
+
+```bash
+PATH=/weka/oe-training-default/rustin/envs/olmo-core-vision/bin:$PATH \
+python src/scripts/train/Molmo2-Stage2.py dry_run s002-stage2-image-only-v9-pilot \
+  --beaker-test-config=configs/vision_moe/stage2_ep8_2node_image_only_v9_resume_to200.yaml
+```
+
+Only replace `dry_run` with `launch` after reviewing the merged configuration and receiving
+explicit submission approval.

@@ -11,7 +11,17 @@ from olmo_core.data.multimodal.message_weight import (
 )
 from olmo_core.data.multimodal.mixture_weights import compute_flat_mixture_weights
 from olmo_core.data.multimodal.mixtures.image_only_v9 import IMAGE_ONLY_V9_SUBMIXTURES
+from olmo_core.data.multimodal.rng import make_random_state
+from olmo_core.data.multimodal.sequence_builder import example_rng
+from olmo_core.data.multimodal.sft_common import (
+    SFT_MESSAGE_FORMATS,
+    MaxSequenceLengthDataset,
+    sft_example_rng,
+    truncate_example,
+    validate_sft_message_format,
+)
 from olmo_core.data.multimodal.sft_formatter import SftFormatter
+from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 
 def test_message_weight_scalar():
@@ -46,7 +56,7 @@ def test_build_branched_sequence_root_length_single_branch():
 def test_mixture_weights_sum_to_one():
     lengths = {src.name: 1000 for g in IMAGE_ONLY_V9_SUBMIXTURES for src in g.datasets}
     flat = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
-    assert len(flat) == 32
+    assert len(flat) == 43
     assert abs(sum(w for _, w in flat) - 1.0) < 1e-6
 
 
@@ -66,27 +76,208 @@ def test_debug_mixture_subset_weights_renormalize():
 def test_image_only_v9_subset_preserves_requested_order(monkeypatch):
     from olmo_core.data.multimodal.mixtures import image_only_v9
 
-    datasets = {
-        src.name: [src.name] * 1000 for group in IMAGE_ONLY_V9_SUBMIXTURES for src in group.datasets
-    }
-    monkeypatch.setattr(
-        image_only_v9,
-        "build_image_only_v9_datasets",
-        lambda *args, **kwargs: datasets,
-    )
+    lengths = {"tulu4": 100, "text_vqa": 400, "chart_qa_weighted": 900}
+    built = []
+
+    class _Dataset:
+        def __init__(self, name):
+            self.name = name
+
+        def __len__(self):
+            return lengths[self.name]
+
+    def _build(name, *args, **kwargs):
+        if name not in lengths:
+            raise AssertionError(f"Omitted dataset was built: {name}")
+        built.append(name)
+        return _Dataset(name)
+
+    monkeypatch.setattr(image_only_v9, "build_image_only_v9_dataset", _build)
     requested = ("tulu4", "text_vqa", "chart_qa_weighted")
 
-    actual, weights = image_only_v9.build_image_only_v9_mixture(object(), dataset_names=requested)
+    actual, weights, names = image_only_v9.build_image_only_v9_mixture(
+        object(), dataset_names=requested, return_names=True
+    )
 
-    assert actual == [datasets[name] for name in requested]
-    assert len(weights) == len(requested)
-    assert sum(weights) == pytest.approx(1.0)
+    assert built == list(requested)
+    assert names == list(requested)
+    assert [dataset.dataset.name for dataset in actual] == names
+    assert weights == pytest.approx(
+        [
+            0.166 / 0.584,
+            (0.418 * 20 / 50) / 0.584,
+            (0.418 * 30 / 50) / 0.584,
+        ]
+    )
 
 
-def test_image_only_v9_has_32_datasets():
+def test_image_only_v9_full_mixture_preserves_weights_order_and_default_return(monkeypatch):
+    from olmo_core.data.multimodal.mixtures import image_only_v9
+
+    expected_names = [
+        source.name for group in IMAGE_ONLY_V9_SUBMIXTURES for source in group.datasets
+    ]
+    lengths = {name: index + 1 for index, name in enumerate(expected_names)}
+
+    class _Dataset:
+        def __init__(self, name):
+            self.name = name
+
+        def __len__(self):
+            return lengths[self.name]
+
+    monkeypatch.setattr(
+        image_only_v9,
+        "build_image_only_v9_dataset",
+        lambda name, *args, **kwargs: _Dataset(name),
+    )
+
+    datasets, weights = image_only_v9.build_image_only_v9_mixture(object())
+    expected = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
+
+    assert [dataset.dataset.name for dataset in datasets] == [name for name, _ in expected]
+    assert weights == pytest.approx([weight for _, weight in expected])
+
+    named_datasets, named_weights, names = image_only_v9.build_image_only_v9_mixture(
+        object(), return_names=True
+    )
+    assert names == expected_names
+    assert [dataset.dataset.name for dataset in named_datasets] == names
+    assert named_weights == pytest.approx(weights)
+
+
+def test_image_only_v9_has_43_datasets():
+    # 4 demo + 33 academic (incl. 3 mantis + 6 multidoc) + 5 pointing + tulu4
     names = [src.name for g in IMAGE_ONLY_V9_SUBMIXTURES for src in g.datasets]
-    assert len(names) == 32
-    assert len(set(names)) == 32
+    assert len(names) == 43
+    assert len(set(names)) == 43
+
+
+def test_stage2_message_formats_include_dense_and_s002_layouts():
+    assert SFT_MESSAGE_FORMATS == ("qwen3", "document", "olmo3_chat")
+    assert validate_sft_message_format("qwen3") == "qwen3"
+    assert validate_sft_message_format("document") == "document"
+    with pytest.raises(ValueError, match="Unknown message_format"):
+        validate_sft_message_format("qwen2")
+
+
+def test_stage2_chat_formats_share_epoch_aware_rng_while_stage1_keeps_its_seed():
+    qwen = sft_example_rng(17, 23, 7, "qwen3")
+    olmo3 = sft_example_rng(999, 23, 7, "olmo3_chat")
+    expected = make_random_state(23, 7)
+    qwen_values = qwen.randint(2**31, size=16)
+    np.testing.assert_array_equal(qwen_values, olmo3.randint(2**31, size=16))
+    np.testing.assert_array_equal(qwen_values, expected.randint(2**31, size=16))
+
+    qwen_next_epoch = sft_example_rng(17, 23, 8, "qwen3")
+    assert not np.array_equal(
+        sft_example_rng(17, 23, 7, "qwen3").randint(2**31, size=16),
+        qwen_next_epoch.randint(2**31, size=16),
+    )
+
+    document_epoch0 = sft_example_rng(17, 23, 0, "document")
+    document_epoch1 = sft_example_rng(17, 23, 1, "document")
+    assert not np.array_equal(
+        document_epoch0.randint(2**31, size=16),
+        document_epoch1.randint(2**31, size=16),
+    )
+
+
+def test_example_rng_matches_vendor_epoch_zero_and_ignores_dataset_seed():
+    expected = make_random_state(23, 0).randint(2**31, size=16)
+    np.testing.assert_array_equal(example_rng(17, 23).randint(2**31, size=16), expected)
+    np.testing.assert_array_equal(example_rng(999, 23).randint(2**31, size=16), expected)
+
+
+def test_image_only_v9_propagates_message_format_and_token_ids(monkeypatch):
+    from olmo_core.data.multimodal.mixtures import image_only_v9
+
+    captured = {}
+
+    class _AcademicConfig:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def build(self, tokenizer):
+            return tokenizer
+
+    token_ids = Molmo2TokenIds(im_patch_id=1234)
+    tokenizer = object()
+    monkeypatch.setattr(image_only_v9, "AcademicDatasetConfig", _AcademicConfig)
+
+    actual = image_only_v9.build_image_only_v9_dataset(
+        "text_vqa",
+        tokenizer,
+        token_ids=token_ids,
+        message_format="olmo3_chat",
+    )
+
+    assert actual is tokenizer
+    assert captured["token_ids"] == token_ids
+    assert captured["message_format"] == "olmo3_chat"
+
+
+def test_truncate_example_uses_model_specific_image_patch_id():
+    seq = {
+        "input_ids": np.array([10, 11, 1234], dtype=np.int64),
+        "labels": np.array([11, 12, 13], dtype=np.int64),
+        "loss_masks": np.array([0.0, 1.0, 0.0], dtype=np.float32),
+        "position_ids": np.arange(3, dtype=np.int64),
+    }
+    with pytest.raises(ValueError, match="drop <im_patch>"):
+        truncate_example(seq, 2, image_patch_token_id=1234)
+
+
+def test_max_sequence_dataset_forwards_epoch_and_rejects_structural_image_truncation():
+    token_ids = Molmo2TokenIds(
+        im_start_id=101,
+        im_end_id=102,
+        im_patch_id=103,
+        im_col_id=104,
+        low_res_im_start_id=105,
+    )
+
+    class Dataset:
+        def __init__(self):
+            self.calls = []
+
+        def __len__(self):
+            return 1
+
+        def get(self, index, epoch):
+            self.calls.append((index, epoch))
+            return {
+                "input_ids": np.array([1, 2, 3, token_ids.im_end_id]),
+                "labels": np.array([2, 3, 4, 5]),
+                "loss_masks": np.array([0.0, 1.0, 1.0, 0.0]),
+                "position_ids": np.arange(4),
+                "token_type_ids": np.zeros(4, dtype=np.int64),
+            }
+
+    source = Dataset()
+    bounded = MaxSequenceLengthDataset(source, 3, token_ids=token_ids)
+    with pytest.raises(ValueError, match="image-structural"):
+        bounded.get(0, 7)
+    assert source.calls == [(0, 7)]
+
+
+def test_truncate_recomputes_surviving_root_subsegment_weight():
+    root_weight = 1.0 / np.sqrt(2.0)
+    seq = {
+        "input_ids": np.array([10, 20, 21, 30, 31, 32]),
+        "labels": np.array([20, 21, 2, 31, 32, 2]),
+        "loss_masks": np.array([0.0, root_weight, root_weight, 0.0, root_weight, root_weight]),
+        "position_ids": np.arange(6),
+        "token_type_ids": np.zeros(6, dtype=np.int64),
+        "subsegment_ids": np.array([10000, 0, 0, 1, 1, 1]),
+    }
+
+    out = truncate_example(seq, 4, recompute_root_subsegments=True)
+
+    # Branch 1 contributes only context before the limit, so vendor preprocessing omits it
+    # and removes the original two-branch 1/sqrt(2) scaling from branch 0.
+    assert len(out["input_ids"]) == 3
+    np.testing.assert_allclose(out["loss_masks"], [0.0, 1.0, 1.0])
 
 
 def test_sft_formatter_vqa_short_answer():

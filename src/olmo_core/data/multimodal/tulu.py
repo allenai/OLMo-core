@@ -1,8 +1,8 @@
 """Tulu4 text-only NLP SFT dataset for the Molmo2 stage-1 mixture.
 
 Ports ``Tulu4FilteredConfig`` (``mm_olmo/olmo/data/academic_datasets.py``): multi-turn,
-**text-only** instruction data (no image). Examples use the same unlabelled Dolma2 document
-layout as the s002 pretraining checkpoint, with loss on response turns only and no image block.
+**text-only** instruction data (no image). Examples support the released Qwen layout, the
+unlabelled Dolma2 document layout, and the exact s002 OLMo 3 instruction layout.
 
 The training pipeline treats these as image-less examples: ``images`` is an empty
 ``(0, n_patches, patch_dim)`` array. The collator supplies a dummy zero crop so every
@@ -27,14 +27,9 @@ from olmo_core.nn.vision.molmo2_tokens import (
 )
 
 from .message_weight import MessageWeight
-from .olmo3_layout import (
-    MessageFormat,
-    conversation_ids_and_assistant_mask,
-    validate_message_format,
-    validate_olmo3_chat_tokenizer,
-)
+from .olmo3_layout import conversation_ids_and_assistant_mask
 from .paths import TULU4_DATA
-from .rng import make_random_state
+from .sft_common import SftMessageFormat, sft_example_rng, validate_sft_message_format
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
@@ -80,15 +75,21 @@ def _format_messages(
 class Tulu4DatasetConfig(Config):
     """Tulu4 filtered text SFT (matches mm_olmo ``get_dataset('tulu4')`` filter)."""
 
-    max_first_msg_len: int = 2304
+    max_first_msg_len: int = 4096
     max_sequence_length: int = 4096
     """Maximum length of a complete tokenized conversation."""
     loss_token_weighting: Optional[str] = "root_subsegments_root_tokens"
     """Assistant-token weighting mode; the default preserves the existing SFT behavior."""
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     """Image token IDs reserved by the selected language-model tokenizer."""
-    message_format: MessageFormat = "document"
-    """Use native pretraining documents or the exact s002 SFT chat template."""
+    message_format: SftMessageFormat = "qwen3"
+    """Use released Qwen, native pretraining document, or s002 instruction layout."""
+    style_length_conditioning: bool = True
+    """Prefix the first user turn with Stage 1's ``text_sft [length]:`` style.
+
+    The image-only-v9 Stage 2 builder disables this because released Molmo2 Stage 2 and
+    Robert's s002 instruction SFT both serialize the original user prompt unchanged.
+    """
     use_code: bool = False
     use_non_english: bool = False
     use_reasoning: bool = False
@@ -101,9 +102,11 @@ class Tulu4DatasetConfig(Config):
 
 class Tulu4Dataset:
     def __init__(self, config: Tulu4DatasetConfig, tokenizer):
-        validate_message_format(config.message_format)
-        if config.message_format == "olmo3_chat":
-            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
         self._data = self._load_filtered()
@@ -161,15 +164,16 @@ class Tulu4Dataset:
             raise ValueError("The s002 document layout requires an EOS token")
 
         messages = [dict(message) for message in messages]
-        if rng.random() > 0.10:
-            noisy_length = len(messages[-1]["content"]) + int(rng.normal(scale=25.0))
-            style_prefix = f"text_sft {noisy_length // 15}:"
-        else:
-            style_prefix = "text_sft:"
-        first_content = messages[0]["content"]
-        messages[0]["content"] = (
-            f"{style_prefix} {first_content}" if first_content else style_prefix
-        )
+        if self.config.style_length_conditioning:
+            if rng.random() > 0.10:
+                noisy_length = len(messages[-1]["content"]) + int(rng.normal(scale=25.0))
+                style_prefix = f"text_sft {noisy_length // 15}:"
+            else:
+                style_prefix = "text_sft:"
+            first_content = messages[0]["content"]
+            messages[0]["content"] = (
+                f"{style_prefix} {first_content}" if first_content else style_prefix
+            )
 
         ids: List[int] = [int(tok.eos_token_id)]
         asst: List[float] = [0.0]
@@ -205,6 +209,36 @@ class Tulu4Dataset:
             "pooled_patches_idx": np.full((0, POOL_H * POOL_W), -1, dtype=np.int64),
         }
 
+    def _qwen3_sequence(self, messages: List[Dict[str, str]]) -> Dict[str, np.ndarray]:
+        """Tokenize one sequential branch with the released Molmo2 Qwen layout.
+
+        Only the final token receives an EOS target. Intermediate responses are followed
+        by the next serialized user-turn context, matching mm_olmo Stage 2 exactly.
+        """
+        from .qwen3_layout import followup_turn_context_ids, user_turn_ids
+        from .sequence_builder import build_branched_sequence
+
+        tok = self.tokenizer
+        segments = []
+        for turn_ix, ix in enumerate(range(0, len(messages) - 1, 2)):
+            u, a = messages[ix]["content"], messages[ix + 1]["content"]
+            if turn_ix == 0:
+                ctx = user_turn_ids(tok, u)
+            else:
+                ctx = followup_turn_context_ids(tok, u)
+            segments.append((ctx, tok.encode(a, add_special_tokens=False)))
+
+        seq = build_branched_sequence(
+            [],  # no shared prefix and no BOS (qwen3)
+            [segments],
+            eos_id=tok.eos_token_id,
+            loss_token_weighting=self.config.loss_token_weighting or "none",
+        )
+        # text-only: zero image crops / pooled rows -> no image for this example.
+        seq["images"] = np.zeros((0, N_PATCHES_SQ, PATCH_DIM), dtype=np.float32)
+        seq["pooled_patches_idx"] = np.full((0, POOL_H * POOL_W), -1, dtype=np.int64)
+        return seq
+
     def _chat_sequence(
         self, messages: List[Dict[str, str]], rng: np.random.RandomState
     ) -> Dict[str, np.ndarray]:
@@ -216,15 +250,16 @@ class Tulu4Dataset:
         if first_user_index is None:
             raise ValueError("Tulu4 chat conversation has no user message")
 
-        if rng.random() > 0.10:
-            noisy_length = len(messages[-1]["content"]) + int(rng.normal(scale=25.0))
-            style_prefix = f"text_sft {noisy_length // 15}:"
-        else:
-            style_prefix = "text_sft:"
-        first_content = messages[first_user_index]["content"]
-        messages[first_user_index]["content"] = (
-            f"{style_prefix} {first_content}" if first_content else style_prefix
-        )
+        if self.config.style_length_conditioning:
+            if rng.random() > 0.10:
+                noisy_length = len(messages[-1]["content"]) + int(rng.normal(scale=25.0))
+                style_prefix = f"text_sft {noisy_length // 15}:"
+            else:
+                style_prefix = "text_sft:"
+            first_content = messages[first_user_index]["content"]
+            messages[first_user_index]["content"] = (
+                f"{style_prefix} {first_content}" if first_content else style_prefix
+            )
 
         all_ids, assistant_mask = conversation_ids_and_assistant_mask(self.tokenizer, messages)
         n_assistant = int(assistant_mask.sum())
@@ -252,18 +287,27 @@ class Tulu4Dataset:
         """Build one deterministically formatted conversation for a source epoch."""
         chat = self.config.message_format == "olmo3_chat"
         messages = _format_messages(list(self._data[i]["messages"]), preserve_system=chat)
-        if messages is None:
-            # Filtered datasets should not contain these, but guard: fall back to next.
-            messages = [
-                {"role": "user", "content": "Hello"},
-                {"role": "assistant", "content": "Hi."},
-            ]
-        rng = make_random_state(self.config.seed + i, epoch)
-        seq = self._chat_sequence(messages, rng) if chat else self._text_sequence(messages, rng)
+        # The filter already drops malformed rows (mm_olmo asserts likewise); raising
+        # lets the loader's skip-broken policy move on instead of training on junk.
+        assert messages is not None, f"Malformed Tulu row at index {i}"
+        rng = sft_example_rng(self.config.seed, i, epoch, self.config.message_format)
+        if self.config.message_format == "qwen3":
+            seq = self._qwen3_sequence(messages)
+        elif chat:
+            seq = self._chat_sequence(messages, rng)
+        else:
+            seq = self._text_sequence(messages, rng)
+
         max_len = self.config.max_sequence_length
         if max_len and len(seq["input_ids"]) > max_len:
+            # mm_olmo truncates to min(max_len, last loss token + 1) and refuses
+            # examples whose loss is entirely cut (example_preprocessor.py:260-270).
+            loss_positions = np.nonzero(seq["loss_masks"][:max_len] > 0)[0]
+            if len(loss_positions) == 0:
+                raise ValueError(f"Truncation to {max_len} removed all loss tokens (index {i})")
+            truncate_to = min(max_len, int(loss_positions[-1]) + 1)
             seq = {
-                key: value[:max_len] if value.ndim == 1 and len(value) > max_len else value
-                for key, value in seq.items()
+                k: (v[:truncate_to] if v.ndim == 1 and len(v) > truncate_to else v)
+                for k, v in seq.items()
             }
         return seq

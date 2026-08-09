@@ -17,6 +17,7 @@ from olmo_core.data.multimodal.grounding import (
     pointing_answer,
 )
 from olmo_core.data.multimodal.packing import (
+    _select_buffered_pack_indices,
     greedy_pack_indices,
     iter_packs,
     pack_examples,
@@ -299,6 +300,14 @@ def test_iter_packs_buffered_solver_improves_fill_and_flushes():
     )
 
 
+def test_buffered_solver_uses_stage_specific_image_weight():
+    lengths = [10, 1]
+    crops = [0, 2]
+
+    assert _select_buffered_pack_indices(lengths, crops, 10, 2, image_weight=1.0) == [0]
+    assert _select_buffered_pack_indices(lengths, crops, 10, 2, image_weight=30.0) == [1]
+
+
 def test_iter_packs_buffered_solver_never_exceeds_unaligned_sequence_length():
     packs = list(
         iter_packs(
@@ -337,7 +346,7 @@ def test_tulu_conversation_is_bounded_by_sequence_length():
     from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
 
     dataset = object.__new__(Tulu4Dataset)
-    dataset.config = Tulu4DatasetConfig(max_sequence_length=12)
+    dataset.config = Tulu4DatasetConfig(max_sequence_length=40, message_format="document")
     dataset.tokenizer = _FakeTok()
     dataset._data = [
         {
@@ -348,9 +357,10 @@ def test_tulu_conversation_is_bounded_by_sequence_length():
         }
     ]
     example = dataset[0]
-    assert len(example["input_ids"]) == 12
+    assert len(example["input_ids"]) == 40
+    assert np.count_nonzero(example["loss_masks"]) > 0
     assert all(
-        value.ndim != 1 or len(value) <= 12
+        value.ndim != 1 or len(value) <= 40
         for value in example.values()
         if isinstance(value, np.ndarray)
     )
@@ -360,7 +370,11 @@ def test_tulu_binary_response_loss_weighting():
     from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
 
     dataset = object.__new__(Tulu4Dataset)
-    dataset.config = Tulu4DatasetConfig(max_sequence_length=64, loss_token_weighting="none")
+    dataset.config = Tulu4DatasetConfig(
+        max_sequence_length=64,
+        loss_token_weighting="none",
+        message_format="document",
+    )
     dataset.tokenizer = _FakeTok()
     dataset._data = [
         {
@@ -380,7 +394,11 @@ def test_tulu_uses_s002_document_boundaries_without_chat_headers():
     from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
 
     dataset = object.__new__(Tulu4Dataset)
-    dataset.config = Tulu4DatasetConfig(max_sequence_length=128, loss_token_weighting="none")
+    dataset.config = Tulu4DatasetConfig(
+        max_sequence_length=128,
+        loss_token_weighting="none",
+        message_format="document",
+    )
     dataset.tokenizer = _FakeTok()
     dataset._data = [
         {
@@ -542,6 +560,7 @@ def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_pat
             pack=True,
             pack_max_crops=1,
             pack_buffer_size=4,
+            pack_image_weight=30.0,
             prefetch_workers=0,
         )
 
@@ -555,6 +574,8 @@ def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_pat
     original_iter.close()
 
     packing_state = state["packing_state"]
+    assert packing_state["version"] == 4
+    assert packing_state["pack_image_weight"] == 30.0
     assert packing_state["packs_emitted"] == 20
     assert len(packing_state["buffer_refs"]) <= 4
 
@@ -722,6 +743,7 @@ class _FakeTok:
 def _pixmo_cap(mode, **kw):
     from olmo_core.data.multimodal.pixmo_cap import PixMoCapDatasetConfig
 
+    kw.setdefault("message_format", "document")
     cfg = PixMoCapDatasetConfig(
         dataset_path="synthetic", mode=mode, max_sequence_length=4096, seed=0, **kw
     )
@@ -781,8 +803,8 @@ def test_pixmo_cap_conditioning_off():
 
 def test_pointing_formats_messages_before_image_augmentation(monkeypatch):
     """Match Molmo2's shared-RNG order: dataset/formatter, shuffle, then image processor."""
+    from olmo_core.data.multimodal import message_sequence
     from olmo_core.data.multimodal.pixmo_points import _build_example
-    from olmo_core.nn.vision import molmo2_image_processor
     from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
     events = []
@@ -800,7 +822,7 @@ def test_pointing_formats_messages_before_image_augmentation(monkeypatch):
             np.array([1, 1, 1, 1], dtype=np.int32),
         )
 
-    monkeypatch.setattr(molmo2_image_processor, "preprocess_image_molmo2", fake_preprocess)
+    monkeypatch.setattr(message_sequence, "preprocess_image_molmo2", fake_preprocess)
     _build_example(
         _FakeTok(),
         None,

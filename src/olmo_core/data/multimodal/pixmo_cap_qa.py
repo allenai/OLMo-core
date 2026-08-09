@@ -1,45 +1,54 @@
-"""PixMo Cap QA as user QA demo dataset for SFT."""
+"""PixMo Cap-QA as user-QA demo dataset for SFT (mm_olmo ``PixMoCapQaConfig``).
+
+Each row carries several synthetic conversations about one image. mm_olmo keeps every
+conversation as ONE ``{"messages": [...]}`` annotation branch (turn 2 attends turn 1)
+with ``style="user_qa"`` (registry name ``pixmo_cap_qa_as_user_qa``), and prefixes
+counting questions with a ``NO_POINT_PREFIX`` instruction so the model is not trained
+to point (``pixmo_datasets.py:594-608``).
+"""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-import numpy as np
 from PIL import Image
 
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
+from .detect_counting_question import is_pixmo_point_and_count_question
 from .message_sequence import encode_sft_example
 from .paths import PIXMO_DATASETS
+from .pixmo_ama import NO_POINT_PREFIX
+from .sft_common import SftMessageFormat, sft_example_rng, validate_sft_message_format
+from .sft_formatter import SftFormatter
 
 __all__ = ["PixMoCapQaDatasetConfig", "PixMoCapQaDataset"]
 
 
-def _parse_cap_qa_turns(question: str, answer: str) -> List[Tuple[str, str]]:
+def _parse_cap_qa_messages(question: str, answer: str) -> List[str]:
+    """Split the ``[USER]``/``[ASSISTANT]``-marked transcript into alternating messages."""
     parts = re.split(r"\s*(\[USER\]|\[ASSISTANT\])\s*", question)
     assert parts[0] == "" and parts[-1] == ""
     parts = parts[1:-1]
     messages: List[str] = []
     for part_ix, part in enumerate(parts):
-        if part_ix % 4 == 1:
-            messages.append(part)
-        elif part_ix % 4 == 3:
+        if part_ix % 4 in (1, 3):
             messages.append(part)
     messages.append(answer)
-    turns: List[Tuple[str, str]] = []
-    for u in range(0, len(messages) - 1, 2):
-        turns.append((messages[u], messages[u + 1]))
-    return turns
+    return messages
 
 
 @dataclass
 class PixMoCapQaDatasetConfig(Config):
+    style: str = "user_qa"
+    prefix_how_many: bool = True
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments_root_tokens"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
+    message_format: SftMessageFormat = "qwen3"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCapQaDataset":
@@ -50,8 +59,14 @@ class PixMoCapQaDataset:
     def __init__(self, config: PixMoCapQaDatasetConfig, tokenizer):
         from .dataset_compat import load_from_disk_compat
 
+        validate_sft_message_format(
+            config.message_format,
+            tokenizer=tokenizer,
+            token_ids=config.token_ids,
+        )
         self.config = config
         self.tokenizer = tokenizer
+        self._formatter = SftFormatter(seed=config.seed)
         ds = load_from_disk_compat(f"{PIXMO_DATASETS}/cap-qa")
         self._data = ds["train"] if "train" in ds else ds
 
@@ -59,23 +74,50 @@ class PixMoCapQaDataset:
         return len(self._data)
 
     def __getitem__(self, index: int) -> Dict:
+        return self.get(index, 0)
+
+    def get(self, index: int, epoch: int = 0) -> Dict:
+        """Build one deterministically formatted example for a source epoch."""
+        rng = sft_example_rng(
+            self.config.seed,
+            index,
+            epoch,
+            self.config.message_format,
+        )
         row = self._data[index]
-        turns: List[Tuple[str, str]] = []
+        message_list = []
         for qs, ans in zip(row["question"], row["answer"]):
             if not ans or not str(ans).strip():
                 continue
-            turns.extend(_parse_cap_qa_turns(qs, ans))
-        if not turns:
+            messages = _parse_cap_qa_messages(qs, ans)
+            message_list.append(dict(messages=messages, style=self.config.style))
+        if not message_list:
             raise ValueError(f"No valid QA pairs at index {index}")
+
+        # mm_olmo prefix_how_many: mark counting questions "no pointing" (one rng draw
+        # per counting question, before the formatter runs).
+        if self.config.prefix_how_many:
+            for conv in message_list:
+                messages = conv["messages"]
+                for user_ix in range(0, len(messages), 2):
+                    q, a = messages[user_ix], messages[user_ix + 1]
+                    if is_pixmo_point_and_count_question(q, a):
+                        prefix = NO_POINT_PREFIX[rng.randint(0, len(NO_POINT_PREFIX))]
+                        messages[user_ix] = prefix + messages[user_ix]
+
+        branches = self._formatter.format_branches(
+            {"message_list": message_list}, index=index, rng=rng
+        )
         image = row["image"]
         if not isinstance(image, Image.Image):
             image = Image.open(image)
         return encode_sft_example(
             self.tokenizer,
             image,
-            turns,
+            branches,
             max_crops=self.config.max_crops,
             loss_token_weighting=self.config.loss_token_weighting,
             token_ids=self.config.token_ids,
-            shuffle_rng=np.random.RandomState(self.config.seed + index),
+            message_format=self.config.message_format,
+            shuffle_rng=rng,
         )

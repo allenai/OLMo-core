@@ -13,7 +13,12 @@ from typing import Any, Dict
 
 import numpy as np
 
-_MM_OLMO_ROOT = "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+# HARDCODED personal checkout (donovanc's mm_olmo clone on weka): this module is a
+# debug/parity bridge only — nothing in the training data path imports it. Override with
+# the MM_OLMO_ROOT env var to point at your own mm_olmo checkout.
+_MM_OLMO_ROOT = os.environ.get(
+    "MM_OLMO_ROOT", "/weka/oe-training-default/donovanc/molmofication/mm_olmo"
+)
 
 
 @lru_cache(maxsize=1)

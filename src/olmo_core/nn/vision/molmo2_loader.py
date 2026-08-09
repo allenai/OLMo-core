@@ -5,7 +5,7 @@ state-dict converter.
 Loads weights from a public Molmo2 checkpoint on HuggingFace (e.g.
 ``allenai/Molmo2-O-7B``) into our composite multimodal model.
 
-The two architectures differ in three places that this converter handles:
+The two architectures differ in four places that this converter handles:
 
 1. **LM token embedding split.** HF Molmo2 keeps the base vocab and the extra
    image-special-token vocab in two separate parameters
@@ -13,12 +13,22 @@ The two architectures differ in three places that this converter handles:
    our :class:`~olmo_core.nn.transformer.Transformer` uses a single
    ``embeddings.weight`` table. We concatenate.
 
-2. **Fused QKV and gated MLP in the LM.** HF Molmo2 has
+2. **Input-only extra vocab in the LM head.** HF Molmo2's ``lm_head`` covers
+   only the *base* vocab — the extra image-special tokens can never be
+   predicted. Our LM head spans the full (input) vocab, so the extra rows are
+   filled depending on tying: under ``tie_word_embeddings`` (Molmo2-4B) the
+   head shares storage with the embedding table and receives the same
+   concatenated tensor; untied heads get zero rows. Either way the extra
+   logit columns are dead weight — :attr:`MultimodalLMConfig.output_vocab_size`
+   masks them to the dtype minimum at forward time so loss and sampling match
+   a base-vocab-only head exactly.
+
+3. **Fused QKV and gated MLP in the LM.** HF Molmo2 has
    ``self_attn.att_proj`` (fused Q+K+V) and ``mlp.ff_proj`` (fused gate+up
    for SwiGLU). Our LM uses ``w_q`` / ``w_k`` / ``w_v`` and ``w1`` / ``w3``.
    We split along the output dimension.
 
-3. **Patch-embedding flatten order in the vision encoder.** Molmo2's HF
+4. **Patch-embedding flatten order in the vision encoder.** Molmo2's HF
    ``image_processing_molmo2.batch_pixels_to_patches`` lays patches out
    spatial-first (``kh, kw, c``), while our
    :class:`~olmo_core.data.multimodal.ImagePreprocessor` uses channel-first
@@ -26,8 +36,14 @@ The two architectures differ in three places that this converter handles:
    convention our CLIP/SigLIP parity tests verified against. We permute
    the patch-embedding weight to bridge the two.
 
-Vision blocks, the connector pooling cross-attention, the connector SwiGLU
-projector, and the LM head all map one-to-one (no per-tensor surgery).
+Vision blocks, the connector pooling cross-attention, and the connector SwiGLU
+projector map one-to-one (no per-tensor surgery).
+
+.. warning::
+    ``torch.nn.Module.to_empty`` re-allocates each parameter entry separately and
+    silently breaks weight tying, so the usual ``build(init_device="meta")`` →
+    ``to_empty(...)`` → ``load_state_dict(converted)`` flow must be followed by
+    :func:`retie_word_embeddings` for tied configs (Molmo2-4B).
 
 Usage::
 
@@ -56,12 +72,15 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "molmo2_hf_state_dict_to_multimodal_lm",
+    "multimodal_lm_state_dict_to_hf",
     "molmo2_hf_state_dict_to_vision",
     "load_molmo2_hf_vision_config",
     "load_molmo2_hf_vision_state_dict",
     "molmo2_config_from_hf_config",
     "multimodal_config_from_molmo2_vision",
     "ensure_default_rope_registered",
+    "ensure_hf_masking_compat",
+    "retie_word_embeddings",
     "reinit_rope_buffers",
 ]
 
@@ -162,6 +181,73 @@ def load_molmo2_hf_vision_state_dict(
     return state_dict
 
 
+def ensure_hf_masking_compat() -> None:
+    """Adapt ``transformers.masking_utils`` for Molmo2's bundled remote code.
+
+    transformers ≥ 5 renamed ``create_causal_mask(input_embeds=...)`` to
+    ``inputs_embeds`` and dropped its ``cache_position`` parameter, but the
+    modeling code bundled inside HF Molmo2 checkpoints still calls the old
+    signature.  Wraps the masking functions with a kwarg adapter.  Call
+    **before** ``from_pretrained`` — the bundled module binds the names at
+    import time.  Safe to call repeatedly; a no-op on older transformers.
+    """
+    import functools
+    import inspect
+
+    try:
+        from transformers import masking_utils
+    except ImportError:  # older transformers — nothing to adapt
+        return
+
+    for name in ("create_causal_mask", "create_masks_for_generate"):
+        fn = getattr(masking_utils, name, None)
+        if fn is None or getattr(fn, "_molmo2_kwarg_adapter", False):
+            continue
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            continue
+        if "input_embeds" in params:  # old signature — no adapter needed
+            continue
+        drops = tuple(k for k in ("cache_position",) if k not in params)
+
+        def _make_wrapper(fn=fn, drops=drops):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                if "input_embeds" in kwargs and "inputs_embeds" not in kwargs:
+                    kwargs["inputs_embeds"] = kwargs.pop("input_embeds")
+                for k in drops:
+                    kwargs.pop(k, None)
+                return fn(*args, **kwargs)
+
+            wrapper._molmo2_kwarg_adapter = True  # type: ignore[attr-defined]
+            return wrapper
+
+        setattr(masking_utils, name, _make_wrapper())
+
+
+def retie_word_embeddings(model: "torch.nn.Module") -> None:
+    """Re-establish LM weight tying after a ``to_empty`` + ``load_state_dict`` flow.
+
+    ``torch.nn.Module.to_empty`` re-allocates every parameter entry individually,
+    silently breaking the ``lm_head.w_out.weight is embeddings.weight`` share of
+    tied configs (e.g. Molmo2-4B's Qwen3-4B backbone) — the model would then train
+    the head and the embedding table independently while ``tie_word_embeddings``
+    (and e.g. ``Transformer.apply_fsdp``'s tied-weight handling) still assume they
+    are one parameter. Call this after loading converted Molmo2 weights into a
+    model built on the ``meta`` device; a no-op for untied configs.
+
+    The converter emits identical tensors for both keys of a tied model, so the
+    load itself is order-independent and re-tying afterwards loses nothing.
+
+    :param model: A :class:`~olmo_core.nn.vision.MultimodalLM` (or a bare
+        :class:`~olmo_core.nn.transformer.Transformer`).
+    """
+    lm = getattr(model, "lm", model)
+    if getattr(lm, "tie_word_embeddings", False):
+        lm._tie_weights()
+
+
 def ensure_default_rope_registered() -> None:
     """Re-register ``ROPE_INIT_FUNCTIONS["default"]`` if upstream removed it.
 
@@ -170,8 +256,13 @@ def ensure_default_rope_registered() -> None:
     code bundled inside HF checkpoints still references it.  Call this
     **before** ``from_pretrained`` so the model can be instantiated.
     Safe to call repeatedly; a no-op when ``"default"`` is already present.
+
+    Also applies :func:`ensure_hf_masking_compat`, which patches the other
+    transformers ≥ 5 incompatibility in the bundled Molmo2 modeling code.
     """
     from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    ensure_hf_masking_compat()
 
     if "default" in ROPE_INIT_FUNCTIONS:
         return
@@ -391,17 +482,18 @@ def molmo2_hf_state_dict_to_multimodal_lm(
     out["lm.lm_head.norm.weight"] = _require(hf_state_dict, "model.transformer.ln_f.weight")
 
     # HF Molmo2's lm_head is sized to the *base* vocab only — image special
-    # tokens are inputs-only and never predicted. Our OLMo-core LM uses a
-    # single vocab_size for both input and output, so pad the lm_head with
-    # zero rows for the image-token slots.
+    # tokens are inputs-only and never predicted (mm_olmo computes logits
+    # against the base embedding table / a base-sized ``ff_out``). Our
+    # OLMo-core LM head spans the full input vocab, so the extra rows must be
+    # filled; :attr:`MultimodalLMConfig.output_vocab_size` masks their logit
+    # columns at forward time, which makes them exactly inert.
     #
-    # NOTE: zero rows give those positions a *finite* logit (0), not -inf, so
-    # they enter the softmax denominator and shift the cross-entropy loss
-    # relative to HF (which has no such columns). Argmax/greedy generation is
-    # unaffected as long as a real token outscores 0, but exact *loss* parity
-    # requires masking the extra output IDs to -inf at the loss/forward layer
-    # (handled where the loss is computed, not in this weight converter). The
-    # logit-parity tests therefore compare only the base-vocab columns.
+    # Under ``tie_word_embeddings`` (Molmo2-4B / Qwen3-4B backbone) the head
+    # *shares storage* with the embedding table, so both state-dict keys must
+    # hold identical tensors — zero-padding here would let whichever key loads
+    # last clobber the other (wiping the 128 new-embedding input rows). The HF
+    # checkpoint exports the tied weight as a copy in ``lm_head.weight``; we
+    # verify that and emit the concatenated embedding table for both keys.
     hf_lm_head = _require(hf_state_dict, "lm_head.weight")
     extra_rows = lm_cfg.vocab_size - hf_lm_head.shape[0]
     if extra_rows < 0:
@@ -409,7 +501,24 @@ def molmo2_hf_state_dict_to_multimodal_lm(
             f"HF lm_head has {hf_lm_head.shape[0]} rows but our LM "
             f"vocab_size is only {lm_cfg.vocab_size}"
         )
-    if extra_rows > 0:
+    head_matches_embedding = hf_lm_head.shape == base_emb.shape and torch.equal(
+        hf_lm_head, base_emb
+    )
+    if getattr(lm_cfg, "tie_word_embeddings", False):
+        if not head_matches_embedding:
+            raise Molmo2LoaderError(
+                "The LM config has tie_word_embeddings=True but the HF checkpoint's "
+                "lm_head.weight differs from wte.embedding — the checkpoint is genuinely "
+                "untied. Build the LM config with tie_word_embeddings=False instead."
+            )
+        out["lm.lm_head.w_out.weight"] = out["lm.embeddings.weight"]
+    elif extra_rows > 0:
+        if head_matches_embedding:
+            log.info(
+                "HF lm_head.weight equals wte.embedding (the checkpoint was trained "
+                "weight-tied) but the LM config is untied; the head and embedding "
+                "will drift apart if the model is fine-tuned."
+            )
         # new_zeros preserves the source tensor's device and dtype, so this
         # works when the HF state dict is already on CUDA.
         pad = hf_lm_head.new_zeros((extra_rows, hf_lm_head.shape[1]))
@@ -635,6 +744,10 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
 
     # Branch by qk_norm_type then dimensions.
     if qk_norm_type == "qwen3" and hidden_size == 2560 and n_layers == 36:
+        # Keeps the factory's tie_word_embeddings=True default: Molmo2-4B was trained
+        # weight-tied in mm_olmo (the released checkpoint's lm_head.weight is
+        # byte-identical to wte.embedding), so a faithful continued-training setup
+        # shares the head with the base rows of the embedding table.
         return TransformerConfig.qwen3_4B(
             vocab_size=total_vocab_size,
             rope_theta=rope_theta,
@@ -762,12 +875,14 @@ def multimodal_config_from_molmo2_vision(
     lm_cfg: TransformerConfig,
     *,
     image_patch_token_id: int,
+    output_vocab_size: Optional[int] = None,
 ) -> MultimodalLMConfig:
     """Pair a Molmo2 vision tower with an arbitrary OLMo-core language model.
 
     The connector architecture follows the Molmo2 adapter, except its output dimension is
     changed to the target LM's ``d_model``. Consequently connector weights must be freshly
-    initialized rather than loaded from the Molmo2 checkpoint.
+    initialized rather than loaded from the Molmo2 checkpoint. ``output_vocab_size`` defaults
+    to ``None`` so external language models such as s002 retain their native output vocabulary.
     """
     vit_cfg = hf_config.vit_config
     adapter_cfg = hf_config.adapter_config
@@ -783,6 +898,7 @@ def multimodal_config_from_molmo2_vision(
         connector=conn_cfg,
         image_patch_token_id=image_patch_token_id,
         vit_layers=_resolved_vit_layers(hf_config),
+        output_vocab_size=output_vocab_size,
     )
 
 
@@ -798,11 +914,14 @@ def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalLMConfig:
     text_cfg = hf_config.text_config
     # HF Molmo2 keeps the extra image-token embeddings in a separate
     # parameter (``new_embedding``); after concatenation our model needs the
-    # combined vocab.
+    # combined vocab as its *input* vocab. The extra tokens are inputs-only —
+    # HF's lm_head covers just ``text_cfg.vocab_size`` — so the base vocab
+    # becomes ``output_vocab_size`` (masking the extra logit columns).
     total_vocab = text_cfg.vocab_size + text_cfg.additional_vocab_size
     lm_cfg = _build_lm_config(text_cfg, total_vocab_size=total_vocab)
     return multimodal_config_from_molmo2_vision(
         hf_config,
         lm_cfg,
         image_patch_token_id=hf_config.image_patch_id,
+        output_vocab_size=text_cfg.vocab_size,
     )

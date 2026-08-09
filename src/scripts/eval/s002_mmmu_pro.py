@@ -31,10 +31,12 @@ from s002_downstream import (
 )
 
 from olmo_core.data.multimodal.document_layout import document_prompt_ids, response_ids
+from olmo_core.data.multimodal.olmo3_layout import validate_olmo3_chat_tokenizer
 from olmo_core.distributed.utils import get_rank
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 from olmo_core.nn.vision.molmo2_tokens import (
+    IMAGE_PLACEHOLDER_TOKEN,
     Molmo2TokenIds,
     build_image_token_ids,
     prepare_molmo2_tokenizer,
@@ -44,7 +46,7 @@ from olmo_core.train import prepare_training_environment, teardown_training_envi
 log = logging.getLogger(__name__)
 
 _IMAGE_MARKER = re.compile(r"<image(?:\s+\d+)?>", flags=re.IGNORECASE)
-_PROMPT_LAYOUTS = ("document", "text_sft", "answer_cue", "bare_chat")
+_PROMPT_LAYOUTS = ("document", "text_sft", "answer_cue", "bare_chat", "olmo3_chat")
 _RESPONSE_MODES = ("generate", "letter_logits", "option_text_mean", "option_text_sum")
 
 
@@ -87,7 +89,8 @@ def _parse_args() -> argparse.Namespace:
         default="document",
         help=(
             "Diagnostic prompt interface. 'document' is the unchanged Stage-1 default; "
-            "the other layouts test text-SFT, completion-cue, and bare role-header calibration."
+            "the other layouts test text-SFT, completion-cue, bare role headers, or the exact "
+            "s002 SFT tokenizer template."
         ),
     )
     parser.add_argument(
@@ -155,6 +158,7 @@ def _prompt_ids_for_layout(
     image_ids: Sequence[int],
     *,
     layout: str,
+    token_ids: Molmo2TokenIds | None = None,
 ) -> List[int]:
     """Build one of the explicitly diagnostic s002 MMMU prompt layouts."""
     if layout == "document":
@@ -170,12 +174,33 @@ def _prompt_ids_for_layout(
             add_special_tokens=False,
         )
         return [*user_header, *image_ids, *assistant_suffix]
+    if layout == "olmo3_chat":
+        if token_ids is None:
+            raise ValueError("token_ids are required for the OLMo 3 chat prompt layout")
+        rendered = tokenizer.apply_chat_template(
+            [{"role": "user", "content": IMAGE_PLACEHOLDER_TOKEN + context}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        rendered_ids = list(tokenizer.encode(rendered, add_special_tokens=False))
+        locations = [
+            index
+            for index, token_id in enumerate(rendered_ids)
+            if token_id == token_ids.image_placeholder_id
+        ]
+        if len(locations) != 1:
+            raise ValueError(
+                "Expected exactly one image placeholder in the rendered OLMo 3 prompt, "
+                f"found {len(locations)}"
+            )
+        location = locations[0]
+        return [*rendered_ids[:location], *image_ids, *rendered_ids[location + 1 :]]
     raise ValueError(f"Unknown prompt layout {layout!r}")
 
 
 def _candidate_ids_for_layout(tokenizer, text: str, *, layout: str) -> List[int]:
     """Tokenize a candidate exactly where the selected prompt expects a response."""
-    if layout == "bare_chat":
+    if layout in ("bare_chat", "olmo3_chat"):
         return tokenizer.encode(text, add_special_tokens=False)
     if layout in _PROMPT_LAYOUTS:
         return response_ids(tokenizer, text)
@@ -316,6 +341,7 @@ def _build_adapter_class():
                 context,
                 image_ids,
                 layout=self.prompt_layout,
+                token_ids=self.token_ids,
             )
 
         def _generation_length(self, generation_kwargs: Dict[str, Any]) -> int:
@@ -658,6 +684,8 @@ def main() -> None:
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_id, cache_dir=hf_cache)
         model_vocab_size = int(raw_config["model"]["lm"]["vocab_size"])
         token_ids = prepare_molmo2_tokenizer(tokenizer, model_vocab_size=model_vocab_size)
+        if args.prompt_layout == "olmo3_chat":
+            validate_olmo3_chat_tokenizer(tokenizer, token_ids=token_ids)
         text_vocab_size = min(token_ids.image_token_ids)
         serialized_token_ids = raw_config.get("dataset", {}).get("token_ids")
         if serialized_token_ids is not None:
@@ -743,7 +771,7 @@ def main() -> None:
                 "prompt_layout": args.prompt_layout,
                 "response_separator": (
                     "none_after_assistant_header"
-                    if args.prompt_layout == "bare_chat"
+                    if args.prompt_layout in ("bare_chat", "olmo3_chat")
                     else "single_leading_space"
                 ),
                 "response_mode": args.response_mode,

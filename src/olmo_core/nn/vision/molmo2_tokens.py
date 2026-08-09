@@ -40,7 +40,9 @@ IMAGE_PLACEHOLDER_ID = 151941  # <|image|>
 IMAGE_TOKEN_IDS = frozenset({IM_PATCH_ID, IM_COL_ID, IM_START_ID, LOW_RES_IM_START_ID, IM_END_ID})
 
 DEFAULT_MODEL_ID = "allenai/Molmo2-4B"
-EOS_TOKEN_ID = 151643  # Qwen2.5 <|endoftext|>
+EOS_TOKEN_ID = (
+    151643  # <|endoftext|> — the PAD token; Molmo2's real eos_token is <|im_end|> (151645)
+)
 IM_END_TURN_ID = 151645  # Qwen2.5 <|im_end|> (chat end-of-turn)
 
 IM_START_TOKEN = "<im_start>"

@@ -13,7 +13,11 @@ import numpy as np
 from PIL import Image
 
 from olmo_core.data.multimodal.dataset_compat import load_from_disk_compat
-from olmo_core.data.multimodal.paths import ACADEMIC_DATASETS, PIXMO_DATASETS, TORCH_DATASETS
+from olmo_core.data.multimodal.paths import (
+    ACADEMIC_DATASETS,
+    PIXMO_DATASETS,
+    TORCH_DATASETS,
+)
 
 from ..pixmo_clocks import format_pixmo_clocks_row
 from .formatters import (
@@ -119,7 +123,9 @@ def _load_chart_qa(split: str) -> List[Dict[str, Any]]:
                 {
                     "image": join(CHARTQA_SOURCE, split, "png", ex["imgname"]),
                     "question": ex["query"],
-                    "answers": [ex["label"]],
+                    "answers": ex[
+                        "label"
+                    ],  # bare string (mm_olmo parity: select_vqa_answer short-circuits on str)
                     "metadata": {"is_human": kind == "human", "example_id": ex.get("id")},
                 }
             )
@@ -493,11 +499,11 @@ def build_academic_data(name: str, split: str = "train"):
     return ACADEMIC_REGISTRY[name].loader(split)
 
 
-def format_academic_example(
-    name: str, example: Any, seed: int, split: str = "train"
-) -> Dict[str, Any]:
+def format_academic_example(name: str, example: Any, rng, split: str = "train") -> Dict[str, Any]:
+    """Format one raw row. ``rng`` is a RandomState (or an int seed for one-off use)."""
     spec = ACADEMIC_REGISTRY[name]
-    rng = np.random.RandomState(seed)
+    if not isinstance(rng, np.random.RandomState):
+        rng = np.random.RandomState(rng)
     formatted = spec.formatter(example, rng, split)
     if "image" in formatted:
         img = formatted["image"]
