@@ -1,0 +1,48 @@
+version: 1
+name: stage1-ep8-2node-real-resume-to32000-micro8
+description: >-
+  Continue the selected corrected two-node EP8 Stage-1 micro8 arm from its complete step-200
+  checkpoint through step 32,000. Restore the full model, optimizer, scheduler, trainer, and
+  packed-loader state in the original save folder and resume the original W&B run. Keep bounded
+  held-out caption, fast vision, and partial language-retention evaluations in loop. PR806's
+  corrected point/count formatting applies from step 201; the first 200 steps predate that fix.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --trainer.save_folder=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-rerisk-200-micro8-2node-20260809-2db297f
+  - --trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-rerisk-200-micro8-2node-20260809-2db297f/step200
+  - --trainer.load_strategy=always
+  - --trainer.load_optim_state=true
+  - --trainer.load_trainer_state=true
+  - --dataset.message_format=document
+  - --pack_max_crops=9
+  - --train_module.rank_microbatch_size=20480
+  - --train_module.diagnostics_interval=10
+  - --trainer.max_duration.value=32000
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=32000
+  - --train_module.scheduler.schedulers.vision.t_max=32000
+  - --train_module.scheduler.default.t_max=32000
+  - --model.lm.recompute_each_block=false
+  - --data_prefetch_workers=8
+  - --eval_interval=2000
+  - --eval_examples=512
+  - --fast_vision_eval_interval=2000
+  - --fast_vision_eval_examples=256
+  - --fast_language_eval_interval=4000
+  - --fast_language_eval_rank_batch_instances=1
+  - --fast_language_eval_batches=32
+  - --trainer.callbacks.wandb.name=s002-stage1-rerisk-200-micro8-2node-20260809-2db297f
+  - --trainer.callbacks.wandb.group=s002-stage1-rerisk-topology-200
+  - --trainer.callbacks.wandb.auto_resume=true
+  - --trainer.callbacks.wandb.run_id=sdgbbjmz
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=2000
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=500
+  - --trainer.callbacks.checkpointer.max_checkpoints=2

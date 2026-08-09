@@ -1,6 +1,6 @@
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
@@ -484,6 +484,11 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     lazy: bool = False
+    rank_batch_size_instances: Optional[int] = None
+    """
+    Optional per-rank batch size in instances. When set, this overrides the train module's
+    evaluation batch size for this downstream evaluator only.
+    """
     enabled: bool = True
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
@@ -504,13 +509,23 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             bos_token_id=self.tokenizer.bos_token_id,
         )
 
+        batch_spec = trainer.train_module.eval_batch_spec
+        if self.rank_batch_size_instances is not None:
+            if self.rank_batch_size_instances < 1:
+                raise OLMoConfigurationError("'rank_batch_size_instances' must be at least 1")
+            batch_spec = replace(
+                batch_spec,
+                rank_batch_size=self.rank_batch_size_instances,
+                batch_size_unit=EvalBatchSizeUnit.instances,
+            )
+
         evaluators: List[Evaluator] = []
         for task in sorted(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
                     name="downstream",
                     task=task,
-                    batch_spec=trainer.train_module.eval_batch_spec,
+                    batch_spec=batch_spec,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,

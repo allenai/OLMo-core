@@ -122,6 +122,8 @@ FAST_LANGUAGE_EVAL_TASKS = (
     "copycolors_10way_fast",
     "hellaswag_bpb_5shot",
 )
+FAST_LANGUAGE_EVAL_RANK_BATCH_INSTANCES = 1
+FAST_LANGUAGE_EVAL_BATCHES = 32
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -229,6 +231,10 @@ class ExperimentConfig(Config):
     """Deterministic examples per fast vision evaluator."""
     fast_language_eval_interval: Optional[int] = FAST_LANGUAGE_EVAL_INTERVAL
     """Run the compact language-retention sentinel every this many steps."""
+    fast_language_eval_rank_batch_instances: int = FAST_LANGUAGE_EVAL_RANK_BATCH_INSTANCES
+    """Text-only downstream-eval instances per rank and forward pass."""
+    fast_language_eval_batches: int = FAST_LANGUAGE_EVAL_BATCHES
+    """Maximum batches per fast language task; these are partial retention sentinels."""
 
 
 def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
@@ -874,21 +880,27 @@ def _add_fast_vision_validation_callback(
 
 
 def _add_fast_language_validation_callback(trainer, config: ExperimentConfig) -> None:
-    """Add a compact OLMES language-retention sentinel to in-loop reporting."""
+    """Add bounded, low-memory OLMES language-retention sentinels to in-loop reporting."""
     interval = config.fast_language_eval_interval
     if interval is None:
         return
     if interval <= 0:
         raise ValueError("fast_language_eval_interval must be positive or None")
+    if config.fast_language_eval_rank_batch_instances <= 0:
+        raise ValueError("fast_language_eval_rank_batch_instances must be positive")
+    if config.fast_language_eval_batches <= 0:
+        raise ValueError("fast_language_eval_batches must be positive")
 
     callback = DownstreamEvaluatorCallbackConfig(
         tasks=list(FAST_LANGUAGE_EVAL_TASKS),
         tokenizer=TokenizerConfig.dolma2(),
         eval_interval=interval,
+        eval_duration=Duration.steps(config.fast_language_eval_batches),
         eval_on_startup=False,
         eval_on_finish=False,
-        log_interval=20,
+        log_interval=max(config.fast_language_eval_batches // 4, 1),
         lazy=True,
+        rank_batch_size_instances=config.fast_language_eval_rank_batch_instances,
     ).build(trainer)
     if callback is None:
         raise RuntimeError("Fast language evaluator callback was unexpectedly disabled")

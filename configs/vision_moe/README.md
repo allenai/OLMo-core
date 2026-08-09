@@ -29,6 +29,14 @@ remains intentionally disabled pending an exact MoE-aware implementation and iso
   recomputation but completed a full real-data local B300 optimizer-step gate with it enabled.
 - `stage1_ep8_2node_real_200step_micro8.yaml` validates the same corrected recipe with two
   EP-DP replicas, which is the intended multi-node production topology.
+- `stage1_ep8_2node_real_resume_to32000_micro8.yaml` resumes that selected two-node arm from
+  its complete step-200 checkpoint through step 32,000 in the original save folder. It restores
+  model, optimizer, scheduler, trainer, and packed-loader state and resumes W&B run `sdgbbjmz`.
+  PR806's corrected point/count formatting applies from step 201, so the state transition is
+  exact but the data serialization after resume is intentionally not byte-identical to steps 1-200.
+  Held-out caption and fast vision evaluation run every 2,000 steps. Four language-retention
+  sentinels run every 4,000 steps at one instance per rank and stop after 32 batches per task;
+  these deterministic partial sentinels are health trends, not full OLMES benchmark scores.
 - `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 32,000-step
   production schedule with the native s002 router loss weights, FP32 gradient
   accumulation/reduction, and padding-excluded routed-expert traffic.
@@ -51,6 +59,15 @@ python src/scripts/train/Molmo2-Stage1.py dry_run stage1-real-gate \
 After reviewing the dry run and receiving explicit submission approval, replace `dry_run`
 with `launch`. Explicit CLI overrides come after the profile's training overrides and
 therefore take precedence. Launch topology and target fields are taken from the profile.
+
+Inspect the selected full-state continuation with its exact original run name:
+
+```bash
+PATH=/weka/oe-training-default/rustin/envs/olmo-core-vision/bin:$PATH \
+python src/scripts/train/Molmo2-Stage1.py dry_run \
+  s002-stage1-rerisk-200-micro8-2node-20260809-2db297f \
+  --beaker-test-config=configs/vision_moe/stage1_ep8_2node_real_resume_to32000_micro8.yaml
+```
 
 ## Stage 2 pilot
 

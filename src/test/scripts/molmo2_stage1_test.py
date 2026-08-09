@@ -412,7 +412,11 @@ def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypat
     trainer = SimpleNamespace(
         add_callback=lambda name, value: captured.update(callback_name=name, callback=value)
     )
-    config = SimpleNamespace(fast_language_eval_interval=4000)
+    config = SimpleNamespace(
+        fast_language_eval_interval=4000,
+        fast_language_eval_rank_batch_instances=1,
+        fast_language_eval_batches=32,
+    )
     monkeypatch.setattr(stage1, "DownstreamEvaluatorCallbackConfig", CallbackConfig)
 
     stage1._add_fast_language_validation_callback(trainer, config)
@@ -421,6 +425,9 @@ def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypat
     assert captured["kwargs"]["tasks"] == list(stage1.FAST_LANGUAGE_EVAL_TASKS)
     assert captured["kwargs"]["tokenizer"] == stage1.TokenizerConfig.dolma2()
     assert captured["kwargs"]["eval_interval"] == 4000
+    assert captured["kwargs"]["eval_duration"] == stage1.Duration.steps(32)
+    assert captured["kwargs"]["rank_batch_size_instances"] == 1
+    assert captured["kwargs"]["log_interval"] == 8
     assert captured["kwargs"]["lazy"] is True
     assert captured["callback_name"] == "fast_language_validation"
     assert captured["callback"] is callback
@@ -596,6 +603,55 @@ def test_stage1_clean_b300_run_uses_the_full_32k_horizon():
     assert "--model.lm.recompute_each_block=false" in overrides
     assert not any(override.startswith("--trainer.load_path=") for override in overrides)
     assert not any("wandb.run_id" in override for override in overrides)
+
+
+def test_stage1_selected_micro8_continuation_restores_full_state_with_bounded_evals():
+    stage1 = _load_stage1_module()
+    profile_path = (
+        Path(__file__).parents[3]
+        / "configs"
+        / "vision_moe"
+        / "stage1_ep8_2node_real_resume_to32000_micro8.yaml"
+    )
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    run_name = "s002-stage1-rerisk-200-micro8-2node-20260809-2db297f"
+    save_folder = "/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/" + run_name
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    assert f"--trainer.save_folder={save_folder}" in overrides
+    assert f"--trainer.load_path={save_folder}/step200" in overrides
+    assert "--trainer.load_strategy=always" in overrides
+    assert "--trainer.load_optim_state=true" in overrides
+    assert "--trainer.load_trainer_state=true" in overrides
+    assert "--dataset.message_format=document" in overrides
+    assert "--pack_max_crops=9" in overrides
+    assert "--train_module.rank_microbatch_size=20480" in overrides
+    assert "--trainer.max_duration.value=32000" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
+    assert "--train_module.scheduler.default.t_max=32000" in overrides
+    assert "--eval_interval=2000" in overrides
+    assert "--eval_examples=512" in overrides
+    assert "--fast_vision_eval_interval=2000" in overrides
+    assert "--fast_vision_eval_examples=256" in overrides
+    assert "--fast_language_eval_interval=4000" in overrides
+    assert "--fast_language_eval_rank_batch_instances=1" in overrides
+    assert "--fast_language_eval_batches=32" in overrides
+    assert f"--trainer.callbacks.wandb.name={run_name}" in overrides
+    assert "--trainer.callbacks.wandb.run_id=sdgbbjmz" in overrides
+    assert "--trainer.callbacks.checkpointer.save_interval=2000" in overrides
+    assert "--trainer.callbacks.checkpointer.ephemeral_save_interval=500" in overrides
+    assert "--trainer.callbacks.checkpointer.max_checkpoints=2" in overrides
 
 
 def test_stage1_b300_continuation_restores_step4000_and_runs_to8000():
