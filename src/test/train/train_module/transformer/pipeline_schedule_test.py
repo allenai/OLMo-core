@@ -16,6 +16,8 @@ from olmo_core.train.train_module.transformer.pipeline.helpers import (
     generate_stage_to_rank_mapping,
 )
 from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
+    BATCH_LEADING_MODEL_KWARGS,
+    SUPPORTED_MODEL_KWARGS,
     CustomSchedule1F1BV,
     CustomScheduleInterleaved1F1B,
     PipelineActionType,
@@ -429,3 +431,28 @@ def test_split_inputs_rejects_metadata_with_mismatched_batch_size():
 
     with pytest.raises(ValueError, match="does not match input batch size"):
         splitter._split_inputs((torch.arange(16).reshape(4, 4),), {"max_doc_lens": [1, 2, 3]})
+
+
+def test_supported_model_kwargs_covers_every_batch_leading_kwarg():
+    # The independent PP dry run validates against this same set, so a kwarg the splitter accepts
+    # but the set omits would train fine and then fail the dry run.
+    assert set(BATCH_LEADING_MODEL_KWARGS) <= SUPPORTED_MODEL_KWARGS
+
+
+@pytest.mark.parametrize("key", sorted(SUPPORTED_MODEL_KWARGS - {"labels"}))
+def test_split_inputs_accepts_every_supported_model_kwarg(key):
+    splitter = _build_splitter(2)
+    values = {
+        "segment_ids": torch.zeros(4, 4, dtype=torch.long),
+        "doc_lens": torch.tensor([[4, 0], [2, 2], [3, 1], [4, 0]]),
+        "max_doc_lens": [4, 2, 3, 4],
+        "loss_div_factor": 2.0,
+        "ignore_index": -100,
+        "loss_reduction": "sum",
+        "z_loss_multiplier": None,
+        "return_logits": False,
+        "cp_already_sharded": False,
+        "cp_original_seq_len": 4,
+    }
+    _, kwargs_split = splitter._split_inputs((torch.arange(16).reshape(4, 4),), {key: values[key]})
+    assert all(key in kwargs_mb for kwargs_mb in kwargs_split)

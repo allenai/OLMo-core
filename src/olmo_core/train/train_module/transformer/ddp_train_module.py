@@ -89,6 +89,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .pipeline.pipeline_schedule import SUPPORTED_MODEL_KWARGS
 
 log = logging.getLogger(__name__)
 
@@ -966,8 +967,8 @@ class OLMoDDPTrainModule(TrainModule):
         if callable(clear_step_info):
             clear_step_info()
 
+    @staticmethod
     def _split_pp_dry_run_model_kwargs(
-        self,
         kwargs: Dict[str, Any],
         *,
         original_batch_size: int,
@@ -981,6 +982,12 @@ class OLMoDDPTrainModule(TrainModule):
                     start = mb_idx * micro_batch_size
                     end = start + micro_batch_size
                     kwargs_mbs[mb_idx][key] = value[start:end].contiguous()
+            elif isinstance(value, (list, tuple)) and len(value) == original_batch_size:
+                # Per-instance metadata such as 'max_doc_lens' is a Python list, so it has to be
+                # sliced on the same boundaries rather than handed whole to every microbatch.
+                for mb_idx in range(num_microbatches):
+                    start = mb_idx * micro_batch_size
+                    kwargs_mbs[mb_idx][key] = value[start : start + micro_batch_size]
             else:
                 for kwargs_mb in kwargs_mbs:
                     kwargs_mb[key] = value
@@ -1012,8 +1019,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "Cannot run independent PP dry-run with empty pipeline microbatches"
             )
 
-        supported_model_kwargs = {"cp_already_sharded", "cp_original_seq_len"}
-        unexpected_model_kwargs = set(kwargs) - supported_model_kwargs
+        unexpected_model_kwargs = set(kwargs) - SUPPORTED_MODEL_KWARGS
         if unexpected_model_kwargs:
             raise OLMoConfigurationError(
                 "Independent PP dry-run only supports the same model kwargs as the PP "

@@ -30,6 +30,27 @@ from .pipeline_stage import CustomPipelineStage
 logger = logging.getLogger(__name__)
 
 
+BATCH_LEADING_MODEL_KWARGS = ("labels", "segment_ids", "doc_lens", "max_doc_lens")
+"""Model kwargs carrying one entry per instance, split alongside ``input_ids`` into microbatches."""
+
+SUPPORTED_MODEL_KWARGS = frozenset(BATCH_LEADING_MODEL_KWARGS) | {
+    "loss_div_factor",
+    "ignore_index",
+    "loss_reduction",
+    "z_loss_multiplier",
+    "return_logits",
+    "cp_already_sharded",
+    "cp_original_seq_len",
+}
+"""
+Every model kwarg the pipeline schedule knows how to split into microbatches.
+
+Anything that splits a batch for the pipeline outside of
+:meth:`CustomScheduleInterleaved1F1B._split_inputs` -- such as the independent PP dry run -- must
+accept the same set, or configurations that train fine will fail there instead.
+"""
+
+
 # Helper to parse an action string like 1F0 into a tuple of (stage_index, computation_type, microbatch_index)
 _action_regex = re.compile(r"(\d+)(F|I|B|W|SEND_F|RECV_F|SEND_B|RECV_B)(\d*)")
 
@@ -377,8 +398,7 @@ class CustomScheduleInterleaved1F1B:
             if len(args) > 1:
                 raise ValueError(f"Expected zero or one positional tensor arg, got {len(args)}")
 
-            # Kwargs carrying one entry per instance, which are split alongside 'input_ids'.
-            batch_leading_keys = ("labels", "segment_ids", "doc_lens", "max_doc_lens")
+            batch_leading_keys = BATCH_LEADING_MODEL_KWARGS
 
             input_ids: Optional[torch.Tensor] = None
             if len(args) == 1:
@@ -441,20 +461,7 @@ class CustomScheduleInterleaved1F1B:
                 args_split = [()] * self._n_microbatches
             kwargs_split: List[Dict[str, Any]] = [{} for _ in range(self._n_microbatches)]
 
-            supported_keys = {
-                "loss_div_factor",
-                "labels",
-                "segment_ids",
-                "doc_lens",
-                "max_doc_lens",
-                "ignore_index",
-                "loss_reduction",
-                "z_loss_multiplier",
-                "return_logits",
-                "cp_already_sharded",
-                "cp_original_seq_len",
-            }
-            unexpected_keys = set(kwargs) - supported_keys
+            unexpected_keys = set(kwargs) - SUPPORTED_MODEL_KWARGS
             if unexpected_keys:
                 raise ValueError(
                     f"Unsupported kwargs for pipeline splitting: {sorted(unexpected_keys)}"

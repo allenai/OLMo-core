@@ -304,3 +304,26 @@ def test_pad_pp_batch_dim_pads_tensors_by_repeating_the_last_instance():
     value = torch.tensor([[1, 2], [3, 4], [5, 6]])
     padded = OLMoDDPTrainModule._pad_pp_batch_dim(value, 2)
     assert torch.equal(padded, torch.tensor([[1, 2], [3, 4], [5, 6], [5, 6]]))
+
+
+def test_split_pp_dry_run_model_kwargs_slices_batch_leading_values():
+    # The independent PP dry run splits model kwargs itself, so per-instance metadata has to be
+    # sliced there too rather than handed whole to every microbatch.
+    kwargs = {
+        "segment_ids": torch.arange(8).reshape(4, 2),
+        "max_doc_lens": [4, 2, 3, 4],
+        "cp_original_seq_len": 2,
+    }
+    split = OLMoDDPTrainModule._split_pp_dry_run_model_kwargs(
+        kwargs,
+        original_batch_size=4,
+        micro_batch_size=2,
+        num_microbatches=2,
+    )
+
+    assert torch.equal(split[0]["segment_ids"], kwargs["segment_ids"][0:2])
+    assert torch.equal(split[1]["segment_ids"], kwargs["segment_ids"][2:4])
+    assert split[0]["max_doc_lens"] == [4, 2]
+    assert split[1]["max_doc_lens"] == [3, 4]
+    # Scalars are broadcast rather than sliced.
+    assert split[0]["cp_original_seq_len"] == split[1]["cp_original_seq_len"] == 2
