@@ -1178,7 +1178,18 @@ class Olmo3MoeForCausalLM(Olmo3MoePreTrainedModel, GenerationMixin):
         slice_indices = (
             slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         )
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
+        selected_hidden_states = hidden_states[:, slice_indices, :]
+        if os.environ.get("OLMO_HF_FP32_LM_HEAD", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            # Greedy cache parity can otherwise hinge on BF16 output-logit ties
+            # even when the two hidden states have the same semantic winner.
+            logits = F.linear(selected_hidden_states.float(), self.lm_head.weight.float())
+        else:
+            logits = self.lm_head(selected_hidden_states)
 
         loss = None
         if labels is not None:
