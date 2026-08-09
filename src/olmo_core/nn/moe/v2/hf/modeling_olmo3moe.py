@@ -629,16 +629,37 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
             decay = -self.A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
                 raw_decay.float() + self.dt_bias.float().view(1, 1, self.n_heads, self.head_k_dim)
             )
-            output, recurrent_state = fused_recurrent_kda(
-                q=q,
-                k=k,
-                v=v,
-                g=decay,
-                beta=beta,
-                initial_state=initial_recurrent_state,
-                output_final_state=output_final_state,
-                use_qk_l2norm_in_kernel=True,
-            )
+            if force_recurrent_reference:
+                # Keep the kernel launch shape and state-update order identical
+                # across full, chunked, and token-by-token cache execution. A
+                # single recurrent launch over an entire prefill can reduce in
+                # a different order than repeated one-token decode launches.
+                outputs = []
+                recurrent_state = initial_recurrent_state
+                for token_idx in range(seq_len):
+                    token_output, recurrent_state = fused_recurrent_kda(
+                        q=q[:, token_idx : token_idx + 1],
+                        k=k[:, token_idx : token_idx + 1],
+                        v=v[:, token_idx : token_idx + 1],
+                        g=decay[:, token_idx : token_idx + 1],
+                        beta=beta[:, token_idx : token_idx + 1],
+                        initial_state=recurrent_state,
+                        output_final_state=True,
+                        use_qk_l2norm_in_kernel=True,
+                    )
+                    outputs.append(token_output)
+                output = torch.cat(outputs, dim=1)
+            else:
+                output, recurrent_state = fused_recurrent_kda(
+                    q=q,
+                    k=k,
+                    v=v,
+                    g=decay,
+                    beta=beta,
+                    initial_state=initial_recurrent_state,
+                    output_final_state=output_final_state,
+                    use_qk_l2norm_in_kernel=True,
+                )
         else:
             output, recurrent_state = chunk_kda(
                 q=q,
