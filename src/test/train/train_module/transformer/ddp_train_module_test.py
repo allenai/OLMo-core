@@ -44,8 +44,19 @@ from olmo_core.train.train_module.transformer import (
     TransformerPipelineParallelConfig,
 )
 from olmo_core.train.train_module.transformer.multimodal_train_module import (
+    _matched_component_grad_norm_patterns,
     _retain_embedding_gradient_rows,
 )
+
+
+class _MetricTrainerStub:
+    def __init__(self):
+        self.global_step = 1
+        self.metrics = {}
+
+    def record_metric(self, name, value, *, namespace=None, **kwargs):
+        del kwargs
+        self.metrics[f"{namespace}/{name}" if namespace else name] = value
 
 
 def test_retain_embedding_gradient_rows_masks_every_other_row():
@@ -55,6 +66,29 @@ def test_retain_embedding_gradient_rows_masks_every_other_row():
 
     torch.testing.assert_close(masked[[1, 3]], grad[[1, 3]], rtol=0, atol=0)
     torch.testing.assert_close(masked[[0, 2, 4]], torch.zeros(3, 4), rtol=0, atol=0)
+
+
+def test_component_grad_norm_patterns_only_keep_trainable_components():
+    patterns = {
+        "vision": ("vision.*", "*vision.*"),
+        "LM output head": ("lm.lm_head.w_out.*", "*lm.lm_head.w_out.*"),
+        "LM shared experts": ("lm.blocks.*.shared_experts.*",),
+    }
+
+    assert _matched_component_grad_norm_patterns(
+        patterns,
+        {"module.vision.patch_embedding.weight"},
+    ) == {"vision": patterns["vision"]}
+    assert _matched_component_grad_norm_patterns(
+        patterns,
+        {
+            "module.vision.patch_embedding.weight",
+            "module.lm.lm_head.w_out.weight",
+        },
+    ) == {
+        "vision": patterns["vision"],
+        "LM output head": patterns["LM output head"],
+    }
 
 
 def test_moe_v2_train_module_config_roundtrips():
@@ -526,6 +560,7 @@ def _run_multimodal_ep_step_impl(
         vision_activation_checkpointing=not freeze_vision,
         connector_activation_checkpointing=not freeze_vision,
         response_logits_only=True,
+        diagnostics_interval=1,
         train_embedding_rows=[120, 121],
         compile_model=padded_router_compile,
         dp_config=TransformerDataParallelConfig(
@@ -568,14 +603,6 @@ def _run_multimodal_ep_step_impl(
         optim._copy_main_params_to_model_params()
         for name, tensor in multimodal.vision.state_dict().items():
             torch.testing.assert_close(tensor, external_vision_state[name], rtol=0, atol=0)
-        optim.set_component_grad_norm_patterns(
-            {
-                "vision": ("vision.*", "*vision.*"),
-                "connector": ("connector.*", "*connector.*"),
-                "language model": ("lm.*", "*lm.*"),
-            }
-        )
-
     vision_params = list(multimodal.vision.parameters())
     connector_params = list(multimodal.connector.parameters())
     routed_params = [
@@ -642,25 +669,35 @@ def _run_multimodal_ep_step_impl(
         assert all(torch.isfinite(value) and value > 0 for value in diagnostics.values())
     assert any(has_nonzero_grad(param) for param in connector_params)
     assert any(has_nonzero_grad(param) for param in routed_params)
+    trainer = _MetricTrainerStub()
+    train_module._trainer = trainer
     optim.latest_loss = torch.zeros((), device="cuda")
-    optim.step()
+    train_module.optim_step()
     expected_clip_groups = {optim.DEFAULT_CLIP_GROUP_NAME, "connector"}
     if not freeze_vision:
         expected_clip_groups.add("vision")
     assert set(optim.latest_clip_group_grad_norms) == expected_clip_groups
     assert set(optim.latest_clip_group_coefficients) == expected_clip_groups
     assert all(torch.isfinite(value) for value in optim.latest_clip_group_coefficients.values())
+    expected_components = {
+        "connector",
+        "input embeddings",
+        "LM attention",
+        "LM routed experts",
+        "LM routers",
+        "LM normalization",
+    }
     if not freeze_vision:
-        assert set(optim.latest_component_grad_norms) == {
-            "vision",
-            "connector",
-            "language model",
-        }
-        assert all(
-            torch.isfinite(norm) and norm > 0 for norm in optim.latest_component_grad_norms.values()
-        )
-    for model_part in train_module.model_parts:
-        model_part.post_optim_step()
+        expected_components.add("vision")
+    assert set(optim.latest_component_grad_norms) == expected_components
+    assert "optim/LM output head grad norm" not in trainer.metrics
+    assert all(
+        f"optim/{component} grad norm" in trainer.metrics for component in expected_components
+    )
+    assert all(
+        torch.isfinite(norm) and norm > 0 for norm in optim.latest_component_grad_norms.values()
+    )
+    assert optim._component_grad_norm_patterns is None
 
     assert any(
         not torch.equal(param, before) for param, before in zip(connector_params, connector_before)
