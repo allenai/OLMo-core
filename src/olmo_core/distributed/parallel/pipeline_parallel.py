@@ -902,6 +902,17 @@ class PipelineSchedule:
             old_num_microbatches = self.schedule_impl._n_microbatches
             self.schedule_impl.reset_n_microbatches(num_microbatches)
 
+        # NOTE: checked here, after the active microbatch count has been selected above, so that
+        # training, evaluation, and reduced dry runs are all validated against the count they
+        # actually run with. Stages size their P2P buffers from a single floor-divided microbatch
+        # shape, so uneven microbatches would leave receivers with undersized buffers.
+        active_num_microbatches = self.schedule_impl._n_microbatches
+        if active_num_microbatches > 0 and input_ids.size(0) % active_num_microbatches != 0:
+            raise RuntimeError(
+                f"Pipeline batch size {input_ids.size(0)} must be divisible by the active number "
+                f"of microbatches ({active_num_microbatches}); uneven microbatches are not supported"
+            )
+
         self.schedule_impl.prepare_step(
             global_batch_size=input_ids.size(0),
             seqlen=input_ids.size(1),

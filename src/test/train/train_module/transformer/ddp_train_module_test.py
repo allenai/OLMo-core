@@ -21,7 +21,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
+from olmo_core.train.train_module import OLMoDDPTrainModule, OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
@@ -284,3 +284,23 @@ def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
     )
+
+
+@pytest.mark.parametrize(
+    "value, multiple, expected",
+    [
+        ([4, 2, 3], 2, [4, 2, 3, 3]),
+        ([4, 2], 2, [4, 2]),
+        ((4, 2, 3), 2, (4, 2, 3, 3)),
+    ],
+)
+def test_pad_pp_batch_dim_pads_batch_leading_sequences(value, multiple, expected):
+    # Per-instance metadata such as 'max_doc_lens' is a Python list, so it has to be padded
+    # alongside the tensors it accompanies or it ends up shorter than the padded batch.
+    assert OLMoDDPTrainModule._pad_pp_batch_dim(value, multiple) == expected
+
+
+def test_pad_pp_batch_dim_pads_tensors_by_repeating_the_last_instance():
+    value = torch.tensor([[1, 2], [3, 4], [5, 6]])
+    padded = OLMoDDPTrainModule._pad_pp_batch_dim(value, 2)
+    assert torch.equal(padded, torch.tensor([[1, 2], [3, 4], [5, 6], [5, 6]]))
