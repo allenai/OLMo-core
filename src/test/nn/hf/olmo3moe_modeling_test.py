@@ -280,3 +280,26 @@ def test_olmo3moe_experts_grouped_mm_matches_reference_loop():
     reference = experts._forward_loop(hidden_states, topk_ids, topk_weights)
     grouped = experts._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
     torch.testing.assert_close(grouped, reference, rtol=1e-5, atol=1e-5)
+
+
+@requires_olmo3moe
+def test_olmo3moe_experts_can_force_reference_loop(monkeypatch):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeExpert, Olmo3MoeExperts
+
+    experts = Olmo3MoeExperts(
+        Olmo3MoeExpert(hidden_size=32, moe_intermediate_size=16, hidden_act="silu")
+        for _ in range(4)
+    )
+    hidden_states = torch.randn(7, 32)
+    topk_ids = torch.randint(0, 4, (7, 2))
+    topk_weights = torch.rand(7, 2)
+    expected = experts._forward_loop(hidden_states, topk_ids, topk_weights)
+
+    monkeypatch.setenv("OLMO_HF_MOE_REFERENCE_LOOP", "1")
+    monkeypatch.setattr(
+        experts,
+        "_forward_grouped_mm",
+        lambda *_args, **_kwargs: pytest.fail("grouped_mm should not run in reference mode"),
+    )
+    actual = experts(hidden_states, topk_ids, topk_weights)
+    torch.testing.assert_close(actual, expected)
