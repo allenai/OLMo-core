@@ -1,0 +1,35 @@
+version: 1
+name: stage1-ep8-2node-real-200step-micro8
+description: >-
+  Fresh 200-step corrected Stage-1 production-topology gate on two Holmes nodes. Uses one
+  eight-sequence forward per rank to validate EP8 with two EP-DP replicas while retaining
+  the released cap-9 packing constraint and 32k LR horizon.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --dataset.message_format=document
+  - --pack_max_crops=9
+  - --train_module.rank_microbatch_size=20480
+  - --train_module.diagnostics_interval=10
+  - --trainer.load_strategy=never
+  - --trainer.max_duration.value=200
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=32000
+  - --train_module.scheduler.schedulers.vision.t_max=32000
+  - --train_module.scheduler.default.t_max=32000
+  - --model.lm.recompute_each_block=false
+  - --eval_interval=200
+  - --eval_examples=512
+  - --fast_vision_eval_interval=200
+  - --fast_language_eval_interval=200
+  - --trainer.callbacks.wandb.group=s002-stage1-rerisk-topology-200
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=200
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --trainer.callbacks.checkpointer.max_checkpoints=1

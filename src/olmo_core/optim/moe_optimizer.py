@@ -48,6 +48,8 @@ from .grad_debug import debug_nan_inf_grad_norm
 
 log = logging.getLogger(__name__)
 
+_DEFAULT_CLIP_GROUP = "<default>"
+
 if TYPE_CHECKING:
     from ..train.train_module import TrainModule
     from ..train.train_module.transformer.ddp_train_module import OLMoDDPTrainModule
@@ -170,6 +172,15 @@ class OLMoDDPOptimizerConfig(Config):
     """
 
     max_grad_norm: float = 1.0
+
+    clip_grad_norm_by_scheduler_group: bool = False
+    """
+    Clip gradients independently for each logical scheduler group. Physical DP and EP parameter
+    groups with the same ``scheduler_name`` are combined before clipping. Parameters without a
+    scheduler name form a private fallback group.
+
+    This is opt-in because the standard OLMo optimizer contract clips the full model globally.
+    """
 
     foreach_chunk_size: int = 600_000_000
     """
@@ -519,6 +530,7 @@ class OLMoDDPOptimizer:
     GRAD_NORMS_STATE_DICT_KEY = "__moe_skip_step_grad_norms"
     ADAM_MOMENT_STATE_SUFFIXES = ("exp_avg", "exp_avg_sq")
     MOMENT_STATE_SUFFIXES = ADAM_MOMENT_STATE_SUFFIXES
+    DEFAULT_CLIP_GROUP_NAME = _DEFAULT_CLIP_GROUP
 
     def __init__(
         self,
@@ -531,6 +543,7 @@ class OLMoDDPOptimizer:
         rolling_interval_length: int = 128,
         sigma_factor: int = 6,
         max_grad_norm: float = 1.0,
+        clip_grad_norm_by_scheduler_group: bool = False,
         dtype: Optional[Union[torch.dtype, DType]] = None,
         device: Optional[torch.device] = None,
         model_has_grad_accum_fp32_buffer: bool = False,  # whether the optimizer should expect the model to have fp32 grad accum buffers
@@ -589,6 +602,14 @@ class OLMoDDPOptimizer:
 
         self.dense_mesh: DeviceMesh = world_mesh["dense"]  # ('pp', 'dp')
         self.moe_mesh: Optional[DeviceMesh] = world_mesh["moe"]  # ('pp', 'ep_dp', 'ep_mp')
+        if (
+            clip_grad_norm_by_scheduler_group
+            and self.dense_mesh.mesh_dim_names is not None
+            and "pp" in self.dense_mesh.mesh_dim_names
+        ):
+            raise OLMoConfigurationError(
+                "Scheduler-group gradient clipping does not yet support pipeline parallelism"
+            )
 
         self.dp_mesh = self.dense_mesh["dp"]
         self.ep_dp_mesh = self.moe_mesh["ep_dp"] if self.moe_mesh else None
@@ -601,6 +622,7 @@ class OLMoDDPOptimizer:
         self._grad_norms: List[torch.Tensor] = []
         self._device: Optional[torch.device] = device
         self.max_grad_norm = max_grad_norm
+        self.clip_grad_norm_by_scheduler_group = clip_grad_norm_by_scheduler_group
         if isinstance(dtype, DType):
             dtype = dtype.as_pt()
         self.dtype = dtype
@@ -616,6 +638,8 @@ class OLMoDDPOptimizer:
         self._use_reduce_scatter_grads = False
         self.main_grad: Dict[str, torch.Tensor] = {}
         self.latest_component_grad_norms: Dict[str, torch.Tensor] = {}
+        self.latest_clip_group_grad_norms: Dict[str, torch.Tensor] = {}
+        self.latest_clip_group_coefficients: Dict[str, torch.Tensor] = {}
         self._component_grad_norm_patterns: Optional[Dict[str, Tuple[str, ...]]] = None
         self._flat_model_sync_groups: "OrderedDict[str, _FlatModelParamSyncGroup]" = OrderedDict()
 
@@ -1144,6 +1168,17 @@ class OLMoDDPOptimizer:
             norms[component] = self._compute_total_grad_norm(*self._partition_main_grads(names))
         return norms
 
+    def _logical_grad_clip_groups(self) -> "OrderedDict[str, List[str]]":
+        """Collect parameter names into logical groups shared across DP and EP partitions."""
+        groups: "OrderedDict[str, List[str]]" = OrderedDict()
+        for param_group in self.param_groups:
+            group_name = param_group.get("scheduler_name") or _DEFAULT_CLIP_GROUP
+            names = groups.setdefault(group_name, [])
+            names.extend(
+                name for name, param in param_group["named_params"].items() if param.requires_grad
+            )
+        return groups
+
     def _clip_grad(self) -> torch.Tensor:
         """
         We need to first compute the grad norm for the FULL model.
@@ -1168,12 +1203,34 @@ class OLMoDDPOptimizer:
             ep_dp_grads_sharded,
         ) = self._partition_main_grads()
 
-        total_grad_norm = self._compute_total_grad_norm(
-            dp_grads_replicated,
-            dp_grads_sharded,
-            ep_dp_grads_replicated,
-            ep_dp_grads_sharded,
+        self.latest_clip_group_grad_norms = {}
+        self.latest_clip_group_coefficients = {}
+        logical_groups = (
+            self._logical_grad_clip_groups() if self.clip_grad_norm_by_scheduler_group else None
         )
+        if logical_groups:
+            ordered_names = [name for names in logical_groups.values() for name in names]
+            if len(ordered_names) != len(set(ordered_names)) or set(ordered_names) != set(
+                self.main_grad
+            ):
+                raise RuntimeError(
+                    "Logical gradient-clip groups must be a disjoint, exhaustive partition of "
+                    "optimizer gradients"
+                )
+            for group_name, names in logical_groups.items():
+                self.latest_clip_group_grad_norms[group_name] = self._compute_total_grad_norm(
+                    *self._partition_main_grads(set(names))
+                )
+            total_grad_norm = torch.linalg.vector_norm(
+                torch.stack(list(self.latest_clip_group_grad_norms.values())), ord=2
+            )
+        else:
+            total_grad_norm = self._compute_total_grad_norm(
+                dp_grads_replicated,
+                dp_grads_sharded,
+                ep_dp_grads_replicated,
+                ep_dp_grads_sharded,
+            )
 
         self._maybe_debug_nan_inf_grad_norm(
             total_grad_norm,
@@ -1184,6 +1241,16 @@ class OLMoDDPOptimizer:
         )
         if self.check_nan_inf_grad:
             _assert_finite_async(total_grad_norm, "total grad norm")
+
+        if logical_groups:
+            for group_name, names in logical_groups.items():
+                group_norm = self.latest_clip_group_grad_norms[group_name]
+                clip_coefficient = torch.clamp(
+                    self.max_grad_norm / (group_norm + 1e-6), max=1.0
+                ).to(group_norm.device)
+                torch._foreach_mul_([self.main_grad[name] for name in names], clip_coefficient)
+                self.latest_clip_group_coefficients[group_name] = clip_coefficient
+            return total_grad_norm
 
         clip_coef = self.max_grad_norm / (total_grad_norm + 1e-6)
         # Note: multiplying by the clamped coef is redundant when the coef is clamped to 1, but doing so
@@ -2259,9 +2326,7 @@ class OLMoDDPOptimizer:
             exp_avgs: list[torch.Tensor] = []  # always fp32
             exp_avg_sqs: list[torch.Tensor] = []  # always fp32
 
-            exp_avgs_original: list[
-                torch.Tensor
-            ] = (
+            exp_avgs_original: list[torch.Tensor] = (
                 []
             )  # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
             exp_avg_sqs_original: list[torch.Tensor] = []

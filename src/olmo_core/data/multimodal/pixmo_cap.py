@@ -30,6 +30,11 @@ from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .document_layout import branch_context_ids, image_prefix_ids, response_ids
+from .olmo3_layout import (
+    MessageFormat,
+    validate_message_format,
+    validate_olmo3_chat_tokenizer,
+)
 from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
 
@@ -104,6 +109,8 @@ class PixMoCapDatasetConfig(Config):
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     """Image and chat token IDs for the selected language-model tokenizer."""
+    message_format: MessageFormat = "document"
+    """Use native pretraining documents or the exact s002 SFT chat template."""
     fixed_prompt: Optional[str] = None
     """If set, always use this user prompt instead of sampling from the pools.
     Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
@@ -126,6 +133,9 @@ class PixMoCapDataset:
     def __init__(self, config: PixMoCapDatasetConfig, tokenizer):
         if config.mode not in _MODES:
             raise ValueError(f"Unknown mode {config.mode!r}; expected one of {_MODES}")
+        validate_message_format(config.message_format)
+        if config.message_format == "olmo3_chat":
+            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
         self.config = config
         self.tokenizer = tokenizer
         self._rows: Optional[List[Dict[str, Any]]] = None
@@ -276,7 +286,11 @@ class PixMoCapDataset:
                     prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
                 else:
                     prompt = base_prompt
-            branch_specs.append((prompt, response_ids(self.tokenizer, text)))
+            if cfg.message_format == "olmo3_chat":
+                encoded_response = self.tokenizer.encode(text, add_special_tokens=False)
+            else:
+                encoded_response = response_ids(self.tokenizer, text)
+            branch_specs.append((prompt, encoded_response))
 
         if len(branch_specs) > 1:
             rng.shuffle(branch_specs)
@@ -292,13 +306,26 @@ class PixMoCapDataset:
         images = images_t[0].numpy()  # (n_crops, n_patches, patch_dim)
         pooled = pooling_t[0].numpy()  # (n_pool, pool_size)
 
-        # Shared prefix = native EOS document boundary + image block. Each branch is plain
-        # non-role text and its response receives Molmo's one-space message separator.
-        prefix_ids = image_prefix_ids(self.tokenizer, image_grid, token_ids=cfg.token_ids)
-        branch_pairs = [
-            (branch_context_ids(self.tokenizer, prompt), encoded_response)
-            for prompt, encoded_response in branch_specs
-        ]
+        if cfg.message_format == "olmo3_chat":
+            from .olmo3_layout import branch_context_ids as chat_branch_context_ids
+            from .olmo3_layout import image_prefix_ids as chat_image_prefix_ids
+
+            prefix_ids = chat_image_prefix_ids(self.tokenizer, image_grid, token_ids=cfg.token_ids)
+            branch_pairs = [
+                (
+                    chat_branch_context_ids(self.tokenizer, prompt, token_ids=cfg.token_ids),
+                    encoded_response,
+                )
+                for prompt, encoded_response in branch_specs
+            ]
+        else:
+            # Shared prefix = native EOS document boundary + image block. Each branch is plain
+            # non-role text and its response receives Molmo's one-space message separator.
+            prefix_ids = image_prefix_ids(self.tokenizer, image_grid, token_ids=cfg.token_ids)
+            branch_pairs = [
+                (branch_context_ids(self.tokenizer, prompt), encoded_response)
+                for prompt, encoded_response in branch_specs
+            ]
 
         seq = build_branched_sequence(
             prefix_ids,

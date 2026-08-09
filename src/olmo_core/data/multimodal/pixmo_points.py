@@ -26,6 +26,11 @@ from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .document_layout import branch_context_ids, image_prefix_ids, response_ids
 from .grounding import normalize_points, pointing_answer
+from .olmo3_layout import (
+    MessageFormat,
+    validate_message_format,
+    validate_olmo3_chat_tokenizer,
+)
 from .rng import make_random_state
 from .sequence_builder import build_branched_sequence
 from .sft_formatter import SftFormatter
@@ -52,6 +57,7 @@ def _build_example(
     token_ids: Molmo2TokenIds,
     message_weight: float | None = None,
     p_high_res: float = 0.0,
+    message_format: MessageFormat = "document",
     rng: np.random.RandomState,
 ) -> Dict[str, np.ndarray]:
     """Format and assemble a (possibly multi-branch) pointing example.
@@ -78,14 +84,27 @@ def _build_example(
         is_training=True,
         rng=rng,
     )
-    prefix = image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
-    branches = [
-        (
-            branch_context_ids(tokenizer, question),
-            response_ids(tokenizer, answer),
-        )
-        for question, answer in branches_text
-    ]
+    if message_format == "olmo3_chat":
+        from .olmo3_layout import branch_context_ids as chat_branch_context_ids
+        from .olmo3_layout import image_prefix_ids as chat_image_prefix_ids
+
+        prefix = chat_image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
+        branches = [
+            (
+                chat_branch_context_ids(tokenizer, question, token_ids=token_ids),
+                tokenizer.encode(answer, add_special_tokens=False),
+            )
+            for question, answer in branches_text
+        ]
+    else:
+        prefix = image_prefix_ids(tokenizer, image_grid, token_ids=token_ids)
+        branches = [
+            (
+                branch_context_ids(tokenizer, question),
+                response_ids(tokenizer, answer),
+            )
+            for question, answer in branches_text
+        ]
     from olmo_core.data.multimodal.message_weight import (
         apply_message_weight_to_loss_masks,
     )
@@ -141,6 +160,7 @@ class PixMoPointsDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
+    message_format: MessageFormat = "document"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
@@ -149,6 +169,9 @@ class PixMoPointsDatasetConfig(Config):
 
 class PixMoPointsDataset:
     def __init__(self, config: PixMoPointsDatasetConfig, tokenizer):
+        validate_message_format(config.message_format)
+        if config.message_format == "olmo3_chat":
+            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
         self.config = config
         self.tokenizer = tokenizer
         sub = {"basic": ["points-pointing"], "high_frequency": ["points-counting"]}.get(
@@ -228,6 +251,7 @@ class PixMoPointsDataset:
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
+            message_format=self.config.message_format,
             rng=rng,
         )
 
@@ -246,6 +270,7 @@ class PixMoCountDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
+    message_format: MessageFormat = "document"
     seed: int = 0
 
     def build(self, tokenizer) -> "PixMoCountDataset":
@@ -254,6 +279,9 @@ class PixMoCountDatasetConfig(Config):
 
 class PixMoCountDataset:
     def __init__(self, config: PixMoCountDatasetConfig, tokenizer):
+        validate_message_format(config.message_format)
+        if config.message_format == "olmo3_chat":
+            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(f"{PIXMO_DATASETS}/count", config.split)
@@ -301,6 +329,7 @@ class PixMoCountDataset:
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
+            message_format=self.config.message_format,
             rng=rng,
         )
 
@@ -317,6 +346,7 @@ class CoSynPointDatasetConfig(Config):
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
     message_weight: float | None = None
     p_high_res: float = 0.0
+    message_format: MessageFormat = "document"
     seed: int = 0
 
     def build(self, tokenizer) -> "CoSynPointDataset":
@@ -325,6 +355,9 @@ class CoSynPointDatasetConfig(Config):
 
 class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
+        validate_message_format(config.message_format)
+        if config.message_format == "olmo3_chat":
+            validate_olmo3_chat_tokenizer(tokenizer, token_ids=config.token_ids)
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
@@ -354,5 +387,6 @@ class CoSynPointDataset:
             token_ids=self.config.token_ids,
             message_weight=self.config.message_weight,
             p_high_res=self.config.p_high_res,
+            message_format=self.config.message_format,
             rng=make_random_state(self.config.seed + i, epoch),
         )

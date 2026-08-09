@@ -1,10 +1,16 @@
 # Vision-MoE Stage-1 launch gates
 
-These profiles exercise the production EP8 topology on two 8-GPU B300 nodes in
+These profiles exercise EP8 topology on one or two 8-GPU B300 nodes in
 `ai2/holmes`. They use workspace `ai2/molmofication`, budget `ai2/oe-other`, and urgent
 priority. Legacy real-data gates and pilots request no minimum runtime. Holmes supplies the
 B300 hardware, so the profiles do not add a redundant GPU-type constraint. The 4k-to-8k
-continuation and clean 32k profiles request an eight-hour minimum runtime.
+continuation, clean 32k run, and corrected 200-step topology gates request an eight-hour
+minimum runtime.
+
+The corrected profiles are topology and serialization baselines, not claims of byte-exact
+released-recipe parity. Their 10% text source is the pinned OLMo 3 no-tools SFT dataset rather
+than released Molmo2's `allenai/molmo2-tulu4-classified`, and response-only residual dropout
+remains intentionally disabled pending an exact MoE-aware implementation and isolated test.
 
 - `stage1_ep8_2node_synthetic_1step.yaml` checks distributed startup, native s002 loading,
   vision-weight loading, optimizer construction, forward/backward, and checkpoint writing
@@ -14,6 +20,13 @@ continuation and clean 32k profiles request an eight-hour minimum runtime.
 - `stage1_ep8_2node_real_resume_2step.yaml` restores the real-data gate's full step-1
   checkpoint into a separate run folder, executes step 2, and verifies that model,
   optimizer, scheduler, data-loader, and trainer state are resumable.
+- `stage1_ep8_1node_real_200step_micro8.yaml` and
+  `stage1_ep8_1node_real_200step_micro16_recompute.yaml` form a controlled one-node
+  comparison of two accumulated eight-sequence forwards against one sixteen-sequence forward.
+  Both use standard OLMo per-block recomputation. The sixteen-sequence arm failed without
+  recomputation but completed a full real-data local B300 optimizer-step gate with it enabled.
+- `stage1_ep8_2node_real_200step_micro8.yaml` validates the same corrected recipe with two
+  EP-DP replicas, which is the intended multi-node production topology.
 - `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 32,000-step
   production schedule with the native s002 router loss weights, FP32 gradient
   accumulation/reduction, and padding-excluded routed-expert traffic.
@@ -22,7 +35,8 @@ continuation and clean 32k profiles request an eight-hour minimum runtime.
   LM block recomputation on B300 while retaining vision and connector checkpointing.
 - `stage1_ep8_2node_real_32k_b300.yaml` starts a clean 32,000-step run from the native s002
   language checkpoint and pinned pristine SigLIP2 tower. It uses the corrected data layout,
-  sixteen-crop packing budget, 32k LR horizon, and the same B300 recomputation optimization.
+  released nine-crop packing constraint, 32k LR horizon, and the same B300 recomputation
+  optimization.
 
 Inspect the fully merged configuration without submitting:
 

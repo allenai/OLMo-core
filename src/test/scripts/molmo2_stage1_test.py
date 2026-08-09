@@ -33,11 +33,13 @@ def test_s002_stage1_uses_olmo_ddp_ep8_and_trains_all_components():
         rank_microbatch_size=64,
         ep_degree=8,
         compile_model=False,
+        image_token_ids=[120, 121],
     )
 
     assert config.dp_config.name == DataParallelType.ddp
     assert config.ep_config.degree == 8
-    assert config.freeze_params is None
+    assert config.freeze_params == ["lm.lm_head.w_out.weight"]
+    assert config.train_embedding_rows == [120, 121]
     assert config.vision_activation_checkpointing
     assert config.connector_activation_checkpointing
     assert config.response_logits_only
@@ -45,9 +47,11 @@ def test_s002_stage1_uses_olmo_ddp_ep8_and_trains_all_components():
 
     overrides = {tuple(group.params): group.opts for group in config.optim.group_overrides}
     assert overrides[("*connector.*",)]["lr"] == stage1.CONNECTOR_LR
+    assert overrides[("*lm.embeddings.weight",)]["lr"] == stage1.CONNECTOR_LR
     assert overrides[("*vision.*",)]["lr"] == stage1.VISION_LR
     assert config.optim.lr == stage1.LLM_LR
     assert config.optim.sigma_factor == 12
+    assert config.optim.clip_grad_norm_by_scheduler_group
     assert config.dp_config.reduce_grads_in_fp32
     assert config.dp_config.accumulate_grads_in_fp32
 
@@ -59,10 +63,16 @@ def test_s002_stage1_optimizer_groups_cover_lm_connector_and_vision():
         rank_microbatch_size=64,
         ep_degree=1,
         compile_model=False,
+        image_token_ids=[120, 121],
     )
     model = nn.ModuleDict(
         {
-            "lm": nn.Linear(4, 4),
+            "lm": nn.ModuleDict(
+                {
+                    "embeddings": nn.Embedding(128, 4),
+                    "body": nn.Linear(4, 4),
+                }
+            ),
             "connector": nn.Linear(4, 4),
             "vision": nn.Linear(4, 4),
         }
@@ -72,7 +82,13 @@ def test_s002_stage1_optimizer_groups_cover_lm_connector_and_vision():
     grouped_names = {name: group for group in groups for name in group["named_params"]}
 
     assert set(grouped_names) == dict(model.named_parameters()).keys()
-    assert all("lr" not in grouped_names[name] for name in grouped_names if name.startswith("lm."))
+    assert grouped_names["lm.embeddings.weight"]["lr"] == stage1.CONNECTOR_LR
+    assert grouped_names["lm.embeddings.weight"]["scheduler_name"] == "connector"
+    assert all(
+        "lr" not in grouped_names[name]
+        for name in grouped_names
+        if name.startswith("lm.") and name != "lm.embeddings.weight"
+    )
     assert all(
         grouped_names[name]["lr"] == stage1.CONNECTOR_LR
         and grouped_names[name]["scheduler_name"] == "connector"
@@ -87,6 +103,24 @@ def test_s002_stage1_optimizer_groups_cover_lm_connector_and_vision():
     )
 
 
+def test_s002_stage1_can_override_only_routed_expert_adam_epsilon():
+    stage1 = _load_stage1_module()
+    train_module = stage1._build_train_module_config(
+        sequence_length=64,
+        rank_microbatch_size=64,
+        ep_degree=1,
+        compile_model=False,
+        image_token_ids=[120, 121],
+    )
+    config = SimpleNamespace(routed_expert_eps=1e-8, train_module=train_module)
+
+    stage1._configure_routed_expert_epsilon(config)
+
+    override = train_module.optim.group_overrides[-1]
+    assert override.params == ["*lm.blocks.*.routed_experts.*"]
+    assert override.opts == {"eps": 1e-8}
+
+
 def test_s002_stage1_matches_released_molmo2_scale_defaults():
     stage1 = _load_stage1_module()
 
@@ -97,7 +131,7 @@ def test_s002_stage1_matches_released_molmo2_scale_defaults():
     assert stage1.ExperimentConfig.__dataclass_fields__["data_seed"].default == 95818
     assert stage1.ExperimentConfig.__dataclass_fields__["init_seed"].default == 6198
     assert stage1.PACK_BUFFER_SIZE == 48
-    assert stage1.PACK_MAX_CROPS == 16
+    assert stage1.PACK_MAX_CROPS == 9
     assert stage1.DATA_PREFETCH_WORKERS == 8
     assert (
         stage1.ExperimentConfig.__dataclass_fields__["data_prefetch_workers"].default
@@ -189,6 +223,7 @@ def test_stage1_console_includes_multimodal_diagnostics():
     assert "data/*" in logger.metrics
     assert "multimodal/*" in logger.metrics
     assert "optim/* grad norm" in logger.metrics
+    assert "optim/* clip coefficient" in logger.metrics
 
 
 def test_stage1_validation_matches_released_loader_seed_without_reseeding_augmentation(
@@ -259,7 +294,9 @@ def test_stage1_fast_vision_validation_uses_held_out_task_splits(monkeypatch):
     stage1 = _load_stage1_module()
     captured = {"loaders": [], "evaluators": []}
 
-    base_dataset = stage1.PixMoCapDatasetConfig(dataset_path="synthetic")
+    base_dataset = stage1.PixMoCapDatasetConfig(
+        dataset_path="synthetic", message_format="olmo3_chat"
+    )
     monkeypatch.setattr(stage1.PixMoCapDatasetConfig, "build", lambda self, tokenizer: self)
     monkeypatch.setattr(stage1.PixMoCountDatasetConfig, "build", lambda self, tokenizer: self)
     monkeypatch.setattr(stage1.PixMoPointsDatasetConfig, "build", lambda self, tokenizer: self)
@@ -315,10 +352,46 @@ def test_stage1_fast_vision_validation_uses_held_out_task_splits(monkeypatch):
     assert datasets[0].mode == "caption"
     assert datasets[1].counting == "both"
     assert datasets[2].kind == "basic"
+    assert all(dataset.message_format == "olmo3_chat" for dataset in datasets)
     assert all(kwargs["shuffle"] is False for _, kwargs in captured["loaders"])
     assert captured["callback_name"] == "fast_vision_validation"
     assert captured["callback_kwargs"]["eval_interval"] == 2000
     assert captured["callback_kwargs"]["eval_duration"] == stage1.Duration.steps(32)
+
+
+def test_stage1_mixture_propagates_message_format_to_every_source(monkeypatch):
+    stage1 = _load_stage1_module()
+    created = []
+
+    class DatasetConfig:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        def build(self, tokenizer):
+            return [object()]
+
+    for name in (
+        "PixMoPointsDatasetConfig",
+        "PixMoCountDatasetConfig",
+        "CoSynPointDatasetConfig",
+        "Tulu4DatasetConfig",
+    ):
+        monkeypatch.setattr(stage1, name, DatasetConfig)
+
+    dataset = SimpleNamespace(
+        build=lambda tokenizer: [object()],
+        max_sequence_length=stage1.SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+        token_ids=object(),
+        message_format="olmo3_chat",
+    )
+    config = SimpleNamespace(dataset=dataset, pointing_rate=0.3, nlp_rate=0.1)
+
+    _, weights, _ = stage1._build_mixture_sources(object(), config)
+
+    assert sum(weights) == pytest.approx(1.0)
+    assert len(created) == 5
+    assert all(kwargs["message_format"] == "olmo3_chat" for kwargs in created)
 
 
 def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypatch):
@@ -449,6 +522,50 @@ def test_stage1_pilot_is_an_exact_prefix_of_the_production_schedule():
     assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
     assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
     assert "--train_module.scheduler.default.t_max=32000" in overrides
+
+
+@pytest.mark.parametrize(
+    "profile_name,num_nodes,rank_microbatch_size",
+    [
+        ("stage1_ep8_1node_real_200step_micro8.yaml", 1, 20_480),
+        ("stage1_ep8_1node_real_200step_micro16_recompute.yaml", 1, 40_960),
+        ("stage1_ep8_2node_real_200step_micro8.yaml", 2, 20_480),
+    ],
+)
+def test_stage1_rerisk_topology_gates_hold_every_non_topology_control_fixed(
+    profile_name, num_nodes, rank_microbatch_size
+):
+    stage1 = _load_stage1_module()
+    profile_path = Path(__file__).parents[3] / "configs" / "vision_moe" / profile_name
+
+    profile, overrides = stage1._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": num_nodes,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    assert "--dataset.message_format=document" in overrides
+    assert "--pack_max_crops=9" in overrides
+    assert f"--train_module.rank_microbatch_size={rank_microbatch_size}" in overrides
+    assert "--train_module.diagnostics_interval=10" in overrides
+    assert "--trainer.load_strategy=never" in overrides
+    assert "--trainer.max_duration.value=200" in overrides
+    assert "--train_module.scheduler.schedulers.connector.t_max=32000" in overrides
+    assert "--train_module.scheduler.schedulers.vision.t_max=32000" in overrides
+    assert "--train_module.scheduler.default.t_max=32000" in overrides
+    assert "--eval_interval=200" in overrides
+    assert "--fast_vision_eval_interval=200" in overrides
+    assert "--fast_language_eval_interval=200" in overrides
+    expected_recompute = "true" if num_nodes == 1 else "false"
+    assert f"--model.lm.recompute_each_block={expected_recompute}" in overrides
+    assert not any(override.startswith("--base_checkpoint=") for override in overrides)
+    assert not any(override.startswith("--routed_expert_eps=") for override in overrides)
 
 
 def test_stage1_clean_b300_run_uses_the_full_32k_horizon():

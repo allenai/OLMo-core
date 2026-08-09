@@ -78,6 +78,13 @@ def _mm_train_verbose_logs() -> bool:
     return os.environ.get("MM_TRAIN_VERBOSE_LOGS", "0").lower() in ("1", "true", "yes")
 
 
+def _retain_embedding_gradient_rows(grad: torch.Tensor, row_ids: Tuple[int, ...]) -> torch.Tensor:
+    """Return an embedding gradient with only ``row_ids`` retained."""
+    row_mask = torch.zeros((grad.shape[0], 1), dtype=grad.dtype, device=grad.device)
+    row_mask[list(row_ids)] = 1
+    return grad * row_mask
+
+
 class MultimodalTransformerTrainModule(TransformerTrainModule):
     """A :class:`TrainModule` for :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training."""
 
@@ -557,6 +564,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         connector_activation_checkpointing: bool = False,
         response_logits_only: bool = False,
         diagnostics_interval: Optional[int] = None,
+        train_embedding_rows: Optional[List[int]] = None,
         **kwargs,
     ):
         from olmo_core.nn.vision import MultimodalOLMoDDPModel
@@ -592,6 +600,9 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 len(frozen),
                 self.freeze_params,
             )
+        self.train_embedding_rows = tuple(sorted(train_embedding_rows or []))
+        if len(self.train_embedding_rows) != len(set(self.train_embedding_rows)):
+            raise OLMoConfigurationError("train_embedding_rows must contain unique IDs")
         if vision_activation_checkpointing:
             model.vision.apply_activation_checkpointing()
             log.info("Applied activation checkpointing to the vision encoder")
@@ -601,6 +612,40 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self.response_logits_only = response_logits_only
         self.diagnostics_interval = diagnostics_interval
         super().__init__(model, *args, **kwargs)
+
+        # OLMoDDP materializes meta-device weights inside ``super().__init__`` with ``to_empty``,
+        # which replaces Parameter objects. Install gradient hooks only on the final materialized
+        # parameters so they run before MultiGroupDDP's post-accumulate FP32 reduction hooks.
+        materialized_lm = self.multimodal_model.lm
+        self._embedding_grad_hook = None
+        if self.train_embedding_rows:
+            embeddings = materialized_lm.embeddings
+            if embeddings is None:
+                raise OLMoConfigurationError("train_embedding_rows requires LM embeddings")
+            if self.train_embedding_rows[0] < 0 or self.train_embedding_rows[-1] >= int(
+                embeddings.weight.shape[0]
+            ):
+                raise OLMoConfigurationError(
+                    "train_embedding_rows contains an ID outside the LM embedding table"
+                )
+            if not embeddings.weight.requires_grad:
+                raise OLMoConfigurationError(
+                    "The LM embedding parameter must remain trainable when row masking is enabled"
+                )
+            if (
+                materialized_lm.lm_head is not None
+                and materialized_lm.lm_head.w_out.weight is embeddings.weight
+            ):
+                raise OLMoConfigurationError(
+                    "Row-masked image embeddings require untied LM input and output weights"
+                )
+            self._embedding_grad_hook = embeddings.weight.register_hook(
+                lambda grad: _retain_embedding_gradient_rows(grad, self.train_embedding_rows)
+            )
+            log.info(
+                "Restricted LM input-embedding gradients to rows %s",
+                self.train_embedding_rows,
+            )
 
     @property
     def multimodal_model(self):
@@ -795,7 +840,21 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 {
                     "vision": ("vision.*", "*vision.*"),
                     "connector": ("connector.*", "*connector.*"),
-                    "language model": ("lm.*", "*lm.*"),
+                    "input embeddings": ("lm.embeddings.weight", "*lm.embeddings.weight"),
+                    "LM attention": ("lm.blocks.*.attention.*", "*lm.blocks.*.attention.*"),
+                    "LM routed experts": (
+                        "lm.blocks.*.routed_experts.*",
+                        "*lm.blocks.*.routed_experts.*",
+                    ),
+                    "LM shared experts": (
+                        "lm.blocks.*.shared_experts.*",
+                        "*lm.blocks.*.shared_experts.*",
+                    ),
+                    "LM routers": (
+                        "lm.blocks.*.routed_experts_router.*",
+                        "*lm.blocks.*.routed_experts_router.*",
+                    ),
+                    "LM normalization": ("lm.*norm*", "*lm.*norm*"),
                 }
             )
         try:
@@ -804,6 +863,30 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 for component, value in optim.latest_component_grad_norms.items():
                     self.record_metric(
                         f"{component} grad norm",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+                for group_name, value in optim.latest_clip_group_grad_norms.items():
+                    component = (
+                        "language model"
+                        if group_name == optim.DEFAULT_CLIP_GROUP_NAME
+                        else group_name
+                    )
+                    self.record_metric(
+                        f"{component} clip group grad norm",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+                for group_name, value in optim.latest_clip_group_coefficients.items():
+                    component = (
+                        "language model"
+                        if group_name == optim.DEFAULT_CLIP_GROUP_NAME
+                        else group_name
+                    )
+                    self.record_metric(
+                        f"{component} clip coefficient",
                         value,
                         reduce_type=None,
                         namespace="optim",
@@ -954,8 +1037,17 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self.optim._check_model_param_main_param_the_same(vision_param_names)
 
     @torch.no_grad()
-    def reset_image_token_rows(self, token_ids: List[int], *, seed: int) -> None:
-        """Initialize newly assigned image-token rows and update optimizer main state."""
+    def reset_image_token_rows(
+        self, token_ids: List[int], *, seed: int, reset_output_rows: bool = True
+    ) -> None:
+        """Initialize newly assigned image-token rows and update optimizer main state.
+
+        :param token_ids: Input-embedding row IDs to initialize.
+        :param seed: Initialization seed.
+        :param reset_output_rows: Also initialize the same untied LM-head rows. This must remain
+            false when adapting s002 because its padded output rows already participated in the
+            native pretraining softmax.
+        """
         if not token_ids or len(set(token_ids)) != len(token_ids):
             raise ValueError("token_ids must be a non-empty list of unique IDs")
 
@@ -986,7 +1078,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         row_index = torch.tensor(token_ids, device=self.device, dtype=torch.long)
         lm.embeddings.weight.index_copy_(0, row_index, embedding_rows.weight)
 
-        if lm.lm_head.w_out.weight is not lm.embeddings.weight:
+        if reset_output_rows and lm.lm_head.w_out.weight is not lm.embeddings.weight:
             output_rows = torch.nn.Linear(
                 lm.d_model,
                 row_count,
@@ -1007,7 +1099,8 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             name
             for group in optim.param_groups
             for name, param in group["named_params"].items()
-            if param is lm.embeddings.weight or param is lm.lm_head.w_out.weight
+            if param is lm.embeddings.weight
+            or (reset_output_rows and param is lm.lm_head.w_out.weight)
         }
         optim._copy_model_param_rows_to_main_params(reset_params, token_ids)
 
@@ -1022,6 +1115,28 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 stripped.removeprefix("lm."), checkpoint_keys
             )
         return None
+
+    def _frozen_checkpoint_param_state_dict_for_load(self, checkpoint_keys):
+        """Load frozen multimodal parameters from stable or native optimizer-main keys.
+
+        Native s002 checkpoints predate ``frozen_model.*`` entries and store every model tensor
+        only as a flattened FP32 optimizer main parameter. A parameter frozen by the multimodal
+        recipe is absent from the current optimizer state, so explicitly map that native tensor
+        onto the frozen model parameter without routing trainable masters through BF16.
+        """
+        state = super()._frozen_checkpoint_param_state_dict_for_load(checkpoint_keys)
+        stable_prefix = self._FROZEN_MODEL_PARAM_KEY_PREFIX
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                if param.requires_grad:
+                    continue
+                stable_key = stable_prefix + self._strip_wrapper_prefixes(name)
+                if stable_key in state:
+                    continue
+                checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
+                if checkpoint_key is not None and checkpoint_key.endswith(".main"):
+                    state[checkpoint_key] = param.data.view(-1)
+        return state
 
     def _resolve_optimizer_checkpoint_key(self, state_key: str, checkpoint_keys) -> Optional[str]:
         checkpoint_key = super()._resolve_optimizer_checkpoint_key(state_key, checkpoint_keys)
@@ -1053,6 +1168,8 @@ class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
     connector_activation_checkpointing: bool = False
     response_logits_only: bool = False
     diagnostics_interval: Optional[int] = None
+    train_embedding_rows: Optional[List[int]] = None
+    """Embedding rows allowed to receive gradients; all other rows are held fixed."""
 
     def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
         return MultimodalOLMoDDPTrainModule(**kwargs)

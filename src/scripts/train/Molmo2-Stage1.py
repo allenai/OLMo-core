@@ -42,7 +42,7 @@ from olmo_core.data.multimodal import (
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.eval import MultimodalLMEvaluator
+from olmo_core.eval import Evaluator, MultimodalLMEvaluator
 from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
 from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
@@ -96,7 +96,9 @@ SEQUENCE_LENGTH = 2560  # released 32k Molmo2 stage-1 artifact sequence length
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples into each fixed-length training sequence
 PACK_BUFFER_SIZE = 48  # released Molmo2 dynamic-packing lookahead
-PACK_MAX_CROPS = 16  # released Molmo2 composite image/video packing budget
+# The released image-only artifact packs at most one global crop plus eight high-resolution
+# crops. The vendor's newer image/video path raises this to 16, which remains an explicit ablation.
+PACK_MAX_CROPS = 9
 ROUTER_LB_LOSS_WEIGHT: Optional[float] = 0.015  # native s002 pretraining objective
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 8  # B300 gate: prevents deterministic packing-stream load stalls
@@ -132,9 +134,9 @@ FAST_LANGUAGE_EVAL_TASKS = (
 # (The other mm_olmo delta, the `style_and_length_v2` length conditioning, IS implemented;
 # see PixMoCapDataset.style_length_conditioning.)
 
-# Instance-based batching, expressed in tokens. Keep released Molmo2's global batch 128 and
-# device microbatch 4. On the two-node EP8 topology this gives each rank eight sequences in two
-# microbatches, while increasing the routed-token population per forward toward s002 pretraining.
+# Instance-based batching, expressed in tokens. The default preserves released Molmo2's global
+# batch 128 and device microbatch 4. Controlled topology profiles raise the per-forward sequence
+# count independently when testing a routing population closer to s002 pretraining.
 GLOBAL_BATCH_INSTANCES = 128
 RANK_MICROBATCH_INSTANCES = 4
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
@@ -212,6 +214,8 @@ class ExperimentConfig(Config):
     """Background data-preprocessing threads per rank; zero disables prefetching."""
     router_lb_loss_weight: Optional[float] = ROUTER_LB_LOSS_WEIGHT
     """Stage-1 router load-balancing weight; defaults to the native s002 value."""
+    routed_expert_eps: Optional[float] = None
+    """Optional Adam epsilon override for routed-expert weights only."""
     eval_interval: Optional[int] = EVAL_INTERVAL
     """Run held-out PixMoCap loss/PPL every this many steps; ``None`` disables it."""
     eval_examples: int = EVAL_EXAMPLES
@@ -242,6 +246,25 @@ def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> int:
     if configured == 0:
         raise ValueError("The s002 Stage-1 language model has no routed-expert router configs")
     return configured
+
+
+def _configure_routed_expert_epsilon(config: ExperimentConfig) -> None:
+    """Optionally restore s002's Adam epsilon on sparse expert weights only."""
+    eps = config.routed_expert_eps
+    if eps is None:
+        return
+    if eps <= 0:
+        raise ValueError("routed_expert_eps must be positive or None")
+    overrides = list(config.train_module.optim.group_overrides or [])
+    overrides.append(
+        OptimGroupOverride(
+            params=["*lm.blocks.*.routed_experts.*"],
+            # No scheduler name is intentional: routed experts stay in the logical LM clip and
+            # scheduler group while receiving only the numerical Adam-epsilon override.
+            opts=dict(eps=eps),
+        )
+    )
+    config.train_module.optim.group_overrides = overrides
 
 
 def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
@@ -298,7 +321,29 @@ def _build_train_module_config(
     rank_microbatch_size: int = RANK_MICROBATCH_SIZE,
     ep_degree: int = EP_DEGREE,
     compile_model: bool = COMPILE_MODEL,
+    image_token_ids: Optional[List[int]] = None,
 ) -> MultimodalOLMoDDPTrainModuleConfig:
+    group_overrides = [
+        OptimGroupOverride(
+            params=["*connector.*"],
+            opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+        ),
+        OptimGroupOverride(
+            params=["*vision.*"],
+            opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
+        ),
+    ]
+    if image_token_ids:
+        # Released Molmo2 puts its input-only image embeddings in the connector optimizer.
+        # s002 has spare rows in one monolithic table, so retain only those row gradients while
+        # assigning the complete parameter to the same connector scheduler group.
+        group_overrides.insert(
+            0,
+            OptimGroupOverride(
+                params=["*lm.embeddings.weight"],
+                opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+            ),
+        )
     return MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=rank_microbatch_size,
         max_sequence_length=sequence_length,
@@ -307,24 +352,19 @@ def _build_train_module_config(
             betas=(0.9, 0.95),
             eps=1e-6,
             weight_decay=0.0,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["*connector.*"],
-                    opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
-                ),
-                OptimGroupOverride(
-                    params=["*vision.*"],
-                    opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
-                ),
-            ],
+            group_overrides=group_overrides,
             compile=False,
             foreach_chunk_size=50_000_000,
             sigma_factor=12,
             max_grad_norm=1.0,
+            clip_grad_norm_by_scheduler_group=True,
             check_nan_inf_grad=True,
             use_distributed=True,
         ),
-        freeze_params=None,
+        # Released Molmo2 ties its LM output classifier to the frozen base input table while
+        # leaving the final norm trainable. s002 is untied, so freeze only the output projection.
+        freeze_params=["lm.lm_head.w_out.weight"],
+        train_embedding_rows=image_token_ids,
         vision_activation_checkpointing=True,
         connector_activation_checkpointing=True,
         response_logits_only=True,
@@ -387,6 +427,7 @@ def _build_console_logger() -> ConsoleLoggerCallback:
             "data/*",
             "multimodal/*",
             "optim/* grad norm",
+            "optim/* clip coefficient",
         ]
     )
     return callback
@@ -419,7 +460,15 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         pad_sequence_length=SEQUENCE_LENGTH,
     )
 
-    train_module_config = _build_train_module_config()
+    image_token_ids = [
+        token_ids.im_start_id,
+        token_ids.im_end_id,
+        token_ids.im_patch_id,
+        token_ids.im_col_id,
+        token_ids.low_res_im_start_id,
+        token_ids.image_placeholder_id,
+    ]
+    train_module_config = _build_train_module_config(image_token_ids=image_token_ids)
 
     trainer_config = (
         TrainerConfig(
@@ -483,6 +532,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         trainer=trainer_config,
         launch=launch_config,
     ).merge(overrides)
+    _configure_routed_expert_epsilon(config)
     configured_routers = _configure_router_load_balancing(
         config.model.lm, config.router_lb_loss_weight
     )
@@ -598,22 +648,26 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
+                message_format=config.dataset.message_format,
             ).build(tokenizer),
             PixMoCountDatasetConfig(
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
+                message_format=config.dataset.message_format,
             ).build(tokenizer),
             PixMoPointsDatasetConfig(
                 kind="high_frequency",
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
+                message_format=config.dataset.message_format,
             ).build(tokenizer),
             CoSynPointDatasetConfig(
                 max_crops=MAX_CROPS,
                 loss_token_weighting=config.dataset.loss_token_weighting,
                 token_ids=config.dataset.token_ids,
+                message_format=config.dataset.message_format,
             ).build(tokenizer),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
@@ -640,6 +694,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                     max_sequence_length=config.dataset.max_sequence_length,
                     loss_token_weighting=config.dataset.loss_token_weighting,
                     token_ids=config.dataset.token_ids,
+                    message_format=config.dataset.message_format,
                 ).build(tokenizer),
                 n,
             )
@@ -751,13 +806,14 @@ def _add_fast_vision_validation_callback(
         )
     eval_batches = config.fast_vision_eval_examples // global_eval_instances
 
-    common = {
+    common: Dict[str, Any] = {
         "max_crops": config.dataset.max_crops,
         "loss_token_weighting": config.dataset.loss_token_weighting,
         "token_ids": config.dataset.token_ids,
+        "message_format": config.dataset.message_format,
         "seed": config.dataset.seed,
     }
-    dataset_configs = [
+    dataset_configs: List[Tuple[str, Any]] = [
         (
             "pixmo-cap-caption-validation",
             replace(config.dataset, split="validation", mode="caption"),
@@ -772,7 +828,7 @@ def _add_fast_vision_validation_callback(
         ),
     ]
 
-    evaluators = []
+    evaluators: List[Evaluator] = []
     for name, dataset_config in dataset_configs:
         loader = MultimodalDataLoader(
             dataset_config.build(tokenizer),
@@ -896,8 +952,9 @@ def train(config: ExperimentConfig):
     train_module.assert_vision_optimizer_state_synced()
     del hf_vision_state, vision_state
 
-    # The six image-format tokens occupy previously padded s002 vocabulary rows. Reset both
-    # embedding and LM-head rows, then synchronize those changes into optimizer main state.
+    # The six image-format tokens occupy previously padded s002 input-embedding rows. The
+    # corresponding untied output rows participated as negative classes during pretraining, so
+    # preserve them exactly and reset only the input rows.
     train_module.reset_image_token_rows(
         [
             token_ids.im_start_id,
@@ -908,6 +965,7 @@ def train(config: ExperimentConfig):
             token_ids.image_placeholder_id,
         ],
         seed=config.init_seed,
+        reset_output_rows=False,
     )
 
     collator = config.collator.build()

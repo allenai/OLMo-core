@@ -8,6 +8,7 @@ harness is exposed as a single logical replica even when ``torchrun`` has many r
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import logging
 import os
@@ -43,6 +44,14 @@ from olmo_core.train import prepare_training_environment, teardown_training_envi
 log = logging.getLogger(__name__)
 
 _IMAGE_MARKER = re.compile(r"<image(?:\s+\d+)?>", flags=re.IGNORECASE)
+_PROMPT_LAYOUTS = ("document", "text_sft", "answer_cue", "bare_chat")
+_RESPONSE_MODES = ("generate", "letter_logits", "option_text_mean", "option_text_sum")
+
+
+def _set_model_parts_eval(train_module) -> None:
+    """Put every sharded model part into deterministic evaluation mode."""
+    for model_part in train_module.model_parts:
+        model_part.eval()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -65,11 +74,20 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--response-mode",
-        choices=("generate", "letter_logits"),
+        choices=_RESPONSE_MODES,
         default="generate",
         help=(
-            "Use normal greedy generation, or score the ten option letters with a single "
-            "forward pass. The latter is practical for pre-SFT checkpoints without a KV cache."
+            "Use normal greedy generation, score the ten option letters with one forward, "
+            "or compare full option-text log likelihoods with mean/sum normalization."
+        ),
+    )
+    parser.add_argument(
+        "--prompt-layout",
+        choices=_PROMPT_LAYOUTS,
+        default="document",
+        help=(
+            "Diagnostic prompt interface. 'document' is the unchanged Stage-1 default; "
+            "the other layouts test text-SFT, completion-cue, and bare role-header calibration."
         ),
     )
     parser.add_argument(
@@ -131,6 +149,51 @@ def _clean_context(context: str) -> str:
     return _IMAGE_MARKER.sub("", context).strip()
 
 
+def _prompt_ids_for_layout(
+    tokenizer,
+    context: str,
+    image_ids: Sequence[int],
+    *,
+    layout: str,
+) -> List[int]:
+    """Build one of the explicitly diagnostic s002 MMMU prompt layouts."""
+    if layout == "document":
+        return document_prompt_ids(tokenizer, context, image_ids=image_ids)
+    if layout == "text_sft":
+        return document_prompt_ids(tokenizer, f"text_sft: {context}", image_ids=image_ids)
+    if layout == "answer_cue":
+        return document_prompt_ids(tokenizer, f"{context}\nAnswer:", image_ids=image_ids)
+    if layout == "bare_chat":
+        user_header = tokenizer.encode("<|im_start|>user\n", add_special_tokens=False)
+        assistant_suffix = tokenizer.encode(
+            f"{context}<|im_end|>\n<|im_start|>assistant\n",
+            add_special_tokens=False,
+        )
+        return [*user_header, *image_ids, *assistant_suffix]
+    raise ValueError(f"Unknown prompt layout {layout!r}")
+
+
+def _candidate_ids_for_layout(tokenizer, text: str, *, layout: str) -> List[int]:
+    """Tokenize a candidate exactly where the selected prompt expects a response."""
+    if layout == "bare_chat":
+        return tokenizer.encode(text, add_special_tokens=False)
+    if layout in _PROMPT_LAYOUTS:
+        return response_ids(tokenizer, text)
+    raise ValueError(f"Unknown prompt layout {layout!r}")
+
+
+def _parse_option_texts(doc: Dict[str, Any]) -> List[str]:
+    """Parse MMMU-Pro's string-serialized option list without accepting other literals."""
+    raw_options = doc.get("options")
+    if isinstance(raw_options, str):
+        raw_options = ast.literal_eval(raw_options)
+    if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 10:
+        raise ValueError("MMMU-Pro options must be a list containing between 2 and 10 entries")
+    if not all(isinstance(option, str) and option for option in raw_options):
+        raise ValueError("Every MMMU-Pro option must be a non-empty string")
+    return raw_options
+
+
 def _build_adapter_class():
     from lmms_eval.api.instance import GenerationResult, TokenCounts
     from lmms_eval.api.model import lmms
@@ -149,6 +212,8 @@ def _build_adapter_class():
             max_new_tokens: int | None,
             sequence_bucket_size: int,
             response_mode: str,
+            prompt_layout: str,
+            text_vocab_size: int,
         ) -> None:
             super().__init__()
             self.train_module = train_module
@@ -160,10 +225,15 @@ def _build_adapter_class():
             self.max_new_tokens_override = max_new_tokens
             self.sequence_bucket_size = sequence_bucket_size
             self.response_mode = response_mode
+            self.prompt_layout = prompt_layout
+            self.text_vocab_size = text_vocab_size
             # Stage 1 uses Molmo's role-free message format, where every response is the second
             # message and therefore begins with one space. Score the tokens the model was trained
             # to predict, not the bare Qwen-style option letters.
-            option_encodings = [response_ids(self.tokenizer, letter) for letter in "ABCDEFGHIJ"]
+            option_encodings = [
+                _candidate_ids_for_layout(self.tokenizer, letter, layout=self.prompt_layout)
+                for letter in "ABCDEFGHIJ"
+            ]
             if any(len(encoding) != 1 for encoding in option_encodings):
                 raise ValueError("Each MMMU-Pro option letter must encode to one token")
             self.option_token_ids = [encoding[0] for encoding in option_encodings]
@@ -241,10 +311,15 @@ def _build_adapter_class():
 
         def _prompt_ids(self, context: str, image_ids: Sequence[int]) -> List[int]:
             context = _clean_context(context)
-            return document_prompt_ids(self.tokenizer, context, image_ids=image_ids)
+            return _prompt_ids_for_layout(
+                self.tokenizer,
+                context,
+                image_ids,
+                layout=self.prompt_layout,
+            )
 
         def _generation_length(self, generation_kwargs: Dict[str, Any]) -> int:
-            if self.response_mode == "letter_logits":
+            if self.response_mode != "generate":
                 return 1
             value = self.max_new_tokens_override
             if value is None:
@@ -259,24 +334,20 @@ def _build_adapter_class():
             ) * self.sequence_bucket_size
             return min(rounded, self.max_sequence_length)
 
-        def _generate_one(
+        def _build_inputs(
             self,
-            context: str,
-            generation_kwargs: Dict[str, Any],
-            visuals: Sequence[Any],
-        ) -> GenerationResult:
-            images, pooling, image_ids = self._prepare_images(visuals)
-            prompt_ids = self._prompt_ids(context, image_ids)
-            max_new_tokens = self._generation_length(generation_kwargs)
-            required = len(prompt_ids) + max_new_tokens
+            prompt_ids: Sequence[int],
+            image_ids: Sequence[int],
+            *,
+            suffix_ids: Sequence[int] = (),
+        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            required = len(prompt_ids) + len(suffix_ids)
             if required > self.max_sequence_length:
                 raise ValueError(
-                    f"MMMU-Pro request needs {required} tokens ({len(prompt_ids)} prompt + "
-                    f"{max_new_tokens} generation), exceeding --max-sequence-length="
-                    f"{self.max_sequence_length}. Reduce --max-crops-total or the smoke-only "
-                    "--max-new-tokens override; prompt truncation is intentionally disabled."
+                    f"MMMU-Pro request needs {required} tokens, exceeding "
+                    f"--max-sequence-length={self.max_sequence_length}. Reduce "
+                    "--max-crops-total; prompt and candidate truncation are disabled."
                 )
-
             buffer_length = self._buffer_length(required)
             pad_token_id = self.tokenizer.pad_token_id
             if pad_token_id is None:
@@ -290,12 +361,86 @@ def _build_adapter_class():
                 dtype=torch.long,
                 device=self.device,
             )
-            input_ids[0, : len(prompt_ids)] = torch.tensor(prompt_ids, device=self.device)
+            full_ids = [*prompt_ids, *suffix_ids]
+            input_ids[0, :required] = torch.tensor(full_ids, device=self.device)
             token_type_ids = torch.zeros_like(input_ids)
             prompt_tensor = input_ids[0, : len(prompt_ids)]
             for image_token_id in self.token_ids.image_token_ids:
                 token_type_ids[0, : len(prompt_ids)] |= prompt_tensor.eq(image_token_id)
             position_ids = torch.arange(buffer_length, device=self.device).unsqueeze(0)
+            return input_ids, token_type_ids, position_ids
+
+        def _score_option_texts(
+            self,
+            prompt_ids: Sequence[int],
+            image_ids: Sequence[int],
+            option_texts: Sequence[str],
+            encoded_features: torch.Tensor | None,
+        ) -> int:
+            scores: List[torch.Tensor] = []
+            for option_text in option_texts:
+                candidate_ids = _candidate_ids_for_layout(
+                    self.tokenizer,
+                    option_text,
+                    layout=self.prompt_layout,
+                )
+                if not candidate_ids:
+                    raise ValueError("An MMMU-Pro option tokenized to an empty sequence")
+                input_ids, token_type_ids, position_ids = self._build_inputs(
+                    prompt_ids,
+                    image_ids,
+                    suffix_ids=candidate_ids,
+                )
+                logits_positions = torch.arange(
+                    len(prompt_ids) - 1,
+                    len(prompt_ids) + len(candidate_ids) - 1,
+                    device=self.device,
+                ).unsqueeze(0)
+                logits = self.train_module.model_forward_no_pipeline(
+                    input_ids,
+                    encoded_image_features=encoded_features,
+                    token_type_ids=token_type_ids,
+                    position_ids=position_ids,
+                    logits_to_keep=logits_positions,
+                )
+                if not isinstance(logits, torch.Tensor):
+                    raise TypeError(f"Expected logits tensor, got {type(logits).__name__}")
+                targets = torch.tensor(candidate_ids, device=self.device).unsqueeze(0)
+                token_log_probs = (
+                    logits.float().log_softmax(dim=-1).gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+                )
+                if self.response_mode == "option_text_mean":
+                    scores.append(token_log_probs.mean())
+                elif self.response_mode == "option_text_sum":
+                    scores.append(token_log_probs.sum())
+                else:
+                    raise RuntimeError(f"Unexpected option-text mode {self.response_mode!r}")
+            return int(torch.stack(scores).argmax().item())
+
+        def _generate_one(
+            self,
+            context: str,
+            generation_kwargs: Dict[str, Any],
+            visuals: Sequence[Any],
+            option_texts: Sequence[str] | None = None,
+        ) -> GenerationResult:
+            images, pooling, image_ids = self._prepare_images(visuals)
+            prompt_ids = self._prompt_ids(context, image_ids)
+            max_new_tokens = self._generation_length(generation_kwargs)
+            required = len(prompt_ids) + max_new_tokens
+            if required > self.max_sequence_length:
+                raise ValueError(
+                    f"MMMU-Pro request needs {required} tokens ({len(prompt_ids)} prompt + "
+                    f"{max_new_tokens} generation), exceeding --max-sequence-length="
+                    f"{self.max_sequence_length}. Reduce --max-crops-total or the smoke-only "
+                    "--max-new-tokens override; prompt truncation is intentionally disabled."
+                )
+
+            input_ids, token_type_ids, position_ids = self._build_inputs(
+                prompt_ids,
+                image_ids,
+            )
+            buffer_length = int(input_ids.shape[1])
 
             encoded_features = None
             if images is not None:
@@ -303,6 +448,24 @@ def _build_adapter_class():
                     raise AssertionError("Image pooling indices are missing")
                 with torch.inference_mode():
                     encoded_features = self.model.encode_images(images, pooling)
+
+            if self.response_mode.startswith("option_text_"):
+                if option_texts is None:
+                    raise ValueError("Option-text scoring requires MMMU-Pro option strings")
+                option_index = self._score_option_texts(
+                    prompt_ids,
+                    image_ids,
+                    option_texts,
+                    encoded_features,
+                )
+                answer = chr(ord("A") + option_index)
+                return GenerationResult(
+                    text=answer,
+                    token_counts=TokenCounts(
+                        input_tokens=len(prompt_ids),
+                        output_tokens=1,
+                    ),
+                )
 
             until = generation_kwargs.get("until", [])
             if isinstance(until, str):
@@ -335,7 +498,11 @@ def _build_adapter_class():
                         option_index = int(logits[0, 0, option_ids].argmax(dim=-1).item())
                         next_token = self.option_token_ids[option_index]
                     else:
-                        next_token = int(logits[0, 0].argmax(dim=-1).item())
+                        # Native s002 trains against a model-padded output vocabulary, but its HF
+                        # text interface exports only tokenizer rows. Prevent greedy decoding from
+                        # emitting padded or image-only IDs while leaving training/log-likelihood
+                        # normalization over the native full vocabulary unchanged.
+                        next_token = int(logits[0, 0, : self.text_vocab_size].argmax(dim=-1).item())
 
                     # Fail loudly if nominally replicated EP/DP groups ever diverge.
                     if dist.is_initialized() and dist.get_world_size() > 1:
@@ -388,7 +555,17 @@ def _build_adapter_class():
                     visuals = []
                 elif not isinstance(visuals, list):
                     visuals = [visuals]
-                response = self._generate_one(context, generation_kwargs, visuals)
+                option_texts = (
+                    _parse_option_texts(doc)
+                    if self.response_mode.startswith("option_text_")
+                    else None
+                )
+                response = self._generate_one(
+                    context,
+                    generation_kwargs,
+                    visuals,
+                    option_texts=option_texts,
+                )
                 responses.append(response)
                 self.cache_hook.add_partial(
                     "generate_until", (context, generation_kwargs), response.text
@@ -415,8 +592,8 @@ def main() -> None:
         raise ValueError("--max-crops-total must be positive")
     if args.max_new_tokens is not None and args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be positive")
-    if args.response_mode == "letter_logits" and args.max_new_tokens is not None:
-        raise ValueError("--max-new-tokens is incompatible with --response-mode=letter_logits")
+    if args.response_mode != "generate" and args.max_new_tokens is not None:
+        raise ValueError("--max-new-tokens is only compatible with --response-mode=generate")
     if args.sequence_bucket_size <= 0:
         raise ValueError("--sequence-bucket-size must be positive")
     if args.limit is not None and args.limit <= 0:
@@ -473,6 +650,7 @@ def main() -> None:
             thread_count=args.checkpoint_load_threads,
             load_optim_state=False,
         )
+        _set_model_parts_eval(train_module)
 
         experiment = raw_config.get("experiment", raw_config)
         tokenizer_id = args.tokenizer or experiment.get("tokenizer_id") or DEFAULT_TOKENIZER
@@ -480,6 +658,7 @@ def main() -> None:
         tokenizer = GPT2Tokenizer.from_pretrained(tokenizer_id, cache_dir=hf_cache)
         model_vocab_size = int(raw_config["model"]["lm"]["vocab_size"])
         token_ids = prepare_molmo2_tokenizer(tokenizer, model_vocab_size=model_vocab_size)
+        text_vocab_size = min(token_ids.image_token_ids)
         serialized_token_ids = raw_config.get("dataset", {}).get("token_ids")
         if serialized_token_ids is not None:
             expected_token_ids = Molmo2TokenIds.from_dict(serialized_token_ids)
@@ -505,6 +684,8 @@ def main() -> None:
             max_new_tokens=args.max_new_tokens,
             sequence_bucket_size=args.sequence_bucket_size,
             response_mode=args.response_mode,
+            prompt_layout=args.prompt_layout,
+            text_vocab_size=text_vocab_size,
         )
 
         # The OLMo module is sharded with EP, not replicated data parallelism. lmms-eval's
@@ -559,13 +740,22 @@ def main() -> None:
                 "max_new_tokens_override": args.max_new_tokens,
                 "sequence_bucket_size": args.sequence_bucket_size,
                 "attention_backend": "flex",
-                "prompt_layout": "s002_dolma2_document",
-                "response_separator": "single_leading_space",
+                "prompt_layout": args.prompt_layout,
+                "response_separator": (
+                    "none_after_assistant_header"
+                    if args.prompt_layout == "bare_chat"
+                    else "single_leading_space"
+                ),
                 "response_mode": args.response_mode,
+                "text_vocab_size": text_vocab_size,
                 "generation": (
                     "single_forward_option_letter_logits"
                     if args.response_mode == "letter_logits"
-                    else "greedy_full_sequence_no_kv_cache"
+                    else (
+                        "full_option_text_log_likelihood"
+                        if args.response_mode.startswith("option_text_")
+                        else "greedy_full_sequence_no_kv_cache"
+                    )
                 ),
             },
             "lmms_eval": results,

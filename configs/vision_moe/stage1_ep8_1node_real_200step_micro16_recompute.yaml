@@ -1,0 +1,36 @@
+version: 1
+name: stage1-ep8-1node-real-200step-micro16-recompute
+description: >-
+  Fresh 200-step corrected Stage-1 topology gate on one Holmes node. Uses one
+  sixteen-sequence forward per rank with standard OLMo per-block recomputation, bringing the
+  expected valid routed-token population close to native s002's while holding the global batch,
+  data stream, seed, and 32k LR horizon fixed.
+launch:
+  num_nodes: 1
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --dataset.message_format=document
+  - --pack_max_crops=9
+  - --train_module.rank_microbatch_size=40960
+  - --train_module.diagnostics_interval=10
+  - --trainer.load_strategy=never
+  - --trainer.max_duration.value=200
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=32000
+  - --train_module.scheduler.schedulers.vision.t_max=32000
+  - --train_module.scheduler.default.t_max=32000
+  - --model.lm.recompute_each_block=true
+  - --eval_interval=200
+  - --eval_examples=512
+  - --fast_vision_eval_interval=200
+  - --fast_language_eval_interval=200
+  - --trainer.callbacks.wandb.group=s002-stage1-rerisk-topology-200
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=200
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --trainer.callbacks.checkpointer.max_checkpoints=1

@@ -30,7 +30,7 @@ from olmo_core.nn.vision import (
     VisionEncoderConfig,
     VisionEncoderType,
 )
-from olmo_core.optim import OLMoDDPOptimizerConfig
+from olmo_core.optim import OLMoDDPOptimizerConfig, OptimGroupOverride
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train import ReduceType
 from olmo_core.train.train_module import (
@@ -43,6 +43,18 @@ from olmo_core.train.train_module.transformer import (
     TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
 )
+from olmo_core.train.train_module.transformer.multimodal_train_module import (
+    _retain_embedding_gradient_rows,
+)
+
+
+def test_retain_embedding_gradient_rows_masks_every_other_row():
+    grad = torch.arange(20, dtype=torch.float32).reshape(5, 4)
+
+    masked = _retain_embedding_gradient_rows(grad, (1, 3))
+
+    torch.testing.assert_close(masked[[1, 3]], grad[[1, 3]], rtol=0, atol=0)
+    torch.testing.assert_close(masked[[0, 2, 4]], torch.zeros(3, 4), rtol=0, atol=0)
 
 
 def test_moe_v2_train_module_config_roundtrips():
@@ -250,12 +262,14 @@ def test_multimodal_olmo_ddp_config_and_native_checkpoint_aliases():
         vision_activation_checkpointing=True,
         connector_activation_checkpointing=True,
         response_logits_only=True,
+        train_embedding_rows=[120, 121],
     )
     restored = MultimodalOLMoDDPTrainModuleConfig.from_dict(config.as_dict())
     assert restored == config
     assert restored.vision_activation_checkpointing
     assert restored.connector_activation_checkpointing
     assert restored.response_logits_only
+    assert restored.train_embedding_rows == [120, 121]
 
     train_module = object.__new__(MultimodalOLMoDDPTrainModule)
     checkpoint_keys = {
@@ -296,6 +310,19 @@ def test_multimodal_checkpoint_frozen_params_can_become_trainable():
     assert model.vision.weight.requires_grad
     assert set(frozen_params) == {"frozen_model.vision.weight"}
     assert frozen_params["frozen_model.vision.weight"] is model.vision.weight
+
+    model.vision.weight.requires_grad_(False)
+    native_checkpoint_keys = {"lm.weight.main", "module.vision.weight.main"}
+    native_frozen_params = train_module._frozen_checkpoint_param_state_dict_for_load(
+        native_checkpoint_keys
+    )
+    assert set(native_frozen_params) == {"module.vision.weight.main"}
+    assert native_frozen_params["module.vision.weight.main"].shape == (4,)
+    assert (
+        native_frozen_params["module.vision.weight.main"].data_ptr()
+        == model.vision.weight.data_ptr()
+    )
+    model.vision.weight.requires_grad_(True)
 
     checkpoint_state, checkpoint_to_current = train_module._optimizer_state_dict_for_load(
         {
@@ -452,7 +479,9 @@ def _run_construct_ep():
     assert train_module.num_flops_per_token(seq_len=512) > 0
 
 
-def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: bool = False):
+def _run_multimodal_ep_step_impl(
+    *, freeze_vision: bool, padded_router_compile: bool = False, fp32_accum: bool = False
+):
     # The production Stage 1 model uses BF16 parameters backed by FP32 optimizer masters. Keep
     # the unfrozen test on that path so a post-optimizer vision load cannot silently regress.
     model_config = _tiny_multimodal_model_config(
@@ -477,36 +506,58 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
         optim=OLMoDDPOptimizerConfig(
             lr=1e-3,
             weight_decay=0.0,
+            group_overrides=[
+                OptimGroupOverride(
+                    params=["*connector.*", "*lm.embeddings.weight"],
+                    opts={"scheduler_name": "connector"},
+                ),
+                OptimGroupOverride(params=["*vision.*"], opts={"scheduler_name": "vision"}),
+            ],
             foreach_chunk_size=32,
             max_grad_norm=1.0,
+            clip_grad_norm_by_scheduler_group=True,
             check_nan_inf_grad=True,
         ),
-        freeze_params=["vision.*"] if freeze_vision else None,
+        freeze_params=(
+            ["vision.*", "lm.lm_head.w_out.weight"]
+            if freeze_vision
+            else ["lm.lm_head.w_out.weight"]
+        ),
         vision_activation_checkpointing=not freeze_vision,
         connector_activation_checkpointing=not freeze_vision,
         response_logits_only=True,
+        train_embedding_rows=[120, 121],
         compile_model=padded_router_compile,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.ddp,
             only_allreduce_last_microbatch=True,
-            accumulate_grads_in_fp32=False,
-            reduce_grads_in_fp32=False,
+            accumulate_grads_in_fp32=fp32_accum,
+            reduce_grads_in_fp32=fp32_accum,
         ),
         ep_config=TransformerExpertParallelConfig(degree=2),
     )
     train_module = config.build(model, device=torch.device("cuda"))
     multimodal = train_module.multimodal_model
 
-    train_module.reset_image_token_rows([120, 121], seed=19)
+    train_module.reset_image_token_rows([120, 121], seed=19, reset_output_rows=False)
     optim = train_module._require_optimizer()
     assert optim.foreach_chunk_size == 32
     optim._check_model_param_main_param_the_same()
+    lm_head_norm_name = next(
+        name
+        for group in optim.param_groups
+        for name, param in group["named_params"].items()
+        if param is multimodal.lm.lm_head.norm.weight
+    )
+    lm_head_norm_main_before = optim.states[f"{lm_head_norm_name}.main"].to_local().clone()
 
     if not freeze_vision:
         external_vision_state = {
-            name: tensor.detach().clone() + 0.125
-            if tensor.is_floating_point()
-            else tensor.detach().clone()
+            name: (
+                tensor.detach().clone() + 0.125
+                if tensor.is_floating_point()
+                else tensor.detach().clone()
+            )
             for name, tensor in multimodal.vision.state_dict().items()
         }
         train_module.load_vision_state_dict(external_vision_state)
@@ -533,6 +584,8 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     connector_before = [param.detach().clone() for param in connector_params]
     vision_before = [param.detach().clone() for param in vision_params]
     routed_before = [param.detach().clone() for param in routed_params]
+    embedding_before = multimodal.lm.embeddings.weight.detach().clone()
+    lm_head_before = multimodal.lm.lm_head.w_out.weight.detach().clone()
 
     rank = dist.get_rank()
     input_ids = torch.tensor([[120, 2 + rank, 4, 5, 6, 7, 8, 9]], device="cuda", dtype=torch.long)
@@ -555,17 +608,27 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     }
 
     train_module.zero_grads()
+    second_batch = {
+        name: value.clone() if isinstance(value, torch.Tensor) else value
+        for name, value in batch.items()
+    }
     if not freeze_vision:
         multimodal.set_input_diagnostics(True)
     train_module.train_batch(batch, dry_run=True)
+    if fp32_accum:
+        # Exercise the production FP32 accumulation buffer across two backwards before clipping
+        # and stepping. The embedding-row hook must mask every contributing microbatch.
+        train_module.train_batch(second_batch, dry_run=True)
+
+    def has_nonzero_grad(param):
+        grad = getattr(param, "_main_grad_fp32", None) if fp32_accum else param.grad
+        return grad is not None and torch.count_nonzero(grad) > 0
+
     if freeze_vision:
         assert all(param.grad is None for param in vision_params)
         assert not multimodal.vision.training
     else:
-        assert any(
-            param.grad is not None and torch.count_nonzero(param.grad) > 0
-            for param in vision_params
-        )
+        assert any(has_nonzero_grad(param) for param in vision_params)
         assert multimodal.vision.training
         diagnostics = multimodal.pop_input_diagnostics(
             reduce_across_process_group=True,
@@ -577,14 +640,16 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
             "spliced image embedding RMS",
         }
         assert all(torch.isfinite(value) and value > 0 for value in diagnostics.values())
-    assert any(
-        param.grad is not None and torch.count_nonzero(param.grad) > 0 for param in connector_params
-    )
-    assert any(
-        param.grad is not None and torch.count_nonzero(param.grad) > 0 for param in routed_params
-    )
+    assert any(has_nonzero_grad(param) for param in connector_params)
+    assert any(has_nonzero_grad(param) for param in routed_params)
     optim.latest_loss = torch.zeros((), device="cuda")
     optim.step()
+    expected_clip_groups = {optim.DEFAULT_CLIP_GROUP_NAME, "connector"}
+    if not freeze_vision:
+        expected_clip_groups.add("vision")
+    assert set(optim.latest_clip_group_grad_norms) == expected_clip_groups
+    assert set(optim.latest_clip_group_coefficients) == expected_clip_groups
+    assert all(torch.isfinite(value) for value in optim.latest_clip_group_coefficients.values())
     if not freeze_vision:
         assert set(optim.latest_component_grad_norms) == {
             "vision",
@@ -603,6 +668,19 @@ def _run_multimodal_ep_step_impl(*, freeze_vision: bool, padded_router_compile: 
     assert any(
         not torch.equal(param, before) for param, before in zip(routed_params, routed_before)
     )
+    ordinary_embedding_rows = torch.ones(multimodal.lm.vocab_size, dtype=torch.bool, device="cuda")
+    ordinary_embedding_rows[[120, 121]] = False
+    torch.testing.assert_close(
+        multimodal.lm.embeddings.weight[ordinary_embedding_rows],
+        embedding_before[ordinary_embedding_rows],
+        rtol=0,
+        atol=0,
+    )
+    assert not torch.equal(multimodal.lm.embeddings.weight[120], embedding_before[120])
+    torch.testing.assert_close(multimodal.lm.lm_head.w_out.weight, lm_head_before, rtol=0, atol=0)
+    assert not torch.equal(
+        optim.states[f"{lm_head_norm_name}.main"].to_local(), lm_head_norm_main_before
+    )
     if freeze_vision:
         for param, before in zip(vision_params, vision_before):
             torch.testing.assert_close(param, before, rtol=0, atol=0)
@@ -617,7 +695,7 @@ def _run_multimodal_ep_step():
 
 
 def _run_multimodal_ep_unfrozen_vision_step():
-    _run_multimodal_ep_step_impl(freeze_vision=False)
+    _run_multimodal_ep_step_impl(freeze_vision=False, fp32_accum=True)
 
 
 def _run_multimodal_ep_padded_compile_step():
@@ -654,13 +732,20 @@ def test_multimodal_olmo_ddp_ep_padding_compile_and_checkpoint_step():
     )
 
 
-def _build_multimodal_ddp_train_module_for_checkpoint(*, freeze_vision: bool = True):
+def _build_multimodal_ddp_train_module_for_checkpoint(
+    *, freeze_vision: bool = True, freeze_lm_head: bool = False
+):
     model = _tiny_multimodal_model_config(dtype=DType.bfloat16).build(init_device="meta")
+    freeze_params = []
+    if freeze_vision:
+        freeze_params.append("vision.*")
+    if freeze_lm_head:
+        freeze_params.append("lm.lm_head.w_out.weight")
     config = MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=8,
         max_sequence_length=8,
         optim=OLMoDDPOptimizerConfig(lr=1e-3),
-        freeze_params=["vision.*"] if freeze_vision else None,
+        freeze_params=freeze_params or None,
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
         ep_config=TransformerExpertParallelConfig(degree=2),
     )
@@ -690,7 +775,7 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, unfrozen_connector_before[name], rtol=0, atol=0)
     unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
-    hybrid = _build_multimodal_ddp_train_module_for_checkpoint()
+    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_lm_head=True)
     multimodal = hybrid.multimodal_model
     connector_before = {
         name: param.detach().clone() for name, param in multimodal.connector.named_parameters()
@@ -721,8 +806,9 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     main_before_reset = (
         embedding_main.full_tensor().reshape_as(multimodal.lm.embeddings.weight).clone()
     )
+    lm_head_before_reset = multimodal.lm.lm_head.w_out.weight.detach().clone()
 
-    hybrid.reset_image_token_rows([120, 121], seed=19)
+    hybrid.reset_image_token_rows([120, 121], seed=19, reset_output_rows=False)
     main_after_reset = embedding_main.full_tensor().reshape_as(multimodal.lm.embeddings.weight)
     ordinary_rows = torch.ones(128, dtype=torch.bool, device="cuda")
     ordinary_rows[[120, 121]] = False
@@ -735,6 +821,12 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     torch.testing.assert_close(
         main_after_reset[[120, 121]],
         multimodal.lm.embeddings.weight[[120, 121]].float(),
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(
+        multimodal.lm.lm_head.w_out.weight,
+        lm_head_before_reset,
         rtol=0,
         atol=0,
     )
