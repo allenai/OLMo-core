@@ -178,6 +178,10 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
+            # The deepcopy above carries over any block-derived caches the full model had already
+            # populated, which would leave this chunk describing the unsplit block list.
+            model_chunk.invalidate_block_topology_caches()
+
             if self.use_custom_stage_implementation:
                 # Custom stage implementation re-uses receive buffers across micro-batches.
                 stage = CustomPipelineStage(

@@ -264,6 +264,17 @@ class Transformer(nn.Module):
             )
         return eos_token_ids.pop()
 
+    def invalidate_block_topology_caches(self) -> None:
+        """
+        Drop the cached properties derived from the block list.
+
+        Must be called after blocks are added or removed, such as when splitting a model into
+        pipeline stages. Deliberately leaves the parameter-count caches alone: those are populated
+        up-front precisely so they survive having their parameters removed.
+        """
+        self.__dict__.pop("emo_block_indices", None)
+        self.__dict__.pop("emo_eos_token_id", None)
+
     @property
     def device(self) -> torch.device:
         if self._device is None:
