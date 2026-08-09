@@ -670,7 +670,7 @@ def _run_multimodal_ep_step_impl(
     assert any(has_nonzero_grad(param) for param in connector_params)
     assert any(has_nonzero_grad(param) for param in routed_params)
     trainer = _MetricTrainerStub()
-    train_module._trainer = trainer
+    train_module._trainer = trainer  # type: ignore[assignment]
     optim.latest_loss = torch.zeros((), device="cuda")
     train_module.optim_step()
     expected_clip_groups = {optim.DEFAULT_CLIP_GROUP_NAME, "connector"}
