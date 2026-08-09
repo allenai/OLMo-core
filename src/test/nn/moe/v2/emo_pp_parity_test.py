@@ -17,6 +17,7 @@ import torch
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.ddp.model import OLMoDDPModel
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe.emo import EmoRouterConfig
@@ -27,7 +28,6 @@ from olmo_core.nn.transformer import (
     TransformerBlockType,
     TransformerType,
 )
-from olmo_core.nn.transformer.model import Transformer
 from olmo_core.ops.moe import segment_ids_from_eos
 from olmo_core.testing import requires_gpu
 
@@ -78,11 +78,16 @@ def _emo_model_config(d_model: int = 64) -> OLMoDDPModelConfig:
     )
 
 
-def _split_into_stages(model: Transformer) -> List[Transformer]:
+def _split_into_stages(model: OLMoDDPModel) -> List[OLMoDDPModel]:
     """
     Prune ``model`` into two pipeline stages the same way
     :meth:`TransformerPipelineParallelConfig.split_model` does, without needing a process group.
+
+    CUDA events cannot be deepcopied, so they are purged before the split and reinstalled on the
+    original and every chunk afterwards, matching what the train module does around its split.
     """
+    model.purge_cuda_events()
+
     stages = []
     for stage_idx, (start, stop) in enumerate([(0, SPLIT_AFTER), (SPLIT_AFTER, N_LAYERS)]):
         chunk = copy.deepcopy(model)
@@ -96,11 +101,29 @@ def _split_into_stages(model: Transformer) -> List[Transformer]:
             chunk.lm_head = None  # type: ignore[assignment]
         chunk.invalidate_block_topology_caches()
         chunk._pp_enabled = True
+        chunk.eval()
         stages.append(chunk)
+
+    model.install_cuda_events()
+    for chunk in stages:
+        chunk.install_cuda_events()
     return stages
 
 
-def _capture_expert_indices(model: Transformer, into: Dict[int, torch.Tensor]) -> List:
+def _build_reference_and_stages():
+    """
+    Build the model and split it immediately, before any forward.
+
+    The split has to happen on a freshly built model, as it does in the train module: a forward
+    leaves per-block runtime state behind that the deepcopy would either trip over or carry along.
+    """
+    model = _emo_model_config().build(init_device="cuda")
+    model.eval()
+    first, last = _split_into_stages(model)
+    return model, first, last
+
+
+def _capture_expert_indices(model: OLMoDDPModel, into: Dict[int, torch.Tensor]) -> List:
     """Record each document router's selected experts, keyed by the block index it belongs to."""
     handles = []
     for block_key, block in model.blocks.items():
@@ -133,8 +156,7 @@ def _batch(device: torch.device):
 @requires_gpu
 def test_split_stages_match_unsplit_model():
     device = torch.device("cuda")
-    model = _emo_model_config().build(init_device="cuda")
-    model.eval()
+    model, first, last = _build_reference_and_stages()
 
     input_ids, labels = _batch(device)
     segment_ids = segment_ids_from_eos(input_ids, EOS_TOKEN_ID)
@@ -145,10 +167,6 @@ def test_split_stages_match_unsplit_model():
         reference = model(input_ids, labels=labels, loss_reduction="sum")
     for handle in handles:
         handle.remove()
-
-    first, last = _split_into_stages(model)
-    first.eval()
-    last.eval()
 
     staged_indices: Dict[int, torch.Tensor] = {}
     handles = _capture_expert_indices(first, staged_indices)
@@ -175,8 +193,7 @@ def test_split_stages_diverge_without_segment_ids_on_later_stage():
     # Guards the assertion above against being vacuous: if the later stage's segment IDs were
     # wrong, the parity check has to be able to notice.
     device = torch.device("cuda")
-    model = _emo_model_config().build(init_device="cuda")
-    model.eval()
+    model, first, last = _build_reference_and_stages()
 
     input_ids, labels = _batch(device)
     segment_ids = segment_ids_from_eos(input_ids, EOS_TOKEN_ID)
@@ -186,9 +203,6 @@ def test_split_stages_diverge_without_segment_ids_on_later_stage():
     with torch.no_grad():
         reference = model(input_ids, labels=labels, loss_reduction="sum")
 
-    first, last = _split_into_stages(model)
-    first.eval()
-    last.eval()
     with torch.no_grad():
         hidden = first(input_ids, segment_ids=segment_ids)
         staged = last(hidden, labels=labels, loss_reduction="sum", segment_ids=wrong_segment_ids)
@@ -200,8 +214,7 @@ def test_split_stages_diverge_without_segment_ids_on_later_stage():
 @requires_gpu
 def test_split_stages_match_unsplit_model_gradients():
     device = torch.device("cuda")
-    model = _emo_model_config().build(init_device="cuda")
-    model.eval()
+    model, first, last = _build_reference_and_stages()
 
     input_ids, labels = _batch(device)
     segment_ids = segment_ids_from_eos(input_ids, EOS_TOKEN_ID)
@@ -213,10 +226,6 @@ def test_split_stages_match_unsplit_model_gradients():
         if param.grad is not None
     }
 
-    model.zero_grad(set_to_none=True)
-    first, last = _split_into_stages(model)
-    first.eval()
-    last.eval()
     hidden = first(input_ids, segment_ids=segment_ids)
     last(hidden, labels=labels, loss_reduction="sum", segment_ids=segment_ids).loss.backward()
 

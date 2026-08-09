@@ -145,3 +145,16 @@ def test_segment_ids_helper_rejects_parts_that_disagree_on_eos_token_id() -> Non
 
 def test_segment_ids_helper_returns_none_without_document_routed_parts() -> None:
     assert get_emo_segment_ids([_build_model()], torch.tensor([[1, 2, 0, 3]])) is None
+
+
+def test_block_topology_caches_are_invalidated_after_pruning() -> None:
+    # Splitting a model into pipeline stages prunes blocks from a deepcopy, so a chunk whose caches
+    # were populated beforehand would otherwise keep describing the unsplit block list.
+    model = _build_model([EOS_TOKEN_ID, EOS_TOKEN_ID, EOS_TOKEN_ID])
+    assert model.emo_block_indices == [0, 1, 2]
+
+    del model.blocks["2"]
+    assert model.emo_block_indices == [0, 1, 2], "expected the cache to be stale until invalidated"
+
+    model.invalidate_block_topology_caches()
+    assert model.emo_block_indices == [0, 1]
