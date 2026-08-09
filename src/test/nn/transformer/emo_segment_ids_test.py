@@ -18,6 +18,9 @@ from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.train.train_module.transformer.common import get_emo_segment_ids
+from olmo_core.train.train_module.transformer.config import (
+    TransformerPipelineParallelConfig,
+)
 
 EOS_TOKEN_ID = 0
 
@@ -158,3 +161,18 @@ def test_block_topology_caches_are_invalidated_after_pruning() -> None:
 
     model.invalidate_block_topology_caches()
     assert model.emo_block_indices == [0, 1]
+
+
+def test_pipeline_split_rejects_blocks_that_disagree_on_eos_token_id() -> None:
+    # Each stage only sees its own blocks, so a disagreement has to be caught while the whole block
+    # list is still visible; otherwise routing silently depends on where the split landed. The
+    # check runs before the mesh is touched, so none is needed here.
+    model = _build_model([0, 0, 1, 1])
+    config = TransformerPipelineParallelConfig(degree=2)
+
+    with pytest.raises(OLMoConfigurationError, match="same eos_token_id"):
+        config.split_model(
+            model,
+            pp_mesh=None,  # type: ignore[arg-type]
+            device=torch.device("cpu"),
+        )

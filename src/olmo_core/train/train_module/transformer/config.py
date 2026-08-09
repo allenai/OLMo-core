@@ -151,6 +151,11 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                 "share a weight."
             )
 
+        # Validate the document-routing EOS token while the whole block list is still visible.
+        # Afterwards each stage only sees its own blocks, so blocks that disagree would each derive
+        # their own segment IDs and routing would silently depend on where the split landed.
+        model.emo_eos_token_id
+
         pp_rank = pp_mesh.get_local_rank()
 
         def build_stage(
