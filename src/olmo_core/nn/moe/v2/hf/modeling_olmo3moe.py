@@ -595,14 +595,18 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
             )
         else:
             initial_conv_states = [None, None, None]
+        force_recurrent_reference = os.environ.get(
+            "OLMO_HF_KDA_RECURRENT_REFERENCE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        output_final_state = cache_layer is not None or force_recurrent_reference
         q, q_state = self.q_conv1d(
-            self.q_proj(hidden_states), initial_conv_states[0], cache_layer is not None
+            self.q_proj(hidden_states), initial_conv_states[0], output_final_state
         )
         k, k_state = self.k_conv1d(
-            self.k_proj(hidden_states), initial_conv_states[1], cache_layer is not None
+            self.k_proj(hidden_states), initial_conv_states[1], output_final_state
         )
         v, v_state = self.v_conv1d(
-            self.v_proj(hidden_states), initial_conv_states[2], cache_layer is not None
+            self.v_proj(hidden_states), initial_conv_states[2], output_final_state
         )
         raw_decay = self.f_proj_2(self.f_proj_1(hidden_states))
         beta = self.beta_proj(hidden_states).float().sigmoid()
@@ -619,9 +623,6 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
             initial_recurrent_state = cache_layer.recurrent_states.float()
         else:
             initial_recurrent_state = None
-        force_recurrent_reference = os.environ.get(
-            "OLMO_HF_KDA_RECURRENT_REFERENCE", ""
-        ).strip().lower() in {"1", "true", "yes", "on"}
         if force_recurrent_reference or (has_previous_state and seq_len == 1):
             # The chunk kernel can fuse this transform, while the recurrent
             # inference kernel expects the log-space decay directly.
@@ -635,7 +636,7 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
                 g=decay,
                 beta=beta,
                 initial_state=initial_recurrent_state,
-                output_final_state=cache_layer is not None,
+                output_final_state=output_final_state,
                 use_qk_l2norm_in_kernel=True,
             )
         else:
@@ -648,7 +649,7 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
                 A_log=self.A_log,
                 dt_bias=self.dt_bias,
                 initial_state=initial_recurrent_state,
-                output_final_state=cache_layer is not None,
+                output_final_state=output_final_state,
                 use_qk_l2norm_in_kernel=True,
                 use_gate_in_kernel=True,
             )
