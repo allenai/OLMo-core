@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctc"
+version = "0.1.0"
+description = "Corpus-reasoning task generation and evaluation. Independent of olmo-core."
+readme = "README.md"
+requires-python = ">=3.10"
+
+# INTENTIONALLY EMPTY. Every heavy dependency is an extra.
+#
+# This is the load-bearing line of the whole package: `pip install ./ctc` must work on a machine
+# with no GPU, no CUDA toolkit, and no compiler, so that generating task data and grading a
+# checkpoint never requires building a training environment. 51 of our 56 task generators are pure
+# Python, and no file under `ctc/data/` imports torch, transformers, or olmo_core.
+dependencies = []
+
+[project.optional-dependencies]
+# Task sources that pull real corpora (BEIR, MS MARCO, HotpotQA, PubMed, ...).
+sources = ["datasets", "tqdm"]
+# Generators that need a tokenizer to fit ladder rungs, or a cross-encoder to filter hard negatives.
+gen = ["transformers", "torch"]
+# Eval backends. Exactly one of these is needed to grade a checkpoint.
+hf = ["transformers", "torch"]
+vllm = ["vllm"]
+native = ["ai2-olmo-core"]
+all = ["ctc[sources,gen,hf,vllm,native]"]
+dev = ["pytest"]
+
+[project.scripts]
+ctc-data = "ctc.data.cli:main"
+ctc-eval = "ctc.eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
