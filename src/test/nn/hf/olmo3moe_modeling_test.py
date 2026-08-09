@@ -308,3 +308,15 @@ def test_olmo3moe_experts_can_force_reference_loop(monkeypatch):
     )
     actual = experts(hidden_states, topk_ids, topk_weights)
     torch.testing.assert_close(actual, expected)
+
+
+@requires_olmo3moe
+def test_olmo3moe_can_force_fp32_lm_head(monkeypatch):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    model = Olmo3MoeForCausalLM(_small_config()).to(dtype=torch.bfloat16).eval()
+    input_ids = torch.randint(0, model.config.vocab_size, (1, 4))
+    monkeypatch.setenv("OLMO_HF_FP32_LM_HEAD", "1")
+    with torch.no_grad():
+        logits = model(input_ids, use_cache=False).logits
+    assert logits.dtype == torch.float32
