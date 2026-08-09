@@ -4,6 +4,7 @@ assembly, text-only handling, and the weighted mixture loader."""
 import itertools
 
 import numpy as np
+import pytest
 import torch
 
 from olmo_core.data.multimodal import (
@@ -681,6 +682,114 @@ def test_mixture_data_loader_prefetch_skips_errors_in_reference_order(tmp_path):
         sync_state["packing_state"]["refs_consumed"]
         == threaded_state["packing_state"]["refs_consumed"]
     )
+
+
+@pytest.mark.parametrize("restored_workers", [0, 4])
+def test_mixture_data_loader_resume_preserves_tolerated_errors(tmp_path, restored_workers):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    dataset = _FailingFakeDataset(200, 1000)
+
+    def build_loader(work_dir, workers):
+        return MixtureDataLoader(
+            [dataset],
+            [1.0],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=41,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            prefetch_workers=workers,
+            dataset_names=["academic-test"],
+        )
+
+    original = build_loader(tmp_path / "original", 4)
+    original.reshuffle(epoch=1)
+    refs = list(itertools.islice(original._rank_refs_from_cursor(), 3))
+    dataset.fail_indices = {refs[0][1], refs[2][1]}
+    original_iter = iter(original)
+    next(original_iter)
+    state = original.state_dict()
+    expected = next(original_iter)
+    expected_state = original.state_dict()
+    original_iter.close()
+
+    restored = build_loader(tmp_path / f"restored-{restored_workers}", restored_workers)
+    restored.load_state_dict(state)
+    restored.reshuffle()
+    restored_iter = iter(restored)
+    actual = next(restored_iter)
+    actual_state = restored.state_dict()
+    restored_iter.close()
+
+    for key in ("input_ids", "example_ids", "loss_masks", "position_ids"):
+        np.testing.assert_array_equal(actual[key], expected[key])
+    assert state["total_data_errors"] == 2
+    assert actual_state["total_data_errors"] == expected_state["total_data_errors"]
+    assert (
+        actual_state["packing_state"]["refs_consumed"]
+        == expected_state["packing_state"]["refs_consumed"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("max_consecutive", "max_total"),
+    [(2, 10), (10, 2)],
+)
+def test_mixture_data_loader_error_limits_allow_n_and_fail_on_n_plus_one(
+    tmp_path, max_consecutive, max_total
+):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    loader = MixtureDataLoader(
+        [_FakeDataset(10, 1)],
+        [1.0],
+        collator,
+        work_dir=tmp_path,
+        global_batch_size=2 * _SEQ,
+        max_consecutive_data_errors=max_consecutive,
+        max_total_data_errors=max_total,
+        dataset_names=["academic-test"],
+    )
+
+    limit = min(max_consecutive, max_total)
+    for index in range(limit):
+        loader._handle_data_error((0, index, 0), ValueError(f"failure {index}"))
+    with pytest.raises(ValueError, match=f"failure {limit}"):
+        loader._handle_data_error((0, limit, 0), ValueError(f"failure {limit}"))
+
+    assert loader.total_data_errors == limit + 1
+
+
+def test_mixture_data_loader_error_limit_reports_exact_reference(tmp_path, caplog):
+    dataset = _FailingFakeDataset(200, 1000)
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    loader = MixtureDataLoader(
+        [dataset],
+        [1.0],
+        collator,
+        work_dir=tmp_path,
+        global_batch_size=2 * _SEQ,
+        seed=37,
+        pack=True,
+        pack_max_crops=1,
+        pack_buffer_size=4,
+        max_consecutive_data_errors=0,
+        max_total_data_errors=0,
+        dataset_names=["academic-test"],
+    )
+    loader.reshuffle(epoch=1)
+    first_ref = next(loader._rank_refs_from_cursor())
+    dataset.fail_indices = {first_ref[1]}
+
+    with pytest.raises(ValueError, match="synthetic failure") as exc_info:
+        next(iter(loader))
+
+    context = f"academic-test[{first_ref[1]}] at source epoch {first_ref[2]}"
+    assert any(context in note for note in exc_info.value.__notes__)
+    assert context in caplog.text
+    assert loader.total_data_errors == 1
+    assert loader.state_dict()["total_data_errors"] == 1
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

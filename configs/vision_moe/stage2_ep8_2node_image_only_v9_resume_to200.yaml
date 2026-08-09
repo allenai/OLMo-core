@@ -30,6 +30,8 @@ overrides:
   - --pack_max_crops=45
   - --pack_buffer_size=48
   - --pack_image_weight=30.0
+  - --max_consecutive_data_errors=10
+  - --max_total_data_errors=1000
   - --trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-corrected-clean-32k-b300-20260807/step32000
   - --trainer.load_strategy=always
   - --trainer.load_optim_state=false

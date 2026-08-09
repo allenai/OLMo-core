@@ -84,7 +84,9 @@ Both profiles use two 8-GPU Holmes nodes, EP8, urgent priority, an eight-hour mi
 and the approved workspace and budget. They run the complete 43-source `image-only-v9`
 mixture with OLMo 3 chat serialization, 16k sequences, MoE capacity factor 2, sigma factor 12,
 diagnostics every 10 steps, and held-out vision evaluation every 50 steps. The scheduler keeps
-the full 30,000-step horizon in both phases. No inline language evaluator is enabled.
+the full 30,000-step horizon in both phases. Isolated malformed rows are skipped deterministically,
+reported through `data/errors total`, and bounded to at most 10 consecutive or 1,000 cumulative
+errors per rank so a broken source still stops training. No inline language evaluator is enabled.
 
 The checkpointer saves permanent milestones at steps 50 and 200, keeps both, and maintains one
 rolling ephemeral checkpoint every 25 steps for preemption recovery. It does not write a

@@ -272,6 +272,11 @@ class MixtureDataLoader(DataLoaderBase):
             return est_packs // self._global_instances
         return self.epoch_instances // self._global_instances
 
+    @property
+    def total_data_errors(self) -> int:
+        """Return the cumulative number of data errors consumed by this rank."""
+        return self._total_data_errors
+
     def reshuffle(self, epoch: Optional[int] = None, **kwargs):
         if epoch is not None:
             self._epoch = epoch
@@ -433,16 +438,18 @@ class MixtureDataLoader(DataLoaderBase):
         self._consecutive_data_errors += 1
         self._total_data_errors += 1
         src_idx, example_idx, source_epoch = ref
+        context = (
+            f"{self.dataset_names[src_idx]}[{example_idx}] at source epoch {source_epoch} "
+            f"(consecutive_data_errors={self._consecutive_data_errors}, "
+            f"total_data_errors={self._total_data_errors})"
+        )
         if (
             self._consecutive_data_errors > self.max_consecutive_data_errors
             or self._total_data_errors > self.max_total_data_errors
         ):
-            error.add_note(
-                f"Exceeded data error tolerance loading "
-                f"{self.dataset_names[src_idx]}[{example_idx}] at source epoch {source_epoch} "
-                f"(consecutive_data_errors={self._consecutive_data_errors}, "
-                f"total_data_errors={self._total_data_errors})"
-            )
+            message = f"Exceeded data error tolerance loading {context}: {error!r}"
+            error.add_note(message)
+            log.error(message)
             raise error
         log.warning(
             "Skipping %s[%d] at source epoch %d after error "

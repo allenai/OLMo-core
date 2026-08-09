@@ -72,6 +72,8 @@ def test_s002_stage2_production_defaults():
     assert stage2.FAST_VISION_EVAL_INTERVAL == 2000
     assert stage2.FAST_VISION_EVAL_EXAMPLES == 32
     assert stage2.FAST_VISION_EVAL_RANK_BATCH_INSTANCES == 1
+    assert stage2.MAX_CONSECUTIVE_DATA_ERRORS == 10
+    assert stage2.MAX_TOTAL_DATA_ERRORS == 1000
     assert stage2.BEAKER_CLUSTER == "ai2/holmes"
     assert stage2.BEAKER_WORKSPACE == "ai2/molmofication"
     assert stage2.TOKENIZER_ID.endswith(
@@ -80,6 +82,23 @@ def test_s002_stage2_production_defaults():
     assert stage2.DEFAULT_LOAD_PATH.endswith(
         "s002-stage1-corrected-clean-32k-b300-20260807/step32000"
     )
+
+
+def test_stage2_data_error_monitor_records_global_cumulative_count():
+    stage2 = _load_stage2_module()
+    data_loader = object.__new__(stage2.MixtureDataLoader)
+    data_loader._total_data_errors = 3
+    recorded = []
+    trainer = SimpleNamespace(
+        data_loader=data_loader,
+        record_metric=lambda name, value, reduce_type: recorded.append((name, value, reduce_type)),
+    )
+    callback = stage2._DataErrorMonitorCallback()
+    callback.trainer = trainer
+
+    callback.post_train_batch()
+
+    assert recorded == [("data/errors total", 3, stage2.ReduceType.sum)]
 
 
 def test_stage2_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
@@ -345,6 +364,8 @@ def test_stage2_pilot_profiles_are_submission_safe_dry_run_inputs(profile_name, 
     assert "--train_module.optim.sigma_factor=12" in overrides
     assert "--train_module.diagnostics_interval=10" in overrides
     assert "--pack_max_crops=45" in overrides
+    assert "--max_consecutive_data_errors=10" in overrides
+    assert "--max_total_data_errors=1000" in overrides
     assert f"--trainer.max_duration.value={max_step}" in overrides
     assert "--trainer.max_duration.unit=steps" in overrides
     assert "--train_module.scheduler.schedulers.connector.t_max=30000" in overrides

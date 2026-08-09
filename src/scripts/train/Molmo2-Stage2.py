@@ -53,6 +53,7 @@ from olmo_core.optim import (
 from olmo_core.train import (
     Duration,
     LoadStrategy,
+    ReduceType,
     TrainerConfig,
     prepare_cli_environment,
     prepare_training_environment,
@@ -60,6 +61,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     BeakerCallback,
+    Callback,
     CheckpointerCallback,
     ConfigSaverCallback,
     ConsoleLoggerCallback,
@@ -96,6 +98,8 @@ PACK_SEQUENCES = True
 COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 4
+MAX_CONSECUTIVE_DATA_ERRORS = 10
+MAX_TOTAL_DATA_ERRORS = 1000
 MAX_CROPS = 8
 # Released Stage 2 permits up to five images, disables the high-resolution branch for
 # multi-image examples, and allows eight tiled crops plus one global crop per image.
@@ -198,6 +202,25 @@ class ExperimentConfig(Config):
     fast_vision_eval_examples: int = FAST_VISION_EVAL_EXAMPLES
     """Number of deterministic examples per fast vision evaluator."""
     fast_vision_eval_seed: int = FAST_VISION_EVAL_SEED
+    max_consecutive_data_errors: int = MAX_CONSECUTIVE_DATA_ERRORS
+    """Stop when more than this many source examples fail consecutively on a rank."""
+    max_total_data_errors: int = MAX_TOTAL_DATA_ERRORS
+    """Stop when more than this many source examples fail cumulatively on a rank."""
+
+
+@dataclass
+class _DataErrorMonitorCallback(Callback):
+    """Expose bounded mixture-loader skips as a cumulative cross-rank metric."""
+
+    def post_train_batch(self):
+        data_loader = self.trainer.data_loader
+        if not isinstance(data_loader, MixtureDataLoader):
+            return
+        self.trainer.record_metric(
+            "data/errors total",
+            data_loader.total_data_errors,
+            reduce_type=ReduceType.sum,
+        )
 
 
 def _build_model_config(token_ids: Molmo2TokenIds) -> MultimodalLMConfig:
@@ -837,13 +860,15 @@ def train(config: ExperimentConfig):
         dp_world_size=dp_world_size,
         dp_rank=dp_rank,
         dataset_names=dataset_names,
-        # The released Stage 2 loader is fail-closed. Do not silently change mixture rates
-        # when a source or formatter is broken; fix or explicitly filter the offending data.
-        max_consecutive_data_errors=0,
-        max_total_data_errors=0,
+        # The released mixture contains a small number of malformed or unreadable rows.
+        # Skip them deterministically while retaining strict bounds so a broken source still
+        # fails quickly instead of silently changing the training mixture.
+        max_consecutive_data_errors=config.max_consecutive_data_errors,
+        max_total_data_errors=config.max_total_data_errors,
     )
 
     trainer = config.trainer.build(train_module, data_loader)
+    trainer.add_callback("data_error_monitor", _DataErrorMonitorCallback())
     _add_fast_vision_validation_callback(
         trainer,
         tokenizer,
