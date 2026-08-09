@@ -222,11 +222,16 @@ def test_olmo3moe_kda_emo_logprobs_match_after_conversion_roundtrip():
 @requires_fla
 @requires_triton
 @pytest.mark.parametrize("decode_chunk_size", [1, 3])
-def test_olmo3moe_kda_emo_cached_logits_match_full_forward(decode_chunk_size: int):
+@pytest.mark.parametrize("recurrent_reference", [False, True])
+def test_olmo3moe_kda_emo_cached_logits_match_full_forward(
+    decode_chunk_size: int, recurrent_reference: bool, monkeypatch
+):
     """KDA convolution/recurrent state and attention KV cache compose correctly."""
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
 
     torch.manual_seed(0)
+    if recurrent_reference:
+        monkeypatch.setenv("OLMO_HF_KDA_RECURRENT_REFERENCE", "1")
     config = _small_kda_emo_config()
     config.use_cache = True
     model = Olmo3MoeForCausalLM(config).cuda().eval()
