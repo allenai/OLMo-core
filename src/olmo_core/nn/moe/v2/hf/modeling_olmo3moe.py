@@ -619,7 +619,10 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
             initial_recurrent_state = cache_layer.recurrent_states.float()
         else:
             initial_recurrent_state = None
-        if has_previous_state and seq_len == 1:
+        force_recurrent_reference = os.environ.get(
+            "OLMO_HF_KDA_RECURRENT_REFERENCE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if force_recurrent_reference or (has_previous_state and seq_len == 1):
             # The chunk kernel can fuse this transform, while the recurrent
             # inference kernel expects the log-space decay directly.
             decay = -self.A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
