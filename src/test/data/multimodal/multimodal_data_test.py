@@ -366,6 +366,37 @@ def test_tulu_conversation_is_bounded_by_sequence_length():
     )
 
 
+def test_tulu_filter_uses_process_local_indices(tmp_path, monkeypatch):
+    from datasets import Dataset
+
+    import olmo_core.data.multimodal.tulu as tulu_module
+    from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
+
+    data_path = tmp_path / "tulu"
+    Dataset.from_dict(
+        {
+            "row_id": [0, 1, 2, 3],
+            "category": ["general", "code", "general", "general"],
+            "source": ["keep", "keep", "keep", "allenai/hardcoded-olmo"],
+            "first_message_qwen3_tokens": [100, 100, 2305, 100],
+            "empty_messages": [False, False, False, False],
+            "has_special_token": [False, False, False, False],
+        }
+    ).save_to_disk(str(data_path))
+    monkeypatch.setattr(tulu_module, "TULU4_DATA", str(data_path))
+
+    dataset = object.__new__(Tulu4Dataset)
+    dataset.config = Tulu4DatasetConfig(max_first_msg_len=2304)
+
+    first = dataset._load_filtered()
+    second = dataset._load_filtered()
+
+    assert first["row_id"] == second["row_id"] == [0]
+    assert type(first._indices).__name__ == "InMemoryTable"
+    assert type(second._indices).__name__ == "InMemoryTable"
+    assert not list(data_path.glob("cache-*.arrow"))
+
+
 def test_tulu_binary_response_loss_weighting():
     from olmo_core.data.multimodal.tulu import Tulu4Dataset, Tulu4DatasetConfig
 

@@ -145,7 +145,15 @@ class Tulu4Dataset:
             "empty_messages",
             "has_special_token",
         ]
-        return ds.filter(_keep, input_columns=cols)
+        # ``ds`` is memory-mapped from a shared filesystem. Hugging Face otherwise writes
+        # the filtered indices beside it, so concurrent ranks race on the same cache file.
+        # The indices are small; recompute them deterministically in memory on every rank.
+        return ds.filter(
+            _keep,
+            input_columns=cols,
+            keep_in_memory=True,
+            load_from_cache_file=False,
+        )
 
     def __len__(self) -> int:
         return len(self._data)
