@@ -220,6 +220,74 @@ def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
 @requires_gpu
 @requires_fla
 @requires_flash_attn_2
+@pytest.mark.parametrize("n_pad", [1, 4])
+def test_generation_module_hybrid_gdn_left_padding_equivalence(n_pad: int):
+    """
+    Left-padding must not change what a hybrid GDN/attention model generates.
+
+    The full-attention blocks already honour left-padding: ``cache_leftpad`` reaches flash-attn
+    through :meth:`KVCacheManager.record_leftpad`, so the pad columns are masked out. The
+    :class:`~olmo_core.nn.attention.GatedDeltaNet` blocks are the gap this test closes -- GDN is
+    *recurrent*, so it scans from position 0 and folds whatever it is handed into the delta-rule
+    state and its causal-conv window. An unmasked pad prefix is therefore absorbed as real content
+    before the first real token is ever seen, and on the Qwen3.5 layout
+    (``block_pattern=[gdn, gdn, gdn, attn]``) that is three out of every four layers.
+
+    This is not a hypothetical: the eval harness left-pads (``tokenizer.padding_side = "left"``,
+    ``padding=True``) whenever ``batch_size > 1``, which is what made batched long-context evals
+    disagree with ``batch_size=1`` runs of the same checkpoint. ``batch_size=1`` is used for both
+    runs here so that padding, not batching, is the only variable.
+    """
+    device = torch.device("cuda")
+    pad_token_id = 0
+    seed_all(0)
+
+    generation_module = TransformerGenerationModule(
+        model=small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16).build(),
+        generation_config=GenerationConfig(
+            max_new_tokens=8,
+            do_sample=False,
+            temperature=0.0,
+            eos_token_id=1,
+            pad_token_id=pad_token_id,
+            use_cache=True,
+        ),
+        device=device,
+    )
+
+    # Real tokens avoid pad/eos so the mask is unambiguous, and the prompt is longer than the GDN
+    # causal-conv window (conv_size=4) so the delta-rule state is exercised, not just the conv.
+    unpadded = torch.tensor([[3, 5, 7, 11, 13, 17, 19, 23]], dtype=torch.long, device=device)
+    left_padded = torch.cat(
+        [torch.full((1, n_pad), pad_token_id, dtype=torch.long, device=device), unpadded], dim=1
+    )
+
+    seed_all(0)
+    out_unpadded, logits_unpadded, _ = generation_module.generate_batch(
+        unpadded,
+        attention_mask=(unpadded != pad_token_id).to(torch.bool),
+        completions_only=True,
+        return_logits=True,
+    )
+    seed_all(0)
+    out_left, logits_left, _ = generation_module.generate_batch(
+        left_padded,
+        attention_mask=(left_padded != pad_token_id).to(torch.bool),
+        completions_only=True,
+        return_logits=True,
+    )
+
+    assert torch.equal(out_unpadded, out_left), (
+        f"left-padding with {n_pad} pad token(s) changed the generated tokens:\n"
+        f"unpadded:    {out_unpadded.tolist()}\nleft-padded: {out_left.tolist()}"
+    )
+    assert isinstance(logits_unpadded, torch.Tensor) and isinstance(logits_left, torch.Tensor)
+    torch.testing.assert_close(logits_unpadded, logits_left, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
 @pytest.mark.parametrize("chunk_size", [3, 4, 5, 7, 8])
 @pytest.mark.parametrize("batch_size", [1, 2])
 def test_generation_module_chunked_prefill_matches_one_shot(chunk_size: int, batch_size: int):
