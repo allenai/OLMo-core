@@ -3,8 +3,10 @@
 This evaluator keeps checkpoints in OLMo-core's distributed format, runs the model with
 EP8, and reports response-token-weighted CE/PPL for matched caption, count-only,
 basic-pointing, and grounded point-counting samples. Count-only evaluation also reports
-candidate-normalized 2-10 classification and response-format diagnostics. The same explicit
-sample indices and OLMo 3 chat serializer are used for every checkpoint in a comparison.
+candidate-normalized 2-10 classification and response-format diagnostics. Grounded
+point-counting evaluation separately scores those same candidates at the teacher-forced final
+count position in each serialized response. The same explicit sample indices and OLMo 3 chat
+serializer are used for every checkpoint in a comparison.
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ import json
 import logging
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -73,6 +76,7 @@ DEFAULT_RANK_BATCH_INSTANCES = 1
 TASK_NAMES = ("caption", "count", "points", "point_count")
 TASK_SEED_OFFSETS = {"caption": 0, "count": 1, "points": 2, "point_count": 2}
 NUMERIC_COUNT_VALUES = tuple(range(2, 11))
+GROUNDED_COUNT_TARGET_VALUES = tuple(range(61))
 
 
 @dataclass(frozen=True)
@@ -94,7 +98,7 @@ class NumericCountTokenProtocol:
     counting_prefix_token_id: int
     points_prefix_token_id: int
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "values": list(self.values),
             "candidate_token_ids": list(self.candidate_token_ids),
@@ -110,6 +114,64 @@ class NumericCountTokenProtocol:
             "candidate_scoring": (
                 "softmax over first-response-token logits for the single-token answers 2-10"
             ),
+        }
+
+
+@dataclass(frozen=True)
+class GroundedFinalCountTokenProtocol:
+    """Token templates for locating final counts in grounded point-count responses."""
+
+    candidate_values: Sequence[int]
+    candidate_token_ids: Sequence[int]
+    eos_token_id: int
+    target_values: Sequence[int]
+    positive_suffix_token_ids: dict[int, Sequence[int]]
+    none_response_token_ids: Sequence[int]
+    candidate_token_offsets: dict[int, int]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_values": list(self.candidate_values),
+            "candidate_token_ids": list(self.candidate_token_ids),
+            "eos_token_id": self.eos_token_id,
+            "supported_target_values": list(self.target_values),
+            "target_serialization": {
+                "positive_template": "Counting the <points...> shows a total of N.",
+                "matched_terminal_template": " shows a total of N.",
+                "zero_text": "There are none.",
+                "zero_token_ids": list(self.none_response_token_ids),
+                "positive_suffix_token_ids": {
+                    str(value): list(self.positive_suffix_token_ids[value])
+                    for value in self.target_values
+                    if value > 0
+                },
+                "candidate_token_offsets": {
+                    str(value): self.candidate_token_offsets[value]
+                    for value in self.candidate_values
+                },
+            },
+            "slot_selection": (
+                "within each supervised assistant subsegment, match the exact terminal target "
+                "serialization immediately before EOS and select its final count label row; "
+                "numeric tokens inside the preceding <points> coordinates are never candidates"
+            ),
+            "logit_alignment": (
+                "response logits and labels use the same flattened row-major loss-mask order"
+            ),
+            "candidate_scoring": (
+                "softmax over token logits for the single-token counts 2-10 at the "
+                "teacher-forced grounded final-count position"
+            ),
+            "aggregation_unit": "eligible grounded assistant response (target count 2-10)",
+            "excluded_targets": (
+                "0, 1, and 11-60 are detected and audited but rejected from candidate scoring"
+            ),
+            "predeclared_step200_go_rule": {
+                "final_count_top1": "step200 >= max(Stage1, step50) - 0.03",
+                "final_count_nll": "step200 <= min(Stage1, step50) + 0.10 nat",
+                "grounded_ce_vs_stage1": "step200 <= 0.95 * Stage1",
+                "grounded_ce_vs_step50": "step200 <= 1.05 * step50",
+            },
         }
 
 
@@ -177,7 +239,7 @@ def _validate_args(args: argparse.Namespace, world_size: int) -> None:
         raise ValueError("--tasks must not contain duplicates")
 
 
-def _representative_indices(size: int, examples: int, *, seed: int) -> List[int]:
+def _representative_indices(size: int, examples: int, *, seed: int) -> list[int]:
     """Select a deterministic, without-replacement permutation prefix."""
     if size <= 0:
         raise ValueError("dataset size must be positive")
@@ -220,8 +282,102 @@ def _numeric_count_token_protocol(tokenizer) -> NumericCountTokenProtocol:
     )
 
 
+def _grounded_final_count_token_protocol(
+    tokenizer,
+    numeric_protocol: NumericCountTokenProtocol,
+) -> GroundedFinalCountTokenProtocol:
+    """Build exact terminal-response templates for grounded count-slot selection."""
+
+    positive_suffix_token_ids: dict[int, Sequence[int]] = {}
+    candidate_token_offsets: dict[int, int] = {}
+    candidate_id_by_value = dict(zip(numeric_protocol.values, numeric_protocol.candidate_token_ids))
+    positive_suffix_prefix = tuple(
+        int(token_id)
+        for token_id in tokenizer.encode(" shows a total of ", add_special_tokens=False)
+    )
+    positive_suffix_punctuation = tuple(
+        int(token_id) for token_id in tokenizer.encode(".", add_special_tokens=False)
+    )
+    if not positive_suffix_prefix or not positive_suffix_punctuation:
+        raise ValueError("Grounded count suffix framing encoded to no tokens")
+    for value in GROUNDED_COUNT_TARGET_VALUES:
+        if value == 0:
+            continue
+        encoded = tuple(
+            int(token_id)
+            for token_id in tokenizer.encode(
+                f" shows a total of {value}.",
+                add_special_tokens=False,
+            )
+        )
+        if not encoded:
+            raise ValueError(f"Grounded count suffix for {value} encoded to no tokens")
+        positive_suffix_token_ids[value] = encoded
+        if value in candidate_id_by_value:
+            candidate_token_id = candidate_id_by_value[value]
+            expected = positive_suffix_prefix + (candidate_token_id,) + positive_suffix_punctuation
+            if encoded != expected:
+                raise ValueError(
+                    f"Grounded count suffix for {value} must serialize its final count as "
+                    f"exactly the single candidate token {candidate_token_id}; expected "
+                    f"{expected}, got {encoded}"
+                )
+            candidate_token_offsets[value] = len(positive_suffix_prefix)
+
+    if len(set(positive_suffix_token_ids.values())) != len(positive_suffix_token_ids):
+        raise ValueError("Grounded positive count suffix tokenizations must be distinct")
+    none_response_token_ids = tuple(
+        int(token_id) for token_id in tokenizer.encode("There are none.", add_special_tokens=False)
+    )
+    if not none_response_token_ids:
+        raise ValueError("Grounded zero-count response encoded to no tokens")
+
+    return GroundedFinalCountTokenProtocol(
+        candidate_values=tuple(numeric_protocol.values),
+        candidate_token_ids=tuple(numeric_protocol.candidate_token_ids),
+        eos_token_id=numeric_protocol.eos_token_id,
+        target_values=GROUNDED_COUNT_TARGET_VALUES,
+        positive_suffix_token_ids=positive_suffix_token_ids,
+        none_response_token_ids=none_response_token_ids,
+        candidate_token_offsets=candidate_token_offsets,
+    )
+
+
+def _match_grounded_final_count_target(
+    response_labels: Sequence[int],
+    protocol: GroundedFinalCountTokenProtocol,
+) -> tuple[int, int | None]:
+    """Identify a grounded response target and its eligible final-count label offset."""
+
+    labels = tuple(int(label) for label in response_labels)
+    if not labels or labels[-1] != protocol.eos_token_id:
+        raise ValueError(
+            "Grounded point-count response must end in the configured EOS token; got tail "
+            f"{list(labels[-12:])}"
+        )
+    body = labels[:-1]
+    matches: list[tuple[int, int | None]] = []
+    if body == tuple(protocol.none_response_token_ids):
+        matches.append((0, None))
+    for value, suffix_ids in protocol.positive_suffix_token_ids.items():
+        suffix = tuple(suffix_ids)
+        if len(body) >= len(suffix) and body[-len(suffix) :] == suffix:
+            candidate_position = None
+            if value in protocol.candidate_token_offsets:
+                candidate_position = (
+                    len(body) - len(suffix) + protocol.candidate_token_offsets[value]
+                )
+            matches.append((value, candidate_position))
+    if len(matches) != 1:
+        raise ValueError(
+            "Expected exactly one grounded final-count target serialization per assistant "
+            f"response, found {len(matches)} for tail {list(labels[-16:])}"
+        )
+    return matches[0]
+
+
 def _numeric_count_batch_statistics(
-    batch: Dict[str, Any],
+    batch: dict[str, Any],
     logits: torch.Tensor,
     protocol: NumericCountTokenProtocol,
 ) -> torch.Tensor:
@@ -330,7 +486,7 @@ def _numeric_count_batch_statistics(
 def _numeric_count_metrics(
     statistics: torch.Tensor,
     protocol: NumericCountTokenProtocol,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Convert globally summed numeric-count statistics into JSON-ready metrics."""
     n_candidates = len(protocol.values)
     expected_size = 10 + 2 * n_candidates + 1
@@ -377,6 +533,220 @@ def _numeric_count_metrics(
     }
 
 
+def _grounded_final_count_batch_statistics(
+    batch: dict[str, Any],
+    logits: torch.Tensor,
+    protocol: GroundedFinalCountTokenProtocol,
+) -> torch.Tensor:
+    """Return additive final-count statistics from grounded point-count responses."""
+
+    labels = batch.get("labels")
+    if labels is None:
+        raise ValueError("Grounded final-count diagnostics require labels")
+    response_mask = batch["loss_masks"] > 0
+    if bool(torch.any(labels.masked_select(response_mask) == -100)):
+        raise ValueError("Grounded final-count loss positions must not have ignored labels")
+    response_counts = response_mask.sum(dim=1)
+    total_response_tokens = int(response_counts.sum().item())
+    if logits.ndim == 3:
+        response_logits = logits.reshape(-1, logits.shape[-1])[response_mask.reshape(-1)]
+    elif logits.ndim == 2 and logits.shape[0] == total_response_tokens:
+        response_logits = logits
+    else:
+        raise ValueError(
+            "Grounded final-count diagnostics expected response-only logits with shape "
+            f"({total_response_tokens}, vocab), got {tuple(logits.shape)}"
+        )
+    response_logits = response_logits.float()
+    response_labels = labels.masked_select(response_mask).detach().cpu()
+
+    subsegment_ids = batch.get("subsegment_ids")
+    response_subsegments = (
+        subsegment_ids.masked_select(response_mask).detach().cpu()
+        if subsegment_ids is not None
+        else None
+    )
+    candidate_values = tuple(int(value) for value in protocol.candidate_values)
+    candidate_index_by_value = {value: index for index, value in enumerate(candidate_values)}
+    target_index_by_value = {
+        int(value): index for index, value in enumerate(protocol.target_values)
+    }
+    target_histogram = [0] * len(protocol.target_values)
+    selected_response_rows: list[int] = []
+    gold_candidate_indices: list[int] = []
+    examples_with_scored_targets = 0
+    grounded_response_slots = 0
+
+    response_offset = 0
+    for row_index, row_count_tensor in enumerate(response_counts.detach().cpu()):
+        row_count = int(row_count_tensor.item())
+        row_labels = response_labels[response_offset : response_offset + row_count]
+        if response_subsegments is None:
+            row_subsegments = torch.zeros(row_count, dtype=torch.long)
+        else:
+            row_subsegments = response_subsegments[response_offset : response_offset + row_count]
+        ordered_subsegments = list(dict.fromkeys(int(value) for value in row_subsegments.tolist()))
+        row_scored_targets = 0
+        for subsegment_id in ordered_subsegments:
+            group_positions = torch.nonzero(
+                row_subsegments == subsegment_id,
+                as_tuple=False,
+            ).flatten()
+            group_labels = row_labels.index_select(0, group_positions).tolist()
+            target_value, candidate_group_position = _match_grounded_final_count_target(
+                group_labels,
+                protocol,
+            )
+            if target_value not in target_index_by_value:
+                raise ValueError(
+                    f"Grounded target {target_value} is outside configured audit values"
+                )
+            grounded_response_slots += 1
+            target_histogram[target_index_by_value[target_value]] += 1
+            if candidate_group_position is not None:
+                selected_response_rows.append(
+                    response_offset + int(group_positions[candidate_group_position].item())
+                )
+                gold_candidate_indices.append(candidate_index_by_value[target_value])
+                row_scored_targets += 1
+        if row_scored_targets:
+            examples_with_scored_targets += 1
+        response_offset += row_count
+    if response_offset != total_response_tokens:
+        raise RuntimeError(
+            f"Consumed {response_offset} response rows, expected {total_response_tokens}"
+        )
+
+    candidate_ids = torch.tensor(
+        protocol.candidate_token_ids,
+        dtype=torch.long,
+        device=response_logits.device,
+    )
+    if selected_response_rows:
+        selected_logits = response_logits.index_select(
+            0,
+            torch.tensor(
+                selected_response_rows,
+                dtype=torch.long,
+                device=response_logits.device,
+            ),
+        )
+        gold_indices = torch.tensor(
+            gold_candidate_indices,
+            dtype=torch.long,
+            device=response_logits.device,
+        )
+        candidate_logits = selected_logits.index_select(1, candidate_ids)
+        candidate_log_probs = F.log_softmax(candidate_logits, dim=1)
+        candidate_nll = -candidate_log_probs.gather(1, gold_indices.unsqueeze(1)).squeeze(1)
+        candidate_predictions = candidate_logits.argmax(dim=1)
+        gold_token_ids = candidate_ids.index_select(0, gold_indices)
+        log_normalizer = torch.logsumexp(selected_logits, dim=1)
+        raw_nll = log_normalizer - selected_logits.gather(1, gold_token_ids.unsqueeze(1)).squeeze(1)
+        candidate_mass = (torch.logsumexp(candidate_logits, dim=1) - log_normalizer).exp()
+        prediction_histogram = F.one_hot(
+            candidate_predictions,
+            num_classes=len(candidate_values),
+        ).sum(dim=0)
+        candidate_nll_sum = candidate_nll.sum()
+        candidate_correct_sum = (candidate_predictions == gold_indices).sum()
+        raw_nll_sum = raw_nll.sum()
+        full_vocab_correct_sum = (selected_logits.argmax(dim=1) == gold_token_ids).sum()
+        candidate_mass_sum = candidate_mass.sum()
+    else:
+        prediction_histogram = torch.zeros(
+            len(candidate_values),
+            dtype=torch.long,
+            device=response_logits.device,
+        )
+        candidate_nll_sum = response_logits.new_zeros(())
+        candidate_correct_sum = response_logits.new_zeros((), dtype=torch.long)
+        raw_nll_sum = response_logits.new_zeros(())
+        full_vocab_correct_sum = response_logits.new_zeros((), dtype=torch.long)
+        candidate_mass_sum = response_logits.new_zeros(())
+
+    scalar_sums = torch.stack(
+        [
+            candidate_nll_sum,
+            candidate_correct_sum,
+            raw_nll_sum,
+            full_vocab_correct_sum,
+            candidate_mass_sum,
+            response_logits.new_tensor(float(grounded_response_slots)),
+            response_logits.new_tensor(float(len(selected_response_rows))),
+            response_logits.new_tensor(float(labels.shape[0])),
+            response_logits.new_tensor(float(examples_with_scored_targets)),
+        ]
+    ).to(torch.float64)
+    return torch.cat(
+        [
+            scalar_sums,
+            torch.tensor(
+                target_histogram,
+                dtype=torch.float64,
+                device=response_logits.device,
+            ),
+            prediction_histogram.to(torch.float64),
+        ]
+    )
+
+
+def _grounded_final_count_metrics(
+    statistics: torch.Tensor,
+    protocol: GroundedFinalCountTokenProtocol,
+) -> dict[str, Any]:
+    """Convert globally summed grounded final-count statistics to JSON-ready metrics."""
+
+    n_scalars = 9
+    n_targets = len(protocol.target_values)
+    n_candidates = len(protocol.candidate_values)
+    expected_size = n_scalars + n_targets + n_candidates
+    if statistics.numel() != expected_size:
+        raise ValueError(
+            f"Expected {expected_size} grounded final-count statistics, "
+            f"got {statistics.numel()}"
+        )
+    values = statistics.detach().cpu().to(torch.float64)
+    grounded_response_slots = int(values[5].item())
+    scored_response_slots = int(values[6].item())
+    examples = int(values[7].item())
+    examples_with_scored_targets = int(values[8].item())
+    if grounded_response_slots <= 0 or examples <= 0:
+        raise ValueError("Grounded final-count diagnostics evaluated no responses")
+    if scored_response_slots <= 0:
+        raise ValueError("Grounded final-count diagnostics found no targets in 2-10")
+
+    target_start = n_scalars
+    prediction_start = target_start + n_targets
+    target_histogram = {
+        str(value): int(values[target_start + index].item())
+        for index, value in enumerate(protocol.target_values)
+    }
+    prediction_histogram = {
+        str(value): int(values[prediction_start + index].item())
+        for index, value in enumerate(protocol.candidate_values)
+    }
+    denominator = float(scored_response_slots)
+    return {
+        "examples": examples,
+        "examples_with_scored_targets": examples_with_scored_targets,
+        "grounded_response_slots": grounded_response_slots,
+        "scored_response_slots": scored_response_slots,
+        "excluded_response_slots": grounded_response_slots - scored_response_slots,
+        "candidate_values": list(protocol.candidate_values),
+        "candidate_token_ids": list(protocol.candidate_token_ids),
+        "target_histogram": target_histogram,
+        "candidate_top1_prediction_histogram": prediction_histogram,
+        "metrics": {
+            "candidate-normalized final-count NLL": float(values[0].item() / denominator),
+            "final-count candidate top-1 accuracy": float(values[1].item() / denominator),
+            "raw final-count NLL": float(values[2].item() / denominator),
+            "full-vocabulary final-count top-1 accuracy": float(values[3].item() / denominator),
+            "final-count numeric candidate mass": float(values[4].item() / denominator),
+        },
+    }
+
+
 def _build_task_datasets(
     tokenizer,
     token_ids: Molmo2TokenIds,
@@ -385,8 +755,8 @@ def _build_task_datasets(
     max_sequence_length: int,
     max_crops: int,
     sample_seed: int,
-) -> Dict[str, Any]:
-    common: Dict[str, Any] = {
+) -> dict[str, Any]:
+    common: dict[str, Any] = {
         "max_crops": max_crops,
         "loss_token_weighting": "none",
         "token_ids": token_ids,
@@ -422,12 +792,12 @@ def _build_task_datasets(
 
 
 def _build_task_specs(
-    datasets: Dict[str, Any],
+    datasets: dict[str, Any],
     tasks: Sequence[str],
     *,
     examples: int,
     sample_seed: int,
-) -> List[TaskSpec]:
+) -> list[TaskSpec]:
     shared_point_indices = None
     if any(name in tasks for name in ("points", "point_count")):
         points_size = len(datasets["points"])
@@ -480,7 +850,8 @@ def _evaluate_task(
     dp_world_size: int,
     dp_rank: int,
     numeric_count_protocol: NumericCountTokenProtocol | None = None,
-) -> Dict[str, Any]:
+    grounded_final_count_protocol: GroundedFinalCountTokenProtocol | None = None,
+) -> dict[str, Any]:
     global_batch_instances = rank_batch_instances * dp_world_size
     if len(task.indices) % global_batch_instances != 0:
         raise ValueError(
@@ -517,11 +888,15 @@ def _evaluate_task(
     batches = 0
     local_examples = 0
     numeric_count_statistics: torch.Tensor | None = None
+    grounded_final_count_statistics: torch.Tensor | None = None
     for batch in evaluator:
         batches += 1
         local_examples += int(batch["input_ids"].shape[0])
         batch = move_to_device(batch, train_module.device)
-        if numeric_count_protocol is None:
+        retain_response_logits = (
+            numeric_count_protocol is not None or grounded_final_count_protocol is not None
+        )
+        if not retain_response_logits:
             output = train_module.eval_batch(dict(batch))
         else:
             output = train_module.eval_batch(dict(batch), return_response_logits=True)
@@ -540,6 +915,18 @@ def _evaluate_task(
                 numeric_count_statistics = batch_statistics
             else:
                 numeric_count_statistics += batch_statistics
+        if grounded_final_count_protocol is not None:
+            if output.logits is None:
+                raise RuntimeError("Grounded final-count diagnostics require response logits")
+            batch_statistics = _grounded_final_count_batch_statistics(
+                batch,
+                output.logits,
+                grounded_final_count_protocol,
+            )
+            if grounded_final_count_statistics is None:
+                grounded_final_count_statistics = batch_statistics
+            else:
+                grounded_final_count_statistics += batch_statistics
         if get_rank() == 0 and (batches == 1 or batches % 20 == 0):
             log.info("[%s] batch %d/%d", task.name, batches, len(loader))
 
@@ -585,6 +972,18 @@ def _evaluate_task(
             global_statistics,
             numeric_count_protocol,
         )
+    if grounded_final_count_protocol is not None:
+        if grounded_final_count_statistics is None:
+            raise RuntimeError("Grounded final-count diagnostics did not observe any batches")
+        global_statistics = all_reduce_value(
+            grounded_final_count_statistics,
+            train_module.device,
+            group=train_module.dp_process_group,
+        )
+        result["grounded_final_count_diagnostics"] = _grounded_final_count_metrics(
+            global_statistics,
+            grounded_final_count_protocol,
+        )
     if get_rank() == 0:
         log.info("Finished %s: %s", task.name, metrics)
     del evaluator, loader, bounded, selected
@@ -592,7 +991,7 @@ def _evaluate_task(
     return result
 
 
-def _write_json_atomic(path: Path, payload: Dict[str, Any]) -> None:
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -626,7 +1025,7 @@ def main() -> None:
         )
         if detected_checkpoint_kind != "multimodal_stage1":
             raise ValueError("Fast vision evaluation requires a multimodal checkpoint")
-        # Count diagnostics retain only two response-position vocabulary rows per example.
+        # Count diagnostics retain logits only at supervised response positions.
         # Never materialize full 16k-sequence logits.
         module_config.response_logits_only = True
         train_module = module_config.build(model, eval_only=True)
@@ -654,6 +1053,10 @@ def main() -> None:
         if tokenizer.pad_token_id is None:
             raise ValueError(f"Tokenizer {args.tokenizer!r} does not define a pad token")
         numeric_count_protocol = _numeric_count_token_protocol(tokenizer)
+        grounded_final_count_protocol = _grounded_final_count_token_protocol(
+            tokenizer,
+            numeric_count_protocol,
+        )
 
         collator = MultimodalCollator(
             pad_token_id=int(tokenizer.pad_token_id),
@@ -704,6 +1107,9 @@ def main() -> None:
                 dp_world_size=dp_world_size,
                 dp_rank=dp_rank,
                 numeric_count_protocol=(numeric_count_protocol if task.name == "count" else None),
+                grounded_final_count_protocol=(
+                    grounded_final_count_protocol if task.name == "point_count" else None
+                ),
             )
             for task in tasks
         }
@@ -748,6 +1154,7 @@ def main() -> None:
                 "dp_process_group_size": dp_world_size,
                 "attention_backend": "flex",
                 "numeric_count_scoring": numeric_count_protocol.as_dict(),
+                "grounded_final_count_scoring": grounded_final_count_protocol.as_dict(),
             },
             "results": results,
         }

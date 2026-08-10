@@ -158,6 +158,99 @@ def test_numeric_count_protocol_requires_distinct_single_token_candidates(fast_v
     assert protocol.points_prefix_token_id == 50
 
 
+def test_grounded_final_count_protocol_locks_suffix_alignment_and_go_rule(fast_vision):
+    class Tokenizer:
+        eos_token_id = 99
+
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            assert add_special_tokens is False
+            if text == "Counting":
+                return [40, 41]
+            if text == "<points":
+                return [50, 51]
+            if text == "There are none.":
+                return [60, 61, 62]
+            if text == " shows a total of ":
+                return [70, 71]
+            if text == ".":
+                return [72]
+            if text.startswith(" shows a total of "):
+                value = int(text.removeprefix(" shows a total of ").removesuffix("."))
+                token_id = value + 10 if value <= 10 else value + 100
+                return [70, 71, token_id, 72]
+            return [int(text) + 10]
+
+    numeric_protocol = fast_vision._numeric_count_token_protocol(Tokenizer())
+    protocol = fast_vision._grounded_final_count_token_protocol(
+        Tokenizer(),
+        numeric_protocol,
+    )
+
+    assert tuple(protocol.target_values) == tuple(range(61))
+    assert tuple(protocol.positive_suffix_token_ids[2]) == (70, 71, 12, 72)
+    assert protocol.candidate_token_offsets == {value: 2 for value in range(2, 11)}
+    assert fast_vision._match_grounded_final_count_target(
+        # Coordinate-like candidate tokens before the terminal suffix must not be selected.
+        [12, 13, 12, 70, 71, 12, 72, 99],
+        protocol,
+    ) == (2, 5)
+    assert fast_vision._match_grounded_final_count_target(
+        [12, 70, 71, 111, 72, 99],
+        protocol,
+    ) == (11, None)
+    assert fast_vision._match_grounded_final_count_target([60, 61, 62, 99], protocol) == (
+        0,
+        None,
+    )
+    serialized = protocol.as_dict()
+    assert serialized["candidate_scoring"].startswith("softmax over token logits")
+    assert "coordinates are never candidates" in serialized["slot_selection"]
+    assert "rejected from candidate scoring" in serialized["excluded_targets"]
+    assert serialized["predeclared_step200_go_rule"] == {
+        "final_count_top1": "step200 >= max(Stage1, step50) - 0.03",
+        "final_count_nll": "step200 <= min(Stage1, step50) + 0.10 nat",
+        "grounded_ce_vs_stage1": "step200 <= 0.95 * Stage1",
+        "grounded_ce_vs_step50": "step200 <= 1.05 * step50",
+    }
+
+
+def test_grounded_final_count_protocol_rejects_non_single_token_final_candidate(
+    fast_vision,
+):
+    class Tokenizer:
+        eos_token_id = 99
+
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            assert add_special_tokens is False
+            if text == "Counting":
+                return [40]
+            if text == "<points":
+                return [50]
+            if text == "There are none.":
+                return [60]
+            if text == " shows a total of ":
+                return [70]
+            if text == ".":
+                return [72]
+            if text.startswith(" shows a total of "):
+                value = int(text.removeprefix(" shows a total of ").removesuffix("."))
+                if value == 2:
+                    # Contextual encoding splits the terminal answer and contains no
+                    # standalone candidate token ID 12.
+                    return [70, 120, 121, 72]
+                return [70, value + 10, 72]
+            return [int(text) + 10]
+
+    numeric_protocol = fast_vision._numeric_count_token_protocol(Tokenizer())
+    with pytest.raises(
+        ValueError,
+        match="must serialize its final count as exactly the single candidate token 12",
+    ):
+        fast_vision._grounded_final_count_token_protocol(Tokenizer(), numeric_protocol)
+
+
 def test_numeric_count_statistics_follow_response_mask_row_order(fast_vision):
     protocol = fast_vision.NumericCountTokenProtocol(
         values=(2, 3),
@@ -222,6 +315,85 @@ def test_numeric_count_statistics_follow_response_mask_row_order(fast_vision):
     with pytest.raises(ValueError, match="must not have ignored labels"):
         fast_vision._numeric_count_batch_statistics(
             {"labels": ignored_at_response, "loss_masks": loss_masks},
+            response_logits,
+            protocol,
+        )
+
+
+def test_grounded_final_count_statistics_follow_branch_and_response_row_order(fast_vision):
+    protocol = fast_vision.GroundedFinalCountTokenProtocol(
+        candidate_values=(2, 3),
+        candidate_token_ids=(2, 3),
+        eos_token_id=1,
+        target_values=(0, 1, 2, 3, 4),
+        positive_suffix_token_ids={
+            1: (4, 5, 8, 6),
+            2: (4, 5, 2, 6),
+            3: (4, 5, 3, 6),
+            4: (4, 5, 7, 6),
+        },
+        none_response_token_ids=(9, 10),
+        candidate_token_offsets={2: 2, 3: 2},
+    )
+    labels = torch.tensor(
+        [
+            [-100, 9, 4, 5, 2, 6, 1, -100, 9, 4, 5, 7, 6, 1],
+            [9, -100, 4, -100, 5, -100, 3, -100, 6, -100, 1, -100, -100, -100],
+        ]
+    )
+    loss_masks = (labels != -100).to(torch.float32)
+    subsegment_ids = torch.tensor(
+        [
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ]
+    )
+    # Response-only rows are flattened row-major. Eligible final-count rows are 3 and 15;
+    # target 4 in row 0's second branch is detected and audited but excluded from 2-10 scoring.
+    response_logits = torch.full((18, 12), -2.0)
+    response_logits[3, 2] = 4.0
+    response_logits[3, 3] = 1.0
+    response_logits[15, 2] = 5.0
+    response_logits[15, 3] = 2.0
+
+    statistics = fast_vision._grounded_final_count_batch_statistics(
+        {
+            "labels": labels,
+            "loss_masks": loss_masks,
+            "subsegment_ids": subsegment_ids,
+        },
+        response_logits,
+        protocol,
+    )
+    result = fast_vision._grounded_final_count_metrics(statistics, protocol)
+
+    expected_candidate_nll = torch.nn.functional.cross_entropy(
+        response_logits[[3, 15]][:, [2, 3]],
+        torch.tensor([0, 1]),
+    ).item()
+    metrics = result["metrics"]
+    assert metrics["candidate-normalized final-count NLL"] == pytest.approx(
+        expected_candidate_nll,
+        abs=1e-6,
+    )
+    assert metrics["final-count candidate top-1 accuracy"] == 0.5
+    assert result["examples"] == 2
+    assert result["examples_with_scored_targets"] == 2
+    assert result["grounded_response_slots"] == 3
+    assert result["scored_response_slots"] == 2
+    assert result["excluded_response_slots"] == 1
+    assert result["target_histogram"] == {"0": 0, "1": 0, "2": 1, "3": 1, "4": 1}
+    assert result["candidate_top1_prediction_histogram"] == {"2": 2, "3": 0}
+
+    malformed = labels.clone()
+    malformed[0, 5] = 11
+    with pytest.raises(ValueError, match="exactly one grounded final-count"):
+        fast_vision._grounded_final_count_batch_statistics(
+            {
+                "labels": malformed,
+                "loss_masks": loss_masks,
+                "subsegment_ids": subsegment_ids,
+            },
             response_logits,
             protocol,
         )
@@ -415,6 +587,56 @@ def test_count_discriminator_beaker_spec_is_matched_safe_and_pinned(fast_vision)
     assert len(set(outputs)) == 3
     assert len(git_refs) == 1
     assert git_refs.pop() == "771c954772413c378e36fc01dc57a3409529eafe"
+
+
+def test_grounded_final_count_beaker_spec_is_matched_safe_and_unsubmitted(fast_vision):
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "configs"
+        / "vision_moe"
+        / "eval"
+        / "stage2_grounded_final_count_discriminator_checkpoint_comparison.yaml"
+    )
+    with path.open() as spec_file:
+        spec = yaml.safe_load(spec_file)
+
+    expected_hosts = ["holmes-cs-aus-517.reviz.ai2.in"]
+    assert spec["version"] == "v2"
+    assert spec["budget"] == "ai2/oe-other"
+    assert len(spec["tasks"]) == 3
+    checkpoints = []
+    outputs = []
+    work_dirs = []
+    for task in spec["tasks"]:
+        arguments = task["arguments"]
+        assert arguments[:2] == ["python", "src/scripts/eval/s002_fast_vision.py"]
+        checkpoints.append(arguments[arguments.index("--checkpoint") + 1])
+        outputs.append(arguments[arguments.index("--output") + 1])
+        work_dirs.append(arguments[arguments.index("--work-dir") + 1])
+        task_start = arguments.index("--tasks") + 1
+        task_end = arguments.index("--examples")
+        assert arguments[task_start:task_end] == ["point_count"]
+        assert arguments[arguments.index("--examples") + 1] == "512"
+        assert arguments[arguments.index("--sample-seed") + 1] == "6198"
+        assert arguments[arguments.index("--message-format") + 1] == "olmo3_chat"
+        assert arguments[arguments.index("--ep-degree") + 1] == "8"
+        assert arguments[arguments.index("--max-sequence-length") + 1] == "16384"
+        assert arguments[arguments.index("--rank-batch-instances") + 1] == "1"
+        assert arguments[arguments.index("--max-crops") + 1] == "8"
+        assert task["resources"] == {"gpuCount": 8, "sharedMemory": "10 GiB"}
+        assert task["constraints"]["hostname"] == expected_hosts
+        assert task["context"]["priority"] == "urgent"
+        assert task["context"]["minRuntime"] == "8h0m0s"
+        assert task["propagateFailure"] is False
+        env = {item["name"]: item.get("value") for item in task["envVars"]}
+        assert env["GIT_REF"] == "REPLACE_WITH_IMMUTABLE_GIT_SHA"
+        assert env["GIT_BRANCH"] == "vision-moe"
+        assert env["TMPDIR"] == "/results"
+
+    assert any(checkpoint.endswith("/step32000") for checkpoint in checkpoints)
+    assert any(checkpoint.endswith("/step50") for checkpoint in checkpoints)
+    assert any(checkpoint.endswith("/step200") for checkpoint in checkpoints)
+    assert len(set(outputs)) == len(set(work_dirs)) == 3
 
 
 def test_stage1_parent_count_discriminator_retry_matches_protocol_and_is_isolated(fast_vision):

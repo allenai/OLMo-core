@@ -44,6 +44,24 @@ does not alter the Stage-2 checkpoints or constitute a corrective-training ablat
 causal corrective ablation should resume from Stage 2 step 50 and compare at step 200
 against the existing control; step 200 is not the causal branch point.
 
+The grounded final-count discriminator isolates `point_count` and compares the exact same
+512 examples across the Stage-1 parent, Stage-2 step 50, and Stage-2 step 200. Before
+submission, replace every literal `REPLACE_WITH_IMMUTABLE_GIT_SHA` with the immutable
+`vision-moe` commit containing the grounded final-count evaluator, then verify that no
+placeholder remains:
+
+```bash
+beaker experiment create -w ai2/molmofication \
+  -n s002-stage2-grounded-final-count-discriminator-checkpoint-comparison \
+  configs/vision_moe/eval/stage2_grounded_final_count_discriminator_checkpoint_comparison.yaml
+```
+
+The predeclared GO decision requires all four gates: Stage-2 step 200 grounded
+`point_count` CE must be at least 5% better than Stage 1 and no more than 5% worse than
+Stage-2 step 50; its final-count top-1 accuracy must be within 3 percentage points of the
+better of Stage 1 and step 50; and its final-count NLL must be within 0.10 nat of the better
+baseline. These thresholds must not be changed after inspecting results.
+
 Do not launch until the checkpoint health audit confirms that `step200` is permanent,
 all 16 trainer states agree on step 200, and a native distributed load succeeds.
 
