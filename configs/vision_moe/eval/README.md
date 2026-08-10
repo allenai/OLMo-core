@@ -45,10 +45,8 @@ causal corrective ablation should resume from Stage 2 step 50 and compare at ste
 against the existing control; step 200 is not the causal branch point.
 
 The grounded final-count discriminator isolates `point_count` and compares the exact same
-512 examples across the Stage-1 parent, Stage-2 step 50, and Stage-2 step 200. Before
-submission, replace every literal `REPLACE_WITH_IMMUTABLE_GIT_SHA` with the immutable
-`vision-moe` commit containing the grounded final-count evaluator, then verify that no
-placeholder remains:
+512 examples across the Stage-1 parent, Stage-2 step 50, and Stage-2 step 200. It is pinned
+to immutable `vision-moe` evaluator commit `717f211714cd40939598a570413d9872b6cc713b`:
 
 ```bash
 beaker experiment create -w ai2/molmofication \

@@ -589,7 +589,7 @@ def test_count_discriminator_beaker_spec_is_matched_safe_and_pinned(fast_vision)
     assert git_refs.pop() == "771c954772413c378e36fc01dc57a3409529eafe"
 
 
-def test_grounded_final_count_beaker_spec_is_matched_safe_and_unsubmitted(fast_vision):
+def test_grounded_final_count_beaker_spec_is_matched_safe_and_pinned(fast_vision):
     path = (
         Path(__file__).resolve().parents[3]
         / "configs"
@@ -629,7 +629,7 @@ def test_grounded_final_count_beaker_spec_is_matched_safe_and_unsubmitted(fast_v
         assert task["context"]["minRuntime"] == "8h0m0s"
         assert task["propagateFailure"] is False
         env = {item["name"]: item.get("value") for item in task["envVars"]}
-        assert env["GIT_REF"] == "REPLACE_WITH_IMMUTABLE_GIT_SHA"
+        assert env["GIT_REF"] == "717f211714cd40939598a570413d9872b6cc713b"
         assert env["GIT_BRANCH"] == "vision-moe"
         assert env["TMPDIR"] == "/results"
 
