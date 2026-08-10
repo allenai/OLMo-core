@@ -66,7 +66,6 @@ tasks:
       minRuntime: 8h0m0s
       autoResume: true
     constraints:
-      cluster: [ai2/holmes]
       hostname:
         - holmes-cs-aus-520.reviz.ai2.in
         - holmes-cs-aus-516.reviz.ai2.in
