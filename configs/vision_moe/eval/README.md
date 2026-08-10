@@ -5,8 +5,8 @@ Stage-2 step-200 checkpoint. They target `ai2/holmes`, which supplies B300 GPUs,
 `priority: urgent`, `minRuntime: 8h`, budget `ai2/oe-other`, and only Rustin's Beaker and
 W&B secrets.
 
-Before launch, replace `VISION_MOE_EVAL_COMMIT` in each spec with the immutable commit on
-`vision-moe` that contains the evaluator fix. Submit each spec to the requested workspace:
+The specs are pinned to the immutable `vision-moe` commit that contains the evaluator fixes.
+Submit each spec to the requested workspace:
 
 ```bash
 beaker experiment create -w ai2/molmofication \

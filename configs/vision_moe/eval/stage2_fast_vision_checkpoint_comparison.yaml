@@ -2,8 +2,8 @@ version: v2
 budget: ai2/oe-other
 description: >-
   Matched native EP8 PixMo caption, count-only, and basic-pointing validation over the
-  s002 Stage 1 parent and Stage 2 steps 50 and 200. Replace VISION_MOE_EVAL_COMMIT with
-  the committed vision-moe revision before submission.
+  s002 Stage 1 parent and Stage 2 steps 50 and 200, pinned to the validated evaluator
+  revision on vision-moe.
 tasks:
   - name: stage1-parent
     image:
@@ -41,7 +41,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GIT_REF, value: f75e0e28b6c83766c2362edf230a7d2b52320e66}
       - {name: GANTRY_TASK_NAME, value: stage1-parent}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
@@ -131,7 +131,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GIT_REF, value: f75e0e28b6c83766c2362edf230a7d2b52320e66}
       - {name: GANTRY_TASK_NAME, value: stage2-step50}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
@@ -221,7 +221,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GIT_REF, value: f75e0e28b6c83766c2362edf230a7d2b52320e66}
       - {name: GANTRY_TASK_NAME, value: stage2-step200}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}

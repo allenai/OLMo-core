@@ -2,7 +2,7 @@ version: v2
 budget: ai2/oe-other
 description: >-
   Complete OLMES-fast completion-format language-retention evaluation for s002 Stage 2
-  step 200. Replace VISION_MOE_EVAL_COMMIT with the committed vision-moe revision.
+  step 200, pinned to the validated evaluator revision on vision-moe.
 tasks:
   - name: main
     image:
@@ -20,7 +20,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GIT_REF, value: f75e0e28b6c83766c2362edf230a7d2b52320e66}
       - {name: GANTRY_TASK_NAME, value: main}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
