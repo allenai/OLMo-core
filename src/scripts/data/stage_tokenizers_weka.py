@@ -54,12 +54,31 @@ def local_dir(root: str, repo: str) -> str:
     return os.path.join(root, repo.replace("/", "__"))
 
 
+# Copy the Hub's files VERBATIM rather than round-tripping through
+# ``AutoTokenizer.save_pretrained``. Re-serializing rewrites tokenizer_config.json in whatever
+# transformers version happens to be running, and the result is not portable: a copy saved by
+# transformers 5.10 set ``extra_special_tokens`` to null, and the older transformers in the beaker
+# image then died with "'list' object has no attribute 'keys'" while loading it. save_pretrained
+# also drops vocab.json/merges.txt. Shipping the raw files means the staged copy is byte-identical
+# to what the job would have downloaded itself.
+TOKENIZER_FILES = [
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "vocab.json",
+    "merges.txt",
+    "added_tokens.json",
+    "chat_template.jinja",
+    "chat_template.json",
+]
+
+
 def stage(repo: str, root: str, attempts: int = 6) -> bool:
     """
-    Download one tokenizer and save it under ``root``, retrying transient Hub failures.
+    Download one tokenizer's raw Hub files into ``root``, retrying transient Hub failures.
 
     A single 429/503 aborts the whole download, so the retry loop is not optional -- it is the
-    reason this script exists rather than a one-line ``save_pretrained``.
+    reason this script exists rather than a one-line ``snapshot_download``.
 
     :param repo: The Hub repo id to fetch.
     :param root: The staging root directory.
@@ -67,15 +86,17 @@ def stage(repo: str, root: str, attempts: int = 6) -> bool:
 
     :returns: ``True`` if the tokenizer was staged successfully.
     """
-    from transformers import AutoTokenizer
+    import shutil
+
+    from huggingface_hub import snapshot_download
 
     dest = local_dir(root, repo)
     for attempt in range(1, attempts + 1):
         try:
-            tok = AutoTokenizer.from_pretrained(repo)
-            os.makedirs(dest, exist_ok=True)
-            tok.save_pretrained(dest)
-            print(f"SAVED {repo} -> {dest}  (vocab={len(tok)})", flush=True)
+            snapshot_download(repo, allow_patterns=TOKENIZER_FILES, local_dir=dest)
+            # snapshot_download leaves a .cache/ dir of download metadata next to the files.
+            shutil.rmtree(os.path.join(dest, ".cache"), ignore_errors=True)
+            print(f"SAVED {repo} -> {dest}  ({sorted(os.listdir(dest))})", flush=True)
             return True
         except Exception as e:  # noqa: BLE001 -- any Hub/network error is worth retrying
             print(f"  attempt {attempt}/{attempts} for {repo}: {type(e).__name__}: {e}", flush=True)
@@ -89,11 +110,16 @@ def verify(repo: str, root: str) -> bool:
     """
     Reload a staged tokenizer from disk to prove the copy is usable offline.
 
+    Runs with ``HF_HUB_OFFLINE=1`` set, so a copy that still secretly reaches the Hub fails here
+    rather than in a sweep six hours later.
+
     :param repo: The Hub repo id that was staged.
     :param root: The staging root directory.
 
     :returns: ``True`` if the staged copy loads.
     """
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
     from transformers import AutoTokenizer
 
     dest = local_dir(root, repo)
