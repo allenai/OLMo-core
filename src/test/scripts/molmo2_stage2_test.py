@@ -511,11 +511,7 @@ def test_stage2_resume_to400_profile_is_guarded_full_state_continuation():
         "num_nodes": 2,
         "num_gpus": 8,
         "workspace": "ai2/molmofication",
-        "hostnames": [
-            "holmes-cs-aus-497.reviz.ai2.in",
-            "holmes-cs-aus-510.reviz.ai2.in",
-            "holmes-cs-aus-517.reviz.ai2.in",
-        ],
+        "cluster": "ai2/holmes",
         "budget": "ai2/oe-other",
         "priority": "urgent",
         "min_runtime": "8h",
@@ -578,8 +574,8 @@ def test_stage2_resume_to400_profile_is_guarded_full_state_continuation():
         description=None,
     )
     stage2._apply_beaker_test_config(SimpleNamespace(launch=launch_config), profile)
-    assert launch_config.clusters == []
-    assert launch_config.hostnames == profile["launch"]["hostnames"]
+    assert launch_config.clusters == ["ai2/holmes"]
+    assert launch_config.hostnames is None
 
 
 def test_stage2_pilot_dry_run_cli_overrides_take_precedence():
