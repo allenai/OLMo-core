@@ -26,8 +26,8 @@ beaker experiment create -w ai2/molmofication \
 
 The count discriminator compares candidate-normalized first-token NLL/top-1 over answers 2-10
 with raw digit/EOS and response-prefix mass, while `point_count` CE measures the grounded
-training format on the exact same source indices as basic pointing. Replace every
-`REPLACE_WITH_VISION_MOE_COMMIT_SHA` with the immutable evaluator commit before launching:
+training format on the exact same source indices as basic pointing. The spec is pinned to
+immutable evaluator commit `771c954772413c378e36fc01dc57a3409529eafe`:
 
 ```bash
 beaker experiment create -w ai2/molmofication \

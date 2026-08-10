@@ -40,7 +40,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: REPLACE_WITH_VISION_MOE_COMMIT_SHA}
+      - {name: GIT_REF, value: 771c954772413c378e36fc01dc57a3409529eafe}
       - {name: GANTRY_TASK_NAME, value: stage1-parent-count-discriminator}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
@@ -132,7 +132,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: REPLACE_WITH_VISION_MOE_COMMIT_SHA}
+      - {name: GIT_REF, value: 771c954772413c378e36fc01dc57a3409529eafe}
       - {name: GANTRY_TASK_NAME, value: stage2-step50-count-discriminator}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
@@ -224,7 +224,7 @@ tasks:
     envVars:
       - {name: GANTRY_VERSION, value: 3.7.0}
       - {name: GITHUB_REPO, value: allenai/OLMo-core}
-      - {name: GIT_REF, value: REPLACE_WITH_VISION_MOE_COMMIT_SHA}
+      - {name: GIT_REF, value: 771c954772413c378e36fc01dc57a3409529eafe}
       - {name: GANTRY_TASK_NAME, value: stage2-step200-count-discriminator}
       - {name: RESULTS_DIR, value: /results}
       - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
