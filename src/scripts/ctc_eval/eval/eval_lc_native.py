@@ -273,6 +273,42 @@ def main():
                 rec["detail"] = details[i]
             gen_dump.append(rec)
 
+    # ---- incremental checkpointing of results ----------------------------------------------
+    # A ladder can run for many hours (a single 128k rung is ~1h, 256k longer), and a preempted or
+    # OOM-killed job used to lose EVERY completed rung because the summary was only written after
+    # the last one. Flush after each rung instead, so whatever finished is already on disk.
+    #
+    # The summary is rewritten in full each time (it is a few hundred bytes) via a temp file +
+    # os.replace, so a kill mid-write can never leave a truncated/partial JSON behind. Generations
+    # are appended incrementally instead -- the dump reaches hundreds of MB, and rewriting it per
+    # rung would be quadratic.
+    #
+    # NOTE: this deliberately does NOT merge with a pre-existing file. A rerun (e.g. the same
+    # checkpoint at a different batch size) must fully replace the old numbers rather than silently
+    # inherit stale rungs, so the file is truncated once at startup and only ever accumulates rungs
+    # from THIS process.
+    gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
+    gens_written = 0
+    if is_main:
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        if args.save_generations:
+            open(gen_path, "w").close()  # truncate any dump from a previous attempt
+
+    def _flush_results():
+        """Persist everything completed so far. Rank 0 only; safe to call after every rung."""
+        nonlocal gens_written
+        if not is_main:
+            return
+        tmp = args.out + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(summary, fh, indent=2)
+        os.replace(tmp, args.out)  # atomic within a filesystem
+        if args.save_generations and len(gen_dump) > gens_written:
+            with open(gen_path, "a") as gf:
+                for rec in gen_dump[gens_written:]:
+                    gf.write(json.dumps(rec) + "\n")
+            gens_written = len(gen_dump)
+
     if not args.skip_ruler:
         recalls = []
         for sub in args.ruler_subtasks.split(","):
@@ -287,7 +323,9 @@ def main():
                 summary["ruler"][f"{sub}_{L}"] = res
                 recalls.append(res["recall"])
                 print(f"[ruler] {sub}_{L}: recall={res['recall']:.3f} (n={len(ex)})", flush=True)
+                _flush_results()
         summary["ruler_avg_recall"] = sum(recalls) / len(recalls) if recalls else None
+        _flush_results()
 
     if not args.ladder:
         ex = _load(args.contra_data, task="contradiction", qp="both")
@@ -296,6 +334,7 @@ def main():
         _record_gens("contradiction", "single", ex, resp, det)
         summary["contradiction"] = res
         print(f"[contradiction] f1={res['f1']:.3f} (n={len(ex)})", flush=True)
+        _flush_results()
 
     if not args.ladder and os.path.exists(args.nq_data):
         ex = _load(args.nq_data, task="retrieval", qp="both")
@@ -304,6 +343,7 @@ def main():
         _record_gens("nq", "single", ex, resp, det)
         summary["nq"] = res
         print(f"[nq] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
+        _flush_results()
 
     # ---- LENGTH-LADDER: each task at 2k..64k (reports <task>_<rung>), mirrors the landmark driver ----
     if args.ladder:
@@ -497,6 +537,7 @@ def main():
                 summary[f"{task}_{label}"] = prim
                 print(f"[ladder:{task}@{label}] {pkey or 'mrr'}="
                       f"{prim if prim is None else round(prim,3)} (n={len(ex)})", flush=True)
+                _flush_results()
 
     # held-out retrieval generalization probes (eval-only) — same task="retrieval" path as NQ.
     if not args.skip_gen and not args.ladder:
@@ -516,15 +557,13 @@ def main():
             _record_gens(f"gen_{gname}", "probe", ex, resp, det)
             summary[f"gen_{gname}"] = res
             print(f"[gen:{gname}] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
+            _flush_results()
 
     if is_main:
-        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-        json.dump(summary, open(args.out, "w"), indent=2)
+        # Everything has already been flushed rung-by-rung; this final call just picks up whatever
+        # the last rung added and leaves the same complete file the old write-once path produced.
+        _flush_results()
         if args.save_generations and gen_dump:
-            gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
-            with open(gen_path, "w") as gf:
-                for rec in gen_dump:
-                    gf.write(json.dumps(rec) + "\n")
             print(f"[native] wrote {len(gen_dump)} generations -> {gen_path}", flush=True)
         print(f"\n[native] TOTAL {time.time()-t0:.1f}s | RULER {summary.get('ruler_avg_recall')} "
               f"contra {summary['contradiction'].get('f1')} nq {summary['nq'].get('f1')}\nWROTE {args.out}")
