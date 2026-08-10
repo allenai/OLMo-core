@@ -1,0 +1,56 @@
+version: 1
+name: stage2-ep8-2node-image-only-v9-resume-to400
+description: >-
+  Continue the audited Stage 2 pilot from its latest same-save-folder checkpoint through
+  step 400. The required run-name guard prevents a typo from falling back to the Stage 1
+  transition checkpoint and silently restarting Stage 2 at step zero.
+launch:
+  num_nodes: 2
+  num_gpus: 8
+  workspace: ai2/molmofication
+  cluster: ai2/holmes
+  budget: ai2/oe-other
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --required_run_name=s002-stage2-v9-pilot-bounded-errors-5a81c40c
+  - --mixture=image-only-v9
+  - --message_format=olmo3_chat
+  - --mmfinereason_rate=0.0
+  - --finevision_rate=0.0
+  - --collator.pad_sequence_length=16384
+  - --train_module.max_sequence_length=16384
+  - --global_batch_size=2097152
+  - --global_batch_instances=128
+  - --train_module.rank_microbatch_size=16384
+  - --rank_microbatch_instances=1
+  - --train_module.ep_config.degree=8
+  - --train_module.optim.sigma_factor=12
+  - --train_module.diagnostics_interval=10
+  - --pack_sequences=true
+  - --pack_max_crops=45
+  - --pack_buffer_size=48
+  - --pack_image_weight=30.0
+  - --max_consecutive_data_errors=10
+  - --max_total_data_errors=1000
+  - --trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-corrected-clean-32k-b300-20260807/step32000
+  - --trainer.load_strategy=always
+  - --trainer.load_optim_state=false
+  - --trainer.load_trainer_state=false
+  - --trainer.max_duration.value=400
+  - --trainer.max_duration.unit=steps
+  - --train_module.scheduler.schedulers.connector.t_max=30000
+  - --train_module.scheduler.schedulers.vision.t_max=30000
+  - --train_module.scheduler.default.t_max=30000
+  - --model.lm.recompute_each_block=true
+  - --fast_vision_eval_interval=200
+  - --fast_vision_eval_examples=32
+  - --trainer.callbacks.wandb.name=s002-stage2-v9-pilot-bounded-errors-5a81c40c
+  - --trainer.callbacks.wandb.group=s002-stage2-image-only-v9-pilot
+  - --trainer.callbacks.wandb.auto_resume=true
+  - --trainer.callbacks.checkpointer.pre_train_checkpoint=false
+  - --trainer.callbacks.checkpointer.save_interval=null
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=100
+  - --trainer.callbacks.checkpointer.remove=all_non_permanent
+  - --trainer.callbacks.checkpointer.fixed_steps=[50,200,400]
+  - --trainer.callbacks.checkpointer.max_checkpoints=3

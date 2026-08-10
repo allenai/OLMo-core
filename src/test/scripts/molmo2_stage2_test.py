@@ -210,6 +210,45 @@ def test_stage2_rejects_fixed_artifact_overrides():
         stage2._validate_fixed_artifacts(config)
 
 
+def test_stage2_required_run_name_guard_accepts_exact_run_identity():
+    stage2 = _load_stage2_module()
+    run_name = "s002-stage2-v9-pilot-bounded-errors-5a81c40c"
+    config = SimpleNamespace(
+        required_run_name=run_name,
+        trainer=SimpleNamespace(
+            save_folder=f"{stage2.EXPERIMENT_ROOT}/checkpoints/{run_name}",
+            callbacks={"wandb": SimpleNamespace(name=run_name)},
+        ),
+    )
+
+    stage2._validate_required_run_name(config, run_name)
+
+
+@pytest.mark.parametrize(
+    ("positional_name", "save_folder_name", "wandb_name", "match"),
+    [
+        ("wrong-run", None, None, "requires run name"),
+        (None, "wrong-folder", None, "save folder must match"),
+        (None, None, "wrong-wandb", "W&B name must match"),
+    ],
+)
+def test_stage2_required_run_name_guard_rejects_mismatched_identity(
+    positional_name, save_folder_name, wandb_name, match
+):
+    stage2 = _load_stage2_module()
+    required = "s002-stage2-v9-pilot-bounded-errors-5a81c40c"
+    config = SimpleNamespace(
+        required_run_name=required,
+        trainer=SimpleNamespace(
+            save_folder=(f"{stage2.EXPERIMENT_ROOT}/checkpoints/{save_folder_name or required}"),
+            callbacks={"wandb": SimpleNamespace(name=wandb_name or required)},
+        ),
+    )
+
+    with pytest.raises(ValueError, match=match):
+        stage2._validate_required_run_name(config, positional_name or required)
+
+
 def test_stage2_fast_vision_validation_uses_olmo3_held_out_tasks(monkeypatch):
     stage2 = _load_stage2_module()
     captured: Any = {"loaders": [], "evaluators": []}
@@ -405,6 +444,75 @@ def test_stage2_pilot_profiles_are_submission_safe_dry_run_inputs(profile_name, 
     assert config.launch.budget == "ai2/oe-other"
     assert config.launch.priority == "urgent"
     assert config.launch.min_runtime == "8h"
+
+
+def test_stage2_resume_to400_profile_is_guarded_full_state_continuation():
+    stage2 = _load_stage2_module()
+    run_name = "s002-stage2-v9-pilot-bounded-errors-5a81c40c"
+    profile_path = (
+        Path(__file__).parents[3]
+        / "configs"
+        / "vision_moe"
+        / "stage2_ep8_2node_image_only_v9_resume_to400.yaml"
+    )
+
+    profile, overrides = stage2._load_beaker_test_config([f"--beaker-test-config={profile_path}"])
+
+    assert profile is not None
+    assert profile["launch"] == {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": "ai2/molmofication",
+        "cluster": "ai2/holmes",
+        "budget": "ai2/oe-other",
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    expected_overrides = {
+        f"--required_run_name={run_name}",
+        "--mixture=image-only-v9",
+        "--message_format=olmo3_chat",
+        "--mmfinereason_rate=0.0",
+        "--finevision_rate=0.0",
+        "--collator.pad_sequence_length=16384",
+        "--train_module.max_sequence_length=16384",
+        "--global_batch_size=2097152",
+        "--global_batch_instances=128",
+        "--train_module.rank_microbatch_size=16384",
+        "--rank_microbatch_instances=1",
+        "--train_module.ep_config.degree=8",
+        "--train_module.optim.sigma_factor=12",
+        "--train_module.diagnostics_interval=10",
+        "--pack_sequences=true",
+        "--pack_max_crops=45",
+        "--pack_buffer_size=48",
+        "--pack_image_weight=30.0",
+        "--max_consecutive_data_errors=10",
+        "--max_total_data_errors=1000",
+        f"--trainer.load_path={stage2.DEFAULT_LOAD_PATH}",
+        "--trainer.load_strategy=always",
+        "--trainer.load_optim_state=false",
+        "--trainer.load_trainer_state=false",
+        "--trainer.max_duration.value=400",
+        "--trainer.max_duration.unit=steps",
+        "--train_module.scheduler.schedulers.connector.t_max=30000",
+        "--train_module.scheduler.schedulers.vision.t_max=30000",
+        "--train_module.scheduler.default.t_max=30000",
+        "--model.lm.recompute_each_block=true",
+        "--fast_vision_eval_interval=200",
+        "--fast_vision_eval_examples=32",
+        f"--trainer.callbacks.wandb.name={run_name}",
+        "--trainer.callbacks.wandb.group=s002-stage2-image-only-v9-pilot",
+        "--trainer.callbacks.wandb.auto_resume=true",
+        "--trainer.callbacks.checkpointer.pre_train_checkpoint=false",
+        "--trainer.callbacks.checkpointer.save_interval=null",
+        "--trainer.callbacks.checkpointer.ephemeral_save_interval=100",
+        "--trainer.callbacks.checkpointer.remove=all_non_permanent",
+        "--trainer.callbacks.checkpointer.fixed_steps=[50,200,400]",
+        "--trainer.callbacks.checkpointer.max_checkpoints=3",
+    }
+    assert expected_overrides <= set(overrides)
+    assert not any("fast_language" in override for override in overrides)
 
 
 def test_stage2_pilot_dry_run_cli_overrides_take_precedence():

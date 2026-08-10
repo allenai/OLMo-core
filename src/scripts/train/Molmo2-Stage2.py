@@ -206,6 +206,8 @@ class ExperimentConfig(Config):
     """Stop when more than this many source examples fail consecutively on a rank."""
     max_total_data_errors: int = MAX_TOTAL_DATA_ERRORS
     """Stop when more than this many source examples fail cumulatively on a rank."""
+    required_run_name: Optional[str] = None
+    """Require an exact positional run name for a same-save-folder continuation."""
 
 
 @dataclass
@@ -409,6 +411,45 @@ def _validate_fixed_artifacts(config: ExperimentConfig) -> None:
                 f"{name} is fixed when constructing the Stage 2 model; "
                 f"expected {value!r}, got {configured!r}"
             )
+
+
+def _validate_required_run_name(config: ExperimentConfig, run_name: str) -> None:
+    """Reject a guarded continuation unless all run identities match exactly.
+
+    Stage 2 always checks its save folder before ``trainer.load_path``. A typo in the
+    positional run name would therefore create a new save folder and fall back to the
+    Stage 1 transition checkpoint. Guarded continuation profiles use this check to fail
+    before launch instead of silently restarting Stage 2 from step zero.
+
+    :param config: Fully merged experiment config.
+    :param run_name: Positional run name supplied to the script.
+
+    :raises ValueError: If a required run name or derived run identity does not match.
+    """
+    required_run_name = config.required_run_name
+    if required_run_name is None:
+        return
+
+    if run_name != required_run_name:
+        raise ValueError(
+            f"This Stage 2 continuation requires run name {required_run_name!r}, "
+            f"got {run_name!r}"
+        )
+
+    expected_save_folder = f"{EXPERIMENT_ROOT}/checkpoints/{required_run_name}"
+    if config.trainer.save_folder != expected_save_folder:
+        raise ValueError(
+            "Guarded Stage 2 continuation save folder must match the required run name: "
+            f"expected {expected_save_folder!r}, got {config.trainer.save_folder!r}"
+        )
+
+    wandb_callback = config.trainer.callbacks.get("wandb")
+    wandb_name = getattr(wandb_callback, "name", None)
+    if wandb_name != required_run_name:
+        raise ValueError(
+            "Guarded Stage 2 continuation W&B name must match the required run name: "
+            f"expected {required_run_name!r}, got {wandb_name!r}"
+        )
 
 
 def _build_console_logger() -> ConsoleLoggerCallback:
@@ -647,6 +688,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     ).merge(overrides)
     _validate_fixed_artifacts(config)
     _validate_batch_geometry(config)
+    _validate_required_run_name(config, run_name)
     return config
 
 

@@ -73,28 +73,42 @@ python src/scripts/train/Molmo2-Stage1.py dry_run \
 
 ## Stage 2 pilot
 
-The Stage 2 pilot is split into two profiles for one logical run named
-`s002-stage2-image-only-v9-pilot`:
+The initial Stage 2 pilot is split into two profiles for one logical run:
 
 - `stage2_ep8_2node_image_only_v9_to50.yaml` starts from the canonical completed Stage 1
   `step32000` checkpoint and trains through step 50.
 - `stage2_ep8_2node_image_only_v9_resume_to200.yaml` resumes the same run and trains through
   step 200. Use exactly the same run name so the trainer finds the latest checkpoint in the
   existing save folder before considering the Stage 1 fallback path.
+- `stage2_ep8_2node_image_only_v9_resume_to400.yaml` is the bounded continuation of the
+  audited run `s002-stage2-v9-pilot-bounded-errors-5a81c40c`. It resumes that run's complete
+  step-200 model, optimizer, scheduler, trainer, packed-loader, RNG, and W&B state and stops
+  at step 400 for another performance gate. Its required-run-name guard rejects any other
+  positional run name, save folder, or W&B identity before launch.
 
-Both profiles use two 8-GPU Holmes nodes, EP8, urgent priority, an eight-hour minimum runtime,
+All profiles use two 8-GPU Holmes nodes, EP8, urgent priority, an eight-hour minimum runtime,
 and the approved workspace and budget. They run the complete 43-source `image-only-v9`
 mixture with OLMo 3 chat serialization, 16k sequences, MoE capacity factor 2, sigma factor 12,
-diagnostics every 10 steps, and held-out vision evaluation every 50 steps. The scheduler keeps
-the full 30,000-step horizon in both phases. Isolated malformed rows are skipped deterministically,
-reported through `data/errors total`, and bounded to at most 10 consecutive or 1,000 cumulative
-errors per rank so a broken source still stops training. No inline language evaluator is enabled.
+and diagnostics every 10 steps. The 50-step and 200-step profiles evaluate held-out vision
+tasks every 50 steps. The bounded step-400 continuation evaluates them every 200 steps. The
+scheduler keeps the full 30,000-step horizon in every phase. Isolated malformed rows are
+skipped deterministically, reported through `data/errors total`, and bounded to at most 10
+consecutive or 1,000 cumulative errors per rank so a broken source still stops training. No
+inline language evaluator is enabled.
 
 The checkpointer saves permanent milestones at steps 50 and 200, keeps both, and maintains one
 rolling ephemeral checkpoint every 25 steps for preemption recovery. It does not write a
 pre-train checkpoint. The first command assumes the run's save folder is empty. Repeating it
 with an existing checkpoint intentionally resumes that run because save-folder checkpoints
 take precedence over `trainer.load_path`.
+
+The step-400 continuation adds a permanent step-400 milestone, retains all three permanent
+checkpoints, and writes one rolling recovery checkpoint at step 300. Although its Stage 1
+fallback flags remain weights-only for the original transition, a checkpoint in the guarded
+same-run save folder always takes precedence and is restored with full trainer and optimizer
+state by the trainer's resume path. Its `all_non_permanent` removal strategy preserves the
+fixed steps while allowing the new step-100 cadence to retire the old ephemeral step 175 after
+step 300 is safely written.
 
 Inspect the fresh profile without submitting:
 
@@ -110,6 +124,15 @@ After step 50 is complete, inspect the continuation with the same run name:
 PATH=/weka/oe-training-default/rustin/envs/olmo-core-vision/bin:$PATH \
 python src/scripts/train/Molmo2-Stage2.py dry_run s002-stage2-image-only-v9-pilot \
   --beaker-test-config=configs/vision_moe/stage2_ep8_2node_image_only_v9_resume_to200.yaml
+```
+
+Inspect the guarded step-200 to step-400 continuation with its exact run name:
+
+```bash
+PATH=/weka/oe-training-default/rustin/envs/olmo-core-vision/bin:$PATH \
+python src/scripts/train/Molmo2-Stage2.py dry_run \
+  s002-stage2-v9-pilot-bounded-errors-5a81c40c \
+  --beaker-test-config=configs/vision_moe/stage2_ep8_2node_image_only_v9_resume_to400.yaml
 ```
 
 Only replace `dry_run` with `launch` after reviewing the merged configuration and receiving
