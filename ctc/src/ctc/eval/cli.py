@@ -62,6 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
             "trap this CLI deliberately does not reproduce."
         ),
     )
+    how.add_argument(
+        "--ignore-format-fingerprint",
+        action="store_true",
+        help=(
+            "grade even when the checkpoint's training format does not match, or was never "
+            "recorded. Off by default: a format mismatch produces plausible output and a "
+            "plausible score, so the failure is invisible without this check. Needed for "
+            "checkpoints trained before fingerprinting existed -- results then record that "
+            "compatibility was unverified."
+        ),
+    )
     how.add_argument("--batch-size", type=int, default=1, help="prompts per forward (default: 1)")
     how.add_argument("--max-new-tokens", type=int, default=None, help="override the task default")
     how.add_argument("--limit", type=int, default=None, help="grade only the first N examples")
@@ -193,6 +204,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(
         f"      rungs={','.join(rungs) if rungs else 'all (resolved from the task config)'}"
         f"  backend={backend_name}  attn={args.attn}"
+    )
+    print(
+        "      format check="
+        + ("DISABLED (--ignore-format-fingerprint)" if args.ignore_format_fingerprint else "on")
     )
     if not registry.names():
         print("\nNo tasks are registered yet, so there is nothing to grade.")

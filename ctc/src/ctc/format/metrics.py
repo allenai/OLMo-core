@@ -1,0 +1,192 @@
+"""
+Scoring primitives: a parsed answer plus a gold answer -> a number.
+
+Two families, and they are not interchangeable:
+
+* **QA metrics** (:func:`exact_match`, :func:`substring_match`, :func:`token_f1`) compare answer
+  *text*, under HELMET-compatible normalization so our numbers are comparable with theirs.
+* **Retrieval metrics** (:func:`retrieval_f1` and friends) compare *sets of document ids*.
+
+Parsing lives in :mod:`ctc.format.parsing`, not here. That split matters: when a task scores near
+zero the first question is always "did it parse?", and keeping the two apart makes that answerable
+without re-running the model.
+
+.. note::
+   ``retrieval_f1`` is a **per-example** F1 over one example's id set, then averaged across the
+   eval set by :func:`aggregate`. It is not a corpus-level F1, and the two differ. When quoting a
+   number, also quote ``eval_size`` and its standard error -- at 488 examples the binomial SE is
+   about ±0.021 at f1≈0.70 and ±0.010 at f1≈0.95, which is larger than many differences that have
+   been reported as findings.
+
+Ported from ``corpus_reasoning/lib/metrics.py``.
+"""
+
+from __future__ import annotations
+
+import re
+import string
+from collections import Counter
+from typing import Callable, Dict, Iterable, List, Sequence, Set, Union
+
+__all__ = [
+    "normalize_answer",
+    "exact_match",
+    "substring_match",
+    "token_f1",
+    "max_over_answers",
+    "retrieval_exact_match",
+    "retrieval_recall",
+    "retrieval_precision",
+    "retrieval_f1",
+    "aggregate",
+]
+
+
+def normalize_answer(s: str) -> str:
+    """
+    Lowercase, strip articles and punctuation, and collapse whitespace.
+
+    HELMET-compatible, deliberately -- changing it silently shifts every QA number and breaks
+    comparability with previously reported results.
+
+    :param s: Raw answer text.
+
+    :returns: The normalized form used by every QA metric here.
+    """
+    s = s.lower()
+    s = re.sub(r"\b(a|an|the)\b", " ", s)
+    s = "".join(ch for ch in s if ch not in string.punctuation)
+    return " ".join(s.split())
+
+
+def exact_match(pred: str, gold: str) -> bool:
+    """
+    :param pred: Predicted answer text.
+    :param gold: Gold answer text.
+
+    :returns: Whether the two match after normalization.
+    """
+    return normalize_answer(pred) == normalize_answer(gold)
+
+
+def substring_match(pred: str, gold: str) -> bool:
+    """
+    :param pred: Predicted answer text.
+    :param gold: Gold answer text.
+
+    :returns: Whether the normalized gold appears anywhere in the normalized prediction. Lenient by
+        design -- a rambling generation that contains the answer still counts.
+    """
+    return normalize_answer(gold) in normalize_answer(pred)
+
+
+def token_f1(pred: str, gold: str) -> float:
+    """
+    Standard SQuAD-style token-overlap F1.
+
+    :param pred: Predicted answer text.
+    :param gold: Gold answer text.
+
+    :returns: Harmonic mean of token precision and recall, ``0.0`` if they share no tokens.
+    """
+    pred_tokens = normalize_answer(pred).split()
+    gold_tokens = normalize_answer(gold).split()
+    # Counter intersection takes the minimum count of each shared token, so repeating a word does
+    # not earn credit more than once.
+    common = Counter(pred_tokens) & Counter(gold_tokens)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0.0
+    precision = num_same / len(pred_tokens)
+    recall = num_same / len(gold_tokens)
+    return (2 * precision * recall) / (precision + recall)
+
+
+def max_over_answers(
+    metric_fn: Callable[[str, str], Union[bool, float]],
+    prediction: str,
+    answers: Union[str, Sequence],
+) -> Union[bool, float]:
+    """
+    Score against every acceptable gold answer and keep the best.
+
+    Many datasets list several valid answers (KILT supplies entity aliases), and SQuAD, HELMET and
+    KILT all score this way.
+
+    :param metric_fn: Any of the QA metrics above.
+    :param prediction: Predicted answer text.
+    :param answers: One answer, a list of answers, or a list-of-lists (some datasets add a wrapping
+        layer).
+
+    :returns: The best score across the gold answers.
+    """
+    if isinstance(answers, str):
+        answers = [answers]
+    elif answers and isinstance(answers[0], list):
+        answers = [a for sublist in answers for a in sublist]
+    return max(metric_fn(prediction, gt) for gt in answers)
+
+
+def retrieval_exact_match(predicted_ids: Set[int], gold_ids: Set[int]) -> bool:
+    """
+    :param predicted_ids: Ids the model named.
+    :param gold_ids: Gold ids.
+
+    :returns: Whether the sets are equal. All-or-nothing; use :func:`retrieval_f1` for partial credit.
+    """
+    return predicted_ids == gold_ids
+
+
+def retrieval_recall(predicted_ids: Set[int], gold_ids: Set[int]) -> float:
+    """
+    :param predicted_ids: Ids the model named.
+    :param gold_ids: Gold ids. An empty gold set scores ``1.0`` -- there was nothing to miss.
+
+    :returns: Fraction of gold documents retrieved.
+    """
+    if not gold_ids:
+        return 1.0
+    return len(predicted_ids & gold_ids) / len(gold_ids)
+
+
+def retrieval_precision(predicted_ids: Set[int], gold_ids: Set[int]) -> float:
+    """
+    :param predicted_ids: Ids the model named. Naming none scores ``0.0``, so abstaining is not a
+        way to score well.
+    :param gold_ids: Gold ids.
+
+    :returns: Fraction of named documents that are gold.
+    """
+    if not predicted_ids:
+        return 0.0
+    return len(predicted_ids & gold_ids) / len(predicted_ids)
+
+
+def retrieval_f1(predicted_ids: Set[int], gold_ids: Set[int]) -> float:
+    """
+    :param predicted_ids: Ids the model named.
+    :param gold_ids: Gold ids.
+
+    :returns: Harmonic mean of :func:`retrieval_precision` and :func:`retrieval_recall`, for this
+        one example. See the module note on per-example vs corpus-level F1.
+    """
+    p = retrieval_precision(predicted_ids, gold_ids)
+    r = retrieval_recall(predicted_ids, gold_ids)
+    if p + r == 0:
+        return 0.0
+    return (2 * p * r) / (p + r)
+
+
+def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:
+    """
+    Average per-example metric values across an eval set.
+
+    :param results: Per-example result dicts.
+    :param keys: Metric names to average. Every result must carry every key -- a missing one raises
+        rather than being skipped, since silently averaging over a subset misreports ``eval_size``.
+
+    :returns: Mean value per key, or an empty dict when there are no results.
+    """
+    if not results:
+        return {}
+    return {k: sum(r[k] for r in results) / len(results) for k in keys}

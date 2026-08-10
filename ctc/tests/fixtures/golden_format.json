@@ -1,0 +1,333 @@
+{
+  "_source": "corpus_reasoning.lib (pre-migration)",
+  "documents": {
+    "absence|use_titles=False": "[1] line one\n\n[2] line two",
+    "absence|use_titles=True": "[1] line one\n\n[2] line two",
+    "an_unregistered_task|use_titles=False": "Document: body one",
+    "an_unregistered_task|use_titles=True": "Document (Title: T1): body one",
+    "contradiction|use_titles=False": "Claim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.",
+    "contradiction|use_titles=True": "Claim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.",
+    "cot_retrieval|use_titles=False": "Document [1]: body one",
+    "cot_retrieval|use_titles=True": "Document [1] (Title: T1): body one",
+    "cycle|use_titles=False": "Claim 1: A outranks B.\n\nClaim 2: B outranks A.",
+    "cycle|use_titles=True": "Claim 1: A outranks B.\n\nClaim 2: B outranks A.",
+    "grouping_labeled|use_titles=False": "Document [1](Title: Optics) On lenses.",
+    "grouping_labeled|use_titles=True": "Document [1](Title: Optics) On lenses.",
+    "grouping|use_titles=False": "Document [1](Title: Attention) We propose a new architecture.\n\nDocument [2](Title: ) An untitled abstract.",
+    "grouping|use_titles=True": "Document [1](Title: Attention) We propose a new architecture.\n\nDocument [2](Title: ) An untitled abstract.",
+    "groups4|use_titles=False": "Expression 1: 1 + 1\n\nExpression 2: 4 - 2",
+    "groups4|use_titles=True": "Expression 1: 1 + 1\n\nExpression 2: 4 - 2",
+    "matching_ngram|use_titles=False": "Snippet 1: red fox\n\nSnippet 2: red fox",
+    "matching_ngram|use_titles=True": "Snippet 1: red fox\n\nSnippet 2: red fox",
+    "mathmatch|use_titles=False": "Expression 1: 3 * 7 + 1\n\nExpression 2: 20 + 2",
+    "mathmatch|use_titles=True": "Expression 1: 3 * 7 + 1\n\nExpression 2: 20 + 2",
+    "oolong|use_titles=False": "item: 1\nlabel: x\n\nitem: 2\nlabel: y",
+    "oolong|use_titles=True": "item: 1\nlabel: x\n\nitem: 2\nlabel: y",
+    "outlier|use_titles=False": "Document [1]: Five stars.",
+    "outlier|use_titles=True": "Document [1] (Title: R): Five stars.",
+    "qa|use_titles=False": "Document: body one\n\nDocument: untitled body",
+    "qa|use_titles=True": "Document (Title: T1): body one\n\nDocument: untitled body",
+    "qdmatch|use_titles=False": "[1] Query: Who wrote it?\n\n[2] Document: It was written by Ada.",
+    "qdmatch|use_titles=True": "[1] Query: Who wrote it?\n\n[2] Document: It was written by Ada.",
+    "redundancy|use_titles=False": "Claim 1: Sales rose 4%.\n\nClaim 2: Revenue increased four percent.",
+    "redundancy|use_titles=True": "Claim 1: Sales rose 4%.\n\nClaim 2: Revenue increased four percent.",
+    "reorder|use_titles=False": "Passage [1]: First para.\nSecond para of the same passage.\n\nPassage [2]: A later passage.",
+    "reorder|use_titles=True": "Passage [1]: First para.\nSecond para of the same passage.\n\nPassage [2]: A later passage.",
+    "rerank|use_titles=False": "Document [1]: candidate passage",
+    "rerank|use_titles=True": "Document [1] (Title: P): candidate passage",
+    "retrieval|use_titles=False": "Document [1]: body one\n\nDocument [2]: untitled body",
+    "retrieval|use_titles=True": "Document [1] (Title: T1): body one\n\nDocument [2]: untitled body",
+    "ruler|use_titles=False": "The magic number for foo is 42.\n\nFiller sentence.",
+    "ruler|use_titles=True": "The magic number for foo is 42.\n\nFiller sentence.",
+    "strmatch|use_titles=False": "String 1: alpha beta gamma\n\nString 2: beta gamma delta",
+    "strmatch|use_titles=True": "String 1: alpha beta gamma\n\nString 2: beta gamma delta",
+    "summarization|use_titles=False": "Paragraph one.\n\nParagraph two.",
+    "summarization|use_titles=True": "Paragraph one.\n\nParagraph two.",
+    "textgroups|use_titles=False": "Passage 1: A short passage about birds.\n\nPassage 2: Another about trains.",
+    "textgroups|use_titles=True": "Passage 1: A short passage about birds.\n\nPassage 2: Another about trains.",
+    "xabsence|use_titles=False": "[1] A: Claim in A.\n\n[2] B: Paraphrase in B.\n\n[3] A: No corpus tag -- defaults to A.",
+    "xabsence|use_titles=True": "[1] A: Claim in A.\n\n[2] B: Paraphrase in B.\n\n[3] A: No corpus tag -- defaults to A."
+  },
+  "max_over_answers": {
+    "Paris|\"Paris\"": 1.0,
+    "Paris|[\"London\", \"Paris\"]": 1.0,
+    "Paris|[[\"London\"], [\"Paris\", \"paris\"]]": 1.0
+  },
+  "normalize_answer": {
+    "Answer: Paris.": "answer paris",
+    "The Golden Gate Bridge": "golden gate bridge",
+    "a the an": "",
+    "nothing alike": "nothing alike",
+    "partial overlap here": "partial overlap here"
+  },
+  "parse_doc_ids": {
+    "": [],
+    "12]": [
+      12
+    ],
+    "8]": [
+      8
+    ],
+    "Document [3]": [
+      3
+    ],
+    "Relevant Documents: [1], [2], [15]": [
+      1,
+      2,
+      15
+    ],
+    "[ 4 ]": [
+      4
+    ],
+    "[3], [7]": [
+      3,
+      7
+    ],
+    "no ids here": []
+  },
+  "parse_outlier_ids": {
+    "Outlier: [1], [1], [2]|10": [
+      1,
+      2
+    ],
+    "Outliers: [2], [5]|10": [
+      2,
+      5
+    ],
+    "Outliers: [99]|10": null,
+    "The majority are 5-star; outliers are 1-star.\nOutliers: [3]|10": [
+      3
+    ],
+    "no outliers line, bare [4]|10": [
+      4
+    ],
+    "|10": null
+  },
+  "parse_partition": {
+    "1 2\n3|3": [
+      [
+        1,
+        2
+      ],
+      [
+        3
+      ]
+    ],
+    "2, 3, 4]}, {\"doc_ids\": [1, 6]}]}|6": [
+      [
+        2,
+        3,
+        4
+      ],
+      [
+        1,
+        6
+      ]
+    ],
+    "Here you go: {\"groups\": [{\"doc_ids\": [1]}]} and some trailing ramble {oops|2": [
+      [
+        1
+      ]
+    ],
+    "[[1, 2], [3]]|3": [
+      [
+        1,
+        2
+      ],
+      [
+        3
+      ]
+    ],
+    "{\"groups\": []}|2": null,
+    "{\"groups\": [{\"doc_ids\": [1, 2]}, {\"doc_ids\": [3]}]}|3": [
+      [
+        1,
+        2
+      ],
+      [
+        3
+      ]
+    ],
+    "|3": null
+  },
+  "parse_permutation": {
+    "The order is 2 3 1 overall.|3": [
+      2,
+      3,
+      1
+    ],
+    "[1, 1, 2]|3": null,
+    "[1, 2]|3": null,
+    "[3, 1, 2]|3": [
+      3,
+      1,
+      2
+    ],
+    "|3": null
+  },
+  "partition_to_labels": {
+    "1 2\n3|3": [
+      0,
+      0,
+      1
+    ],
+    "2, 3, 4]}, {\"doc_ids\": [1, 6]}]}|6": [
+      1,
+      0,
+      0,
+      0,
+      2,
+      1
+    ],
+    "Here you go: {\"groups\": [{\"doc_ids\": [1]}]} and some trailing ramble {oops|2": [
+      0,
+      1
+    ],
+    "[[1, 2], [3]]|3": [
+      0,
+      0,
+      1
+    ],
+    "{\"groups\": []}|2": [
+      0,
+      1
+    ],
+    "{\"groups\": [{\"doc_ids\": [1, 2]}, {\"doc_ids\": [3]}]}|3": [
+      0,
+      0,
+      1
+    ],
+    "|3": [
+      0,
+      1,
+      2
+    ]
+  },
+  "prompt_constants": {
+    "ABSENCE_GUTENBERG_INSTRUCTION": "Above are two versions of the same passage. Version B is identical to Version A except that some whole sentences have been removed. Identify every sentence that appears in Version A but is MISSING from Version B. For each missing sentence, write its first four words.\nWrite your answer as a JSON list of strings, in order of occurrence, for example:\n[\"Bob was not happy\", \"Jane felt sad that\"]",
+    "ABSENCE_INSTRUCTION": "The numbered claims above are the original corpus. The text below is a second version of that corpus with some claims removed. Identify which of the numbered claims are MISSING from the second version (present above but absent below).\nWrite your answer in the following format:\nMissing: [id1], [id2], ...",
+    "CLAIM_TEMPLATE": "Claim {id}: {text}",
+    "CONTRADICTION_INSTRUCTION": "Given the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []",
+    "COT_RETRIEVAL_INSTRUCTION_MULTI_DOC": "Use the given documents to identify which documents are relevant to answering the question. Think step by step about why the documents are relevant, then list all relevant document IDs.\nWrite your answer in the following format:\n[chain of thought reasoning]\nRelevant Documents: [id1], [id2]",
+    "COT_RETRIEVAL_INSTRUCTION_SINGLE": "Use the given documents to identify which document is most relevant to answering the question. Think step by step about why the document is relevant, then give your answer.\nWrite your answer in the following format:\n[chain of thought reasoning]\nRelevant Document: [id]",
+    "CYCLE_INSTRUCTION": "Output your answer as a JSON list of cycles, where each cycle is a list of the claim IDs whose comparisons form the loop. For example: [[3, 8, 12]]\nIf there are no cycles, output: []",
+    "DEMO_TEMPLATE": "{documents}\n\nQuestion: {question}\nAnswer: {answer}",
+    "EXPRESSION_TEMPLATE": "Expression {id}: {text}",
+    "GENERIC_INSTRUCTION": "You will be asked to do a long-context processing task for a context.",
+    "GROUPING_INSTRUCTION": "You are given a list of scientific paper abstracts. Group them into the requested number of categories based on what they are about. Output a JSON object of the form {\"groups\": [{\"doc_ids\": [...]}, ...]} where each group is a list of 1-indexed document IDs. Every document must appear in exactly one group.",
+    "GROUPING_LABELED_INSTRUCTION": "You are given a list of scientific paper abstracts. Group them into the requested number of categories based on what they are about. For each group, give a short label describing the shared topic, then list the 1-indexed document IDs. Output a JSON object of the form {\"groups\": [{\"label\": \"<topic>\", \"doc_ids\": [...]}, ...]}. Every document must appear in exactly one group.",
+    "GROUPS4_INSTRUCTION": "Given the following numbered list of arithmetic expressions, identify all groups of expressions matching the criterion below.\n\nOutput your answer as a JSON list of groups, where each group is a list of the matching expression IDs. For example: [[3, 8, 12, 19]]\nIf there are no matching groups, output: []",
+    "HELMET_RERANK_SYSTEM_TEMPLATE": "Ranking:",
+    "HELMET_RERANK_USER_TEMPLATE": "You are provided with a list of documents, each indicated by their ID. Rank each document based on their relevance to the question in descending order from most relelvant to least relevant texts. Include all documents in the rankings. Write your answer using the unique IDs, with the following format:\nRanking: ID3 > ID1 > ID2\n\n{demos}{context}\n\nQuery: {question}",
+    "HELMET_TEMPLATE": "Use the given documents to write a concise and short answer to the question. Write your answer in the following format:\nAnswer: [answer]\n\n{demos}{context}\n\nQuestion: {question}",
+    "HELMET_TEMPLATE_QUERY_BEFORE": "Use the given documents to write a concise and short answer to the question. Write your answer in the following format:\nAnswer: [answer]\n\n{demos}Question: {question}\n\n{context}",
+    "HELMET_TEMPLATE_QUERY_BOTH": "Use the given documents to write a concise and short answer to the question. Write your answer in the following format:\nAnswer: [answer]\n\n{demos}Question: {question}\n\n{context}\n\nQuestion: {question}",
+    "MATCHING_NGRAM_INSTRUCTION": "Given the following numbered list of short text snippets, identify all pairs of snippets whose text is exactly identical to each other.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two snippet IDs. For example: [[1, 4], [3, 7]]\nIf there are no matching pairs, output: []",
+    "MATHMATCH_INSTRUCTION": "Given the following numbered list of arithmetic expressions, identify all pairs of expressions matching the criterion below.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two expression IDs. For example: [[1, 4], [3, 7]]\nIf there are no matching pairs, output: []",
+    "MULTI_QA_INSTRUCTION": "Use the given documents to answer each of the following questions. Write a concise and short answer for each question, in order, as a comma-separated list.\nWrite your answer in the following format:\nAnswers: [answer1], [answer2], ...",
+    "NGRAM_TEMPLATE": "Snippet {id}: {text}",
+    "OOLONG_INSTRUCTION": "Read the data below and answer the question. Compute the exact answer by analyzing every item; do not guess or approximate.",
+    "OUTLIER_INSTRUCTION": "You are given a list of product reviews. Most share a common attribute (star rating or product category); a few are outliers with a different value. First state what the majority attribute is and what the outlier attribute is, then list the 1-indexed document IDs of the outliers.\nWrite your answer in the following format:\n[one sentence describing majority and outlier attributes]\nOutliers: [id1], [id2], ...",
+    "PASSAGE_TEMPLATE": "Document (Title: {title}): {text}",
+    "PASSAGE_TEMPLATE_GROUPING": "Document [{id}](Title: {title}) {text}",
+    "PASSAGE_TEMPLATE_ID": "Document [{id}] (Title: {title}): {text}",
+    "PASSAGE_TEMPLATE_NO_TITLE": "Document: {text}",
+    "PASSAGE_TEMPLATE_NO_TITLE_ID": "Document [{id}]: {text}",
+    "PASSAGE_TEMPLATE_REORDER": "Passage [{id}]: {text}",
+    "QA_INSTRUCTION": "Use the given documents to write a concise and short answer to the question. Write your answer in the following format:\nAnswer: [answer]",
+    "QDMATCH_INSTRUCTION": "Below is a numbered list of items. Each item is labeled either 'Query:' (a question) or 'Document:' (a passage). A few query-document pairs are relevant: the document answers the query. Identify every relevant pair.\n\nOutput your answer as a JSON list of pairs, where each pair is [query_id, document_id] \u2014 the query's number first, then the matching document's number. For example: [[1, 8], [3, 4]]\nIf no pairs are relevant, output: []",
+    "REDUNDANCY_INSTRUCTION": "Given the following corpus of numbered claims, identify all pairs of claims that are redundant with each other. A pair of claims is redundant if they state the same fact or finding (one is a paraphrase or restatement of the other), even if worded differently.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no redundant pairs, output: []",
+    "REORDER_INSTRUCTION": "You are given a list of text passages presented in a random order. They were originally consecutive segments of a single document. Output the permutation that restores them to their original order, as a JSON array of the passage IDs.\nWrite your answer in the following format:\n[id1, id2, id3, ...]",
+    "RERANK_INSTRUCTION": "Rank the documents by how relevant each is to the question, from most to least relevant. Output the document IDs in ranked order.\nWrite your answer in the following format:\nRanking: [id1], [id2], [id3], ...",
+    "RETRIEVAL_INSTRUCTION_MULTI_DOC": "Use the given documents to identify which documents are relevant to answering the question. List all relevant document IDs.\nWrite your answer in the following format:\nRelevant Documents: [id1], [id2]",
+    "RETRIEVAL_INSTRUCTION_MULTI_QUERY": "Use the given documents to identify which documents are relevant to answering each of the following questions. For each question, list the relevant document IDs.\nWrite your answer in the following format:\nRelevant Documents: Q1: [id1], [id2]; Q2: [id3], [id4]; ...",
+    "RETRIEVAL_INSTRUCTION_SINGLE": "Use the given documents to identify which document is most relevant to answering the question.\nWrite your answer in the following format:\nRelevant Document: [id]",
+    "RULER_INSTRUCTIONS": {
+      "cwe": "Write your answer as a comma-separated list in the following format:\nAnswer: [word1, word2, ...]",
+      "fwe": "Write your answer as a comma-separated list in the following format:\nAnswer: [word1, word2, ...]",
+      "niah_multikey": "Several special magic numbers, each tied to a different key, are hidden within the text above. Find the one for the key in the question below.\nWrite your answer in the following format:\nAnswer: [the magic number]",
+      "niah_multiquery": "Special magic numbers for several keys are hidden within the text above. Find the number for EACH key asked about in the question below.\nWrite your answer in the following format:\nAnswer: [number1, number2, ...]",
+      "niah_multivalue": "Several special magic numbers for the same key are hidden within the text above. Find ALL of them and answer the question below.\nWrite your answer in the following format:\nAnswer: [number1, number2, ...]",
+      "niah_single": "A special magic number is hidden within the text above. Find it and answer the question below.\nWrite your answer in the following format:\nAnswer: [the magic number]",
+      "vt": "The text above contains chains of variable assignments. Variables can be assigned a number directly or set equal to another variable. Trace the assignments to answer the question below.\nWrite your answer as the list of all matching variable names in the following format:\nAnswer: [VAR1, VAR2, ...]"
+    },
+    "RULER_INSTRUCTION_DEFAULT": "Some special magic numbers are hidden within the text above. Read the text and answer the question below using only the information in the text.\nWrite your answer in the following format:\nAnswer: [answer]",
+    "STRING_TEMPLATE": "String {id}: {text}",
+    "STRMATCH_INSTRUCTION": "Given the following numbered list of strings, identify all pairs of strings matching the criterion below.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two string IDs. For example: [[1, 4], [3, 7]]\nIf there are no matching pairs, output: []",
+    "SUMMARIZATION_INSTRUCTION": "Write a concise, faithful summary of the document(s) below. Cover the key facts and findings; do not add information that is not in the document(s).",
+    "TEXTGROUPS_INSTRUCTION": "Given the following numbered list of passages, identify all groups of passages matching the criterion below.\n\nOutput your answer as a JSON list of groups, where each group is a list of the matching passage IDs. For example: [[3, 8, 12]]\nIf there are no matching groups, output: []",
+    "TEXTGROUPS_TEMPLATE": "Passage {id}: {text}",
+    "XABSENCE_INSTRUCTION": "Below are two corpora of numbered claims, A and B. Almost every claim has a paraphrase \u2014 a restatement of the same fact \u2014 somewhere in the OTHER corpus (an A claim paraphrased in B, or a B claim paraphrased in A). A few claims are UNMATCHED: they have no paraphrase anywhere in the other corpus. Identify the unmatched claims.\nWrite your answer in the following format:\nUnmatched: [id1], [id2], ..."
+  },
+  "qa_metrics": {
+    "Answer: Paris.|Paris": {
+      "exact_match": false,
+      "substring_match": true,
+      "token_f1": 0.6666666666666666
+    },
+    "The Golden Gate Bridge|golden gate bridge": {
+      "exact_match": true,
+      "substring_match": true,
+      "token_f1": 1.0
+    },
+    "a the an|": {
+      "exact_match": true,
+      "substring_match": true,
+      "token_f1": 0.0
+    },
+    "nothing alike|completely different": {
+      "exact_match": false,
+      "substring_match": false,
+      "token_f1": 0.0
+    },
+    "partial overlap here|partial overlap": {
+      "exact_match": false,
+      "substring_match": true,
+      "token_f1": 0.8
+    }
+  },
+  "rerank_instruction": {
+    "-1": "Rank the documents by how relevant each is to the question, from most to least relevant. Output the document IDs in ranked order.\nWrite your answer in the following format:\nRanking: [id1], [id2], [id3], ...",
+    "0": "Rank the documents by how relevant each is to the question, from most to least relevant. Output the document IDs in ranked order.\nWrite your answer in the following format:\nRanking: [id1], [id2], [id3], ...",
+    "10": "Rank the documents by how relevant each is to the question. Output the IDs of the 10 most relevant documents, in ranked order from most to least relevant.\nWrite your answer in the following format:\nRanking: [id1], [id2], ...",
+    "5": "Rank the documents by how relevant each is to the question. Output the IDs of the 5 most relevant documents, in ranked order from most to least relevant.\nWrite your answer in the following format:\nRanking: [id1], [id2], ..."
+  },
+  "retrieval_metrics": {
+    "[1, 2, 3]|[1]": {
+      "exact_match": false,
+      "f1": 0.5,
+      "precision": 0.3333333333333333,
+      "recall": 1.0
+    },
+    "[1, 2]|[1, 2]": {
+      "exact_match": true,
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "[1]|[1, 2]": {
+      "exact_match": false,
+      "f1": 0.6666666666666666,
+      "precision": 1.0,
+      "recall": 0.5
+    },
+    "[1]|[]": {
+      "exact_match": false,
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 1.0
+    },
+    "[]|[1]": {
+      "exact_match": false,
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 0.0
+    },
+    "[]|[]": {
+      "exact_match": true,
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 1.0
+    }
+  }
+}
