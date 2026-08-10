@@ -1,12 +1,13 @@
 # Stage 2 step-200 evaluation
 
-These are four standalone, single-node EP8 Beaker specifications for the permanent
-Stage-2 step-200 checkpoint. They target `ai2/holmes`, which supplies B300 GPUs, with
+These are standalone, single-node EP8 Beaker specifications for the permanent Stage-2
+step-200 checkpoint and its matched checkpoint comparisons. They target `ai2/holmes`,
+which supplies B300 GPUs, with
 `priority: urgent`, `minRuntime: 8h`, budget `ai2/oe-other`, and only Rustin's Beaker and
 W&B secrets.
 
-The specs are pinned to the immutable `vision-moe` commit that contains the evaluator fixes.
-Submit each spec to the requested workspace:
+The existing specs are pinned to the immutable `vision-moe` commit that contains their
+evaluator fixes. Submit each spec to the requested workspace:
 
 ```bash
 beaker experiment create -w ai2/molmofication \
@@ -21,6 +22,17 @@ beaker experiment create -w ai2/molmofication \
 beaker experiment create -w ai2/molmofication \
   -n s002-stage2-fast-vision-checkpoint-comparison \
   configs/vision_moe/eval/stage2_fast_vision_checkpoint_comparison.yaml
+```
+
+The count discriminator compares candidate-normalized first-token NLL/top-1 over answers 2-10
+with raw digit/EOS and response-prefix mass, while `point_count` CE measures the grounded
+training format on the exact same source indices as basic pointing. Replace every
+`REPLACE_WITH_VISION_MOE_COMMIT_SHA` with the immutable evaluator commit before launching:
+
+```bash
+beaker experiment create -w ai2/molmofication \
+  -n s002-stage2-count-discriminator-checkpoint-comparison \
+  configs/vision_moe/eval/stage2_count_discriminator_checkpoint_comparison.yaml
 ```
 
 Do not launch until the checkpoint health audit confirms that `step200` is permanent,

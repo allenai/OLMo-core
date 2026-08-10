@@ -1,9 +1,10 @@
 """Evaluate native s002 multimodal checkpoints on fixed PixMo validation samples.
 
 This evaluator keeps checkpoints in OLMo-core's distributed format, runs the model with
-EP8, and reports response-token-weighted CE/PPL for matched caption, count-only, and
-basic-pointing samples. The same explicit sample indices and OLMo 3 chat serializer are
-used for every checkpoint in a comparison.
+EP8, and reports response-token-weighted CE/PPL for matched caption, count-only,
+basic-pointing, and grounded point-counting samples. Count-only evaluation also reports
+candidate-normalized 2-10 classification and response-format diagnostics. The same explicit
+sample indices and OLMo 3 chat serializer are used for every checkpoint in a comparison.
 """
 
 from __future__ import annotations
@@ -20,7 +21,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 import numpy as np
+import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from s002_downstream import (
     DEFAULT_OUTPUT_ROOT,
     _build_model_and_module_config,
@@ -66,9 +69,10 @@ DEFAULT_EXAMPLES = 512
 DEFAULT_SAMPLE_SEED = 6198
 DEFAULT_MAX_SEQUENCE_LENGTH = 16384
 DEFAULT_MAX_CROPS = 8
-DEFAULT_RANK_BATCH_INSTANCES = 2
-TASK_NAMES = ("caption", "count", "points")
-TASK_SEED_OFFSETS = {"caption": 0, "count": 1, "points": 2}
+DEFAULT_RANK_BATCH_INSTANCES = 1
+TASK_NAMES = ("caption", "count", "points", "point_count")
+TASK_SEED_OFFSETS = {"caption": 0, "count": 1, "points": 2, "point_count": 2}
+NUMERIC_COUNT_VALUES = tuple(range(2, 11))
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,35 @@ class TaskSpec:
     name: str
     dataset: Any
     indices: Sequence[int]
+
+
+@dataclass(frozen=True)
+class NumericCountTokenProtocol:
+    """Single-token answer candidates and competing response-format prefixes."""
+
+    values: Sequence[int]
+    candidate_token_ids: Sequence[int]
+    eos_token_id: int
+    counting_prefix_token_id: int
+    points_prefix_token_id: int
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "values": list(self.values),
+            "candidate_token_ids": list(self.candidate_token_ids),
+            "eos_token_id": self.eos_token_id,
+            "counting_prefix": {
+                "text": "Counting",
+                "first_token_id": self.counting_prefix_token_id,
+            },
+            "points_prefix": {
+                "text": "<points",
+                "first_token_id": self.points_prefix_token_id,
+            },
+            "candidate_scoring": (
+                "softmax over first-response-token logits for the single-token answers 2-10"
+            ),
+        }
 
 
 class IndexedDataset:
@@ -158,6 +191,192 @@ def _indices_sha256(indices: Sequence[int]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _numeric_count_token_protocol(tokenizer) -> NumericCountTokenProtocol:
+    candidate_token_ids = []
+    for value in NUMERIC_COUNT_VALUES:
+        encoded = list(tokenizer.encode(str(value), add_special_tokens=False))
+        if len(encoded) != 1:
+            raise ValueError(
+                f"Numeric count candidate {value} must encode to one token, got {encoded}"
+            )
+        candidate_token_ids.append(int(encoded[0]))
+    if len(set(candidate_token_ids)) != len(candidate_token_ids):
+        raise ValueError("Numeric count candidates must have distinct token IDs")
+    if tokenizer.eos_token_id is None:
+        raise ValueError("Numeric count diagnostics require a tokenizer EOS token")
+
+    def first_token(text: str) -> int:
+        encoded = list(tokenizer.encode(text, add_special_tokens=False))
+        if not encoded:
+            raise ValueError(f"Response-format prefix {text!r} encoded to no tokens")
+        return int(encoded[0])
+
+    return NumericCountTokenProtocol(
+        values=NUMERIC_COUNT_VALUES,
+        candidate_token_ids=tuple(candidate_token_ids),
+        eos_token_id=int(tokenizer.eos_token_id),
+        counting_prefix_token_id=first_token("Counting"),
+        points_prefix_token_id=first_token("<points"),
+    )
+
+
+def _numeric_count_batch_statistics(
+    batch: Dict[str, Any],
+    logits: torch.Tensor,
+    protocol: NumericCountTokenProtocol,
+) -> torch.Tensor:
+    """Return additive count-classification and response-format statistics for one batch."""
+    labels = batch.get("labels")
+    if labels is None:
+        raise ValueError("Numeric count diagnostics require labels")
+    # MultimodalLM uses this exact flattened row-major mask to select response logits.
+    # Check ignored labels separately so label filtering cannot silently change row alignment.
+    response_mask = batch["loss_masks"] > 0
+    if bool(torch.any(labels.masked_select(response_mask) == -100)):
+        raise ValueError("Numeric count loss positions must not have ignored labels")
+    response_counts = response_mask.sum(dim=1)
+    if not bool(torch.all(response_counts == 2)):
+        raise ValueError(
+            "Numeric count diagnostics require exactly two supervised tokens per example "
+            f"(number and EOS), got {response_counts.detach().cpu().tolist()}"
+        )
+
+    batch_size = int(labels.shape[0])
+    response_labels = labels.masked_select(response_mask).reshape(batch_size, 2)
+    if logits.ndim == 3:
+        response_logits = logits.reshape(-1, logits.shape[-1])[response_mask.reshape(-1)]
+    elif logits.ndim == 2 and logits.shape[0] == batch_size * 2:
+        response_logits = logits
+    else:
+        raise ValueError(
+            "Numeric count diagnostics expected response-only logits with shape "
+            f"({batch_size * 2}, vocab), got {tuple(logits.shape)}"
+        )
+    response_logits = response_logits.reshape(batch_size, 2, -1).float()
+    first_logits, eos_logits = response_logits[:, 0], response_logits[:, 1]
+    first_labels, eos_labels = response_labels[:, 0], response_labels[:, 1]
+
+    candidate_ids = torch.tensor(
+        protocol.candidate_token_ids,
+        dtype=torch.long,
+        device=first_logits.device,
+    )
+    candidate_matches = first_labels.unsqueeze(1) == candidate_ids.unsqueeze(0)
+    if not bool(torch.all(candidate_matches.sum(dim=1) == 1)):
+        raise ValueError(
+            "Numeric count labels must be one of the configured candidate token IDs; got "
+            f"{first_labels.detach().cpu().tolist()}"
+        )
+    if not bool(torch.all(eos_labels == protocol.eos_token_id)):
+        raise ValueError(
+            "Numeric count responses must end in the configured EOS token; got "
+            f"{eos_labels.detach().cpu().tolist()}"
+        )
+
+    gold_candidate_indices = candidate_matches.to(torch.int64).argmax(dim=1)
+    candidate_logits = first_logits.index_select(1, candidate_ids)
+    candidate_log_probs = F.log_softmax(candidate_logits, dim=1)
+    candidate_nll = -candidate_log_probs.gather(1, gold_candidate_indices.unsqueeze(1)).squeeze(1)
+    candidate_predictions = candidate_logits.argmax(dim=1)
+
+    first_log_normalizer = torch.logsumexp(first_logits, dim=1)
+    eos_log_normalizer = torch.logsumexp(eos_logits, dim=1)
+    raw_digit_nll = first_log_normalizer - first_logits.gather(
+        1, first_labels.unsqueeze(1)
+    ).squeeze(1)
+    raw_eos_nll = eos_log_normalizer - eos_logits.gather(1, eos_labels.unsqueeze(1)).squeeze(1)
+    numeric_log_mass = torch.logsumexp(candidate_logits, dim=1) - first_log_normalizer
+    counting_log_mass = first_logits[:, protocol.counting_prefix_token_id] - first_log_normalizer
+    points_log_mass = first_logits[:, protocol.points_prefix_token_id] - first_log_normalizer
+    numeric_mass = numeric_log_mass.exp()
+    counting_mass = counting_log_mass.exp()
+    points_mass = points_log_mass.exp()
+
+    # These conditional shares are stable even when all named formats have low raw mass.
+    numeric_vs_counting = torch.sigmoid(numeric_log_mass - counting_log_mass)
+    structured_log_mass = torch.logaddexp(counting_log_mass, points_log_mass)
+    numeric_vs_structured = torch.sigmoid(numeric_log_mass - structured_log_mass)
+
+    target_histogram = F.one_hot(gold_candidate_indices, num_classes=len(protocol.values)).sum(
+        dim=0
+    )
+    prediction_histogram = F.one_hot(candidate_predictions, num_classes=len(protocol.values)).sum(
+        dim=0
+    )
+    scalar_sums = torch.stack(
+        [
+            candidate_nll.sum(),
+            (candidate_predictions == gold_candidate_indices).sum(),
+            raw_digit_nll.sum(),
+            raw_eos_nll.sum(),
+            (first_logits.argmax(dim=1) == first_labels).sum(),
+            numeric_mass.sum(),
+            counting_mass.sum(),
+            points_mass.sum(),
+            numeric_vs_counting.sum(),
+            numeric_vs_structured.sum(),
+        ]
+    )
+    return torch.cat(
+        [
+            scalar_sums.to(torch.float64),
+            target_histogram.to(torch.float64),
+            prediction_histogram.to(torch.float64),
+            scalar_sums.new_tensor([batch_size], dtype=torch.float64),
+        ]
+    )
+
+
+def _numeric_count_metrics(
+    statistics: torch.Tensor,
+    protocol: NumericCountTokenProtocol,
+) -> Dict[str, Any]:
+    """Convert globally summed numeric-count statistics into JSON-ready metrics."""
+    n_candidates = len(protocol.values)
+    expected_size = 10 + 2 * n_candidates + 1
+    if statistics.numel() != expected_size:
+        raise ValueError(
+            f"Expected {expected_size} numeric count statistics, got {statistics.numel()}"
+        )
+    values = statistics.detach().cpu().to(torch.float64)
+    examples = int(values[-1].item())
+    if examples <= 0:
+        raise ValueError("Numeric count diagnostics evaluated no examples")
+    denominator = float(examples)
+    target_start = 10
+    prediction_start = target_start + n_candidates
+    target_histogram = {
+        str(value): int(values[target_start + index].item())
+        for index, value in enumerate(protocol.values)
+    }
+    prediction_histogram = {
+        str(value): int(values[prediction_start + index].item())
+        for index, value in enumerate(protocol.values)
+    }
+    return {
+        "examples": examples,
+        "candidate_values": list(protocol.values),
+        "candidate_token_ids": list(protocol.candidate_token_ids),
+        "target_histogram": target_histogram,
+        "candidate_top1_prediction_histogram": prediction_histogram,
+        "metrics": {
+            "candidate-normalized first-token NLL": float(values[0].item() / denominator),
+            "candidate top-1 accuracy": float(values[1].item() / denominator),
+            "raw digit NLL": float(values[2].item() / denominator),
+            "raw teacher-forced EOS NLL": float(values[3].item() / denominator),
+            "raw two-token CE": float((values[2].item() + values[3].item()) / (2 * denominator)),
+            "full-vocabulary digit top-1 accuracy": float(values[4].item() / denominator),
+            "first-token numeric candidate mass": float(values[5].item() / denominator),
+            "first-token Counting-prefix mass": float(values[6].item() / denominator),
+            "first-token points-prefix mass": float(values[7].item() / denominator),
+            "first-token numeric share vs Counting": float(values[8].item() / denominator),
+            "first-token numeric share vs structured prefixes": float(
+                values[9].item() / denominator
+            ),
+        },
+    }
+
+
 def _build_task_datasets(
     tokenizer,
     token_ids: Molmo2TokenIds,
@@ -193,6 +412,12 @@ def _build_task_datasets(
             counting=False,
             **common,
         ).build(tokenizer),
+        "point_count": PixMoPointsDatasetConfig(
+            split="validation",
+            kind="basic",
+            counting=True,
+            **common,
+        ).build(tokenizer),
     }
 
 
@@ -203,14 +428,33 @@ def _build_task_specs(
     examples: int,
     sample_seed: int,
 ) -> List[TaskSpec]:
+    shared_point_indices = None
+    if any(name in tasks for name in ("points", "point_count")):
+        points_size = len(datasets["points"])
+        point_count_size = len(datasets["point_count"])
+        if points_size != point_count_size:
+            raise ValueError(
+                "Pointing and point-counting datasets must expose the same source index space, "
+                f"got {points_size} and {point_count_size}"
+            )
+        shared_point_indices = _representative_indices(
+            points_size,
+            examples,
+            seed=sample_seed + TASK_SEED_OFFSETS["points"],
+        )
+
     specs = []
     for name in tasks:
         dataset = datasets[name]
-        indices = _representative_indices(
-            len(dataset),
-            examples,
-            seed=sample_seed + TASK_SEED_OFFSETS[name],
-        )
+        if name in ("points", "point_count"):
+            assert shared_point_indices is not None
+            indices = shared_point_indices
+        else:
+            indices = _representative_indices(
+                len(dataset),
+                examples,
+                seed=sample_seed + TASK_SEED_OFFSETS[name],
+            )
         specs.append(TaskSpec(name=name, dataset=dataset, indices=indices))
     return specs
 
@@ -235,6 +479,7 @@ def _evaluate_task(
     token_ids: Molmo2TokenIds,
     dp_world_size: int,
     dp_rank: int,
+    numeric_count_protocol: NumericCountTokenProtocol | None = None,
 ) -> Dict[str, Any]:
     global_batch_instances = rank_batch_instances * dp_world_size
     if len(task.indices) % global_batch_instances != 0:
@@ -271,14 +516,30 @@ def _evaluate_task(
     started = time.monotonic()
     batches = 0
     local_examples = 0
+    numeric_count_statistics: torch.Tensor | None = None
     for batch in evaluator:
         batches += 1
         local_examples += int(batch["input_ids"].shape[0])
         batch = move_to_device(batch, train_module.device)
-        output = train_module.eval_batch(dict(batch))
+        if numeric_count_protocol is None:
+            output = train_module.eval_batch(dict(batch))
+        else:
+            output = train_module.eval_batch(dict(batch), return_response_logits=True)
         if not isinstance(output, LMOutputWithLoss):
             raise TypeError(f"Expected LMOutputWithLoss, got {type(output).__name__}")
         evaluator.update_metrics(batch, output.ce_loss, output.logits)
+        if numeric_count_protocol is not None:
+            if output.logits is None:
+                raise RuntimeError("Numeric count diagnostics require response logits")
+            batch_statistics = _numeric_count_batch_statistics(
+                batch,
+                output.logits,
+                numeric_count_protocol,
+            )
+            if numeric_count_statistics is None:
+                numeric_count_statistics = batch_statistics
+            else:
+                numeric_count_statistics += batch_statistics
         if get_rank() == 0 and (batches == 1 or batches % 20 == 0):
             log.info("[%s] batch %d/%d", task.name, batches, len(loader))
 
@@ -312,6 +573,18 @@ def _evaluate_task(
         "response_token_weight": float(response_token_weight.detach().cpu().item()),
         "elapsed_seconds": time.monotonic() - started,
     }
+    if numeric_count_protocol is not None:
+        if numeric_count_statistics is None:
+            raise RuntimeError("Numeric count diagnostics did not observe any batches")
+        global_statistics = all_reduce_value(
+            numeric_count_statistics,
+            train_module.device,
+            group=train_module.dp_process_group,
+        )
+        result["numeric_count_diagnostics"] = _numeric_count_metrics(
+            global_statistics,
+            numeric_count_protocol,
+        )
     if get_rank() == 0:
         log.info("Finished %s: %s", task.name, metrics)
     del evaluator, loader, bounded, selected
@@ -353,6 +626,9 @@ def main() -> None:
         )
         if detected_checkpoint_kind != "multimodal_stage1":
             raise ValueError("Fast vision evaluation requires a multimodal checkpoint")
+        # Count diagnostics retain only two response-position vocabulary rows per example.
+        # Never materialize full 16k-sequence logits.
+        module_config.response_logits_only = True
         train_module = module_config.build(model, eval_only=True)
         state_dir = _checkpoint_state_dir(checkpoint)
         log.info("Loading multimodal checkpoint from %s", state_dir)
@@ -377,6 +653,7 @@ def main() -> None:
             )
         if tokenizer.pad_token_id is None:
             raise ValueError(f"Tokenizer {args.tokenizer!r} does not define a pad token")
+        numeric_count_protocol = _numeric_count_token_protocol(tokenizer)
 
         collator = MultimodalCollator(
             pad_token_id=int(tokenizer.pad_token_id),
@@ -426,6 +703,7 @@ def main() -> None:
                 token_ids=token_ids,
                 dp_world_size=dp_world_size,
                 dp_rank=dp_rank,
+                numeric_count_protocol=(numeric_count_protocol if task.name == "count" else None),
             )
             for task in tasks
         }
@@ -469,6 +747,7 @@ def main() -> None:
                 "ep_dp_degree": world_size // args.ep_degree,
                 "dp_process_group_size": dp_world_size,
                 "attention_backend": "flex",
+                "numeric_count_scoring": numeric_count_protocol.as_dict(),
             },
             "results": results,
         }

@@ -929,15 +929,27 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         return self.multimodal_model.image_encoder_flops(batch_size * crops, patches, pooled)
 
     def eval_batch(
-        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+        *,
+        return_response_logits: bool = False,
     ) -> LMOutputWithLoss:
         """Evaluate multimodal response loss or delegate ordinary LM evaluation.
 
         Multimodal Stage 1 batches carry ``loss_masks`` and use a scalar summed response-token
         loss without materializing full-sequence logits. Text-only downstream batches do not
         carry ``loss_masks`` and need the standard OLMoDDP path so evaluators receive logits.
+
+        :param return_response_logits: Retain logits at supervised response positions for a
+            multimodal batch. This requires ``response_logits_only=True`` on the train module so
+            an evaluator cannot accidentally materialize full-sequence vocabulary logits.
         """
         if "loss_masks" not in batch:
+            if return_response_logits:
+                raise ValueError(
+                    "return_response_logits is only valid for multimodal loss-mask batches"
+                )
             output = super().eval_batch(batch, labels=labels)
             assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
             return output._replace(
@@ -950,6 +962,11 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         if self.cp_enabled or self.tp_enabled or self.pp_enabled:
             raise RuntimeError(
                 f"{self.__class__.__name__}.eval_batch() only supports the Stage 1 EP/DP topology"
+            )
+        if return_response_logits and not self.response_logits_only:
+            raise RuntimeError(
+                "return_response_logits requires response_logits_only=True to avoid "
+                "materializing full-sequence vocabulary logits"
             )
 
         # EvaluatorCallback derives ordinary LM labels from input_ids, but multimodal batches
@@ -972,11 +989,16 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                     labels=labels,
                     ignore_index=self.label_ignore_index,
                     loss_reduction="sum",
-                    return_logits=False,
+                    return_logits=return_response_logits,
                     **model_kwargs,
                 )
                 assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
                 return output._replace(
+                    logits=(
+                        output.logits.detach()
+                        if return_response_logits and output.logits is not None
+                        else None
+                    ),
                     loss=output.loss.detach(),
                     ce_loss=output.ce_loss.detach(),
                     z_loss=output.z_loss.detach() if output.z_loss is not None else None,

@@ -66,6 +66,71 @@ def test_multimodal_eval_uses_explicit_labels_and_summed_weighted_loss():
     assert model_part.reset_calls == 1
 
 
+def test_multimodal_eval_can_return_detached_response_logits_in_mask_row_order():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module._cp_config = None
+    train_module._tp_config = None
+    train_module._pp_config = None
+    train_module.response_logits_only = True
+    train_module.label_ignore_index = -100
+
+    class ModelPart:
+        def __init__(self):
+            self.lm = self
+
+        @staticmethod
+        def routed_blocks():
+            yield from ()
+
+        @staticmethod
+        def eval():
+            pass
+
+        @staticmethod
+        def reset_auxiliary_metrics():
+            pass
+
+    object.__setattr__(train_module, "model_parts", [ModelPart()])
+    full_logits = torch.arange(2 * 5 * 7, dtype=torch.float32).reshape(2, 5, 7)
+    full_logits.requires_grad_(True)
+    labels = torch.tensor(
+        [
+            [-100, 11, -100, 12, -100],
+            [21, -100, -100, -100, 22],
+        ]
+    )
+    loss_masks = torch.tensor(
+        [
+            [0.0, 1.0, 0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    expected_logits = full_logits.reshape(-1, 7)[loss_masks.reshape(-1) > 0]
+    captured = {}
+
+    def model_forward(input_ids, labels=None, **kwargs):
+        captured.update(input_ids=input_ids, labels=labels, kwargs=kwargs)
+        loss = full_logits.sum() * 0 + 1
+        return LMOutputWithLoss(expected_logits, loss, loss, None)
+
+    train_module.model_forward_no_pipeline = model_forward
+    batch = {
+        "input_ids": torch.arange(10).reshape(2, 5),
+        "labels": labels,
+        "loss_masks": loss_masks,
+    }
+
+    output = train_module.eval_batch(batch, return_response_logits=True)
+
+    assert captured["labels"] is labels
+    assert captured["kwargs"]["return_logits"] is True
+    assert captured["kwargs"]["response_logits_only"] is True
+    torch.testing.assert_close(output.logits, expected_logits.detach())
+    assert output.logits is not None and not output.logits.requires_grad
+    # The flattened order is row-major across examples, not interleaved by token position.
+    assert output.logits[:, 0].tolist() == [7.0, 21.0, 35.0, 63.0]
+
+
 def test_multimodal_text_eval_delegates_to_standard_full_logits_path(monkeypatch):
     train_module = object.__new__(MultimodalOLMoDDPTrainModule)
     captured = {}
