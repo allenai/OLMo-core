@@ -31,6 +31,29 @@ BF16_RTOL = 1e-5
 BF16_ATOL = 5e-3
 
 
+def small_qwen3_5_config(n_layers: int = 4, **kwargs) -> TransformerConfig:
+    """
+    A tiny Qwen3.5-like hybrid: ``block_pattern=[gdn, gdn, gdn, attn]``, i.e. three
+    :class:`~olmo_core.nn.attention.GatedDeltaNet` blocks per full-attention block. Built through
+    the shipped :meth:`TransformerConfig.qwen3_5_like` factory so the test exercises the real
+    layout of the ``qwen3_5_*`` model family rather than a hand-rolled approximation.
+    """
+    return TransformerConfig.qwen3_5_like(
+        d_model=128,
+        vocab_size=512,
+        n_layers=n_layers,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=32,
+        intermediate_size=256,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+        linear_key_head_dim=32,
+        linear_value_head_dim=32,
+        **kwargs,
+    )
+
+
 def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs):
     config = TransformerConfig.llama_like(
         d_model=128, n_heads=4, n_layers=n_layers, vocab_size=512, **kwargs
@@ -265,6 +288,118 @@ def test_generation_module_stop_sequences():
     generation_module.model.forward = create_mock_forward([8, 1, 99])  # type: ignore[method-assign]
     output, _, _ = generation_module.generate_batch(input_ids, completions_only=False)
     assert torch.equal(output, torch.tensor([[3, 5, 7, 8, 1]], device=device))
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_left_padded_attention_mask_equivalence_no_cache():
+    """
+    Control for :func:`test_left_padded_attention_mask_equivalence_qwen3_5_hybrid`: the same
+    invariant on a plain full-attention model with ``use_cache=False``, which isolates whether the
+    left-padding offsets survive the *uncached* forward path at all (they reach attention only via
+    ``KVCacheManager.record_leftpad``, so there is no cache manager to record them on).
+    """
+    device = torch.device("cuda")
+    pad_token_id = 0
+
+    generation_config = GenerationConfig(
+        max_new_tokens=8,
+        temperature=0.0,
+        pad_token_id=pad_token_id,
+        eos_token_id=1,
+        use_cache=False,
+    )
+    seed_all(0)
+    generation_module = TransformerGenerationModule(
+        model=small_transformer_config(use_flash=True, dtype=DType.bfloat16).build(),
+        generation_config=generation_config,
+        device=device,
+    )
+
+    unpadded = torch.tensor([[3, 5, 7, 11, 13, 17, 19, 23]], dtype=torch.long, device=device)
+    left_padded = torch.cat(
+        [torch.full((1, 4), pad_token_id, dtype=torch.long, device=device), unpadded], dim=1
+    )
+
+    seed_all(0)
+    out_unpadded, _, _ = generation_module.generate_batch(
+        unpadded, attention_mask=(unpadded != pad_token_id).to(torch.bool), completions_only=True
+    )
+    seed_all(0)
+    out_left, _, _ = generation_module.generate_batch(
+        left_padded,
+        attention_mask=(left_padded != pad_token_id).to(torch.bool),
+        completions_only=True,
+    )
+
+    assert torch.equal(out_unpadded, out_left), (
+        f"left-padding changed the generated tokens with use_cache=False: "
+        f"{out_unpadded.tolist()} != {out_left.tolist()}"
+    )
+
+
+@requires_gpu
+@requires_flash_attn_2
+@pytest.mark.parametrize(
+    "use_cache",
+    [pytest.param(False, id="use_cache=False"), pytest.param(True, id="use_cache=True")],
+)
+def test_left_padded_attention_mask_equivalence_qwen3_5_hybrid(use_cache: bool):
+    """
+    Left-padding must not change what a Qwen3.5-like hybrid generates.
+
+    This is the same invariant as :func:`test_left_padded_attention_mask_equivalence`, but for a
+    ``[gdn, gdn, gdn, attn]`` model. It is a distinct case because the two block types consume
+    padding differently: full-attention blocks mask the pad columns via ``cache_leftpad``, while
+    :class:`~olmo_core.nn.attention.GatedDeltaNet` is *recurrent* -- it scans from position 0 and
+    folds every token it is handed into the delta-rule state (and its causal conv window), so an
+    unmasked pad prefix is absorbed as real content before the first real token is seen. With
+    ``[gdn, gdn, gdn, attn]`` that is three out of every four layers.
+
+    ``batch_size=1`` is used deliberately for both runs: batching is not what breaks this, the
+    padding is, and a single row makes the comparison exact.
+    """
+    device = torch.device("cuda")
+    pad_token_id = 0
+    n_pad = 4
+
+    generation_config = GenerationConfig(
+        max_new_tokens=8,
+        temperature=0.0,
+        pad_token_id=pad_token_id,
+        eos_token_id=1,
+        use_cache=use_cache,
+    )
+    seed_all(0)
+    generation_module = TransformerGenerationModule(
+        model=small_qwen3_5_config(use_flash=True, dtype=DType.bfloat16).build(),
+        generation_config=generation_config,
+        device=device,
+    )
+
+    # Real tokens avoid pad/eos so the mask is unambiguous. The prompt is longer than the GDN
+    # causal-conv window (conv_size=4) so the recurrent state, not just the conv, is exercised.
+    unpadded = torch.tensor([[3, 5, 7, 11, 13, 17, 19, 23]], dtype=torch.long, device=device)
+    left_padded = torch.cat(
+        [torch.full((1, n_pad), pad_token_id, dtype=torch.long, device=device), unpadded], dim=1
+    )
+
+    attn_unpadded = (unpadded != pad_token_id).to(torch.bool)
+    attn_left_padded = (left_padded != pad_token_id).to(torch.bool)
+
+    seed_all(0)
+    out_unpadded, logits_unpadded, _ = generation_module.generate_batch(
+        unpadded, attention_mask=attn_unpadded, completions_only=True, return_logits=True
+    )
+    seed_all(0)
+    out_left, logits_left, _ = generation_module.generate_batch(
+        left_padded, attention_mask=attn_left_padded, completions_only=True, return_logits=True
+    )
+
+    assert torch.equal(out_unpadded, out_left), (
+        f"left-padding changed the generated tokens: {out_unpadded.tolist()} != {out_left.tolist()}"
+    )
+    torch.testing.assert_close(logits_unpadded, logits_left, rtol=BF16_RTOL, atol=BF16_ATOL)
 
 
 @requires_gpu
