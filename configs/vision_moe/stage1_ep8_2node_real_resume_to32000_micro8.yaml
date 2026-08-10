@@ -12,8 +12,8 @@ launch:
   workspace: ai2/molmofication
   hostnames:
     - holmes-cs-aus-520.reviz.ai2.in
-    - holmes-cs-aus-516.reviz.ai2.in
-    - holmes-cs-aus-505.reviz.ai2.in
+    - holmes-cs-aus-511.reviz.ai2.in
+    - holmes-cs-aus-517.reviz.ai2.in
   budget: ai2/oe-other
   priority: urgent
   min_runtime: 8h

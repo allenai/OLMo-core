@@ -657,8 +657,8 @@ def test_stage1_selected_micro8_continuation_restores_full_state_with_bounded_ev
         "workspace": "ai2/molmofication",
         "hostnames": [
             "holmes-cs-aus-520.reviz.ai2.in",
-            "holmes-cs-aus-516.reviz.ai2.in",
-            "holmes-cs-aus-505.reviz.ai2.in",
+            "holmes-cs-aus-511.reviz.ai2.in",
+            "holmes-cs-aus-517.reviz.ai2.in",
         ],
         "budget": "ai2/oe-other",
         "priority": "urgent",
