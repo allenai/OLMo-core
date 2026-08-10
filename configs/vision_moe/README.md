@@ -30,12 +30,14 @@ remains intentionally disabled pending an exact MoE-aware implementation and iso
 - `stage1_ep8_2node_real_200step_micro8.yaml` validates the same corrected recipe with two
   EP-DP replicas, which is the intended multi-node production topology.
 - `stage1_ep8_2node_real_resume_to32000_micro8.yaml` resumes that selected two-node arm from
-  its complete step-200 checkpoint through step 32,000 in the original save folder. It restores
+  its latest complete checkpoint, currently step 4,000, through step 32,000 in the original save
+  folder. It restores
   model, optimizer, scheduler, trainer, and packed-loader state and resumes W&B run `sdgbbjmz`.
   PR806's corrected point/count formatting applies from step 201, so the state transition is
   exact but the data serialization after resume is intentionally not byte-identical to steps 1-200.
   Held-out caption and fast vision evaluation run every 2,000 steps. Four language-retention
-  sentinels run every 4,000 steps at one instance per rank and stop after 32 batches per task;
+  sentinels run every 4,000 steps at one instance per rank and stop after 30 batches per task,
+  preserving complete 10-choice Basic Skills documents;
   these deterministic partial sentinels are health trends, not full OLMES benchmark scores.
 - `stage1_ep8_2node_real_500step_pilot.yaml` runs an exact 500-step prefix of the 32,000-step
   production schedule with the native s002 router loss weights, FP32 gradient

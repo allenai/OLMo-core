@@ -1,7 +1,7 @@
 version: 1
 name: stage1-ep8-2node-real-resume-to32000-micro8
 description: >-
-  Continue the selected corrected two-node EP8 Stage-1 micro8 arm from its complete step-200
+  Continue the selected corrected two-node EP8 Stage-1 micro8 arm from its complete step-4000
   checkpoint through step 32,000. Restore the full model, optimizer, scheduler, trainer, and
   packed-loader state in the original save folder and resume the original W&B run. Keep bounded
   held-out caption, fast vision, and partial language-retention evaluations in loop. PR806's
@@ -16,7 +16,7 @@ launch:
   min_runtime: 8h
 overrides:
   - --trainer.save_folder=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-rerisk-200-micro8-2node-20260809-2db297f
-  - --trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-rerisk-200-micro8-2node-20260809-2db297f/step200
+  - --trainer.load_path=/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-rerisk-200-micro8-2node-20260809-2db297f/step4000
   - --trainer.load_strategy=always
   - --trainer.load_optim_state=true
   - --trainer.load_trainer_state=true
@@ -37,7 +37,7 @@ overrides:
   - --fast_vision_eval_examples=256
   - --fast_language_eval_interval=4000
   - --fast_language_eval_rank_batch_instances=1
-  - --fast_language_eval_batches=32
+  - --fast_language_eval_batches=30
   - --trainer.callbacks.wandb.name=s002-stage1-rerisk-200-micro8-2node-20260809-2db297f
   - --trainer.callbacks.wandb.group=s002-stage1-rerisk-topology-200
   - --trainer.callbacks.wandb.auto_resume=true

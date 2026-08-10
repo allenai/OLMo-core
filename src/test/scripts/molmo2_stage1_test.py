@@ -410,12 +410,13 @@ def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypat
             return callback
 
     trainer = SimpleNamespace(
-        add_callback=lambda name, value: captured.update(callback_name=name, callback=value)
+        dp_process_group=None,
+        add_callback=lambda name, value: captured.update(callback_name=name, callback=value),
     )
     config = SimpleNamespace(
         fast_language_eval_interval=4000,
         fast_language_eval_rank_batch_instances=1,
-        fast_language_eval_batches=32,
+        fast_language_eval_batches=30,
     )
     monkeypatch.setattr(stage1, "DownstreamEvaluatorCallbackConfig", CallbackConfig)
 
@@ -425,12 +426,25 @@ def test_stage1_fast_language_validation_uses_compact_dolma2_sentinels(monkeypat
     assert captured["kwargs"]["tasks"] == list(stage1.FAST_LANGUAGE_EVAL_TASKS)
     assert captured["kwargs"]["tokenizer"] == stage1.TokenizerConfig.dolma2()
     assert captured["kwargs"]["eval_interval"] == 4000
-    assert captured["kwargs"]["eval_duration"] == stage1.Duration.steps(32)
+    assert captured["kwargs"]["eval_duration"] == stage1.Duration.steps(30)
     assert captured["kwargs"]["rank_batch_size_instances"] == 1
-    assert captured["kwargs"]["log_interval"] == 8
+    assert captured["kwargs"]["log_interval"] == 7
     assert captured["kwargs"]["lazy"] is True
     assert captured["callback_name"] == "fast_language_validation"
     assert captured["callback"] is callback
+
+
+def test_stage1_fast_language_validation_rejects_partial_choice_documents():
+    stage1 = _load_stage1_module()
+    trainer = SimpleNamespace(dp_process_group=None)
+    config = SimpleNamespace(
+        fast_language_eval_interval=4000,
+        fast_language_eval_rank_batch_instances=1,
+        fast_language_eval_batches=32,
+    )
+
+    with pytest.raises(ValueError, match="complete 10-choice Basic Skills documents"):
+        stage1._add_fast_language_validation_callback(trainer, config)
 
 
 @pytest.mark.parametrize(
@@ -629,7 +643,7 @@ def test_stage1_selected_micro8_continuation_restores_full_state_with_bounded_ev
         "min_runtime": "8h",
     }
     assert f"--trainer.save_folder={save_folder}" in overrides
-    assert f"--trainer.load_path={save_folder}/step200" in overrides
+    assert f"--trainer.load_path={save_folder}/step4000" in overrides
     assert "--trainer.load_strategy=always" in overrides
     assert "--trainer.load_optim_state=true" in overrides
     assert "--trainer.load_trainer_state=true" in overrides
@@ -646,7 +660,7 @@ def test_stage1_selected_micro8_continuation_restores_full_state_with_bounded_ev
     assert "--fast_vision_eval_examples=256" in overrides
     assert "--fast_language_eval_interval=4000" in overrides
     assert "--fast_language_eval_rank_batch_instances=1" in overrides
-    assert "--fast_language_eval_batches=32" in overrides
+    assert "--fast_language_eval_batches=30" in overrides
     assert f"--trainer.callbacks.wandb.name={run_name}" in overrides
     assert "--trainer.callbacks.wandb.run_id=sdgbbjmz" in overrides
     assert "--trainer.callbacks.checkpointer.save_interval=2000" in overrides

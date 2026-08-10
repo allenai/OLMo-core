@@ -123,7 +123,11 @@ FAST_LANGUAGE_EVAL_TASKS = (
     "hellaswag_bpb_5shot",
 )
 FAST_LANGUAGE_EVAL_RANK_BATCH_INSTANCES = 1
-FAST_LANGUAGE_EVAL_BATCHES = 32
+# Basic Skills arithmetic expands each document into ten continuation rows. Keep the
+# bounded distributed prefix aligned to complete documents so the metric never scores a
+# gold answer against a partial set of distractors.
+FAST_LANGUAGE_EVAL_BATCHES = 30
+FAST_LANGUAGE_EVAL_CONTINUATION_ALIGNMENT = 10
 
 # KNOWN DELTA vs mm_olmo stage-1 captioner: `response_residual_dropout=0.1`.
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (input/image
@@ -890,6 +894,17 @@ def _add_fast_language_validation_callback(trainer, config: ExperimentConfig) ->
         raise ValueError("fast_language_eval_rank_batch_instances must be positive")
     if config.fast_language_eval_batches <= 0:
         raise ValueError("fast_language_eval_batches must be positive")
+
+    global_eval_rows = (
+        config.fast_language_eval_rank_batch_instances
+        * get_world_size(trainer.dp_process_group)
+        * config.fast_language_eval_batches
+    )
+    if global_eval_rows % FAST_LANGUAGE_EVAL_CONTINUATION_ALIGNMENT != 0:
+        raise ValueError(
+            "The fast language evaluation prefix must contain complete 10-choice Basic "
+            f"Skills documents, but it contains {global_eval_rows} continuation rows"
+        )
 
     callback = DownstreamEvaluatorCallbackConfig(
         tasks=list(FAST_LANGUAGE_EVAL_TASKS),
