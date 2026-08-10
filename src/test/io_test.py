@@ -3,6 +3,7 @@ from glob import glob
 import pytest
 
 from olmo_core.io import (
+    _http_auth_headers,
     _s3_retry_condition,
     copy_dir,
     copy_file,
@@ -19,6 +20,19 @@ from olmo_core.io import (
 def test_serde_from_tensor():
     data = {"a": (1, 2)}
     assert deserialize_from_tensor(serialize_to_tensor(data)) == data
+
+
+def test_http_auth_headers(monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    hf_url = "https://huggingface.co/buckets/allenai/ai2-llm/resolve/checkpoints/OLMo25/step0/config.json"
+
+    # No token set -> no header, even on a registered host.
+    assert _http_auth_headers(hf_url) == {}
+
+    # Token set -> bearer header, but only for the registered host (never leaked to other hosts).
+    monkeypatch.setenv("HF_TOKEN", "hf_secret")
+    assert _http_auth_headers(hf_url) == {"Authorization": "Bearer hf_secret"}
+    assert _http_auth_headers("https://storage.googleapis.com/ai2-llm/x") == {}
 
 
 def test_s3_retry_condition_includes_ssl_errors():

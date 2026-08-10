@@ -622,10 +622,41 @@ def _get_http_session() -> requests.Session:
     return session
 
 
+# Hosts that receive a bearer token on outgoing HTTP requests, mapped to the env var that holds the
+# token. Authenticating typically raises the host's rate limit (e.g. HuggingFace resolver reads).
+# See https://huggingface.co/docs/hub/rate-limits.
+_HTTP_BEARER_TOKEN_ENV_VARS = {
+    "huggingface.co": "HF_TOKEN",
+    "hf.co": "HF_TOKEN",
+}
+
+
+def _http_auth_headers(url: str) -> dict:
+    """
+    ``Authorization: Bearer`` header for hosts registered in :data:`_HTTP_BEARER_TOKEN_ENV_VARS` when
+    the corresponding env var is set, otherwise an empty dict. The token is only attached to its own
+    host, and ``requests`` strips the header on cross-host redirects (e.g. to a CDN).
+    """
+    from urllib.parse import urlparse
+
+    env_var = _HTTP_BEARER_TOKEN_ENV_VARS.get(urlparse(url).hostname or "")
+    token = os.environ.get(env_var) if env_var is not None else None
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _http_retry_condition(exc: Exception) -> bool:
+    # Retry on transient rate-limit (429) and bad-gateway (502) responses.
+    return (
+        isinstance(exc, requests.exceptions.HTTPError)
+        and exc.response is not None
+        and exc.response.status_code in (429, 502)
+    )
+
+
 @retriable()
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
-    response = session.head(url, allow_redirects=True)
+    response = session.head(url, allow_redirects=True, headers=_http_auth_headers(url))
     content_length = response.headers.get("content-length")
     if content_length is None:
         raise OLMoNetworkError(
@@ -636,17 +667,15 @@ def _http_file_size(url: str) -> int:
     return int(content_length)
 
 
-@retriable(
-    retry_condition=lambda exc: (
-        isinstance(exc, requests.exceptions.HTTPError)
-        and exc.response is not None
-        and exc.response.status_code == 502
-    ),
-)
+@retriable(retry_condition=_http_retry_condition)
 def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     session = _get_http_session()
     response = session.get(
-        url, headers={"Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}"}
+        url,
+        headers={
+            "Range": f"bytes={bytes_start}-{bytes_start + num_bytes - 1}",
+            **_http_auth_headers(url),
+        },
     )
 
     if response.status_code == 404:
@@ -661,10 +690,10 @@ def _http_get_bytes_range(url: str, bytes_start: int, num_bytes: int) -> bytes:
     return result
 
 
-@retriable()
+@retriable(retry_condition=_http_retry_condition)
 def _http_file_exists(url: str) -> bool:
     session = _get_http_session()
-    response = session.head(url)
+    response = session.head(url, headers=_http_auth_headers(url))
     if response.status_code == 404:
         return False
 
