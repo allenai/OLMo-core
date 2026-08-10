@@ -350,7 +350,7 @@ def test_stage1_fast_vision_validation_uses_held_out_task_splits(monkeypatch):
     ]
     assert all(dataset.split == "validation" for dataset in datasets)
     assert datasets[0].mode == "caption"
-    assert datasets[1].counting == "both"
+    assert datasets[1].counting is True
     assert datasets[2].kind == "basic"
     assert all(dataset.message_format == "olmo3_chat" for dataset in datasets)
     assert all(kwargs["shuffle"] is False for _, kwargs in captured["loaders"])

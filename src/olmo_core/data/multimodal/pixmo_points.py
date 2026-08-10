@@ -226,7 +226,7 @@ class PixMoPointsDataset:
 @dataclass
 class PixMoCountDatasetConfig(Config):
     split: str = "train"
-    counting: str = "both"  # "both" interleaves point_count (even) / pointing (odd)
+    counting: str | bool = "both"  # "both" interleaves point_count (even) / pointing (odd)
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     token_ids: Molmo2TokenIds = field(default_factory=Molmo2TokenIds)
@@ -265,6 +265,7 @@ class PixMoCountDataset:
             row_idx, style = i, ("point_count" if self.config.counting else "pointing")
         row = self._data[row_idx]
         label = row["label"]
+        count = int(row["count"])
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
         rng = sft_example_rng(self.config.seed, i, epoch, self.config.message_format)
@@ -279,6 +280,15 @@ class PixMoCountDataset:
         }
 
         def build_branches(branch_rng: np.random.RandomState) -> List[Tuple[str, str]]:
+            # PixMo Count validation/test retain the declared count but omit point
+            # annotations. Those rows support count-only evaluation, not grounding.
+            if len(xy) == 0 and count > 0:
+                return [
+                    (
+                        f"How many {label} are there?",
+                        pointing_answer(xy, label, "count", count=count),
+                    )
+                ]
             prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
             return [(prompt, answer)]
 

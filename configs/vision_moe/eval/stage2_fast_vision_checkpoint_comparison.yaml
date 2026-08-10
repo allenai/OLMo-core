@@ -1,0 +1,276 @@
+version: v2
+budget: ai2/oe-other
+description: >-
+  Matched native EP8 PixMo caption, count-only, and basic-pointing validation over the
+  s002 Stage 1 parent and Stage 2 steps 50 and 200. Replace VISION_MOE_EVAL_COMMIT with
+  the committed vision-moe revision before submission.
+tasks:
+  - name: stage1-parent
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/s002_fast_vision.py
+      - --checkpoint
+      - /weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-corrected-clean-32k-b300-20260807/step32000
+      - --tasks
+      - caption
+      - count
+      - points
+      - --examples
+      - "512"
+      - --sample-seed
+      - "6198"
+      - --message-format
+      - olmo3_chat
+      - --max-sequence-length
+      - "16384"
+      - --rank-batch-instances
+      - "2"
+      - --max-crops
+      - "8"
+      - --tokenizer
+      - /weka/oe-training-default/robertb/olmo3moe-post-training/checkpoints/s002-olmo3moe-instruct-sft-resume-to1000-fused-20260727-hf
+      - --hf-cache
+      - /weka/oe-training-default/rustin/hf-cache/hub
+      - --work-dir
+      - /results/fast-vision-work
+      - --output
+      - /weka/oe-training-default/rustin/experiments/vision-moe/evals/s002-stage1-corrected-clean-32k-b300-20260807-step32000/fast-vision-512-olmo3-chat-20260810.json
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GANTRY_TASK_NAME, value: stage1-parent}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_USE_TORCHRUN, value: "1"}
+      - {name: GIT_BRANCH, value: vision-moe}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_POST_SETUP_CMD
+        value: python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace --backend cmake
+      - {name: LOG_FILTER_TYPE, value: local_rank0_only}
+      - {name: NCCL_DEBUG, value: WARN}
+      - {name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True"}
+      - {name: OLMO_USE_OWN_SYMM_MEM, value: "1"}
+      - {name: OLMO_EP_MP_HIGH_PRIORITY_GROUP, value: "1"}
+      - {name: OLMO_OWN_SYMM_PREWARM, value: "1"}
+      - {name: OLMO_SYMM_VDEV2D_AUTO_BUILD, value: "1"}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: PYTORCH_KERNEL_CACHE_PATH, value: /root/.cache/torch/kernels}
+      - {name: OLMO_SHARED_FS, value: "1"}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+      - {name: WANDB_API_KEY, secret: RUSTINS_WANDB_API_KEY}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 10 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 24h0m0s
+
+  - name: stage2-step50
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/s002_fast_vision.py
+      - --checkpoint
+      - /weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage2-v9-pilot-bounded-errors-5a81c40c/step50
+      - --tasks
+      - caption
+      - count
+      - points
+      - --examples
+      - "512"
+      - --sample-seed
+      - "6198"
+      - --message-format
+      - olmo3_chat
+      - --max-sequence-length
+      - "16384"
+      - --rank-batch-instances
+      - "2"
+      - --max-crops
+      - "8"
+      - --tokenizer
+      - /weka/oe-training-default/robertb/olmo3moe-post-training/checkpoints/s002-olmo3moe-instruct-sft-resume-to1000-fused-20260727-hf
+      - --hf-cache
+      - /weka/oe-training-default/rustin/hf-cache/hub
+      - --work-dir
+      - /results/fast-vision-work
+      - --output
+      - /weka/oe-training-default/rustin/experiments/vision-moe/evals/s002-stage2-v9-pilot-bounded-errors-5a81c40c-step50/fast-vision-512-olmo3-chat-20260810.json
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GANTRY_TASK_NAME, value: stage2-step50}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_USE_TORCHRUN, value: "1"}
+      - {name: GIT_BRANCH, value: vision-moe}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_POST_SETUP_CMD
+        value: python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace --backend cmake
+      - {name: LOG_FILTER_TYPE, value: local_rank0_only}
+      - {name: NCCL_DEBUG, value: WARN}
+      - {name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True"}
+      - {name: OLMO_USE_OWN_SYMM_MEM, value: "1"}
+      - {name: OLMO_EP_MP_HIGH_PRIORITY_GROUP, value: "1"}
+      - {name: OLMO_OWN_SYMM_PREWARM, value: "1"}
+      - {name: OLMO_SYMM_VDEV2D_AUTO_BUILD, value: "1"}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: PYTORCH_KERNEL_CACHE_PATH, value: /root/.cache/torch/kernels}
+      - {name: OLMO_SHARED_FS, value: "1"}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+      - {name: WANDB_API_KEY, secret: RUSTINS_WANDB_API_KEY}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 10 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 24h0m0s
+
+  - name: stage2-step200
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/s002_fast_vision.py
+      - --checkpoint
+      - /weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage2-v9-pilot-bounded-errors-5a81c40c/step200
+      - --tasks
+      - caption
+      - count
+      - points
+      - --examples
+      - "512"
+      - --sample-seed
+      - "6198"
+      - --message-format
+      - olmo3_chat
+      - --max-sequence-length
+      - "16384"
+      - --rank-batch-instances
+      - "2"
+      - --max-crops
+      - "8"
+      - --tokenizer
+      - /weka/oe-training-default/robertb/olmo3moe-post-training/checkpoints/s002-olmo3moe-instruct-sft-resume-to1000-fused-20260727-hf
+      - --hf-cache
+      - /weka/oe-training-default/rustin/hf-cache/hub
+      - --work-dir
+      - /results/fast-vision-work
+      - --output
+      - /weka/oe-training-default/rustin/experiments/vision-moe/evals/s002-stage2-v9-pilot-bounded-errors-5a81c40c-step200/fast-vision-512-olmo3-chat-20260810.json
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: VISION_MOE_EVAL_COMMIT}
+      - {name: GANTRY_TASK_NAME, value: stage2-step200}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_USE_TORCHRUN, value: "1"}
+      - {name: GIT_BRANCH, value: vision-moe}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_POST_SETUP_CMD
+        value: python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace --backend cmake
+      - {name: LOG_FILTER_TYPE, value: local_rank0_only}
+      - {name: NCCL_DEBUG, value: WARN}
+      - {name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True"}
+      - {name: OLMO_USE_OWN_SYMM_MEM, value: "1"}
+      - {name: OLMO_EP_MP_HIGH_PRIORITY_GROUP, value: "1"}
+      - {name: OLMO_OWN_SYMM_PREWARM, value: "1"}
+      - {name: OLMO_SYMM_VDEV2D_AUTO_BUILD, value: "1"}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: PYTORCH_KERNEL_CACHE_PATH, value: /root/.cache/torch/kernels}
+      - {name: OLMO_SHARED_FS, value: "1"}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+      - {name: WANDB_API_KEY, secret: RUSTINS_WANDB_API_KEY}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 10 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 24h0m0s

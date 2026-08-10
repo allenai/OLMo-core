@@ -1,4 +1,4 @@
-"""Run MMMU-Pro against a native multimodal s002 Stage-1 checkpoint.
+"""Run MMMU-Pro against a native multimodal s002 checkpoint.
 
 The checkpoint stays in its native OLMo-core distributed-checkpoint format and uses
 expert parallelism. Every EP rank therefore executes the same lmms-eval request; the
@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 _IMAGE_MARKER = re.compile(r"<image(?:\s+\d+)?>", flags=re.IGNORECASE)
 _PROMPT_LAYOUTS = ("document", "text_sft", "answer_cue", "bare_chat", "olmo3_chat")
 _RESPONSE_MODES = ("generate", "letter_logits", "option_text_mean", "option_text_sum")
+_STAGE2_MAX_CROPS_PER_IMAGE = 8
 
 
 def _set_model_parts_eval(train_module) -> None:
@@ -67,7 +68,18 @@ def _parse_args() -> argparse.Namespace:
         "--max-crops-total",
         type=int,
         default=8,
-        help="High-resolution crop budget divided across all images in one question.",
+        help=(
+            "Legacy high-resolution crop budget divided across all images. The exact "
+            "olmo3_chat layout instead defaults to eight crops per image."
+        ),
+    )
+    parser.add_argument(
+        "--max-crops-per-image",
+        type=int,
+        help=(
+            "Per-image high-resolution crop budget. Defaults to 8 for olmo3_chat and is "
+            "unset for the legacy layouts."
+        ),
     )
     parser.add_argument(
         "--max-new-tokens",
@@ -152,6 +164,60 @@ def _clean_context(context: str) -> str:
     return _IMAGE_MARKER.sub("", context).strip()
 
 
+def _resolve_max_crops_per_image(
+    prompt_layout: str,
+    max_crops_per_image: int | None,
+) -> int | None:
+    """Select exact Stage 2 crop semantics without changing legacy layouts."""
+    if max_crops_per_image is not None:
+        return max_crops_per_image
+    if prompt_layout == "olmo3_chat":
+        return _STAGE2_MAX_CROPS_PER_IMAGE
+    return None
+
+
+def _image_crop_budgets(
+    image_count: int,
+    *,
+    max_crops_total: int,
+    max_crops_per_image: int | None,
+) -> List[int]:
+    """Return safe per-image crop budgets for exact or legacy preprocessing."""
+    if image_count < 0:
+        raise ValueError("image_count must be non-negative")
+    if image_count == 0:
+        return []
+    if max_crops_per_image is not None:
+        if max_crops_per_image <= 0:
+            raise ValueError("max_crops_per_image must be positive")
+        return [max_crops_per_image] * image_count
+    if max_crops_total <= 0:
+        raise ValueError("max_crops_total must be positive")
+    if image_count > max_crops_total:
+        raise ValueError(
+            f"Request has {image_count} images but --max-crops-total={max_crops_total}; "
+            "at least one high-resolution crop is required per image"
+        )
+    base_crops, extra_crops = divmod(max_crops_total, image_count)
+    return [base_crops + int(index < extra_crops) for index in range(image_count)]
+
+
+def _image_ids_for_prompt(
+    tokenizer,
+    image_id_groups: Sequence[Sequence[int]],
+    *,
+    layout: str,
+) -> List[int]:
+    """Flatten image blocks, adding the Stage 2 multi-image text prefixes when required."""
+    image_ids: List[int] = []
+    multi_image_chat = layout == "olmo3_chat" and len(image_id_groups) > 1
+    for image_index, ids in enumerate(image_id_groups):
+        if multi_image_chat:
+            image_ids.extend(tokenizer.encode(f"Image {image_index + 1}", add_special_tokens=False))
+        image_ids.extend(ids)
+    return image_ids
+
+
 def _prompt_ids_for_layout(
     tokenizer,
     context: str,
@@ -234,6 +300,7 @@ def _build_adapter_class():
             *,
             max_sequence_length: int,
             max_crops_total: int,
+            max_crops_per_image: int | None,
             max_new_tokens: int | None,
             sequence_bucket_size: int,
             response_mode: str,
@@ -247,6 +314,7 @@ def _build_adapter_class():
             self.token_ids = token_ids
             self.max_sequence_length = max_sequence_length
             self.max_crops_total = max_crops_total
+            self.max_crops_per_image = max_crops_per_image
             self.max_new_tokens_override = max_new_tokens
             self.sequence_bucket_size = sequence_bucket_size
             self.response_mode = response_mode
@@ -289,17 +357,14 @@ def _build_adapter_class():
             if not visuals:
                 return None, None, []
 
-            if len(visuals) > self.max_crops_total:
-                raise ValueError(
-                    f"Request has {len(visuals)} images but --max-crops-total="
-                    f"{self.max_crops_total}; at least one high-resolution crop is required "
-                    "per image"
-                )
-            base_crops, extra_crops = divmod(self.max_crops_total, len(visuals))
-            crop_budgets = [base_crops + int(index < extra_crops) for index in range(len(visuals))]
+            crop_budgets = _image_crop_budgets(
+                len(visuals),
+                max_crops_total=self.max_crops_total,
+                max_crops_per_image=self.max_crops_per_image,
+            )
             image_parts: List[torch.Tensor] = []
             pooling_parts: List[torch.Tensor] = []
-            image_token_ids: List[int] = []
+            image_token_id_groups: List[List[int]] = []
             patch_offset = 0
 
             for visual, crop_budget in zip(visuals, crop_budgets):
@@ -318,7 +383,7 @@ def _build_adapter_class():
                 image_parts.append(images)
                 pooling_parts.append(adjusted_pooling)
                 resized_h, resized_w, height, width = (int(grid[i]) for i in range(4))
-                image_token_ids.extend(
+                image_token_id_groups.append(
                     build_image_token_ids(
                         resized_h,
                         resized_w,
@@ -331,7 +396,11 @@ def _build_adapter_class():
             return (
                 torch.cat(image_parts, dim=1),
                 torch.cat(pooling_parts, dim=1),
-                image_token_ids,
+                _image_ids_for_prompt(
+                    self.tokenizer,
+                    image_token_id_groups,
+                    layout=self.prompt_layout,
+                ),
             )
 
         def _prompt_ids(self, context: str, image_ids: Sequence[int]) -> List[int]:
@@ -372,7 +441,7 @@ def _build_adapter_class():
                 raise ValueError(
                     f"MMMU-Pro request needs {required} tokens, exceeding "
                     f"--max-sequence-length={self.max_sequence_length}. Reduce "
-                    "--max-crops-total; prompt and candidate truncation are disabled."
+                    "the configured crop budget; prompt and candidate truncation are disabled."
                 )
             buffer_length = self._buffer_length(required)
             pad_token_id = self.tokenizer.pad_token_id
@@ -458,8 +527,9 @@ def _build_adapter_class():
                 raise ValueError(
                     f"MMMU-Pro request needs {required} tokens ({len(prompt_ids)} prompt + "
                     f"{max_new_tokens} generation), exceeding --max-sequence-length="
-                    f"{self.max_sequence_length}. Reduce --max-crops-total or the smoke-only "
-                    "--max-new-tokens override; prompt truncation is intentionally disabled."
+                    f"{self.max_sequence_length}. Reduce the configured crop budget or the "
+                    "smoke-only --max-new-tokens override; prompt truncation is intentionally "
+                    "disabled."
                 )
 
             input_ids, token_type_ids, position_ids = self._build_inputs(
@@ -616,6 +686,8 @@ def main() -> None:
         raise ValueError("--max-sequence-length must be positive")
     if args.max_crops_total <= 0:
         raise ValueError("--max-crops-total must be positive")
+    if args.max_crops_per_image is not None and args.max_crops_per_image <= 0:
+        raise ValueError("--max-crops-per-image must be positive")
     if args.max_new_tokens is not None and args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be positive")
     if args.response_mode != "generate" and args.max_new_tokens is not None:
@@ -663,7 +735,7 @@ def main() -> None:
         )
         if checkpoint_kind != "multimodal_stage1":
             raise ValueError(
-                "MMMU-Pro requires a multimodal Stage-1 checkpoint; the supplied checkpoint "
+                "MMMU-Pro requires a multimodal s002 checkpoint; the supplied checkpoint "
                 f"was detected as {checkpoint_kind!r}."
             )
 
@@ -687,7 +759,10 @@ def main() -> None:
         if args.prompt_layout == "olmo3_chat":
             validate_olmo3_chat_tokenizer(tokenizer, token_ids=token_ids)
         text_vocab_size = min(token_ids.image_token_ids)
-        serialized_token_ids = raw_config.get("dataset", {}).get("token_ids")
+        serialized_token_ids = experiment.get("token_ids")
+        dataset_config = raw_config.get("dataset")
+        if serialized_token_ids is None and isinstance(dataset_config, dict):
+            serialized_token_ids = dataset_config.get("token_ids")
         if serialized_token_ids is not None:
             expected_token_ids = Molmo2TokenIds.from_dict(serialized_token_ids)
             if token_ids != expected_token_ids:
@@ -702,6 +777,11 @@ def main() -> None:
                 f"model.image_patch_token_id {expected_patch_id}"
             )
 
+        max_crops_per_image = _resolve_max_crops_per_image(
+            args.prompt_layout,
+            args.max_crops_per_image,
+        )
+
         adapter_type = _build_adapter_class()
         adapter = adapter_type(
             train_module,
@@ -709,6 +789,7 @@ def main() -> None:
             token_ids,
             max_sequence_length=args.max_sequence_length,
             max_crops_total=args.max_crops_total,
+            max_crops_per_image=max_crops_per_image,
             max_new_tokens=args.max_new_tokens,
             sequence_bucket_size=args.sequence_bucket_size,
             response_mode=args.response_mode,
@@ -765,6 +846,13 @@ def main() -> None:
                 "logical_eval_replicas": 1,
                 "max_sequence_length": args.max_sequence_length,
                 "max_crops_total": args.max_crops_total,
+                "max_crops_per_image": max_crops_per_image,
+                "crop_budget_mode": (
+                    "per_image" if max_crops_per_image is not None else "shared_total"
+                ),
+                "multi_image_text_prefixes": (
+                    "Image {one_based_index}" if args.prompt_layout == "olmo3_chat" else None
+                ),
                 "max_new_tokens_override": args.max_new_tokens,
                 "sequence_bucket_size": args.sequence_bucket_size,
                 "attention_backend": "flex",

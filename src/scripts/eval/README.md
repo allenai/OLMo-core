@@ -74,7 +74,7 @@ with batch shape.
 The output records whether the checkpoint was detected as a pretrained LM or multimodal
 Stage-1 model, all task names, topology, limits, git revision, and dirty-tree state.
 
-## Native Stage-1 MMMU-Pro
+## Native s002 MMMU-Pro
 
 The base s002 checkpoint has no vision tower or connector and is deliberately rejected by
 this runner. Use it after Stage-1 produces a multimodal checkpoint:
@@ -104,6 +104,24 @@ NVSHMEM path's persistent kernels are intended for steady-state training batches
 indefinitely on batch-one autoregressive inference.
 The native runner uses s002's Dolma2 document layout, with no Qwen role headers, and scores
 leading-space option tokens to match the Stage-1 response serialization.
+
+For a Stage-2 checkpoint trained with the s002 SFT template, select the exact chat interface
+and the 16,384-token training horizon:
+
+```bash
+torchrun --standalone --nproc-per-node=8 src/scripts/eval/s002_mmmu_pro.py \
+  --checkpoint /weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/STAGE2_CHECKPOINT \
+  --tasks mmmu_pro_vision mmmu_pro_standard \
+  --prompt-layout olmo3_chat \
+  --max-sequence-length 16384 \
+  --response-mode letter_logits
+```
+
+The runner resolves the SFT tokenizer from the Stage-2 checkpoint config and validates its
+template and special-token IDs. In `olmo3_chat` mode, each image receives the released Stage-2
+budget of eight high-resolution crops and multi-image prompts contain the trained `Image 1`,
+`Image 2`, ... text prefixes. The legacy layouts retain their original shared eight-crop budget.
+Use `--max-crops-per-image` only for an explicit Stage-2 preprocessing ablation.
 
 There are two complete protocols:
 

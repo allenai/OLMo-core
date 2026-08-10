@@ -112,3 +112,7 @@ python src/scripts/train/Molmo2-Stage2.py dry_run s002-stage2-image-only-v9-pilo
 
 Only replace `dry_run` with `launch` after reviewing the merged configuration and receiving
 explicit submission approval.
+
+The standalone post-step-200 health and performance jobs are documented in
+[`eval/README.md`](eval/README.md). They remain unlaunchable until their `GIT_REF` placeholder
+is replaced with the committed `vision-moe` evaluator revision.

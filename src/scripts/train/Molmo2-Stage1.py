@@ -830,7 +830,7 @@ def _add_fast_vision_validation_callback(
         ),
         (
             "pixmo-count-validation",
-            PixMoCountDatasetConfig(split="validation", counting="both", **common),
+            PixMoCountDatasetConfig(split="validation", counting=True, **common),
         ),
         (
             "pixmo-points-validation",
