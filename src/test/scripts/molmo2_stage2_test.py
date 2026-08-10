@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -99,6 +100,53 @@ def test_stage2_data_error_monitor_records_global_cumulative_count():
     callback.post_train_batch()
 
     assert recorded == [("data/errors total", 3, stage2.ReduceType.sum)]
+
+
+def test_stage2_startup_sync_uses_main_group_with_long_timeout(monkeypatch):
+    stage2 = _load_stage2_module()
+    barriers = []
+    environment_timeouts = []
+
+    monkeypatch.setattr(stage2.dist, "is_available", lambda: True)
+    monkeypatch.setattr(stage2.dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(stage2.dist, "barrier", lambda: barriers.append(True))
+    monkeypatch.setattr(
+        stage2,
+        "prepare_training_environment",
+        lambda **kwargs: environment_timeouts.append(kwargs["timeout"]),
+    )
+
+    stage2._prepare_stage2_training_environment()
+    stage2._synchronize_before_trainer()
+
+    assert stage2.STAGE2_DISTRIBUTED_STARTUP_TIMEOUT == timedelta(minutes=60)
+    assert environment_timeouts == [timedelta(minutes=60)]
+    assert barriers == [True]
+
+
+def test_stage2_startup_sync_precedes_trainer_process_group_creation(monkeypatch):
+    stage2 = _load_stage2_module()
+    events: list[Any] = []
+    expected_trainer = object()
+
+    monkeypatch.setattr(
+        stage2,
+        "_synchronize_before_trainer",
+        lambda: events.append("startup_sync"),
+    )
+
+    def build(train_module, data_loader):
+        events.append(("trainer_build", train_module, data_loader))
+        return expected_trainer
+
+    config = SimpleNamespace(trainer=SimpleNamespace(build=build))
+    train_module = object()
+    data_loader = object()
+
+    trainer = stage2._build_trainer_after_startup_sync(config, train_module, data_loader)
+
+    assert trainer is expected_trainer
+    assert events == ["startup_sync", ("trainer_build", train_module, data_loader)]
 
 
 def test_stage2_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():

@@ -17,6 +17,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
+import torch.distributed as dist
 import yaml
 
 from olmo_core.config import Config, DType
@@ -116,6 +117,11 @@ FAST_VISION_EVAL_INTERVAL = 2000
 FAST_VISION_EVAL_EXAMPLES = 32
 FAST_VISION_EVAL_RANK_BATCH_INSTANCES = 1
 FAST_VISION_EVAL_SEED = 6198
+
+# Building the full image-only-v9 dataset stack can take substantially different amounts of
+# time on different ranks when Hugging Face caches are cold. Keep the main process group alive
+# long enough for that work and use the same timeout for the explicit pre-Trainer rendezvous.
+STAGE2_DISTRIBUTED_STARTUP_TIMEOUT = timedelta(minutes=60)
 
 # Optional PR #806 reasoning sources. Both remain off in the official image-only-v9
 # baseline and must be enabled explicitly as isolated mixture ablations.
@@ -859,6 +865,40 @@ def _append_extra_sft_sources(
     return datasets, weights, names
 
 
+def _synchronize_before_trainer() -> None:
+    """Rendezvous ranks after dataset setup and before Trainer creates auxiliary groups.
+
+    ``Trainer`` creates a Gloo process group for asynchronous bookkeeping with PyTorch's
+    30-minute default timeout. Full Stage 2 dataset construction is rank-local and can exceed
+    that skew on a cold cache. Synchronizing on the already-initialized main process group first
+    makes every rank enter auxiliary process-group construction together without consuming or
+    changing any data-loader state.
+    """
+    if not dist.is_available() or not dist.is_initialized():
+        return
+
+    log.info(
+        "Synchronizing all ranks before Trainer construction (timeout=%s)",
+        STAGE2_DISTRIBUTED_STARTUP_TIMEOUT,
+    )
+    # The main group was initialized with STAGE2_DISTRIBUTED_STARTUP_TIMEOUT, which this
+    # collective inherits. This also works on PyTorch versions where barrier() does not accept a
+    # per-collective timeout.
+    dist.barrier()
+    log.info("All ranks finished Stage 2 dataset setup")
+
+
+def _build_trainer_after_startup_sync(config: ExperimentConfig, train_module, data_loader):
+    """Build the Trainer only after all ranks finish rank-local Stage 2 setup."""
+    _synchronize_before_trainer()
+    return config.trainer.build(train_module, data_loader)
+
+
+def _prepare_stage2_training_environment() -> None:
+    """Initialize the main process group with the Stage 2 startup timeout."""
+    prepare_training_environment(timeout=STAGE2_DISTRIBUTED_STARTUP_TIMEOUT)
+
+
 def train(config: ExperimentConfig):
     os.environ.setdefault("OLMO_USE_OWN_SYMM_MEM", "1")
     os.environ.setdefault("OLMO_EP_MP_HIGH_PRIORITY_GROUP", "1")
@@ -922,7 +962,7 @@ def train(config: ExperimentConfig):
         max_total_data_errors=config.max_total_data_errors,
     )
 
-    trainer = config.trainer.build(train_module, data_loader)
+    trainer = _build_trainer_after_startup_sync(config, train_module, data_loader)
     trainer.add_callback("data_error_monitor", _DataErrorMonitorCallback())
     _add_fast_vision_validation_callback(
         trainer,
@@ -991,7 +1031,7 @@ Launch on two Beaker nodes:
     script, cmd, run_name, *overrides = sys.argv
 
     if cmd == "train":
-        prepare_training_environment(timeout=timedelta(minutes=60))
+        _prepare_stage2_training_environment()
     else:
         prepare_cli_environment()
 
