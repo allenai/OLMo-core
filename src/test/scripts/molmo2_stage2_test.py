@@ -463,7 +463,11 @@ def test_stage2_resume_to400_profile_is_guarded_full_state_continuation():
         "num_nodes": 2,
         "num_gpus": 8,
         "workspace": "ai2/molmofication",
-        "cluster": "ai2/holmes",
+        "hostnames": [
+            "holmes-cs-aus-504.reviz.ai2.in",
+            "holmes-cs-aus-517.reviz.ai2.in",
+            "holmes-cs-aus-553.reviz.ai2.in",
+        ],
         "budget": "ai2/oe-other",
         "priority": "urgent",
         "min_runtime": "8h",
@@ -514,6 +518,21 @@ def test_stage2_resume_to400_profile_is_guarded_full_state_continuation():
     assert expected_overrides <= set(overrides)
     assert not any("fast_language" in override for override in overrides)
 
+    launch_config = SimpleNamespace(
+        num_nodes=1,
+        num_gpus=1,
+        workspace=None,
+        clusters=["must-be-cleared"],
+        hostnames=None,
+        budget=None,
+        priority="normal",
+        min_runtime=None,
+        description=None,
+    )
+    stage2._apply_beaker_test_config(SimpleNamespace(launch=launch_config), profile)
+    assert launch_config.clusters == []
+    assert launch_config.hostnames == profile["launch"]["hostnames"]
+
 
 def test_stage2_pilot_dry_run_cli_overrides_take_precedence():
     stage2 = _load_stage2_module()
@@ -531,3 +550,58 @@ def test_stage2_pilot_dry_run_cli_overrides_take_precedence():
 
     assert overrides[-1] == cli_override
     assert all(not override.startswith("--beaker-test-config=") for override in overrides)
+
+
+@pytest.mark.parametrize("hostnames", [[], [""], ["healthy-host", 1], "healthy-host"])
+def test_stage2_beaker_profile_rejects_invalid_hostnames(hostnames):
+    stage2 = _load_stage2_module()
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            num_nodes=1,
+            num_gpus=1,
+            workspace=None,
+            clusters=["ai2/holmes"],
+            hostnames=None,
+            budget=None,
+            priority="normal",
+            min_runtime=None,
+            description=None,
+        )
+    )
+    profile = {"launch": {"workspace": "ai2/molmofication", "hostnames": hostnames}}
+
+    with pytest.raises(ValueError, match="hostnames.*non-empty string list"):
+        stage2._apply_beaker_test_config(config, profile)
+
+
+def test_stage2_beaker_gate_refuses_an_unset_submission_target():
+    stage2 = _load_stage2_module()
+    config = SimpleNamespace(launch=SimpleNamespace(workspace=None, clusters=[], hostnames=None))
+
+    with pytest.raises(RuntimeError, match="workspace and placement constraints are unset"):
+        stage2.launch(config)
+
+
+@pytest.mark.parametrize(
+    ("clusters", "hostnames"),
+    [(["ai2/holmes"], None), ([], ["healthy-host"])],
+)
+def test_stage2_beaker_gate_accepts_cluster_or_hostname_placement(clusters, hostnames):
+    stage2 = _load_stage2_module()
+    launched = False
+
+    def launch(*, follow):
+        nonlocal launched
+        assert follow
+        launched = True
+
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            workspace="ai2/molmofication",
+            clusters=clusters,
+            hostnames=hostnames,
+            launch=launch,
+        )
+    )
+    stage2.launch(config)
+    assert launched

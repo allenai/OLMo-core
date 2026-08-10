@@ -8,7 +8,10 @@ launch:
   num_nodes: 2
   num_gpus: 8
   workspace: ai2/molmofication
-  cluster: ai2/holmes
+  hostnames:
+    - holmes-cs-aus-504.reviz.ai2.in
+    - holmes-cs-aus-517.reviz.ai2.in
+    - holmes-cs-aus-553.reviz.ai2.in
   budget: ai2/oe-other
   priority: urgent
   min_runtime: 8h
