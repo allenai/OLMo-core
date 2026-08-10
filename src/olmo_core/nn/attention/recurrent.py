@@ -237,6 +237,7 @@ class GatedDeltaNet(SequenceMixer):
         self,
         x: torch.Tensor,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -246,11 +247,32 @@ class GatedDeltaNet(SequenceMixer):
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
+        :param cache_leftpad: Optional per-row left-padding lengths, shape ``(batch_size,)``. Unlike
+            attention -- which masks the pad columns out through flash-attn -- this mixer is
+            recurrent and would otherwise fold the pad prefix into the causal-conv window and the
+            delta-rule state before reaching the first real token. Only the prefill carries
+            padding; single-token decode steps are always real tokens.
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
         del kwargs  # Ignore any extra kwargs passed from attention interface
         B, T_og, _ = x.shape
+
+        # Positions strictly before a row's left-padding length are pad; ``None`` once there is
+        # nothing to mask, so the unpadded path stays allocation-free and bit-identical.
+        pad_mask: Optional[torch.Tensor] = None
+        if cache_leftpad is not None and T_og > 1:
+            leftpad = cache_leftpad.to(device=x.device).reshape(B, 1)
+            if bool((leftpad > 0).any()):
+                if self.cp_enabled:
+                    raise RuntimeError(
+                        "GatedDeltaNet does not support left-padding with context parallelism"
+                    )
+                if cu_doc_lens is not None:
+                    raise RuntimeError(
+                        "GatedDeltaNet does not support left-padding with packed cu_doc_lens"
+                    )
+                pad_mask = torch.arange(T_og, device=x.device).unsqueeze(0) < leftpad
 
         # Cached decoding: once prefill has populated the cache, every subsequent single-token step
         # advances the recurrent state instead of recomputing over the whole sequence. A multi-token
@@ -271,6 +293,17 @@ class GatedDeltaNet(SequenceMixer):
         if self.allow_neg_eigval:
             beta = beta * 2.0
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
+
+        if pad_mask is not None:
+            keep = (~pad_mask).unsqueeze(-1)
+            # Zeroing the conv INPUTS makes each real position's causal window see zeros where the
+            # pads are -- exactly what ``CausalConv1d`` feeds an unpadded sequence at its start.
+            q, k, v = q * keep, k * keep, v * keep
+            # ``beta = 0`` and ``g = 0`` make the delta-rule update the identity across the pad
+            # prefix: ``S_t = S_{t-1} * exp(g_t) + beta_t * k_t (v_t - S_{t-1} k_t)^T`` collapses to
+            # ``S_t = S_{t-1}``, so the state entering the first real token is the unpadded state.
+            beta = beta * keep
+            g = g * keep
 
         if self.cp_enabled and self.uly is not None:
             assert (
@@ -314,6 +347,16 @@ class GatedDeltaNet(SequenceMixer):
             repeat_factor = self.n_v_heads // self.n_heads
             q = q.repeat_interleave(repeat_factor, dim=-2)
             k = k.repeat_interleave(repeat_factor, dim=-2)
+
+        if pad_mask is not None:
+            # Zeroing the conv inputs above leaves q/k all-zero at the pad positions, and the kernel
+            # L2-normalises them (``use_qk_l2norm_in_kernel``), so a zero vector risks 0/0 -> NaN --
+            # which ``beta = 0`` would NOT cancel, since ``0 * NaN`` is NaN and would poison the
+            # carried state. Those positions contribute nothing by construction, so refill them with
+            # an arbitrary finite vector purely to keep the normalisation well-defined.
+            fill = pad_mask.view(B, pad_mask.shape[1], 1, 1)
+            q = q.masked_fill(fill, 1.0)
+            k = k.masked_fill(fill, 1.0)
 
         if use_precomputed:
             assert cache is not None
