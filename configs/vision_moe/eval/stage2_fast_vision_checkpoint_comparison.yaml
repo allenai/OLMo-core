@@ -27,7 +27,7 @@ tasks:
       - --max-sequence-length
       - "16384"
       - --rank-batch-instances
-      - "2"
+      - "1"
       - --max-crops
       - "8"
       - --tokenizer
@@ -117,7 +117,7 @@ tasks:
       - --max-sequence-length
       - "16384"
       - --rank-batch-instances
-      - "2"
+      - "1"
       - --max-crops
       - "8"
       - --tokenizer
@@ -207,7 +207,7 @@ tasks:
       - --max-sequence-length
       - "16384"
       - --rank-batch-instances
-      - "2"
+      - "1"
       - --max-crops
       - "8"
       - --tokenizer
