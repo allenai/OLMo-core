@@ -502,9 +502,27 @@ def test_beaker_gate_profiles_use_approved_holmes_target(
 
 def test_beaker_gate_refuses_an_unset_submission_target():
     stage1 = _load_stage1_module()
-    config = SimpleNamespace(launch=SimpleNamespace(workspace=None, clusters=[]))
-    with pytest.raises(RuntimeError, match="workspace and cluster are unset"):
+    config = SimpleNamespace(launch=SimpleNamespace(workspace=None, clusters=[], hostnames=None))
+    with pytest.raises(RuntimeError, match="workspace and placement constraints are unset"):
         stage1.launch(config)
+
+
+def test_beaker_gate_accepts_hostname_only_placement():
+    stage1 = _load_stage1_module()
+    launched = False
+
+    def launch(*, follow):
+        nonlocal launched
+        assert follow
+        launched = True
+
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            workspace="ai2/molmofication", clusters=[], hostnames=["healthy-host"], launch=launch
+        )
+    )
+    stage1.launch(config)
+    assert launched
 
 
 def test_beaker_gate_cli_overrides_take_precedence():
@@ -637,11 +655,29 @@ def test_stage1_selected_micro8_continuation_restores_full_state_with_bounded_ev
         "num_nodes": 2,
         "num_gpus": 8,
         "workspace": "ai2/molmofication",
-        "cluster": "ai2/holmes",
+        "hostnames": [
+            "holmes-cs-aus-520.reviz.ai2.in",
+            "holmes-cs-aus-516.reviz.ai2.in",
+            "holmes-cs-aus-505.reviz.ai2.in",
+        ],
         "budget": "ai2/oe-other",
         "priority": "urgent",
         "min_runtime": "8h",
     }
+    launch_config = SimpleNamespace(
+        num_nodes=1,
+        num_gpus=1,
+        workspace=None,
+        clusters=["must-be-cleared"],
+        hostnames=None,
+        budget=None,
+        priority="normal",
+        min_runtime=None,
+        description=None,
+    )
+    stage1._apply_beaker_test_config(SimpleNamespace(launch=launch_config), profile)
+    assert launch_config.clusters == []
+    assert launch_config.hostnames == profile["launch"]["hostnames"]
     assert f"--trainer.save_folder={save_folder}" in overrides
     assert f"--trainer.load_path={save_folder}/step4000" in overrides
     assert "--trainer.load_strategy=always" in overrides

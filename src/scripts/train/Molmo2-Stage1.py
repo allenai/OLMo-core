@@ -597,6 +597,7 @@ def _apply_beaker_test_config(
         "num_gpus",
         "workspace",
         "cluster",
+        "hostnames",
         "budget",
         "priority",
         "min_runtime",
@@ -607,8 +608,20 @@ def _apply_beaker_test_config(
     config.launch.num_nodes = int(launch.get("num_nodes", config.launch.num_nodes))
     config.launch.num_gpus = int(launch.get("num_gpus", config.launch.num_gpus))
     config.launch.workspace = launch.get("workspace")
-    cluster = launch.get("cluster")
-    config.launch.clusters = [] if cluster is None else [str(cluster)]
+    hostnames = launch.get("hostnames")
+    if hostnames is not None:
+        if (
+            not isinstance(hostnames, list)
+            or not hostnames
+            or not all(isinstance(hostname, str) and hostname for hostname in hostnames)
+        ):
+            raise ValueError("Beaker test launch 'hostnames' must be a non-empty string list")
+        config.launch.hostnames = hostnames
+        config.launch.clusters = []
+    else:
+        cluster = launch.get("cluster")
+        config.launch.clusters = [] if cluster is None else [str(cluster)]
+        config.launch.hostnames = None
     config.launch.budget = launch.get("budget", config.launch.budget)
     config.launch.priority = str(launch.get("priority", config.launch.priority))
     config.launch.min_runtime = launch.get("min_runtime", config.launch.min_runtime)
@@ -1074,10 +1087,10 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
-    if not config.launch.workspace or not config.launch.clusters:
+    if not config.launch.workspace or not (config.launch.clusters or config.launch.hostnames):
         raise RuntimeError(
-            "Beaker workspace and cluster are unset. Fill the approved target in the test config "
-            "before launching; no experiment was submitted."
+            "Beaker workspace and placement constraints are unset. Fill the approved target in "
+            "the test config before launching; no experiment was submitted."
         )
     config.launch.launch(follow=True)
 
