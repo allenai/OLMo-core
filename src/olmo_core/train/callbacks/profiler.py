@@ -1,6 +1,9 @@
 import logging
+import os
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+import torch
 
 from olmo_core.distributed.parallel import (
     get_cp_mesh,
@@ -186,3 +189,114 @@ class ProfilerCallback(Callback):
         prof.export_chrome_trace(str(trace_path))
         final_path = self.trainer.persist_working_file(trace_path)
         log.info(f"Chrome trace saved to '{final_path}'")
+
+
+@dataclass
+class NvidiaProfilerCallback(Callback):
+    """
+    Delimits a range of training steps for an external NVIDIA profiler, such as Nsight Systems,
+    by driving the CUDA profiler API and emitting NVTX ranges for the ops in that range.
+
+    Launch the training command under
+    ``nsys profile --capture-range=cudaProfilerApi --capture-range-end=stop`` so that the capture
+    begins at :data:`start` and ends at :data:`end`.
+    """
+
+    start: int = 10
+    """
+    The step at which to start profiling.
+    """
+    end: int = 12
+    """
+    The step at which to stop profiling.
+    """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable profiling.
+    """
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """
+    The ranks to profile.
+    """
+
+    _nvtx_ctx = None
+
+    def _should_profile_rank(self) -> bool:
+        return get_rank() in self.profile_ranks
+
+    def pre_load_batch(self):
+        if not self.enabled or not self._should_profile_rank():
+            return
+
+        if self.step == self.start:
+            log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.step}...")
+            torch.cuda.cudart().cudaProfilerStart()
+            self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
+            self._nvtx_ctx.__enter__()
+
+    def post_train_batch(self):
+        if not self.enabled or not self._should_profile_rank():
+            return
+
+        if self.step == self.end and self._nvtx_ctx is not None:
+            log.info(f"Stopping NVIDIA profiler at rank={get_rank()} step={self.step}...")
+            self._nvtx_ctx.__exit__(None, None, None)
+            self._nvtx_ctx = None
+            torch.cuda.cudart().cudaProfilerStop()
+            log.info(f"Stop complete: NVIDIA profiler at rank={get_rank()} step={self.step}")
+
+
+@dataclass
+class TorchMemoryHistoryCallback(Callback):
+    """
+    Records CUDA memory allocation history over a range of training steps and dumps a snapshot
+    that can be viewed at https://docs.pytorch.org/memory_viz.
+    """
+
+    start: int = 10
+    """
+    The step at which to start recording.
+    """
+    end: int = 12
+    """
+    The step at which to stop recording and dump the snapshot.
+    """
+    enabled: bool = True
+    """
+    Set to ``False`` to disable recording.
+    """
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+    """
+    The ranks to record.
+    """
+    max_entries: int = 500_000
+    """
+    The maximum number of allocation events to record.
+    """
+    output_dir: str = "."
+    """
+    The directory to write the snapshot to.
+    """
+
+    def _should_profile_rank(self) -> bool:
+        return get_rank() in self.profile_ranks
+
+    def pre_load_batch(self):
+        if not self.enabled or not self._should_profile_rank():
+            return
+
+        if self.step == self.start:
+            log.info(f"Starting memory profiler at rank={get_rank()} step={self.step}...")
+            torch.cuda.memory._record_memory_history(max_entries=self.max_entries)
+
+    def post_train_batch(self):
+        if not self.enabled or not self._should_profile_rank():
+            return
+
+        if self.step == self.end:
+            os.makedirs(self.output_dir, exist_ok=True)
+            snapshot_path = os.path.join(self.output_dir, f"memsnapshot.{get_rank()}.pickle")
+            log.info(f"Dumping memory snapshot at rank={get_rank()} step={self.step}...")
+            torch.cuda.memory._dump_snapshot(snapshot_path)
+            torch.cuda.memory._record_memory_history(enabled=None)
+            log.info(f"Memory snapshot saved to '{snapshot_path}'")
