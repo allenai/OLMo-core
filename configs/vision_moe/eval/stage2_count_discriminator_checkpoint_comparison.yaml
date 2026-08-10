@@ -64,7 +64,7 @@ tasks:
       - {name: TORCH_LOGS, value: -dynamo}
       - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
       - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
-      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: TMPDIR, value: /results}
       - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
       - name: TORCHINDUCTOR_CACHE_DIR
         value: /weka/oe-training-default/rustin/.cache/torchinductor
@@ -156,7 +156,7 @@ tasks:
       - {name: TORCH_LOGS, value: -dynamo}
       - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
       - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
-      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: TMPDIR, value: /results}
       - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
       - name: TORCHINDUCTOR_CACHE_DIR
         value: /weka/oe-training-default/rustin/.cache/torchinductor
@@ -248,7 +248,7 @@ tasks:
       - {name: TORCH_LOGS, value: -dynamo}
       - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
       - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
-      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: TMPDIR, value: /results}
       - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
       - name: TORCHINDUCTOR_CACHE_DIR
         value: /weka/oe-training-default/rustin/.cache/torchinductor

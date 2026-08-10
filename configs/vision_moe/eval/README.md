@@ -33,7 +33,16 @@ immutable evaluator commit `771c954772413c378e36fc01dc57a3409529eafe`:
 beaker experiment create -w ai2/molmofication \
   -n s002-stage2-count-discriminator-checkpoint-comparison \
   configs/vision_moe/eval/stage2_count_discriminator_checkpoint_comparison.yaml
+beaker experiment create -w ai2/molmofication \
+  -n s002-stage1-parent-count-discriminator-retry \
+  configs/vision_moe/eval/stage1_parent_count_discriminator_retry.yaml
 ```
+
+Both specs use job-local `/results` for `TMPDIR`, avoiding shared-Weka temporary-file
+failures. The single-task retry only repairs the missing Stage-1-parent measurement and
+does not alter the Stage-2 checkpoints or constitute a corrective-training ablation. A
+causal corrective ablation should resume from Stage 2 step 50 and compare at step 200
+against the existing control; step 200 is not the causal branch point.
 
 Do not launch until the checkpoint health audit confirms that `step200` is permanent,
 all 16 trainer states agree on step 200, and a native distributed load succeeds.

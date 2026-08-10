@@ -1,7 +1,6 @@
 import argparse
 import importlib.util
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -369,7 +368,7 @@ def test_checkpoint_comparison_beaker_spec_is_three_matched_ep8_jobs(fast_vision
     assert len(set(outputs)) == 3
 
 
-def test_count_discriminator_beaker_spec_is_matched_safe_and_uncommitted(fast_vision):
+def test_count_discriminator_beaker_spec_is_matched_safe_and_pinned(fast_vision):
     path = (
         Path(__file__).resolve().parents[3]
         / "configs"
@@ -408,11 +407,75 @@ def test_count_discriminator_beaker_spec_is_matched_safe_and_uncommitted(fast_vi
         env = {item["name"]: item.get("value") for item in task["envVars"]}
         git_refs.add(env["GIT_REF"])
         assert env["GIT_BRANCH"] == "vision-moe"
+        assert env["TMPDIR"] == "/results"
 
     assert any(checkpoint.endswith("/step32000") for checkpoint in checkpoints)
     assert any(checkpoint.endswith("/step50") for checkpoint in checkpoints)
     assert any(checkpoint.endswith("/step200") for checkpoint in checkpoints)
     assert len(set(outputs)) == 3
     assert len(git_refs) == 1
-    git_ref = git_refs.pop()
-    assert git_ref == "REPLACE_WITH_VISION_MOE_COMMIT_SHA" or re.fullmatch(r"[0-9a-f]{40}", git_ref)
+    assert git_refs.pop() == "771c954772413c378e36fc01dc57a3409529eafe"
+
+
+def test_stage1_parent_count_discriminator_retry_matches_protocol_and_is_isolated(fast_vision):
+    root = Path(__file__).resolve().parents[3]
+    config_dir = root / "configs" / "vision_moe" / "eval"
+    with (config_dir / "stage1_parent_count_discriminator_retry.yaml").open() as spec_file:
+        retry_spec = yaml.safe_load(spec_file)
+    with (config_dir / "stage2_count_discriminator_checkpoint_comparison.yaml").open() as spec_file:
+        comparison_spec = yaml.safe_load(spec_file)
+
+    expected_hosts = [
+        "holmes-cs-aus-520.reviz.ai2.in",
+        "holmes-cs-aus-516.reviz.ai2.in",
+        "holmes-cs-aus-505.reviz.ai2.in",
+    ]
+    assert retry_spec["version"] == "v2"
+    assert retry_spec["budget"] == "ai2/oe-other"
+    assert len(retry_spec["tasks"]) == 1
+
+    retry = retry_spec["tasks"][0]
+    parent = comparison_spec["tasks"][0]
+    retry_arguments = retry["arguments"]
+    parent_arguments = parent["arguments"]
+    assert retry_arguments[retry_arguments.index("--checkpoint") + 1] == (
+        "/weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/"
+        "s002-stage1-corrected-clean-32k-b300-20260807/step32000"
+    )
+    for option in (
+        "--checkpoint",
+        "--tasks",
+        "--examples",
+        "--sample-seed",
+        "--message-format",
+        "--max-sequence-length",
+        "--rank-batch-instances",
+        "--max-crops",
+        "--tokenizer",
+        "--hf-cache",
+        "--work-dir",
+    ):
+        retry_start = retry_arguments.index(option) + 1
+        parent_start = parent_arguments.index(option) + 1
+        if option == "--tasks":
+            retry_end = retry_arguments.index("--examples")
+            parent_end = parent_arguments.index("--examples")
+        else:
+            retry_end = retry_start + 1
+            parent_end = parent_start + 1
+        assert retry_arguments[retry_start:retry_end] == parent_arguments[parent_start:parent_end]
+
+    retry_output = retry_arguments[retry_arguments.index("--output") + 1]
+    parent_output = parent_arguments[parent_arguments.index("--output") + 1]
+    assert retry_output.endswith(
+        "fast-vision-count-discriminator-512-olmo3-chat-20260810-retry.json"
+    )
+    assert retry_output != parent_output
+    assert retry["resources"]["gpuCount"] == 8
+    assert retry["constraints"]["hostname"] == expected_hosts
+    assert retry["context"]["priority"] == "urgent"
+    assert retry["context"]["minRuntime"] == "8h0m0s"
+    env = {item["name"]: item.get("value") for item in retry["envVars"]}
+    assert env["GIT_REF"] == "771c954772413c378e36fc01dc57a3409529eafe"
+    assert env["GIT_BRANCH"] == "vision-moe"
+    assert env["TMPDIR"] == "/results"
