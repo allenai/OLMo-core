@@ -176,7 +176,16 @@ DENSE_BASELINE_STEPS = 10700
 # Instances the *landmark* BFD packer produces from the same mixture at ABLATION_SEQ_LEN. Measure
 # it with `launch_prep` and grep the log for "LandmarkPackingInstanceSource packed"; until it is
 # set, the data-matched arm refuses to build rather than guess.
-LANDMARK_ABLATION_INSTANCES: Optional[int] = None
+#
+# Measured 2026-08-11 (Beaker 01KZS0DVQ3S5Q5GFBANRR34QKZ): 2,136,560,718 content tokens from
+# 1,053,362/1,061,460 documents -> 66,083 windows, averaging 1012.5 non-content tokens each (3.04%
+# of the window: 521 landmark tokens = 1.56%, the rest per-document block padding and the tail).
+# That is only +1.48% instances over the dense arm's 65,121 -- the ~13% inflation reported in
+# records/POSSIBLE_BUG_SFT_DATA.md was the next-fit packer, and BFD removes it. Content tokens are
+# +0.13% because the landmark cut (content > 32,823) keeps a few documents the dense one (> 32,768)
+# drops. The data-matched step count therefore comes out at 10,858, i.e. 3.26% more data *and*
+# compute than the token-matched arm's 10,515 -- that 3.26% is the whole span of this ablation.
+LANDMARK_ABLATION_INSTANCES: Optional[int] = 66083
 _ARMS: Dict[str, Dict[str, Any]] = {
     "dense": dict(
         attn_type=None,
