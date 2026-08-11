@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Sequence
 
-from ..format import assemble, metrics, parsing
+from ..format import assemble, metrics
 from ..format.prompts import (
     COT_RETRIEVAL_INSTRUCTION_MULTI_DOC,
     COT_RETRIEVAL_INSTRUCTION_SINGLE,

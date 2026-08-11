@@ -29,7 +29,7 @@ Between them they separate "the model failed" from "we truncated it".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Tuple
 
 __all__ = ["StopCondition", "STOP_PRESETS", "strip_think", "apply"]
 

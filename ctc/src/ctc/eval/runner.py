@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..format import metrics as metrics_mod
-from ..format.fingerprint import FormatFingerprint, check_or_explain_missing
+from ..format.fingerprint import check_or_explain_missing
 from ..format.registry import TaskSpec
 from .stopping import STOP_PRESETS
 from .stopping import apply as apply_stop

@@ -19,9 +19,9 @@ after it, which for a re-ranking task is most of the answer.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
-from ...format import assemble, metrics, parsing
+from ...format import assemble
 from ...format.prompts import RERANK_INSTRUCTION, rerank_instruction
 from ...format.registry import TaskSpec
 from .._retrieval import questions_block

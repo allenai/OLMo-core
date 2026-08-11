@@ -19,7 +19,7 @@ Two things differ from the other pair tasks and both matter:
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 from ...format import assemble, metrics, parsing
 from ...format.prompts import GENERIC_INSTRUCTION, QDMATCH_INSTRUCTION

@@ -26,7 +26,6 @@ from ...format import metrics, parsing
 from ...format.prompts import ABSENCE_INSTRUCTION
 from .._absence import make_absence_spec
 from .._absence import parse as parse_ids
-from .._absence import score as score_ids
 
 __all__ = ["SPEC", "build_query", "build_target", "is_textdiff"]
 

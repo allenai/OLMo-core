@@ -22,13 +22,14 @@ Requires ``pip install 'ctc[native]'`` -- torch, transformers and olmo-core itse
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
+from ..prefill import Prefill, build_prefills, plain_prefill, structural_prefill
 from ..stopping import StopCondition
 from ..stopping import apply as apply_stop
 from ..stopping import should_stop, strip_think
 
-__all__ = ["NativeBackend"]
+__all__ = ["NativeBackend", "build"]
 
 ATTENTION_MODES = ("full", "chunked", "landmark")
 
@@ -98,6 +99,8 @@ class NativeBackend:
         self.mem_freq = mem_freq
         self.doc_start_id = doc_start_id
         self.doc_end_id = doc_end_id
+        self._prefill: Optional[Prefill] = None
+        self._prefill_task: Optional[str] = None
 
         self.tok = AutoTokenizer.from_pretrained(tokenizer)
         self.eos_id = eos_token_id if eos_token_id is not None else self.tok.eos_token_id
@@ -148,57 +151,30 @@ class NativeBackend:
             if disable is not None:
                 disable()
 
-    def build_prefill(self, example: Mapping[str, Any], task: str) -> List[int]:
+    def prefill_for(self, task: str) -> Prefill:
         """
-        Tokenize one example the way the model was trained, not as flat text.
+        The prefill builder for a task, constructed once and reused.
 
-        **The token stream carries document markers even in the ``full`` arm.** ``full`` means the
-        attention *mask* is plain causal; the tokens still wrap each document in
-        ``<|box_start|>``/``<|box_end|>``, exactly as training did. Plain-tokenizing the prompt
-        string instead produces a stream the model has never seen, which is worth roughly -0.01 f1
-        on contradiction @2k -- small enough to be mistaken for numerical noise, which is what makes
-        it dangerous.
+        Shared with the vLLM and HuggingFace backends via :mod:`ctc.eval.prefill`, which is what
+        makes a cross-backend comparison a comparison of *decoding* rather than of two different
+        token streams.
 
-        This is why the structure has to come from the example rather than from the assembled text:
-        the segmenter needs document boundaries, and recovering them from a flat string means
-        re-deriving what the generator already knew.
-
-        :param example: A unified-format example.
         :param task: Task name.
 
-        :returns: Prompt token ids, markers included.
+        :returns: The builder.
         """
-        from olmo_core.data.document_chunk_landmark import (
-            DOC_END_ID,
-            DOC_START_ID,
-            LANDMARK_TOKEN_ID,
-            PAD_TOKEN_ID,
-            emit_document_chunk_dense,
-            emit_document_chunk_landmark,
-            segment_prompt_to_chunks,
-        )
-
-        segs, _, _ = segment_prompt_to_chunks(
-            self.tok,
-            example,
-            task,
-            query_position=self.query_position,
-            cot_mode="none",
-            chunk_by="document",
-            item_regex=r"\|\|",
-            include_answer=False,
-            doc_start_id=self.doc_start_id if self.doc_start_id is not None else DOC_START_ID,
-            doc_end_id=self.doc_end_id if self.doc_end_id is not None else DOC_END_ID,
-        )
-        if self.attn in ("full", "chunked"):
-            # Both arms share one token stream; they differ only in the MASK, which
-            # _configure_attention set at load time.
-            ids, _ = emit_document_chunk_dense(segs)
-        else:
-            ids, _ = emit_document_chunk_landmark(
-                segs, mem_freq=self.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+        if self._prefill is None or self._prefill_task != task:
+            self._prefill = structural_prefill(
+                self.tok,
+                task=task,
+                attn=self.attn,
+                query_position=self.query_position,
+                mem_freq=self.mem_freq,
+                doc_start_id=self.doc_start_id,
+                doc_end_id=self.doc_end_id,
             )
-        return list(ids)
+            self._prefill_task = task
+        return self._prefill
 
     def count_tokens(self, text: str) -> int:
         """
@@ -227,8 +203,8 @@ class NativeBackend:
         :param prompts: Prompts, already assembled by the task spec. Used only when ``examples``
             is absent -- plain tokenization omits the document markers the model was trained with,
             so it is a fallback, not the intended path.
-        :param examples: The unified-format examples the prompts came from. When given, each is
-            tokenized through :meth:`build_prefill` so the token stream carries markers.
+        :param examples: The unified-format examples the prompts came from. When given, each goes
+            through the shared structural prefill so the token stream carries markers.
         :param task: Task name, required alongside ``examples``.
         :param stop: The task's stop condition, checked after each token so generation ends at the
             answer rather than at the budget.
@@ -242,15 +218,14 @@ class NativeBackend:
         if examples is not None and task is None:
             raise ValueError("passing examples requires task=")
 
+        prefill = self.prefill_for(task) if examples is not None else plain_prefill(self.tok)
+        all_ids = build_prefills(prefill, prompts, examples)
+
         out: List[str] = []
-        for i, prompt in enumerate(prompts):
-            if examples is not None:
-                ids = self.build_prefill(examples[i], task)
-            else:
-                ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
+        for i, ids in enumerate(all_ids):
             out.append(self._generate_one(torch, ids, stop))
             if progress_every and (i + 1) % progress_every == 0:
-                print(f"[ctc-eval] {i + 1}/{len(prompts)}", flush=True)
+                print(f"[ctc-eval] {i + 1}/{len(all_ids)}", flush=True)
         return out
 
     @staticmethod
@@ -305,3 +280,18 @@ class NativeBackend:
                 nxt = self._decode_step(torch, logits)
 
         return apply_stop(self.tok.decode(produced, skip_special_tokens=True), stop)
+
+
+def build(ckpt: str, **kwargs: Any) -> NativeBackend:
+    """
+    Construct the native backend.
+
+    Present so :func:`ctc.eval.backends.base.load` can build any backend by name, with the same
+    call shape for all three. The constructor takes the arguments; this only adapts the path type.
+
+    :param ckpt: Checkpoint directory.
+    :param kwargs: See :class:`NativeBackend`.
+
+    :returns: The backend.
+    """
+    return NativeBackend(Path(ckpt), **kwargs)

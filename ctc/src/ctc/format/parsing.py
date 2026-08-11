@@ -436,7 +436,7 @@ def partition_to_labels(clusters: List[List[int]], n_docs: int) -> List[int]:
             idx = d - 1
             if 0 <= idx < n_docs and labels[idx] == -1:
                 labels[idx] = cid
-    next_label = max(labels) + 1 if any(l >= 0 for l in labels) else 0
+    next_label = max(labels) + 1 if any(label >= 0 for label in labels) else 0
     for i in range(n_docs):
         if labels[i] == -1:
             labels[i] = next_label

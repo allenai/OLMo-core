@@ -29,7 +29,7 @@ Two task-specific quirks:
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Optional
 
 from ...format import assemble
 from ...format.prompts import OOLONG_INSTRUCTION

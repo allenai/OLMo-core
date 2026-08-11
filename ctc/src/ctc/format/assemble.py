@@ -39,7 +39,7 @@ Ported from ``corpus_reasoning/lib/data_format.py`` (``build_prompt`` / ``build_
 
 from __future__ import annotations
 
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Sequence, Tuple
 
 from .documents import format_documents
 

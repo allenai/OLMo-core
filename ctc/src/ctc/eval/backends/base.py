@@ -18,7 +18,20 @@ from __future__ import annotations
 import importlib
 import importlib.util
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
+
+if TYPE_CHECKING:
+    from ..stopping import StopCondition
 
 __all__ = ["Backend", "BackendInfo", "available", "load", "describe"]
 
@@ -34,9 +47,10 @@ class Backend(Protocol):
     def generate(
         self,
         prompts: Sequence[str],
+        examples: Optional[Sequence[Mapping[str, Any]]] = None,
         *,
-        max_new_tokens: int,
-        stop: Optional[Sequence[str]] = None,
+        stop: "StopCondition",
+        task: Optional[str] = None,
     ) -> List[str]:
         """
         Generate a continuation for each prompt.
@@ -44,13 +58,34 @@ class Backend(Protocol):
         Greedy decoding: every caller in this package compares scores across checkpoints, so
         sampling would add variance that swamps the differences being measured.
 
-        :param prompts: Rendered prompts, one per example.
-        :param max_new_tokens: Hard cap on generated tokens per prompt.
-        :param stop: Optional stop strings. Note these are *string* stops applied to decoded text,
-            not token stops -- newline-based token stops truncate an unclosed ``<think>`` block and
-            manufacture what looks like a capability collapse.
+        Three obligations make the backends comparable, and a new backend that skips any of them
+        will produce numbers that differ from the others for reasons that are not the model:
 
-        :returns: One decoded continuation per prompt, prompt text excluded, in input order.
+        1. **Build the prefill through** :mod:`ctc.eval.prefill`. Tokenizing the prompt string
+           independently drops the document-marker scaffold, which is worth about -0.01 f1 --
+           small enough to read as noise.
+        2. **Let** :func:`ctc.eval.stopping.apply` **have the last word.** A backend's own stop
+           mechanism is an early exit; each one cuts at a slightly different point, and only a
+           host-side truncation over the final decoded string is identical across all three.
+        3. **Preserve input order**, so generation *i* is graded against example *i*.
+
+        :param prompts: Rendered prompts, one per example.
+        :param examples: The unified-format examples the prompts came from. Required whenever the
+            prefill is structural, which is the normal case.
+        :param stop: The task's stop condition, carrying the decode budget as well.
+        :param task: Task name.
+
+        :returns: One continuation per prompt, prompt text excluded, truncated and think-stripped,
+            in input order.
+        """
+        ...
+
+    def count_tokens(self, text: str) -> int:
+        """
+        :param text: A prompt.
+
+        :returns: Its length in tokens. Used for the runner's length audit, which is what catches
+            prompts silently exceeding the budget and scoring a clean 0.0.
         """
         ...
 

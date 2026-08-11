@@ -18,10 +18,9 @@ import json
 from typing import Callable, Dict, List, Optional, Sequence
 
 from ..format import assemble, metrics, parsing
-from ..format.prompts import GENERIC_INSTRUCTION
 from ..format.registry import TaskSpec
 
-__all__ = ["parse", "score", "build_target", "make_grouping_spec"]
+__all__ = ["parse", "score", "build_labeled_target", "make_grouping_spec"]
 
 
 def parse(text: str, n_docs: int) -> Optional[List[List[int]]]:
