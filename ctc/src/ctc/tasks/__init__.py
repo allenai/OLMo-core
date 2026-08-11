@@ -34,7 +34,12 @@ from ..format import registry
 __all__ = ["TASK_MODULES", "load_all", "loaded", "import_errors"]
 
 #: Task packages to import, in registration order. Add a task by adding its name here.
-TASK_MODULES: tuple = ("contradiction",)
+TASK_MODULES: tuple = (
+    "contradiction",
+    "redundancy",
+    "strmatch",
+    "mathmatch",
+)
 
 _loaded: List[str] = []
 _errors: Dict[str, BaseException] = {}

@@ -203,18 +203,26 @@ def test_unparseable_on_empty_gold_does_not_score_perfect():
 GOLDEN = json.loads(
     (Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text()
 )
-_PROMPT_KEYS = [k for k in GOLDEN["prompts"] if k.startswith("contradiction|")]
+#: Golden prompt cases whose task is registered. Grows automatically as specs land, so a newly
+#: ported task is held to the pre-migration bytes without anyone adding a test for it.
+_PROMPT_KEYS = [k for k in GOLDEN["prompts"] if k.split("|")[0] in registry.names()]
+
+
+def test_prompt_parity_actually_covers_something():
+    """Guards the filter above: if it silently matched nothing, every parity test would vanish."""
+    covered = {k.split("|")[0] for k in _PROMPT_KEYS}
+    assert covered, "no golden prompt cases matched any registered task"
+    assert "contradiction" in covered
 
 
 @pytest.mark.parametrize("key", sorted(_PROMPT_KEYS))
-def test_contradiction_prompt_matches_golden(key):
-    """Byte-identical to what built every contradiction shard we have trained on."""
+def test_prompt_matches_golden(key):
+    """Byte-identical to what built every shard we have trained on, for every ported task."""
     from fixtures.generate_golden import PROMPT_EXAMPLES
 
-    _, position, alpaca = key.split("|")
-    spec = registry.get("contradiction")
-    got = spec.build_prompt(
-        PROMPT_EXAMPLES["contradiction"],
+    task, position, alpaca = key.split("|")
+    got = registry.get(task).build_prompt(
+        PROMPT_EXAMPLES[task],
         query_position=position,
         use_alpaca=(alpaca == "alpaca=True"),
     )
@@ -222,11 +230,18 @@ def test_contradiction_prompt_matches_golden(key):
 
 
 @pytest.mark.parametrize("key", sorted(_PROMPT_KEYS))
-def test_contradiction_target_matches_golden(key):
-    from fixtures.generate_golden import PROMPT_EXAMPLES
-    from ctc.tasks.contradiction.spec import build_target
+def test_target_matches_golden(key):
+    """The training target, not just the prompt -- both halves of a shard must reproduce."""
+    import importlib
 
-    assert build_target(PROMPT_EXAMPLES["contradiction"]) == GOLDEN["prompts"][key][1]
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
+    task = key.split("|")[0]
+    mod = importlib.import_module(f"ctc.tasks.{task}.spec")
+    build_target = getattr(mod, "build_target", None)
+    if build_target is None:
+        pytest.skip(f"{task} declares no build_target yet")
+    assert build_target(PROMPT_EXAMPLES[task]) == GOLDEN["prompts"][key][1]
 
 
 def test_query_position_both_repeats_the_ask():

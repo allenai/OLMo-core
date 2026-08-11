@@ -121,6 +121,8 @@ PROMPT_CASES = [
     ("qdmatch", "after", True),
     ("cycle", "after", True),
     ("strmatch", "after", True),
+    ("redundancy", "after", True),
+    ("mathmatch", "after", True),
 ]
 
 #: One example per task, shaped like the unified JSONL the generators emit.
@@ -217,6 +219,20 @@ PROMPT_EXAMPLES = {
     "strmatch": {
         "documents": [{"text": "alpha beta gamma"}, {"text": "beta gamma delta"}],
         "queries": ["Find pairs sharing a run of 2 words."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "synthetic",
+    },
+    "redundancy": {
+        "documents": [{"text": "Sales rose 4%."}, {"text": "Revenue increased four percent."}],
+        "queries": ["Find redundant claims."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "pubmed",
+    },
+    "mathmatch": {
+        "documents": [{"text": "3 * 7 + 1"}, {"text": "20 + 2"}],
+        "queries": ["Find pairs whose values differ by at most 1."],
         "answers": [""],
         "gold_doc_indices": [[1, 2]],
         "source": "synthetic",
