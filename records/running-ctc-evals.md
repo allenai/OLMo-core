@@ -112,6 +112,7 @@ works too, for a staged local copy.
 |---|---|---|
 | `v2_clean` | reliable | **default.** The v2 ladder with contradiction rebuilt against a PubMed-only filler pool and its rungs recalibrated. |
 | `v2` | reliable | The original v2 ladder. Kept because existing results — including the 256k runs — were produced against it. |
+| `fast` | fast | Shared-corpus rungs, 8k–1M, for contradiction / nq / rerank. Cheaper on contradiction; **not comparable to a reliable number.** See below. |
 
 **Bundles are not interchangeable, and this is the one thing to get right.** The same rung label
 maps to *different files with different corpus sizes*: contradiction's 64k rung is `n=1602` in `v2`
@@ -174,16 +175,63 @@ Point `--bundle` (or `$CTC_EVAL_BUNDLE`) at a staged copy of the bundle. On the 
 that copy must live on node-local `/data` — `/scratch` and `/accounts` are both NFS at ~5 MB/s and
 will deadlock concurrent readers.
 
-## Efficient (shared-corpus) evals
+## The fast (shared-corpus) bundle
 
-There is a second, **cheaper** construction where many queries share one corpus so a prefill can be
-reused. It is not what the commands above run, and it is not interchangeable with them: rebuilding
-the eval set that way measurably changes some tasks' scores (+0.215/+0.261 on outlier, −0.10…−0.18
-on contradiction), with a control isolating the cause to document *placement* rather than to the
-sharing itself.
+```bash
+python src/scripts/ctc/eval_beaker.py MY_RUN --bundle fast --share-prefix \
+    --tasks contradiction --rungs xlong
+```
 
-The safe half of that idea — reusing KV across prompts that already share a token prefix — is
-`ctc.eval.prefix_cache` and is score-preserving by construction. It is currently inert for these
-checkpoints: with `query_position="both"` the per-query question precedes the corpus, so the
-measured reusable prefix is 0.1–0.9% on nq/rerank/oolong. See
-`records/shared-corpus-eval-results.md` in the pre-migration tree for the full measurement.
+Many queries share one corpus, so the shared part is prefilled once and its KV reused.
+`--share-prefix` is what turns the reuse on; without it you get the fast *data* at the reliable
+cost. The reuse is measured and printed per rung rather than assumed, and falls back to plain
+prefills when there is nothing to share.
+
+**Coverage is 8k–1M, and only three tasks:**
+
+| task | construction | shared | what you get |
+|---|---|---|---|
+| contradiction | prefix + per-query tail, 10% tail | 90% of the prefill | genuinely ~10× cheaper |
+| nq | query-multiplexed | 100% of the *documents* | corpus count drops ~30×, compute does not |
+| rerank | query-multiplexed | 100% of the *documents* | same |
+
+The multiplexed pair is the disappointing case and it is worth knowing why before you reach for
+it. These checkpoints train with `query_position="both"`, which renders
+`{questions}\n\n{documents}\n\n{questions}` — the per-query question comes *before* the corpus, so
+a byte-identical document block is not a *token* prefix and there is nothing to reuse. Measured
+reusable prefix: nq 0.5%, rerank 0.9%. The obvious fix is not available: `query_position="after"`
+makes the corpus a true prefix and collapses the model (nq 0.860 → 0.074).
+
+**`outlier` and `oolong` are absent.** outlier's construction needs per-document topic labels that
+the eval files strip; the clustering that recovers them has to reproduce the corpus's whole topic
+size multiset exactly, and it passes that gate **2/25 of the time at 32k and 0/25 below** — so it
+gets harder, not easier, at 1M. Unblocking it means emitting labels from the generator. oolong's
+shared file comes from a source split with no ultra-long member.
+
+### A fast number is a different measurement
+
+Not a cheaper route to the same number. Against the independent rungs: **outlier +0.215/+0.261,
+contradiction −0.102…−0.175**. A scatter control that held corpus contents fixed and moved only
+the gold documents attributed outlier's entire shift to *placement* — the rebuilt corpus was
+faithful (0.330 vs 0.320); putting the golds at the end was not.
+
+So use the fast bundle to compare **arms against each other** at a length you otherwise could not
+afford, and never to fill a cell in a table whose other cells came from `v2_clean`. Every result
+file records `bundle`, `bundle_kind` and `share_prefix`, so which one produced a number is always
+answerable after the fact.
+
+The KV-reuse machinery itself (`ctc.eval.prefix_cache`) is score-preserving by construction and was
+verified byte-identical against the plain path in the pre-migration tree — but **not yet re-verified
+on a GPU in this repo**. Treat the first fast numbers as unconfirmed until that parity run exists.
+
+### Rebuilding it
+
+```bash
+python src/scripts/ctc/build_fast_bundle.py                      # print the matrix, submit nothing
+python src/scripts/ctc/build_fast_bundle.py --tasks contradiction --from-bundle v2_clean --submit
+```
+
+One CPU-only Beaker job per task-rung, reading the reliable bundle on weka and writing
+`_eval_bundle_eval500_v2_fast` beside it. Nothing is staged through this machine. contradiction is
+built from `v2_clean`; nq and rerank from `v2`, because `v2_clean` has no ultra-long rungs for
+them — each output file's `.manifest.json` records the source it actually came from.

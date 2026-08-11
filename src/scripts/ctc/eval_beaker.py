@@ -36,6 +36,9 @@ for _src in (_REPO / "src", _REPO / "ctc" / "src"):
 
 from ctc.eval import bundles  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _launch import pushed_head  # noqa: E402
+
 #: Default results root on weka, alongside the checkpoints rather than in a separate tree -- a
 #: results file is only interpretable next to the checkpoint that produced it.
 RESULTS_SUBDIR = "ctc_eval"
@@ -257,12 +260,17 @@ def main(argv=None) -> int:
     # This is a single-process eval, not distributed training: torchrun would fan it out over the
     # GPUs and grade every example once per rank.
     launch.torchrun = False
+    # The node clones the pushed commit, verified below, so an unrelated working-tree edit cannot
+    # reach it and the dirty-tree guard has nothing left to protect.
+    launch.allow_dirty = True
     launch.priority = args.priority
     # A 32k rung is hours, and the suite is many rungs. The default step timeouts kill it mid-sweep.
     launch.step_soft_timeout = None
     launch.step_timeout = None
 
     print(f"--- {name} ---")
+    if not args.dry_run:
+        print(f"the node will run commit {pushed_head()[:12]}")
     print(inner)
     if args.dry_run:
         print("\n[dry-run] not submitted.")

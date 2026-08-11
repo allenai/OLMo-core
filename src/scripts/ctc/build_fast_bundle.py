@@ -34,6 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "ctc" / "src"))
 
 from ctc.eval import bundles  # noqa: E402
 
+from _launch import pushed_head  # noqa: E402
+
 #: Where the fast bundle is written. A sibling of the reliable bundles, not a subdirectory of one:
 #: a fast file must never be reachable by a ``--bundle v2_clean`` run.
 FAST_ROOT_DEFAULT = (
@@ -183,40 +185,6 @@ ls -la "{args.out_root}/{task}" 2>/dev/null | tail -5
 exit $STATUS"""
 
 
-def _pushed_head() -> str:
-    """
-    Check that the commit gantry will clone is the one on this machine.
-
-    gantry runs the **pushed** commit, so the working tree is irrelevant to what executes -- which
-    is why ``allow_dirty`` is set below, and why it is safe to set it while another edit is in
-    flight. The real hazard is the opposite one: launching with local commits that were never
-    pushed, which silently runs older code and produces a result that cannot be reproduced from
-    the recorded sha.
-
-    :returns: The commit the node will check out.
-
-    :raises SystemExit: If HEAD is not on the remote branch.
-    """
-    import subprocess
-
-    def git(*a: str) -> str:
-        return subprocess.run(
-            ["git", *a], capture_output=True, text=True, check=True
-        ).stdout.strip()
-
-    head = git("rev-parse", "HEAD")
-    branch = git("rev-parse", "--abbrev-ref", "HEAD")
-    remote = subprocess.run(
-        ["git", "branch", "-r", "--contains", head], capture_output=True, text=True
-    ).stdout
-    if f"origin/{branch}" not in remote:
-        raise SystemExit(
-            f"HEAD ({head[:12]}) is not on origin/{branch}. gantry clones the pushed commit, so "
-            f"this would run older code.\n  git push origin {branch}"
-        )
-    return head
-
-
 def main(argv=None) -> int:
     """
     :param argv: Argument list; defaults to ``sys.argv[1:]``.
@@ -240,7 +208,7 @@ def main(argv=None) -> int:
         print("\n[not submitted] pass --submit to launch.")
         return 0
 
-    head = _pushed_head()
+    head = pushed_head()
     print(f"\nthe node will run commit {head[:12]}")
 
     from olmo_core.internal.common import build_launch_config, get_root_dir
