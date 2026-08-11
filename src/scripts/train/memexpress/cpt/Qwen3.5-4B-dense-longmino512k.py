@@ -37,7 +37,9 @@ from olmo_core.train.train_module import (
     TransformerTrainModuleConfig,
 )
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data")
+)
 
 from longmino_512k_mix import build_longmino_512k_mix  # noqa: E402
 
