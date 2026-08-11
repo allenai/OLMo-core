@@ -46,18 +46,54 @@ def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[List[int]]]:
     return parsing.parse_pairs(text)
 
 
+def _check_gold(gold: Sequence[Sequence[int]]) -> None:
+    """
+    Assert the invariant the set comparison depends on.
+
+    :param gold: Gold pairs.
+
+    :raises ValueError: If a pair is not sorted low-high, which would make it unmatchable.
+    """
+    for p in gold:
+        if len(p) == 2 and p[0] > p[1]:
+            raise ValueError(
+                f"gold pair {list(p)} is not sorted low-high. Predicted pairs are sorted, and "
+                "scoring is a set intersection, so this pair could never be matched and would "
+                "silently cost recall on every example that contains it."
+            )
+
+
 def score(parsed: Optional[Sequence[Sequence[int]]], gold: Sequence[Sequence[int]]) -> Dict[str, float]:
     """
     Score predicted pairs against gold.
 
+    .. warning::
+       **This deliberately diverges from the pre-migration scorer.** ``_eval_contradiction`` mapped
+       an unparseable generation to ``[]`` and scored it normally, so on an example with *no* gold
+       pairs a garbage generation scored a perfect 1.0 on all four metrics. Contradiction data has
+       no empty-gold examples (checked: 0 of 3,153 across three unified files), so this never fired
+       there -- but the same scorer is shared by redundancy, strmatch and mathmatch, whose
+       instructions explicitly permit an empty answer. Here ``None`` scores zero instead. Numbers
+       from this scorer are therefore **not** guaranteed comparable with old ones on any task that
+       has empty-gold examples.
+
+    .. note::
+       Gold pairs must be sorted low-high, because :func:`parse` sorts predicted pairs and the
+       comparison is a set intersection -- a gold ``[4, 1]`` could never match a predicted
+       ``[1, 4]``. The generators satisfy this (checked: 0 unsorted of 3,153) but never asserted
+       it, so :func:`_check_gold` does.
+
     :param parsed: Output of :func:`parse`. ``None`` (unparseable) scores zero on every metric --
         it is not the same as ``[]``, which is a real answer and can be correct.
-    :param gold: Gold pairs, 1-based, each already sorted.
+    :param gold: Gold pairs, 1-based, each sorted low-high.
 
     :returns: ``precision``, ``recall``, ``f1``, ``exact_match``, plus ``parsed`` as a 0/1 flag.
         Track ``parsed``: a drop in it means a decoding or truncation problem, and without it that
         is indistinguishable from the model getting worse.
+
+    :raises ValueError: If a gold pair is not sorted low-high.
     """
+    _check_gold(gold)
     if parsed is None:
         return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "exact_match": 0.0, "parsed": 0.0}
     return {**metrics.pair_metrics(parsed, gold), "parsed": 1.0}

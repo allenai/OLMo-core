@@ -114,6 +114,24 @@ def test_contradiction_keeps_hallucinated_ids():
     assert spec.score(spec.parse("[[1, 9999]]"), [[1, 4]])["precision"] == 0.0
 
 
+def test_unsorted_gold_is_rejected_not_silently_unmatchable():
+    """Predicted pairs are sorted and scoring is a set intersection, so [4, 1] can never match."""
+    spec = registry.get("contradiction")
+    with pytest.raises(ValueError, match="not sorted low-high"):
+        spec.score([[1, 4]], [[4, 1]])
+
+
+def test_unparseable_on_empty_gold_does_not_score_perfect():
+    """The pre-migration scorer mapped None -> [] and returned 1.0 on all four metrics here.
+
+    Contradiction has no empty-gold examples so it never fired, but redundancy/strmatch/mathmatch
+    share that scorer and their instructions explicitly permit an empty answer.
+    """
+    spec = registry.get("contradiction")
+    assert spec.score(None, [])["exact_match"] == 0.0
+    assert spec.score([], [])["exact_match"] == 1.0  # a real empty answer can still be right
+
+
 def test_generate_reports_what_is_missing_rather_than_returning_nothing():
     from ctc.tasks.contradiction import generate
 
