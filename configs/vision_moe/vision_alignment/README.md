@@ -121,14 +121,17 @@ only 1% of the peak connector LR, so the run includes one tiny update: it proves
 topology, forward/backward, optimizer construction, and checkpoint plumbing, but it is not a
 meaningful learning or quality test. Its checkpoint is forbidden as a parent of another phase.
 
-Each visual intrinsic suite reports both ordinary held-out response CE/PPL and a paired
+Each in-training visual intrinsic suite reports ordinary held-out response CE/PPL and a paired
 blank-image CE/PPL on the same deterministic examples. The blank control replaces normalized
-image patches with zeros while preserving crop geometry, prompts, and labels. The gap
-`CE(blank image) - CE(correct image)` is a content-reliance diagnostic: it should be positive as
-caption loss falls, but it is not by itself a complete visual-understanding gate. Evaluation
-uses the phase's supported per-rank instance capacity (four at 2,560 tokens, one at 8,192).
-Native replay holdout uses a deterministic permutation so a bounded evaluation is not biased
-toward the first source files in the manifest.
+image patches with zeros while preserving crop geometry, prompts, and labels. Its gap measures
+sensitivity to this out-of-distribution image-path intervention; a positive gap is not evidence
+of semantic image-response binding by itself. Use the separately versioned matched wrong-image
+evaluator before promoting a checkpoint. It replaces only the image tensor with a distinct-content
+validation image whose tensor shape and exact `pooled_patches_idx` array match the recipient, and
+reports results on that explicitly pinned matched-eligible subset. Evaluation uses the phase's
+supported per-rank instance capacity (four at 2,560 tokens, one at 8,192). Native replay holdout
+uses a deterministic permutation so a bounded evaluation is not biased toward the first source
+files in the manifest.
 
 Inspect the synthetic profile without submitting:
 
@@ -194,11 +197,31 @@ PYTHONPATH=src python src/scripts/train/Vision-Alignment.py dry_run \
 ```
 
 The step-250 checkpoint is only a gate candidate. Compare the startup/100/200/250 correct-image
-and blank-image CE/PPL, verify finite optimization and router metrics, inspect the delivered
-70/30 loss-mass telemetry, and run the agreed language/numerical regression checks. A human must
-then issue the pinned approved-parent gate; the canary does not approve itself. Because duration
-is part of the trainable contract, do not extend this run in place. If a longer bridge is needed,
-start a fresh named bridge from the bare checkpoint with a separately reviewed profile.
+and blank-image CE/PPL, then replay every saved checkpoint with the versioned matched wrong-image
+evaluator using the same pinned pairing files. Verify finite optimization and router metrics,
+inspect the delivered 70/30 loss-mass telemetry, and run the agreed language/numerical regression
+checks. A human must then issue the pinned approved-parent gate; the canary does not approve
+itself. Because duration is part of the trainable contract, do not extend this run in place. If a
+longer bridge is needed, start a fresh named bridge from the bare checkpoint with a separately
+reviewed profile.
+
+Run the post-hoc binding check on one 8-GPU node. The first command builds and pins the caption
+and transcript pairings; every later checkpoint must reuse that exact directory:
+
+```bash
+for step in 0 100 200 250; do
+  torchrun --standalone --nproc-per-node=8 \
+    src/scripts/eval/vision_alignment_matched_wrong.py \
+    --checkpoint=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/checkpoints/vision-alignment-bridge-real-canary-v1/step${step} \
+    --pairing-dir=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/bridge-real-canary-v1-matched-wrong-v2/pairings \
+    --output=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/bridge-real-canary-v1-matched-wrong-v2/step${step}.json
+done
+```
+
+This metric is explicitly conditional on the exact-geometry matched-eligible subset recorded in
+the pairing artifact. Compare `wrong_ce - correct_ce`, its bootstrap interval, and win rate across
+the four checkpoints; do not compare it to the in-training blank-image gap as if they were the
+same intervention or population.
 
 The perception and joint directories contain no launch profile yet. Their default contracts
 deliberately fail closed until explicit scalar-count, OCR/document, audited-alignment, and
