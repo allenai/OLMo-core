@@ -278,6 +278,37 @@ def build_level_index(papers, level, min_per_value=2):
 
 
 # ---------- Example construction ----------
+#
+# NOTE on the fix (2026-07): the old `sample_k_for_level` picked k as a pure
+# fraction of n_docs with no awareness of how many distinct concept values
+# exist at that level, or how many docs each value's pool can actually supply.
+# At small n_docs this rarely mattered; at large n_docs (esp. the 32k rung,
+# n_docs=176) the *coarse* levels (L0 has only ~19 distinct top-level fields
+# in the whole OpenAlex concept taxonomy -- a hard ceiling that MORE DATA
+# cannot raise) started requesting k beyond what's feasible, and
+# `build_example` silently returned None. The outer retry loop then just
+# filled the quota from whichever level happened to still be easy (finer
+# levels, with thousands of distinct values), so the realized level-mix and
+# gold-cluster granularity silently drifted with N -- conflating "more
+# documents" with "harder/finer grouping" across the ladder.
+#
+# Fix has two parts:
+#  1. `sample_k_for_level` now takes the actual `level_idx` and clamps the
+#     frac-derived [lo, hi] range to what's *provably buildable*: k can't
+#     exceed the number of distinct values, and can't exceed the largest k
+#     for which the sum of the k biggest pools covers n_docs (a necessary
+#     condition for the capacity-aware partition below to succeed). This
+#     makes build_example deterministic-success instead of retry-and-hope,
+#     for a given (level, n_docs, level_idx) it never silently drops.
+#  2. `build_example` selects group values and partition sizes in a
+#     capacity-aware way (biased sample toward larger pools + iterative
+#     overflow redistribution) instead of a pure random partition that gets
+#     rejected whenever a randomly large slice lands on a small pool.
+#  3. (in `main()`/`gen()`) the outer loop now draws a FIXED quota of
+#     examples per level (stratified), instead of `rng.choice` + hoping
+#     differential per-level success rates happen to cancel out -- which is
+#     the second half of why the level-mix drifted (even before the L0
+#     ceiling bites, L1/L2/L3 always had lower raw accept rates than L0).
 
 def sample_partition_sizes(total, k, rng, min_per=1):
     """Random partition of `total` into k parts, each >= min_per."""
@@ -290,28 +321,165 @@ def sample_partition_sizes(total, k, rng, min_per=1):
     return sizes
 
 
-def sample_k_for_level(level, n_docs, rng,
+def _min_k_by_capacity(pool_sizes_desc, n_docs):
+    """Smallest k such that the k biggest pools can jointly cover n_docs docs.
+
+    This is a LOWER bound on k, not an upper one: sum(top-k) is
+    non-decreasing in k (adding another value only adds capacity), so once
+    k reaches this threshold every larger k (up to the eligible-value count)
+    remains feasible too -- more groups only ever adds total capacity. The
+    binding failure mode for coarse levels is the opposite of what it looks
+    like at first glance: too few groups (their pools, even the biggest
+    ones, can't jointly hold n_docs), not too many.
+    """
+    cum = 0
+    for i, s in enumerate(pool_sizes_desc, start=1):
+        cum += s
+        if cum >= n_docs:
+            return i
+    return 0  # 0 if even ALL eligible values together can't cover n_docs
+
+
+def sample_k_for_level(level, n_docs, rng, level_idx,
                        k_frac=DEFAULT_K_FRAC_PER_LEVEL, min_per_group=1):
-    """Sample k (number of groups) for the given level."""
+    """Sample k (number of groups) for the given level, clamped to what the
+    actual concept-value index can support at this n_docs (see module note).
+
+    Returns None if the level is infeasible for this n_docs at all (e.g. even
+    the single largest pool can't supply min_per_group docs, or no k >= 2 is
+    buildable) -- callers should treat that as "skip this level this draw",
+    not silently retry-until-something-else-works.
+    """
     lo_f, hi_f = k_frac[level]
     lo = max(2, int(round(lo_f * n_docs)))
-    hi = min(n_docs // min_per_group, max(lo, int(round(hi_f * n_docs))))
-    return rng.randint(lo, hi)
+    hi = max(lo, int(round(hi_f * n_docs)))
+    hi = min(hi, n_docs // min_per_group)
+
+    pool_sizes_desc = sorted((len(v) for v in level_idx.values()), reverse=True)
+    max_k_eligible = len(pool_sizes_desc)
+    min_k_capacity = _min_k_by_capacity(pool_sizes_desc, n_docs)
+    if min_k_capacity == 0:
+        return None  # even every eligible value combined can't cover n_docs
+    feasible_lo = max(lo, min_k_capacity)
+    feasible_hi = min(hi, max_k_eligible)
+    if feasible_lo > feasible_hi:
+        # frac target and feasibility don't overlap -- prefer the smallest
+        # feasible k over silently failing (keeps the level alive at this N
+        # rather than dropping it from the mix; only reachable when the frac
+        # target's hi is below what feasibility requires, i.e. an extremely
+        # thin pool -- flagged via the caller's "only got X/quota" printout
+        # if it also fails downstream).
+        feasible_lo = feasible_hi = min_k_capacity if min_k_capacity <= max_k_eligible else None
+        if feasible_hi is None:
+            return None
+    return rng.randint(feasible_lo, feasible_hi)
+
+
+def _choose_group_values(level_idx, k, n_docs, rng, diversity_mult=3):
+    """Pick k distinct concept values with combined capacity >= n_docs.
+
+    Biases toward larger pools (so the pick is very likely capacity-feasible
+    on the first try, matching the clamp in `sample_k_for_level`) while still
+    giving example-to-example variety: sample from the top
+    `min(len(eligible), max(k * diversity_mult, k + 10))` values by pool
+    size, weighted by pool size, then verify; fall back to the strict top-k
+    (guaranteed feasible per `sample_k_for_level`'s clamp) if the weighted
+    draw came up short on capacity.
+    """
+    values_by_size = sorted(level_idx.keys(), key=lambda v: -len(level_idx[v]))
+    if len(values_by_size) < k:
+        return None
+    candidate_pool = values_by_size[:min(len(values_by_size),
+                                          max(k * diversity_mult, k + 10))]
+    weights = [len(level_idx[v]) for v in candidate_pool]
+    # NOTE: `chosen` must be an order-preserving list, not a set -- `pool.pop(i)`
+    # already guarantees no duplicates, and a set's iteration order depends on
+    # Python's per-process string-hash randomization (PYTHONHASHSEED), which
+    # would silently make output non-deterministic across runs/processes
+    # despite a fixed `rng` seed (the resulting group order feeds back into
+    # how many further rng.sample/rng.uniform calls happen and in what order).
+    chosen = []
+    pool = list(zip(candidate_pool, weights))
+    for _ in range(k):
+        if not pool:
+            break
+        total_w = sum(w for _, w in pool)
+        r = rng.uniform(0, total_w)
+        acc = 0.0
+        for i, (v, w) in enumerate(pool):
+            acc += w
+            if acc >= r:
+                chosen.append(v)
+                pool.pop(i)
+                break
+        else:
+            chosen.append(pool.pop()[0])
+    if sum(len(level_idx[v]) for v in chosen) >= n_docs:
+        return chosen
+    # Weighted draw came up short (can happen near the feasibility boundary)
+    # -- fall back to the deterministic, guaranteed-feasible top-k.
+    return values_by_size[:k]
+
+
+def _partition_with_capacity(total, caps, rng, min_per=1):
+    """Random partition of `total` into len(caps) parts, each in
+    [min_per, caps[i]]. Feasible (and found) whenever sum(caps) >= total and
+    min_per * len(caps) <= total: start from an uncapped random partition and
+    iteratively move overflow off any over-capacity group onto groups with
+    spare room (order determined by `rng`, so still randomized).
+    """
+    k = len(caps)
+    if total < k * min_per or sum(caps) < total:
+        return None
+    sizes = sample_partition_sizes(total, k, rng, min_per=min_per)
+    for _ in range(4 * k + 20):
+        over = [i for i in range(k) if sizes[i] > caps[i]]
+        if not over:
+            return sizes
+        i = over[0]
+        excess = sizes[i] - caps[i]
+        sizes[i] = caps[i]
+        under = [j for j in range(k) if sizes[j] < caps[j]]
+        rng.shuffle(under)
+        for j in under:
+            if excess == 0:
+                break
+            room = caps[j] - sizes[j]
+            add = min(room, excess)
+            sizes[j] += add
+            excess -= add
+        if excess > 0:
+            sizes[i] += excess  # couldn't place it (shouldn't happen); retry loop
+    return None
 
 
 def build_example(level, level_idx, n_docs, k_groups, rng, source_tag,
                   min_per_group=1):
-    """One grouping example at concept level `level` with `k_groups` clusters."""
+    """One grouping example at concept level `level` with `k_groups` clusters.
+
+    `k_groups` is expected to already be feasibility-clamped by
+    `sample_k_for_level` against this same `level_idx` -- this function still
+    defends (returns None) if it isn't, so it's safe to call standalone.
+    """
     eligible = list(level_idx.keys())
     if len(eligible) < k_groups:
         return None
     if n_docs < k_groups * min_per_group:
         return None
-    chosen = rng.sample(eligible, k_groups)
-    sizes = sample_partition_sizes(n_docs, k_groups, rng, min_per=min_per_group)
-    # Capacity-aware: largest size goes to value with largest pool.
-    sizes_sorted   = sorted(sizes, reverse=True)
-    chosen_sorted  = sorted(chosen, key=lambda v: -len(level_idx[v]))
+
+    chosen = _choose_group_values(level_idx, k_groups, n_docs, rng)
+    if chosen is None:
+        return None
+    caps = [len(level_idx[v]) for v in chosen]
+    sizes = _partition_with_capacity(n_docs, caps, rng, min_per=min_per_group)
+    if sizes is None:
+        return None
+    # Capacity-aware: largest size goes to value with largest pool (both
+    # already respect each other's cap by construction, this just pairs them
+    # sensibly for readability of the resulting label sizes).
+    order = sorted(range(k_groups), key=lambda i: -caps[i])
+    chosen_sorted = [chosen[i] for i in order]
+    sizes_sorted = [sizes[i] for i in order]
 
     docs, gold_clusters, labels = [], [], []
     for value, size in zip(chosen_sorted, sizes_sorted):
@@ -364,6 +532,15 @@ def main():
                     help="Directory of OpenAlex .gz work shards (snapshot mode).")
     ap.add_argument("--compact-out", default="data/openalex_compact.jsonl")
     ap.add_argument("--compact-in",  default="data/openalex_compact.jsonl")
+    ap.add_argument("--eval-compact-in", default=None,
+                    help="Optional separate compact pool to draw EVAL examples from "
+                         "(still filtered by --eval-year-min). Use this when the "
+                         "--compact-in pool's held-out (>= --eval-year-min) slice is too "
+                         "small/thin per concept value to support large --docs-per-example "
+                         "at coarse levels (L0 has only ~19 distinct values total -- fetch "
+                         "a bigger, year-restricted pool with --api-fetch "
+                         "--api-year-min/--api-year-max and point this at it). Defaults to "
+                         "--compact-in (old behavior: single pool, split by year).")
     ap.add_argument("--max-abstract-words", type=int, default=120)
     ap.add_argument("--api-email", default=None,
                     help="Your email for OpenAlex polite-pool (required for --api-fetch).")
@@ -377,6 +554,14 @@ def main():
     ap.add_argument("--docs-per-example", type=int, default=20)
     ap.add_argument("--levels", nargs="+", type=int, default=LEVELS,
                     help="Concept levels to sample examples from.")
+    ap.add_argument("--level-mix", type=float, nargs="+", default=None,
+                    help="Fixed fraction of examples to draw from each of --levels, same "
+                         "order (must sum to ~1). Default: uniform over --levels. This is "
+                         "sampled as an explicit per-level QUOTA -- not `rng.choice` per "
+                         "attempt -- so the realized level-mix no longer depends on each "
+                         "level's differential accept rate (which is what silently drifted "
+                         "the granularity mix across the N ladder before this fix; see the "
+                         "module note above `sample_partition_sizes`).")
     ap.add_argument("--min-per-group", type=int, default=1,
                     help="Smallest allowed cluster size (1 = singletons allowed).")
     ap.add_argument("--eval-year-min", type=int, default=2024,
@@ -398,10 +583,14 @@ def main():
 
     rng = random.Random(args.seed)
     papers = load_compact(args.compact_in)
-    print(f"loaded {len(papers):,} papers")
+    print(f"loaded {len(papers):,} papers from {args.compact_in}")
+    eval_papers = (load_compact(args.eval_compact_in)
+                   if args.eval_compact_in else papers)
+    if args.eval_compact_in:
+        print(f"loaded {len(eval_papers):,} papers from {args.eval_compact_in} (eval-only pool)")
 
-    train_pool = [p for p in papers if p["year"] <  args.eval_year_min]
-    eval_pool  = [p for p in papers if p["year"] >= args.eval_year_min]
+    train_pool = [p for p in papers      if p["year"] <  args.eval_year_min]
+    eval_pool  = [p for p in eval_papers if p["year"] >= args.eval_year_min]
     print(f"train pool: {len(train_pool):,}   eval pool: {len(eval_pool):,}")
 
     print("building per-level concept indices (papers needing all of L0-L3)...")
@@ -412,26 +601,64 @@ def main():
                                         min_per_value=args.min_per_group)
                  for lvl in args.levels}
     for lvl in args.levels:
-        print(f"  L{lvl}  train values: {len(train_idx[lvl]):>6,}   "
-              f"eval values: {len(eval_idx[lvl]):>6,}")
+        train_cap = sum(len(v) for v in train_idx[lvl].values())
+        eval_cap  = sum(len(v) for v in eval_idx[lvl].values())
+        print(f"  L{lvl}  train values: {len(train_idx[lvl]):>6,} (cap {train_cap:>7,})   "
+              f"eval values: {len(eval_idx[lvl]):>6,} (cap {eval_cap:>7,})")
+
+    if args.level_mix is not None:
+        if len(args.level_mix) != len(args.levels):
+            ap.error("--level-mix must have one weight per --levels entry")
+        mix = dict(zip(args.levels, args.level_mix))
+    else:
+        mix = {lvl: 1.0 / len(args.levels) for lvl in args.levels}
+    mix_total = sum(mix.values())
+    mix = {lvl: w / mix_total for lvl, w in mix.items()}  # normalize
+    print(f"level mix (fixed, independent of N): "
+          f"{ {f'L{l}': round(w, 3) for l, w in mix.items()} }")
+
+    def level_quotas(n_examples):
+        """Largest-remainder rounding so per-level quotas sum to n_examples exactly."""
+        raw = {lvl: mix[lvl] * n_examples for lvl in args.levels}
+        quotas = {lvl: int(raw[lvl]) for lvl in args.levels}
+        remainder = n_examples - sum(quotas.values())
+        # hand out leftover slots to the levels with the largest fractional part
+        order = sorted(args.levels, key=lambda l: -(raw[l] - quotas[l]))
+        for lvl in order[:remainder]:
+            quotas[lvl] += 1
+        return quotas
 
     def gen(per_level, n_examples, tag):
-        examples, attempts = [], 0
+        if n_examples == 0:
+            return []
+        quotas = level_quotas(n_examples)
+        examples = []
         pbar = tqdm(total=n_examples, desc=f"gen {tag}")
-        while len(examples) < n_examples and attempts < n_examples * 20:
-            attempts += 1
-            level = rng.choice(args.levels)
-            k = sample_k_for_level(level, args.docs_per_example, rng,
+        for level, quota in quotas.items():
+            got, attempts = 0, 0
+            max_attempts = max(200, quota * 20)
+            while got < quota and attempts < max_attempts:
+                attempts += 1
+                k = sample_k_for_level(level, args.docs_per_example, rng,
+                                       per_level[level],
+                                       min_per_group=args.min_per_group)
+                if k is None:
+                    continue  # this level is infeasible at this n_docs -- don't spin
+                ex = build_example(level, per_level[level],
+                                   args.docs_per_example, k,
+                                   rng, source_tag=f"openalex_grouping_{tag}",
                                    min_per_group=args.min_per_group)
-            ex = build_example(level, per_level[level],
-                               args.docs_per_example, k,
-                               rng, source_tag=f"openalex_grouping_{tag}",
-                               min_per_group=args.min_per_group)
-            if ex is None:
-                continue
-            examples.append(ex)
-            pbar.update(1)
+                if ex is None:
+                    continue
+                examples.append(ex)
+                got += 1
+                pbar.update(1)
+            if got < quota:
+                print(f"  ⚠ L{level} {tag}: only got {got}/{quota} "
+                      f"(level infeasible/too-thin at docs-per-example="
+                      f"{args.docs_per_example}; see cap printout above)")
         pbar.close()
+        rng.shuffle(examples)  # de-block the per-level generation order
         return examples
 
     train = gen(train_idx, args.num_train, "train")

@@ -61,9 +61,41 @@ TASKS = {
         # by ~1.7-1.8x once the actual rendered prompt (instruction + query + box markers) is
         # measured. Recalibrated via tokenizer-measured tokens = 288.7 + 22.82*n_docs (Qwen3.5,
         # 50-example sample/rung, full prefill incl. wrap markers) -- see BUILD_MATRIX.md FIX 2.
-        "rungs": {"2k": 77, "4k": 167, "8k": 346},
+        # 2026-07-19 Stage-5: extend to 16k/32k via the FIX-2 fit (288.7 + 22.82*n).
+        # expand mode -> unbounded harvested filler pool, so large rungs are reachable.
+        "rungs": {"2k": 77, "4k": 167, "8k": 346, "16k": 705, "32k": 1423},
         "out_tmpl": "contradiction_eval_pubmed_both_n{n}_k3.jsonl",
-        "filler_glob": f"{DATA}/contradiction_*_k3.jsonl",  # harvest non-gold texts
+        # 2026-07-21 leak fix: PUBMED-only, was f"{DATA}/contradiction_*_k3.jsonl" (also matched
+        # the FEVER/wiki_mix files). See harvest_fillers() docstring -- mixing in FEVER/wiki
+        # decoy text was the dominant leak vector (small finite Wikipedia claim pool reused
+        # verbatim as "distractor" text across dozens of examples, e.g. a SUPPORTS/REFUTES pair
+        # about Julius Caesar's tenure recurred 43x as non-gold filler and never once as an
+        # official gold pair -- so the gold-membership exclusion below could never catch it).
+        # Restricting to pubmed also fixes a domain mismatch (pubmed corpus filled with
+        # Wikipedia-entity trivia).
+        "filler_glob": f"{DATA}/contradiction_*pubmed*_k3.jsonl",  # harvest non-gold texts
+    },
+    "contra_ctc": {
+        # Same canonical/gold/filler semantics as "contra"; ONLY the rung->n_docs map differs.
+        #
+        # 2026-08-04 RE-CALIBRATION. The "contra" rungs above (77/167/346/705/1423) were fit
+        # against a filler pool that was 92-99.6% FEVER/wiki_mix (the pre-2026-07-21 glob), whose
+        # one-line Wikipedia trivia claims tokenize at ~22.8 tok/doc. Real PubMed claim sentences
+        # are ~43 tok/doc, so re-running the SAME n against the fixed pubmed-only glob overshoots
+        # every label by ~1.8x (measured: n=77 -> 3413 tok, not 2048; n=1423 -> 61461, not 32768).
+        # Refit on the clean pool over 25 examples/rung, full rendered prefill:
+        #     tokens = 170 + 42.8 * n_docs      (r^2 ~ 1.00 over n in [77, 1423])
+        # -> n = (target - 170) / 42.8. Note this lands within a few docs of the ORIGINAL
+        # BUILD_MATRIX row-16 ladder (40/88/190/385/765), which was calibrated on real PubMed and
+        # was correct all along; "FIX 2" only looked necessary because the pool was contaminated.
+        "canonical": f"{DATA}/contra_base500.jsonl",
+        "mode": "expand",
+        "gold_field": "gold_doc_indices",
+        "gold_is_pairs": True,
+        "index_base": 1,
+        "rungs": {"2k": 44, "4k": 92, "8k": 187, "16k": 379, "32k": 762},
+        "out_tmpl": "contradiction_eval_pubmed_both_n{n}_k3.jsonl",
+        "filler_glob": f"{DATA}/contradiction_*pubmed*_k3.jsonl",
     },
     "hpqa": {
         # CTC suite HotpotQA fixed-eval rungs (BUILD_MATRIX.md row 2 / ACTION A2b). Canonical is
@@ -78,16 +110,25 @@ TASKS = {
         # (tokenizer-measured full prefill, not just doc text). Recalibrated via
         # tokens = 66.6 + 113.36*n_docs (Qwen3.5, 50-example sample/rung) -- see BUILD_MATRIX.md
         # FIX 2.
-        "rungs": {"2k": 17, "4k": 36, "8k": 72},
+        # 2026-07-19 Stage-5: +16k via FIX-2 fit (66.6 + 113.36*n) -> n=144 (< canonical n205 OK).
+        # 32k rung DEFERRED: it needs n=288 > canonical n205; requires regenerating the hpqa eval
+        # canonical at n~290 (--split validation --num-docs 290) before it can shrink-derive.
+        "rungs": {"2k": 17, "4k": 36, "8k": 72, "16k": 144},
         "out_tmpl": "hotpotqa_eval_bridge_hn20_n{n}_500.jsonl",
     },
     "nq": {
-        "canonical": f"{E5}/nq/nq_validation_k200_hn20_600.jsonl",
+        # 2026-07-19 Stage-5: switched to the p10/CE-filtered validation (hard-ratio 0.097, from
+        # the same clean pipeline as the train pool) per the CE-every-rung directive. Its doc counts
+        # vary (p50=117, only 12 ex >=200), so clean rungs cap at 2k/4k/8k (48 docs: 525/600 qualify);
+        # 16k/32k need a uniform-k200 CE eval regen (deferred, the expensive nq gen).
+        "canonical": "/scratch/users/prasann/nq_p10_20k/nq_validation_k25-202_600.jsonl",
         "mode": "shrink",
         "gold_field": "gold_doc_indices",
         "gold_is_pairs": False,
         "extra_index_fields": ["hard_neg_indices"],
-        "rungs": {"3k": 20, "8k": 50, "16k": 100, "32k": 200},
+        # 2026-07-19 Stage-5: re-rung to 2k/4k/8k/16k/32k (~160 tok/doc; canonical k200_hn20 is
+        # uniform 200 docs, hard-ratio 20/200=0.10 p10-consistent, text answers -> shrink-safe).
+        "rungs": {"2k": 11, "4k": 23, "8k": 48},
         "out_tmpl": "nq_validation_k{n}_600.jsonl",
     },
     "outlier": {
@@ -100,7 +141,9 @@ TASKS = {
         # 2026-07-19 FIX 2 (token calibration): CONFIRMED already within +-10% of the
         # 2048/4096/8192 labels (tokenizer-measured full prefill medians: 2158/4230/8490, i.e.
         # ratios 1.05/1.03/1.04) -- no change. See BUILD_MATRIX.md FIX 2.
-        "rungs": {"2k": 14, "4k": 28, "8k": 57},
+        # 2026-07-19 Stage-5: +16k/32k via FIX-2 fit (114.1 + 146.93*n). 32k rung n=222 clamps to
+        # canonical max n=220 (whole file, ~32.2k tok) -> set 220.
+        "rungs": {"2k": 14, "4k": 28, "8k": 57, "16k": 111, "32k": 220},
         "out_tmpl": "outlier_wiki100w_n{n}_k3_eval_600.jsonl",
     },
     "rerank": {
@@ -113,8 +156,32 @@ TASKS = {
         "gold_is_pairs": False,
         "extra_index_fields": ["hard_neg_indices"],
         "has_ce": True,                          # ce_scores parallel array follows each doc
-        "rungs": {"3k": 20, "8k": 50, "16k": 100},
+        # 2026-07-19 Stage-5: re-rung to 2k/4k/8k/16k (~100 tok/doc). Canonical is k100 so 16k=100
+        # (whole canonical). 32k rung DEFERRED: needs a k~300 CE-scored eval pool (A9).
+        "rungs": {"2k": 20, "4k": 40, "8k": 70, "16k": 100},
         "out_tmpl": "msmarco_trainhn_eval_k{n}_500.jsonl",
+    },
+    "scifact": {
+        # BEIR SciFact retrieval (CE-cleaned). DATA-POOR: test set is only 300 queries -> eval_size
+        # 300 (< 500, flag inline with SE ~= 0.026). Canonical k88 test, shrink-derive smaller rungs.
+        "canonical": "/data/prasann/ctc_suite_data/scifact/final20k/beir_scifact_ce_test_k88_300.jsonl",
+        "mode": "shrink",
+        "gold_field": "gold_doc_indices",
+        "gold_is_pairs": False,
+        "extra_index_fields": ["hard_neg_indices"],
+        "min_examples": 300,
+        "rungs": {"2k": 5, "4k": 10, "8k": 21, "16k": 43, "32k": 88},
+        "out_tmpl": "beir_scifact_eval_k{n}_300.jsonl",
+    },
+    "fiqa": {
+        # BEIR FiQA retrieval (CE-cleaned). test 648 -> eval_size 500. Canonical k80 test, shrink.
+        "canonical": "/data/prasann/ctc_suite_data/fiqa/final20k/beir_fiqa_ce_test_k80_648.jsonl",
+        "mode": "shrink",
+        "gold_field": "gold_doc_indices",
+        "gold_is_pairs": False,
+        "extra_index_fields": ["hard_neg_indices"],
+        "rungs": {"2k": 4, "4k": 9, "8k": 19, "16k": 40, "32k": 80},
+        "out_tmpl": "beir_fiqa_eval_k{n}_648.jsonl",
     },
 }
 
@@ -193,13 +260,41 @@ def harvest_fillers(cfg, gold_texts_global):
     of ANY contra file. The contra corpus is built by perturbation, so a doc that
     is a gold contradiction-member somewhere is a claim engineered to contradict —
     dropping it into another example injects a *real* contradiction that isn't in
-    that example's gold, which the model then (correctly) finds -> f1 collapses.
+    that example's gold, which the model then (correctly) finds -> f1/EM collapses.
     So we first collect every cross-file gold-member text and exclude all of them
     (plus the canonical's own gold). What remains are the neutral distractor slots
-    (random PubMed sentences), matching v1's fresh-disjoint-filler behaviour."""
+    (random PubMed sentences), matching v1's fresh-disjoint-filler behaviour.
+
+    2026-07-21 leak fix (dense-contradiction investigation, see
+    records/ dense-contra eval-data-leak notes): gold-membership exclusion alone is
+    NOT sufficient. The generation pipelines create MORE perturbed/paired claims
+    than get selected as a given example's k=3 gold — the surplus never becomes
+    "gold" in ANY file we have on disk (confirmed by exhaustively scanning every
+    contradiction_*.jsonl for two known leaked pairs: neither was gold anywhere),
+    yet both halves of the pair are still real engineered contradictions that
+    "cannot both be true at the same time" per the task's own instruction. When
+    harvest draws both halves into the same rebuilt example, the model correctly
+    flags them and gets scored wrong.
+
+    We can't recover per-item perturbation provenance (the final k3.jsonl output
+    only keeps doc text, no abstract-id / perturbed-flag / pair-id), so we use a
+    DUPLICATE-COUNT heuristic as a proxy: a genuinely neutral real source sentence
+    (e.g. one PubMed sentence out of >20M abstracts) essentially never recurs
+    verbatim across the harvested files, whereas a reused synthetic claim does —
+    confirmed on the two leaked pairs found: the FEVER "Julius Caesar" pair
+    recurred 43x as non-gold filler (small finite Wikipedia claim pool reused as
+    decoy text across dozens of examples) and a PubMed "PImax" pair recurred 4x
+    (generated more than once across bulk train-data draws). Both are excluded by
+    requiring EXACT-COUNT-1 (singleton) occurrence across every scanned file, in
+    ANY role (gold or distractor) -- not just deduped to one pool entry as before.
+    Combined with restricting filler_glob to pubmed-only (the dominant leak vector
+    was the off-domain FEVER/wiki_mix decoy pool), this removes both leak classes
+    found in the investigation."""
     files = sorted(glob.glob(cfg["filler_glob"]))
-    # Pass 1: every text that is a gold contradiction-member in ANY file.
+    # Pass 1: every text that is a gold contradiction-member in ANY file, AND the
+    # occurrence count of every text (in any role) across every file.
     contradiction_members = set(gold_texts_global)
+    occ_count = {}
     for path in files:
         try:
             rows = load_jsonl(path)
@@ -207,10 +302,17 @@ def harvest_fillers(cfg, gold_texts_global):
             continue
         for ex in rows:
             docs = ex["documents"]
-            for i in gold_index_set(ex, cfg):
-                if 0 <= i < len(docs):
-                    contradiction_members.add(docs[i].get("text", ""))
-    # Pass 2: collect only never-a-gold-member distractor docs.
+            gidx = gold_index_set(ex, cfg)
+            for i, d in enumerate(docs):
+                t = d.get("text", "")
+                if not t:
+                    continue
+                occ_count[t] = occ_count.get(t, 0) + 1
+                if i in gidx:
+                    contradiction_members.add(t)
+    # Pass 2: collect only never-a-gold-member, SINGLETON (count==1) distractor
+    # docs -- a text seen more than once anywhere (gold or filler role) is treated
+    # as a reused/paired synthetic claim, not a genuinely neutral one-off sentence.
     seen = set()
     pool = []
     for path in files:
@@ -225,6 +327,8 @@ def harvest_fillers(cfg, gold_texts_global):
                     continue
                 t = d.get("text", "")
                 if not t or t in seen or t in contradiction_members:
+                    continue
+                if occ_count.get(t, 0) != 1:
                     continue
                 seen.add(t)
                 pool.append(d)
@@ -247,7 +351,10 @@ def build_task(task, cfg, out_root, verbose=True):
     if verbose and (tot_dropped or before != len(canon)):
         print(f"    sanitized: dropped {tot_dropped} invalid gold entries; "
               f"{before - len(canon)} examples had zero valid gold (removed)")
-    assert len(canon) >= 500, f"{task}: only {len(canon)} valid examples < 500"
+    min_ex = cfg.get("min_examples", 500)
+    assert len(canon) >= min_ex, f"{task}: only {len(canon)} valid examples < {min_ex}"
+    if min_ex < 500:
+        print(f"    ⚠ DATA-POOR eval_size={min_ex} (<500) for {task} — quote inline with SE")
 
     filler_pool = []
     if cfg["mode"] == "expand":

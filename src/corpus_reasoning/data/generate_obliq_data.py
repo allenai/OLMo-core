@@ -47,7 +47,11 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-from corpus_reasoning.lib.bm25_local import LocalBM25Searcher
+# NOTE: `from corpus_reasoning.lib.bm25_local import LocalBM25Searcher` is
+# deliberately NOT at module top -- pyserini spins up an Anserini JVM at import
+# time, which hangs/core-dumps on some compute nodes. It's imported lazily inside
+# main() (the only place it's used), so importing this module's helpers
+# (_load_subset, _assemble_example, ...) elsewhere never triggers the JVM.
 from corpus_reasoning.lib.io import save_jsonl, print_dataset_stats
 
 
@@ -324,6 +328,8 @@ def main():
           f"qrels={len(qrels)}  excluded={len(excluded)}")
 
     corpus_by_id = {str(doc["_id"]): doc for doc in corpus}
+
+    from corpus_reasoning.lib.bm25_local import LocalBM25Searcher  # lazy: JVM
 
     index_dir = Path(args.index_dir) / args.subset
     searcher = LocalBM25Searcher(corpus, str(index_dir),

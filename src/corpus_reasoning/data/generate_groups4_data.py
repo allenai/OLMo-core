@@ -14,10 +14,20 @@ small numbers (see below). `--target-sum` is a documented alternative.
 Construction guarantees exactly K gold groups:
   - K cluster centers, pairwise spaced > 2X apart.
   - Each gold group is G distinct values inside a span of X around its center.
-  - Every distractor is > X from EVERY other value (gold or distractor).
-  => any G values that are all-pairwise-within-X must lie in one span of width
-     X; by the separation, that can only be one planted group. (Same argument
-     as mathmatch's pair construction, lifted to G-tuples.)
+  - Distractors are drawn to be IN-DISTRIBUTION background noise, not isolated
+    singletons: a distractor may land within X of up to G-2 other values (so
+    incidental pairs/triples of near-duplicate values occur among distractors
+    too), but is NEVER allowed to complete a run of >= G mutually-within-X
+    values. Since "all pairwise distances <= X" for a 1-D set is equivalent to
+    "the set fits inside one span of width X", capping every point's local
+    within-X neighbor count at G-2 before insertion caps every span's
+    occupancy at G-1 after insertion -- so no accidental G-clique can ever
+    form outside the planted ones. This closes the old "any two close values
+    = gold" shortcut (previously distractors were > X from EVERYTHING, so a
+    single close pair was a 100%-reliable, trivially-cheap gold detector
+    regardless of N) while still leaving the gold G-clique as the unique
+    maximal run >= G, so the task stays well-posed. See
+    `records/ctc-setting-verification-2026-07-23.md` for the diagnosis.
 
 `gold_doc_indices` stores each group as a list of G 1-indexed IDs:
 `[[3, 8, 12, 19], ...]`. Output schema/metric are shared with the `cycle`
@@ -30,6 +40,7 @@ Usage:
 """
 
 import argparse
+import bisect
 import json
 import random
 
@@ -90,18 +101,45 @@ def sample_values(n_docs, n_groups, group_size, tol, ans_min, ans_max, rng,
         if len(set(flat_group)) != len(flat_group):
             continue  # collision across windows (rare); retry
 
-        # 3) distractors, each > tol from every chosen value.
+        # 3) distractors, drawn as in-distribution background noise: a new
+        # value may land within `tol` of at most (G - 2) already-placed values
+        # (gold or distractor). That caps every within-tol span at G-1 members
+        # after insertion -- provably no G-clique can form outside the
+        # planted gold group(s) (see module docstring) -- while still letting
+        # pairs/triples of near-duplicate distractors occur, so a bare
+        # "any two close values" scan no longer singles out gold.
+        # `chosen` is kept SORTED for O(log n) within-tol counting via bisect.
         n_distract = n_docs - K * G
-        pool = list(range(ans_min, ans_max + 1))
-        rng.shuffle(pool)
-        chosen = list(flat_group)
+        max_local = G - 2
+        chosen = sorted(flat_group)
         distractors = []
-        for v in pool:
-            if all(abs(v - o) > tol for o in chosen):
-                distractors.append(v)
-                chosen.append(v)
-                if len(distractors) == n_distract:
+        attempts_per_slot = 300
+        for _ in range(n_distract):
+            placed = False
+            for _try in range(attempts_per_slot):
+                if chosen and rng.random() < 0.5:
+                    # biased draw: near an existing value, to actively create
+                    # realistic local density (not just incidental pigeonhole
+                    # at low n_docs / wide ans range).
+                    anchor = rng.choice(chosen)
+                    offset = rng.randint(1, 3 * tol)
+                    v = anchor + offset if rng.random() < 0.5 else anchor - offset
+                else:
+                    v = rng.randint(ans_min, ans_max)
+                if v < ans_min or v > ans_max:
+                    continue
+                dup_idx = bisect.bisect_left(chosen, v)
+                if dup_idx < len(chosen) and chosen[dup_idx] == v:
+                    continue  # exact-value collision; every value must be distinct
+                lo = bisect.bisect_left(chosen, v - tol)
+                hi = bisect.bisect_right(chosen, v + tol)
+                if hi - lo <= max_local:
+                    bisect.insort(chosen, v)
+                    distractors.append(v)
+                    placed = True
                     break
+            if not placed:
+                break
         if len(distractors) < n_distract:
             continue
 

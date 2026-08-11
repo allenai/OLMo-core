@@ -8,12 +8,31 @@ relation is a strict order, any directed CYCLE (A>B>C>A) is logically
 impossible. The task: find the set of claims forming each cycle.
 
 Construction guarantees exactly K cycles:
-  - K disjoint cycles, each on L FRESH entities, edges a0->a1->...->a_{L-1}->a0.
-  - All distractor claims form a DAG on a SEPARATE entity pool: entities get a
-    random total order and every distractor edge goes forward in that order, so
-    the distractor subgraph is acyclic. Cycle entities never appear in
-    distractor claims, so no cross-edges can create or break a cycle.
-  => the only directed cycles in the graph are the K planted ones.
+  - K disjoint cycles, each on L entities, edges a0->a1->...->a_{L-1}->a0.
+  - ALL entities (cycle + background) share ONE random total order ("rank").
+    Every non-cycle claim ("background" edge, incl. edges touching cycle
+    entities) goes strictly forward in that order, so on its own that subgraph
+    is a DAG. Each planted cycle's L entities occupy CONSECUTIVE ranks (a
+    contiguous "block"); the cycle itself is the forward chain
+    a0->a1->...->a_{L-1} (consistent with rank) plus ONE backward "closing"
+    edge a_{L-1}->a0. The only structural rule needed for uniqueness is: no
+    background edge has BOTH endpoints inside the same block. Proof sketch: a
+    background/forward-only graph is acyclic, so any cycle must use a closing
+    edge; since no background entity has a rank strictly between a block's
+    endpoints (the block is consecutive) and no background edge can jump
+    between two entities of the same block, any forward path from a0 to
+    a_{L-1} is trapped inside the block and forced through the interior chain
+    -- it can never detour out and back (rank only increases). So the planted
+    chain is the UNIQUE forward path completing each closing edge, i.e. the
+    only cycle.
+  - Unlike the pool-disjoint version this replaces, cycle entities are FULL
+    participants in the background-edge sampling (both as source and target,
+    anywhere outside their own block), so their claim-frequency lands in the
+    same distribution as background entities instead of being pinned at
+    exactly 2 (one in-edge, one out-edge) regardless of N. See
+    `records/ctc-setting-verification-2026-07-23.md` for the diagnosis this
+    fixes (gold was the 3 rarest names in the corpus, growing MORE
+    distinguishable as N grew -- a frequency shortcut, not real O(N^L) search).
 
 `gold_doc_indices` stores each cycle as a list of 1-indexed claim IDs:
 `[[3, 17, 8], ...]` (the claims whose edges form that cycle).
@@ -84,38 +103,75 @@ def build_example(num_docs, cycle_len, num_cycles, rng):
 
     predicate = rng.choice(PREDICATES)
 
-    # Entity budget: K*L cycle entities + a distractor pool big enough to admit
-    # n_distract distinct forward edges. With D distractor entities the DAG has
-    # D*(D-1)/2 possible forward edges; pick D so that's comfortably >= need.
+    # Entity budget: K*L cycle entities + a background pool big enough to admit
+    # n_distract distinct forward edges among ALL entities (cycle included),
+    # minus the K*L*(L-1)/2 same-block pairs that are off-limits (see below).
+    # Sizing is the same asymptotic rule as before (d ~ sqrt(2*n_distract)), so
+    # background-entity degree is UNCHANGED by this fix -- only cycle-entity
+    # degree moves, from pinned-at-2 up to background-comparable.
     d = 2
-    while d * (d - 1) // 2 < max(1, n_distract):
+    while True:
+        total_entities = K * L + d
+        available = (total_entities * (total_entities - 1) // 2
+                     - K * (L * (L - 1) // 2))
+        if available >= max(1, n_distract):
+            break
         d += 1
-    d = max(d, 3)
     total_entities = K * L + d
+    # entity_names shuffles the FIXED-length name pool before truncating, so
+    # this prefix (and hence which names are the cycle) is stable across
+    # different --num-docs for the same --seed -- preserves eval row-alignment
+    # (same gold claims at every rung, only the background pool grows).
     names = entity_names(total_entities, rng)
     cycle_entities = names[:K * L]
-    distractor_entities = names[K * L:]
+    background_entities = names[K * L:]
+
+    # Global rank order over ALL entities: splice each cycle's L entities in
+    # as a CONSECUTIVE block at a random position among the shuffled
+    # background order. Consecutive placement is what makes the "no same-block
+    # background edge" rule below sufficient for uniqueness (see docstring).
+    order = list(background_entities)
+    rng.shuffle(order)
+    insert_points = sorted(rng.sample(range(len(order) + 1), K))
+    full_order = []
+    block_spans = []  # (start_pos, end_pos) inclusive, per cycle, into full_order
+    prev = 0
+    for c, ip in enumerate(insert_points):
+        full_order.extend(order[prev:ip])
+        start_pos = len(full_order)
+        full_order.extend(cycle_entities[c * L:(c + 1) * L])
+        block_spans.append((start_pos, start_pos + L - 1))
+        prev = ip
+    full_order.extend(order[prev:])
+    assert len(full_order) == total_entities
+
+    def in_same_block(i, j):
+        return any(s <= i <= e and s <= j <= e for s, e in block_spans)
 
     edges = []          # (a, b) meaning "a > b"
     gold_edge_groups = []  # list of edge-index lists, one per cycle
 
-    # Planted cycles on disjoint entity sets.
-    for c in range(K):
-        ring = cycle_entities[c * L:(c + 1) * L]
+    # Planted cycles: forward chain a0->a1->...->a_{L-1} (consistent with
+    # rank) + one backward closing edge a_{L-1}->a0.
+    for c, (start_pos, end_pos) in enumerate(block_spans):
+        ring = full_order[start_pos:end_pos + 1]
         group = []
         for i in range(L):
             group.append(len(edges))
             edges.append((ring[i], ring[(i + 1) % L]))
         gold_edge_groups.append(group)
 
-    # Distractor DAG: random total order, forward edges only.
-    order = list(distractor_entities)
-    rng.shuffle(order)
-    pos = {name: i for i, name in enumerate(order)}
-    possible = [(order[i], order[j])
-                for i in range(len(order)) for j in range(i + 1, len(order))]
+    # Background/padding: every forward pair (rank i < rank j) is eligible
+    # EXCEPT pairs with both endpoints in the same cycle block (the only
+    # bypass risk -- see docstring proof). Cycle entities are otherwise full
+    # participants (as source AND target), so their frequency lands in the
+    # same distribution as background entities instead of being frozen at 2.
+    possible = [(full_order[i], full_order[j])
+                for i in range(total_entities)
+                for j in range(i + 1, total_entities)
+                if not in_same_block(i, j)]
     rng.shuffle(possible)
-    assert len(possible) >= n_distract, "distractor pool too small (bug)"
+    assert len(possible) >= n_distract, "entity pool too small (bug)"
     edges.extend(possible[:n_distract])
 
     # Shuffle claim order; remap gold edge indices to 1-indexed claim IDs.
