@@ -114,7 +114,7 @@ PROMPT_CASES = [
     ("qa", "after", True),
     ("outlier", "after", True),
     ("reorder", "after", True),
-    ("grouping", "after", True),
+    ("grouping_labeled", "after", True),
     ("oolong", "after", True),
     ("absence", "after", True),
     ("xabsence", "after", True),
@@ -129,7 +129,6 @@ PROMPT_CASES = [
     # vs multi-query select three different strings. All three shapes are pinned.
     ("retrieval_multigold", "after", True),
     ("retrieval_multiquery", "after", True),
-    ("cot_retrieval", "after", True),
 ]
 
 #: One example per task, shaped like the unified JSONL the generators emit.
@@ -172,14 +171,16 @@ PROMPT_EXAMPLES = {
         "gold_order": [2, 1],
         "source": "gutenberg",
     },
-    "grouping": {
+    "grouping_labeled": {
         "documents": [
             {"title": "Attention", "text": "A new architecture."},
             {"title": "Optics", "text": "On lenses."},
         ],
         "queries": ["Group into 2 categories."],
         "answers": [""],
-        "gold_doc_indices": [0, 1],
+        # Clusters, not flat indices -- every document belongs to exactly one group.
+        "gold_doc_indices": [[0], [1]],
+        "cluster_labels": ["architectures", "optics"],
         "source": "arxiv",
     },
     "oolong": {
@@ -278,13 +279,6 @@ PROMPT_EXAMPLES = {
         "gold_doc_indices": [[0], [1]],  # >1 query -> the multi-query instruction
         "source": "hotpotqa",
     },
-    "cot_retrieval": {
-        "documents": [{"title": "T1", "text": "body one"}, {"title": "T2", "text": "body two"}],
-        "queries": ["Who built it?"],
-        "answers": ["Ada"],
-        "gold_doc_indices": [0],
-        "source": "nq",
-    },
 }
 
 #: Fixture-key -> real task name, for keys that exist only to pin an example-dependent variant.
@@ -356,6 +350,24 @@ SNIPPET_NORM_CASES = [
     "BOB WAS NOT HAPPY",
 ]
 
+# Grouping and reorder primaries, checked against sklearn/scipy so the pure-Python versions in
+# ctc.format.metrics can be trusted to match. Keeping the primaries dependency-free is what lets
+# ctc.format stay importable without sklearn/scipy; ARI/NMI/spearman remain optional extras.
+PAIRWISE_CASES = [
+    ([[1, 2], [3]], [[1, 2], [3]], 3),
+    ([[1, 2, 3]], [[1, 2], [3]], 3),
+    ([[1], [2], [3]], [[1, 2], [3]], 3),
+    ([[1, 2], [3, 4]], [[1, 3], [2, 4]], 4),
+]
+
+KENDALL_CASES = [
+    ([1, 2, 3], [1, 2, 3]),
+    ([3, 2, 1], [1, 2, 3]),
+    ([1, 3, 2], [1, 2, 3]),
+    ([2, 1, 4, 3], [1, 2, 3, 4]),
+    ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]),
+]
+
 CYCLE_METRIC_CASES = [
     ([[3, 8, 12]], [[3, 8, 12]]),
     ([[3, 8]], [[3, 8, 12]]),  # partial: cycle-level 0, claim-level > 0
@@ -404,6 +416,49 @@ RETRIEVAL_CASES = [
     ([1], []),
     ([], []),
 ]
+
+
+def _pairwise_reference(old_et) -> dict:
+    """
+    Pairwise precision/recall/F1 for grouping, computed exactly as ``_eval_grouping`` does.
+
+    :param old_et: The pre-migration ``eval_tasks`` module, for ``partition_to_labels``.
+
+    :returns: ``"pred|gold|n" -> metrics``.
+    """
+    from itertools import combinations
+
+    out = {}
+    for pred, gold, n in PAIRWISE_CASES:
+        pl = old_et.partition_to_labels(pred, n)
+        gl = old_et.partition_to_labels(gold, n)
+        pp = {(i, j) for i, j in combinations(range(n), 2) if pl[i] == pl[j]}
+        gp = {(i, j) for i, j in combinations(range(n), 2) if gl[i] == gl[j]}
+        tp = len(pp & gp)
+        p = tp / len(pp) if pp else 0.0
+        r = tp / len(gp) if gp else 0.0
+        f1 = 2 * p * r / (p + r) if (p + r) else 0.0
+        out[f"{json.dumps(pred)}|{json.dumps(gold)}|{n}"] = {
+            "pairwise_precision": p, "pairwise_recall": r, "pairwise_f1": f1,
+        }
+    return out
+
+
+def _kendall_reference() -> dict:
+    """
+    Kendall tau from scipy, the reference the pure-Python implementation must match.
+
+    Permutations have no ties, so scipy's tau-b reduces to tau-a and a plain concordant/discordant
+    count is exact. Pinning it here is what makes that claim checkable rather than assumed.
+
+    :returns: ``"pred|gold" -> tau``.
+    """
+    from scipy.stats import kendalltau
+
+    return {
+        f"{json.dumps(pred)}|{json.dumps(gold)}": float(kendalltau(pred, gold).correlation)
+        for pred, gold in KENDALL_CASES
+    }
 
 
 def _build_prompts(old_df) -> dict:
@@ -498,6 +553,8 @@ def build(old_repo: Path) -> dict:
         "prompts": _build_prompts(old_df),
         "parse_pairs": {t: old_ev.parse_pairs(t) for t in PAIR_CASES},
         "parse_cycles": {t: old_ev.parse_cycles(t) for t in CYCLE_CASES},
+        "pairwise_f1": _pairwise_reference(old_et),
+        "kendall_tau": _kendall_reference(),
         "parse_id_set": {
             f"{t}|{n}": (
                 sorted(r) if (r := old_ev._parse_id_set(t, n)) is not None else None

@@ -56,6 +56,11 @@ class TaskSpec:
         among two. All of them are hashed into the fingerprint, because a checkpoint is bound to
         every wording it was trained under, not just the most common one -- hashing only
         ``instruction`` would let a variant be edited without invalidating anything.
+    :param honors_query_position: Whether ``query_position`` actually changes this task's prompt.
+        False for ``grouping``, ``grouping_labeled`` and ``outlier``, which take a legacy path that
+        hardcodes documents-then-query and never consults the knob. Recorded because an **inert**
+        knob must not produce a false fingerprint mismatch: two runs differing only in a setting
+        that does nothing are compatible, and flagging them would teach people to ignore the guard.
     :param serializer: Key into the table in :mod:`ctc.format.documents`, or ``"default"``.
     :param unified: Whether this task uses the unified prompt shape -- a generic alpaca header with
         the task instruction positioned alongside the documents. True for tasks with **no
@@ -100,6 +105,7 @@ class TaskSpec:
     instruction_variants: Tuple[str, ...] = ()
     serializer: str = "default"
     unified: bool = False
+    honors_query_position: bool = True
     rungs: Tuple[str, ...] = ()
     primary_metric: str = "f1"
     max_new_tokens: int = 512
@@ -145,6 +151,10 @@ class TaskSpec:
             gold_index_base=self.gold_index_base,
             prompt_shape="unified" if self.unified else "classic",
         )
+        if not self.honors_query_position:
+            # The knob does nothing for this task, so pin it: otherwise two compatible runs that
+            # merely passed different values would compare as incompatible.
+            base["query_position"] = "after"
         base.update(overrides)
         return FormatFingerprint(**base)
 

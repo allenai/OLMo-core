@@ -93,6 +93,11 @@ def test_stop_rule_terminates_on_this_task_s_own_target(spec):
     key = next((k for k in PROMPT_EXAMPLES if k == spec.name), None)
     if key is None:
         pytest.skip(f"no fixture example for {spec.name}")
+    if not STOP_PRESETS[spec.stop].text_stops:
+        # EOS-only by design: grouping and reorder emit long, legitimately multi-line answers, so
+        # any text stop would cut a valid one short. Nothing can truncate a ramble here except the
+        # model emitting EOS, which is the intended trade.
+        pytest.skip(f"{spec.name} stops on EOS only; no text rule can apply")
     mod = importlib.import_module(f"ctc.tasks.{spec.name}.spec")
     build_target = getattr(mod, "build_target", None)
     if build_target is None:

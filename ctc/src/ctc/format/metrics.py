@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 import string
 from collections import Counter
+from itertools import combinations
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Union
 
 __all__ = [
@@ -41,6 +42,10 @@ __all__ = [
     "pair_metrics",
     "cycle_metrics",
     "set_metrics",
+    "pairwise_metrics",
+    "kendall_tau",
+    "clustering_extras",
+    "ordering_extras",
     "aggregate",
 ]
 
@@ -276,6 +281,124 @@ def set_metrics(predicted: Set, gold: Set) -> Dict[str, float]:
     r = tp / len(gold) if gold else 0.0
     f1 = 2 * p * r / (p + r) if (p + r) else 0.0
     return {"precision": p, "recall": r, "f1": f1, "exact_match": float(predicted == gold)}
+
+
+def pairwise_metrics(
+    pred_labels: Sequence[int], gold_labels: Sequence[int]
+) -> Dict[str, float]:
+    """
+    Pairwise clustering metrics for the grouping tasks.
+
+    Compares which *pairs* of documents were put together, rather than comparing cluster labels --
+    which is necessary because cluster identity is arbitrary: a model that finds exactly the right
+    grouping but numbers the clusters differently is completely correct.
+
+    Pure Python on purpose. The pre-migration scorer also reported ARI and NMI via sklearn, but the
+    headline metric is this one, and keeping it dependency-free is what lets :mod:`ctc.format` be
+    imported without sklearn. ARI/NMI live behind an optional extra.
+
+    :param pred_labels: Predicted cluster label per document.
+    :param gold_labels: Gold cluster label per document.
+
+    :returns: ``pairwise_precision``, ``pairwise_recall``, ``pairwise_f1``.
+
+    :raises ValueError: If the label arrays differ in length.
+    """
+    if len(pred_labels) != len(gold_labels):
+        raise ValueError(
+            f"label arrays differ in length ({len(pred_labels)} vs {len(gold_labels)}); "
+            "both must cover every document"
+        )
+    n = len(pred_labels)
+    pred_pairs = {
+        (i, j) for i, j in combinations(range(n), 2) if pred_labels[i] == pred_labels[j]
+    }
+    gold_pairs = {
+        (i, j) for i, j in combinations(range(n), 2) if gold_labels[i] == gold_labels[j]
+    }
+    tp = len(pred_pairs & gold_pairs)
+    p = tp / len(pred_pairs) if pred_pairs else 0.0
+    r = tp / len(gold_pairs) if gold_pairs else 0.0
+    f1 = 2 * p * r / (p + r) if (p + r) else 0.0
+    return {"pairwise_precision": p, "pairwise_recall": r, "pairwise_f1": f1}
+
+
+def kendall_tau(pred: Sequence[int], gold: Sequence[int]) -> float:
+    """
+    Kendall's tau between two orderings, for the reorder task.
+
+    Both arguments are permutations, so there are no ties and tau-b reduces to tau-a -- a plain
+    concordant-minus-discordant count over pairs. That equivalence is why this can be pure Python
+    instead of pulling in scipy, and it is pinned against ``scipy.stats.kendalltau`` in the golden
+    fixture rather than merely asserted here.
+
+    :param pred: The predicted ordering.
+    :param gold: The true ordering.
+
+    :returns: Tau in ``[-1, 1]``; ``1.0`` for identical orderings, ``-1.0`` for exact reversal, and
+        ``0.0`` for a sequence too short to have any pair.
+
+    :raises ValueError: If the two differ in length.
+    """
+    if len(pred) != len(gold):
+        raise ValueError(f"orderings differ in length ({len(pred)} vs {len(gold)})")
+    n = len(pred)
+    if n < 2:
+        return 0.0
+    concordant = discordant = 0
+    for i, j in combinations(range(n), 2):
+        a = (pred[i] - pred[j]) * (gold[i] - gold[j])
+        if a > 0:
+            concordant += 1
+        elif a < 0:
+            discordant += 1
+    total = n * (n - 1) / 2
+    return (concordant - discordant) / total
+
+
+def clustering_extras(
+    pred_labels: Sequence[int], gold_labels: Sequence[int]
+) -> Dict[str, float]:
+    """
+    ARI and NMI for the grouping tasks, when scikit-learn is available.
+
+    Secondary to :func:`pairwise_metrics`, which is the headline number. Kept separate and lazily
+    imported so :mod:`ctc.format` stays importable on a bare install -- the data-generation side
+    depends on this module and has no reason to carry scikit-learn.
+
+    :param pred_labels: Predicted cluster label per document.
+    :param gold_labels: Gold cluster label per document.
+
+    :returns: ``{"ari": ..., "nmi": ...}``, or an empty dict when scikit-learn is absent. Empty
+        rather than zeros -- a missing metric must not be recorded as a score of zero.
+    """
+    try:
+        from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+    except ImportError:
+        return {}
+    return {
+        "ari": float(adjusted_rand_score(gold_labels, pred_labels)),
+        "nmi": float(normalized_mutual_info_score(gold_labels, pred_labels)),
+    }
+
+
+def ordering_extras(pred: Sequence[int], gold: Sequence[int]) -> Dict[str, float]:
+    """
+    Spearman's rho for the reorder task, when scipy is available.
+
+    :param pred: The predicted ordering.
+    :param gold: The true ordering.
+
+    :returns: ``{"spearman_rho": ...}``, or an empty dict when scipy is absent -- never a zero,
+        which would read as a real measurement.
+    """
+    try:
+        from scipy.stats import spearmanr
+    except ImportError:
+        return {}
+    if len(pred) < 2:
+        return {}
+    return {"spearman_rho": float(spearmanr(pred, gold).correlation)}
 
 
 def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:

@@ -18,6 +18,10 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+# Secondary clustering/ordering metrics (ARI, NMI, spearman). The PRIMARY metrics --
+# pairwise-F1 and kendall-tau -- are pure Python and pinned against these libraries in the
+# golden fixture, so a bare install still produces the headline numbers.
+stats = ["scikit-learn", "scipy"]
 # Task sources that pull real corpora (BEIR, MS MARCO, HotpotQA, PubMed, ...).
 sources = ["datasets", "tqdm"]
 # Generators that need a tokenizer to fit ladder rungs, or a cross-encoder to filter hard negatives.

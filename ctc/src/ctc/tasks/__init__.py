@@ -45,8 +45,9 @@ TASK_MODULES: tuple = (
     "absence",
     "xabsence",
     "retrieval",
-    "cot_retrieval",
     "qa",
+    "grouping_labeled",
+    "reorder",
 )
 
 _loaded: List[str] = []

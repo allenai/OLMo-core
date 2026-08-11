@@ -1,4 +1,4 @@
-"""The ``cot_retrieval`` task. Importing this package registers its spec."""
+"""The ``grouping_labeled`` task. Importing this package registers its spec."""
 
 from ...format import registry
 from .spec import SPEC
