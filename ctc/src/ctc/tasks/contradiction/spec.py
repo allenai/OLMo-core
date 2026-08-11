@@ -15,9 +15,9 @@ Two facts that have each cost real debugging time:
 * **Gold indices are 1-based here** and 0-based for outlier, rerank and nq. That lived in people's
   heads until it produced an off-by-one that read as a modelling result.
 * **The rung label bounds corpus size, not prompt length.** These rung files fix the claim count
-  (77/167/346/705 claims for 2k/4k/8k/16k) and let per-claim length vary, so measured prompts at
-  the 4k rung spanned 3,457-23,796 tokens. Sizing a decode budget from the label silently skipped
-  354/500 examples and scored them 0 -- in both arms, which read as "no dense-vs-chunked gap".
+  (see :data:`CLAIMS_PER_RUNG`) and let per-claim length vary, so measured prompts at the 4k rung
+  spanned 3,457-23,796 tokens. Sizing a decode budget from the label silently skipped 354/500
+  examples and scored them 0 -- in both arms, which read as "no dense-vs-chunked gap".
 
 .. warning::
    **``stop="pairs"`` is a deliberate change from the pre-migration evaluator.** There,
@@ -40,7 +40,19 @@ from ...format.prompts import CONTRADICTION_INSTRUCTION, GENERIC_INSTRUCTION
 from ...format.registry import TaskSpec
 
 #: Corpus size per rung: claims, not tokens. See the module note on why this is not prompt length.
-CLAIMS_PER_RUNG = {"2k": 77, "4k": 167, "8k": 346, "16k": 705}
+#:
+#: These are the **re-calibrated** counts. The earlier ladder (77/167/346/705/1423) was fit against
+#: a filler pool that turned out to be 92-99.6% FEVER/wiki -- one-line Wikipedia trivia at ~22.8
+#: tokens per claim. Real PubMed claim sentences run ~43 tokens, so those counts overshoot every
+#: token label by roughly 1.8x against the corrected pubmed-only pool: n=77 measures 3,413 tokens
+#: rather than 2,048, and n=1423 measures 61,461 rather than 32,768. Refit over 25 examples per
+#: rung on full rendered prefills gives ``tokens = 170 + 42.8 * n_docs`` (r^2 ~ 1.00 across n in
+#: [77, 1423]), hence ``n = (target - 170) / 42.8``.
+#:
+#: The refit lands within a few documents of the ORIGINAL ladder (40/88/190/385/765), which was
+#: calibrated on real PubMed and was right all along -- the intermediate "fix" only looked
+#: necessary because the pool was contaminated.
+CLAIMS_PER_RUNG = {"2k": 44, "4k": 92, "8k": 187, "16k": 379, "32k": 762}
 
 
 def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[List[int]]]:

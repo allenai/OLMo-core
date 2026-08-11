@@ -26,6 +26,9 @@ Two design choices worth knowing:
 2. **Fields carry their own comparison rule.** Most must match exactly, but the digit-range bug is
    not an equality failure -- it is a *containment* failure, where eval exceeds the range training
    covered. See :data:`_RULES`.
+3. **Some fields are provenance and are never compared.** ``data_paths`` records which corpora fed
+   a task, so a checkpoint can answer "what was I trained on"; comparing it would fail two runs
+   over the same shards staged at different paths. See :data:`_PROVENANCE_FIELDS`.
 
 Usage::
 
@@ -157,6 +160,13 @@ _RULES = {
     "doc_id_range": ("within", _within),
 }
 
+#: Fields recorded for provenance and deliberately **not** compared. Two runs over byte-identical
+#: data staged at different paths -- weka, node-local ``/data``, an S3 mirror -- are compatible, and
+#: comparing paths would fail them all. It would also make the guard fire constantly for a reason
+#: nobody can act on, which is how a guard gets switched off. They are also what
+#: :meth:`FormatFingerprint.merged_with` accumulates rather than deduplicates.
+_PROVENANCE_FIELDS = ("data_paths", "notes")
+
 
 @dataclass(frozen=True)
 class FormatFingerprint:
@@ -180,6 +190,10 @@ class FormatFingerprint:
     :param doc_id_range: ``(min, max)`` document id actually present. Compared by containment.
     :param marker_token_ids: Reserved marker ids, when the format uses them.
     :param tokenizer: Tokenizer identifier.
+    :param data_paths: Which data this format was built from -- source corpora, shard directories,
+        or both. Several entries when a task is fed by a mix, which is why
+        :func:`collect_fingerprints` unions them rather than deduplicating whole records. Recorded,
+        never compared: the same shards on weka and on node-local ``/data`` are the same shards.
     :param notes: Free-form provenance. Recorded, never compared.
     """
 
@@ -194,6 +208,7 @@ class FormatFingerprint:
     doc_id_range: Optional[Tuple[int, int]] = None
     marker_token_ids: Optional[Tuple[int, ...]] = None
     tokenizer: Optional[str] = None
+    data_paths: Tuple[str, ...] = ()
     notes: Dict[str, Any] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
 
@@ -250,6 +265,46 @@ class FormatFingerprint:
                 )
         return out
 
+    def same_format_as(self, other: "FormatFingerprint") -> bool:
+        """
+        :param other: Another fingerprint.
+
+        :returns: Whether the two describe the same format, ignoring provenance. Distinct from
+            ``==``: two shard directories built the same way from different corpora produce equal
+            formats and different :attr:`data_paths`, and collapsing them by ``==`` would lose one
+            of the paths.
+        """
+        return not self.compare(other)
+
+    def merged_with(self, other: "FormatFingerprint") -> "FormatFingerprint":
+        """
+        Fold another record of the same format into this one, accumulating provenance.
+
+        :param other: A fingerprint describing the same format.
+
+        :returns: This record with ``other``'s data paths appended (order preserved, duplicates
+            dropped) and its notes merged in.
+
+        :raises ValueError: If the two are not the same format. Merging different formats would
+            manufacture a record matching neither.
+        """
+        if not self.same_format_as(other):
+            raise ValueError(
+                "refusing to merge two different formats into one record; keep them as separate "
+                f"entries: {[m.field for m in self.compare(other)]}"
+            )
+        paths = list(self.data_paths) + [p for p in other.data_paths if p not in self.data_paths]
+        return replace(self, data_paths=tuple(paths), notes={**other.notes, **self.notes})
+
+    def with_data_paths(self, *paths: str) -> "FormatFingerprint":
+        """
+        :param paths: Paths to record, appended in order, duplicates dropped.
+
+        :returns: A copy carrying them.
+        """
+        new = list(self.data_paths) + [p for p in paths if p not in self.data_paths]
+        return replace(self, data_paths=tuple(new))
+
     def require_compatible_with(self, trained: "FormatFingerprint") -> None:
         """
         Raise unless this eval format is compatible with ``trained``.
@@ -267,7 +322,7 @@ class FormatFingerprint:
     def to_dict(self) -> Dict[str, Any]:
         """:returns: A JSON-ready mapping."""
         d = asdict(self)
-        for k in ("doc_id_range", "marker_token_ids"):
+        for k in ("doc_id_range", "marker_token_ids", "data_paths"):
             if d[k] is not None:
                 d[k] = list(d[k])
         return d
@@ -287,6 +342,9 @@ class FormatFingerprint:
             d["doc_id_range"] = tuple(d["doc_id_range"])
         if d.get("marker_token_ids") is not None:
             d["marker_token_ids"] = tuple(d["marker_token_ids"])
+        # Tuple, not list: the record is frozen and hashable, and a list here would break equality
+        # against a freshly derived fingerprint.
+        d["data_paths"] = tuple(d.get("data_paths") or ())
         known = {f for f in cls.__dataclass_fields__}
         extra = set(d) - known
         if extra:
@@ -388,17 +446,19 @@ class FingerprintSet:
 
     def merge(self, other: "FingerprintSet") -> "FingerprintSet":
         """
-        Combine two sets, dropping exact duplicates.
+        Combine two sets, folding same-format records together.
+
+        Deduplication is on *format*, not on the whole record, and matching records have their
+        provenance accumulated. That distinction is the mixed-corpus case: contradiction built from
+        PubMed and from FEVER yields two identical formats with different
+        :attr:`FormatFingerprint.data_paths`, and dropping the second as a duplicate would erase
+        half of what the model was trained on.
 
         :param other: The set to fold in.
 
         :returns: The union.
         """
-        out = list(self.formats)
-        for fp in other.formats:
-            if fp not in out:
-                out.append(fp)
-        return FingerprintSet(out)
+        return FingerprintSet(_fold(list(self.formats), other.formats))
 
     def require_compatible(self, eval_fp: FormatFingerprint) -> None:
         """
@@ -473,11 +533,33 @@ class FingerprintSet:
         return cls.from_dict(json.loads(path.read_text()))
 
 
+def _fold(
+    into: List[FormatFingerprint], incoming: Sequence[FormatFingerprint]
+) -> List[FormatFingerprint]:
+    """
+    Add records to a list, merging any that describe the same format.
+
+    :param into: Accumulator, mutated and returned.
+    :param incoming: Records to add.
+
+    :returns: ``into``.
+    """
+    for fp in incoming:
+        for i, existing in enumerate(into):
+            if existing.task == fp.task and existing.same_format_as(fp):
+                into[i] = existing.merged_with(fp)
+                break
+        else:
+            into.append(fp)
+    return into
+
+
 def collect_fingerprints(
     directories: Sequence[Path],
     *,
     extra: Sequence[FormatFingerprint] = (),
     allow_missing: bool = False,
+    record_source_paths: bool = True,
 ) -> Tuple[FingerprintSet, List[str]]:
     """
     Gather the formats recorded across several shard directories.
@@ -486,10 +568,19 @@ def collect_fingerprints(
     checkpoint stamped at train time and one stamped afterwards must record the same thing, and
     two implementations of "collect" would eventually not.
 
+    **Mixing is the case this has to get right.** Different tasks fold in side by side, one entry
+    each. The *same* task from several directories -- contradiction from PubMed and from FEVER, or
+    one task spread over per-rung directories -- produces several records with an identical format,
+    which are merged into one entry whose :attr:`FormatFingerprint.data_paths` lists every source.
+    Deduplicating on the whole record instead would drop all but the first, leaving a checkpoint
+    that names one corpus out of five.
+
     :param directories: Shard directories to read.
     :param extra: Fingerprints to include that no directory records.
     :param allow_missing: Tolerate a directory with no record. Off by default -- a partial record
         is worse than none, because the eval guard then reports a trained task as untrained.
+    :param record_source_paths: Record each directory on the fingerprints read from it, so the
+        checkpoint says what it was trained on even when the shard writer recorded no path itself.
 
     :returns: ``(set, skipped)`` where ``skipped`` names the directories that had no record. It is
         non-empty only when ``allow_missing`` is set, and the caller must disclose it.
@@ -504,9 +595,11 @@ def collect_fingerprints(
         if found is None:
             missing.append(str(d))
             continue
-        for fp in found.formats:
-            if fp not in collected:
-                collected.append(fp)
+        source = str(Path(d).resolve())
+        _fold(
+            collected,
+            [fp.with_data_paths(source) if record_source_paths else fp for fp in found.formats],
+        )
 
     if missing and not allow_missing:
         raise FileNotFoundError(

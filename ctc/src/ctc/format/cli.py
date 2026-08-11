@@ -83,6 +83,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="assert the id range instead of measuring it",
     )
     write.add_argument(
+        "--data-path",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help=(
+            "record a data path this format was built from. Repeatable, and unioned across "
+            "sources when a task is fed by several -- a mixed corpus must name all of them. "
+            "Recorded for provenance and never compared: the same data staged on weka, on "
+            "node-local /data and on S3 is the same data. --data adds its path automatically."
+        ),
+    )
+    write.add_argument(
         "--merge",
         action="store_true",
         help="add to the directory's existing record rather than replacing it",
@@ -163,6 +175,12 @@ def _show(args: argparse.Namespace) -> int:
         print(f"    chunk layout  {fp.chunk_layout}")
         print(f"    doc id range  {_describe_range(fp)}")
         print(f"    tokenizer     {fp.tokenizer or '(unrecorded)'}")
+        if fp.data_paths:
+            print(f"    data          {fp.data_paths[0]}")
+            for extra_path in fp.data_paths[1:]:
+                print(f"                  {extra_path}")
+        else:
+            print("    data          (unrecorded)")
         print(
             f"    provenance    {provenance}"
             + (
@@ -222,6 +240,11 @@ def _build(args: argparse.Namespace, examples: Optional[Sequence[dict]]) -> Form
         }
     else:
         overrides["notes"] = {"provenance": "asserted"}
+
+    declared = list(getattr(args, "data_path", []) or [])
+    if getattr(args, "data", None):
+        declared.append(args.data)
+    overrides["data_paths"] = tuple(dict.fromkeys(str(Path(p).resolve()) for p in declared))
     return spec.fingerprint(**overrides)
 
 

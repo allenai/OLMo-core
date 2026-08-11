@@ -10,6 +10,8 @@ resolved, who writes it, where it goes, and whether eval can read back what trai
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 
 import pytest
 
@@ -37,9 +39,9 @@ def make(task="contradiction", **overrides) -> FormatFingerprint:
     return FormatFingerprint(**base)
 
 
-def shards(tmp_path, name):
+def shards(tmp_path, name, *fps):
     d = tmp_path / name
-    FingerprintSet([make(name)]).write(d)
+    FingerprintSet(list(fps) or [make(name)]).write(d)
     return str(d)
 
 
@@ -129,3 +131,71 @@ def test_a_save_before_pre_train_still_records(tmp_path):
     cb = attached(FormatFingerprintCallback(collect_from=[shards(tmp_path, "contradiction")]))
     cb.post_checkpoint_saved("/ckpt/step0")
     assert ("/ckpt/step0", FINGERPRINT_FILENAME) in cb.trainer.written
+
+
+# ── what the checkpoint says it was trained on ──────────────────────────────────────────────────
+
+
+def test_the_checkpoint_records_the_shard_dirs_it_was_trained_on(tmp_path):
+    cb = attached(
+        FormatFingerprintCallback(
+            collect_from=[shards(tmp_path, "contradiction"), shards(tmp_path, "outlier")]
+        )
+    )
+    cb.pre_train()
+    recorded = {p for fp in cb._resolved.formats for p in fp.data_paths}
+    assert recorded == {
+        str((tmp_path / "contradiction").resolve()),
+        str((tmp_path / "outlier").resolve()),
+    }
+
+
+def test_a_task_fed_by_two_corpora_keeps_both(tmp_path):
+    """Deduplication is on format, not on the record -- otherwise one corpus disappears."""
+    for name in ("pubmed", "fever"):
+        FingerprintSet([make("contradiction")]).write(tmp_path / name)
+    cb = attached(
+        FormatFingerprintCallback(collect_from=[str(tmp_path / "pubmed"), str(tmp_path / "fever")])
+    )
+    cb.pre_train()
+    assert len(cb._resolved.formats) == 1
+    assert len(cb._resolved.formats[0].data_paths) == 2
+
+
+def test_recording_paths_can_be_turned_off(tmp_path):
+    cb = attached(
+        FormatFingerprintCallback(
+            collect_from=[shards(tmp_path, "contradiction")], record_data_paths=False
+        )
+    )
+    cb.pre_train()
+    assert cb._resolved.formats[0].data_paths == ()
+
+
+class LoaderTrainer(FakeTrainer):
+    """A trainer whose data loader reports the shard files it will actually read."""
+
+    def __init__(self, paths):
+        super().__init__()
+        self.data_loader = type("DL", (), {"dataset": type("DS", (), {"paths": paths})()})()
+
+
+def test_a_recorded_path_the_loader_never_reads_is_flagged(tmp_path, caplog):
+    """
+    The record is what a future eval trusts, so a record describing a different build than the one
+    running is worth saying out loud -- while it is still cheap to fix.
+    """
+    cb = FormatFingerprintCallback(collect_from=[shards(tmp_path, "contradiction")])
+    cb.trainer = LoaderTrainer(["/data/some/other/build/shard-000.npy"])
+    with caplog.at_level(logging.WARNING):
+        cb.pre_train()
+    assert "match nothing the data loader is reading" in caplog.text
+
+
+def test_loader_paths_under_a_recorded_directory_are_not_flagged(tmp_path, caplog):
+    d = shards(tmp_path, "contradiction")
+    cb = FormatFingerprintCallback(collect_from=[d])
+    cb.trainer = LoaderTrainer([f"{Path(d).resolve()}/shard-000.npy"])
+    with caplog.at_level(logging.WARNING):
+        cb.pre_train()
+    assert "match nothing" not in caplog.text

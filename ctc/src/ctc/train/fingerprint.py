@@ -62,12 +62,16 @@ class FormatFingerprintCallback(Callback):
         default: silently skipping one produces a checkpoint whose record is *incomplete*, which
         is worse than one with no record at all, because the eval-side guard will then confidently
         report a task as untrained.
+    :param record_data_paths: Record each ``collect_from`` directory on the formats read from it,
+        so the checkpoint says what it was trained on. Paths are provenance and are never compared
+        -- the same shards staged on weka and on node-local ``/data`` are the same shards.
     :param fname: Filename to write. Only override this to shadow a record you cannot delete.
     """
 
     collect_from: List[str] = field(default_factory=list)
     formats: List[FormatFingerprint] = field(default_factory=list)
     allow_missing: bool = False
+    record_data_paths: bool = True
     fname: str = FINGERPRINT_FILENAME
 
     _resolved: Optional[FingerprintSet] = None
@@ -89,6 +93,44 @@ class FormatFingerprintCallback(Callback):
             len(self._resolved.formats),
             ", ".join(self._resolved.tasks),
         )
+        for fp in self._resolved.formats:
+            log.info(
+                "format fingerprint: %s <- %s",
+                fp.task,
+                ", ".join(fp.data_paths) or "(no data path recorded)",
+            )
+        self._warn_if_data_paths_disagree_with_the_loader()
+
+    def _warn_if_data_paths_disagree_with_the_loader(self) -> None:
+        """
+        Cross-check the recorded paths against what the data loader is actually reading.
+
+        The fingerprint's paths come from ``collect_from``, which is a statement about intent; the
+        loader's ``dataset.paths`` is what will really be read. When they disagree the run is
+        training on data the record does not mention, and the record is the thing a future eval
+        will trust. Not fatal -- the loader's paths are per-shard ``.npy`` files under the
+        directories named here, so a plain mismatch is normal -- but a *recorded directory that no
+        loader path sits under* is worth saying out loud.
+
+        olmo-core's ``ConfigSaverCallback`` separately writes the full shard list to
+        ``data_paths.txt``; this is deliberately the coarser question of which corpora fed which
+        task, which that file cannot answer.
+        """
+        dataset = getattr(getattr(self.trainer, "data_loader", None), "dataset", None)
+        loader_paths = [str(p) for p in getattr(dataset, "paths", []) or []]
+        if not loader_paths or self._resolved is None:
+            return
+        recorded = {p for fp in self._resolved.formats for p in fp.data_paths}
+        unused = [
+            r for r in recorded if not any(r in lp or lp.startswith(r) for lp in loader_paths)
+        ]
+        if unused:
+            log.warning(
+                "format fingerprint: %d recorded data path(s) match nothing the data loader is "
+                "reading; the record may describe a different build than this run: %s",
+                len(unused),
+                ", ".join(sorted(unused)),
+            )
 
     def post_checkpoint_saved(self, path: PathOrStr) -> None:
         """
@@ -117,6 +159,7 @@ class FormatFingerprintCallback(Callback):
             [Path(d) for d in self.collect_from],
             extra=self.formats,
             allow_missing=self.allow_missing,
+            record_source_paths=self.record_data_paths,
         )
         if skipped:
             log.warning(

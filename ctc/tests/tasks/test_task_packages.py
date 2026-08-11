@@ -393,3 +393,43 @@ def test_a_task_declaring_the_knob_live_actually_uses_it(name):
         f"{name} declares honors_query_position=True but ignores it. The fingerprint then records "
         "a distinction the prompt does not make, and two incompatible-looking runs are identical."
     )
+
+
+# ── a per-rung table must cover the ladder it belongs to ────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", registry.names())
+def test_per_rung_tables_cover_every_declared_rung(name):
+    """
+    contradiction declared five rungs and carried a four-entry claims table, so building 32k would
+    have raised KeyError -- at data-build time, long after the config was written. Any task with a
+    ``*_per_rung`` table in ``extra`` is checked, not just that one.
+    """
+    spec = registry.get(name)
+    for key, table in spec.extra.items():
+        if not key.endswith("_per_rung") or not isinstance(table, dict):
+            continue
+        missing = [r for r in spec.rungs if r not in table]
+        assert not missing, f"{name}.{key} has no entry for rung(s) {missing}"
+
+
+@pytest.mark.parametrize("name", registry.names())
+def test_per_rung_tables_have_no_entries_for_rungs_that_do_not_exist(name):
+    """The converse: a stale entry is a rung someone removed and a table nobody updated."""
+    spec = registry.get(name)
+    for key, table in spec.extra.items():
+        if not key.endswith("_per_rung") or not isinstance(table, dict):
+            continue
+        extra_rungs = [r for r in table if r not in spec.rungs]
+        assert not extra_rungs, f"{name}.{key} has entries for unknown rung(s) {extra_rungs}"
+
+
+def test_contradiction_uses_the_recalibrated_claim_ladder():
+    """
+    Guarding a specific number on purpose. The pre-recalibration ladder overshoots every token
+    label by ~1.8x because it was fit against a 92-99.6% FEVER filler pool, and rebuilding the
+    flagship N-squared task with it would bake the overshoot into the headline result.
+    """
+    from ctc.tasks.contradiction.spec import CLAIMS_PER_RUNG
+
+    assert CLAIMS_PER_RUNG == {"2k": 44, "4k": 92, "8k": 187, "16k": 379, "32k": 762}

@@ -102,3 +102,104 @@ def test_conflicting_formats_names_the_differing_field(tmp_path):
 
 def test_a_consistent_mix_reports_no_conflict():
     assert conflicting_formats(FingerprintSet([make("a"), make("b")])) == {}
+
+
+# ── data paths, and what happens when corpora are mixed ─────────────────────────────────────────
+#
+# The failure this guards is quiet. Deduplication used to be on the whole record, so two shard
+# directories that produced an IDENTICAL format -- contradiction from PubMed and from FEVER, or one
+# task spread over per-rung directories -- collapsed into one entry and the second directory's path
+# vanished. The checkpoint then named one corpus out of however many it actually read, and nothing
+# anywhere said otherwise.
+
+
+def test_the_directory_a_format_came_from_is_recorded(tmp_path):
+    got, _ = collect_fingerprints([shards(tmp_path, "contradiction")])
+    assert got.formats[0].data_paths == (str((tmp_path / "contradiction").resolve()),)
+
+
+def test_one_task_from_two_corpora_keeps_both_paths(tmp_path):
+    """The mixed-corpus case: same format, two sources, one entry, both paths."""
+    fp = make("contradiction")
+    got, _ = collect_fingerprints([shards(tmp_path, "pubmed", fp), shards(tmp_path, "fever", fp)])
+    assert len(got.formats) == 1
+    assert got.formats[0].data_paths == (
+        str((tmp_path / "pubmed").resolve()),
+        str((tmp_path / "fever").resolve()),
+    )
+
+
+def test_a_five_task_mix_records_a_path_per_task(tmp_path):
+    names = ["contradiction", "outlier", "oolong", "retrieval", "nq"]
+    got, _ = collect_fingerprints([shards(tmp_path, n) for n in names])
+    assert got.tasks == names
+    assert all(len(fp.data_paths) == 1 for fp in got.formats)
+
+
+def test_paths_from_two_formats_of_one_task_stay_separate(tmp_path):
+    """A curriculum trains one task two ways; each layout keeps its own corpus."""
+    got, _ = collect_fingerprints(
+        [
+            shards(tmp_path, "before", make(query_position="before")),
+            shards(tmp_path, "after", make(query_position="after")),
+        ]
+    )
+    entries = got.for_task("contradiction")
+    assert len(entries) == 2
+    assert {e.data_paths[0] for e in entries} == {
+        str((tmp_path / "before").resolve()),
+        str((tmp_path / "after").resolve()),
+    }
+
+
+def test_the_same_directory_twice_records_one_path(tmp_path):
+    d = shards(tmp_path, "contradiction")
+    got, _ = collect_fingerprints([d, d])
+    assert got.formats[0].data_paths == (str(d.resolve()),)
+
+
+def test_a_path_a_shard_dir_recorded_itself_is_preserved(tmp_path):
+    """Tokenize time can record the SOURCE jsonl; collection adds the shard dir, not replaces it."""
+    fp = make("contradiction").with_data_paths("/corpora/pubmed_claims.jsonl")
+    got, _ = collect_fingerprints([shards(tmp_path, "contradiction", fp)])
+    assert got.formats[0].data_paths == (
+        "/corpora/pubmed_claims.jsonl",
+        str((tmp_path / "contradiction").resolve()),
+    )
+
+
+def test_recording_paths_can_be_turned_off(tmp_path):
+    got, _ = collect_fingerprints([shards(tmp_path, "contradiction")], record_source_paths=False)
+    assert got.formats[0].data_paths == ()
+
+
+# ── paths are provenance: recorded, never compared ──────────────────────────────────────────────
+
+
+def test_the_same_data_staged_at_two_paths_is_compatible():
+    """weka, node-local /data and an S3 mirror are the same corpus. Comparing paths fails them all."""
+    weka = make().with_data_paths("/weka/oe-training/contra")
+    local = make().with_data_paths("/data/prasann/contra")
+    assert weka.compare(local) == []
+    local.require_compatible_with(weka)
+
+
+def test_same_format_as_ignores_paths_while_equality_does_not():
+    a = make().with_data_paths("/a")
+    b = make().with_data_paths("/b")
+    assert a.same_format_as(b)
+    assert a != b
+
+
+def test_merging_two_different_formats_is_refused():
+    """Merging them would manufacture one record that matches neither."""
+    with pytest.raises(ValueError, match="different formats"):
+        make(gold_index_base=1).merged_with(make(gold_index_base=0))
+
+
+def test_paths_survive_a_round_trip_as_a_tuple(tmp_path):
+    """A list here would silently fail equality against a freshly derived fingerprint."""
+    FingerprintSet([make().with_data_paths("/a", "/b")]).write(tmp_path)
+    got = FingerprintSet.read(tmp_path).formats[0]
+    assert got.data_paths == ("/a", "/b")
+    assert isinstance(got.data_paths, tuple)

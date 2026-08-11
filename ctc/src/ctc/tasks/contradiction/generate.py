@@ -11,9 +11,23 @@ conflict, so each gets a module under ``sources/``. They share this file's assem
 only the claim mining differs.
 
 .. warning::
-   **The FEVER filler leak is still open for the CTC-suite ladder.** FEVER filler claims were found
-   in PubMed contradiction evals. It is fixed for the xlong ladders and not for this one, so a
-   PubMed contradiction number off the CTC ladder may be contaminated. Resolve before rebuilding.
+   **Never harvest fillers with a domain-agnostic glob.** The pre-migration builder globbed a
+   mutable directory with ``contradiction_*_k3.jsonl``, which also matched the FEVER and wiki
+   corpora, so PubMed contradiction evals shipped Wikipedia claims as distractors -- 92.2% of
+   fillers at 2k rising to 99.6% at 32k, against gold that was 100% PubMed. "Find the contradicting
+   pair among n docs" then collapses to "find the biomedical sentences". Pin a manifest instead.
+
+   The leak is **closed** for both the xlong and CTC-suite ladders (rebuilt and re-verified at
+   0.00% on 2026-08-04/05), so this is a constraint on new generators rather than an outstanding
+   repair. Two results of that rebuild are worth carrying forward, because each overturned a
+   headline:
+
+   * The contamination **depressed** the scores rather than flattering them -- it was a train/eval
+     domain shift, not a shortcut -- and worst at the long end: 32k went 0.335 -> 0.559 on the
+     clean ladder, roughly 10 SE at eval_size 500.
+   * The published "dense collapses at 32k" was therefore an artifact of the ladder. The real dense
+     curve declines gracefully, and the dense-vs-chunked absolute gap **narrows** with context
+     (0.441 at 2k -> 0.369 at 32k) rather than widening.
 """
 
 from __future__ import annotations

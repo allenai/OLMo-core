@@ -9,7 +9,10 @@ certifies one. Several tests below are about making that asymmetry visible rathe
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +33,14 @@ def rung(tmp_path, name="rung_2048.jsonl", n_docs=(20, 40)):
     p = tmp_path / name
     p.write_text("\n".join(json.dumps(e) for e in examples) + "\n")
     return str(p)
+
+
+def _run_show(directory):
+    """``show`` output as a string; capsys is per-test and these helpers are module-level."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        main(["show", str(directory)])
+    return buf.getvalue()
 
 
 def written(directory):
@@ -240,3 +251,73 @@ def test_show_json_round_trips(tmp_path, capsys):
 def test_an_unknown_task_is_rejected(tmp_path):
     with pytest.raises(KeyError):
         main(["write", "--dir", str(tmp_path), "--task", "not_a_task"])
+
+
+# ── data paths ──────────────────────────────────────────────────────────────────────────────────
+
+
+def test_measuring_from_a_file_records_it_as_a_data_path(tmp_path):
+    data = rung(tmp_path)
+    main(["write", "--dir", str(tmp_path), "--task", "retrieval", "--data", data])
+    assert written(tmp_path).formats[0].data_paths == (str(Path(data).resolve()),)
+
+
+def test_data_paths_can_be_declared_without_measuring(tmp_path):
+    main(
+        [
+            "write",
+            "--dir",
+            str(tmp_path),
+            "--task",
+            "contradiction",
+            "--data-path",
+            "/corpora/pubmed.jsonl",
+            "--data-path",
+            "/corpora/fever.jsonl",
+        ]
+    )
+    assert written(tmp_path).formats[0].data_paths == (
+        "/corpora/pubmed.jsonl",
+        "/corpora/fever.jsonl",
+    )
+
+
+def test_collect_unions_the_paths_of_one_task_from_two_corpora(tmp_path):
+    """The mixed-corpus case, end to end through the CLI."""
+    a, b, ckpt = tmp_path / "a", tmp_path / "b", tmp_path / "ckpt"
+    for d, corpus in ((a, "/corpora/pubmed.jsonl"), (b, "/corpora/fever.jsonl")):
+        main(["write", "--dir", str(d), "--task", "contradiction", "--data-path", corpus])
+    main(["collect", "--ckpt", str(ckpt), "--from", str(a), str(b)])
+
+    entries = written(ckpt).for_task("contradiction")
+    assert len(entries) == 1
+    assert set(entries[0].data_paths) == {
+        "/corpora/pubmed.jsonl",
+        "/corpora/fever.jsonl",
+        str(a.resolve()),
+        str(b.resolve()),
+    }
+
+
+def test_show_lists_every_data_path(tmp_path):
+    main(
+        [
+            "write",
+            "--dir",
+            str(tmp_path),
+            "--task",
+            "contradiction",
+            "--data-path",
+            "/corpora/pubmed.jsonl",
+            "--data-path",
+            "/corpora/fever.jsonl",
+        ]
+    )
+    capsys_out = _run_show(tmp_path)
+    assert "/corpora/pubmed.jsonl" in capsys_out
+    assert "/corpora/fever.jsonl" in capsys_out
+
+
+def test_show_says_so_when_no_data_path_was_recorded(tmp_path):
+    main(["write", "--dir", str(tmp_path), "--task", "contradiction"])
+    assert "data          (unrecorded)" in _run_show(tmp_path)
