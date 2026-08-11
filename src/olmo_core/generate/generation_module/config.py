@@ -7,16 +7,6 @@ if TYPE_CHECKING:
     pass
 
 
-#: Steps between host-side stop-string scans. Each scan costs a tokenizer decode per row, so it is
-#: worth batching; the only cost of a larger value is that a row may generate up to this many extra
-#: tokens after its stop string closes, and those are truncated anyway.
-#:
-#: This does NOT gate the EOS exit. It used to, which meant raising it silently delayed termination
-#: for rows that had already finished -- a stop-STRING knob throttling the EOS path. The two are
-#: now independent, which is what makes a value above 1 safe.
-DEFAULT_STOP_STRING_CHECK_INTERVAL = 16
-
-
 @dataclass
 class GenerationConfig(Config):
     """Configuration for text generation."""
@@ -62,7 +52,7 @@ class GenerationConfig(Config):
     via ``stop_string_tokenizer`` (used to decode the running completion). ``None`` disables.
     """
 
-    stop_string_check_interval: int = DEFAULT_STOP_STRING_CHECK_INTERVAL
+    stop_string_check_interval: int = 1
     """How often (in decode steps) to run the :data:`stop_strings` / finished-all check. Larger values
     cut the per-step GPU->CPU sync at the cost of a few extra decode steps before stopping. Default 1."""
 

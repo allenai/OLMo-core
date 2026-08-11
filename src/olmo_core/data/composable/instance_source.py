@@ -32,6 +32,11 @@ class Instance(TypedDict):
     """The token IDs for this instance."""
     label_mask: NotRequired[Sequence[bool]]
     """An optional mask indicating which tokens should contribute to the loss."""
+    doc_lens: NotRequired[Sequence[int]]
+    """Optional explicit per-document lengths within this instance (they must sum to the instance
+    length). When present, the data loader uses these for intra-document masking instead of deriving
+    document boundaries from EOS tokens. Used by sources that pack pre-segmented documents (e.g.
+    :class:`~olmo_core.data.composable.landmark_packing_instance_source.LandmarkPackingInstanceSource`)."""
 
 
 class InstanceSource(SourceABC):
