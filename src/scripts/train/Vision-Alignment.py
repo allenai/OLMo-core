@@ -1173,9 +1173,22 @@ def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, A
     if audit.get("failures") != []:
         raise ValueError("Vision-alignment source audit records preprocessing failures")
     expected_loss_mass = audit.get("expected_loss_mass")
-    if not isinstance(expected_loss_mass, Mapping) or _canonical_sha256(
-        expected_loss_mass
-    ) != _canonical_sha256(targets):
+    if (
+        not isinstance(expected_loss_mass, Mapping)
+        or set(expected_loss_mass) != set(targets)
+        or any(
+            isinstance(expected_loss_mass[source_name], bool)
+            or not isinstance(expected_loss_mass[source_name], (int, float))
+            or not math.isfinite(float(expected_loss_mass[source_name]))
+            or not math.isclose(
+                float(expected_loss_mass[source_name]),
+                float(target_weight),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            for source_name, target_weight in targets.items()
+        )
+    ):
         raise ValueError("Vision-alignment source audit expected loss mass differs from targets")
     for source_name, source_report in source_reports.items():
         if not isinstance(source_report, Mapping):

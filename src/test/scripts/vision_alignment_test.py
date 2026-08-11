@@ -650,7 +650,10 @@ def test_real_data_requires_a_matching_pinned_source_audit(tmp_path):
         "target_loss_mass": data.mixture.resolved_targets(),
         "mean_loss_weight": data.mixture.mean_loss_weight,
         "sampling_probabilities": data.mixture.sampling_weights(),
-        "expected_loss_mass": data.mixture.resolved_targets(),
+        "expected_loss_mass": {
+            "pixmo_caption": 0.7000000000000001,
+            "pixmo_transcript": 0.3,
+        },
         "failures": [],
         "inputs": source_inputs,
         "sources": {
@@ -675,6 +678,16 @@ def test_real_data_requires_a_matching_pinned_source_audit(tmp_path):
     assert loaded["fingerprint"] == audit["fingerprint"]
     data.mixture.mean_loss_weight["pixmo_caption"] = 3.0
     with pytest.raises(ValueError, match="mean_loss_weight differs"):
+        vision_alignment._validated_source_audit(config)
+    data.mixture.mean_loss_weight["pixmo_caption"] = 2.0
+
+    audit["expected_loss_mass"]["pixmo_caption"] = 0.700001
+    audit["fingerprint"] = vision_alignment._canonical_sha256(
+        {key: value for key, value in audit.items() if key != "fingerprint"}
+    )
+    audit_path.write_text(json.dumps(audit))
+    data.source_audit_fingerprint = audit["fingerprint"]
+    with pytest.raises(ValueError, match="expected loss mass differs"):
         vision_alignment._validated_source_audit(config)
 
 
