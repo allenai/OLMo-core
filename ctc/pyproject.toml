@@ -22,6 +22,10 @@ dependencies = []
 # pairwise-F1 and kendall-tau -- are pure Python and pinned against these libraries in the
 # golden fixture, so a bare install still produces the headline numbers.
 stats = ["scikit-learn", "scipy"]
+# ROUGE for summarization. NOT optional in practice: without it summarization refuses to score
+# rather than silently substituting token-F1, which is what corrupted the published helmet_summ
+# column. absl-py is listed explicitly because rouge_score imports fine without it and fails later.
+rouge = ["rouge_score", "absl-py", "nltk"]
 # Task sources that pull real corpora (BEIR, MS MARCO, HotpotQA, PubMed, ...).
 sources = ["datasets", "tqdm"]
 # Generators that need a tokenizer to fit ladder rungs, or a cross-encoder to filter hard negatives.

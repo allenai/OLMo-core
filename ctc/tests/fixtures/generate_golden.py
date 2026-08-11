@@ -127,6 +127,8 @@ PROMPT_CASES = [
     ("textgroups", "after", True),
     # retrieval's instruction depends on the EXAMPLE, not just the task: single-gold vs multi-gold
     # vs multi-query select three different strings. All three shapes are pinned.
+    ("rerank", "after", True),
+    ("summarization", "after", True),
     ("retrieval_multigold", "after", True),
     ("retrieval_multiquery", "after", True),
 ]
@@ -262,6 +264,21 @@ PROMPT_EXAMPLES = {
         "answers": [""],
         "gold_doc_indices": [[1, 2, 3]],
         "source": "synthetic",
+    },
+    "rerank": {
+        "documents": [{"title": "P1", "text": "candidate one"}, {"title": "P2", "text": "two"}],
+        "queries": ["Which is most relevant?"],
+        "answers": [""],
+        "gold_doc_indices": [1, 0],  # ranked order, 0-based
+        "ce_scores": [0.2, 0.9],     # CE-graded; the binary format is disabled
+        "source": "msmarco",
+    },
+    "summarization": {
+        "documents": [{"text": "Paragraph one.\n\nParagraph two."}],
+        "queries": ["Summarize the document."],
+        "answers": ["A short summary."],
+        "gold_doc_indices": [0],
+        "source": "govreport",
     },
     # Same task, three instruction shapes. The `_task_of` map below routes these back to the real
     # task name when generating.

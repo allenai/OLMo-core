@@ -104,7 +104,16 @@ def test_stop_rule_terminates_on_this_task_s_own_target(spec):
         pytest.skip(f"{spec.name} declares no build_target")
 
     target = build_target(PROMPT_EXAMPLES[key])
-    out = apply(f"{target}\nand now some rambling", STOP_PRESETS[spec.stop])
+    cond = STOP_PRESETS[spec.stop]
+    generation = f"{target}\nand now some rambling"
+    if cond.require_before is not None:
+        # oolong's rule keys on the templated "answer:" line, which the bare target does not
+        # contain -- the model emits it, the target does not. Prefix it so the generation looks
+        # like what the model actually produces, rather than skipping the check.
+        generation = f"{cond.require_before} {generation}"
+    out = apply(generation, cond)
+    if cond.require_before is not None:
+        out = out.split(cond.require_before, 1)[1].strip()
     assert out.strip() == target.strip(), (
         f"{spec.name} (stop={spec.stop!r}) did not truncate back to its own target"
     )

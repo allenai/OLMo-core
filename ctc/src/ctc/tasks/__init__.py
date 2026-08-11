@@ -48,6 +48,11 @@ TASK_MODULES: tuple = (
     "qa",
     "grouping_labeled",
     "reorder",
+    "outlier",
+    "rerank",
+    "oolong",
+    "summarization",
+    "qdmatch",
 )
 
 _loaded: List[str] = []
