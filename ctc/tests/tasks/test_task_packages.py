@@ -8,6 +8,9 @@ that has already been made once.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from ctc import tasks
@@ -172,6 +175,60 @@ def test_unparseable_on_empty_gold_does_not_score_perfect():
     spec = registry.get("contradiction")
     assert spec.score(None, [])["exact_match"] == 0.0
     assert spec.score([], [])["exact_match"] == 1.0  # a real empty answer can still be right
+
+
+# ── prompt parity ───────────────────────────────────────────────────────────────────────────────
+#
+# The fixture was snapshotted from the pre-migration build_prompt BEFORE assemble.py was written,
+# so these are an independent target, not a description of the port.
+
+GOLDEN = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text()
+)
+_PROMPT_KEYS = [k for k in GOLDEN["prompts"] if k.startswith("contradiction|")]
+
+
+@pytest.mark.parametrize("key", sorted(_PROMPT_KEYS))
+def test_contradiction_prompt_matches_golden(key):
+    """Byte-identical to what built every contradiction shard we have trained on."""
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
+    _, position, alpaca = key.split("|")
+    spec = registry.get("contradiction")
+    got = spec.build_prompt(
+        PROMPT_EXAMPLES["contradiction"],
+        query_position=position,
+        use_alpaca=(alpaca == "alpaca=True"),
+    )
+    assert got == GOLDEN["prompts"][key][0]
+
+
+@pytest.mark.parametrize("key", sorted(_PROMPT_KEYS))
+def test_contradiction_target_matches_golden(key):
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+    from ctc.tasks.contradiction.spec import build_target
+
+    assert build_target(PROMPT_EXAMPLES["contradiction"]) == GOLDEN["prompts"][key][1]
+
+
+def test_query_position_both_repeats_the_ask():
+    """'both' duplicates the entire positioned block, which costs context at every rung."""
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
+    spec = registry.get("contradiction")
+    after = spec.build_prompt(PROMPT_EXAMPLES["contradiction"], query_position="after")
+    both = spec.build_prompt(PROMPT_EXAMPLES["contradiction"], query_position="both")
+    assert len(both) > len(after)
+    assert both.count("identify all pairs of claims") == 2
+
+
+def test_unknown_query_position_raises():
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
+    with pytest.raises(ValueError, match="query_position"):
+        registry.get("contradiction").build_prompt(
+            PROMPT_EXAMPLES["contradiction"], query_position="middle"
+        )
 
 
 def test_generate_reports_what_is_missing_rather_than_returning_nothing():

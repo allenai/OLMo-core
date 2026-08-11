@@ -22,10 +22,11 @@ Two facts that have each cost real debugging time:
 
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional, Sequence
 
-from ...format import metrics, parsing
-from ...format.prompts import CONTRADICTION_INSTRUCTION
+from ...format import assemble, metrics, parsing
+from ...format.prompts import CONTRADICTION_INSTRUCTION, GENERIC_INSTRUCTION
 from ...format.registry import TaskSpec
 
 #: Corpus size per rung: claims, not tokens. See the module note on why this is not prompt length.
@@ -99,20 +100,50 @@ def score(parsed: Optional[Sequence[Sequence[int]]], gold: Sequence[Sequence[int
     return {**metrics.pair_metrics(parsed, gold), "parsed": 1.0}
 
 
+def build_query(example: Dict) -> str:
+    """
+    The positioned ask.
+
+    Contradiction has no per-example question, so the instruction *is* the ask and the example's
+    ``queries`` field is unused. That is exactly why the task is ``unified``.
+
+    :param example: A unified-format example.
+
+    :returns: The text placed before/after/both relative to the claims.
+    """
+    return CONTRADICTION_INSTRUCTION
+
+
+def build_target(example: Dict) -> str:
+    """
+    The training target: the gold pairs as JSON.
+
+    :param example: A unified-format example. ``gold_doc_indices`` holds the pairs directly, as
+        ``[[a, b], ...]`` of **1-based** claim ids -- not document positions, despite the field
+        name it shares with the 0-based tasks.
+
+    :returns: A JSON list of pairs, e.g. ``"[[1, 4], [3, 7]]"``.
+    """
+    return json.dumps(example["gold_doc_indices"])
+
+
 def build_prompt(example: Dict, **opts) -> str:
     """
-    Render one contradiction example.
+    Render one contradiction example into a prompt.
 
-    :param example: A unified-format example with ``documents`` (the claims) and ``queries``.
-    :param opts: Passed through to the shared prompt assembler.
+    :param example: A unified-format example with ``documents`` (the claims).
+    :param opts: Assembly options -- ``query_position``, ``use_alpaca``, ``use_titles``,
+        ``before_dummy``, ``after_dummy``. See :func:`ctc.format.assemble.assemble`.
 
     :returns: The prompt string.
-
-    :raises NotImplementedError: Prompt assembly is not ported yet -- see ``ctc/tasks/README.md``.
     """
-    raise NotImplementedError(
-        "prompt assembly lands with the eval runner; contradiction's instruction and serializer "
-        "are already declared on SPEC below"
+    return assemble.assemble(
+        example,
+        task=SPEC.name,
+        unified=SPEC.unified,
+        header=GENERIC_INSTRUCTION,
+        positioned=build_query(example),
+        **opts,
     )
 
 
