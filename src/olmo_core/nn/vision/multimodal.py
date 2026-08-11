@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
 import torch
@@ -14,7 +14,12 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
-from olmo_core.nn.vision.connector import VisionConnectorConfig
+from olmo_core.nn.vision.connector import (
+    ImagePoolingType,
+    ImageProjectorType,
+    VisionConnectorConfig,
+)
+from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
 
 __all__ = [
     "MultimodalLMConfig",
@@ -82,6 +87,73 @@ class MultimodalLMConfig(Config):
     base-vocab-only head for loss, sampling, and (tied-embedding) training dynamics.
     ``None`` (default) disables masking.
     """
+
+    @classmethod
+    def molmo2_4B(cls, *, rope_theta: int = 5_000_000, **kwargs) -> "MultimodalLMConfig":
+        """
+        Molmo2-4B architecture: a Qwen3-4B LM, a SigLIP2-SO400M/14-378 ViT truncated to
+        25 of its 27 blocks, and a two-layer attention-pooling connector.
+
+        Equivalent to
+        :func:`~olmo_core.nn.vision.molmo2_loader.molmo2_config_from_hf_config` applied to
+        ``allenai/Molmo2-4B``, but without reading anything from the Hugging Face Hub — so
+        training from base checkpoints has no dependency on the released Molmo2 repo (whose
+        remote code also needs ``trust_remote_code=True``).
+
+        :param rope_theta: RoPE base. Defaults to ``5_000_000``, matching the *released*
+            Molmo2-4B weights. When initialising the LM from **base** Qwen3-4B, pass
+            ``1_000_000`` instead — that is what those weights were trained with (and what
+            mm_olmo's stage-1 ``QWEN3_4B`` config uses).
+        """
+        import os
+
+        from olmo_core.config import DType
+        from olmo_core.nn.attention import AttentionBackendName
+        from olmo_core.nn.vision.config import VisionEncoderType
+
+        base_vocab = 151_936
+        n_extra_tokens = 128
+        # Same backend rule as the HF loader: the multimodal masks (bidirectional image
+        # tokens + subsegment branch isolation) only run on dense ``torch`` or fused ``flex``.
+        attn_backend = (
+            AttentionBackendName.flex
+            if os.environ.get("OLMO2_FLEX_ATTN") == "1"
+            else AttentionBackendName.torch
+        )
+        # Molmo2 keeps only blocks 0..24 of SigLIP2's 27 — everything past the deepest
+        # feature layer (``vit_layers`` max 24) is dropped. ``name`` is a label only (the
+        # SigLIP variant is selected by use_cls_token / patch_embedding_bias / use_pre_ln);
+        # we use ``siglip`` so this is byte-identical to the HF-derived config.
+        vision = replace(
+            VisionEncoderConfig.siglip2_so400m_patch14_378(),
+            name=VisionEncoderType.siglip,
+            image_num_layers=25,
+        )
+        return cls(
+            lm=TransformerConfig.qwen3_4B(
+                vocab_size=base_vocab + n_extra_tokens,
+                rope_theta=rope_theta,
+                attn_backend=attn_backend,
+                dtype=DType.float32,
+            ),
+            vision=vision,
+            connector=VisionConnectorConfig(
+                image_emb_dim=vision.image_emb_dim,
+                image_num_heads=vision.image_num_heads,
+                image_num_key_value_heads=vision.image_num_key_value_heads,
+                image_head_dim=vision.image_head_dim,
+                output_dim=2560,
+                num_input_layers=2,
+                pooling_type=ImagePoolingType.attention_meanq,
+                pooling_attention_mask=True,
+                projector_type=ImageProjectorType.mlp,
+                mlp_hidden_size=9728,
+            ),
+            image_patch_token_id=IM_PATCH_ID,
+            vit_layers=(24, 18),
+            output_vocab_size=base_vocab,
+            **kwargs,
+        )
 
     def build(self, init_device: str = "cpu") -> "MultimodalLM":
         """
@@ -247,9 +319,7 @@ class MultimodalLM(nn.Module):
                 end = min(start + microbatch, T)
                 chunk = images[:, start:end].reshape(B * (end - start), N, -1)
                 chunk_features = self._vit_forward_features(chunk)
-                parts.append(
-                    chunk_features.reshape(B, (end - start) * chunk_features.shape[1], -1)
-                )
+                parts.append(chunk_features.reshape(B, (end - start) * chunk_features.shape[1], -1))
             features = torch.cat(parts, dim=1)
 
         return self.connector(features, pooled_patches_idx)
@@ -335,9 +405,7 @@ class MultimodalLM(nn.Module):
         flex_mask_kwargs: Optional[dict] = None
         if use_flex_attn:
             B, S = input_ids.shape
-            flex_is_image = (
-                token_type_ids.to(device) != 0 if token_type_ids is not None else None
-            )
+            flex_is_image = token_type_ids.to(device) != 0 if token_type_ids is not None else None
             flex_subseg = subsegment_ids.to(device) if subsegment_ids is not None else None
             flex_eid = example_ids.to(device) if example_ids is not None else None
             flex_mask_kwargs = dict(

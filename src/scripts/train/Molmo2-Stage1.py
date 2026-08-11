@@ -98,6 +98,10 @@ INIT_FROM_CHOICES = ("scratch", "molmo2")
 SCRATCH_LM_ID = "Qwen/Qwen3-4B"
 SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
+# RoPE base per weight source: base Qwen3-4B was trained with 1e6 (as is mm_olmo's
+# stage-1 QWEN3_4B); the released Molmo2-4B checkpoint uses 5e6.
+SCRATCH_ROPE_THETA = 1_000_000
+MOLMO2_ROPE_THETA = 5_000_000
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
@@ -181,18 +185,37 @@ class ExperimentConfig(Config):
     base Qwen3-4B + base SigLIP2 + random connector/new embeddings)."""
 
 
-def _build_model_config() -> MultimodalLMConfig:
-    """Build the :class:`MultimodalLMConfig` from the HF Molmo2 config (no weights)."""
-    from transformers import AutoConfig
+def _build_model_config(init_from: str) -> MultimodalLMConfig:
+    """Build the Molmo2-4B :class:`MultimodalLMConfig` natively (no weights, no HF read).
 
-    from olmo_core.nn.vision.molmo2_loader import (
-        ensure_default_rope_registered,
-        molmo2_config_from_hf_config,
-    )
+    ``MultimodalLMConfig.molmo2_4B`` is byte-identical to
+    ``molmo2_config_from_hf_config(AutoConfig.from_pretrained(MODEL_ID))``, so a
+    from-scratch run needs nothing from the released Molmo2 repo.
 
-    ensure_default_rope_registered()
-    hf_config = AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
-    return molmo2_config_from_hf_config(hf_config)
+    The one architecture field that depends on the weight source is the RoPE base: the
+    released Molmo2-4B uses ``5e6``, but base Qwen3-4B — whose weights ``"scratch"`` loads
+    — was trained with ``1e6`` (mm_olmo's stage-1 ``QWEN3_4B`` also uses ``1e6``). Using
+    the released value with base weights would put them on the wrong rotary base.
+    """
+    rope_theta = SCRATCH_ROPE_THETA if init_from == "scratch" else MOLMO2_ROPE_THETA
+    return MultimodalLMConfig.molmo2_4B(rope_theta=rope_theta)
+
+
+def _resolve_init_from(overrides: List[str]) -> str:
+    """Read ``init_from`` out of the raw overrides.
+
+    The model config depends on it (RoPE base), and it has to be built before
+    :meth:`Config.merge` runs, so the override cannot be read off the merged config.
+    Later occurrences win, matching ``merge``.
+    """
+    init_from = INIT_FROM
+    for override in overrides:
+        key, _, value = override.lstrip("-").partition("=")
+        if key == "init_from" and value:
+            init_from = value
+    if init_from not in INIT_FROM_CHOICES:
+        raise OLMoConfigurationError(f"init_from={init_from!r} is not one of {INIT_FROM_CHOICES}")
+    return init_from
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
@@ -200,7 +223,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     beaker_user = get_beaker_username()
     assert beaker_user is not None
 
-    model_config = _build_model_config()
+    model_config = _build_model_config(_resolve_init_from(overrides))
 
     dataset_config = PixMoCapDatasetConfig(
         dataset_path=DATASET_PATH,
@@ -328,9 +351,23 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     return config
 
 
-def _load_tokenizer():
+def _load_tokenizer(init_from: str):
+    """Load the tokenizer for this init mode.
+
+    A ``"scratch"`` run uses base ``Qwen/Qwen3-4B``'s tokenizer — what mm_olmo's stage 1
+    uses — so nothing is read from the released Molmo2 repo. It is a drop-in for training:
+    identical BPE (``encode`` matches exactly), identical ``eos_token_id`` (151645), and
+    identical output for the only chat-template calls the data pipeline makes (user-turn +
+    generation prompt, see ``data/multimodal/qwen3_layout.py``). Qwen3's template differs
+    only for *assistant* messages, which that pipeline never passes. The image-special token
+    IDs come from ``nn/vision/molmo2_tokens.py`` constants, not from the tokenizer, so their
+    absence from the base vocab does not affect training (they are unmapped when *decoding*,
+    which only matters for debugging).
+    """
     from transformers import AutoTokenizer
 
+    if init_from == "scratch":
+        return AutoTokenizer.from_pretrained(SCRATCH_LM_ID)
     return AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
 
 
@@ -359,40 +396,6 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
     del converted
 
 
-def _convert_siglip_vision_state(hf_sd, n_blocks: int):
-    """Map an HF ``SiglipVisionModel`` state dict onto ``MultimodalLM.vision`` keys.
-
-    Same (numerically parity-verified) mapping as ``_convert_siglip_state_dict`` in
-    ``src/test/nn/vision/parity_test.py``, with a ``vision.`` key prefix and truncation to
-    the target's ``n_blocks`` (Molmo2 keeps SigLIP2 blocks 0..24 of 27 — everything past
-    ``vit_layers`` max ``24`` is dropped, exactly like mm_olmo's truncated ViT).
-    ``post_layernorm`` / ``head.*`` have no counterpart in our encoder and are skipped.
-    """
-    hf_sd = {k.removeprefix("vision_model."): v for k, v in hf_sd.items()}
-    out = {}
-    w = hf_sd["embeddings.patch_embedding.weight"]  # Conv2d (D, 3, p, p) -> C-first flatten
-    out["vision.patch_embedding.weight"] = w.reshape(w.shape[0], -1)
-    out["vision.patch_embedding.bias"] = hf_sd["embeddings.patch_embedding.bias"]
-    out["vision.positional_embedding"] = hf_sd["embeddings.position_embedding.weight"]
-    for i in range(n_blocks):
-        src, dst = f"encoder.layers.{i}", f"vision.blocks.{i}"
-        for hf_name, ours in (("layer_norm1", "attn_norm"), ("layer_norm2", "ffn_norm")):
-            for suf in ("weight", "bias"):
-                out[f"{dst}.{ours}.{suf}"] = hf_sd[f"{src}.{hf_name}.{suf}"]
-        for hf_name, ours in (
-            ("q_proj", "wq"),
-            ("k_proj", "wk"),
-            ("v_proj", "wv"),
-            ("out_proj", "wo"),
-        ):
-            for suf in ("weight", "bias"):
-                out[f"{dst}.attn.{ours}.{suf}"] = hf_sd[f"{src}.self_attn.{hf_name}.{suf}"]
-        for hf_name, ours in (("fc1", "w1"), ("fc2", "w2")):
-            for suf in ("weight", "bias"):
-                out[f"{dst}.ffn.{ours}.{suf}"] = hf_sd[f"{src}.mlp.{hf_name}.{suf}"]
-    return out
-
-
 def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfig) -> None:
     """mm_olmo's true stage-1 init (``reset_with_pretrained_weights``):
 
@@ -407,6 +410,7 @@ def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfi
     from transformers import AutoModelForCausalLM, SiglipVisionModel
 
     from olmo_core.nn.hf import convert_state_from_hf
+    from olmo_core.nn.vision import siglip_state_dict_to_vision_encoder
     from olmo_core.nn.vision.molmo2_loader import retie_word_embeddings
 
     log.info(f"[scratch init] Loading base LM weights from {SCRATCH_LM_ID} ...")
@@ -432,7 +436,11 @@ def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfi
 
     log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")
     hf_vit = SiglipVisionModel.from_pretrained(SCRATCH_VIT_ID, dtype=torch.float32)
-    converted.update(_convert_siglip_vision_state(hf_vit.state_dict(), len(model.vision.blocks)))
+    converted.update(
+        siglip_state_dict_to_vision_encoder(
+            hf_vit.state_dict(), n_blocks=len(model.vision.blocks), prefix="vision."
+        )
+    )
     del hf_vit
 
     model.to_empty(device=get_default_device())
@@ -489,7 +497,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 def train(config: ExperimentConfig):
     seed_all(config.init_seed)
 
-    tokenizer = _load_tokenizer()
+    tokenizer = _load_tokenizer(config.init_from)
 
     model = config.model.build(init_device="meta")
     if config.init_from == "scratch":
