@@ -698,4 +698,11 @@ class TransformerPipelineTrainModule(TrainModule):
             log_once(log, "intra-document masking enabled")
             kwargs["doc_lens"] = batch["doc_lens"]
             kwargs["max_doc_lens"] = batch["max_doc_lens"]
-        return input_ids, labels, kwargs
+
+        # Move the inputs to the device ourselves so FSDP doesn't do it with a blocking copy in its
+        # root pre-forward hook. See the note in ``TransformerTrainModule._prepare_batch``.
+        return (
+            move_to_device(input_ids, self.device),
+            move_to_device(labels, self.device),
+            move_to_device(kwargs, self.device),
+        )
