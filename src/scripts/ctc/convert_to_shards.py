@@ -87,6 +87,28 @@ def check_item_regex(item_regex: str) -> None:
         )
 
 
+def check_cot_mode(cot_mode: str) -> None:
+    """
+    Refuse a CoT mode this repo's evaluator cannot render.
+
+    ``ctc`` dropped the CoT prompt builders during the port: 150 of 150 CTC-suite result rows are
+    no-cot, ``cot_mode`` was never recorded in them, and the eval path renders ``"none"``
+    unconditionally. A shard built with a CoT preamble therefore trains fine, grades fine, and
+    grades the wrong thing. The pre-migration tree had exactly this pair live --
+    ``TASK_CFG["oolong"]["cot"] == "plan"`` against every converter building ``--cot-mode none``.
+
+    :param cot_mode: The requested mode.
+
+    :raises SystemExit: For anything but ``"none"``.
+    """
+    if cot_mode != "none":
+        raise SystemExit(
+            f"--cot-mode {cot_mode!r} is not supported: ctc's eval path renders cot_mode='none' "
+            "unconditionally, so a shard built this way could not be evaluated by this repo. See "
+            "ctc/src/ctc/tasks/README.md for why the CoT builders were dropped."
+        )
+
+
 def check_marker_ids(tok, tokenizer_name: str, marker_set: str, ids_set) -> None:
     """
     Verify the resolved reserved ids against the tokenizer actually being used.
@@ -354,7 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--mem-freq", type=int, default=63, help="(landmark) block = mem_freq + 1")
     p.add_argument("--query-position", default="both", choices=["before", "after", "both"])
-    p.add_argument("--cot-mode", default="plan")
+    p.add_argument(
+        "--cot-mode",
+        default="none",
+        help="prompt CoT mode. Only 'none' is supported -- see :func:`check_cot_mode`. The "
+        "pre-migration default was 'plan', which this repo's evaluator cannot render.",
+    )
     p.add_argument(
         "--chunk-by",
         default="line",
@@ -480,6 +507,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit("--emit-gold-sidecar requires --emit dense (chunk index == gold id - 1)")
     if args.chunk_by == "line":
         check_item_regex(args.item_regex)
+    check_cot_mode(args.cot_mode)
 
     from transformers import AutoTokenizer
 
@@ -577,6 +605,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "emit": args.emit,
         "cot_mode": args.cot_mode,
         "chunk_by": args.chunk_by,
+        # Recorded so a shard's line-wrapping is auditable from metadata alone. Without it, telling
+        # a good oolong shard from one built with the bare '||' regex means scanning raw token ids
+        # for inter-chunk FREE gaps -- which is how a bad shard sat undetected on disk for weeks.
+        "item_regex": args.item_regex if args.chunk_by == "line" else None,
         "doc_markers": not args.no_doc_markers,
         "free_pad_repeat": args.free_pad_repeat,
         "repeat_doc_text": args.repeat_doc_text,

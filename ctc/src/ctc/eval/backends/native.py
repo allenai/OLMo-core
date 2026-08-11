@@ -89,12 +89,13 @@ class NativeBackend:
             raise ValueError(f"attn must be one of {ATTENTION_MODES}, got {attn!r}")
 
         import torch  # noqa: F401 -- imported for its side effect on device init
+        from transformers import AutoTokenizer
+
         from olmo_core.config import DType
         from olmo_core.generate.generation_module.config import GenerationConfig
         from olmo_core.generate.generation_module.transformer import (
             TransformerGenerationModuleConfig,
         )
-        from transformers import AutoTokenizer
 
         self.ckpt = Path(ckpt)
         self.attn = attn

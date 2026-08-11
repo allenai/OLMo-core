@@ -218,3 +218,20 @@ def test_the_attention_mode_is_not_part_of_the_format(tmp_path, examples):
     recovered.require_compatible(spec.fingerprint(chunk_layout="wrap_documents", **common))
     with pytest.raises(FormatMismatchError, match="chunk_layout"):
         recovered.require_compatible(spec.fingerprint(chunk_layout="none", **common))
+
+
+# ── the CoT-mode mismatch ───────────────────────────────────────────────────────────────────────
+
+
+def test_a_nonzero_cot_mode_is_refused():
+    """
+    A shard built with a CoT preamble the evaluator never renders trains fine, grades fine, and
+    grades the wrong thing. The pre-migration tree had exactly this pair live: TASK_CFG["oolong"]
+    declared cot="plan" while every converter built --cot-mode none. Refused, not warned about.
+    """
+    with pytest.raises(SystemExit, match="not supported"):
+        convert.check_cot_mode("plan")
+
+
+def test_the_supported_cot_mode_passes():
+    convert.check_cot_mode("none")

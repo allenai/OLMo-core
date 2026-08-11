@@ -61,4 +61,8 @@ force-exclude = 'src/ctc/format/prompts\.py'
 [tool.isort]
 profile = "black"
 line_length = 100
+# olmo_core is first-party in this monorepo even though ctc depends on it only via the `native`
+# extra. Declared so that formatting a file under ctc/ gives the same result whether isort resolved
+# this config or the repo-root one -- otherwise the import order churns on every invocation.
+known_first_party = ["ctc", "olmo_core"]
 skip_glob = ["src/ctc/format/prompts.py"]
