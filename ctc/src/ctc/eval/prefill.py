@@ -23,6 +23,7 @@ HuggingFace run against a document-chunked checkpoint does need it, which the er
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, List, Mapping, Optional, Protocol, Sequence
 
 __all__ = ["Prefill", "plain_prefill", "structural_prefill", "StructuralPrefill"]
@@ -68,8 +69,22 @@ class StructuralPrefill:
     :param mem_freq: Landmark stride, ``landmark`` only.
     :param doc_start_id: Override the opening marker id.
     :param doc_end_id: Override the closing marker id.
+    :param chunk_by: ``"document"`` or ``"line"`` -- what counts as one chunk. **Must match how the
+        training shards were converted**, and for one task in the suite it is not ``document``:
+        oolong's items are lines inside a single context block, so a document-chunked prompt would
+        wrap the entire context in one marker pair and grade the model against a token stream it
+        never trained on. Taken from the task spec's ``extra`` by
+        :meth:`~ctc.eval.backends.native.NativeBackend.prefill_for`, so this is not something a
+        caller has to know.
+    :param item_regex: In ``line`` mode, a line is an item iff this pattern matches it.
+
+        .. warning::
+           A pattern that matches the empty string matches *every* line, which silently turns the
+           whole context into items and leaks the item boundaries into the prompt. That exact bug (a
+           bare ``'||'``) shipped in oolong shards built before 2026-07-26.
 
     :raises ModuleNotFoundError: If olmo-core is absent, naming the extra to install.
+    :raises ValueError: If ``chunk_by`` is ``"line"`` and ``item_regex`` matches the empty string.
     """
 
     def __init__(
@@ -82,7 +97,16 @@ class StructuralPrefill:
         mem_freq: int = DEFAULT_MEM_FREQ,
         doc_start_id: Optional[int] = None,
         doc_end_id: Optional[int] = None,
+        chunk_by: str = "document",
+        item_regex: str = r"\|\|",
     ):
+        if chunk_by not in ("document", "line"):
+            raise ValueError(f"chunk_by must be 'document' or 'line', got {chunk_by!r}")
+        if chunk_by == "line" and re.compile(item_regex).match(""):
+            raise ValueError(
+                f"item_regex {item_regex!r} matches the empty string, so every line becomes an "
+                "item. This is the pre-2026-07-26 oolong shard bug; pass an anchored pattern."
+            )
         try:
             from olmo_core.data.document_chunk_landmark import (  # noqa: F401
                 DOC_END_ID,
@@ -114,6 +138,8 @@ class StructuralPrefill:
         self.mem_freq = mem_freq
         self.doc_start_id = DOC_START_ID if doc_start_id is None else doc_start_id
         self.doc_end_id = DOC_END_ID if doc_end_id is None else doc_end_id
+        self.chunk_by = chunk_by
+        self.item_regex = item_regex
 
     def __call__(self, prompt: str, example: Optional[Mapping[str, Any]] = None) -> List[int]:
         """
@@ -140,8 +166,8 @@ class StructuralPrefill:
             self.task,
             query_position=self.query_position,
             cot_mode="none",
-            chunk_by="document",
-            item_regex=r"\|\|",
+            chunk_by=self.chunk_by,
+            item_regex=self.item_regex,
             include_answer=False,
             doc_start_id=self.doc_start_id,
             doc_end_id=self.doc_end_id,

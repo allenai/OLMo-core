@@ -168,11 +168,20 @@ class NativeBackend:
         makes a cross-backend comparison a comparison of *decoding* rather than of two different
         token streams.
 
+        The chunk layout comes from the task's own spec rather than from a flag. It has to match how
+        the training shards were converted, and for one task in the suite it is not the default:
+        oolong's items are lines inside a single context block. A caller who had to know that could
+        get it wrong, and the failure is silent -- the model is simply graded against a token stream
+        it never trained on.
+
         :param task: Task name.
 
         :returns: The builder.
         """
         if self._prefill is None or self._prefill_task != task:
+            from ...format import registry
+
+            extra = registry.get(task).extra if task in registry.names() else {}
             self._prefill = structural_prefill(
                 self.tok,
                 task=task,
@@ -181,6 +190,8 @@ class NativeBackend:
                 mem_freq=self.mem_freq,
                 doc_start_id=self.doc_start_id,
                 doc_end_id=self.doc_end_id,
+                chunk_by=extra.get("chunk_by", "document"),
+                item_regex=extra.get("item_regex", r"\|\|"),
             )
             self._prefill_task = task
         return self._prefill

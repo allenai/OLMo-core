@@ -1,49 +1,77 @@
 """
-``ctc-eval`` -- grade a checkpoint on one or more tasks.
+``ctc-eval`` -- grade a checkpoint on the CTC suite.
 
-One command for every backend. ``--backend`` selects how text gets generated; nothing else about
-the run changes, because the prompt, the parser and the scorer come from :mod:`ctc.format` and are
-shared. A score that moves when only ``--backend`` moves is a bug in a backend, and the parity test
-in ``ctc/tests/eval`` exists to catch exactly that.
+One command, one checkpoint, any number of tasks and rungs::
+
+    ctc-eval --ckpt /weka/.../step1100 --tasks main --attn chunked
+
+``--tasks main`` is the five in-distribution ladders; ``ood`` is the four held-out ones; ``all`` is
+both. Which file grades which task at which rung is not something a caller supplies -- it lives in
+:mod:`ctc.eval.bundles`, because every place that mapping was retyped is a place it drifted.
+
+``--backend`` selects how text gets generated and nothing else about the run changes: the prompt,
+the parser and the scorer come from :mod:`ctc.format` and are shared. A score that moves when only
+``--backend`` moves is a backend bug.
+
+Defaults are chosen so the failure modes that have actually cost this project GPU time are errors
+rather than plausible numbers:
+
+* an over-long prompt **stops the run** instead of being skipped and scored 0.0;
+* a checkpoint whose training format does not match the eval format is **reported**, not assumed
+  compatible;
+* every result carries ``eval_size``, a standard error, and its ``parse_rate``.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from typing import List, Optional
+import time
+import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from ..format import registry
-from ..format import rungs as rung_util
+from . import bundles
 from .backends import base as backends
+from .runner import EvalConfig, run_task
+
+__all__ = ["build_parser", "main"]
 
 
 def build_parser() -> argparse.ArgumentParser:
     """:returns: The ``ctc-eval`` argument parser."""
     ap = argparse.ArgumentParser(
         prog="ctc-eval",
-        description="Grade a checkpoint on corpus-reasoning tasks.",
+        description="Grade a checkpoint on the CTC suite.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
             "  ctc-eval --list-tasks\n"
-            "  ctc-eval --ckpt /data/ckpts/q35-4b/step1100 --task contradiction --rungs 2k\n"
-            "  ctc-eval --ckpt … --suite ctc_suite --rungs all --backend vllm --attn chunked\n"
+            "  ctc-eval --ckpt /weka/.../step1100 --tasks main\n"
+            "  ctc-eval --ckpt /weka/.../step1100 --tasks main --attn chunked\n"
+            "  ctc-eval --ckpt /weka/.../step1100 --tasks contradiction --rungs 2k,8k\n"
         ),
     )
 
     what = ap.add_argument_group("what to run")
-    what.add_argument("--ckpt", help="checkpoint directory to grade")
-    what.add_argument("--task", help="single task name (see --list-tasks)")
-    what.add_argument("--suite", help="named suite from configs/suites/<name>.yaml")
+    what.add_argument("--ckpt", help="checkpoint directory (the one holding model_and_optim)")
+    what.add_argument(
+        "--tasks",
+        default="main",
+        help="'main' (5 in-distribution), 'ood' (4 held-out), 'all', or a comma list of task names",
+    )
     what.add_argument(
         "--rungs",
         default="all",
-        help=(
-            "'all' (default) for every rung the task defines, or a comma list of labels like "
-            "'2k,8k,32k'. There is no fixed set: each task declares its own ladder in "
-            "configs/tasks/<task>.yaml, ranging from nq (2k-8k) to the xlong ladders (up to 512k)."
-        ),
+        help="'all' (default) or a comma list like '2k,8k'. Ladders differ per task, so an "
+        "explicit list is checked against the task rather than against a fixed set.",
+    )
+    what.add_argument(
+        "--bundle",
+        default=None,
+        help=f"eval bundle root (default: $CTC_EVAL_BUNDLE, else {bundles.DEFAULT_ROOT})",
     )
 
     how = ap.add_argument_group("how to run it")
@@ -51,63 +79,84 @@ def build_parser() -> argparse.ArgumentParser:
         "--backend",
         default=None,
         choices=sorted(backends.BACKENDS),
-        help="generation backend (default: the fastest one installed; see --list-backends)",
+        help="generation backend (default: the fastest installed; see --list-backends)",
     )
     how.add_argument(
         "--attn",
         default="full",
         choices=("full", "chunked", "landmark"),
-        help=(
-            "attention mask to grade under (default: full). One vocabulary across the whole "
-            "pipeline -- the old driver inverted these names against the evaluator's, which is a "
-            "trap this CLI deliberately does not reproduce."
-        ),
+        help="attention mask to grade under (default: full). Must match how the checkpoint was "
+        "trained; --attn full forces plain causal even on a checkpoint carrying the mask.",
+    )
+    how.add_argument(
+        "--tokenizer", default="Qwen/Qwen3-4B", help="tokenizer id or path (default Qwen/Qwen3-4B)"
+    )
+    how.add_argument(
+        "--max-length",
+        type=int,
+        default=40960,
+        help="total sequence budget, prompt + generation (default 40960). Rung labels bound corpus "
+        "size, not prompt length, so this is sized from the model and not from --rungs.",
+    )
+    how.add_argument(
+        "--query-position",
+        default="both",
+        choices=("both", "before", "after"),
+        help="where the question is rendered (default both). MUST match training: these "
+        "checkpoints trained with 'both', and 'after' collapses them (nq 0.860 -> 0.074).",
+    )
+    how.add_argument("--mem-freq", type=int, default=63, help="(landmark) block = mem-freq + 1")
+    how.add_argument("--limit", type=int, default=None, help="grade only the first N per rung")
+    how.add_argument(
+        "--allow-truncated",
+        action="store_true",
+        help="continue when prompts exceed --max-length, counting them. Off by default: a skipped "
+        "prompt scores a clean 0.0, which is indistinguishable from a wrong answer.",
     )
     how.add_argument(
         "--ignore-format-fingerprint",
         action="store_true",
-        help=(
-            "grade even when the checkpoint's training format does not match, or was never "
-            "recorded. Off by default: a format mismatch produces plausible output and a "
-            "plausible score, so the failure is invisible without this check. Needed for "
-            "checkpoints trained before fingerprinting existed -- results then record that "
-            "compatibility was unverified."
-        ),
+        help="grade even when the checkpoint's training format does not match or was never "
+        "recorded. Results then record that compatibility was UNVERIFIED.",
     )
-    how.add_argument("--batch-size", type=int, default=1, help="prompts per forward (default: 1)")
-    how.add_argument("--max-new-tokens", type=int, default=None, help="override the task default")
-    how.add_argument("--limit", type=int, default=None, help="grade only the first N examples")
+    how.add_argument(
+        "--keep-going",
+        action="store_true",
+        help="on a failed rung, record the error and continue to the next one instead of stopping. "
+        "Useful for an overnight sweep; the summary lists what failed.",
+    )
 
     out = ap.add_argument_group("output")
-    out.add_argument("--out", default=None, help="results directory (default: ./results)")
+    out.add_argument("--out", default="results", help="results directory (default ./results)")
+    out.add_argument(
+        "--tag", default="", help="extra label in the result filenames, e.g. the run name"
+    )
     out.add_argument(
         "--no-dump-generations",
         action="store_true",
-        help=(
-            "skip writing raw generations. Not recommended: every grading bug we have found was "
-            "found by reading generations for a task that scored near zero."
-        ),
+        help="skip writing raw generations. Not recommended: every grading bug found in this "
+        "project was found by reading generations for a task that scored near zero.",
     )
 
     info = ap.add_argument_group("information")
-    info.add_argument("--list-tasks", action="store_true", help="list registered tasks and exit")
+    info.add_argument("--list-tasks", action="store_true", help="list ladders and rungs, then exit")
     info.add_argument(
         "--list-backends", action="store_true", help="list backends and availability, then exit"
+    )
+    info.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve every rung to a file and report what would run, without loading the model. "
+        "Checks the bundle paths exist -- run it once before a long sweep.",
     )
     return ap
 
 
 def _list_tasks() -> int:
-    names = registry.names()
-    if not names:
-        print("No tasks registered yet.")
-        print("Tasks land in ctc/src/ctc/eval/tasks/ during the port; see records/ for the plan.")
-        return 0
-    print(f"{len(names)} registered task(s):\n")
-    for name in names:
-        spec = registry.get(name)
-        print(f"  {name:<18} {spec.description}")
-        print(f"  {'':<18} gold ids are {spec.gold_index_base}-based")
+    print(f"eval bundle: {bundles.bundle_root()}\n")
+    for line in bundles.describe():
+        print(line)
+    print("\ngroups: " + ", ".join(f"{k} ({len(v)} tasks)" for k, v in bundles.GROUPS.items()))
     return 0
 
 
@@ -119,46 +168,54 @@ def _list_backends() -> int:
     print(
         f"\ndefault: {installed[0]!r}"
         if installed
-        else "\nNo backend installed. Add one, e.g. pip install 'ctc[vllm]'."
+        else "\nNo backend installed. Add one, e.g. pip install 'ctc[native]'."
     )
     return 0
 
 
-def _resolve_rungs(spec: str, defined: Optional[List[str]] = None) -> List[str]:
+def plan(args: argparse.Namespace) -> List[Dict[str, Any]]:
     """
-    Expand the ``--rungs`` value.
+    Resolve the arguments into a list of rungs to grade.
 
-    Rungs are not a fixed global set -- each task declares its own ladder. So ``"all"`` can only be
-    answered once we know the task, and an explicit list is validated against what that task
-    actually has rather than against a hardcoded tuple.
+    Done up front, before the model is loaded, so a typo in ``--tasks`` or a missing bundle file
+    fails in seconds rather than after a multi-minute checkpoint load.
 
-    :param spec: ``"all"`` or a comma list of rung labels.
-    :param defined: Rungs this task/suite declares. ``None`` while task configs are not yet loaded,
-        in which case explicit labels are accepted on syntax alone and ``"all"`` cannot be resolved.
+    :param args: Parsed arguments.
 
-    :returns: Canonical rung labels, ascending by context length.
+    :returns: One entry per rung, each with its task, label and file.
 
-    :raises SystemExit: On a malformed label, or one the task does not define.
+    :raises SystemExit: On an unknown task or rung.
     """
-    if spec == "all":
-        if defined is None:
-            return []
-        return rung_util.sort_rungs(defined)
-
     try:
-        chosen = rung_util.sort_rungs(r for r in spec.split(",") if r.strip())
-    except ValueError as e:
+        names = bundles.names(args.tasks)
+    except KeyError as e:
         raise SystemExit(str(e)) from None
 
-    if defined is not None:
-        have = set(rung_util.sort_rungs(defined))
-        missing = [r for r in chosen if r not in have]
-        if missing:
-            raise SystemExit(
-                f"rung(s) {', '.join(missing)} are not defined for this task; "
-                f"it has {', '.join(rung_util.sort_rungs(defined))}"
-            )
-    return chosen
+    out: List[Dict[str, Any]] = []
+    for name in names:
+        entry = bundles.get(name)
+        try:
+            resolved = bundles.resolve(name, args.rungs, root=args.bundle)
+        except KeyError as e:
+            # A task legitimately may not have every requested rung -- rerank has no 32k. Skip it
+            # with a note rather than failing the whole sweep, but say so: a silently missing row
+            # reads as "scored nothing", not as "never ran".
+            if args.rungs != "all":
+                print(f"[ctc-eval] skipping {name}: {e}", file=sys.stderr)
+                continue
+            raise SystemExit(str(e)) from None
+        for label, path in resolved:
+            out.append({"task": name, "spec": entry.spec, "rung": label, "path": path})
+    if not out:
+        raise SystemExit("nothing to run: no task matched --tasks/--rungs")
+    return out
+
+
+def _result_path(out_dir: Path, item: Dict[str, Any], attn: str, tag: str) -> Path:
+    stem = f"{item['task']}_{item['rung']}_{attn}"
+    if tag:
+        stem = f"{stem}_{tag}"
+    return out_dir / f"{stem}.json"
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -167,7 +224,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     :param argv: Argument list; defaults to ``sys.argv[1:]``.
 
-    :returns: Process exit status.
+    :returns: Process exit status -- non-zero if any rung failed.
     """
     ap = build_parser()
     args = ap.parse_args(argv)
@@ -177,14 +234,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.list_backends:
         return _list_backends()
 
-    if not args.ckpt:
-        ap.error("--ckpt is required (or use --list-tasks / --list-backends)")
-    if bool(args.task) == bool(args.suite):
-        ap.error("pass exactly one of --task or --suite")
+    import ctc.tasks
 
-    # `defined=None` until configs/tasks/*.yaml loading lands with the runner (port task #3); at
-    # that point the task's own ladder is passed in and both "all" and validation become real.
-    rungs = _resolve_rungs(args.rungs, defined=None)
+    ctc.tasks.load_all()
+
+    todo = plan(args)
+    root = bundles.bundle_root(args.bundle)
+    out_dir = Path(args.out)
+
+    print(f"[ctc-eval] bundle {root}")
+    print(
+        f"[ctc-eval] {len(todo)} rung(s) over {len({i['task'] for i in todo})} task(s), "
+        f"attn={args.attn}, query_position={args.query_position}"
+    )
+
+    if args.dry_run:
+        missing = 0
+        for item in todo:
+            exists = item["path"].exists()
+            missing += not exists
+            print(
+                f"  {'ok     ' if exists else 'MISSING'} {item['task']:<16} "
+                f"{item['rung']:<5} {item['path']}"
+            )
+        if missing:
+            print(
+                f"\n{missing}/{len(todo)} rung file(s) missing. On Beaker these live on the weka "
+                "mount, so a local dry run reporting MISSING is expected."
+            )
+        return 1 if missing else 0
+
+    if not args.ckpt:
+        ap.error("--ckpt is required (or use --list-tasks / --list-backends / --dry-run)")
 
     backend_name = args.backend
     if backend_name is None:
@@ -192,29 +273,110 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not installed:
             raise SystemExit(
                 "no eval backend is installed.\n"
+                "  pip install 'ctc[native]'  # grade an olmo-core checkpoint directly\n"
                 "  pip install 'ctc[vllm]'    # fastest\n"
-                "  pip install 'ctc[hf]'      # widest coverage\n"
-                "  pip install 'ctc[native]'  # grade an olmo-core checkpoint directly"
+                "  pip install 'ctc[hf]'      # widest coverage"
             )
         backend_name = installed[0]
 
-    # The runner lands in task #3 of the port. Until then, report the resolved plan rather than
-    # pretending to grade -- a CLI that silently no-ops is worse than one that says what is missing.
-    print(f"plan: ckpt={args.ckpt}")
-    print(f"      {'suite' if args.suite else 'task'}={args.suite or args.task}")
-    print(
-        f"      rungs={','.join(rungs) if rungs else 'all (resolved from the task config)'}"
-        f"  backend={backend_name}  attn={args.attn}"
+    print(f"[ctc-eval] loading {args.ckpt} on the {backend_name} backend ...", flush=True)
+    started = time.time()
+    backend = backends.load(
+        backend_name,
+        ckpt=args.ckpt,
+        tokenizer=args.tokenizer,
+        attn=args.attn,
+        max_length=args.max_length,
+        query_position=args.query_position,
+        mem_freq=args.mem_freq,
     )
-    print(
-        "      format check="
-        + ("DISABLED (--ignore-format-fingerprint)" if args.ignore_format_fingerprint else "on")
-    )
-    if not registry.names():
-        print("\nNo tasks are registered yet, so there is nothing to grade.")
-        print("Next step in the port: ctc/src/ctc/format/ (task #2), then the runner (task #3).")
-        return 1
-    raise SystemExit("runner not implemented yet (port task #3)")
+    print(f"[ctc-eval] loaded in {time.time() - started:.0f}s", flush=True)
+
+    summaries: List[str] = []
+    failures: List[str] = []
+
+    for i, item in enumerate(todo, 1):
+        spec = registry.get(item["spec"])
+        label = f"{item['task']}@{item['rung']}"
+        print(f"\n[ctc-eval] ({i}/{len(todo)}) {label}  {item['path']}", flush=True)
+        rung_started = time.time()
+
+        cfg = EvalConfig(
+            ckpt=Path(args.ckpt),
+            task=spec,
+            rung=item["rung"],
+            data_path=item["path"],
+            attn=args.attn,
+            backend=backend_name,
+            max_length=args.max_length,
+            query_position=args.query_position,
+            limit=args.limit,
+            allow_truncated=args.allow_truncated,
+            ignore_fingerprint=args.ignore_format_fingerprint,
+            dump_generations=not args.no_dump_generations,
+        )
+        try:
+            outcome = run_task(
+                cfg,
+                lambda prompts, examples: backend.generate(
+                    prompts,
+                    examples,
+                    stop=_stop_for(spec),
+                    # The ladder name and the grading spec differ for the OOD tasks --
+                    # contra_fever is graded by the contradiction spec -- and the prefill
+                    # dispatches on the SPEC, which is what the model was trained on.
+                    task=spec.name,
+                ),
+                count_tokens=backend.count_tokens,
+            )
+        except Exception as e:  # noqa: BLE001 - a failed rung must not lose the finished ones
+            failures.append(f"{label}: {type(e).__name__}: {e}")
+            print(f"[ctc-eval] FAILED {label}: {type(e).__name__}: {e}", file=sys.stderr)
+            if not args.keep_going:
+                traceback.print_exc()
+                raise SystemExit(
+                    f"{label} failed. Fix it, or pass --keep-going to record the failure and "
+                    "continue the sweep."
+                ) from None
+            continue
+
+        path = _result_path(out_dir, item, args.attn, args.tag)
+        # The ladder name, which for the OOD tasks is not the spec name. Written so a results table
+        # can tell contra_fever from contradiction -- they are graded identically and would
+        # otherwise collide in the same row.
+        payload = outcome.to_dict()
+        payload["ladder"] = item["task"]
+        payload["spec"] = spec.name
+        payload["seconds"] = round(time.time() - rung_started, 1)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+        line = outcome.summary().replace(spec.name, item["task"], 1)
+        summaries.append(line)
+        print(f"[ctc-eval] {line}  ({payload['seconds']:.0f}s)  -> {path}", flush=True)
+
+    print("\n" + "=" * 78)
+    for line in summaries:
+        print("  " + line)
+    if failures:
+        print(f"\n  {len(failures)} rung(s) FAILED:")
+        for line in failures:
+            print("    " + line)
+    print("=" * 78)
+    print(f"results in {out_dir.resolve()}")
+    return 1 if failures else 0
+
+
+def _stop_for(spec: Any) -> Any:
+    """
+    :param spec: A task spec.
+
+    :returns: Its stop condition, from the shared preset table -- never rebuilt per backend, which
+        is what keeps the three backends cutting generations at the same point.
+    """
+    from .stopping import STOP_PRESETS
+
+    return STOP_PRESETS[spec.stop]
 
 
 if __name__ == "__main__":

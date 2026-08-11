@@ -163,4 +163,13 @@ SPEC = TaskSpec(
     stop="oolong",
     answer_is_set=False,
     sources=("oolong",),
+    # The one task in the suite whose chunks are not documents. An oolong example is a single
+    # context block of labelled lines, so document chunking would wrap the whole context in one
+    # marker pair -- the training converter chunks by line, and eval must match or the model is
+    # graded against a token stream it never saw.
+    #
+    # `item_regex` is the ESCAPED pattern, matching a literal `||` separator. A bare `'||'` is a
+    # regex alternation of two empty strings, so it matches every line -- that is the leak that
+    # wrapped oolong preambles as chunks in shards built before 2026-07-26.
+    extra={"chunk_by": "line", "item_regex": r"\|\|"},
 )
