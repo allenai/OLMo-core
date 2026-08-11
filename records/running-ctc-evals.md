@@ -7,7 +7,9 @@ data, or the checkpoint locally — everything runs on the node.
 ## The command
 
 ```bash
-python src/scripts/ctc/eval_beaker.py MY_RUN_NAME
+python src/scripts/ctc/eval_beaker.py MY_RUN_NAME                          # Qwen3 checkpoint
+python src/scripts/ctc/eval_beaker.py MY_RUN_NAME \
+    --tokenizer Qwen/Qwen3.5-0.8B-Base                                     # Qwen3.5 checkpoint
 ```
 
 `MY_RUN_NAME` is a directory under `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/`. The
@@ -65,6 +67,20 @@ Three fields are worth reading before you trust a number:
 - **`warnings`** — where a format-fingerprint mismatch or a truncated prompt gets recorded.
 
 ## Things that will bite you
+
+**`--tokenizer` must match the checkpoint's family, and the default is Qwen3.** The two families
+have different vocabularies — Qwen3 is 151,936 and Qwen3.5 is 248,320 — so grading a Qwen3.5
+checkpoint with the default gets every token id wrong, including EOS, and the run *completes* and
+reports f1 = 0.000. It reads as a dead model. This is now a hard error naming the right id, but the
+flag still has to be set:
+
+```bash
+--tokenizer Qwen/Qwen3-4B             # Qwen3   (vocab 151,936) — the default
+--tokenizer Qwen/Qwen3.5-0.8B-Base    # Qwen3.5 (vocab 248,320) — one tokenizer, all sizes
+```
+
+A Qwen3.5 checkpoint is easy to spot in the load log: `vocab_size=248320` and a
+`block_pattern=['gdn','gdn','gdn','attn']`.
 
 **`--attn` must match how the checkpoint was trained.** `full` forces plain causal attention even on
 a checkpoint whose config carries the document-chunked mask, and `chunked` enables it. Grading an
