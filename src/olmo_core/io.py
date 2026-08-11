@@ -20,9 +20,10 @@ except ImportError:
 import requests
 import torch
 from cached_path import cached_path
-from cached_path.schemes import S3Client, SchemeClient, add_scheme_client
+from cached_path.schemes import HttpClient, S3Client, SchemeClient, add_scheme_client
 from requests.adapters import HTTPAdapter
 from rich.progress import track
+from urllib3.util.retry import Retry as Urllib3Retry
 
 from .aliases import PathOrStr
 from .exceptions import (
@@ -609,18 +610,55 @@ def retriable(
 ######################
 
 
+HTTP_RETRY_STATUS_CODES = (429, 502, 503, 504)
+"""
+HTTP status codes that are worth retrying: rate limiting (429) and transient server errors.
+"""
+
+HTTP_MAX_RETRIES = 5
+"""
+The maximum number of adapter-level retries for sessions built with a retry policy.
+"""
+
+
+def _build_http_session(
+    headers: Optional[dict] = None,
+    retry_status_codes: Optional[Tuple[int, ...]] = None,
+) -> requests.Session:
+    """
+    Build an HTTP session with connection pooling, which prevents resource exhaustion when making
+    many HTTP requests.
+
+    :param headers: Default headers to send with every request from the session.
+    :param retry_status_codes: If set, responses with these status codes are retried with
+        exponential backoff, honoring the ``Retry-After`` header. Leave unset when the caller
+        handles retries itself (see :func:`retriable`).
+    """
+    session = requests.Session()
+    max_retries: Union[int, Urllib3Retry] = 0
+    if retry_status_codes:
+        max_retries = Urllib3Retry(
+            total=HTTP_MAX_RETRIES,
+            backoff_factor=1,
+            status_forcelist=retry_status_codes,
+            respect_retry_after_header=True,
+        )
+    adapter = HTTPAdapter(pool_maxsize=50, max_retries=max_retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    if headers:
+        session.headers.update(headers)
+    return session
+
+
 @cache
 def _get_http_session() -> requests.Session:
     """
-    Get a shared HTTP session with connection pooling.
-    This prevents resource exhaustion when making many HTTP requests.
+    Get the shared HTTP session used by the ``_http_*`` helpers below. Those helpers retry through
+    the :func:`retriable` decorator (see :func:`_http_retry_condition`), so the session itself
+    doesn't set a retry policy.
     """
-    session = requests.Session()
-    # Configure connection pooling to reuse connections
-    adapter = HTTPAdapter(pool_maxsize=50)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    return session
+    return _build_http_session()
 
 
 # Hosts that receive a bearer token on outgoing HTTP requests, mapped to the env var that holds the
@@ -646,18 +684,21 @@ def _http_auth_headers(url: str) -> dict:
 
 
 def _http_retry_condition(exc: Exception) -> bool:
-    # Retry on transient rate-limit (429) and bad-gateway (502) responses.
     return (
         isinstance(exc, requests.exceptions.HTTPError)
         and exc.response is not None
-        and exc.response.status_code in (429, 502)
+        and exc.response.status_code in HTTP_RETRY_STATUS_CODES
     )
 
 
-@retriable()
+@retriable(retry_condition=_http_retry_condition)
 def _http_file_size(url: str) -> int:
     session = _get_http_session()
     response = session.head(url, allow_redirects=True, headers=_http_auth_headers(url))
+    if response.status_code == 404:
+        raise FileNotFoundError(url)
+
+    response.raise_for_status()
     content_length = response.headers.get("content-length")
     if content_length is None:
         raise OLMoNetworkError(
@@ -1106,9 +1147,9 @@ def _s3_list_directory(
                 )
 
 
-#############################################
-## Custom cached path client for 'weka://' ##
-#############################################
+################################
+## Custom cached-path clients ##
+################################
 
 
 def add_cached_path_clients():
@@ -1116,6 +1157,49 @@ def add_cached_path_clients():
     Add additional cached-path clients.
     """
     add_scheme_client(_WekaClient)
+    add_scheme_client(_RetryableHttpClient)
+
+
+class _RetryableHttpClient(HttpClient):
+    """
+    A cached-path client for ``http(s)://`` URLs that retries every status code in
+    :data:`HTTP_RETRY_STATUS_CODES`, whereas cached-path's built-in client only retries server
+    errors. Retrying rate-limited (429) responses matters when many ranks download checkpoint
+    files from the same host concurrently.
+
+    .. note::
+        This subclasses cached-path's ``HttpClient`` because ``cached_path()`` only forwards custom
+        headers, such as the auth headers from :func:`_http_auth_headers`, to clients derived from
+        it.
+    """
+
+    scheme = ("http", "https")
+
+    recoverable_errors = HttpClient.recoverable_errors + (requests.exceptions.RetryError,)
+    """
+    Treat exhausted retries like the other recoverable errors, so ``cached_path()`` can fall back to
+    a previously cached version of the resource instead of failing.
+    """
+
+    def _session(self) -> requests.Session:
+        return _build_http_session(self.headers, retry_status_codes=HTTP_RETRY_STATUS_CODES)
+
+    @property
+    def head_response(self):
+        if self._head_response is None:
+            with self._session() as session:
+                response = session.head(self.resource, allow_redirects=True)
+            self.validate_response(response)
+            self._head_response = response
+        return self._head_response
+
+    def get_resource(self, temp_file: io.BufferedWriter) -> None:
+        with self._session() as session:
+            response = session.get(self.resource, stream=True)
+            self.validate_response(response)
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:  # filter out keep-alive chunks
+                    temp_file.write(chunk)
 
 
 class _WekaClient(SchemeClient):
