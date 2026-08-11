@@ -131,11 +131,24 @@ def main():
         # reads garbage positions and the rung looks like a long-context collapse that is really a
         # config error. Warn loudly; the caller is responsible for pointing --model-path at the
         # extended copy (debug/ctx_ceiling_4b/make_yarn_copy.py).
-        if _need > 262144:
-            print(f"[xlong] ⚠ selected rungs reach {_need} tokens, PAST the Qwen3.5 native "
-                  f"262144 position limit -- this measures RoPE-EXTENDED extrapolation. Point "
-                  f"--model-path at a YaRN serving copy and label every >256k number as such.",
-                  flush=True)
+        #
+        # ⚠ Test the REALIZED cap (_budget), not the rung LABEL (_need). The 256k rung labels
+        # exactly 262,144 -- so a `_need > 262144` test is False -- while its built prompts land
+        # 0.4-3.3% ABOVE the label (263,192-270,794 tokens, per the measurements above), i.e. every
+        # one of them past the native ceiling. That off-by-one-boundary silence is what let the
+        # 2026-08-04 "native, no YaRN" 256k sweep run and be recorded as an in-ceiling measurement;
+        # both arms scored 5-6x below the 128k AND 512k rungs on either side of it. _budget crosses
+        # 262,144 first at the 256k rung (68,608 / 146,227 / 290,406 for 64k / 128k / 256k), so it
+        # fires exactly when a prompt can actually exceed the ceiling.
+        if _budget > 262144:
+            print(f"[xlong] ⚠ selected rungs are capped at {_budget} tokens (label {_need}), PAST "
+                  f"the Qwen3.5 native 262144 position limit -- this measures RoPE-EXTENDED "
+                  f"extrapolation. Point --model-path at a YaRN serving copy and label every "
+                  f">=256k number as such.", flush=True)
+            if _need <= 262144:
+                print(f"[xlong] ⚠ note: the {_need}-token label is itself AT/below the ceiling -- "
+                      f"it is the ~0.4-3.3% over-label overage that crosses it. A native-RoPE run "
+                      f"at this rung is NOT an in-ceiling measurement.", flush=True)
     if args.root:
         os.chdir(args.root)
 

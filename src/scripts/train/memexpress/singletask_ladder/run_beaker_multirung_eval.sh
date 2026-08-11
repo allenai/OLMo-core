@@ -216,8 +216,10 @@ if [ "$LADDER_XLONG" = "1" ]; then
       # 263168 (= label + 1024) truncated the prompt TAIL -- where the question lives -- scoring
       # f1 0.000 at parse_rate 1.0 for a healthy model. eval_lc_native.py re-raises max_length by
       # the same 10% rule, so it corrects an undersized value here rather than trusting it.
-      # ⚠ 512k/1M/2M exceed Qwen3.5's native 262,144 positions and need a YaRN serving copy
-      # (debug/ctx_ceiling_4b/make_yarn_copy.py).
+      # ⚠ 256k/512k/1M/2M all exceed Qwen3.5's native 262,144 positions and need a YaRN serving copy
+      # (debug/ctx_ceiling_4b/make_yarn_copy.py). 256k is in that list because its prompts land
+      # 0.4-3.3% OVER the 262,144 label -- the label sits exactly ON the ceiling, so the overage
+      # crosses it. eval_lc_native.py now warns on the realized cap rather than the label.
       #
       # They also need PREFILL_CHUNK_SIZE. A one-shot prefill materializes every intermediate at the
       # full prompt length, and one layer's SwiGLU (~59KiB/token) is nearly twice the KV cache it
@@ -226,11 +228,17 @@ if [ "$LADDER_XLONG" = "1" ]; then
       # died outright. Chunking bounds activations by the chunk instead of the prompt, putting 512k
       # at ~30 GiB and 1M at ~48 GiB, and is mathematically identical (see the parity test
       # test_generation_module_chunked_prefill_matches_one_shot).
+      #
+      # 256k was the ONE xlong rung left unchunked, which made it the only rung differing from its
+      # neighbours in the prefill path as well as in length. In the 2026-08-04 sweep it scored 5-6x
+      # BELOW both the 128k and the 512k rungs in both arms (nq dense .830 -> .146 -> .760; landmark
+      # .800 -> .000 -> .792) -- non-monotonic in a way no capability story explains. Chunk it too,
+      # so the rung is comparable to the ones on either side of it.
       case ",$XLONG_RUNGS," in
         *,2M,*)   MAX_LENGTH=2308915; PREFILL_CHUNK_SIZE=32768 ;;
         *,1M,*)   MAX_LENGTH=1155482; PREFILL_CHUNK_SIZE=32768 ;;
         *,512k,*) MAX_LENGTH=578765;  PREFILL_CHUNK_SIZE=32768 ;;
-        *,256k,*) MAX_LENGTH=290406 ;;
+        *,256k,*) MAX_LENGTH=290406;  PREFILL_CHUNK_SIZE=32768 ;;
         *,128k,*) MAX_LENGTH=146227 ;;
         # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) run
         # skipped_too_long=0. NOTE the empirical single-80GB-H100 ceiling for the docchunk
