@@ -271,3 +271,58 @@ def test_a_prefix_shorter_than_the_threshold_takes_the_plain_path(torch_stub):
     assert pc.longest_common_token_prefix(prefills) == 3
     assert stats["prefix_len"] == 0, "took the caching path for a 3-token prefix"
     assert seen == [list(p) for p in prefills]
+
+
+# ── wiring into the native backend ──────────────────────────────────────────────────────────────
+
+
+def _wired_backend(share_prefix=True):
+    """A NativeBackend with the wiring but no model: __init__ needs torch and a checkpoint."""
+    from ctc.eval.backends.native import NativeBackend
+
+    backend = NativeBackend.__new__(NativeBackend)
+    backend.share_prefix = share_prefix
+    backend.gm = StubGM()
+    backend.device = None
+    backend.max_length = 99
+    return backend
+
+
+def test_the_backend_routes_groups_through_the_cache_and_restores_order(torch_stub, monkeypatch):
+    """
+    Results must come back in submission order, not group order. Returning them grouped would
+    silently pair every generation with the wrong example's gold -- a scoring bug with no
+    traceback, on a path whose whole justification is that it changes nothing.
+    """
+    backend = _wired_backend()
+    monkeypatch.setattr(
+        type(backend), "_decode_from", lambda self, torch, logits, stop: f"gen{len(logits)}"
+    )
+
+    corpus_a, corpus_b = list(range(80)), list(range(200, 300))
+    prompts = [corpus_a + [1], corpus_b + [2], corpus_a + [3], corpus_b + [4]]
+    examples = [{"corpus_id": c} for c in ("a", "b", "a", "b")]
+
+    out = backend._generate_with_shared_prefixes(torch_stub, prompts, examples, stop=None)
+    assert out == [f"gen{len(p)}" for p in prompts]
+
+
+def test_the_backend_still_works_when_nothing_shares_a_corpus(torch_stub, monkeypatch):
+    """An ordinary independent eval file must run through this path unchanged."""
+    backend = _wired_backend()
+    monkeypatch.setattr(
+        type(backend), "_decode_from", lambda self, torch, logits, stop: f"gen{len(logits)}"
+    )
+    prompts = [list(range(50)), list(range(100, 160))]
+
+    out = backend._generate_with_shared_prefixes(torch_stub, prompts, None, stop=None)
+    assert out == [f"gen{len(p)}" for p in prompts]
+
+
+def test_sharing_is_off_by_default():
+    """It is wired but unvalidated end to end, so it must not be reachable by accident."""
+    import inspect
+
+    from ctc.eval.backends.native import NativeBackend
+
+    assert inspect.signature(NativeBackend.__init__).parameters["share_prefix"].default is False

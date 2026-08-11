@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, List, Mapping, Optional, Sequence
 
 from ..prefill import Prefill, build_prefills, plain_prefill, structural_prefill
+from ..prefix_cache import generate_group_with_shared_prefix, group_by_corpus, measure_reuse
 from ..stopping import StopCondition
 from ..stopping import apply as apply_stop
 from ..stopping import should_stop, strip_think
@@ -60,6 +61,11 @@ class NativeBackend:
     :param dtype: Model dtype.
     :param pad_token_id: Generation pad id. Qwen3 tokenizers set ``pad == eos``, which breaks
         left-padding, so it is set explicitly rather than read from the tokenizer.
+    :param share_prefix: Prefill each ``corpus_id`` group's shared token prefix once and reuse its
+        KV (:mod:`ctc.eval.prefix_cache`). **Off by default and not yet validated end to end here**
+        -- wired so the path exists, but no scored run has gone through it in this repo. It is also
+        inert for the current checkpoints: they train with ``query_position="both"``, which puts the
+        per-query question before the corpus, so there is almost no shared token prefix to reuse.
     """
 
     def __init__(
@@ -77,6 +83,7 @@ class NativeBackend:
         mem_freq: int = 63,
         doc_start_id: Optional[int] = None,
         doc_end_id: Optional[int] = None,
+        share_prefix: bool = False,
     ):
         if attn not in ATTENTION_MODES:
             raise ValueError(f"attn must be one of {ATTENTION_MODES}, got {attn!r}")
@@ -92,6 +99,7 @@ class NativeBackend:
         self.ckpt = Path(ckpt)
         self.attn = attn
         self.max_length = max_length
+        self.share_prefix = share_prefix
         self.device = device
         # Needed by build_prefill: the segmenter rebuilds the prompt itself, so it must be told the
         # same layout ctc.format used, or the two disagree silently.
@@ -221,12 +229,59 @@ class NativeBackend:
         prefill = self.prefill_for(task) if examples is not None else plain_prefill(self.tok)
         all_ids = build_prefills(prefill, prompts, examples)
 
+        if self.share_prefix:
+            return self._generate_with_shared_prefixes(torch, all_ids, examples, stop)
+
         out: List[str] = []
         for i, ids in enumerate(all_ids):
             out.append(self._generate_one(torch, ids, stop))
             if progress_every and (i + 1) % progress_every == 0:
                 print(f"[ctc-eval] {i + 1}/{len(all_ids)}", flush=True)
         return out
+
+    def _generate_with_shared_prefixes(
+        self,
+        torch: Any,
+        all_ids: Sequence[Sequence[int]],
+        examples: Optional[Sequence[Mapping[str, Any]]],
+        stop: StopCondition,
+    ) -> List[str]:
+        """
+        Decode via :mod:`ctc.eval.prefix_cache`, prefilling each corpus group's shared prefix once.
+
+        **Not yet validated end to end on a GPU** -- the module's rewind logic is tested and the
+        wiring below is, but no scored run has gone through this path in this repo. Treat a number
+        produced with ``share_prefix=True`` as unverified until a byte-identity run against the
+        plain path exists.
+
+        The reuse is measured and printed rather than assumed. Shared documents are not shared
+        tokens: with ``query_position="both"`` the per-query question precedes the corpus, and the
+        measured reusable prefix was 0.5-0.9% on the multiplexed tasks. When there is nothing to
+        reuse this costs a grouping pass and falls back.
+
+        :param torch: The torch module.
+        :param all_ids: Tokenized prompts.
+        :param examples: The examples they came from, read for ``corpus_id``.
+        :param stop: The task's stop condition.
+
+        :returns: One generation per prompt, in the order of ``all_ids``.
+        """
+        groups = group_by_corpus(examples or [{} for _ in all_ids])
+        estimate = measure_reuse([[all_ids[i] for i in rows] for rows in groups.values()])
+        print(f"[ctc-eval] prefill reuse: {estimate}", flush=True)
+
+        out: List[Optional[str]] = [None] * len(all_ids)
+        for rows in groups.values():
+            texts, _ = generate_group_with_shared_prefix(
+                self.gm,
+                [all_ids[i] for i in rows],
+                device=self.device,
+                max_length=self.max_length,
+                decode_fn=lambda logits: self._decode_from(torch, logits, stop),
+            )
+            for row, text in zip(rows, texts):
+                out[row] = text
+        return [t or "" for t in out]
 
     @staticmethod
     def _decode_step(torch: Any, logits) -> int:
@@ -253,8 +308,25 @@ class NativeBackend:
                 logits_to_keep=1,
                 cache_leftpad=leftpad,
             )
-            nxt = self._decode_step(torch, logits)
+        return self._decode_from(torch, logits, stop)
 
+    def _decode_from(self, torch: Any, logits: Any, stop: StopCondition) -> str:
+        """
+        Run the decode loop from a prefilled state.
+
+        Split out from :meth:`_generate_one` so the prefill-reuse path can supply the logits from a
+        shared prefix instead. Both paths therefore share every stop rule and truncation detail --
+        the reuse path differs only in where the prompt's KV came from, which is the only way it
+        can be argued to preserve scores.
+
+        :param torch: The torch module.
+        :param logits: Logits for the last prompt token.
+        :param stop: The task's stop condition.
+
+        :returns: The generation, truncated and cleaned.
+        """
+        with torch.no_grad():
+            nxt = self._decode_step(torch, logits)
             produced: List[int] = []
             for step in range(stop.max_new_tokens):
                 if stop.eos and nxt == self.eos_id:
