@@ -10,7 +10,8 @@ launch:
   budget: ai2/oe-other
   num_nodes: 2
   num_gpus: 8
-  priority: normal
+  priority: urgent
+  min_runtime: 8h
 overrides:
   - --data.pixmo_cap_path=synthetic
   - --data.allow_unpinned_synthetic_smoke=true

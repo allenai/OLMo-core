@@ -13,7 +13,8 @@ launch:
   budget: ai2/oe-other
   num_nodes: 2
   num_gpus: 8
-  priority: normal
+  priority: urgent
+  min_runtime: 8h
 overrides:
   - --data.pixmo_cap_path=__PIN_FILTERED_PIXMO_CAP_ARROW_ROOT__
   - --data.source_audit_path=__PIN_BRIDGE_SOURCE_AUDIT_JSON__

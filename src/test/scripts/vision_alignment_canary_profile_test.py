@@ -62,7 +62,8 @@ def test_real_canary_is_a_nonlaunchable_holmes_only_artifact_template():
         "budget": "ai2/oe-other",
         "num_nodes": 2,
         "num_gpus": 8,
-        "priority": "normal",
+        "priority": "urgent",
+        "min_runtime": "8h",
     }
     assert "hostnames" not in profile["launch"]
     assert "data.allow_unpinned_synthetic_smoke" not in overrides
@@ -199,7 +200,8 @@ def test_materialized_real_canary_is_fully_pinned_and_holmes_only():
         "budget": "ai2/oe-other",
         "num_nodes": 2,
         "num_gpus": 8,
-        "priority": "normal",
+        "priority": "urgent",
+        "min_runtime": "8h",
     }
     assert "hostnames" not in profile["launch"]
     assert str(overrides["data.pixmo_cap_path"]).endswith("/pixmo-cap-content-disjoint-v1/dataset")

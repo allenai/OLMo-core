@@ -1198,6 +1198,8 @@ def test_checked_in_smoke_profile_is_cluster_only_and_calibrated():
 
     assert profile["phase"] == "bridge"
     assert profile["launch"]["cluster"] == "ai2/holmes"
+    assert profile["launch"]["priority"] == "urgent"
+    assert profile["launch"]["min_runtime"] == "8h"
     assert "hostnames" not in profile["launch"]
     assert "--data.allow_unpinned_synthetic_smoke=true" in profile["overrides"]
     assert any("mean_loss_weight.pixmo_caption" in value for value in profile["overrides"])
