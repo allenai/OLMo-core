@@ -91,7 +91,8 @@ def resource_path(folder: PathOrStr, fname: str, local_cache: Optional[PathOrStr
         log.info(f"Found local cache of {fname} at {local_path}")
         return local_path
     else:
-        return cached_path(f"{folder}/{fname}", quiet=True)
+        url = f"{folder}/{fname}"
+        return cached_path(url, quiet=True, headers=_http_auth_headers(url))
 
 
 def is_url(path: PathOrStr) -> bool:

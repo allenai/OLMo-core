@@ -31,6 +31,7 @@ from ..distributed.utils import (
 )
 from ..exceptions import OLMoConfigurationError
 from ..io import (
+    _http_auth_headers,
     clear_directory,
     dir_is_empty,
     file_exists,
@@ -201,7 +202,10 @@ class Checkpointer:
             # doesn't exist, which can happen when we're restoring a checkpoint with a different world size.
             for path in (f"{dir}/train/rank{get_rank()}.pt", f"{dir}/train/rank0.pt"):
                 try:
-                    trainer_state = torch.load(cached_path(path, quiet=True), weights_only=False)
+                    trainer_state = torch.load(
+                        cached_path(path, quiet=True, headers=_http_auth_headers(path)),
+                        weights_only=False,
+                    )
                     break
                 except FileNotFoundError:
                     pass
@@ -328,7 +332,10 @@ class Checkpointer:
 
                 # Filter out based on ephemeral flag.
                 if ephemeral is not None:
-                    metadata_path = cached_path(join_path(path, cls.METADATA_FNAME), quiet=True)
+                    metadata_url = str(join_path(path, cls.METADATA_FNAME))
+                    metadata_path = cached_path(
+                        metadata_url, quiet=True, headers=_http_auth_headers(metadata_url)
+                    )
                     metadata = CheckpointMetadata.from_file(metadata_path)
 
                     # Assume not ephemeral for backwards compat.
