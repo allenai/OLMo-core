@@ -73,6 +73,14 @@ fi
 export CTC_PYTHON
 
 case "$CTC_PYTHON" in
+  /net/*)
+    # /net/<node>/data is the same bytes as that node's /data, reached over NFS. It exists for
+    # auditing another host, never for running anything -- and a job on the node it names would be
+    # reading its own local disk the slow way.
+    echo "run/_env.sh: WARNING: interpreter is a /net path ($CTC_PYTHON)." >&2
+    echo "  /net is the NFS view of a node's local disk: read-only auditing, not job I/O." >&2
+    echo "  On that node, use the equivalent /data/... path instead." >&2
+    ;;
   /accounts/*|/scratch/*)
     echo "run/_env.sh: WARNING: interpreter is on NFS ($CTC_PYTHON)." >&2
     echo "  Fine for --help and data generation; a torch/vLLM job will stall for minutes." >&2
