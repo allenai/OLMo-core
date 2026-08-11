@@ -701,6 +701,12 @@ class TransformerPipelineTrainModule(TrainModule):
 
         # Move the inputs to the device ourselves so FSDP doesn't do it with a blocking copy in its
         # root pre-forward hook. See the note in ``TransformerTrainModule._prepare_batch``.
+        log_once(
+            log,
+            f"_prepare_batch moving inputs to {self.device}: input_ids arrived on "
+            f"{input_ids.device}, pinned={input_ids.is_pinned()}, "
+            f"shape={tuple(input_ids.shape)}, extra keys={sorted(kwargs)}",
+        )
         return (
             move_to_device(input_ids, self.device),
             move_to_device(labels, self.device),

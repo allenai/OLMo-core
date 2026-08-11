@@ -650,6 +650,16 @@ class TransformerTrainModule(TrainModule):
         # everything already queued on the compute stream before the CPU can enqueue the next
         # micro-batch. Since the data loader pins its buffers, doing it here is asynchronous, and
         # FSDP's copy becomes a no-op because the tensors are already on the right device.
+        #
+        # Logged once per distinct message so a run can be checked for two things: that this path
+        # is what moves the inputs, and that the source buffers are pinned -- an unpinned source
+        # makes the copy below synchronous, which is the problem this is meant to avoid.
+        log_once(
+            log,
+            f"_prepare_batch moving inputs to {self.device}: input_ids arrived on "
+            f"{input_ids.device}, pinned={input_ids.is_pinned()}, "
+            f"shape={tuple(input_ids.shape)}, extra keys={sorted(batch)}",
+        )
         return (
             move_to_device(input_ids, self.device),
             move_to_device(labels, self.device),
