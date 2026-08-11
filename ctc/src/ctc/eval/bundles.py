@@ -67,6 +67,11 @@ class BundleTask:
     :param spec: The registered :class:`~ctc.format.registry.TaskSpec` that grades it.
     :param rungs: ``(label, path relative to the bundle root)``, ascending by context length.
     :param group: ``"main"`` for the five in-distribution tasks, ``"ood"`` for the held-out ones.
+    :param eval_size: Rows per rung, **counted on weka** rather than inferred from the filename --
+        several filenames disagree with their contents (``..._eval_600.jsonl`` holds 600, but
+        ``..._fever_plain_n100_k3.jsonl`` holds 599 and ``nq_validation_k20_600.jsonl`` holds 500).
+        Recorded so a sub-500 ladder can be flagged before a run rather than discovered in the
+        results, and ``0`` means uncounted.
     :param note: Anything a reader of the numbers has to know.
     """
 
@@ -74,12 +79,27 @@ class BundleTask:
     spec: str
     rungs: Tuple[Tuple[str, str], ...]
     group: str = "main"
+    eval_size: int = 0
     note: str = ""
 
     @property
     def labels(self) -> List[str]:
         """:returns: This task's rung labels, ascending."""
         return [label for label, _ in self.rungs]
+
+    @property
+    def small_eval_warning(self) -> str:
+        """
+        :returns: A warning when this ladder is below the 500-example floor, else ``""``. A small
+            eval inflates noise into apparent findings, so the caution travels with the task.
+        """
+        if not self.eval_size or self.eval_size >= 500:
+            return ""
+        se = (0.7 * 0.3 / self.eval_size) ** 0.5
+        return (
+            f"eval_size={self.eval_size}, below the 500 floor: quote the size and its error bar "
+            f"(about ±{se:.3f} at f1 0.7) inline next to every number"
+        )
 
 
 #: The five in-distribution tasks plus the four out-of-distribution ladders. Paths are relative to
@@ -95,6 +115,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
             ("32k", "contra/contradiction_eval_pubmed_both_n765_k3.jsonl"),
         ),
+        eval_size=500,
         note="PubMed claims. Gold indices are 1-based for this task and 0-based for every other.",
     ),
     "nq": BundleTask(
@@ -106,6 +127,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "nq/nq_validation_k100_600.jsonl"),
             ("32k", "nq/nq_validation_k200_600.jsonl"),
         ),
+        eval_size=500,
         note="Graded on retrieved document ids, not answer text.",
     ),
     "outlier": BundleTask(
@@ -117,6 +139,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
             ("32k", "outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
         ),
+        eval_size=600,
     ),
     "rerank": BundleTask(
         name="rerank",
@@ -126,6 +149,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("8k", "rerank/msmarco_trainhn_eval_k50_500.jsonl"),
             ("16k", "rerank/msmarco_trainhn_eval_k100_500.jsonl"),
         ),
+        eval_size=500,
         note="No 32k rung: the CE-filtered hard-negative pool caps at 100 documents per query.",
     ),
     "oolong": BundleTask(
@@ -136,6 +160,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "oolong/oolong_test_synth_ctx16384_spliteval.jsonl"),
             ("32k", "oolong/oolong_test_synth_ctx32768_spliteval.jsonl"),
         ),
+        eval_size=500,
         note=(
             "Items are lines within one context block, not separate documents, so this is the one "
             "task whose chunk layout is line-based -- see the spec's extra['chunk_by']."
@@ -151,6 +176,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("8k", "beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
             ("16k", "beir/beir_fiqa_ce_ladder_k80_648.jsonl"),
         ),
+        eval_size=648,
         note="Held-out BEIR retrieval; graded by the same retrieval spec as nq.",
     ),
     "scifact": BundleTask(
@@ -163,10 +189,8 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "beir/beir_scifact_ladder_k44_299.jsonl"),
             ("32k", "beir/beir_scifact_ladder_k88_299.jsonl"),
         ),
-        note=(
-            "eval_size=299, below the 500 floor: quote the size and its error bar (about ±0.026 at "
-            "f1 0.7) inline next to every number."
-        ),
+        eval_size=299,
+        note="Held-out BEIR retrieval; graded by the same retrieval spec as nq.",
     ),
     "outlier_review": BundleTask(
         name="outlier_review",
@@ -178,6 +202,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
             ("32k", "outlier/outlier_review_matched_n300_k3_eval_600.jsonl"),
         ),
+        eval_size=600,
         note=(
             "Amazon-review passages instead of wiki100w. The `matched` build is the only one the "
             "grid has ever used -- it is difficulty-matched to the in-distribution outlier ladder, "
@@ -194,6 +219,7 @@ BUNDLE: Dict[str, BundleTask] = {
             ("16k", "contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
             ("32k", "contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
         ),
+        eval_size=599,
         note=(
             "FEVER claims instead of PubMed. `plain` is the difficulty-matched build (no hard NEI "
             "pairs, no decoy support, no decoys) and is the only variant the grid uses."
@@ -294,8 +320,11 @@ def describe(tasks: Sequence[str] = ()) -> List[str]:
     lines = []
     for name in tasks or list(BUNDLE):
         entry = get(name)
-        lines.append(f"  {entry.name:<16} [{entry.group}]  spec={entry.spec}")
+        size = f"  eval_size={entry.eval_size}" if entry.eval_size else ""
+        lines.append(f"  {entry.name:<16} [{entry.group}]  spec={entry.spec}{size}")
         lines.append(f"  {'':<16} rungs: {', '.join(entry.labels)}")
         if entry.note:
             lines.append(f"  {'':<16} note:  {entry.note}")
+        if entry.small_eval_warning:
+            lines.append(f"  {'':<16} ⚠      {entry.small_eval_warning}")
     return lines

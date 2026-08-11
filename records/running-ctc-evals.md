@@ -1,0 +1,131 @@
+# Running CTC-suite evals on Beaker
+
+For anyone who has a checkpoint and wants its numbers. You need a Beaker account in `ai2/flex2` and
+a clone of this repo on the `prasann/ctc` branch. You do **not** need a GPU, a weka mount, the eval
+data, or the checkpoint locally — everything runs on the node.
+
+## The command
+
+```bash
+python src/scripts/ctc/eval_beaker.py MY_RUN_NAME
+```
+
+`MY_RUN_NAME` is a directory under `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/`. The
+latest complete `stepN` inside it is found on the node, so you don't have to look one up. Results
+land in `<that directory>/ctc_eval/` as one JSON per task-rung.
+
+That grades the **five in-distribution tasks** — contradiction, nq, outlier, rerank, oolong — over
+every rung each one defines (18 rungs total). Common variations:
+
+```bash
+# the four held-out (OOD) ladders instead: fiqa, scifact, outlier_review, contra_fever
+python src/scripts/ctc/eval_beaker.py MY_RUN --tasks ood
+
+# a document-chunked checkpoint (must match how it was trained)
+python src/scripts/ctc/eval_beaker.py MY_RUN --tasks main --attn chunked
+
+# one task, two rungs, pinned step
+python src/scripts/ctc/eval_beaker.py MY_RUN --tasks contradiction --rungs 2k,8k --step step1100
+
+# a checkpoint that isn't under checkpoints/prasanns/
+python src/scripts/ctc/eval_beaker.py --ckpt /weka/.../some/step2000
+```
+
+`--dry-run` prints the exact command the node will run without submitting. Do that first if you're
+changing anything.
+
+## Before your first launch
+
+**gantry clones the pushed commit, not your working tree.** If you have local changes, commit and
+push them or the job silently runs older code. This is the single most common way one of these jobs
+produces a confusing result.
+
+**Check the bundle once**, especially if someone has rebuilt eval data:
+
+```bash
+python src/scripts/ctc/eval_beaker.py --check-bundle
+```
+
+That submits a GPU-less job that only resolves every rung to a file and reports whether it exists.
+It takes about a minute and is much cheaper than discovering a missing rung an hour into a sweep.
+
+## What comes back
+
+One JSON per task-rung in the results directory, named `<task>_<rung>_<attn>.json`. Each carries the
+metric, its **standard error**, `eval_size`, `parse_rate`, the prompt-length distribution, and the
+git commit that produced it. The job's log ends with a summary table of every rung it ran.
+
+Three fields are worth reading before you trust a number:
+
+- **`parse_rate`** — below 1.0 means some generations didn't parse. A parse failure and a wrong
+  answer both score zero, so a drop here is a decoding or truncation problem, not a capability one.
+  Read the generations (they're in the JSON) before concluding anything.
+- **`eval_size`** — scifact's ladder is 299 examples, below the 500 floor. Quote the size and its
+  error bar inline next to any number from it.
+- **`warnings`** — where a format-fingerprint mismatch or a truncated prompt gets recorded.
+
+## Things that will bite you
+
+**`--attn` must match how the checkpoint was trained.** `full` forces plain causal attention even on
+a checkpoint whose config carries the document-chunked mask, and `chunked` enables it. Grading an
+arm under the wrong mask produces a plausible number, not an error. The eval checks the checkpoint's
+recorded format fingerprint and warns on a mismatch; if the checkpoint predates fingerprinting the
+check can't run, and you'll need `--ignore-format-fingerprint` — the result then records that
+compatibility was **unverified**.
+
+**`--query-position` must also match, and the default is right.** These checkpoints trained with
+`both`, which renders the question before *and* after the corpus. `after` collapses them (nq 0.860 →
+0.074). Don't change it unless you know the checkpoint was trained that way.
+
+**A rung label bounds corpus size, not prompt length.** Contradiction prompts at the "4k" rung have
+been measured from 3,457 to 23,796 tokens. `--max-length` defaults to 40960 and is sized from the
+model, not from `--rungs`. If prompts exceed it the run **stops** rather than skipping them — a
+skipped prompt scores a clean 0.0, which is indistinguishable from a wrong answer, and that failure
+mode once silently dropped 354 of 500 examples in both arms at once. Pass `--allow-truncated` only
+if you want them counted and reported instead.
+
+**`rerank` has no 32k rung** (its CE-filtered hard-negative pool caps at 100 documents) and `fiqa`
+stops at 16k. `--rungs all` handles this; an explicit `--rungs 32k` skips those tasks with a note.
+
+## Which data this runs on
+
+The `_eval_bundle_eval500_v2_clean` bundle on weka. Every rung of a task grades the **same
+questions** — only the distractor documents change — so a rung-to-rung difference is a length
+effect and not eval-set resampling noise.
+
+The bundle is `_clean` rather than the original `_v2` because contradiction's rungs in that one were
+calibrated against a filler pool that turned out to be 92–99% FEVER/wiki rather than PubMed;
+Wikipedia claims tokenize at ~22.8 tok/doc against PubMed's ~43, so every contradiction rung
+overshot its label by about 1.8×.
+
+The rung-to-file mapping lives in `ctc/src/ctc/eval/bundles.py` — one table, because it used to be
+retyped in three drivers and the copies drifted.
+
+## Running it without Beaker
+
+`ctc-eval` is the same command the node runs, so a local GPU works too:
+
+```bash
+PYTHONPATH=src:ctc/src python -m ctc.eval.cli \
+    --ckpt /data/prasann/ckpts/my-run/step1100 \
+    --tasks main --attn chunked \
+    --bundle /data/prasann/eval_bundle --out results/my-run
+```
+
+Point `--bundle` (or `$CTC_EVAL_BUNDLE`) at a staged copy of the bundle. On the Berkeley cluster
+that copy must live on node-local `/data` — `/scratch` and `/accounts` are both NFS at ~5 MB/s and
+will deadlock concurrent readers.
+
+## Efficient (shared-corpus) evals
+
+There is a second, **cheaper** construction where many queries share one corpus so a prefill can be
+reused. It is not what the commands above run, and it is not interchangeable with them: rebuilding
+the eval set that way measurably changes some tasks' scores (+0.215/+0.261 on outlier, −0.10…−0.18
+on contradiction), with a control isolating the cause to document *placement* rather than to the
+sharing itself.
+
+The safe half of that idea — reusing KV across prompts that already share a token prefix — is
+`ctc.eval.prefix_cache` and is score-preserving by construction. It is currently inert for these
+checkpoints: with `query_position="both"` the per-query question precedes the corpus, so the
+measured reusable prefix is 0.1–0.9% on nq/rerank/oolong. See
+`records/shared-corpus-eval-results.md` in the pre-migration tree for the full measurement.

@@ -152,6 +152,21 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _warn_small_evals(todo: List[Dict[str, Any]]) -> None:
+    """
+    Print the sub-500 warning for any ladder in the plan, once per task.
+
+    Said **before** the run as well as beside each number, because the point of the warning is to be
+    read by whoever quotes the result, and the person launching is usually that person.
+
+    :param todo: The resolved plan.
+    """
+    for name in dict.fromkeys(item["task"] for item in todo):
+        warning = bundles.get(name).small_eval_warning
+        if warning:
+            print(f"[ctc-eval] ⚠ {name}: {warning}")
+
+
 def _list_tasks() -> int:
     print(f"eval bundle: {bundles.bundle_root()}\n")
     for line in bundles.describe():
@@ -262,7 +277,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 f"\n{missing}/{len(todo)} rung file(s) missing. On Beaker these live on the weka "
                 "mount, so a local dry run reporting MISSING is expected."
             )
+        _warn_small_evals(todo)
         return 1 if missing else 0
+
+    _warn_small_evals(todo)
 
     if not args.ckpt:
         ap.error("--ckpt is required (or use --list-tasks / --list-backends / --dry-run)")

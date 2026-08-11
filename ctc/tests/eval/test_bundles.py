@@ -85,6 +85,26 @@ def test_bundle_root_prefers_explicit_then_env(monkeypatch):
     assert str(bundles.bundle_root()) == bundles.DEFAULT_ROOT
 
 
+def test_every_ladder_records_a_counted_eval_size():
+    """Counted on weka, not inferred from the filename -- several disagree. Recorded so a sub-500
+    ladder is flagged before the run rather than found in the results."""
+    for name, entry in bundles.BUNDLE.items():
+        assert entry.eval_size > 0, f"{name} has no recorded eval_size"
+
+
+def test_only_scifact_is_below_the_eval_size_floor():
+    small = {n for n, e in bundles.BUNDLE.items() if e.small_eval_warning}
+    assert small == {"scifact"}
+    assert "±0.02" in bundles.get("scifact").small_eval_warning
+
+
+def test_filename_row_counts_are_not_trusted():
+    """``nq_validation_k20_600.jsonl`` holds 500 rows and ``..._fever_plain_n100_k3.jsonl`` holds
+    599. Reading the count off the name would mis-flag both."""
+    assert bundles.get("nq").eval_size == 500
+    assert bundles.get("contra_fever").eval_size == 599
+
+
 def _args(**kwargs) -> argparse.Namespace:
     base = dict(tasks="main", rungs="all", bundle="/bundle")
     base.update(kwargs)
