@@ -644,7 +644,17 @@ class TransformerTrainModule(TrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         if "doc_lens" in batch and "max_doc_lens" in batch:
             log_once(log, "intra-document masking enabled")
-        return input_ids, labels, batch
+
+        # Move the inputs to the device ourselves. Otherwise they arrive at the model on the host
+        # and FSDP moves them in its root pre-forward hook with a *blocking* copy, which drains
+        # everything already queued on the compute stream before the CPU can enqueue the next
+        # micro-batch. Since the data loader pins its buffers, doing it here is asynchronous, and
+        # FSDP's copy becomes a no-op because the tensors are already on the right device.
+        return (
+            move_to_device(input_ids, self.device),
+            move_to_device(labels, self.device),
+            move_to_device(batch, self.device),
+        )
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
