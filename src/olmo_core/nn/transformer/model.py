@@ -43,6 +43,11 @@ from ..attention import (
     RingAttentionLoadBalancer,
     SequenceMixer,
 )
+from ..attention.chunked_mask import (
+    build_chunk_ids_from_tokens,
+    collapse_roles_to_causal,
+    mask_mix_standard_prob,
+)
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -128,6 +133,10 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.dtype = dtype
         self.embed_scale = embed_scale
+        # Optional document-chunked-attention config (see ``enable_document_chunk_attention``). When
+        # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
+        # forwards them to every block (for :class:`DocumentLandmarkAttention`).
+        self._document_chunk_attention: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -199,6 +208,103 @@ class Transformer(nn.Module):
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
+
+    def enable_document_chunk_attention(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        mode: str = "chunked",
+        pad_id: Optional[int] = None,
+        standard_mix_prob: float = 0.0,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_forwards: int = 0,
+        mix_seed: int = 42,
+        mix_log_interval: int = 500,
+    ) -> None:
+        """
+        Enable runtime ``chunk_ids`` reconstruction for document-chunked landmark attention.
+
+        When enabled, :meth:`forward` reconstructs a per-token ``chunk_id`` role tensor from the
+        ``<|doc_start|>`` / ``<|doc_end|>`` boundary tokens (and the EOS pad terminator) on every
+        step and forwards it to each block, so :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`
+        can build its chunked mask. All attention layers must accept a ``chunk_ids`` keyword (i.e. the
+        model is uniformly ``document_landmark``); mixing with other attention types via this path is
+        not supported. Context parallelism with chunked attention is not yet supported.
+
+        **Mask mixing** (optional): during *training*, each forward independently collapses a random
+        subset of examples from the chunked mask to plain causal (full) attention, by setting their
+        roles to all-FREE (see :func:`~olmo_core.nn.attention.chunked_mask.collapse_roles_to_causal`).
+        The per-example probability ``p`` is either static (``standard_mix_prob``) or a linear
+        curriculum (``mix_start_p -> mix_end_p`` over ``mix_total_forwards`` forwards). ``p == 0`` (all
+        defaults) is a no-op -- pure-chunked training stays bit-identical. Static and curriculum mixing
+        are mutually exclusive.
+
+        :param doc_start_id: The ``<|doc_start|>`` token id.
+        :param doc_end_id: The ``<|doc_end|>`` token id.
+        :param eos_id: The EOS / document terminator (everything after the first one is padding).
+        :param mode: ``"chunked"`` (no SINK) or ``"modified_swa"`` (mark the instruction prefix SINK).
+        :param pad_id: Optional dedicated interior-padding id (window fill for the landmark variant);
+            when set, those positions reconstruct to ``PAD`` (non-attendable) rather than ``FREE``.
+        :param standard_mix_prob: Static per-example mask-mix probability (constant every forward).
+        :param mix_start_p: Curriculum start probability (at forward 0).
+        :param mix_end_p: Curriculum end probability (at ``mix_total_forwards``).
+        :param mix_total_forwards: Number of forwards over which the curriculum anneals linearly.
+        :param mix_seed: Base seed for the deterministic per-(forward, example) mix coin.
+        :param mix_log_interval: Log a ``[curriculum]`` line (current ``p`` + cumulative collapse
+            count) every this many training forwards.
+
+        :raises OLMoConfigurationError: If static and curriculum mixing are both requested, or a
+            curriculum is requested without ``mix_total_forwards > 0``.
+        """
+        curriculum = mix_start_p > 0.0 or mix_end_p > 0.0
+        if standard_mix_prob > 0.0 and curriculum:
+            raise OLMoConfigurationError(
+                "Mask mixing: 'standard_mix_prob' (static) is mutually exclusive with the curriculum "
+                "('mix_start_p' / 'mix_end_p'); set only one."
+            )
+        if curriculum and mix_total_forwards <= 0:
+            raise OLMoConfigurationError(
+                "Mask-mix curriculum ('mix_start_p' / 'mix_end_p') requires 'mix_total_forwards' > 0 "
+                "(the number of forwards over which p anneals)."
+            )
+        mix: Optional[Dict[str, Any]] = None
+        if standard_mix_prob > 0.0 or curriculum:
+            mix = {
+                "standard_mix_prob": float(standard_mix_prob),
+                "mix_start_p": float(mix_start_p),
+                "mix_end_p": float(mix_end_p),
+                "mix_total_forwards": int(mix_total_forwards),
+                "mix_seed": int(mix_seed),
+                "log_interval": max(1, int(mix_log_interval)),
+                "forward_idx": 0,
+                "n_collapsed": 0,
+            }
+        self._document_chunk_attention = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "mode": mode,
+            "pad_id": None if pad_id is None else int(pad_id),
+            "mix": mix,
+        }
+
+    def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
+        """
+        Enable inference-only hard top-k landmark retrieval on every eager landmark attention layer
+        (e.g. :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`): each query attends only the
+        ``top_k`` highest-scoring landmark blocks. ``None`` restores exact (all-block) attention.
+        Training is unaffected. Returns the number of layers updated.
+
+        :param top_k: Number of landmark blocks to keep per query, or ``None`` for exact.
+        """
+        n = 0
+        for module in self.modules():
+            if hasattr(module, "set_eval_top_k") and callable(module.set_eval_top_k):
+                module.set_eval_top_k(top_k)
+                n += 1
+        return n
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
@@ -423,6 +529,12 @@ class Transformer(nn.Module):
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
 
+        if self._document_chunk_attention is not None and self._cp_load_balancer is not None:
+            raise NotImplementedError(
+                "Document-chunked landmark attention (enable_document_chunk_attention) is not yet "
+                "supported together with context parallelism (chunk_ids are not sequence-sharded)."
+            )
+
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
@@ -508,6 +620,48 @@ class Transformer(nn.Module):
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
+
+            # Document-chunked landmark attention: reconstruct per-token chunk_ids from the boundary
+            # tokens and forward them to every block (see ``enable_document_chunk_attention``).
+            if self._document_chunk_attention is not None:
+                cfg = self._document_chunk_attention
+                chunk_ids = build_chunk_ids_from_tokens(
+                    input_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    eos_id=cfg["eos_id"],
+                    mode=cfg["mode"],
+                    pad_id=cfg.get("pad_id"),
+                )
+                # Mask mixing (training only): with a scheduled, seeded probability, collapse a random
+                # subset of examples to plain causal by neutralizing their roles to all-FREE. Runs once
+                # per forward on the shared chunk_ids (before they are threaded to every block), so all
+                # layers and any AC recompute see the same mixed roles. p == 0 (no mix configured, or a
+                # forward where no example is drawn) leaves chunk_ids untouched -> bit-identical to
+                # pure chunked. Kept eager (python-seeded coin + counter) -- exclude from torch.compile.
+                mix = cfg.get("mix")
+                if mix is not None and self.training:
+                    idx = mix["forward_idx"]
+                    p = mask_mix_standard_prob(
+                        idx,
+                        standard_mix_prob=mix["standard_mix_prob"],
+                        mix_start_p=mix["mix_start_p"],
+                        mix_end_p=mix["mix_end_p"],
+                        mix_total_forwards=mix["mix_total_forwards"],
+                    )
+                    mix["forward_idx"] = idx + 1
+                    new_chunk_ids = collapse_roles_to_causal(
+                        chunk_ids, p, forward_idx=mix["forward_idx"], mix_seed=mix["mix_seed"]
+                    )
+                    if new_chunk_ids is not chunk_ids:  # at least one example collapsed this forward
+                        mix["n_collapsed"] += 1
+                    chunk_ids = new_chunk_ids
+                    if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
+                        log.info(
+                            f"[curriculum] forward={mix['forward_idx']} p_standard={p:.3f} "
+                            f"collapsed_forwards={mix['n_collapsed']}"
+                        )
+                all_block_kwargs["chunk_ids"] = move_to_device(chunk_ids, self.device)
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
