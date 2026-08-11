@@ -32,6 +32,7 @@ from olmo_core.nn.vision.molmo2_loader import (
     molmo2_config_from_hf_config,
     molmo2_hf_state_dict_to_multimodal_lm,
     reinit_rope_buffers,
+    retie_word_embeddings,
 )
 from olmo_core.testing import requires_gpu
 
@@ -248,6 +249,7 @@ def test_molmo2_generation_parity():
     ours = MultimodalLM(cfg, init_device="meta")
     ours.to_empty(device=torch.device("cpu"))
     missing, unexpected = ours.load_state_dict(converted, strict=False)
+    retie_word_embeddings(ours)  # `to_empty` breaks the tied-embedding share (Molmo2-4B)
     del converted
     param_keys = {k for k, _ in ours.named_parameters()}
     assert not (
@@ -366,6 +368,7 @@ def test_molmo2_image_bidirectional_attention_parity():
     ours = MultimodalLM(cfg, init_device="meta")
     ours.to_empty(device=torch.device("cpu"))
     ours.load_state_dict(molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), cfg), strict=False)
+    retie_word_embeddings(ours)  # `to_empty` breaks the tied-embedding share (Molmo2-4B)
     hf = hf.to(device=device, dtype=dtype).eval()
     ours = ours.to(device=device, dtype=dtype).eval()
 

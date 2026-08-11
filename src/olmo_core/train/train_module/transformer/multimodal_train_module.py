@@ -19,9 +19,10 @@ three ways:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -34,7 +35,13 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
     get_dp_model_mesh,
 )
-from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_distributed
+from olmo_core.distributed.utils import (
+    get_local_tensor,
+    get_rank,
+    get_world_size,
+    is_distributed,
+    reduce_distributed_failure_flag,
+)
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.optim import OptimConfig
@@ -44,12 +51,17 @@ from olmo_core.utils import get_default_device, move_to_device, warn_once
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerDataParallelConfig
+from .config import TransformerActivationCheckpointingConfig, TransformerDataParallelConfig
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
 __all__ = ["MultimodalTransformerTrainModule", "MultimodalTransformerTrainModuleConfig"]
+
+
+def _mm_train_verbose_logs() -> bool:
+    """Per-step batch/optim diagnostics (forces CUDA sync via ``.item()``)."""
+    return os.environ.get("MM_TRAIN_VERBOSE_LOGS", "0").lower() in ("1", "true", "yes")
 
 
 class MultimodalTransformerTrainModule(TransformerTrainModule):
@@ -70,7 +82,11 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         device: Optional[torch.device] = None,
         compile_model: bool = False,
         dp_config: Optional[TransformerDataParallelConfig] = None,
+        ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
+        vision_activation_checkpointing: bool = True,
+        connector_activation_checkpointing: bool = True,
         label_ignore_index: int = -100,
+        response_logits_only: bool = False,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
@@ -116,9 +132,28 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             log.info(f"Froze {n_frozen} parameter tensors matching {self.freeze_params}")
 
         model.to(self.device)
+        if vision_activation_checkpointing and hasattr(model.vision, "apply_activation_checkpointing"):
+            model.vision.apply_activation_checkpointing()
+            log.info("Applied per-block activation checkpointing to model.vision")
+        if connector_activation_checkpointing and hasattr(
+            model.connector, "apply_activation_checkpointing"
+        ):
+            model.connector.apply_activation_checkpointing()
+            log.info("Applied activation checkpointing to model.connector")
+        if ac_config is not None:
+            model.lm.apply_activation_checkpointing(
+                ac_config.mode,
+                block_interval=ac_config.block_interval,
+                modules=ac_config.modules,
+                activation_memory_budget=ac_config.activation_memory_budget,
+                determinism_check=ac_config.determinism_check,
+            )
+            log.info("Applied '%s' activation checkpointing to model.lm", ac_config.mode)
         if compile_model:
-            log.info("Compiling model.lm ...")
-            model.lm = torch.compile(model.lm)  # type: ignore[assignment]
+            # Compile per block (not the whole LM) so dynamic multimodal attention masks
+            # (or_mask / and_mask) don't trip full-graph compile on the outer forward.
+            log.info("Compiling model.lm blocks ...")
+            model.lm.apply_compile()
         self.model = model
         self._model_mode = None
 
@@ -127,6 +162,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self._tp_config = None
         self._ep_config = None
         self.label_ignore_index = label_ignore_index
+        self.response_logits_only = response_logits_only
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -210,7 +246,36 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         input_ids = batch.pop("input_ids")
         labels = labels if labels is not None else batch.pop("labels", None)
         loss_masks = batch.pop("loss_masks")
+        batch.pop("pack_source_names", None)
         return input_ids, labels, loss_masks, batch
+
+    def _set_model_mode(self, mode: Literal["train", "eval"]):
+        super()._set_model_mode(mode)
+        # Frozen vision should stay in eval mode (mm_olmo trains the ViT; stage-1 freezes it).
+        if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
+            self._multimodal.vision.eval()
+
+    def _log_batch_sources(self, batch: Dict[str, Any], local_weight: torch.Tensor) -> None:
+        """Log per-rank packed source names (enable with ``MM_TRAIN_VERBOSE_LOGS=1``)."""
+        if not _mm_train_verbose_logs():
+            return
+        sources = batch.get("pack_source_names")
+        if sources is None:
+            return
+        images = batch.get("images")
+        n_crops = int(images.shape[1]) if images is not None else 0
+        n_im_patch = int(
+            (batch["input_ids"] == self._multimodal.cfg.image_patch_token_id).sum().item()
+        )
+        log.info(
+            "batch sources rank=%d sources=%s local_weight=%.1f im_patch=%d crops=%d shape=%s",
+            get_rank(),
+            sources,
+            float(local_weight.item()),
+            n_im_patch,
+            n_crops,
+            tuple(batch["input_ids"].shape),
+        )
 
     # -- training step -----------------------------------------------------------
 
@@ -231,6 +296,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             div_factor = local_weight
         div_factor = torch.clamp(div_factor, min=1.0)
 
+        pack_sources = batch.get("pack_source_names")
+        if not dry_run:
+            self._log_batch_sources(batch, local_weight)
+
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = (
             move_to_device(torch.tensor(0.0), self.device)
@@ -247,34 +316,93 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
+        if get_rank() == 0 and not dry_run and _mm_train_verbose_logs():
+            images = batch.get("images")
+            bsz, seq_len = batch["input_ids"].shape[:2]
+            n_crops = int(images.shape[1]) if images is not None else 0
+            vit_bt = bsz * n_crops
+            gpu_mem_gb = (
+                torch.cuda.max_memory_allocated(self.device) / (1024**3)
+                if torch.cuda.is_available()
+                else 0.0
+            )
+            log.info(
+                "batch shapes: input_ids=%s crops/seq=%d vit_B*T=%d gpu_max_alloc_gb=%.2f",
+                tuple(batch["input_ids"].shape),
+                n_crops,
+                vit_bt,
+                gpu_mem_gb,
+            )
+
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
             with self._train_microbatch_context(micro_batch_idx, num_micro_batches):
                 input_ids, labels, mb_loss_masks, model_kwargs = self._prepare_batch(micro_batch)
                 assert labels is not None
                 mb_loss_masks = mb_loss_masks.to(self.device).float()
 
-                # MultimodalLM with ``labels=None`` returns raw logits ``(B, S, V)``.
                 # ``labels`` / ``loss_masks`` are already next-token-aligned (shifted) by
                 # the data pipeline, so no additional shift here.
                 with self._model_forward_context():
-                    logits = self.model(input_ids, labels=None, **model_kwargs)
-                vocab_size = logits.shape[-1]
-                flat_logits = logits.reshape(-1, vocab_size)
-                flat_labels = labels.to(self.device).reshape(-1)
-                flat_weights = mb_loss_masks.reshape(-1)
-                # Mask out non-loss positions from the CE target for safety.
-                flat_labels = torch.where(
-                    flat_weights > 0, flat_labels, flat_labels.new_full((), self.label_ignore_index)
-                )
+                    if self.response_logits_only:
+                        logits = self.model(
+                            input_ids,
+                            labels=None,
+                            response_logits_only=True,
+                            loss_masks=mb_loss_masks,
+                            **model_kwargs,
+                        )
+                        response_mask = mb_loss_masks > 0
+                        flat_logits = logits
+                        flat_labels = labels.to(self.device).reshape(-1)[response_mask.reshape(-1)]
+                        flat_weights = mb_loss_masks.reshape(-1)[response_mask.reshape(-1)]
+                    else:
+                        logits = self.model(input_ids, labels=None, **model_kwargs)
+                        vocab_size = logits.shape[-1]
+                        flat_logits = logits.reshape(-1, vocab_size)
+                        flat_labels = labels.to(self.device).reshape(-1)
+                        flat_weights = mb_loss_masks.reshape(-1)
+                        # Mask out non-loss positions from the CE target for safety.
+                        flat_labels = torch.where(
+                            flat_weights > 0,
+                            flat_labels,
+                            flat_labels.new_full((), self.label_ignore_index),
+                        )
 
                 ce_loss, z_loss = weighted_cross_entropy_loss(
                     flat_logits,
                     flat_labels,
                     flat_weights,
                     ignore_index=self.label_ignore_index,
-                    compute_z_loss=self.z_loss_multiplier is not None,
+                    compute_z_loss=self.z_loss_multiplier is not None and not dry_run,
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
+
+                # This flag is an all_reduce, so EVERY rank must call it on every
+                # microbatch — gating it on the local result would leave healthy ranks
+                # in backward's collectives while a failing rank calls this one
+                # (mismatched collectives -> NCCL hang).
+                local_failed = bool(not torch.isfinite(ce_loss))
+                if reduce_distributed_failure_flag(
+                    local_failed, self.device, group=self.dp_process_group
+                ):
+                    if local_failed:
+                        n_im_patch = int(
+                            (input_ids == self._multimodal.cfg.image_patch_token_id).sum()
+                        )
+                        raise RuntimeError(
+                            f"Non-finite CE loss on rank {get_rank()}: ce={ce_loss.item()}, "
+                            f"local_weight={local_weight.item():.4f}, "
+                            f"logits_nan={bool(torch.isnan(logits).any())}, "
+                            f"logits_inf={bool(torch.isinf(logits).any())}, "
+                            f"im_patch_tokens={n_im_patch}, seq_len={input_ids.shape[1]}, "
+                            f"sources={pack_sources}"
+                        )
+                    raise RuntimeError(
+                        f"Training failed on another rank (rank {get_rank()} had finite CE)"
+                    )
+
+                if dry_run:
+                    continue
 
                 loss = ce_loss / div_factor
                 if z_loss is not None:
@@ -310,6 +438,13 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 reset=True
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
+
+        if not dry_run and _mm_train_verbose_logs():
+            log.info(
+                "train_batch rank=%d complete local_weight=%.1f",
+                get_rank(),
+                float(local_weight.item()),
+            )
 
     def optim_step(self):
         if self.max_grad_norm is not None:
@@ -366,9 +501,13 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     scheduler: Optional[Scheduler] = None
     compile_model: bool = False
     dp_config: Optional[TransformerDataParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    vision_activation_checkpointing: bool = True
+    connector_activation_checkpointing: bool = True
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
     label_ignore_index: int = -100
+    response_logits_only: bool = False
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None

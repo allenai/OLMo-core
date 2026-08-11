@@ -1,11 +1,14 @@
 import math
+from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.nn.vision.config import VisionEncoderConfig
+from olmo_core.nn.vision.sdpa import vision_scaled_dot_product_attention
 
 __all__ = [
     "ViTAttention",
@@ -35,6 +38,11 @@ def _get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
     if name not in _ACTIVATIONS:
         raise ValueError(f"Unknown activation {name!r}; expected one of {sorted(_ACTIVATIONS)}.")
     return _ACTIVATIONS[name]
+
+
+def _vit_activation_checkpoint_function(cfg: VisionEncoderConfig) -> Callable:
+    preserve_rng_state = (cfg.attention_dropout != 0.0) or (cfg.residual_dropout != 0.0)
+    return partial(checkpoint, preserve_rng_state=preserve_rng_state, use_reentrant=False)
 
 
 class ViTAttention(nn.Module):
@@ -99,7 +107,7 @@ class ViTAttention(nn.Module):
             k = k.repeat_interleave(self.num_kv_groups, dim=2)
             v = v.repeat_interleave(self.num_kv_groups, dim=2)
 
-        out = F.scaled_dot_product_attention(
+        out = vision_scaled_dot_product_attention(
             q.transpose(1, 2).contiguous(),
             k.transpose(1, 2).contiguous(),
             v.transpose(1, 2).contiguous(),
@@ -253,8 +261,13 @@ class VisionTransformer(nn.Module):
         self.blocks = nn.ModuleList(
             [cfg.block.build(cfg, init_device=init_device) for _ in range(cfg.image_num_layers)]
         )
+        self._activation_checkpoint_fn: Optional[Callable] = None
 
         self.reset_parameters()
+
+    def apply_activation_checkpointing(self) -> None:
+        """Per-block activation checkpointing (mm_olmo ``VitConfig.activation_checkpointing``)."""
+        self._activation_checkpoint_fn = _vit_activation_checkpoint_function(self.cfg)
 
     def reset_parameters(self):
         """Re-initialise all parameters."""
@@ -306,6 +319,9 @@ class VisionTransformer(nn.Module):
 
         hidden_states: List[torch.Tensor] = []
         for block in self.blocks:
-            x = block(x)
+            if self._activation_checkpoint_fn is not None:
+                x = self._activation_checkpoint_fn(block, x)
+            else:
+                x = block(x)
             hidden_states.append(x)
         return hidden_states

@@ -4,10 +4,12 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
+from olmo_core.nn.vision.sdpa import vision_scaled_dot_product_attention
 
 __all__ = [
     "ImagePoolingType",
@@ -124,7 +126,7 @@ class _PoolingCrossAttention(nn.Module):
             k = k.repeat_interleave(self.num_kv_groups, dim=2)
             v = v.repeat_interleave(self.num_kv_groups, dim=2)
 
-        out = F.scaled_dot_product_attention(
+        out = vision_scaled_dot_product_attention(
             q.transpose(1, 2),
             k.transpose(1, 2),
             v.transpose(1, 2),
@@ -346,6 +348,12 @@ class VisionConnector(nn.Module):
             self.projector.reset_parameters()
         elif isinstance(self.projector, nn.Linear):
             nn.init.normal_(self.projector.weight, std=self.cfg.initializer_range)
+
+    def apply_activation_checkpointing(self) -> None:
+        """Checkpoint pooling + projector (mm_olmo ``connector_activation_checkpointing``)."""
+        if self.pooling is not None:
+            self.pooling = checkpoint_wrapper(self.pooling)
+        self.projector = checkpoint_wrapper(self.projector)
 
     def forward(
         self,

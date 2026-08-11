@@ -143,4 +143,9 @@ class MultimodalCollator:
             ]
             batch["example_ids"] = self._pad_1d(example_arrays, -1, max_len, np.int64)
 
+        if any("pack_source_names" in ex for ex in examples):
+            batch["pack_source_names"] = [
+                ex.get("pack_source_names", []) for ex in examples
+            ]
+
         return batch

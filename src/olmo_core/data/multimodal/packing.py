@@ -26,14 +26,39 @@ per example (and hence for the pack).
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Iterator, List, Sequence
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 
-__all__ = ["pack_examples", "greedy_pack_indices", "iter_packs"]
+__all__ = [
+    "pack_examples",
+    "greedy_pack_indices",
+    "iter_packs",
+    "example_has_images",
+    "select_subset_2d_knapsack",
+    "PackingConstraint",
+    "DynamicPacker",
+    "iter_dynamic_packs",
+]
 
 
-def greedy_pack_indices(lengths: Sequence[int], seq_len: int) -> List[List[int]]:
+def example_has_images(ex: Dict[str, np.ndarray]) -> bool:
+    """True when the example carries real image crops (not text-only NLP)."""
+    return ex["images"].shape[0] > 0
+
+
+def example_crop_count(ex: Dict[str, np.ndarray]) -> int:
+    """Number of image crops in an example (0 for text-only)."""
+    return int(ex["images"].shape[0])
+
+
+def greedy_pack_indices(
+    lengths: Sequence[int],
+    seq_len: int,
+    *,
+    crop_counts: Optional[Sequence[int]] = None,
+    max_crops_per_pack: Optional[int] = None,
+) -> List[List[int]]:
     """Greedily group example indices so each group's total length ``<= seq_len``.
 
     First-fit-decreasing is overkill here; a simple next-fit over the given order keeps the
@@ -41,18 +66,31 @@ def greedy_pack_indices(lengths: Sequence[int], seq_len: int) -> List[List[int]]
 
     :param lengths: real token length of each example, in the order they should be packed.
     :param seq_len: maximum packed length.
+    :param crop_counts: per-example crop counts (required when ``max_crops_per_pack`` is set).
+    :param max_crops_per_pack: maximum total crops in one pack (mm_olmo ``image_weight`` parity).
     :returns: a list of groups, each a list of indices into ``lengths``.
     """
+    if max_crops_per_pack is not None and crop_counts is None:
+        raise ValueError("crop_counts is required when max_crops_per_pack is set")
     groups: List[List[int]] = []
     cur: List[int] = []
     cur_len = 0
+    cur_crops = 0
     for i, n in enumerate(lengths):
         n = int(n)
-        if cur and cur_len + n > seq_len:
+        crops = int(crop_counts[i]) if crop_counts is not None else 0
+        over_tokens = cur and cur_len + n > seq_len
+        over_crops = (
+            max_crops_per_pack is not None
+            and cur
+            and cur_crops + crops > max_crops_per_pack
+        )
+        if over_tokens or over_crops:
             groups.append(cur)
-            cur, cur_len = [], 0
+            cur, cur_len, cur_crops = [], 0, 0
         cur.append(i)
         cur_len += n
+        cur_crops += crops
     if cur:
         groups.append(cur)
     return groups
@@ -96,6 +134,9 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
         axis=0,
     )
 
+    if any("_source_name" in ex for ex in examples):
+        out["pack_source_names"] = [ex.get("_source_name", "?") for ex in examples]
+
     # Images: concatenate crops; offset each example's pooled indices by the running
     # crop-patch count so they index into the concatenated (total_crops * n_patches) axis.
     images = [ex["images"] for ex in examples]
@@ -130,6 +171,8 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
 def iter_packs(
     examples: Iterable[Dict[str, np.ndarray]],
     seq_len: int,
+    *,
+    max_crops_per_pack: Optional[int] = None,
 ) -> Iterator[Dict[str, np.ndarray]]:
     """Greedily next-fit-pack a stream of example dicts into ``<= seq_len`` sequences.
 
@@ -144,15 +187,253 @@ def iter_packs(
     :param examples: iterator of per-example dicts (the heavy loading happens upstream, so it
         can be prefetched off the training thread).
     :param seq_len: target packed length.
+    :param max_crops_per_pack: cap total image crops per pack (mm_olmo crop-budget parity).
     """
     cur: List[Dict[str, np.ndarray]] = []
     cur_len = 0
+    cur_crops = 0
     for ex in examples:
         length = len(ex["input_ids"])
-        if cur and cur_len + length > seq_len:
+        crops = example_crop_count(ex)
+        # Do not mix text-only NLP (e.g. Tulu4) with image-bearing examples in one pack:
+        # head-truncating a cross-modal pack can orphan <im_patch> tokens from their
+        # pooled rows (mm_olmo uses separate packing constraints when NLP is enabled).
+        over_tokens = cur and cur_len + length > seq_len
+        over_crops = (
+            max_crops_per_pack is not None
+            and cur
+            and example_has_images(cur[0])
+            and cur_crops + crops > max_crops_per_pack
+        )
+        if cur and (over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])):
             yield pack_examples(cur)
-            cur, cur_len = [], 0
+            cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
         cur_len += length
+        cur_crops += crops
     if cur:
         yield pack_examples(cur)
+
+
+# ---------------------------------------------------------------------------
+# 2D-knapsack dynamic packer (port of mm_olmo ``olmo/data/dynamic_packer.py``)
+# ---------------------------------------------------------------------------
+
+
+def select_subset_2d_knapsack(
+    t_values: Sequence[int],
+    i_values: Sequence[int],
+    max_t: int,
+    max_i: int,
+    obj_vals: Sequence[float],
+) -> List[int]:
+    """Vectorized 2D knapsack dynamic-program solver (verbatim mm_olmo port).
+
+    Selects the subset of items maximizing ``sum(obj_vals)`` subject to
+    ``sum(t_values) <= max_t`` and ``sum(i_values) <= max_i``.
+
+    :returns: selected indices (descending).
+    """
+    M = len(t_values)
+
+    # DP table with quantized dimensions.
+    dp = np.zeros((M + 1, max_t + 1, max_i + 1), dtype=np.float32)
+
+    for item in range(1, M + 1):
+        t_val_q = t_values[item - 1]
+        i_val_q = i_values[item - 1]
+        obj_val = obj_vals[item - 1]
+
+        # Copy previous layer.
+        dp[item] = dp[item - 1]
+
+        # Vectorized update where the item can fit.
+        if t_val_q <= max_t and i_val_q <= max_i:
+            take_val = dp[item - 1, : max_t + 1 - t_val_q, : max_i + 1 - i_val_q] + obj_val
+            dp[item, t_val_q:, i_val_q:] = np.maximum(dp[item, t_val_q:, i_val_q:], take_val)
+
+    # Backtrack to find the solution.
+    selected_indices: List[int] = []
+    t_rem_q, i_rem_q = max_t, max_i
+    for item in range(M, 0, -1):
+        t_val_q = t_values[item - 1]
+        i_val_q = i_values[item - 1]
+        if (
+            t_val_q <= t_rem_q
+            and i_val_q <= i_rem_q
+            and dp[item, t_rem_q, i_rem_q] != dp[item - 1, t_rem_q, i_rem_q]
+        ):
+            selected_indices.append(item - 1)
+            t_rem_q -= t_val_q
+            i_rem_q -= i_val_q
+    return selected_indices
+
+
+class PackingConstraint:
+    """One capacity dimension of the dynamic packer (mm_olmo ``Constraint``).
+
+    :param key: example-dict key whose ``len()`` is constrained (``len(images)`` is the
+        crop count for our ``(n_crops, n_patches, patch_dim)`` arrays).
+    :param max_len: max total ``len(example[key])`` in one pack.
+    :param allow_shortcut: emit an example alone (without buffering) when it already
+        reaches ``max_len`` on its own.
+    :param weight: objective value per unit of this dimension in the knapsack.
+    :param granularity: quantization step for the DP table.
+    """
+
+    def __init__(self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int):
+        self.key = key
+        self.max_len = max_len
+        self.allow_shortcut = allow_shortcut
+        self.weight = weight
+        self.granularity = max(1, int(granularity))
+
+    def get_quantized_value(self, val: int) -> int:
+        return (val + self.granularity - 1) // self.granularity
+
+    def get_quantized_max_len(self) -> int:
+        return self.get_quantized_value(self.max_len)
+
+
+class DynamicPacker:
+    """Buffered 2D-knapsack packer (port of mm_olmo ``DynamicSolver``).
+
+    Buffers up to ``max_buffer_size`` examples; once full, a 2D knapsack picks the
+    highest-value subset that fits both capacities (text tokens and image crops) and
+    emits it as one pack. Text-only and image examples pack together, exactly like
+    mm_olmo (``pack()`` gives text-only rows an empty crop array).
+
+    Deviation from mm_olmo (documented): an example that *alone* exceeds a
+    non-shortcut constraint (e.g. a >max-crops example) is emitted as its own pack
+    instead of being buffered — mm_olmo would keep it in the buffer forever (the
+    knapsack can never select it), eventually starving the buffer.
+    """
+
+    def __init__(
+        self,
+        max_buffer_size: int,
+        constraints: Sequence[PackingConstraint],
+        pack_fn=None,
+    ):
+        if len(constraints) != 2:
+            raise NotImplementedError("DynamicPacker currently supports exactly 2 constraints")
+        self.max_buffer_size = max_buffer_size
+        self.constraints = list(constraints)
+        self.pack_fn = pack_fn or pack_examples
+        # Parallel lists: quantized lens per constraint, objective values, examples.
+        self._buffer: List[Dict[str, np.ndarray]] = []
+        self._buffer_qlens: List[Dict[str, int]] = []
+        self._buffer_values: List[float] = []
+
+    def __len__(self) -> int:
+        return len(self._buffer)
+
+    def _quantized_lens_and_value(self, example):
+        qlens: Dict[str, int] = {}
+        value = 0.0
+        for c in self.constraints:
+            if c.key in example:
+                n = len(example[c.key])
+                qlens[c.key] = c.get_quantized_value(n)
+                value += n * c.weight
+            else:
+                qlens[c.key] = 0
+        return qlens, value
+
+    def __call__(self, example: Dict[str, np.ndarray]) -> Optional[Dict[str, np.ndarray]]:
+        """Offer one example; returns a finished pack or ``None`` (buffered)."""
+        for c in self.constraints:
+            n = len(example[c.key]) if c.key in example else 0
+            at_capacity = c.get_quantized_value(n) >= c.get_quantized_max_len()
+            over_capacity = n > c.max_len
+            if (c.allow_shortcut and at_capacity) or over_capacity:
+                # Already fills (or exceeds) a capacity on its own — emit alone.
+                return self.pack_fn([example])
+
+        qlens, value = self._quantized_lens_and_value(example)
+        if len(self._buffer) < self.max_buffer_size:
+            self._buffer.append(example)
+            self._buffer_qlens.append(qlens)
+            self._buffer_values.append(value)
+            return None
+
+        # Buffer full: solve over the buffered examples, emit the best-fitting subset.
+        c1, c2 = self.constraints
+        indices = select_subset_2d_knapsack(
+            [q[c1.key] for q in self._buffer_qlens],
+            [q[c2.key] for q in self._buffer_qlens],
+            c1.get_quantized_max_len(),
+            c2.get_quantized_max_len(),
+            self._buffer_values,
+        )
+        if len(indices) == 0:
+            raise RuntimeError("No indices returned by select_subset_2d_knapsack")
+
+        out = self.pack_fn([self._buffer[i] for i in sorted(indices)])
+        for ix in sorted(indices, reverse=True):
+            self._buffer.pop(ix)
+            self._buffer_qlens.pop(ix)
+            self._buffer_values.pop(ix)
+        self._buffer.append(example)
+        self._buffer_qlens.append(qlens)
+        self._buffer_values.append(value)
+        return out
+
+    def flush(self) -> Iterator[Dict[str, np.ndarray]]:
+        """Drain the buffer (finite streams / end of epoch)."""
+        c1, c2 = self.constraints
+        while self._buffer:
+            indices = select_subset_2d_knapsack(
+                [q[c1.key] for q in self._buffer_qlens],
+                [q[c2.key] for q in self._buffer_qlens],
+                c1.get_quantized_max_len(),
+                c2.get_quantized_max_len(),
+                self._buffer_values,
+            )
+            if not indices:  # nothing fits (shouldn't happen; be safe)
+                indices = [len(self._buffer) - 1]
+            yield self.pack_fn([self._buffer[i] for i in sorted(indices)])
+            for ix in sorted(indices, reverse=True):
+                self._buffer.pop(ix)
+                self._buffer_qlens.pop(ix)
+                self._buffer_values.pop(ix)
+
+
+def iter_dynamic_packs(
+    examples: Iterable[Dict[str, np.ndarray]],
+    seq_len: int,
+    *,
+    max_crops_per_pack: int,
+    buffer_size: int = 48,
+    text_weight: float = 1.0,
+    image_weight: float = 30.0,
+    flush: bool = True,
+) -> Iterator[Dict[str, np.ndarray]]:
+    """2D-knapsack-pack a stream of example dicts (mm_olmo SFT packing parity).
+
+    mm_olmo stage-2 uses ``PackingConfig(buffer_size=48, image_weight=30,
+    shortcut_max_len_images=False)`` with capacities = (sequence length, per-sequence
+    crop capacity) and quantization ``(seq_len // 512, 1)``. Text-only examples pack
+    together with image examples.
+
+    :param seq_len: token capacity per pack.
+    :param max_crops_per_pack: crop capacity per pack. Use the max crops a single
+        example can produce (global crop + locals; the high-res budget if any dataset
+        uses ``p_high_res > 0``) or more.
+    :param buffer_size: candidate buffer size (mm_olmo: 48).
+    :param flush: drain the buffer once ``examples`` is exhausted (set False to match
+        mm_olmo's ``packed_iterator``, which drops the tail of infinite streams).
+    """
+    packer = DynamicPacker(
+        buffer_size,
+        [
+            PackingConstraint("input_ids", seq_len, True, text_weight, max(1, seq_len // 512)),
+            PackingConstraint("images", max_crops_per_pack, False, image_weight, 1),
+        ],
+    )
+    for ex in examples:
+        out = packer(ex)
+        if out is not None:
+            yield out
+    if flush:
+        yield from packer.flush()

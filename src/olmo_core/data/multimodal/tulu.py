@@ -19,11 +19,9 @@ import numpy as np
 from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
 
-__all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
+from .paths import TULU4_DATA
 
-_DATA = (
-    "/weka/oe-training-default/mm-olmo/torch_datasets/olmo-3-instruct-sft-no-tools-classified-v3"
-)
+__all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
 
 def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str]]]:
@@ -57,9 +55,12 @@ def _format_messages(parts: List[Dict[str, str]]) -> Optional[List[Dict[str, str
 
 @dataclass
 class Tulu4DatasetConfig(Config):
-    """``tulu4_max_2304``: filtered multi-turn text SFT."""
+    """Tulu4 filtered text SFT (matches mm_olmo ``get_dataset('tulu4')`` filter)."""
 
-    max_first_msg_len: int = 2304
+    max_first_msg_len: int = 4096
+    max_sequence_length: int = 4096
+    """Truncate the full tokenized conversation to this length (Tulu can exceed
+    ``max_first_msg_len`` when it has many turns)."""
     use_code: bool = False
     use_non_english: bool = False
     use_reasoning: bool = False
@@ -77,9 +78,9 @@ class Tulu4Dataset:
         self._data = self._load_filtered()
 
     def _load_filtered(self):
-        from datasets import load_from_disk
+        from .dataset_compat import load_from_disk_compat
 
-        ds = load_from_disk(_DATA)
+        ds = load_from_disk_compat(TULU4_DATA)
         ds = ds["train"] if hasattr(ds, "keys") and "train" in ds else ds
         cfg = self.config
 
@@ -116,53 +117,57 @@ class Tulu4Dataset:
         return len(self._data)
 
     def _text_sequence(self, messages: List[Dict[str, str]]) -> Dict[str, np.ndarray]:
-        """Tokenize the conversation turn-by-turn, with loss on assistant turns only.
+        """Tokenize the conversation as ONE sequential branch (mm_olmo ``text_sft``).
 
-        Each turn is the molmo2 chat layout: ``<|im_start|>user\\n{u}<|im_end|>\\n
-        <|im_start|>assistant\\n`` (non-loss) followed by ``{a}<|im_end|>`` (loss). We build
-        it explicitly because the Molmo2/Qwen chat template doesn't emit an
-        ``assistant_masks`` (no ``{% generation %}`` marker)."""
-        from olmo_core.nn.vision.molmo2_tokens import IM_END_TURN_ID
+        Turn layout matches mm_olmo's qwen3 ``apply_chat_template``
+        (``preprocessor_utils.py:244-291``): turn 1 is
+        ``<|im_start|>user\\n{u}<|im_end|>\\n<|im_start|>assistant\\n{a}``; turns 2+
+        prefix the user message with ``<|im_end|>\\n`` (closing the previous assistant
+        turn). Only the conversation's final token is an EOS target — intermediate
+        assistant spans carry no mid-sequence EOS loss (their last token's shifted
+        weight is the following user prefix's 0) — and the root-length weight is
+        ``2/sqrt(total_assistant_tokens + 1)``, counting no separator tokens.
+        """
+        from .qwen3_layout import followup_turn_context_ids, user_turn_ids
+        from .sequence_builder import build_branched_sequence
 
         tok = self.tokenizer
-        ids: List[int] = [tok.bos_token_id or tok.eos_token_id]
-        asst: List[float] = [0.0]
-        for ix in range(0, len(messages) - 1, 2):
+        segments = []
+        for turn_ix, ix in enumerate(range(0, len(messages) - 1, 2)):
             u, a = messages[ix]["content"], messages[ix + 1]["content"]
-            u_ids = tok.encode(
-                tok.apply_chat_template(
-                    [{"role": "user", "content": u}], tokenize=False, add_generation_prompt=True
-                ),
-                add_special_tokens=False,
-            )
-            a_ids = tok.encode(a, add_special_tokens=False) + [IM_END_TURN_ID]
-            ids += u_ids + a_ids
-            asst += [0.0] * len(u_ids) + [1.0] * len(a_ids)
-        input_ids = np.array(ids, dtype=np.int64)
-        asst_mask = np.array(asst, dtype=np.float32)
+            if turn_ix == 0:
+                ctx = user_turn_ids(tok, u)
+            else:
+                ctx = followup_turn_context_ids(tok, u)
+            segments.append((ctx, tok.encode(a, add_special_tokens=False)))
 
-        labels = np.zeros_like(input_ids)
-        labels[:-1] = input_ids[1:]
-        # Loss masks aligned to labels (predict-next): shift the assistant mask left by one.
-        loss_masks = np.zeros_like(asst_mask)
-        loss_masks[:-1] = asst_mask[1:]
-        return {
-            "input_ids": input_ids,
-            "labels": labels,
-            "loss_masks": loss_masks.astype(np.float32),
-            "position_ids": np.arange(len(input_ids), dtype=np.int64),
-            "token_type_ids": np.zeros(len(input_ids), dtype=np.int64),
-            # text-only: zero image crops / pooled rows -> no image for this example.
-            "images": np.zeros((0, N_PATCHES_SQ, PATCH_DIM), dtype=np.float32),
-            "pooled_patches_idx": np.full((0, POOL_H * POOL_W), -1, dtype=np.int64),
-        }
+        seq = build_branched_sequence(
+            [],  # no shared prefix and no BOS (qwen3)
+            [segments],
+            eos_id=tok.eos_token_id,
+            loss_token_weighting="root_subsegments_root_tokens",
+        )
+        # text-only: zero image crops / pooled rows -> no image for this example.
+        seq["images"] = np.zeros((0, N_PATCHES_SQ, PATCH_DIM), dtype=np.float32)
+        seq["pooled_patches_idx"] = np.full((0, POOL_H * POOL_W), -1, dtype=np.int64)
+        return seq
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         messages = _format_messages(list(self._data[i]["messages"]))
-        if messages is None:
-            # Filtered datasets should not contain these, but guard: fall back to next.
-            messages = [
-                {"role": "user", "content": "Hello"},
-                {"role": "assistant", "content": "Hi."},
-            ]
-        return self._text_sequence(messages)
+        # The filter already drops malformed rows (mm_olmo asserts likewise); raising
+        # lets the loader's skip-broken policy move on instead of training on junk.
+        assert messages is not None, f"Malformed Tulu row at index {i}"
+        seq = self._text_sequence(messages)
+        max_len = self.config.max_sequence_length
+        if max_len and len(seq["input_ids"]) > max_len:
+            # mm_olmo truncates to min(max_len, last loss token + 1) and refuses
+            # examples whose loss is entirely cut (example_preprocessor.py:260-270).
+            loss_positions = np.nonzero(seq["loss_masks"][:max_len] > 0)[0]
+            if len(loss_positions) == 0:
+                raise ValueError(f"Truncation to {max_len} removed all loss tokens (index {i})")
+            truncate_to = min(max_len, int(loss_positions[-1]) + 1)
+            seq = {
+                k: (v[:truncate_to] if v.ndim == 1 and len(v) > truncate_to else v)
+                for k, v in seq.items()
+            }
+        return seq

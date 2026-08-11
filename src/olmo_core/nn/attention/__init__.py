@@ -2,7 +2,7 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -499,6 +499,10 @@ class Attention(SequenceMixer):
         cache_leftpad: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
@@ -513,6 +517,19 @@ class Attention(SequenceMixer):
                 "(e.g. subsegment / branch isolation); use the 'torch' attention backend."
             )
         # shape: (batch_size, seq_len, n_heads, head_dim)
+        backend_kwargs: Dict[str, Optional[torch.Tensor]] = dict(
+            or_mask=or_mask,
+            and_mask=and_mask,
+        )
+        from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+        if isinstance(self.backend, FlexAttentionBackend):
+            backend_kwargs.update(
+                flex_attn_is_image=flex_attn_is_image,
+                flex_attn_subsegment_ids=flex_attn_subsegment_ids,
+                flex_attn_example_ids=flex_attn_example_ids,
+                flex_attn_block_mask=flex_attn_block_mask,
+            )
         att = self.backend(
             (q, k, v),
             cu_doc_lens=cu_doc_lens,
@@ -523,8 +540,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
-            or_mask=or_mask,
-            and_mask=and_mask,
+            **backend_kwargs,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -585,6 +601,10 @@ class Attention(SequenceMixer):
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
+        flex_attn_is_image: Optional[torch.Tensor] = None,
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
+        flex_attn_example_ids: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -660,6 +680,10 @@ class Attention(SequenceMixer):
             cache_leftpad=cache_leftpad,
             or_mask=or_mask,
             and_mask=and_mask,
+            flex_attn_is_image=flex_attn_is_image,
+            flex_attn_subsegment_ids=flex_attn_subsegment_ids,
+            flex_attn_example_ids=flex_attn_example_ids,
+            flex_attn_block_mask=flex_attn_block_mask,
         )
 
         if self.gate is not None:

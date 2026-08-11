@@ -66,6 +66,57 @@ def test_flex_per_token_recovery():
     assert torch.equal(example_id, torch.zeros(B, S, dtype=torch.int64))
 
 
+def test_flex_block_mask_from_vectors_matches_dense_masks():
+    """Pre-built BlockMask from O(S) vectors must match the dense-mask flex path."""
+    B, S, D = 2, 16, 8
+    torch.manual_seed(1)
+    q = torch.randn(B, S, 4, D)
+    k = torch.randn(B, S, 2, D)
+    v = torch.randn(B, S, 2, D)
+    or_mask, and_mask = _make_masks(B, S, "both")
+
+    kw = dict(head_dim=D, n_heads=4, n_kv_heads=2, scale=D**-0.5)
+    ref = FlexAttentionBackend(**kw)((q, k, v), or_mask=or_mask, and_mask=and_mask)
+
+    is_image = torch.zeros(B, S, dtype=torch.bool)
+    is_image[:, 2:6] = True
+    seg = torch.zeros(B, S, dtype=torch.long)
+    seg[:, :4] = 10000
+    seg[:, 4:10] = 0
+    seg[:, 10:] = 1
+    block_mask = FlexAttentionBackend.build_block_mask_from_vectors(
+        B, S, q.device, is_image=is_image, subsegment_ids=seg
+    )
+    out = FlexAttentionBackend(**kw)((q, k, v), flex_attn_block_mask=block_mask)
+    torch.testing.assert_close(out, ref, atol=1e-4, rtol=1e-4)
+
+
+def test_flex_per_token_vectors_match_dense_masks():
+    """O(S) per-token vectors must reproduce the dense-mask flex path."""
+    B, S, D = 2, 16, 8
+    torch.manual_seed(1)
+    q = torch.randn(B, S, 4, D)
+    k = torch.randn(B, S, 2, D)
+    v = torch.randn(B, S, 2, D)
+    or_mask, and_mask = _make_masks(B, S, "both")
+
+    kw = dict(head_dim=D, n_heads=4, n_kv_heads=2, scale=D**-0.5)
+    ref = FlexAttentionBackend(**kw)((q, k, v), or_mask=or_mask, and_mask=and_mask)
+
+    is_image = torch.zeros(B, S, dtype=torch.bool)
+    is_image[:, 2:6] = True
+    seg = torch.zeros(B, S, dtype=torch.long)
+    seg[:, :4] = 10000
+    seg[:, 4:10] = 0
+    seg[:, 10:] = 1
+    out = FlexAttentionBackend(**kw)(
+        (q, k, v),
+        flex_attn_is_image=is_image,
+        flex_attn_subsegment_ids=seg,
+    )
+    torch.testing.assert_close(out, ref, atol=1e-4, rtol=1e-4)
+
+
 def test_flex_per_token_recovery_packed():
     """With a block-diagonal `and_mask` (two packed examples) the recovered example_id
     labels the two contiguous blocks and seg_code stays example-local."""

@@ -17,7 +17,19 @@ packer), this carries variable-shape image tensors alongside the token sequence.
 
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
+from .finevision import (
+    FINEVISION_ROOT,
+    FineVisionDataset,
+    FineVisionDatasetConfig,
+    VisualWebInstructDataset,
+    VisualWebInstructDatasetConfig,
+)
 from .mixture_data_loader import MixtureDataLoader
+from .mmfinereason import (
+    MMFineReasonDataset,
+    MMFineReasonDatasetConfig,
+    extract_answer_text,
+)
 from .packing import pack_examples
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
 from .pixmo_points import (
@@ -33,9 +45,30 @@ from .sequence_builder import (
     build_branched_sequence,
     build_packed_sequence,
 )
+from .paths import (
+    ACADEMIC_DATASETS,
+    MOLMO_DATA_DIR,
+    PIXMO_DATASETS,
+    TORCH_DATASETS,
+    TULU4_DATA,
+)
+from .academic_dataset import AcademicDataset, AcademicDatasetConfig
+from .pixmo_ama import PixMoAmaDataset, PixMoAmaDatasetConfig
+from .pixmo_cap_qa import PixMoCapQaDataset, PixMoCapQaDatasetConfig
+from .message_weight import MessageWeight, apply_message_weight_to_loss_masks
+from .mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
+from .sft_formatter import SftFormatter
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
+    "FineVisionDataset",
+    "FineVisionDatasetConfig",
+    "VisualWebInstructDataset",
+    "VisualWebInstructDatasetConfig",
+    "FINEVISION_ROOT",
+    "MMFineReasonDataset",
+    "MMFineReasonDatasetConfig",
+    "extract_answer_text",
     "PixMoCapDataset",
     "PixMoCapDatasetConfig",
     "PixMoPointsDataset",
@@ -46,6 +79,23 @@ __all__ = [
     "CoSynPointDatasetConfig",
     "Tulu4Dataset",
     "Tulu4DatasetConfig",
+    "AcademicDataset",
+    "AcademicDatasetConfig",
+    "PixMoAmaDataset",
+    "PixMoAmaDatasetConfig",
+    "PixMoCapQaDataset",
+    "PixMoCapQaDatasetConfig",
+    "SftFormatter",
+    "MessageWeight",
+    "apply_message_weight_to_loss_masks",
+    "DatasetSource",
+    "SubMixture",
+    "compute_flat_mixture_weights",
+    "PIXMO_DATASETS",
+    "TULU4_DATA",
+    "ACADEMIC_DATASETS",
+    "MOLMO_DATA_DIR",
+    "TORCH_DATASETS",
     "MultimodalCollator",
     "MultimodalCollatorConfig",
     "MultimodalDataLoader",
