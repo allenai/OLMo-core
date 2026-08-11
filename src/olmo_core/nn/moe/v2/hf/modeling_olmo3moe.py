@@ -173,7 +173,42 @@ class Olmo3MoeExpert(nn.Module):
         self.down_proj = nn.Linear(self.moe_intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
+    def _forward_olmo_core_shared_reference(self, x: torch.Tensor) -> torch.Tensor:
+        """Match the packed single-shared-expert OLMo-core BF16 forward exactly.
+
+        OLMo-core stores the shared up/gate projections in one contiguous ``[D, 2H]``
+        tensor and evaluates them with one GEMM, followed by a one-group batched down
+        projection.  The ordinary HF implementation below is mathematically equivalent,
+        but its two independent up/gate GEMMs can round differently in BF16.  Peri-norm
+        can amplify those otherwise harmless differences enough to obscure strict
+        end-to-end conversion validation.
+
+        This path is only selected by the same opt-in verifier environment variable used
+        for the routed experts; normal HF and vLLM inference keep their optimized paths.
+        """
+        input_shape = x.shape
+        x_flat = x.reshape(-1, self.hidden_size)
+        # Reconstruct the exact contiguous OLMo-core SharedExperts parameter layouts.
+        w_up_gate = (
+            torch.cat((self.up_proj.weight, self.gate_proj.weight), dim=0)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        up_gate = x_flat @ w_up_gate
+        up, gate = up_gate.chunk(2, dim=-1)
+        hidden = up * F.silu(gate)
+        w_down = self.down_proj.weight.transpose(0, 1).contiguous().unsqueeze(0)
+        out = torch.bmm(hidden.unsqueeze(0), w_down).squeeze(0)
+        return out.view(*input_shape[:-1], self.hidden_size)
+
     def forward(self, x):
+        if os.environ.get("OLMO_HF_MOE_CORE_REFERENCE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_olmo_core_shared_reference(x)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 

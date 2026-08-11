@@ -349,6 +349,29 @@ def test_olmo3moe_experts_can_force_olmo_core_reference(monkeypatch):
 
 
 @requires_olmo3moe
+def test_olmo3moe_shared_expert_can_force_olmo_core_reference(monkeypatch):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeExpert
+
+    torch.manual_seed(0)
+    expert = Olmo3MoeExpert(hidden_size=32, moe_intermediate_size=16, hidden_act="silu")
+    hidden_states = torch.randn(2, 7, 32)
+
+    w_up_gate = torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0).T.contiguous()
+    up, gate = (hidden_states.reshape(-1, 32) @ w_up_gate).chunk(2, dim=-1)
+    expected = (
+        torch.bmm(
+            (up * torch.nn.functional.silu(gate)).unsqueeze(0),
+            expert.down_proj.weight.T.contiguous().unsqueeze(0),
+        )
+        .squeeze(0)
+        .view_as(hidden_states)
+    )
+
+    monkeypatch.setenv("OLMO_HF_MOE_CORE_REFERENCE", "1")
+    torch.testing.assert_close(expert(hidden_states), expected, rtol=0, atol=0)
+
+
+@requires_olmo3moe
 def test_olmo3moe_router_uses_float32_projection():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
 
