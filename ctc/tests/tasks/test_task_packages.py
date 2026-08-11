@@ -48,6 +48,24 @@ def test_serializer_exists(spec):
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
+def test_stop_preset_exists(spec):
+    """A typo would fall back to whatever the runner defaults to, silently."""
+    from ctc.eval.stopping import STOP_PRESETS
+
+    assert spec.stop in STOP_PRESETS, f"{spec.name}.stop={spec.stop!r} is not a known preset"
+
+
+@pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
+def test_set_answer_tasks_do_not_stop_on_a_newline(spec):
+    """A set answer can wrap; a newline stop would cut it mid-list."""
+    from ctc.eval.stopping import STOP_PRESETS
+
+    if not spec.answer_is_set:
+        pytest.skip("not a set-answer task")
+    assert "\n" not in STOP_PRESETS[spec.stop].text_stops
+
+
+@pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
 def test_instruction_is_declared(spec):
     """The instruction is hashed into the fingerprint; an empty one makes the guard vacuous."""
     assert spec.instruction.strip()

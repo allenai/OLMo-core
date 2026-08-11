@@ -68,6 +68,14 @@ class TaskSpec:
         explicitly so a results table cannot quietly switch between f1 and exact_match.
     :param max_new_tokens: Default decode budget. Too small truncates a correct answer into a parse
         failure, which reads as a capability limit rather than as a config mistake.
+
+        The pre-migration tables disagreed here: ``eval_lc_native_docchunk``'s ``TASK_CFG`` gave
+        contradiction ``max_new=200`` while ``run_rung_eval``'s ``TASK_MAX_NEW`` gave 512, with the
+        driver passing its value explicitly -- so the budget in force depended on which entry point
+        you used. Declaring it once is the point of this field.
+    :param stop: Key into :data:`ctc.eval.stopping.STOP_PRESETS`, governing when generation ends and
+        what survives for the parser. A surprising share of this project's bad numbers came from
+        getting that wrong rather than from the model.
     :param answer_is_set: True when the answer is an unordered set of ids (scored with set-F1)
         rather than a ranked list or free text.
     :param sources: Named source corpora this task can be built from, e.g.
@@ -88,6 +96,7 @@ class TaskSpec:
     rungs: Tuple[str, ...] = ()
     primary_metric: str = "f1"
     max_new_tokens: int = 512
+    stop: str = "eos"
     answer_is_set: bool = False
     sources: Tuple[str, ...] = ()
     description: str = ""

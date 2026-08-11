@@ -18,6 +18,16 @@ Two facts that have each cost real debugging time:
   (77/167/346/705 claims for 2k/4k/8k/16k) and let per-claim length vary, so measured prompts at
   the 4k rung spanned 3,457-23,796 tokens. Sizing a decode budget from the label silently skipped
   354/500 examples and scored them 0 -- in both arms, which read as "no dense-vs-chunked gap".
+
+.. warning::
+   **``stop="pairs"`` is a deliberate change from the pre-migration evaluator.** There,
+   contradiction ran under ``stop_rule="eos"``, whose ``should_stop`` returns ``False``
+   unconditionally -- so nothing but EOS or the budget ended generation. No-cot checkpoints
+   frequently never emit EOS, so they answered correctly and then rambled to the budget, and
+   whatever the parser made of the ramble is what got scored. Stopping at the closing ``]]``
+   terminates on the actual answer. This can move numbers relative to previously reported ones, in
+   either direction, and is worth a back-to-back comparison on a known checkpoint before it is
+   relied on.
 """
 
 from __future__ import annotations
@@ -161,7 +171,8 @@ SPEC = TaskSpec(
     parse=parse,
     score=score,
     primary_metric="f1",
-    max_new_tokens=512,  # generous: generation early-stops at ']]'
+    max_new_tokens=512,
+    stop="pairs",
     answer_is_set=True,
     sources=("pubmed", "fever", "wiki"),
     extra={"claims_per_rung": CLAIMS_PER_RUNG},
