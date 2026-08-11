@@ -21,6 +21,7 @@ _PROFILE_TEMPLATE = (
     / "bridge"
     / "real_canary_v1.yaml.template"
 )
+_MATERIALIZED_PROFILE = _PROFILE_TEMPLATE.with_suffix("")
 
 
 def _load_launcher():
@@ -181,3 +182,29 @@ def test_real_canary_template_does_not_claim_unreviewed_artifact_values():
     assert "__PIN_64_HEX_VALIDATION_MANIFEST_SHA256__" in raw
     assert "/path/to/" not in raw
     assert "synthetic" not in raw.lower()
+
+
+def test_materialized_real_canary_is_fully_pinned_and_holmes_only():
+    raw = _MATERIALIZED_PROFILE.read_text()
+    profile = yaml.safe_load(raw)
+    assert isinstance(profile, dict)
+    overrides = _parsed_overrides(profile)
+
+    assert "__PIN_" not in raw
+    assert profile["name"] == "vision-alignment-bridge-real-canary-v1"
+    assert profile["phase"] == "bridge"
+    assert profile["launch"] == {
+        "cluster": "ai2/holmes",
+        "workspace": "ai2/molmofication",
+        "budget": "ai2/oe-other",
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "priority": "normal",
+    }
+    assert "hostnames" not in profile["launch"]
+    assert str(overrides["data.pixmo_cap_path"]).endswith("/pixmo-cap-content-disjoint-v1/dataset")
+    assert str(overrides["data.source_audit_path"]).endswith("/bridge-source-audit-v1.json")
+    assert len(str(overrides["data.source_audit_fingerprint"])) == 64
+    assert len(str(overrides["evaluation.validation_manifest_sha256"])) == 64
+    assert float(overrides["data.mixture.mean_loss_weight.pixmo_caption"]) > 0
+    assert float(overrides["data.mixture.mean_loss_weight.pixmo_transcript"]) > 0
