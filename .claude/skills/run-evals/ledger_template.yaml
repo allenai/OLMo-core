@@ -1,0 +1,132 @@
+# Launch ledger — one file per checkpoint evaluated.
+# Path: records/eval_launches/<YYYY-MM-DD>_<run-name>[_<tag>].yaml
+#
+# Written AT SUBMISSION TIME by the `run-evals` skill. Holds every results-hub column
+# except metric_value / extra_metrics, so ingestion after the jobs land is a mechanical
+# join. The `pull-evals` skill reads it back, cross-references the finished jobs against
+# it, and flips each job's status to `done`.
+
+checkpoint:
+  run_name: q4b-example-5task-dolci25-32k
+  ckpt: /weka/oe-training-default/ai2-llm/checkpoints/<user>/q4b-example/step8550
+  model_type: compressive            # dense | landmark | compressive | docchunk
+  model_subtype: block64
+  attention_type: compressive_landmark
+  pipeline_stage: SFT
+  chat_template: chat                # chat = SFT, raw = BASE/CPT
+  # SHORT slug -> results-hub `model_train_data_hparams`. Describes the MODEL, never the
+  # eval (no YaRN factor / top-k / batch size here). Must be identical across every row
+  # of this checkpoint. Derived by pull-evals on the first push, then reused verbatim;
+  # leave blank at launch unless you already know it.
+  #
+  # ONE slug for this whole file. The _yarn2/_yarn4/_yarn8 passes below are the SAME
+  # model -- config-only copies symlinking the same weights -- so they share this slug.
+  # Their per-pass `ckpt_used` and `yarn_factor` carry the difference.
+  model_slug: q4b-compressive-block64-32K
+  # The long training description -> results-hub `other_notes`, NOT the slug column.
+  training_description: >
+    5task(75%)+Dolci-Instruct-SFT(25%) SFT, ~700M tok (TARGET_STEPS=8550, GBS=2*40960),
+    lr1e-5, Ulysses CP=8; init weights-only from qwen3-4b-compressive-block64/step2385
+
+common:
+  who_ran: <whoever launched — git user / $USER; results-hub auto-fills it>
+  date_eval_ran: <YYYY-MM-DD of submission>
+  eval_version: v2                   # the only supported ladder
+  # STANDARD bundle — the runner's EVAL500 default. Change only to reproduce a
+  # pre-2026-07-29 number, and say so in the pass's other_notes if you do.
+  eval_set_weka_pointer: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean
+  git_commit: <repo HEAD at submission>
+  cluster: ai2/jupiter-cirrascale-2
+  priority: urgent
+  tokenizer: Qwen/Qwen3.5-0.8B
+  landmark_top_k_fixed_val: ""       # blank = checkpoint default
+  landmark_top_k_percentage: 0.1
+  landmark_nonselected_percentage: 0.1
+
+passes:
+
+  - name: base                       # Pass A — base ladder, ALL 9 tasks incl. the 4 OOD
+    eval_tag: base
+    tasks: [contra, nq, rerank, outlier, oolong, fiqa, scifact, outlier_review, contra_fever]
+    rungs_per_task:
+      contra: [2k, 8k, 16k, 32k]
+      nq: [3k, 8k, 16k, 32k]
+      outlier: [3k, 8k, 16k, 32k]
+      rerank: [3k, 8k, 16k]
+      oolong: [8k, 16k, 32k]
+      fiqa: [2k, 4k, 8k, 16k]
+      scifact: [4k, 8k, 16k, 32k]
+      outlier_review: [3k, 8k, 16k, 32k]
+      contra_fever: [2k, 8k, 16k, 32k]
+    ckpt_used: <same as checkpoint.ckpt>
+    yarn_factor: null
+    decoding_hparams_other: "temp=0.0 top_p=1.0 max_length=40960 batch_size=1 ngpu=2"
+    eval_command: "<the inner RUN=... TASK=... bash run_beaker_multirung_eval.sh line the launcher printed>"
+    # One entry per submitted job (= one per task). `status` starts at `submitted`;
+    # only the pull-evals skill advances it. Every job in every pass must appear here,
+    # or pull-evals cannot tell a missing result from a job that was never launched.
+    jobs:
+      - task: contra
+        # REQUIRED. The launcher prints this as `submitted: <id>` for each task —
+        # copy it verbatim. This is what pull-evals queries; without it that skill is
+        # reduced to globbing weka and guessing which job wrote which file.
+        beaker_experiment_id: 01KZQ58X21CM4GPW9R70YK0W5D
+        beaker_job_name: ev-contra-...          # printed as `--- [contra] <name> ---`
+        beaker_job_id: ""                       # optional; resolve from the experiment when needed
+        status: submitted            # submitted | done | failed | requeued
+        result_json: ""              # filled by pull-evals: the weka _eval_results path
+        rungs_ingested: []           # filled by pull-evals: rungs that became results-hub rows
+        pulled_at: ""                # filled by pull-evals: YYYY-MM-DD
+        notes: ""                    # e.g. "OOM at 64k tail", "requeued as 01K..."
+    other_notes: "base ladder pass"
+
+  - name: xlong-native               # Pass B.1 — 64k/128k, native RoPE
+    eval_tag: xlong-native
+    tasks: [contra, nq, rerank, outlier, oolong]
+    xlong_rungs: [64k, 128k]
+    ckpt_used: <same as checkpoint.ckpt>
+    yarn_factor: null
+    decoding_hparams_other: "temp=0.0 top_p=1.0 max_length=146227 batch_size=1 ngpu=2"
+    eval_command: "..."
+    jobs: []
+    other_notes: "in-ceiling (native 262144 positions)"
+
+  - name: xlong-yarn2                # Pass B.2 — 256k/512k, YaRN factor 2
+    eval_tag: xlong-yarn2
+    tasks: [contra, nq, rerank, outlier, oolong]
+    xlong_rungs: [256k, 512k]
+    ckpt_used: <checkpoint.ckpt>_yarn2
+    yarn_factor: 2
+    decoding_hparams_other: "temp=0.0 top_p=1.0 max_length=578765 batch_size=1 ngpu=2 yarn_factor=2 prefill_chunk=32768"
+    eval_command: "..."
+    jobs: []
+    other_notes: >
+      RoPE-EXTENDED (YaRN factor 2) — past Qwen3.5's native 262144 positions.
+      NOT comparable to a native-RoPE number at any rung.
+
+  - name: xlong-yarn4                # Pass B.3 — 1M, YaRN factor 4
+    eval_tag: xlong-yarn4
+    tasks: [contra, nq, rerank, outlier, oolong]
+    xlong_rungs: [1M]
+    ckpt_used: <checkpoint.ckpt>_yarn4
+    yarn_factor: 4
+    decoding_hparams_other: "temp=0.0 top_p=1.0 max_length=1155482 batch_size=1 ngpu=2 yarn_factor=4 prefill_chunk=32768"
+    eval_command: "..."
+    jobs: []
+    other_notes: "RoPE-EXTENDED (YaRN factor 4)."
+
+  - name: xlong-yarn8                # Pass B.4 — 2M, YaRN factor 8
+    eval_tag: xlong-yarn8
+    tasks: [contra, nq, rerank, outlier, oolong]
+    xlong_rungs: [2M]
+    ckpt_used: <checkpoint.ckpt>_yarn8
+    yarn_factor: 8
+    decoding_hparams_other: "temp=0.0 top_p=1.0 max_length=2308915 batch_size=1 ngpu=2 yarn_factor=8 prefill_chunk=32768"
+    eval_command: "..."
+    jobs: []
+    other_notes: "RoPE-EXTENDED (YaRN factor 8). KV ~32KB/token — 2M alone is ~69GB, size the job accordingly."
+
+# Filled in AFTER the jobs land (the only fields not known at submission):
+#   eval_context_length -> one results-hub row per rung
+#   eval_data_quantity  -> realized eval_size per rung, read from the result JSON
+#   metric_name / metric_value / extra_metrics
