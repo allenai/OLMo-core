@@ -5,6 +5,13 @@ Trains the connector + LM on PixMoCap captions/transcripts with the vision encod
 **frozen**, using the float ``root_subsegments``-weighted loss and per-component
 learning rates / warmups. In-loop evaluation is intentionally omitted.
 
+Weights start from **base** checkpoints, matching mm_olmo's ``reset_with_pretrained_weights``:
+the LM from ``Qwen/Qwen3-4B``, the ViT from ``google/siglip2-so400m-patch14-384``, and the
+connector / extra-token embeddings randomly initialised (``INIT_FROM = "scratch"``). This is
+stage-1 *pretraining*. Passing ``--init_from=molmo2`` instead continues the released,
+already-post-trained ``allenai/Molmo2-4B`` on the stage-1 objective, which is a fine-tune —
+useful for parity tests and continuation experiments, but not a stage-1 reproduction.
+
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
     torchrun --nproc-per-node=1 src/scripts/train/Molmo2-Stage1.py train smoke \\
@@ -33,8 +40,10 @@ from olmo_core.data.multimodal import (
     PixMoPointsDatasetConfig,
     Tulu4DatasetConfig,
 )
+from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
@@ -42,7 +51,12 @@ from olmo_core.internal.common import (
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, PerGroupScheduler
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    OptimGroupOverride,
+    PerGroupScheduler,
+)
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -70,8 +84,21 @@ log = logging.getLogger(__name__)
 #### CONFIGURATION ####
 #######################
 
-MODEL_ID = "allenai/Molmo2-4B"  # HF checkpoint to initialise from (also provides the tokenizer)
-SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo stage 1 uses ~5248
+# Architecture + tokenizer source. Only the HF *config* and tokenizer are read from this
+# repo id; stage-1 weights come from the base checkpoints below (see INIT_FROM).
+MODEL_ID = "allenai/Molmo2-4B"
+
+# Weight init. "scratch" is mm_olmo's true stage-1 start and the default: base Qwen3-4B LM
+# + base SigLIP2 ViT + randomly-initialised connector / new-token embeddings. "molmo2"
+# instead *continues* the released (already post-trained) Molmo2-4B on the stage-1
+# objective — that is a fine-tune, not stage-1 pretraining, so it is opt-in only
+# (`--init_from=molmo2`), kept for parity tests and continuation experiments.
+INIT_FROM = "scratch"
+INIT_FROM_CHOICES = ("scratch", "molmo2")
+SCRATCH_LM_ID = "Qwen/Qwen3-4B"
+SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"
+NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
+SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
@@ -100,8 +127,6 @@ LLM_LR = 2e-5
 CONNECTOR_WARMUP = 200
 LLM_WARMUP = 2000
 ALPHA_F = 0.1
-
-from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
 DATASET_PATH = f"{PIXMO_DATASETS}/cap"
@@ -150,6 +175,10 @@ class ExperimentConfig(Config):
     """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
     pack_sequences: bool = PACK_SEQUENCES
     """Pack several short examples per sequence (mm_olmo dynamic packer)."""
+
+    init_from: str = INIT_FROM
+    """``"molmo2"`` (released Molmo2-4B weights) or ``"scratch"`` (mm_olmo stage-1 init:
+    base Qwen3-4B + base SigLIP2 + random connector/new embeddings)."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -281,7 +310,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
         ]
 
-    return ExperimentConfig(
+    config = ExperimentConfig(
         model=model_config,
         dataset=dataset_config,
         collator=collator_config,
@@ -289,6 +318,14 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         trainer=trainer_config,
         launch=launch_config,
     ).merge(overrides)
+
+    # Fail here rather than after a Beaker job has queued, started and downloaded weights.
+    if config.init_from not in INIT_FROM_CHOICES:
+        raise OLMoConfigurationError(
+            f"init_from={config.init_from!r} is not one of {INIT_FROM_CHOICES}"
+        )
+
+    return config
 
 
 def _load_tokenizer():
@@ -320,6 +357,100 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
     # training updates the head and the embedding table as one parameter, like mm_olmo.
     retie_word_embeddings(model)
     del converted
+
+
+def _convert_siglip_vision_state(hf_sd, n_blocks: int):
+    """Map an HF ``SiglipVisionModel`` state dict onto ``MultimodalLM.vision`` keys.
+
+    Same (numerically parity-verified) mapping as ``_convert_siglip_state_dict`` in
+    ``src/test/nn/vision/parity_test.py``, with a ``vision.`` key prefix and truncation to
+    the target's ``n_blocks`` (Molmo2 keeps SigLIP2 blocks 0..24 of 27 — everything past
+    ``vit_layers`` max ``24`` is dropped, exactly like mm_olmo's truncated ViT).
+    ``post_layernorm`` / ``head.*`` have no counterpart in our encoder and are skipped.
+    """
+    hf_sd = {k.removeprefix("vision_model."): v for k, v in hf_sd.items()}
+    out = {}
+    w = hf_sd["embeddings.patch_embedding.weight"]  # Conv2d (D, 3, p, p) -> C-first flatten
+    out["vision.patch_embedding.weight"] = w.reshape(w.shape[0], -1)
+    out["vision.patch_embedding.bias"] = hf_sd["embeddings.patch_embedding.bias"]
+    out["vision.positional_embedding"] = hf_sd["embeddings.position_embedding.weight"]
+    for i in range(n_blocks):
+        src, dst = f"encoder.layers.{i}", f"vision.blocks.{i}"
+        for hf_name, ours in (("layer_norm1", "attn_norm"), ("layer_norm2", "ffn_norm")):
+            for suf in ("weight", "bias"):
+                out[f"{dst}.{ours}.{suf}"] = hf_sd[f"{src}.{hf_name}.{suf}"]
+        for hf_name, ours in (
+            ("q_proj", "wq"),
+            ("k_proj", "wk"),
+            ("v_proj", "wv"),
+            ("out_proj", "wo"),
+        ):
+            for suf in ("weight", "bias"):
+                out[f"{dst}.attn.{ours}.{suf}"] = hf_sd[f"{src}.self_attn.{hf_name}.{suf}"]
+        for hf_name, ours in (("fc1", "w1"), ("fc2", "w2")):
+            for suf in ("weight", "bias"):
+                out[f"{dst}.ffn.{ours}.{suf}"] = hf_sd[f"{src}.mlp.{hf_name}.{suf}"]
+    return out
+
+
+def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfig) -> None:
+    """mm_olmo's true stage-1 init (``reset_with_pretrained_weights``):
+
+    * LM  <- base ``Qwen/Qwen3-4B`` (weight-tied), via the generic HF->olmo-core converter;
+      the 128 extra-token embedding rows are ``N(0, 0.02)`` (mm_olmo
+      ``new_embedding_init_range``) and the LM head is tied to the embeddings.
+    * vision <- base ``google/siglip2-so400m-patch14-384`` (blocks 0..24).
+    * connector <- random (``reset_parameters``: ``N(0, 0.02)`` weights, zero biases —
+      matches mm_olmo's pooling + projector init).
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, SiglipVisionModel
+
+    from olmo_core.nn.hf import convert_state_from_hf
+    from olmo_core.nn.vision.molmo2_loader import retie_word_embeddings
+
+    log.info(f"[scratch init] Loading base LM weights from {SCRATCH_LM_ID} ...")
+    hf_lm = AutoModelForCausalLM.from_pretrained(SCRATCH_LM_ID, dtype=torch.float32)
+    lm_state = convert_state_from_hf(hf_lm.config, hf_lm.state_dict(), model_type="qwen3")
+    del hf_lm
+
+    emb = lm_state["embeddings.weight"]
+    extra = model_cfg.lm.vocab_size - emb.shape[0]
+    if extra < 0:
+        raise RuntimeError(f"Base LM vocab {emb.shape[0]} exceeds target {model_cfg.lm.vocab_size}")
+    gen = torch.Generator().manual_seed(0)  # same rows on every rank
+    new_rows = torch.empty(extra, emb.shape[1], dtype=emb.dtype)
+    new_rows.normal_(std=NEW_EMBEDDING_INIT_STD, generator=gen)
+    full_emb = torch.cat([emb, new_rows], dim=0)
+
+    converted = {f"lm.{k}": v for k, v in lm_state.items()}
+    converted["lm.embeddings.weight"] = full_emb
+    # Tied head (mm_olmo `weight_tying=True`): identical values regardless of whether the
+    # target params share storage.
+    converted["lm.lm_head.w_out.weight"] = full_emb.clone()
+    del lm_state
+
+    log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")
+    hf_vit = SiglipVisionModel.from_pretrained(SCRATCH_VIT_ID, dtype=torch.float32)
+    converted.update(_convert_siglip_vision_state(hf_vit.state_dict(), len(model.vision.blocks)))
+    del hf_vit
+
+    model.to_empty(device=get_default_device())
+    missing, unexpected = model.load_state_dict(converted, strict=False)
+    del converted
+    # Everything except the connector must have been covered by the two base checkpoints.
+    non_connector_missing = [k for k in missing if not k.startswith("connector.")]
+    if non_connector_missing or unexpected:
+        raise RuntimeError(
+            f"[scratch init] unexpected state-dict coverage: missing={non_connector_missing[:8]} "
+            f"unexpected={list(unexpected)[:8]}"
+        )
+    # `to_empty` above un-ties tied word embeddings, so the head and the embedding table
+    # would otherwise train as two independent parameters. Restore the share so they move
+    # together, matching mm_olmo's `weight_tying=True` (no-op for untied configs).
+    retie_word_embeddings(model)
+    log.info("[scratch init] Randomly initialising the connector ...")
+    model.connector.reset_parameters()
 
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
@@ -361,7 +492,14 @@ def train(config: ExperimentConfig):
     tokenizer = _load_tokenizer()
 
     model = config.model.build(init_device="meta")
-    _init_weights_from_hf(model, config.model)
+    if config.init_from == "scratch":
+        _init_weights_from_scratch(model, config.model)
+    elif config.init_from == "molmo2":
+        _init_weights_from_hf(model, config.model)
+    else:  # unreachable via build_config, which validates; guards direct train() calls
+        raise OLMoConfigurationError(
+            f"init_from={config.init_from!r} is not one of {INIT_FROM_CHOICES}"
+        )
 
     train_module = config.train_module.build(model)
 
