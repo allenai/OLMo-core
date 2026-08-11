@@ -1,0 +1,18 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts_4b/ctc-4b-rerank-full",
+  "variant": "full",
+  "task": "rerank",
+  "data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs_shared/rerank/rung_8192_mux.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "mrr@10": 0.9562690476190475,
+    "recall@10": 0.996,
+    "parse_rate": 1.0,
+    "ndcg@10": 0.9889709733854033,
+    "kendall_tau": 0.4458037518037518,
+    "ce_graded_n": 500
+  }
+}

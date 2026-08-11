@@ -1,0 +1,15 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/llama32-3b-contra-full-s1",
+  "variant": "full",
+  "contra_data": "/data/prasann/ctc_suite_staged/eval_rungs/contradiction_clean/rung_8192.jsonl",
+  "eval_size": 500,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "contradiction": {
+    "precision": 0.1223762464040591,
+    "recall": 0.6513333333333332,
+    "f1": 0.19356065059614772,
+    "exact_match": 0.0,
+    "parse_rate": 1.0
+  }
+}

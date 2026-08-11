@@ -1,0 +1,16 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-nq-full",
+  "variant": "full",
+  "task": "retrieval",
+  "data": "/data/prasann/ctc_suite_data/eval_rungs_pilot/nq/rung_2048.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "exact_match": 0.074,
+    "recall": 0.074,
+    "precision": 0.074,
+    "f1": 0.074
+  }
+}

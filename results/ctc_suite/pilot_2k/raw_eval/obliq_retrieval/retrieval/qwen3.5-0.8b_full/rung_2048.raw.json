@@ -1,0 +1,16 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-obliq_retrieval-full-lambda",
+  "variant": "full",
+  "task": "retrieval",
+  "data": "/data/prasann/ctc_suite_data/eval_rungs_pilot/obliq_retrieval/rung_2048.jsonl",
+  "eval_size": 488,
+  "skipped_too_long": 3,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "exact_match": 0.004098360655737705,
+    "recall": 0.05194348265499583,
+    "precision": 0.14549180327868852,
+    "f1": 0.0737661541713431
+  }
+}

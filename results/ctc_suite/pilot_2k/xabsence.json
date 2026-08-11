@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-xabsence-full",
+  "compute_pool": "cubbins,mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/xabsence.json",
+  "epochs": 1,
+  "eval_metric": 0.07888888888888888,
+  "eval_metric_name": "set_f1",
+  "eval_size": 300,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval_size=300 only (binomial SE +/-0.016 at p=0.08)",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "xabsence",
+  "train_ce_end": 0.5703,
+  "train_ce_start": 0.8462,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-xabsence-full_3338425.log",
+  "train_steps_logged": 250,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/thqcvph8"
+}

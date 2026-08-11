@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-grouping_labeled-full",
+  "compute_pool": "mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/grouping_labeled.json",
+  "epochs": 1,
+  "eval_metric": null,
+  "eval_metric_name": null,
+  "eval_size": null,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: N/A (no eval_rungs data staged for this task)",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "grouping_labeled",
+  "train_ce_end": 0.2854,
+  "train_ce_start": 0.7697,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-grouping_labeled-full_3338307.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/tjqjsbsd"
+}

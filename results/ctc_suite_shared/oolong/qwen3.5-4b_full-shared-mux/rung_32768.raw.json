@@ -1,0 +1,19 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-4b-oolong-full",
+  "variant": "full",
+  "task": "oolong",
+  "data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs_shared/oolong/rung_32768_mux.jsonl",
+  "eval_size": 400,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "oolong": {
+    "score": 0.04781293325405469,
+    "exact_match": 0.015,
+    "per_task_group": {
+      "counting": 0.0025913545702679398,
+      "user": 0.10775709885817308,
+      "timeline": 0.036054117570927253
+    }
+  }
+}

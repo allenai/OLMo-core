@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/accounts/projects/sewonm/prasann/ctc_suite/ckpts/ctc-1ep-scifact-full-lambda",
+  "compute_pool": "lambda-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/scifact.json",
+  "epochs": 1,
+  "eval_metric": null,
+  "eval_metric_name": null,
+  "eval_size": null,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: BLOCKED \u2014 staged eval set eval_rungs_pilot/scifact/rung_2048.jsonl is 0 bytes (empty); cannot evaluate. Ckpt exists on lambda (ctc-1ep-scifact-full-lambda, step100) but no eval data was staged.",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "scifact",
+  "train_ce_end": 0.0213,
+  "train_ce_start": 1.554,
+  "train_log": "lambda:/accounts/projects/sewonm/prasann/ctc_suite/logs/ctc_suite_ctc-1ep-scifact-full-lambda_109692.log",
+  "train_steps_logged": 100,
+  "variant": "full",
+  "wandb_url_if_any": null
+}

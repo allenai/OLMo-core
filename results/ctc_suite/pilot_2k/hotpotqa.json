@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-hotpotqa-full",
+  "compute_pool": "cubbins,mooney-8gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/hotpotqa.json",
+  "epochs": 1,
+  "eval_metric": 0.8613333333333334,
+  "eval_metric_name": "gold_id_f1",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "train early-stopped at --max-steps=400 (plumbing check, not full epoch)",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 40960,
+  "task": "hotpotqa",
+  "train_ce_end": 0.1484,
+  "train_ce_start": 1.811,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-hotpotqa-full_3338407.log",
+  "train_steps_logged": 400,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/lia51vs5"
+}

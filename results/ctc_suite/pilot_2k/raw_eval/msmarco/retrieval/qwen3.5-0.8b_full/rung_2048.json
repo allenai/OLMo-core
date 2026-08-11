@@ -1,0 +1,37 @@
+{
+  "arm": "full",
+  "aux": {
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/raw_eval/msmarco/retrieval/qwen3.5-0.8b_full/rung_2048.generations.json",
+    "max_length": 4096,
+    "max_new_tokens": 64,
+    "nproc": 1,
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/raw_eval/msmarco/retrieval/qwen3.5-0.8b_full/rung_2048.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 109.6,
+    "exact_match": 0.77,
+    "f1": 0.7819333333333333,
+    "precision": 0.7826666666666666,
+    "recall": 0.7816666666666666,
+    "skipped_too_long": 0
+  },
+  "complexity_class": "N",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "gold_id_f1",
+  "metric_value": 0.7819333333333333,
+  "model": "qwen3.5-0.8b",
+  "provenance": {
+    "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-msmarco-full-lambda-r2",
+    "data_path": "/data/prasann/ctc_suite_data/eval_rungs_pilot/msmarco/rung_2048.jsonl",
+    "date": "2026-07-20T03:13:04",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk.py",
+    "evaluator_variant": "full",
+    "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 2048,
+  "task": "retrieval",
+  "trained_ctx": "2k-32k-joint-uniform"
+}

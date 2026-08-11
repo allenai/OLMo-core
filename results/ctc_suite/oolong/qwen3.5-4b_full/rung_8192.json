@@ -1,0 +1,35 @@
+{
+  "arm": "full",
+  "aux": {
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/oolong/qwen3.5-4b_full/rung_8192.generations.json",
+    "max_length": 10240,
+    "max_new_tokens": 256,
+    "nproc": 1,
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/oolong/qwen3.5-4b_full/rung_8192.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 9685.8,
+    "exact_match": 0.1,
+    "score": 0.17920215118665558,
+    "skipped_too_long": 1
+  },
+  "complexity_class": "N",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "partial_credit",
+  "metric_value": 0.17920215118665558,
+  "model": "qwen3.5-4b",
+  "provenance": {
+    "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-4b-oolong-full",
+    "data_path": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/oolong/rung_8192.jsonl",
+    "date": "2026-07-20T17:26:42",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk.py",
+    "evaluator_variant": "full",
+    "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 8192,
+  "task": "oolong",
+  "trained_ctx": "2k-32k-joint-uniform"
+}

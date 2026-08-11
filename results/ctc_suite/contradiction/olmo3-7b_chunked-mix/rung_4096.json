@@ -1,0 +1,37 @@
+{
+  "arm": "chunked-mix",
+  "aux": {
+    "generations_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/results/contradiction/olmo3-7b_chunked-mix/rung_4096.generations.json",
+    "max_length": 32768,
+    "max_new_tokens": 512,
+    "nproc": 8,
+    "raw_eval_json": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/results/contradiction/olmo3-7b_chunked-mix/rung_4096.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 133.1,
+    "exact_match": 0.3,
+    "f1": 0.6488666666666667,
+    "parse_rate": 1.0,
+    "precision": 0.6556666666666666,
+    "recall": 0.6446666666666666
+  },
+  "complexity_class": "N2",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "set_f1",
+  "metric_value": 0.6488666666666667,
+  "model": "olmo3-7b",
+  "provenance": {
+    "ckpt_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/ctc-olmo3-7b-contra-cmix-swa2-20260727T020625-0700",
+    "data_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/eval_rungs/contradiction/rung_4096.jsonl",
+    "date": "2026-07-27T11:05:43",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py",
+    "evaluator_variant": "dense",
+    "git_commit": "73ede37b117766807bc91c54da5cbe8bf9bcd343",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 4096,
+  "task": "contradiction",
+  "trained_ctx": "2k-32k-joint-uniform"
+}

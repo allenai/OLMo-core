@@ -1,0 +1,16 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/llama32-3b-hpqa-full",
+  "variant": "full",
+  "task": "retrieval",
+  "data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/hotpotqa/rung_16384.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "exact_match": 0.84,
+    "recall": 0.989,
+    "precision": 0.9386,
+    "f1": 0.9578190476190477
+  }
+}

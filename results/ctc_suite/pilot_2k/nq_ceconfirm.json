@@ -1,0 +1,54 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-nq-ceconfirm",
+  "compute_pool": "mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/nq_ceconfirm.json",
+  "epochs": 1,
+  "eval_metric": 0.034,
+  "eval_metric_name": "gold_id_f1",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "CE-CONFIRM retrain on CE-clean-SUBSAMPLE k12-18 ALSO COLLAPSED (f1 0.034, 3 unique preds) -- see ce_false_neg_audit before concluding; may indicate the subsample source was not truly CE-filtered OR that data false-negatives are not the collapse cause.",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "nq_ceconfirm",
+  "train_ce_end": 0.5456,
+  "train_ce_start": 1.536,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-nq-ceconfirm_3338786.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": null,
+  "prediction_diversity": {
+    "unique_predictions": 3,
+    "top5": [
+      [
+        "[12]",
+        289
+      ],
+      [
+        "[14]",
+        207
+      ],
+      [
+        "[10]",
+        4
+      ]
+    ]
+  },
+  "collapse_baseline_comparison": {
+    "baseline_source": "nq.json (pilot, no ce-filter)",
+    "baseline_eval_f1": 0.074,
+    "baseline_unique_predictions": 2,
+    "baseline_top3": [
+      [
+        "[12]",
+        402
+      ],
+      [
+        "[2]",
+        98
+      ]
+    ],
+    "learned": false
+  }
+}

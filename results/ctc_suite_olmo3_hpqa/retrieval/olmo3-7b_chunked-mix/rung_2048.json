@@ -1,0 +1,37 @@
+{
+  "arm": "chunked-mix",
+  "aux": {
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_chunked-mix/rung_2048.generations.json",
+    "max_length": 4096,
+    "max_new_tokens": 64,
+    "nproc": 4,
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_chunked-mix/rung_2048.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 121.4,
+    "exact_match": 0.996,
+    "f1": 0.998,
+    "precision": 0.998,
+    "recall": 0.998,
+    "skipped_too_long": 0
+  },
+  "complexity_class": "N",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "gold_id_f1",
+  "metric_value": 0.998,
+  "model": "olmo3-7b",
+  "provenance": {
+    "ckpt_path": "/data/prasann/ctc_olmo3/hpqaret-cmix",
+    "data_path": "/data/prasann/ctc_olmo3/eval_rungs/rung_2048.jsonl",
+    "date": "2026-07-27T22:36:52",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk.py",
+    "evaluator_variant": "dense",
+    "git_commit": "unknown",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 2048,
+  "task": "retrieval",
+  "trained_ctx": "2k-32k-joint-uniform"
+}

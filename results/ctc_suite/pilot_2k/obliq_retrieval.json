@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/accounts/projects/sewonm/prasann/ctc_suite/ckpts/ctc-1ep-obliq_retrieval-full-lambda",
+  "compute_pool": "lambda-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/obliq_retrieval.json",
+  "epochs": 1,
+  "eval_metric": 0.0737661541713431,
+  "eval_metric_name": "gold_id_f1",
+  "eval_size": 488,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "MODE COLLAPSE: 3 unique predictions across 488 examples (top='[1], [2], [3]' x356=73%, '[1]' x114=23%); f1=chance-level despite the model running \u2014 same collapse as nq/qdmatch_nq (hard p10 retrieval). eval: gold_id_f1=0.0738 eval_size=488 n_unique_preds=3/488. CAVEATS: (1) staged rung_2048.jsonl is NOT a 2k rung \u2014 it holds 30 un-subsampled full docs (~27k tok median, max >35k); this number is obliq's NATIVE ~27k-token result, evaluated at max_length 40960 (3/488 prompts still skipped_too_long). (2) ckpt is undertrained (lambda step44, train_ce 1.015->0.321, not a full epoch). eval_size=488 (<500): binomial SE +/-0.012.",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "obliq_retrieval",
+  "train_ce_end": 0.3209,
+  "train_ce_start": 1.015,
+  "train_log": "lambda:/accounts/projects/sewonm/prasann/ctc_suite/logs/ctc_suite_ctc-1ep-obliq_retrieval-full-lambda_109691.log",
+  "train_steps_logged": 44,
+  "variant": "full",
+  "wandb_url_if_any": null
+}

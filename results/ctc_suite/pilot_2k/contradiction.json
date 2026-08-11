@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-contra-full",
+  "compute_pool": "cubbins-8gpu-train_cubbins-1gpu-eval",
+  "curve_path": "results/ctc_suite/pilot_2k/curves/contradiction.json",
+  "epochs": 1,
+  "eval_metric": 0.6837333333333333,
+  "eval_metric_name": "set_f1",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 40960,
+  "task": "contradiction",
+  "train_ce_end": 0.0072,
+  "train_ce_start": 1.7,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-contra-full_3338194.log",
+  "train_steps_logged": 2420,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/uxo06jy9"
+}

@@ -195,6 +195,18 @@ modeling results).
 
 ## 7. Compute allocation
 
+**Cluster-access correction (user, 2026-07-19):** Berkeley slurm access is **only `berkeleynlp`
+and `jsteinhardt`** partitions (NOT songmei/feanor, NOT yss/beren/luthien). `preemptive` and
+`preemptive_high` QOS both allowed; prefer plain `preemptive` for non-urgent pilot/eval work.
+Concurrency reality: `jsteinhardt` has an **8-GPU/user cap** → effectively ONE 8-GPU job at a
+time across the whole partition (any of cubbins/mooney/mcfuzz/sneetches). `berkeleynlp` (horton +
+lorax) is a separate quota → ~2 more concurrent H200 jobs. So Berkeley = **~3 concurrent training
+slots total**. Cross-node work needs the base+shard staged to that node's `/data` (scp via a
+sleeper job on the target; pam_slurm_adopt blocks ssh without an active job there). **Width for
+the full fan-out therefore comes from Beaker (jupiter, wide) + lambda (A100, small-scale); Berkeley
+handles the repro-gate exemplar pair + quick pilots.**
+
+
 | Resource | What runs there | Notes |
 |---|---|---|
 | Berkeley `berkeleynlp`/jsteinhardt (H200×8) | Stage-0 audits, data builds, all 0.8B pilots + several 0.8B finals, native evals | `/data` staging + NFS log rules per `local_cluster.md`; preemptive_high QOS |

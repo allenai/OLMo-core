@@ -54,3 +54,13 @@ after the 2k sanity evals.
   optimizer (1 node/CP=8 → dp=1 → no param sharding → ~56GB static → OOM risk). global_batch=16.
 - **Qwen3.5-hybrid**: `--num-nodes 1` (8 GPU), CP=4 → dp=2 → shard_degree=2 + full AC + `--pack`
   (YaRN skipped — hybrid named-block limitation). global_batch=8. Cheaper (~1/4 layers full-attn).
+
+## FINAL working 256k configs (both STEPPING 2026-07-24)
+- Qwen3-dense: Beaker jupiter, 2 nodes (16xH100), CP=8, dp=2, budget-AC 0.3, compile. Fits H100 80GB.
+  beaker ex 01KY94R6312PYE1XQ6VHZ1ZFSY.
+- Qwen3.5-hybrid: **local sneetches 8xH200**, CP=4, dp=2, **full-AC + NO compile**. H100 CANNOT fit it
+  (CP capped at 4 -> 65k local chunk -> budget-0.7 keeps ~84GB activations -> OOM even on 141GB H200).
+  full-AC (checkpoint every block, ~1 live) drops peak to fit; no-compile avoids the full-AC+CP+compile
+  recompute-metadata mismatch. job 3352977. (budget AC REQUIRES compile; run_ctc_local now has COMPILE=1 knob.)
+- Memory lesson: for the GDN-hybrid at long context, full-AC+no-compile is the frugal+safe combo;
+  budget-AC+compile is the proven combo but doesn't cut the peak enough at 65k chunks.

@@ -1,0 +1,15 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-helmet_summ-full",
+  "variant": "full",
+  "task": "summarization",
+  "data": "/data/prasann/ctc_suite_data/eval_rungs_pilot/helmet_summ/rung_2048.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "rouge1_f": 0.3693413811601609,
+    "rougeL_f": 0.3693413811601609,
+    "metric": "token_f1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-helmet_summ-full",
+  "compute_pool": "cubbins,mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/helmet_summ.json",
+  "epochs": 1,
+  "eval_metric": 0.3693413811601609,
+  "eval_metric_name": "rouge1_f",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: rouge1_f=0.3693 eval_size=500 parse_rate=None n_unique_preds=499/500",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "helmet_summ",
+  "train_ce_end": 1.722,
+  "train_ce_start": 2.3,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-helmet_summ-full_3338326.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/9ra3g503"
+}

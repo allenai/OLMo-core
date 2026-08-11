@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/accounts/projects/sewonm/prasann/ctc_suite/ckpts/ctc-1ep-msmarco_rerank-full-lambda-r2",
+  "compute_pool": "lambda-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/msmarco_rerank.json",
+  "epochs": 1,
+  "eval_metric": null,
+  "eval_metric_name": null,
+  "eval_size": null,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: N/A (trained successfully on lambda; no eval_rungs data staged for this task)",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 3072,
+  "task": "msmarco_rerank",
+  "train_ce_end": 0.3013,
+  "train_ce_start": 0.7569,
+  "train_log": "/tmp/claude-3018/-accounts-projects-berkeleynlp-prasann-projects-OLMo-core/0e9e8ba4-979d-4240-bc94-14fe2119a904/scratchpad/lambda_logs/ctc_suite_ctc-1ep-msmarco_rerank-full-lambda-r2_109701.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": null
+}

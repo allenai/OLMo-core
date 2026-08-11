@@ -1,0 +1,16 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-msmarco-full-lambda-r2",
+  "variant": "full",
+  "task": "retrieval",
+  "data": "/data/prasann/ctc_suite_data/eval_rungs_pilot/msmarco/rung_2048.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "exact_match": 0.77,
+    "recall": 0.7816666666666666,
+    "precision": 0.7826666666666666,
+    "f1": 0.7819333333333333
+  }
+}

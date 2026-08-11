@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-groups4-full",
+  "compute_pool": "mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/groups4.json",
+  "epochs": 1,
+  "eval_metric": 0.0,
+  "eval_metric_name": "cycle_f1",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: N/A (no eval_rungs data staged for this task); EVAL RAN, metric=0.0 at parse_rate=1.0 -- NOT the maxlen-truncation trap (max_example_len=2858 well under max_length=4096). Inspected generations.json: model outputs the IDENTICAL constant prediction '[[1, 16, 20, 30]]' for every one of 500 examples regardless of input -- mode collapse from the 1-epoch/2500-example fine-tune, not a pipeline bug. Real FAIL, needs more data/epochs or LR tuning.",
+  "pass": false,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "groups4",
+  "train_ce_end": 0.8628,
+  "train_ce_start": 1.388,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-groups4-full_3338309.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/nlfmi5mr"
+}

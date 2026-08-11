@@ -1,0 +1,16 @@
+{
+  "model_path": "/data/prasann/ctc_olmo3/hpqaret-full-s1",
+  "variant": "full",
+  "task": "retrieval",
+  "data": "/data/prasann/ctc_olmo3/eval_rungs/rung_2048.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "exact_match": 1.0,
+    "recall": 1.0,
+    "precision": 1.0,
+    "f1": 1.0
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/accounts/projects/sewonm/prasann/ctc_suite/ckpts/ctc-1ep-fiqa-full-lambda-r3",
+  "compute_pool": "lambda-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/fiqa.json",
+  "epochs": 1,
+  "eval_metric": null,
+  "eval_metric_name": null,
+  "eval_size": null,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "eval: BLOCKED \u2014 staged eval set eval_rungs_pilot/fiqa/rung_2048.jsonl is 0 bytes (empty); cannot evaluate. Ckpt exists on lambda (ctc-1ep-fiqa-full-lambda-r3, complete step312) but no eval data was staged.",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "fiqa",
+  "train_ce_end": 0.0625,
+  "train_ce_start": 0.7167,
+  "train_log": "/tmp/claude-3018/-accounts-projects-berkeleynlp-prasann-projects-OLMo-core/0e9e8ba4-979d-4240-bc94-14fe2119a904/scratchpad/lambda_logs/ctc_suite_ctc-1ep-fiqa-full-lambda-r3_109703.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": null
+}

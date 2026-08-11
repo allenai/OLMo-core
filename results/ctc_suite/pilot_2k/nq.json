@@ -1,0 +1,21 @@
+{
+  "ckpt_path": "/data/prasann/ctc_suite/ckpts/ctc-1ep-nq-full",
+  "compute_pool": "cubbins,mooney-1gpu",
+  "curve_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/pilot_2k/curves/nq.json",
+  "epochs": 1,
+  "eval_metric": 0.074,
+  "eval_metric_name": "gold_id_f1",
+  "eval_size": 500,
+  "git_commit": "2b4c95c40bffd5634640c97c9a2b66503731ae0e",
+  "notes": "",
+  "pass": true,
+  "scale": "0.8b",
+  "seq_len": 4096,
+  "task": "nq",
+  "train_ce_end": 0.4646,
+  "train_ce_start": 1.775,
+  "train_log": "/scratch/users/prasann/ctc_suite_logs/train_ctc-1ep-nq-full_3338426.log",
+  "train_steps_logged": 312,
+  "variant": "full",
+  "wandb_url_if_any": "https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/runs/12ytx40g"
+}

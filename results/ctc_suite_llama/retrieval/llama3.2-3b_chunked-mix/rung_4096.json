@@ -1,0 +1,37 @@
+{
+  "arm": "chunked-mix",
+  "aux": {
+    "generations_path": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama/retrieval/llama3.2-3b_chunked-mix/rung_4096.generations.json",
+    "max_length": 6144,
+    "max_new_tokens": 64,
+    "nproc": 2,
+    "raw_eval_json": "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama/retrieval/llama3.2-3b_chunked-mix/rung_4096.raw.json"
+  },
+  "aux_metrics": {
+    "eval_seconds": 623.5,
+    "exact_match": 0.824,
+    "f1": 0.9552666666666666,
+    "precision": 0.9406666666666667,
+    "recall": 0.984,
+    "skipped_too_long": 0
+  },
+  "complexity_class": "N",
+  "cot_label": "no-cot",
+  "eval_size": 500,
+  "metric_name": "gold_id_f1",
+  "metric_value": 0.9552666666666666,
+  "model": "llama3.2-3b",
+  "provenance": {
+    "ckpt_path": "/data/prasann/ctc_suite/ckpts/llama32-3b-hpqa-chunked-mix",
+    "data_path": "/scratch/users/prasann/ctc_suite_staged/eval_rungs/hotpotqa/rung_4096.jsonl",
+    "date": "2026-07-27T18:29:11",
+    "eval_backend": "native",
+    "evaluator": "src/corpus_reasoning/eval/eval_lc_native_docchunk.py",
+    "evaluator_variant": "dense",
+    "git_commit": "9f77bee8f6b5b717c75a682cfc4e6d222334e32c",
+    "launcher": "src/scripts/eval/ctc_suite/run_rung_eval.py"
+  },
+  "rung_tokens": 4096,
+  "task": "retrieval",
+  "trained_ctx": "2k-16k-joint-uniform"
+}

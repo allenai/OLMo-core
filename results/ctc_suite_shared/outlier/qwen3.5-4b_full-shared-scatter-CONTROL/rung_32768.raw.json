@@ -1,0 +1,25 @@
+{
+  "model_path": "/data/prasann/ctc_suite/ckpts_4b/ctc-4b-outlier-full",
+  "variant": "full",
+  "task": "outlier",
+  "data": "/scratch/users/prasann/ctc_suite_staged/eval_rungs_shared/outlier/rung_32768_scatter.jsonl",
+  "eval_size": 500,
+  "skipped_too_long": 0,
+  "landmark_top_k_blocks": null,
+  "landmark_top_k_fraction": null,
+  "metrics": {
+    "precision": 0.33,
+    "recall": 0.3293333333333333,
+    "f1": 0.3296,
+    "exact_match": 0.318,
+    "parse_rate": 1.0,
+    "per_source": {
+      "wiki_outlier_topic": {
+        "precision": 0.33,
+        "recall": 0.3293333333333333,
+        "f1": 0.3296,
+        "exact_match": 0.318
+      }
+    }
+  }
+}
