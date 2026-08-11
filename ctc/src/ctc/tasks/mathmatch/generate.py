@@ -21,12 +21,12 @@ than a finding.
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ...data.generators.base import Generator
 from ...data.gold import remap_groups, shuffle_with_remap
 from ...data.schema import make_document, make_example
-from ...data.synthetic import build_expression
+from ...data.synthetic import auto_value_range, build_expression
 
 __all__ = ["build_example", "sample_answers", "GENERATOR"]
 
@@ -106,8 +106,8 @@ def build_example(
     num_docs: int,
     num_pairs: int = 3,
     tolerance: int = 2,
-    ans_min: int = -50,
-    ans_max: int = 50,
+    ans_min: Optional[int] = None,
+    ans_max: Optional[int] = None,
     numbers_only: bool = False,
 ) -> Dict:
     """
@@ -117,13 +117,18 @@ def build_example(
     :param num_docs: Corpus size N.
     :param num_pairs: Gold pairs K.
     :param tolerance: Closeness threshold X.
-    :param ans_min: Smallest answer value.
-    :param ans_max: Largest answer value.
+    :param ans_min: Smallest answer value; defaults to a range scaled to ``num_docs`` (see
+        :func:`~ctc.data.synthetic.auto_value_range`). A fixed range cannot hold a ladder's worth
+        of mutually-distant values.
+    :param ans_max: Largest answer value; same default.
     :param numbers_only: Render bare values instead of arithmetic, isolating matching from
         per-document arithmetic. The query text is unchanged either way.
 
     :returns: A unified-format example whose ``gold_doc_indices`` holds 1-based pairs.
     """
+    if ans_min is None or ans_max is None:
+        span = auto_value_range(num_docs, tolerance)
+        ans_min, ans_max = -span, span
     values, gold_pairs = sample_answers(num_docs, num_pairs, tolerance, ans_min, ans_max, rng)
     texts = [str(v) for v in values] if numbers_only else [build_expression(v, rng) for v in values]
     items, old_to_new = shuffle_with_remap(list(zip(texts, values)), rng=rng, base=1)
@@ -144,8 +149,8 @@ GENERATOR = Generator(
         "num_docs": 20,
         "num_pairs": 3,
         "tolerance": 2,
-        "ans_min": -50,
-        "ans_max": 50,
+        "ans_min": None,
+        "ans_max": None,
         "numbers_only": False,
     },
     notes="pure synthetic; the no-LLM stand-in for contradiction's gold shape",

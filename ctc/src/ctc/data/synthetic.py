@@ -13,7 +13,32 @@ from __future__ import annotations
 
 import random
 
-__all__ = ["build_expression"]
+__all__ = ["build_expression", "auto_value_range"]
+
+
+def auto_value_range(num_docs: int, tolerance: int, *, per_window: int = 1) -> int:
+    """
+    A value range wide enough to hold ``num_docs`` distinct answers at the required spacing.
+
+    The numeric tasks need every non-gold value more than ``tolerance`` from its neighbours, so N
+    values need a span of at least ``N * (tolerance + 1) / per_window``. Fixed defaults cannot
+    satisfy that at ladder scale, and the pre-migration defaults did not: mathmatch's ``[-50, 50]``
+    holds 101 integers, which at ``tolerance=2`` fits about 34 mutually-distant values -- so the
+    build command recorded for it in ``BUILD_MATRIX.md`` was infeasible at **every** CTC-suite rung
+    (48 through 900 documents), and groups4's ``[-500, 500]`` at the top three. Neither had been run.
+
+    The 4x factor is slack for rejection sampling: the generators draw from a shuffled pool and
+    keep what fits, so a span equal to the theoretical minimum would almost never pack successfully.
+
+    :param num_docs: Corpus size N.
+    :param tolerance: Closeness threshold X.
+    :param per_window: How many values may share one X-wide window. 1 for mathmatch, where every
+        non-gold value is isolated; ``group_size - 1`` for groups4, whose distractors may cluster.
+
+    :returns: The half-range; callers use ``[-r, r]``.
+    """
+    needed = 4 * num_docs * (tolerance + 1) // max(1, per_window)
+    return max(50, needed // 2)
 
 
 def build_expression(

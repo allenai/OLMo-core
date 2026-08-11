@@ -25,12 +25,12 @@ from __future__ import annotations
 
 import bisect
 import random
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from ...data.generators.base import Generator
 from ...data.gold import remap_groups, shuffle_with_remap
 from ...data.schema import make_document, make_example
-from ...data.synthetic import build_expression
+from ...data.synthetic import auto_value_range, build_expression
 
 __all__ = ["build_example", "sample_values", "GENERATOR"]
 
@@ -132,8 +132,8 @@ def build_example(
     num_groups: int = 1,
     group_size: int = 4,
     tolerance: int = 5,
-    ans_min: int = -500,
-    ans_max: int = 500,
+    ans_min: Optional[int] = None,
+    ans_max: Optional[int] = None,
     numbers_only: bool = False,
 ) -> Dict:
     """
@@ -144,14 +144,18 @@ def build_example(
     :param num_groups: Gold clusters K.
     :param group_size: Expressions per cluster G; larger is harder (N^G).
     :param tolerance: Max pairwise difference within a cluster X.
-    :param ans_min: Smallest answer value.
-    :param ans_max: Largest answer value.
+    :param ans_min: Smallest answer value; defaults to a range scaled to ``num_docs`` and to how
+        densely distractors may pack (see :func:`~ctc.data.synthetic.auto_value_range`).
+    :param ans_max: Largest answer value; same default.
     :param numbers_only: Render bare numbers instead of arithmetic, isolating the clustering task
         from per-document arithmetic.
 
     :returns: A unified-format example whose ``gold_doc_indices`` holds one 1-based id list per
         cluster.
     """
+    if ans_min is None or ans_max is None:
+        span = auto_value_range(num_docs, tolerance, per_window=group_size - 1)
+        ans_min, ans_max = -span, span
     values, gold_groups = sample_values(
         num_docs, num_groups, group_size, tolerance, ans_min, ans_max, rng
     )
@@ -184,8 +188,8 @@ GENERATOR = Generator(
         "num_groups": 1,
         "group_size": 4,
         "tolerance": 5,
-        "ans_min": -500,
-        "ans_max": 500,
+        "ans_min": None,
+        "ans_max": None,
         "numbers_only": False,
     },
     notes="pure synthetic; hardest task in the suite (F1 ~0.14 at n=20 even with sort-CoT)",
