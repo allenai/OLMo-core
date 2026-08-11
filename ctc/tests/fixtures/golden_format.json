@@ -378,6 +378,72 @@
     "TEXTGROUPS_TEMPLATE": "Passage {id}: {text}",
     "XABSENCE_INSTRUCTION": "Below are two corpora of numbered claims, A and B. Almost every claim has a paraphrase \u2014 a restatement of the same fact \u2014 somewhere in the OTHER corpus (an A claim paraphrased in B, or a B claim paraphrased in A). A few claims are UNMATCHED: they have no paraphrase anywhere in the other corpus. Identify the unmatched claims.\nWrite your answer in the following format:\nUnmatched: [id1], [id2], ..."
   },
+  "prompts": {
+    "absence|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\n[1] line one\n\n[2] line two\n\nThe numbered claims above are the original corpus. The text below is a second version of that corpus with some claims removed. Identify which of the numbered claims are MISSING from the second version (present above but absent below).\nWrite your answer in the following format:\nMissing: [id1], [id2], ...\n\nline one\n\n### Response:\n",
+      "Missing: [2]"
+    ],
+    "contradiction|after|alpaca=False": [
+      "You will be asked to do a long-context processing task for a context.\n\nClaim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.\n\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n",
+      "[[1, 2]]"
+    ],
+    "contradiction|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nClaim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.\n\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\n### Response:\n",
+      "[[1, 2]]"
+    ],
+    "contradiction|before|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\nClaim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.\n\n### Response:\n",
+      "[[1, 2]]"
+    ],
+    "contradiction|both|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\nClaim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.\n\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\n### Response:\n",
+      "[[1, 2]]"
+    ],
+    "cycle|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nClaim 1: A outranks B.\n\nClaim 2: B outranks A.\n\nFind cycles.\n\nOutput your answer as a JSON list of cycles, where each cycle is a list of the claim IDs whose comparisons form the loop. For example: [[3, 8, 12]]\nIf there are no cycles, output: []\n\n### Response:\n",
+      "[[1, 2]]"
+    ],
+    "grouping|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou are given a list of scientific paper abstracts. Group them into the requested number of categories based on what they are about. Output a JSON object of the form {\"groups\": [{\"doc_ids\": [...]}, ...]} where each group is a list of 1-indexed document IDs. Every document must appear in exactly one group.\n\n### Input:\nDocument [1](Title: Attention) A new architecture.\n\nDocument [2](Title: Optics) On lenses.\n\nGroup into 2 categories.\n\n### Response:\n",
+      ""
+    ],
+    "oolong|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nRead the data below and answer the question. Compute the exact answer by analyzing every item; do not guess or approximate.\n\n### Input:\nitem: 1\nlabel: x\n\nitem: 2\nlabel: y\n\nQuestion: How many are labelled x? Answer with a number.\n\n### Response:\n",
+      "1"
+    ],
+    "outlier|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou are given a list of product reviews. Most share a common attribute (star rating or product category); a few are outliers with a different value. First state what the majority attribute is and what the outlier attribute is, then list the 1-indexed document IDs of the outliers.\nWrite your answer in the following format:\n[one sentence describing majority and outlier attributes]\nOutliers: [id1], [id2], ...\n\n### Input:\nDocument [1] (Title: R1): Five stars.\n\nDocument [2] (Title: R2): One star.\n\nFind the outliers.\n\n### Response:\n",
+      "Outliers: [2]"
+    ],
+    "qa|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to write a concise and short answer to the question. Write your answer in the following format:\nAnswer: [answer]\n\n### Input:\nDocument (Title: T1): body one\n\nQuestion: Who built it?\n\n### Response:\n",
+      "Ada"
+    ],
+    "qdmatch|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nBelow is a numbered list of items. Each item is labeled either 'Query:' (a question) or 'Document:' (a passage). A few query-document pairs are relevant: the document answers the query. Identify every relevant pair.\n\nOutput your answer as a JSON list of pairs, where each pair is [query_id, document_id] \u2014 the query's number first, then the matching document's number. For example: [[1, 8], [3, 4]]\nIf no pairs are relevant, output: []\n\n[1] Query: Who wrote it?\n\n[2] Document: Written by Ada.\n\nBelow is a numbered list of items. Each item is labeled either 'Query:' (a question) or 'Document:' (a passage). A few query-document pairs are relevant: the document answers the query. Identify every relevant pair.\n\nOutput your answer as a JSON list of pairs, where each pair is [query_id, document_id] \u2014 the query's number first, then the matching document's number. For example: [[1, 8], [3, 4]]\nIf no pairs are relevant, output: []\n\n### Response:\n",
+      "[]"
+    ],
+    "reorder|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nPassage [1]: First para.\nSecond para.\n\nPassage [2]: A later passage.\n\nYou are given a list of text passages presented in a random order. They were originally consecutive segments of a single document. Output the permutation that restores them to their original order, as a JSON array of the passage IDs.\nWrite your answer in the following format:\n[id1, id2, id3, ...]\n\n### Response:\n",
+      "[2, 1]"
+    ],
+    "retrieval|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to identify which document is most relevant to answering the question.\nWrite your answer in the following format:\nRelevant Document: [id]\n\n### Input:\nDocument [1] (Title: T1): body one\n\nDocument [2]: untitled body\n\nQuestion: Who built it?\n\n### Response:\n",
+      "[1]"
+    ],
+    "retrieval|before|alpaca=False": [
+      "Use the given documents to identify which document is most relevant to answering the question.\nWrite your answer in the following format:\nRelevant Document: [id]\n\nQuestion: Who built it?\n\nDocument [1] (Title: T1): body one\n\nDocument [2]: untitled body\n",
+      "[1]"
+    ],
+    "strmatch|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nString 1: alpha beta gamma\n\nString 2: beta gamma delta\n\nGiven the following numbered list of strings, identify all pairs of strings matching the criterion below.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two string IDs. For example: [[1, 4], [3, 7]]\nIf there are no matching pairs, output: []\n\nFind pairs sharing a run of 2 words.\n\n### Response:\n",
+      "[[1, 2]]"
+    ],
+    "xabsence|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\n[1] A: Claim in A.\n\n[2] B: Paraphrase in B.\n\nBelow are two corpora of numbered claims, A and B. Almost every claim has a paraphrase \u2014 a restatement of the same fact \u2014 somewhere in the OTHER corpus (an A claim paraphrased in B, or a B claim paraphrased in A). A few claims are UNMATCHED: they have no paraphrase anywhere in the other corpus. Identify the unmatched claims.\nWrite your answer in the following format:\nUnmatched: [id1], [id2], ...\n\n### Response:\n",
+      "Unmatched: [1]"
+    ]
+  },
   "qa_metrics": {
     "Answer: Paris.|Paris": {
       "exact_match": false,

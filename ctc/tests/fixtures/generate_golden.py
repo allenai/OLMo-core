@@ -99,6 +99,130 @@ PARTITION_CASES = [
     ('{"groups": []}', 2),
 ]
 
+# Prompt assembly. This is the highest-stakes surface in the port: build_prompt's output IS the
+# text every shard was tokenized from, so a one-character difference makes new data incompatible
+# with every existing checkpoint. Covered across tasks, all three query positions, and both alpaca
+# settings. cot_mode is pinned to "none" throughout because the port drops CoT (see
+# ctc/tasks/README.md), so "none" is the only mode whose behaviour must be preserved.
+PROMPT_CASES = [
+    ("contradiction", "after", True),
+    ("contradiction", "after", False),
+    ("contradiction", "before", True),
+    ("contradiction", "both", True),
+    ("retrieval", "after", True),
+    ("retrieval", "before", False),
+    ("qa", "after", True),
+    ("outlier", "after", True),
+    ("reorder", "after", True),
+    ("grouping", "after", True),
+    ("oolong", "after", True),
+    ("absence", "after", True),
+    ("xabsence", "after", True),
+    ("qdmatch", "after", True),
+    ("cycle", "after", True),
+    ("strmatch", "after", True),
+]
+
+#: One example per task, shaped like the unified JSONL the generators emit.
+PROMPT_EXAMPLES = {
+    "contradiction": {
+        "documents": [{"text": "The bridge opened in 1931."}, {"text": "The bridge opened in 1937."}],
+        "queries": ["Find contradicting claims."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "pubmed",
+    },
+    "retrieval": {
+        "documents": [{"title": "T1", "text": "body one"}, {"text": "untitled body"}],
+        "queries": ["Who built it?"],
+        "answers": ["Ada"],
+        "gold_doc_indices": [0],
+        "source": "nq",
+    },
+    "qa": {
+        "documents": [{"title": "T1", "text": "body one"}],
+        "queries": ["Who built it?"],
+        "answers": ["Ada"],
+        "gold_doc_indices": [0],
+        "source": "nq",
+    },
+    "outlier": {
+        "documents": [{"title": "R1", "text": "Five stars."}, {"title": "R2", "text": "One star."}],
+        "queries": ["Find the outliers."],
+        "answers": [""],
+        "gold_doc_indices": [1],
+        "source": "amazon",
+    },
+    "reorder": {
+        "documents": [{"text": "First para.\n\nSecond para."}, {"text": "A later passage."}],
+        "queries": ["Restore the order."],
+        "answers": [""],
+        "gold_doc_indices": [0, 1],
+        # Already 1-indexed display IDs in source order -- reorder's target is this list verbatim,
+        # not derived from gold_doc_indices.
+        "gold_order": [2, 1],
+        "source": "gutenberg",
+    },
+    "grouping": {
+        "documents": [
+            {"title": "Attention", "text": "A new architecture."},
+            {"title": "Optics", "text": "On lenses."},
+        ],
+        "queries": ["Group into 2 categories."],
+        "answers": [""],
+        "gold_doc_indices": [0, 1],
+        "source": "arxiv",
+    },
+    "oolong": {
+        "documents": [{"text": "item: 1\nlabel: x"}, {"text": "item: 2\nlabel: y"}],
+        "queries": ["How many are labelled x? Answer with a number."],
+        "answers": ["1"],
+        "gold_doc_indices": [0],
+        "source": "oolong",
+    },
+    "absence": {
+        "documents": [{"text": "line one"}, {"text": "line two"}],
+        "queries": ["line one"],
+        "answers": [""],
+        "gold_doc_indices": [1],
+        "source": "absencebench",
+    },
+    "xabsence": {
+        "documents": [
+            {"corpus": "A", "text": "Claim in A."},
+            {"corpus": "B", "text": "Paraphrase in B."},
+        ],
+        "queries": ["Find unmatched claims."],
+        "answers": [""],
+        "gold_doc_indices": [0],
+        "source": "pubmed",
+    },
+    "qdmatch": {
+        "documents": [
+            {"type": "query", "text": "Who wrote it?"},
+            {"type": "document", "text": "Written by Ada."},
+        ],
+        "queries": ["Match queries to documents."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "hpqa",
+    },
+    "cycle": {
+        "documents": [{"text": "A outranks B."}, {"text": "B outranks A."}],
+        "queries": ["Find cycles."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "synthetic",
+    },
+    "strmatch": {
+        "documents": [{"text": "alpha beta gamma"}, {"text": "beta gamma delta"}],
+        "queries": ["Find pairs sharing a run of 2 words."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2]],
+        "source": "synthetic",
+    },
+}
+
 PAIR_CASES = [
     "[[1, 4], [3, 7]]",
     "1, 37], [6, 60], [35, 71]]",  # primed '[[' dropped -- the bug that read EM 0.60 vs true >0.9
@@ -159,6 +283,41 @@ RETRIEVAL_CASES = [
 ]
 
 
+def _build_prompts(old_df) -> dict:
+    """
+    Snapshot ``build_prompt`` for every case in :data:`PROMPT_CASES`.
+
+    Collects failures instead of stopping at the first, so a missing field in a synthetic example
+    is reported for every task at once rather than one run per fix.
+
+    :param old_df: The pre-migration ``data_format`` module.
+
+    :returns: ``"task|position|alpaca=X" -> [prompt, target]``.
+
+    :raises SystemExit: If any case fails, listing all of them.
+    """
+    out, failures = {}, []
+    for task, pos, alpaca in PROMPT_CASES:
+        try:
+            prompt, target = old_df.build_prompt(
+                PROMPT_EXAMPLES[task],
+                task=task,
+                query_position=pos,
+                use_alpaca=alpaca,
+                cot_mode="none",
+            )
+        except Exception as e:  # noqa: BLE001 -- all reported together below
+            failures.append(f"  {task}|{pos}|alpaca={alpaca}: {type(e).__name__}: {e}")
+            continue
+        out[f"{task}|{pos}|alpaca={alpaca}"] = [prompt, target]
+    if failures:
+        raise SystemExit(
+            "build_prompt failed for these cases -- the synthetic example is missing a field the "
+            "task requires:\n" + "\n".join(failures)
+        )
+    return out
+
+
 def build(old_repo: Path) -> dict:
     """
     Import the pre-migration modules and record their output.
@@ -213,6 +372,7 @@ def build(old_repo: Path) -> dict:
         "parse_permutation": {
             f"{t}|{n}": old_et.parse_permutation(t, n) for t, n in PERMUTATION_CASES
         },
+        "prompts": _build_prompts(old_df),
         "parse_pairs": {t: old_ev.parse_pairs(t) for t in PAIR_CASES},
         "parse_qd_pairs": {t: old_ev.parse_qd_pairs(t) for t in QD_PAIR_CASES},
         "pair_metrics": {
