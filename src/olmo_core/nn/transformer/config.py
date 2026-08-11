@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -16,6 +16,7 @@ from ..attention import (
     AttentionBackendName,
     AttentionConfig,
     AttentionType,
+    AttentionTypePatternConfig,
     GateConfig,
     GateGranularity,
     SlidingWindowAttentionConfig,
@@ -27,7 +28,7 @@ from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardTyp
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
-from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from ..rope import PIRoPEScalingConfig, RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -328,6 +329,15 @@ class TransformerConfig(ModelConfig):
     embedding_init_std: Optional[float] = None
     freeze_params: Optional[List[str]] = None
     block_pattern: Optional[List[str]] = None
+    document_chunk_attention: Optional[Dict[str, Any]] = None
+    """
+    Enable runtime ``chunk_id`` reconstruction for document-chunked attention -- either
+    :class:`~olmo_core.nn.attention.DocumentLandmarkAttention` (landmark) or
+    :class:`~olmo_core.nn.attention.DocumentChunkedAttention` (dense). A dict of
+    ``{"doc_start_id", "doc_end_id", "eos_id", "mode"?}`` passed to
+    :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention` after the model is
+    built. Requires the model be uniformly a document-chunked variant and rules out context parallelism.
+    """
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
     tie_word_embeddings: bool = False
@@ -436,6 +446,9 @@ class TransformerConfig(ModelConfig):
                         break
                 else:
                     log.info(f"Param '{name}' will be trainable")
+
+        if self.document_chunk_attention is not None:
+            model.enable_document_chunk_attention(**self.document_chunk_attention)
 
         log.info("%s", model)
         log.info(
@@ -1383,6 +1396,7 @@ class TransformerConfig(ModelConfig):
             n_heads=kwargs.pop("n_heads", 32),
             n_kv_heads=kwargs.pop("n_kv_heads", 8),
             head_dim=kwargs.pop("head_dim", 128),
+            attn_backend=kwargs.pop("attn_backend", AttentionBackendName.flash_2),
             rope_theta=kwargs.pop("rope_theta", 1_000_000),
             rope_full_precision=kwargs.pop("rope_full_precision", False),
             layer_norm_eps=1e-6,
@@ -1556,6 +1570,17 @@ class TransformerConfig(ModelConfig):
         fused_ops: bool = False,
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
+        document_chunked: bool = False,
+        full_attention_layers: Optional[List[int]] = None,
+        cross_doc_mode: Optional[str] = None,
+        dilation_n: Optional[int] = None,
+        dilation_m: Optional[int] = None,
+        dilation_cycle: Optional[int] = None,
+        dilation_max_docs: Optional[int] = None,
+        doc_keep_prob: Optional[float] = None,
+        random_doc_seed: Optional[int] = None,
+        random_doc_per_example: Optional[bool] = None,
+        flex_block_size: Optional[int] = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1566,7 +1591,53 @@ class TransformerConfig(ModelConfig):
         full attention layers in a 3:1 ratio. Both layer types use pre-norm blocks with
         Qwen-style RMS normalization, per-head QK norm and output gating on full-attention
         layers, and partial RoPE (25% of head dimension by default).
+
+        When ``document_chunked=True`` the **full-attention** blocks use
+        :class:`~olmo_core.nn.attention.DocumentChunkedAttention` (the document-chunked mask
+        family) instead of plain causal attention, while the Gated DeltaNet (linear-attention)
+        blocks are left untouched -- they are inherently unmasked and simply ignore the runtime
+        ``chunk_ids`` threaded to every block. This mirrors ``llama_like``'s document-chunked
+        knobs (``cross_doc_mode`` and the ``dilation_*`` / ``doc_keep_prob`` / ``random_doc_seed`` /
+        ``flex_block_size`` / ``full_attention_layers`` parameters) so the same contradiction /
+        long-context document-chunked SFT recipe works on the hybrid Qwen3.5 models. The boundary
+        token ids and the optional mask-mixing schedule are supplied separately by setting
+        :attr:`TransformerConfig.document_chunk_attention` on the returned config (see
+        :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention`).
         """
+        uses_document_chunked = document_chunked
+        if cross_doc_mode is not None and not uses_document_chunked:
+            raise OLMoConfigurationError(
+                "'cross_doc_mode' is only valid when 'document_chunked=True'."
+            )
+        if full_attention_layers is not None and not uses_document_chunked:
+            raise OLMoConfigurationError(
+                "'full_attention_layers' (hybrid full/chunked layers) is only valid with "
+                "'document_chunked=True'."
+            )
+        _hier = cross_doc_mode == "hierarchical_dilated"
+        if (
+            dilation_n is not None
+            or dilation_m is not None
+            or dilation_cycle is not None
+            or dilation_max_docs is not None
+        ) and not (uses_document_chunked and _hier):
+            raise OLMoConfigurationError(
+                "'dilation_n' / 'dilation_m' / 'dilation_cycle' / 'dilation_max_docs' are only valid "
+                "with document_chunked=True and cross_doc_mode='hierarchical_dilated'."
+            )
+        _rand = cross_doc_mode == "random_doc"
+        if (
+            doc_keep_prob is not None
+            or random_doc_seed is not None
+            or random_doc_per_example is not None
+        ) and not (
+            uses_document_chunked and _rand
+        ):
+            raise OLMoConfigurationError(
+                "'doc_keep_prob' / 'random_doc_seed' / 'random_doc_per_example' are only valid "
+                "with document_chunked=True and "
+                "cross_doc_mode='random_doc'."
+            )
         layer_norm = LayerNormConfig(
             name=LayerNormType.qwen_rms,
             eps=layer_norm_eps,
@@ -1590,10 +1661,15 @@ class TransformerConfig(ModelConfig):
             layer_norm=layer_norm,
         )
 
+        # Document-chunked mask family (applied ONLY to the full-attention blocks; the Gated
+        # DeltaNet blocks are linear attention and stay untouched). Mirrors ``llama_like``.
+        att_type = (
+            AttentionType.document_chunked if uses_document_chunked else AttentionType.default
+        )
         attn_block = TransformerBlockConfig(
             name=TransformerBlockType.default,
             sequence_mixer=AttentionConfig(
-                name=AttentionType.default,
+                name=att_type,
                 n_heads=n_heads,
                 n_kv_heads=n_kv_heads,
                 head_dim=head_dim,
@@ -1609,6 +1685,20 @@ class TransformerConfig(ModelConfig):
                 use_head_qk_norm=True,
                 use_flash=use_flash,
                 backend=attn_backend,
+                # Only pass the document-chunked knobs on the relevant cross_doc_mode (matches
+                # ``llama_like``); config.py's downstream builders assert the pairing otherwise.
+                cross_doc_mode=cross_doc_mode if uses_document_chunked else None,
+                dilation_n=dilation_n if (uses_document_chunked and _hier) else None,
+                dilation_m=dilation_m if (uses_document_chunked and _hier) else None,
+                dilation_cycle=dilation_cycle if (uses_document_chunked and _hier) else None,
+                dilation_max_docs=dilation_max_docs if (uses_document_chunked and _hier) else None,
+                doc_keep_prob=doc_keep_prob if (uses_document_chunked and _rand) else None,
+                random_doc_seed=random_doc_seed if (uses_document_chunked and _rand) else None,
+                random_doc_per_example=(
+                    random_doc_per_example if (uses_document_chunked and _rand) else None
+                ),
+                flex_block_size=flex_block_size if uses_document_chunked else None,
+                full_attention_layers=full_attention_layers if uses_document_chunked else None,
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=intermediate_size, bias=False, dtype=dtype),
@@ -1652,6 +1742,37 @@ class TransformerConfig(ModelConfig):
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
+        landmark: bool = False,
+        mem_freq: Optional[int] = None,
+        landmark_use_kernel: bool = False,
+        fast_landmark: bool = False,
+        fast_compressive_landmark: bool = False,
+        nonselected_landmark_mass: Optional[float] = None,
+        sparse_landmark: bool = False,
+        num_landmarks: Optional[int] = None,
+        document_landmark: bool = False,
+        document_compressive: bool = False,
+        document_chunked: bool = False,
+        full_attention_layers: Optional[List[int]] = None,
+        cross_doc_mode: Optional[str] = None,
+        dilation_n: Optional[int] = None,
+        dilation_m: Optional[int] = None,
+        dilation_cycle: Optional[int] = None,
+        dilation_max_docs: Optional[int] = None,
+        doc_keep_prob: Optional[float] = None,
+        random_doc_seed: Optional[int] = None,
+        random_doc_per_example: Optional[bool] = None,
+        summary_every_k: Optional[int] = None,
+        summary_bandwidth: Optional[int] = None,
+        summary_relay: Optional[bool] = None,
+        gold_hops: Optional[int] = None,
+        gold_decoys: Optional[int] = None,
+        flex_block_size: Optional[int] = None,
+        dilated_sliding_window: bool = False,
+        dilated_window_k: Optional[int] = None,
+        dilated_window_num_configs: Optional[int] = None,
+        dilated_window_base: Optional[int] = None,
+        layer_types: Optional[AttentionTypePatternConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
         block_mods: Optional[
             Dict[int, Callable[[TransformerBlockConfig], TransformerBlockConfig]]
@@ -1672,6 +1793,10 @@ class TransformerConfig(ModelConfig):
             :data:`LayerNormType.fused_rms` when ``fused_ops=True``, otherwise
             :data:`LayerNormType.rms`.
         :param block_mods: A dictionary of block indices to functions that take the base block config and return a modified block config.
+        :param layer_types: Optionally select the attention :class:`AttentionType` per layer via an
+            :class:`AttentionTypePatternConfig` (e.g. to mix full attention with landmark variants).
+            Mutually exclusive with the uniform ``landmark`` / ``fast_landmark`` / ``sparse_landmark``
+            flags; shared landmark params (``mem_freq`` / ``num_landmarks``) still apply.
         :param dtype: The default data type to use for all parameters.
         """
         # Resolve hidden size of FFN in blocks.
@@ -1697,6 +1822,192 @@ class TransformerConfig(ModelConfig):
             if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
                 att_type = AttentionType.fused
                 rope_type = RoPEType.fused
+
+        if (
+            sum(
+                [
+                    landmark,
+                    fast_landmark,
+                    fast_compressive_landmark,
+                    sparse_landmark,
+                    document_landmark,
+                    document_compressive,
+                ]
+            )
+            > 1
+        ):
+            raise OLMoConfigurationError(
+                "Only one of 'landmark', 'fast_landmark', 'fast_compressive_landmark', "
+                "'sparse_landmark', 'document_landmark', 'document_compressive' may be set."
+            )
+
+        uses_uniform_landmark = (
+            landmark
+            or fast_landmark
+            or fast_compressive_landmark
+            or sparse_landmark
+            or document_landmark
+            or document_compressive
+        )
+        if document_chunked and (uses_uniform_landmark or layer_types is not None):
+            raise OLMoConfigurationError(
+                "'document_chunked' (dense chunked attention) cannot be combined with a landmark "
+                "variant or 'layer_types'."
+            )
+        if full_attention_layers is not None and not document_chunked:
+            raise OLMoConfigurationError(
+                "'full_attention_layers' (hybrid full/chunked layers) is only valid with "
+                "'document_chunked=True'."
+            )
+        if dilated_sliding_window:
+            raise NotImplementedError(
+                "'dilated_sliding_window' (the positional 'Hierarchical K' rotating-dilation window) "
+                "is DEPRECATED and no longer supported. Use the document-chunked hierarchical-dilated "
+                "pattern instead: document_chunked=True with cross_doc_mode='hierarchical_dilated' "
+                "(rotating per-layer dilation via 'dilation_cycle')."
+            )
+        if dilated_sliding_window and (
+            uses_uniform_landmark or document_chunked or layer_types is not None
+        ):
+            raise OLMoConfigurationError(
+                "'dilated_sliding_window' cannot be combined with a landmark variant, "
+                "'document_chunked', or 'layer_types'."
+            )
+        if dilated_sliding_window and sliding_window is not None:
+            raise OLMoConfigurationError(
+                "'dilated_sliding_window' has its own dilated-window mask and cannot be combined "
+                "with 'sliding_window'."
+            )
+        if (
+            dilated_window_k is not None
+            or dilated_window_num_configs is not None
+            or dilated_window_base is not None
+        ) and not dilated_sliding_window:
+            raise OLMoConfigurationError(
+                "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
+                "valid with 'dilated_sliding_window=True'."
+            )
+        # ``hierarchical_dilated`` is a cross-document visibility policy orthogonal to the attention
+        # mechanism, so the dilation knobs apply to every document-chunked family.
+        uses_document_chunked_family = document_chunked or document_landmark or document_compressive
+        if (
+            dilation_n is not None
+            or dilation_m is not None
+            or dilation_cycle is not None
+            or dilation_max_docs is not None
+        ) and not uses_document_chunked_family:
+            raise OLMoConfigurationError(
+                "'dilation_n' / 'dilation_m' / 'dilation_cycle' / 'dilation_max_docs' are only valid "
+                "with a document-chunked family ('document_chunked' / 'document_landmark' / "
+                "'document_compressive', with cross_doc_mode='hierarchical_dilated')."
+            )
+        if (
+            summary_every_k is not None
+            or summary_bandwidth is not None
+            or summary_relay is not None
+        ) and not document_chunked:
+            raise OLMoConfigurationError(
+                "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' are only valid with "
+                "'document_chunked=True' and cross_doc_mode='summary_attention'."
+            )
+        if (gold_hops is not None or gold_decoys is not None) and not document_chunked:
+            raise OLMoConfigurationError(
+                "'gold_hops' / 'gold_decoys' are only valid with 'document_chunked=True' and "
+                "cross_doc_mode='gold_hop_controlled'."
+            )
+
+        pattern_landmark_types = layer_types.landmark_types() if layer_types is not None else set()
+        pattern_has_plain_landmark = AttentionType.landmark in pattern_landmark_types
+        pattern_has_sparse_landmark = AttentionType.sparse_landmark in pattern_landmark_types
+        pattern_has_document_landmark = AttentionType.document_landmark in pattern_landmark_types
+        pattern_has_compressive_landmark = (
+            AttentionType.fast_compressive_landmark in pattern_landmark_types
+        )
+        uses_compressive_landmark = (
+            fast_compressive_landmark or document_compressive or pattern_has_compressive_landmark
+        )
+        if nonselected_landmark_mass is not None and not uses_compressive_landmark:
+            raise OLMoConfigurationError(
+                "'nonselected_landmark_mass' is only valid with fast_compressive_landmark or "
+                "document_compressive attention."
+            )
+
+        if layer_types is not None:
+            if uses_uniform_landmark:
+                raise OLMoConfigurationError(
+                    "'layer_types' selects the attention type per layer and cannot be combined "
+                    "with the uniform 'landmark' / 'fast_landmark' / 'fast_compressive_landmark' / "
+                    "'sparse_landmark' flags."
+                )
+            if pattern_landmark_types and mem_freq is None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' must be set when 'layer_types' includes a landmark attention variant."
+                )
+            if not pattern_landmark_types and mem_freq is not None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' is only valid when 'layer_types' includes a landmark attention variant."
+                )
+            if pattern_landmark_types and sliding_window is not None:
+                raise OLMoConfigurationError(
+                    "Landmark attention is not compatible with sliding window attention."
+                )
+            if num_landmarks is not None and not pattern_has_sparse_landmark:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'layer_types' includes 'sparse_landmark'."
+                )
+            if cross_doc_mode is not None and not pattern_has_document_landmark:
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'layer_types' includes 'document_landmark'."
+                )
+        elif uses_uniform_landmark:
+            if mem_freq is None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' must be set for a landmark attention variant."
+                )
+            if sliding_window is not None:
+                raise OLMoConfigurationError(
+                    "Landmark attention is not compatible with sliding window attention."
+                )
+            if landmark:
+                att_type = AttentionType.landmark
+            elif fast_landmark:
+                att_type = AttentionType.fast_landmark
+            elif fast_compressive_landmark:
+                att_type = AttentionType.fast_compressive_landmark
+            elif sparse_landmark:
+                att_type = AttentionType.sparse_landmark
+            elif document_compressive:
+                att_type = AttentionType.document_compressive_landmark
+            else:
+                att_type = AttentionType.document_landmark
+            if num_landmarks is not None and not sparse_landmark:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                )
+            if cross_doc_mode is not None and not (document_landmark or document_compressive):
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'document_landmark=True' or "
+                    "'document_compressive=True'."
+                )
+        else:
+            if mem_freq is not None:
+                raise OLMoConfigurationError(
+                    "'mem_freq' is only valid with a landmark attention variant "
+                    "(landmark / fast_landmark / sparse_landmark / document_landmark)."
+                )
+            if num_landmarks is not None:
+                raise OLMoConfigurationError(
+                    "'num_landmarks' is only valid when 'sparse_landmark=True'."
+                )
+            if document_chunked:
+                att_type = AttentionType.document_chunked
+            elif dilated_sliding_window:
+                att_type = AttentionType.dilated_sliding_window
+            elif cross_doc_mode is not None:
+                raise OLMoConfigurationError(
+                    "'cross_doc_mode' is only valid when 'document_landmark=True' or "
+                    "'document_chunked=True'."
+                )
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
@@ -1724,6 +2035,67 @@ class TransformerConfig(ModelConfig):
                 use_flash=use_flash,
                 backend=attn_backend,
                 sliding_window=sliding_window,
+                layer_types=layer_types,
+                mem_freq=mem_freq,
+                landmark_use_kernel=(
+                    landmark_use_kernel
+                    if (
+                        landmark
+                        or document_landmark
+                        or document_compressive
+                        or pattern_has_plain_landmark
+                    )
+                    else None
+                ),
+                num_landmarks=(
+                    num_landmarks if (sparse_landmark or pattern_has_sparse_landmark) else None
+                ),
+                nonselected_landmark_mass=(
+                    nonselected_landmark_mass if uses_compressive_landmark else None
+                ),
+                cross_doc_mode=(
+                    cross_doc_mode
+                    if (
+                        document_landmark
+                        or document_compressive
+                        or document_chunked
+                        or pattern_has_document_landmark
+                    )
+                    else None
+                ),
+                dilation_n=dilation_n if uses_document_chunked_family else None,
+                dilation_m=dilation_m if uses_document_chunked_family else None,
+                dilation_cycle=dilation_cycle if uses_document_chunked_family else None,
+                dilation_max_docs=dilation_max_docs if uses_document_chunked_family else None,
+                # random_doc (dense DocumentChunkedAttention with cross_doc_mode="random_doc"): each doc
+                # attends itself + a seeded-random ~doc_keep_prob subset of earlier docs.
+                doc_keep_prob=doc_keep_prob if document_chunked else None,
+                random_doc_seed=random_doc_seed if document_chunked else None,
+                random_doc_per_example=random_doc_per_example if document_chunked else None,
+                # summary_attention (dense DocumentChunkedAttention with
+                # cross_doc_mode="summary_attention"): cell size, relay bandwidth, and relay on/off.
+                summary_every_k=summary_every_k if document_chunked else None,
+                summary_bandwidth=summary_bandwidth if document_chunked else None,
+                summary_relay=summary_relay if document_chunked else None,
+                # gold_hop_controlled (dense DocumentChunkedAttention with
+                # cross_doc_mode="gold_hop_controlled"): which arm of the multi-hop gold-routing
+                # ladder. Recorded here so config.json names the arm; the per-example gold-edited graph
+                # is supplied at runtime by gold_hop_mask.install_gold_hop_mask.
+                gold_hops=gold_hops if document_chunked else None,
+                gold_decoys=gold_decoys if document_chunked else None,
+                # FlexAttention block-mask granularity (dense DocumentChunkedAttention only). Smaller
+                # (e.g. 32) lets sub-128-token chunks realize block-sparsity; ignored by landmark
+                # variants (no flex path).
+                flex_block_size=flex_block_size if document_chunked else None,
+                # Hybrid full/chunked: these layer indices run plain causal attention (dense
+                # DocumentChunkedAttention only).
+                full_attention_layers=full_attention_layers if document_chunked else None,
+                # Dilated causal sliding window with per-layer rotating dilation ("Hierarchical K").
+                dilated_window_k=dilated_window_k if dilated_sliding_window else None,
+                dilated_window_num_configs=(
+                    dilated_window_num_configs if dilated_sliding_window else None
+                ),
+                dilated_window_base=dilated_window_base if dilated_sliding_window else None,
                 dtype=dtype,
             ),
             feed_forward=feed_forward,
@@ -1795,9 +2167,11 @@ class TransformerConfig(ModelConfig):
                 hidden_size=expert_hidden_size,
                 capacity_factor=capacity_factor,
                 router=MoERouterConfig(top_k=top_k),
-                shared_mlp=None
-                if shared_expert_hidden_size is None
-                else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False),
+                shared_mlp=(
+                    None
+                    if shared_expert_hidden_size is None
+                    else FeedForwardConfig(hidden_size=shared_expert_hidden_size, bias=False)
+                ),
                 lb_loss_weight=lb_loss_weight,
                 z_loss_weight=z_loss_weight,
             ),
@@ -1875,11 +2249,15 @@ class TransformerConfig(ModelConfig):
         local_window_size: int = 1024,
         local_rope_theta: int = 10_000,
         global_rope_theta: int = 1_000_000,
+        global_rope_linear_scaling_factor: float = 0.0,
         global_layer_interval: int = 6,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
+        document_chunked: bool = False,
+        cross_doc_mode: Optional[str] = None,
+        flex_block_size: Optional[int] = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1895,8 +2273,25 @@ class TransformerConfig(ModelConfig):
         :param local_window_size: Sliding window size for local attention layers.
         :param local_rope_theta: RoPE base frequency for local attention layers.
         :param global_rope_theta: RoPE base frequency for global attention layers.
+        :param global_rope_linear_scaling_factor: Position-interpolation (HF ``rope_type="linear"``)
+            factor applied to the **global** layers only, matching Gemma 3's
+            ``text_config.rope_scaling`` (``factor=8`` for the released 4B/12B/27B checkpoints).
+            ``0`` (default) leaves RoPE unscaled.
         :param global_layer_interval: Number of layers per pattern cycle (default 6 = 5 local + 1 global).
+        :param document_chunked: Use :class:`~olmo_core.nn.attention.DocumentChunkedAttention` on the
+            **global** (full-attention) layers. The local layers keep plain sliding-window attention:
+            :class:`DocumentChunkedAttention` rejects ``window_size`` outright (the chunked mask and a
+            sliding window are two different key restrictions), so the chunked mask can only live on
+            the global layers. This mirrors the Qwen3.5 hybrid, where the chunked mask applies to the
+            full-attention blocks and the GDN blocks are left alone.
+        :param cross_doc_mode: The chunked-attention pattern for the global layers; only valid with
+            ``document_chunked=True``.
+        :param flex_block_size: FlexAttention block size for the chunked global layers.
         """
+        if not document_chunked and (cross_doc_mode is not None or flex_block_size is not None):
+            raise OLMoConfigurationError(
+                "'cross_doc_mode' / 'flex_block_size' are only valid with 'document_chunked=True'."
+            )
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
             eps=layer_norm_eps,
@@ -1936,8 +2331,20 @@ class TransformerConfig(ModelConfig):
 
         global_block = local_block.copy()
         sequence_mixer = cast(AttentionConfig, global_block.sequence_mixer.copy())
-        sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
+        sequence_mixer.rope = RoPEConfig(
+            name=RoPEType.default,
+            theta=global_rope_theta,
+            scaling=(
+                PIRoPEScalingConfig(factor=float(global_rope_linear_scaling_factor))
+                if global_rope_linear_scaling_factor and global_rope_linear_scaling_factor > 1
+                else None
+            ),
+        )
         sequence_mixer.sliding_window = None
+        if document_chunked:
+            sequence_mixer.name = AttentionType.document_chunked
+            sequence_mixer.cross_doc_mode = cross_doc_mode
+            sequence_mixer.flex_block_size = flex_block_size
         global_block.sequence_mixer = sequence_mixer
 
         blocks = {"local": local_block, "global": global_block}
@@ -1987,12 +2394,19 @@ class TransformerConfig(ModelConfig):
             apply_scaling(new_config.block)
             return new_config
 
-        # Add rope scaling only to layers that do not use sliding window attention
-        # We supply "block_overrides" for the layers we want to scale.
+        # Add rope scaling only to layers that use full attention (no sliding window and no
+        # non-default attention type from the layer_types pattern). We supply "block_overrides"
+        # for the layers we want to scale.
         overrides: Dict[int, TransformerBlockConfig] = {}
         for i in range(new_config.n_layers):
             sliding_window_cfg = new_config.block.sequence_mixer.sliding_window
             if sliding_window_cfg and sliding_window_cfg.should_use_swa(i, new_config.n_layers):
+                continue
+            layer_types_cfg = new_config.block.sequence_mixer.layer_types
+            if (
+                layer_types_cfg is not None
+                and layer_types_cfg.get_type(i, new_config.n_layers) != AttentionType.default
+            ):
                 continue
             block_copy = new_config.block.copy()
             apply_scaling(block_copy)
