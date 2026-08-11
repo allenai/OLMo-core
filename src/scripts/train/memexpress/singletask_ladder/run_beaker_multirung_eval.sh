@@ -21,6 +21,7 @@
 #   WEKA_LLM    weka ai2-llm root (e.g. /weka/oe-training-default/ai2-llm)
 #   STEP        optional: pin a specific step dir (e.g. step580); empty -> latest complete step
 #   MAX_TEST    default 600 ; MAX_LENGTH default 40960 ; BATCH_SIZE default 8 ; NGPU default 8
+#   QUERY_POSITION  both (default) | after -- MUST match the SFT shards (qafter data -> after)
 set -uo pipefail
 TASK="${TASK:?set TASK=contra|nq|rerank|outlier|oolong}"
 VARIANT="${VARIANT:?set VARIANT=dense|landmark|compressive|docchunk}"
@@ -35,6 +36,13 @@ NGPU="${NGPU:-8}"
 # deliberately NOT defaulted here. The old `${TOKENIZER:-Qwen/Qwen3-4B}` silently mis-tokenized
 # every Qwen3.5 eval, scoring 0.000 while reporting success.
 PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
+# QUERY_POSITION must match the SFT shards the model was trained on, for the v2 ladder AND the OOD
+# probes (both render from raw unified JSONL at eval time, so this is a prompt flag, not a data one):
+#   xlong5_2k256k_qwen35        -> both   (the default; every result before 2026-08-11 used this)
+#   xlong5_2k256k_qwen35_qafter -> after
+# Evaluating a query-after model with "both" hands it a second copy of the ask it never saw during
+# training, which reads as a capability gap rather than a prompt mismatch.
+QUERY_POSITION="${QUERY_POSITION:-both}"
 # GQA compressive-landmark checkpoints only: share top-k landmark block selection across each KV
 # group's query heads ("mean"/"max") instead of each head retrieving independently. Empty (default)
 # keeps independent per-head selection; only takes effect with top-k decode enabled (on by default
@@ -241,7 +249,7 @@ python -c "import scipy, sklearn" 2>/dev/null || pip install --quiet scipy sciki
 
 cd "$REPO"   # CODE is in-repo (ctc_eval); DATA comes from weka via --root "$BUNDLE" + EVAL500_ROOT
 PORT=$(( 20000 + RANDOM % 20000 ))
-TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py --prompt-format $PROMPT_FORMAT"
+TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eval/eval_lc_native.py --prompt-format $PROMPT_FORMAT --query-position $QUERY_POSITION"
 
 # ---- docchunk: box-marker chunked prefill + bs=1 KV-cached decode over the FULL ladder (all 9 tasks
 # incl. the 4 OOD ladders) via eval_lc_native_docchunk_ladder.py. It shares the TASK->LTASK/RUNGS case

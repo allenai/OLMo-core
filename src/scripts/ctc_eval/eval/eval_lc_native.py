@@ -69,6 +69,14 @@ def main():
                     help="chat = Qwen3 apply_chat_template (matches SFT training); "
                          "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
                          "alpaca = legacy alpaca-instruction wrap.")
+    ap.add_argument("--query-position", choices=["both", "after", "before"], default="both",
+                    help="Where the task ask is rendered relative to the corpus. MUST match the "
+                         "shards the model was SFT'd on: the xlong5_2k256k_qwen35 build is 'both', "
+                         "the ..._qafter build is 'after'. Evaluating a query-after model with "
+                         "'both' shows it a second copy of the ask it never saw in training, which "
+                         "reads as a capability gap rather than a prompt mismatch. Default 'both' "
+                         "keeps every existing result reproducible. RULER is exempt -- it is not "
+                         "from the 5-task mix and is always rendered query-after.")
     ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
                     help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
                          "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
@@ -199,7 +207,8 @@ def main():
     def strip_think(s):
         return s.split("</think>", 1)[1] if "</think>" in s else s
 
-    def _load(path, task, qp="both"):
+    def _load(path, task, qp=None):
+        qp = args.query_position if qp is None else qp
         # Build prompts in the format the model expects:
         #   chat  -> Qwen3 chat template over the raw build_prompt (matches SFT training)
         #   raw   -> bare build_prompt, fed as a completion (BASE/CPT models)
@@ -266,7 +275,9 @@ def main():
                 full[gi] = resp
         return full
 
-    summary = {"model_path": args.model_path, "ruler": {}, "contradiction": {}, "nq": {}}
+    summary = {"model_path": args.model_path, "query_position": args.query_position,
+               "prompt_format": args.prompt_format,
+               "ruler": {}, "contradiction": {}, "nq": {}}
 
     # Per-example generation dump (for error inspection). Each _eval_* returns (metrics, details);
     # we pair the FULL model generation with its per-example detail (parsed pred, gold, metrics) and
@@ -341,7 +352,7 @@ def main():
         _flush_results()
 
     if not args.ladder:
-        ex = _load(args.contra_data, task="contradiction", qp="both")
+        ex = _load(args.contra_data, task="contradiction")
         resp = generate([e["prompt"] for e in ex], args.contra_max_new_tokens, stop_strings=["contradicting pairs:"])
         res, det = _eval_contradiction(ex, resp)
         _record_gens("contradiction", "single", ex, resp, det)
@@ -350,7 +361,7 @@ def main():
         _flush_results()
 
     if not args.ladder and os.path.exists(args.nq_data):
-        ex = _load(args.nq_data, task="retrieval", qp="both")
+        ex = _load(args.nq_data, task="retrieval")
         resp = generate([e["prompt"] for e in ex], 64)
         res, det = _eval_retrieval(ex, resp)
         _record_gens("nq", "single", ex, resp, det)
@@ -615,7 +626,7 @@ def main():
             for label, path in rungs:
                 if not path or not os.path.exists(path):
                     print(f"[ladder:{task}@{label}] MISSING {path}, skipping"); continue
-                ex = _load(path, task=loadtask, qp="both")
+                ex = _load(path, task=loadtask)
                 resp = generate([e["prompt"] for e in ex], maxtok, **gkw)
                 res, det = fn(ex, resp)
                 _record_gens(task, label, ex, resp, det)
@@ -637,8 +648,15 @@ def main():
         for gname, gpath, gmax in gen:
             if not os.path.exists(gpath):
                 print(f"[gen:{gname}] MISSING {gpath}, skipping"); continue
-            ex = load_unified_examples(gpath, args.max_test_samples, task="retrieval",
-                                       query_position="both", use_alpaca=True)
+            # BEHAVIOUR CHANGE (2026-08-11): these OOD probes used to call load_unified_examples
+            # directly with use_alpaca=True and NO chat template, while every other task in the same
+            # run went through _load and got the chat template. One model, one run, two prompt
+            # conventions -- the probes were being fed a format the SFT model never saw. Routing them
+            # through _load fixes that and picks up --query-position. OOD numbers from this driver are
+            # therefore NOT comparable to pre-2026-08-11 OOD numbers. To restore the old rendering,
+            # call load_unified_examples(gpath, args.max_test_samples, task="retrieval",
+            # query_position=args.query_position, use_alpaca=True) here instead.
+            ex = _load(gpath, task="retrieval")
             resp = generate([e["prompt"] for e in ex], gmax)
             res, det = _eval_retrieval(ex, resp)
             _record_gens(f"gen_{gname}", "probe", ex, resp, det)
