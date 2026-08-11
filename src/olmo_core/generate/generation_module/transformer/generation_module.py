@@ -4,7 +4,7 @@ import math
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -30,6 +30,9 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.generate.generation_module import GenerationConfig, GenerationModule
+from olmo_core.generate.generation_module.config import (
+    DEFAULT_STOP_STRING_CHECK_INTERVAL,
+)
 from olmo_core.generate.sampling import select_next_token
 from olmo_core.generate.utils import selective_log_softmax
 from olmo_core.io import is_url, join_path, normalize_path
@@ -57,6 +60,57 @@ _LANDMARK_ATTENTION_TYPES = (
     SparseLandmarkAttention,
     DocumentLandmarkAttention,
 )
+
+
+#: Completion-tail tokens scanned for a freshly-closed anchor line. The scan only ever looks at
+#: this window, so a stop string must not be able to scroll out of it between checks --
+#: :func:`mark_rows_hitting_stop_string` enforces that rather than leaving it to a comment.
+STOP_DECODE_WINDOW = 256
+
+
+def mark_rows_hitting_stop_string(
+    finished: torch.Tensor,
+    completions: Sequence[Sequence[int]],
+    stop_strings_lower: Sequence[str],
+    tokenizer,
+    *,
+    check_interval: int,
+) -> None:
+    """
+    Mark rows whose completion has closed a stop-string line, in place.
+
+    A row finishes once its completion contains a stop string **followed by a newline** -- the
+    answer line has closed, so the answer itself is captured rather than cut mid-token. Matching is
+    case-insensitive.
+
+    Shared by both decode loops. They previously carried near-identical copies which had already
+    drifted (one used a named window constant, the other a bare ``256``) -- the same duplication
+    that let them disagree about when to sync ``finished``.
+
+    :param finished: ``(batch,)`` bool tensor, updated in place.
+    :param completions: Per-row generated token ids, excluding the prompt.
+    :param stop_strings_lower: Stop strings, already lowercased.
+    :param tokenizer: Anything exposing ``.decode(ids, skip_special_tokens=True)``.
+    :param check_interval: Steps between calls. Used only to verify the window cannot be outrun.
+
+    :raises ValueError: If ``check_interval`` exceeds :data:`STOP_DECODE_WINDOW`, where a stop
+        string could appear and scroll past unseen -- the scan would silently stop working rather
+        than fail.
+    """
+    if check_interval > STOP_DECODE_WINDOW:
+        raise ValueError(
+            f"stop_string_check_interval={check_interval} exceeds the {STOP_DECODE_WINDOW}-token "
+            "scan window; a stop string could appear and scroll out of view between checks"
+        )
+    for i, comp in enumerate(completions):
+        if finished[i]:
+            continue
+        text = tokenizer.decode(list(comp)[-STOP_DECODE_WINDOW:], skip_special_tokens=True).lower()
+        for s in stop_strings_lower:
+            j = text.find(s)
+            if j >= 0 and text.find("\n", j + len(s)) >= 0:
+                finished[i] = True
+                break
 
 
 def _insert_landmark_tokens(input_ids: torch.Tensor, mem_freq: int, mem_id: int) -> torch.Tensor:
@@ -434,7 +488,6 @@ class TransformerGenerationModule(GenerationModule):
         stop_strings_lc = [s.lower() for s in (generation_config.stop_strings or [])]
         do_string_stop = bool(stop_strings_lc) and stop_string_tokenizer is not None
         check_interval = max(1, generation_config.stop_string_check_interval)
-        _STOP_DECODE_WINDOW = 256  # completion-tail tokens scanned for a freshly-closed anchor line
         step_idx = 0
         all_finished = False
 
@@ -503,21 +556,22 @@ class TransformerGenerationModule(GenerationModule):
 
             # Periodic string-level early-stop + finished-all sync (every check_interval steps).
             step_idx += 1
-            if step_idx % check_interval == 0:
-                if do_string_stop and not bool(finished.all().item()):
-                    comp_tail = generated[:, prompt_len:][:, -_STOP_DECODE_WINDOW:].tolist()
-                    for i in range(batch_size):
-                        if finished[i]:
-                            continue
-                        text = stop_string_tokenizer.decode(
-                            comp_tail[i], skip_special_tokens=True
-                        ).lower()
-                        for s in stop_strings_lc:
-                            j = text.find(s)
-                            if j >= 0 and text.find("\n", j + len(s)) >= 0:
-                                finished[i] = True
-                                break
-                all_finished = bool(finished.all().item())
+            # The host-side string scan is expensive (a tokenizer decode per row), so it runs on an
+            # interval. The finished.all() sync is NOT gated with it. Both used to be, which meant
+            # EOS-finished rows kept decoding for up to check_interval-1 more steps: a
+            # stop-STRING sampling knob silently throttled the EOS exit path. A device sync costs
+            # microseconds; a decode step on a 4B model at 32k costs far more, so gating the sync
+            # to save syncs lost more than it saved. generate_landmark_batch below always had this
+            # right -- it breaks on finished.all() every step and gates only the scan.
+            if do_string_stop and step_idx % check_interval == 0 and not bool(finished.all().item()):
+                mark_rows_hitting_stop_string(
+                    finished,
+                    generated[:, prompt_len:][:, -STOP_DECODE_WINDOW:].tolist(),
+                    stop_strings_lc,
+                    stop_string_tokenizer,
+                    check_interval=check_interval,
+                )
+            all_finished = bool(finished.all().item())
 
             if log_timing and tokens_generated == 0:
                 torch.cuda.synchronize()
@@ -600,7 +654,7 @@ class TransformerGenerationModule(GenerationModule):
         top_k_blocks: Optional[int] = None,
         stop_strings: Optional[List[str]] = None,
         stop_string_tokenizer: Optional[Any] = None,
-        stop_string_check_interval: int = 16,
+        stop_string_check_interval: int = DEFAULT_STOP_STRING_CHECK_INTERVAL,
     ) -> List[List[int]]:
         """Greedy generation for a **right-padded, cross-length batch** of landmark prompts.
 
@@ -711,17 +765,9 @@ class TransformerGenerationModule(GenerationModule):
             if bool(finished.all().item()):
                 break
             if do_stop and (step + 1) % check == 0:
-                for i in range(B):
-                    if finished[i]:
-                        continue
-                    text = stop_string_tokenizer.decode(
-                        comp[i][-256:], skip_special_tokens=True
-                    ).lower()
-                    for s in stop_lc:
-                        j = text.find(s)
-                        if j >= 0 and text.find("\n", j + len(s)) >= 0:
-                            finished[i] = True
-                            break
+                mark_rows_hitting_stop_string(
+                    finished, comp, stop_lc, stop_string_tokenizer, check_interval=check
+                )
 
         for a in layers:
             a.clear_ragged_decode()  # type: ignore[attr-defined]
