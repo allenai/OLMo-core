@@ -101,6 +101,77 @@ def test_run_name_cannot_escape_or_alias_checkpoint_root(run_name):
         vision_alignment._validate_run_name(run_name)
 
 
+def test_git_provenance_requires_owned_branch_for_local_launch(monkeypatch):
+    vision_alignment = _load_module()
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            git=SimpleNamespace(branch="vision-moe", ref="a" * 40),
+        )
+    )
+    monkeypatch.setattr(vision_alignment, "is_running_in_beaker_batch_job", lambda: False)
+
+    vision_alignment._validate_git_provenance(config, runtime=False)
+
+    config.launch.git.branch = "main"
+    with pytest.raises(ValueError, match="user-owned vision-moe branch"):
+        vision_alignment._validate_git_provenance(config, runtime=False)
+
+
+def test_git_provenance_accepts_matching_detached_beaker_checkout(monkeypatch):
+    vision_alignment = _load_module()
+    git_ref = "b" * 40
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            git=SimpleNamespace(branch=None, ref=git_ref),
+        )
+    )
+    monkeypatch.setattr(vision_alignment, "is_running_in_beaker_batch_job", lambda: True)
+    monkeypatch.setenv("GIT_BRANCH", "vision-moe")
+    monkeypatch.setenv("GIT_REF", git_ref)
+
+    vision_alignment._validate_git_provenance(config, runtime=True)
+
+
+@pytest.mark.parametrize(
+    ("branch", "runtime_ref", "checkout_branch", "checkout_ref", "message"),
+    [
+        ("main", "c" * 40, None, "c" * 40, "runtime metadata"),
+        ("vision-moe", "short", None, "c" * 40, "exact GIT_REF"),
+        ("vision-moe", "c" * 40, None, "d" * 40, "detached checkout"),
+        ("vision-moe", "c" * 40, "main", "c" * 40, "unexpected active branch"),
+    ],
+)
+def test_git_provenance_rejects_invalid_beaker_metadata(
+    monkeypatch, branch, runtime_ref, checkout_branch, checkout_ref, message
+):
+    vision_alignment = _load_module()
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            git=SimpleNamespace(branch=checkout_branch, ref=checkout_ref),
+        )
+    )
+    monkeypatch.setattr(vision_alignment, "is_running_in_beaker_batch_job", lambda: True)
+    monkeypatch.setenv("GIT_BRANCH", branch)
+    monkeypatch.setenv("GIT_REF", runtime_ref)
+
+    with pytest.raises(ValueError, match=message):
+        vision_alignment._validate_git_provenance(config, runtime=True)
+
+
+def test_git_provenance_rejects_train_worker_outside_beaker(monkeypatch):
+    vision_alignment = _load_module()
+    git_ref = "e" * 40
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            git=SimpleNamespace(branch=None, ref=git_ref),
+        )
+    )
+    monkeypatch.setattr(vision_alignment, "is_running_in_beaker_batch_job", lambda: False)
+
+    with pytest.raises(ValueError, match="inside a Beaker batch job"):
+        vision_alignment._validate_git_provenance(config, runtime=True)
+
+
 @pytest.mark.parametrize(
     ("phase", "freeze_params", "lm_lr", "vision_lr", "microbatch_instances"),
     [

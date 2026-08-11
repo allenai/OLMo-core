@@ -82,7 +82,11 @@ from olmo_core.eval import (
     MultimodalLMEvaluator,
 )
 from olmo_core.internal.common import build_launch_config, get_root_dir
-from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    is_running_in_beaker_batch_job,
+)
 from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
 from olmo_core.optim import (
     CosWithWarmup,
@@ -1868,7 +1872,42 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
         raise ValueError("Every active warmup must be shorter than the production phase duration")
 
 
-def _validate_phase_contract(config: ExperimentConfig, run_name: str) -> None:
+def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None:
+    git = config.launch.git
+    if git is None or re.fullmatch(r"[0-9a-f]{40}", git.ref or "") is None:
+        raise ValueError("Vision alignment launch must pin an exact 40-character git revision")
+
+    if not runtime:
+        if git.branch != "vision-moe":
+            raise ValueError(
+                "Vision alignment may launch only from the user-owned vision-moe branch"
+            )
+        return
+
+    if not is_running_in_beaker_batch_job():
+        raise ValueError("Vision alignment train workers must run inside a Beaker batch job")
+
+    # Gantry checks out the submitted SHA in detached-HEAD state. Its reconstructed
+    # GitRepoState therefore has no active branch, even though the authoritative job
+    # metadata contains GIT_BRANCH and GIT_REF. Validate both the submitted metadata and
+    # the actual detached checkout instead of requiring an active worker-side branch.
+    runtime_branch = os.environ.get("GIT_BRANCH")
+    runtime_ref = os.environ.get("GIT_REF")
+    if runtime_branch != "vision-moe":
+        raise ValueError(
+            "Vision alignment runtime metadata must identify the user-owned vision-moe branch"
+        )
+    if re.fullmatch(r"[0-9a-f]{40}", runtime_ref or "") is None:
+        raise ValueError("Vision alignment runtime must include an exact GIT_REF")
+    if git.ref != runtime_ref:
+        raise ValueError("Vision alignment detached checkout does not match the submitted GIT_REF")
+    if git.branch not in (None, "vision-moe"):
+        raise ValueError("Vision alignment runtime checkout reports an unexpected active branch")
+
+
+def _validate_phase_contract(
+    config: ExperimentConfig, run_name: str, *, runtime: bool = False
+) -> None:
     policy = _PHASE_POLICIES[config.phase]
     if config.artifacts != ArtifactConfig():
         raise ValueError("Pinned vision-alignment artifact identities may not be overridden")
@@ -1923,10 +1962,7 @@ def _validate_phase_contract(config: ExperimentConfig, run_name: str) -> None:
         raise ValueError("Vision alignment requires one or more complete 8-GPU Holmes nodes")
     if config.launch.allow_dirty:
         raise ValueError("Vision alignment may launch only a clean committed revision")
-    if config.launch.git is None or config.launch.git.branch != "vision-moe":
-        raise ValueError("Vision alignment may launch only from the user-owned vision-moe branch")
-    if re.fullmatch(r"[0-9a-f]{40}", config.launch.git.ref or "") is None:
-        raise ValueError("Vision alignment launch must pin an exact 40-character git revision")
+    _validate_git_provenance(config, runtime=runtime)
     if any(
         secret is not None
         for secret in (
@@ -2066,7 +2102,9 @@ def _validate_phase_contract(config: ExperimentConfig, run_name: str) -> None:
     _validate_parent_or_resume(config)
 
 
-def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
+def build_config(
+    script: str, run_name: str, overrides: List[str], *, runtime: bool = False
+) -> ExperimentConfig:
     """Build and validate one phase config after resolving its phase selector first."""
     _validate_run_name(run_name)
     _validate_override_surface(overrides)
@@ -2193,7 +2231,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         config.evaluation.native_text_holdout_fingerprint = holdout_manifest.content_fingerprint
     config.train_module.source_loss_mass_targets = config.data.mixture.resolved_targets()
     _configure_router_load_balancing(config.model.lm, config.router_lb_loss_weight)
-    _validate_phase_contract(config, run_name)
+    _validate_phase_contract(config, run_name, runtime=runtime)
     return config
 
 
@@ -2548,9 +2586,10 @@ so do not also pass --phase when --profile is used.
     else:
         prepare_cli_environment()
     profile, overrides = _load_profile(raw_overrides)
-    experiment = build_config(script, run_name, overrides)
+    runtime = command == "train"
+    experiment = build_config(script, run_name, overrides, runtime=runtime)
     experiment = _apply_profile_launch(experiment, profile)
-    _validate_phase_contract(experiment, run_name)
+    _validate_phase_contract(experiment, run_name, runtime=runtime)
     log.info(experiment)
     if command == "train":
         train(experiment)
