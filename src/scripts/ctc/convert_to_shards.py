@@ -43,10 +43,20 @@ import logging
 import multiprocessing as mp
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
+# Run against THIS checkout. The conda env's editable install points olmo_core at the PRE-MIGRATION
+# repo, so a bare `import olmo_core` from here silently resolves to the old tree -- verified, not
+# hypothetical -- and this script would then tokenize with the old marker sets and without the
+# item-regex guard, producing plausible, wrong shards. Mirrors ctc/tests/conftest.py.
+_REPO = Path(__file__).resolve().parents[3]
+for _src in (_REPO / "src", _REPO / "ctc" / "src"):
+    if _src.is_dir() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+
+import numpy as np  # noqa: E402
 
 log = logging.getLogger("ctc.convert")
 

@@ -188,9 +188,9 @@ def build_dataset_config(options: TrainOptions, tokenizer_config):
         return PadToLengthInstanceSourceConfig(
             sources=[mixed], sequence_length=options.seq_len, tokenizer=tokenizer_config
         )
-    return ConcatAndChunkInstanceSourceConfig(
-        sources=[mixed], sequence_length=options.seq_len, tokenizer=tokenizer_config
-    )
+    # No `tokenizer` here, unlike PadToLength: concatenation never needs to pad, so it has no pad
+    # id to look up. Passing one is a TypeError.
+    return ConcatAndChunkInstanceSourceConfig(sources=[mixed], sequence_length=options.seq_len)
 
 
 def build_trainer_config(options: TrainOptions, *, save_folder: str, work_dir: str):

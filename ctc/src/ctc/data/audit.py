@@ -67,29 +67,54 @@ class AuditResult:
         )
 
 
+#: How far above chance a probe must score before it is a finding. A shortcut that beats chance by
+#: less than this is not worth a build failure.
+MARGIN = 0.20
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """
+    A probe's hit rate, **against its own chance baseline**.
+
+    The baseline is not decoration. Several of these heuristics are near-certain to hit by
+    accident when gold is a large fraction of the corpus: at the textgroups 2k rung, 6 of 11
+    documents are gold, so "is a gold document the longest or the shortest?" is true ~82% of the
+    time in data with no shortcut at all. A fixed ceiling reports that as a failure, blocks a
+    legitimate build, and teaches everyone to pass ``--force`` -- which is worse than having no
+    probe. So each probe computes what it would score on shortcut-free data of the same shape, and
+    only a margin above *that* counts.
+
     :param name: Probe name.
     :param score: Heuristic hit rate in ``[0, 1]`` -- roughly "how often this alone finds gold".
-    :param ceiling: Above this, the shortcut is strong enough to explain the task.
+    :param chance: What this probe scores on data of the same shape with no shortcut.
     :param detail: One line of context.
+    :param ceiling: Overrides ``chance + MARGIN``. Used to mark a probe as accepted.
     """
 
     name: str
     score: float
-    ceiling: float
+    chance: float
     detail: str = ""
+    ceiling: Optional[float] = None
+
+    @property
+    def threshold(self) -> float:
+        """:returns: The score above which this is a finding."""
+        return self.ceiling if self.ceiling is not None else min(1.0, self.chance + MARGIN)
 
     @property
     def failed(self) -> bool:
-        """:returns: True when the probe fired."""
-        return self.score > self.ceiling
+        """:returns: True when the probe beat chance by more than :data:`MARGIN`."""
+        return self.score > self.threshold
 
     def __str__(self) -> str:
         mark = "FAIL" if self.failed else "ok"
         tail = f" — {self.detail}" if self.detail else ""
-        return f"[{mark}] {self.name}: {self.score:.3f} (ceiling {self.ceiling:.3f}){tail}"
+        return (
+            f"[{mark}] {self.name}: {self.score:.3f} vs chance {self.chance:.3f} "
+            f"(threshold {self.threshold:.3f}){tail}"
+        )
 
 
 def _gold_positions(example: Mapping, spec: TaskSpec) -> List[int]:
@@ -121,9 +146,12 @@ def gold_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResu
         deciles.update(min(9, 10 * p // n) for p in _gold_positions(example, spec))
     total = sum(deciles.values())
     if not total:
-        return ProbeResult("gold_position_bias", 0.0, 0.25, "no gold indices")
+        return ProbeResult("gold_position_bias", 0.0, 0.1, "no gold indices")
     top, count = deciles.most_common(1)[0]
-    return ProbeResult("gold_position_bias", count / total, 0.25, f"heaviest decile #{top}")
+    # Uniform gold puts a tenth in each decile, but the MAX over ten noisy bins sits above 0.1 --
+    # more so with few gold positions -- so the baseline is the expected maximum, not the mean.
+    chance = min(1.0, 0.1 + 0.9 * (10 / total) ** 0.5) if total else 0.1
+    return ProbeResult("gold_position_bias", count / total, chance, f"heaviest decile #{top}")
 
 
 def gold_length_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
@@ -137,15 +165,21 @@ def gold_length_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult
     :returns: The probe result.
     """
     hits = total = 0
+    chance_sum = 0.0
     for example in examples:
         lengths = [len(d["text"]) for d in example["documents"]]
         gold = set(_gold_positions(example, spec))
-        if not gold or len(lengths) < 3:
+        n, g = len(lengths), len(gold)
+        if not gold or n < 3:
             continue
         hits += bool(gold & {lengths.index(max(lengths)), lengths.index(min(lengths))})
         total += 1
+        # P(at least one of the two extreme positions is gold) if gold were placed at random:
+        # 1 - P(both extremes are non-gold).
+        chance_sum += 1.0 - ((n - g) / n) * ((n - g - 1) / (n - 1))
     score = hits / total if total else 0.0
-    return ProbeResult("gold_length_bias", score, 0.5, f"{hits}/{total} examples")
+    chance = chance_sum / total if total else 0.0
+    return ProbeResult("gold_length_bias", score, chance, f"{hits}/{total} examples")
 
 
 def cycle_frequency_gap(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
@@ -161,7 +195,8 @@ def cycle_frequency_gap(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeRes
     :returns: The probe result -- the mean share of gold entities landing among the k rarest, where
         k is the number of gold entities.
     """
-    scores = []
+    scores: List[float] = []
+    chances: List[float] = []
     for example in examples:
         entities = [
             [t.split()[0], t.split()[-1]] for t in (d["text"] for d in example["documents"])
@@ -173,8 +208,11 @@ def cycle_frequency_gap(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeRes
         gold_entities = {e for i in gold for e in entities[i]}
         rarest = {e for e, _ in sorted(freq.items(), key=lambda kv: kv[1])[: len(gold_entities)]}
         scores.append(len(gold_entities & rarest) / max(1, len(gold_entities)))
+        chances.append(len(gold_entities) / max(1, len(freq)))
     score = sum(scores) / len(scores) if scores else 0.0
-    return ProbeResult("cycle_frequency_gap", score, 0.5, "gold recoverable as the rarest names")
+    # Picking the k rarest entities at random recovers k/|entities| of the gold ones.
+    chance = sum(chances) / len(chances) if chances else 0.0
+    return ProbeResult("cycle_frequency_gap", score, chance, "gold recoverable as the rarest names")
 
 
 def closest_pair_is_gold(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
@@ -190,19 +228,22 @@ def closest_pair_is_gold(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeRe
     :returns: The probe result.
     """
     hits = total = 0
+    chance_sum = 0.0
     for example in examples:
         meta = example.get("_meta") or {}
         values = meta.get("answer_values") or meta.get("counts")
         gold = set(_gold_positions(example, spec))
         if not values or not gold or len(values) < 3:
             continue
-        i, j = min(
-            combinations(range(len(values)), 2), key=lambda p: abs(values[p[0]] - values[p[1]])
-        )
+        pairs = list(combinations(range(len(values)), 2))
+        i, j = min(pairs, key=lambda p: abs(values[p[0]] - values[p[1]]))
         hits += {i, j} <= gold
         total += 1
+        # A random pair being gold-contained -- the rate this probe would hit with no signal.
+        chance_sum += sum(1 for p in pairs if set(p) <= gold) / len(pairs)
     score = hits / total if total else 0.0
-    return ProbeResult("closest_pair_is_gold", score, 0.5, f"{hits}/{total} examples")
+    chance = chance_sum / total if total else 0.0
+    return ProbeResult("closest_pair_is_gold", score, chance, f"{hits}/{total} examples")
 
 
 Probe = Callable[[Sequence[Mapping], TaskSpec], ProbeResult]
@@ -242,7 +283,11 @@ def run_probes(task: str, examples: Sequence[Mapping], spec: TaskSpec) -> List[P
     results += [probe(examples, spec) for probe in PROBES.get(task, [])]
     accepted = ACCEPTED.get(task, {})
     return [
-        ProbeResult(r.name, r.score, 1.01, accepted[r.name]) if r.name in accepted else r
+        (
+            ProbeResult(r.name, r.score, r.chance, accepted[r.name], ceiling=1.01)
+            if r.name in accepted
+            else r
+        )
         for r in results
     ]
 
@@ -383,7 +428,7 @@ def audit(
         result.checks[f"shortcut/{probe.name}"] = str(probe)
         if probe.failed:
             result.problems.append(
-                f"shortcut probe {probe.name} scored {probe.score:.3f} against a ceiling of "
-                f"{probe.ceiling:.3f}: gold may be findable without doing the task"
+                f"shortcut probe {probe.name} scored {probe.score:.3f} against a chance baseline "
+                f"of {probe.chance:.3f}: gold may be findable without doing the task"
             )
     return result

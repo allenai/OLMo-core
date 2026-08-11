@@ -22,8 +22,19 @@ The 20 pre-migration CPT launchers differed from each other only in --arch, --lr
 
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Run against THIS checkout. The conda env's editable install points olmo_core at the PRE-MIGRATION
+# repo, so a bare `import olmo_core` from here silently resolves to the old tree -- verified, not
+# hypothetical -- and this script would then tokenize with the old marker sets and without the
+# item-regex guard, producing plausible, wrong shards. Mirrors ctc/tests/conftest.py.
+_REPO = Path(__file__).resolve().parents[4]
+for _src in (_REPO / "src", _REPO / "ctc" / "src"):
+    if _src.is_dir() and str(_src) not in sys.path:
+        sys.path.insert(0, str(_src))
+
 
 from run import main  # noqa: E402
 
