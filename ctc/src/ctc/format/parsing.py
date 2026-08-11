@@ -30,6 +30,8 @@ from typing import List, Optional, Set
 __all__ = [
     "parse_doc_ids",
     "parse_outlier_ids",
+    "parse_pairs",
+    "parse_qd_pairs",
     "parse_partition",
     "partition_to_labels",
     "parse_permutation",
@@ -85,6 +87,98 @@ def parse_outlier_ids(text: str, n_docs: int) -> Optional[List[int]]:
             seen.add(i)
             uniq.append(i)
     return uniq
+
+
+# ── Pairs ───────────────────────────────────────────────────────────────────────────────────────
+#
+# Shared by every pair task -- contradiction, redundancy, mathmatch, matching_ngram, strmatch. One
+# definition on purpose: five copies of a parser this fiddly is how the copies drift apart.
+
+def parse_pairs(text: str) -> Optional[List[List[int]]]:
+    """
+    Extract unordered integer pairs, e.g. ``[[1, 4], [3, 7]]``.
+
+    Each pair is **sorted**, because "1 contradicts 4" and "4 contradicts 1" are the same claim.
+    Use :func:`parse_qd_pairs` where the two positions mean different things.
+
+    The prompt primes the answer with ``[[``, so a generation is usually the completion with the
+    opening brackets missing (``1, 37], [6, 60]]``). Requiring the leading ``[`` dropped the FIRST
+    pair of every such example: contradiction exact-match read ~0.60 while the model was emitting
+    the correct pairs and true EM was above 0.9. Bracket-reconstructed variants are therefore also
+    tried, keeping whichever parse yields the most pairs.
+
+    :param text: Raw model generation.
+
+    :returns: The pairs; ``[]`` for an explicitly empty answer; ``None`` when nothing parsed.
+        ``[]`` and ``None`` must not be conflated -- "the model said there are none" and "the model
+        produced nothing usable" score the same on this task but mean opposite things about it.
+    """
+    text = text.strip()
+    candidates = [text]
+    if text[:1].isdigit():
+        candidates.append("[[" + text)  # primed '[[' dropped, generation starts at a digit
+    elif text.startswith("[") and not text.startswith("[["):
+        candidates.append("[" + text)  # primed outer '[' dropped, starts at '[digit'
+
+    best: Optional[List[List[int]]] = None
+    for s in candidates:
+        for candidate in [s, re.search(r"\[\[[\s\S]*\]\]", s) or re.search(r"\[[\s\S]*\]", s)]:
+            if candidate is None:
+                continue
+            frag = candidate if isinstance(candidate, str) else candidate.group()
+            try:
+                parsed = json.loads(frag)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if isinstance(parsed, list):
+                pairs = [
+                    sorted([int(p[0]), int(p[1])])
+                    for p in parsed
+                    if isinstance(p, list) and len(p) == 2
+                ]
+                if best is None or len(pairs) > len(best):
+                    best = pairs
+    if best:
+        return best
+
+    matches = re.findall(r"[\[\(]?\s*(\d+)\s*,\s*(\d+)\s*[\]\)]", text)
+    if matches:
+        return [sorted([int(a), int(b)]) for a, b in matches]
+    return [] if text in ("[]", "") else None
+
+
+def parse_qd_pairs(text: str) -> Optional[List[List[int]]]:
+    """
+    Extract **order-preserving** pairs, for ``qdmatch``.
+
+    Identical to :func:`parse_pairs` except that pairs are not sorted: a qdmatch pair is
+    ``(query_id, document_id)`` over one shared index, so swapping the two makes a different claim.
+    The regex fallback also requires a real opening bracket here, since without sorting there is no
+    way to recover from a mis-split.
+
+    :param text: Raw model generation.
+
+    :returns: The pairs in the order given, ``[]`` for an empty answer, or ``None`` on failure.
+    """
+    text = text.strip()
+    for candidate in [text, re.search(r"\[[\s\S]*\]", text)]:
+        if candidate is None:
+            continue
+        s = candidate if isinstance(candidate, str) else candidate.group()
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [
+                    [int(p[0]), int(p[1])]
+                    for p in parsed
+                    if isinstance(p, list) and len(p) == 2
+                ]
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+    matches = re.findall(r"[\[\(]\s*(\d+)\s*,\s*(\d+)\s*[\]\)]", text)
+    if matches:
+        return [[int(a), int(b)] for a, b in matches]
+    return [] if text in ("[]", "") else None
 
 
 # ── Grouping ────────────────────────────────────────────────────────────────────────────────────

@@ -99,6 +99,34 @@ PARTITION_CASES = [
     ('{"groups": []}', 2),
 ]
 
+PAIR_CASES = [
+    "[[1, 4], [3, 7]]",
+    "1, 37], [6, 60], [35, 71]]",  # primed '[[' dropped -- the bug that read EM 0.60 vs true >0.9
+    "[1, 4], [3, 7]]",  # primed outer '[' dropped
+    "[]",
+    "",
+    "The pairs are (1, 4) and (3, 7).",
+    "[[4, 1]]",  # unordered: contradiction pairs are sorted
+    "not a pair anywhere",
+    "[[1, 2, 3]]",  # wrong arity
+]
+
+QD_PAIR_CASES = [
+    "[[1, 8], [3, 4]]",
+    "[[8, 1]]",  # order-preserving: (query, doc) is NOT interchangeable
+    "[]",
+    "",
+]
+
+PAIR_METRIC_CASES = [
+    ([[1, 4], [3, 7]], [[1, 4], [3, 7]]),
+    ([[1, 4]], [[1, 4], [3, 7]]),
+    ([[1, 4], [2, 9]], [[1, 4]]),
+    ([], []),
+    ([], [[1, 4]]),
+    ([[1, 4]], []),
+]
+
 PERMUTATION_CASES = [
     ("[3, 1, 2]", 3),
     ("The order is 2 3 1 overall.", 3),
@@ -146,6 +174,7 @@ def build(old_repo: Path) -> dict:
         raise SystemExit(f"no src/corpus_reasoning under {old_repo}")
     sys.path.insert(0, str(src))
 
+    from corpus_reasoning.eval import evaluate as old_ev  # type: ignore
     from corpus_reasoning.lib import data_format as old_df  # type: ignore
     from corpus_reasoning.lib import eval_tasks as old_et  # type: ignore
     from corpus_reasoning.lib import metrics as old_m  # type: ignore
@@ -183,6 +212,12 @@ def build(old_repo: Path) -> dict:
         },
         "parse_permutation": {
             f"{t}|{n}": old_et.parse_permutation(t, n) for t, n in PERMUTATION_CASES
+        },
+        "parse_pairs": {t: old_ev.parse_pairs(t) for t in PAIR_CASES},
+        "parse_qd_pairs": {t: old_ev.parse_qd_pairs(t) for t in QD_PAIR_CASES},
+        "pair_metrics": {
+            f"{json.dumps(p)}|{json.dumps(g)}": old_ev.pair_metrics(p, g)
+            for p, g in PAIR_METRIC_CASES
         },
         "normalize_answer": {p: old_m.normalize_answer(p) for p, _ in QA_METRIC_CASES},
         "qa_metrics": {

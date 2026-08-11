@@ -20,8 +20,10 @@ A task registered here cannot disagree with itself, because there is only one of
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from .fingerprint import FormatFingerprint, hash_prompt
 
 __all__ = ["TaskSpec", "register", "get", "names", "clear"]
 
@@ -30,6 +32,12 @@ __all__ = ["TaskSpec", "register", "get", "names", "clear"]
 class TaskSpec:
     """
     Everything the pipeline needs to know about one task.
+
+    Declared once, in ``ctc/tasks/<name>/spec.py``, and read by the generator that writes examples,
+    the grader that scores answers, and the fingerprint that checks the two agree. That last one is
+    why some fields here restate things the code already encodes: recording the *declared* format
+    lets :meth:`fingerprint` be derived rather than hand-maintained, so a spec and its fingerprint
+    cannot drift apart.
 
     :param name: Registry key, e.g. ``"contradiction"``. Matches the ``--task`` CLI value.
     :param gold_index_base: ``0`` or ``1`` -- whether this task's ``gold_doc_indices`` count the
@@ -40,9 +48,22 @@ class TaskSpec:
         Returns ``None`` when nothing parseable was produced, which callers must distinguish from a
         parsed-but-wrong answer -- collapsing the two hides decoding regressions as accuracy drops.
     :param score: ``(parsed, gold) -> dict[str, float]``. The metric(s) for this task.
-    :param answer_is_set: True when the answer is an unordered set of document ids (scored with
-        set-F1) rather than a ranked list or free text.
+    :param instruction: The task's instruction string, verbatim. Hashed into the fingerprint, so
+        editing it correctly invalidates every checkpoint trained under the old wording.
+    :param serializer: Key into the table in :mod:`ctc.format.documents`, or ``"default"``.
+    :param rungs: This task's own context-length ladder. There is no global set -- nq runs 2k-8k
+        while the xlong ladders reach 512k -- so ``--rungs all`` is only answerable per task.
+    :param primary_metric: Which key of ``score``'s output is *the* number for this task. Named
+        explicitly so a results table cannot quietly switch between f1 and exact_match.
+    :param max_new_tokens: Default decode budget. Too small truncates a correct answer into a parse
+        failure, which reads as a capability limit rather than as a config mistake.
+    :param answer_is_set: True when the answer is an unordered set of ids (scored with set-F1)
+        rather than a ranked list or free text.
+    :param sources: Named source corpora this task can be built from, e.g.
+        ``("pubmed", "fever", "wiki")``. Empty for purely synthetic tasks.
     :param description: One line, shown by ``ctc-eval --list-tasks``.
+    :param extra: Task-specific knobs that no other task shares. Kept out of the fields above so
+        the common contract stays small.
     """
 
     name: str
@@ -50,14 +71,49 @@ class TaskSpec:
     build_prompt: Callable[..., str]
     parse: Callable[..., object]
     score: Callable[..., Dict[str, float]]
+    instruction: str = ""
+    serializer: str = "default"
+    rungs: Tuple[str, ...] = ()
+    primary_metric: str = "f1"
+    max_new_tokens: int = 512
     answer_is_set: bool = False
+    sources: Tuple[str, ...] = ()
     description: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.gold_index_base not in (0, 1):
             raise ValueError(
                 f"task {self.name!r}: gold_index_base must be 0 or 1, got {self.gold_index_base!r}"
             )
+        if self.max_new_tokens <= 0:
+            raise ValueError(f"task {self.name!r}: max_new_tokens must be positive")
+
+    def fingerprint(self, **overrides: Any) -> FormatFingerprint:
+        """
+        Derive this task's format fingerprint.
+
+        Everything defining the format is already declared on the spec, so the fingerprint is
+        computed from it rather than written out a second time -- which is what stops the two from
+        disagreeing. The caller supplies only what the spec cannot know: the tokenizer, the marker
+        ids, the chunk layout, and the document-id range actually present in the built data.
+
+        :param overrides: Fingerprint fields to set, typically ``tokenizer``, ``marker_token_ids``,
+            ``chunk_layout`` and ``doc_id_range``.
+
+        :returns: The fingerprint to write beside the shards or the checkpoint.
+        """
+        from .documents import ITEM_SEPARATOR
+
+        base: Dict[str, Any] = dict(
+            task=self.name,
+            prompt_hash=hash_prompt(self.instruction, self.serializer),
+            serializer=self.serializer,
+            item_separator=ITEM_SEPARATOR,
+            gold_index_base=self.gold_index_base,
+        )
+        base.update(overrides)
+        return FormatFingerprint(**base)
 
 
 _REGISTRY: Dict[str, TaskSpec] = {}

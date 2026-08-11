@@ -113,6 +113,50 @@ def test_parse_outlier_ids_stays_strict_about_brackets():
     assert parsing.parse_outlier_ids("Most are 5 star. Outliers: 3", 10) is None
 
 
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_pairs"]))
+def test_parse_pairs(text):
+    assert parsing.parse_pairs(text) == GOLDEN["parse_pairs"][text]
+
+
+def test_parse_pairs_recovers_a_dropped_primer():
+    """Contradiction EM read ~0.60 against a true >0.9 because the first pair was dropped."""
+    assert parsing.parse_pairs("1, 37], [6, 60], [35, 71]]") == [[1, 37], [6, 60], [35, 71]]
+
+
+def test_parse_pairs_sorts_each_pair():
+    """'1 contradicts 4' and '4 contradicts 1' are the same claim."""
+    assert parsing.parse_pairs("[[4, 1]]") == [[1, 4]]
+
+
+def test_parse_pairs_distinguishes_empty_from_unparseable():
+    """'there are none' and 'produced nothing usable' score alike but mean opposite things."""
+    assert parsing.parse_pairs("[]") == []
+    assert parsing.parse_pairs("not a pair anywhere") is None
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_qd_pairs"]))
+def test_parse_qd_pairs(text):
+    assert parsing.parse_qd_pairs(text) == GOLDEN["parse_qd_pairs"][text]
+
+
+def test_qd_pairs_preserve_order():
+    """(query_id, doc_id) over one shared index -- swapping them is a different claim."""
+    assert parsing.parse_qd_pairs("[[8, 1]]") == [[8, 1]]
+    assert parsing.parse_pairs("[[8, 1]]") == [[1, 8]]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["pair_metrics"]))
+def test_pair_metrics(key):
+    pred, gold = key.split("|")
+    got = metrics.pair_metrics(json.loads(pred), json.loads(gold))
+    for k, want in GOLDEN["pair_metrics"][key].items():
+        assert got[k] == pytest.approx(want), k
+
+
+def test_pair_metrics_perfect_on_mutual_empty():
+    assert metrics.pair_metrics([], [])["f1"] == 1.0
+
+
 @pytest.mark.parametrize("key", sorted(GOLDEN["parse_partition"]))
 def test_parse_partition(key):
     text, n = key.rsplit("|", 1)

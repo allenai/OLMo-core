@@ -38,6 +38,7 @@ __all__ = [
     "retrieval_recall",
     "retrieval_precision",
     "retrieval_f1",
+    "pair_metrics",
     "aggregate",
 ]
 
@@ -175,6 +176,35 @@ def retrieval_f1(predicted_ids: Set[int], gold_ids: Set[int]) -> float:
     if p + r == 0:
         return 0.0
     return (2 * p * r) / (p + r)
+
+
+def pair_metrics(
+    predicted: Sequence[Sequence[int]], gold: Sequence[Sequence[int]]
+) -> Dict[str, float]:
+    """
+    Set-level precision / recall / F1 / exact-match over pairs.
+
+    Shared by every pair task: contradiction, redundancy, mathmatch, matching_ngram, strmatch.
+
+    :param predicted: Parsed pairs. For unordered tasks these arrive already sorted from
+        :func:`~ctc.format.parsing.parse_pairs`; passing unsorted pairs would make ``[4, 1]`` miss
+        a gold ``[1, 4]``.
+    :param gold: Gold pairs, under the same ordering convention.
+
+    :returns: ``precision``, ``recall``, ``f1``, ``exact_match``. Predicting nothing when there is
+        nothing to find scores a perfect 1.0 -- correct, but it means a task whose examples mostly
+        have no pairs can be gamed by always answering ``[]``, so check the positive rate before
+        reading much into a high score.
+    """
+    pred_set = {tuple(p) for p in predicted}
+    gold_set = {tuple(p) for p in gold}
+    if not pred_set and not gold_set:
+        return {"precision": 1.0, "recall": 1.0, "f1": 1.0, "exact_match": 1.0}
+    tp = len(pred_set & gold_set)
+    p = tp / len(pred_set) if pred_set else 0.0
+    r = tp / len(gold_set) if gold_set else 0.0
+    f1 = (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
+    return {"precision": p, "recall": r, "f1": f1, "exact_match": float(pred_set == gold_set)}
 
 
 def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:

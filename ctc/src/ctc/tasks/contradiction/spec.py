@@ -1,0 +1,98 @@
+"""
+The ``contradiction`` eval contract.
+
+Given a corpus of numbered claims, find every pair that cannot both be true. The answer is a set of
+unordered pairs, scored by set-F1 over those pairs.
+
+This is the suite's flagship N-squared task: the work is quadratic in corpus size, so it is the one
+where a model that can only attend locally is expected to fall off first. It is also the task with
+the largest history of grading bugs -- see :mod:`ctc.format.parsing` -- which is why the parse and
+score functions here are references to shared, golden-tested implementations rather than local
+copies.
+
+Two facts that have each cost real debugging time:
+
+* **Gold indices are 1-based here** and 0-based for outlier, rerank and nq. That lived in people's
+  heads until it produced an off-by-one that read as a modelling result.
+* **The rung label bounds corpus size, not prompt length.** These rung files fix the claim count
+  (77/167/346/705 claims for 2k/4k/8k/16k) and let per-claim length vary, so measured prompts at
+  the 4k rung spanned 3,457-23,796 tokens. Sizing a decode budget from the label silently skipped
+  354/500 examples and scored them 0 -- in both arms, which read as "no dense-vs-chunked gap".
+"""
+
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Sequence
+
+from ...format import metrics, parsing
+from ...format.prompts import CONTRADICTION_INSTRUCTION
+from ...format.registry import TaskSpec
+
+#: Corpus size per rung: claims, not tokens. See the module note on why this is not prompt length.
+CLAIMS_PER_RUNG = {"2k": 77, "4k": 167, "8k": 346, "16k": 705}
+
+
+def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[List[int]]]:
+    """
+    Parse a contradiction answer into sorted claim-id pairs.
+
+    :param text: Raw model generation.
+    :param n_docs: Corpus size. Unused -- pairs are not range-filtered, so a hallucinated id counts
+        against precision rather than vanishing. Silently dropping out-of-range ids would flatter a
+        model that invents them.
+
+    :returns: The pairs, ``[]`` for an explicit empty answer, or ``None`` when nothing parsed.
+    """
+    return parsing.parse_pairs(text)
+
+
+def score(parsed: Optional[Sequence[Sequence[int]]], gold: Sequence[Sequence[int]]) -> Dict[str, float]:
+    """
+    Score predicted pairs against gold.
+
+    :param parsed: Output of :func:`parse`. ``None`` (unparseable) scores zero on every metric --
+        it is not the same as ``[]``, which is a real answer and can be correct.
+    :param gold: Gold pairs, 1-based, each already sorted.
+
+    :returns: ``precision``, ``recall``, ``f1``, ``exact_match``, plus ``parsed`` as a 0/1 flag.
+        Track ``parsed``: a drop in it means a decoding or truncation problem, and without it that
+        is indistinguishable from the model getting worse.
+    """
+    if parsed is None:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "exact_match": 0.0, "parsed": 0.0}
+    return {**metrics.pair_metrics(parsed, gold), "parsed": 1.0}
+
+
+def build_prompt(example: Dict, **opts) -> str:
+    """
+    Render one contradiction example.
+
+    :param example: A unified-format example with ``documents`` (the claims) and ``queries``.
+    :param opts: Passed through to the shared prompt assembler.
+
+    :returns: The prompt string.
+
+    :raises NotImplementedError: Prompt assembly is not ported yet -- see ``ctc/tasks/README.md``.
+    """
+    raise NotImplementedError(
+        "prompt assembly lands with the eval runner; contradiction's instruction and serializer "
+        "are already declared on SPEC below"
+    )
+
+
+SPEC = TaskSpec(
+    name="contradiction",
+    description="Find every pair of claims that cannot both be true (N^2 over the corpus).",
+    gold_index_base=1,
+    instruction=CONTRADICTION_INSTRUCTION,
+    serializer="contradiction",
+    rungs=("2k", "4k", "8k", "16k", "32k"),
+    build_prompt=build_prompt,
+    parse=parse,
+    score=score,
+    primary_metric="f1",
+    max_new_tokens=512,  # generous: generation early-stops at ']]'
+    answer_is_set=True,
+    sources=("pubmed", "fever", "wiki"),
+    extra={"claims_per_rung": CLAIMS_PER_RUNG},
+)
