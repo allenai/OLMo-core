@@ -123,6 +123,8 @@ PROMPT_CASES = [
     ("strmatch", "after", True),
     ("redundancy", "after", True),
     ("mathmatch", "after", True),
+    ("groups4", "after", True),
+    ("textgroups", "after", True),
 ]
 
 #: One example per task, shaped like the unified JSONL the generators emit.
@@ -237,6 +239,24 @@ PROMPT_EXAMPLES = {
         "gold_doc_indices": [[1, 2]],
         "source": "synthetic",
     },
+    "groups4": {
+        "documents": [{"text": "1 + 1"}, {"text": "4 - 2"}, {"text": "6 / 3"}],
+        "queries": ["Find groups of 3 whose values are within 1 of each other."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2, 3]],
+        "source": "synthetic",
+    },
+    "textgroups": {
+        "documents": [
+            {"text": "A short passage about birds."},
+            {"text": "Another about trains."},
+            {"text": "A third about rivers."},
+        ],
+        "queries": ["Find groups of 3 whose noun counts sum to 9."],
+        "answers": [""],
+        "gold_doc_indices": [[1, 2, 3]],
+        "source": "synthetic",
+    },
 }
 
 PAIR_CASES = [
@@ -256,6 +276,28 @@ QD_PAIR_CASES = [
     "[[8, 1]]",  # order-preserving: (query, doc) is NOT interchangeable
     "[]",
     "",
+]
+
+CYCLE_CASES = [
+    "[[3, 8, 12]]",
+    "[[3, 8, 12], [1, 4, 9]]",
+    "[3, 8, 12]",  # a single flat cycle, not a list of cycles
+    "[]",
+    "",
+    "[[8, 3, 12]]",  # unordered: cycles are normalized to sorted sets
+    "[[3, 3, 8]]",  # duplicate id inside a cycle
+    "[[5]]",  # length-1 is not a cycle
+    "The cycle is [3, 8, 12] I think.",
+    "no cycles anywhere",
+]
+
+CYCLE_METRIC_CASES = [
+    ([[3, 8, 12]], [[3, 8, 12]]),
+    ([[3, 8]], [[3, 8, 12]]),  # partial: cycle-level 0, claim-level > 0
+    ([], []),
+    ([], [[3, 8, 12]]),
+    ([[3, 8, 12]], []),
+    ([[3, 8, 12], [1, 4]], [[3, 8, 12]]),
 ]
 
 PAIR_METRIC_CASES = [
@@ -390,6 +432,11 @@ def build(old_repo: Path) -> dict:
         },
         "prompts": _build_prompts(old_df),
         "parse_pairs": {t: old_ev.parse_pairs(t) for t in PAIR_CASES},
+        "parse_cycles": {t: old_ev.parse_cycles(t) for t in CYCLE_CASES},
+        "cycle_metrics": {
+            f"{json.dumps(p)}|{json.dumps(g)}": old_ev.cycle_metrics(p, g)
+            for p, g in CYCLE_METRIC_CASES
+        },
         "parse_qd_pairs": {t: old_ev.parse_qd_pairs(t) for t in QD_PAIR_CASES},
         "pair_metrics": {
             f"{json.dumps(p)}|{json.dumps(g)}": old_ev.pair_metrics(p, g)

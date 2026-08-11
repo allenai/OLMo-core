@@ -32,6 +32,7 @@ __all__ = [
     "parse_outlier_ids",
     "parse_pairs",
     "parse_qd_pairs",
+    "parse_cycles",
     "parse_partition",
     "partition_to_labels",
     "parse_permutation",
@@ -178,6 +179,59 @@ def parse_qd_pairs(text: str) -> Optional[List[List[int]]]:
     matches = re.findall(r"[\[\(]\s*(\d+)\s*,\s*(\d+)\s*[\]\)]", text)
     if matches:
         return [[int(a), int(b)] for a, b in matches]
+    return [] if text in ("[]", "") else None
+
+
+# ── Cycles and groups ───────────────────────────────────────────────────────────────────────────
+#
+# Shared by cycle, groups4 and textgroups. The answer is a set of ID-*sets* of variable size, which
+# is what distinguishes it from the pair tasks -- there, every group has exactly two members.
+
+def parse_cycles(text: str) -> Optional[List[List[int]]]:
+    """
+    Extract a list of cycles/groups, each a list of item ids.
+
+    Accepts a JSON list of lists, a single flat list (read as one cycle), or bracketed integer
+    groups scraped from prose. Each cycle is normalized to a **sorted, de-duplicated** list, since
+    a cycle is a set: the order the model happened to walk it in carries no information, and
+    scoring compares sets.
+
+    Groups of fewer than two ids are dropped -- a single item cannot form a cycle, and admitting
+    them would let a model score by listing every id separately.
+
+    :param text: Raw model generation.
+
+    :returns: The cycles, ``[]`` for an explicitly empty answer, or ``None`` when nothing parsed.
+    """
+    text = text.strip()
+    for candidate in [text, re.search(r"\[[\s\S]*\]", text)]:
+        if candidate is None:
+            continue
+        s = candidate if isinstance(candidate, str) else candidate.group()
+        try:
+            parsed = json.loads(s)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            continue
+        if isinstance(parsed, list):
+            if parsed and all(isinstance(x, int) for x in parsed):
+                return [sorted(set(parsed))]  # a single flat cycle
+            out = []
+            for c in parsed:
+                if isinstance(c, list) and len(c) >= 2:
+                    try:
+                        out.append(sorted({int(x) for x in c}))
+                    except (ValueError, TypeError):
+                        pass
+            return out
+
+    groups = re.findall(r"\[([\d,\s]+)\]", text)
+    if groups:
+        out = []
+        for g in groups:
+            ids = [int(x) for x in re.findall(r"\d+", g)]
+            if len(ids) >= 2:
+                out.append(sorted(set(ids)))
+        return out
     return [] if text in ("[]", "") else None
 
 

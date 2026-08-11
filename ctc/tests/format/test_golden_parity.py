@@ -157,6 +157,41 @@ def test_pair_metrics_perfect_on_mutual_empty():
     assert metrics.pair_metrics([], [])["f1"] == 1.0
 
 
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_cycles"]))
+def test_parse_cycles(text):
+    assert parsing.parse_cycles(text) == GOLDEN["parse_cycles"][text]
+
+
+def test_cycles_are_normalized_to_sorted_sets():
+    """A cycle is a set; the order the model walked it in carries no information."""
+    assert parsing.parse_cycles("[[8, 3, 12]]") == [[3, 8, 12]]
+    assert parsing.parse_cycles("[[3, 3, 8]]") == [[3, 8]]
+
+
+def test_singleton_groups_are_dropped():
+    """One item cannot form a cycle; admitting them lets a model score by listing every id."""
+    assert parsing.parse_cycles("[[5]]") == []
+
+
+def test_a_flat_list_is_read_as_one_cycle():
+    assert parsing.parse_cycles("[3, 8, 12]") == [[3, 8, 12]]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["cycle_metrics"]))
+def test_cycle_metrics(key):
+    pred, gold = key.split("|")
+    got = metrics.cycle_metrics(json.loads(pred), json.loads(gold))
+    for k, want in GOLDEN["cycle_metrics"][key].items():
+        assert got[k] == pytest.approx(want), k
+
+
+def test_partial_cycle_scores_zero_at_cycle_level_but_earns_claim_credit():
+    """The two numbers answer different questions: found the right items vs grouped them right."""
+    got = metrics.cycle_metrics([[3, 8]], [[3, 8, 12]])
+    assert got["f1"] == 0.0
+    assert got["claim_f1"] > 0.0
+
+
 @pytest.mark.parametrize("key", sorted(GOLDEN["parse_partition"]))
 def test_parse_partition(key):
     text, n = key.rsplit("|", 1)

@@ -78,10 +78,18 @@ class StopCondition:
 
 #: Named presets, mirroring the pre-migration evaluators' ``stop`` field.
 STOP_PRESETS = {
-    # Set-answer tasks (contradiction and its family). These frequently never emit EOS, so the
-    # closing bracket of the JSON pair list is the real terminator -- and it is kept, because the
-    # parser needs it.
-    "pairs": StopCondition(text_stops=("]]",), keep_stop=True, max_new_tokens=512),
+    # Set-answer tasks: the pair family (contradiction, redundancy, strmatch, mathmatch) and the
+    # cycle family (cycle, groups4, textgroups). The answer is single-line JSON, so BOTH terminators
+    # are needed and the earliest wins:
+    #
+    #   "]]"  ends a populated answer like [[1, 4], [3, 7]] exactly, and is kept because the parser
+    #         needs the closing bracket.
+    #   "\n"  ends an EMPTY answer -- "[]" contains no "]]", so a "]]"-only rule would never fire,
+    #         the model would ramble to the budget, and parse_pairs would return None. A correct
+    #         "there are no pairs" answer would be recorded as a parse failure.
+    #
+    # The trailing newline is harmless to the parsers, which tolerate surrounding whitespace.
+    "pairs": StopCondition(text_stops=("]]", "\n"), keep_stop=True, max_new_tokens=512),
     # Short free-text answers. The answer is one line; the newline is not part of it.
     "newline": StopCondition(text_stops=("\n",), keep_stop=False, max_new_tokens=64),
     # Long structured answers (grouping, reorder) where EOS is genuinely emitted and any text stop

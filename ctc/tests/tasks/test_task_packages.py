@@ -56,13 +56,33 @@ def test_stop_preset_exists(spec):
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
-def test_set_answer_tasks_do_not_stop_on_a_newline(spec):
-    """A set answer can wrap; a newline stop would cut it mid-list."""
-    from ctc.eval.stopping import STOP_PRESETS
+def test_set_answer_tasks_terminate_on_an_empty_answer(spec):
+    """"[]" is a CORRECT answer -- there were no pairs -- and must not run to the budget.
+
+    An earlier version of this suite asserted the opposite property (that set-answer tasks never
+    newline-stop, on the theory that a newline could cut a wrapped list). That was wrong: these
+    answers are single-line JSON, and enforcing it produced a "]]"-only stop rule, under which the
+    empty answer "[]" contains no terminator at all. The model would ramble to max_new_tokens and
+    parse_pairs would then return None -- recording a correct answer as a parse failure.
+    """
+    from ctc.eval.stopping import STOP_PRESETS, should_stop
 
     if not spec.answer_is_set:
         pytest.skip("not a set-answer task")
-    assert "\n" not in STOP_PRESETS[spec.stop].text_stops
+    cond = STOP_PRESETS[spec.stop]
+    assert should_stop("[]\nand now some rambling", cond) is not None, (
+        f"{spec.name} (stop={spec.stop!r}) has no terminator for an empty answer"
+    )
+
+
+@pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
+def test_set_answer_tasks_terminate_on_a_populated_answer(spec):
+    from ctc.eval.stopping import STOP_PRESETS, apply
+
+    if not spec.answer_is_set:
+        pytest.skip("not a set-answer task")
+    out = apply("[[1, 4], [3, 7]] then rambling", STOP_PRESETS[spec.stop])
+    assert out.strip() == "[[1, 4], [3, 7]]"
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)

@@ -39,6 +39,7 @@ __all__ = [
     "retrieval_precision",
     "retrieval_f1",
     "pair_metrics",
+    "cycle_metrics",
     "aggregate",
 ]
 
@@ -205,6 +206,50 @@ def pair_metrics(
     r = tp / len(gold_set) if gold_set else 0.0
     f1 = (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
     return {"precision": p, "recall": r, "f1": f1, "exact_match": float(pred_set == gold_set)}
+
+
+def cycle_metrics(
+    predicted: Sequence[Sequence[int]], gold: Sequence[Sequence[int]]
+) -> Dict[str, float]:
+    """
+    Set-of-sets scoring for the cycle family: cycle, groups4, textgroups.
+
+    A predicted cycle counts as a true positive only if its id-set **exactly** equals a gold
+    cycle's. That is deliberately strict -- a cycle with one member wrong is not a cycle -- so a
+    softer ``claim_f1`` over the union of all cycle members is reported alongside it, giving partial
+    credit for finding most of a cycle's items.
+
+    Report both. Cycle-level F1 alone hides a model that is finding the right *items* but grouping
+    them wrongly, which is a different failure from not finding them at all.
+
+    :param predicted: Parsed cycles, each a sorted id list.
+    :param gold: Gold cycles.
+
+    :returns: ``precision``, ``recall``, ``f1``, ``exact_match`` (all cycle-level), and
+        ``claim_f1`` (item-level).
+    """
+    pred_set = {frozenset(c) for c in predicted}
+    gold_set = {frozenset(c) for c in gold}
+    if not pred_set and not gold_set:
+        return {
+            "precision": 1.0, "recall": 1.0, "f1": 1.0,
+            "exact_match": 1.0, "claim_f1": 1.0,
+        }
+    tp = len(pred_set & gold_set)
+    p = tp / len(pred_set) if pred_set else 0.0
+    r = tp / len(gold_set) if gold_set else 0.0
+    f1 = (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
+
+    pred_ids = {i for c in predicted for i in c}
+    gold_ids = {i for c in gold for i in c}
+    ctp = len(pred_ids & gold_ids)
+    cp = ctp / len(pred_ids) if pred_ids else 0.0
+    cr = ctp / len(gold_ids) if gold_ids else 0.0
+    claim_f1 = (2 * cp * cr / (cp + cr)) if (cp + cr) > 0 else 0.0
+    return {
+        "precision": p, "recall": r, "f1": f1,
+        "exact_match": float(pred_set == gold_set), "claim_f1": claim_f1,
+    }
 
 
 def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:

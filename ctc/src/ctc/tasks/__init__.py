@@ -39,6 +39,9 @@ TASK_MODULES: tuple = (
     "redundancy",
     "strmatch",
     "mathmatch",
+    "cycle",
+    "groups4",
+    "textgroups",
 )
 
 _loaded: List[str] = []
