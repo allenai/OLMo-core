@@ -1,8 +1,8 @@
 """
-Multimodal (vision-language) training data: datasets and collation for Molmo2.
+Multimodal (vision-language) training data, replay, packing, and collation.
 
-This subpackage provides a standalone, ``mm_olmo``-free pipeline for Molmo2 "stage 1"
-caption pretraining:
+This subpackage provides a standalone, ``mm_olmo``-free pipeline shared by Molmo2 recipes and
+the separate vision-alignment continued-pretraining recipe:
 
 * :class:`~olmo_core.data.multimodal.pixmo_cap.PixMoCapDataset` — map-style dataset
   yielding packed image + caption/transcript training examples.
@@ -10,6 +10,8 @@ caption pretraining:
   into batches for :class:`~olmo_core.nn.vision.MultimodalLM`.
 * :func:`~olmo_core.data.multimodal.sequence_builder.build_packed_sequence` — the
   core multi-annotation (branch-packing) sequence assembly with float loss weights.
+* :class:`~olmo_core.data.multimodal.native_text_replay.NativeTextReplayDataset` — bounded,
+  exact-token replay from a pinned parent-pretraining manifest.
 
 Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
@@ -32,6 +34,13 @@ from .mmfinereason import (
     MMFineReasonDataset,
     MMFineReasonDatasetConfig,
     extract_answer_text,
+)
+from .native_text_replay import (
+    NativeTextReplayDataset,
+    NativeTextReplayDatasetConfig,
+    NativeTextReplayManifest,
+    NativeTextReplaySource,
+    NativeTextReplayVerificationReceipt,
 )
 from .packing import pack_examples
 from .paths import (
@@ -100,6 +109,11 @@ __all__ = [
     "MultimodalCollatorConfig",
     "MultimodalDataLoader",
     "MixtureDataLoader",
+    "NativeTextReplayDataset",
+    "NativeTextReplayDatasetConfig",
+    "NativeTextReplayManifest",
+    "NativeTextReplaySource",
+    "NativeTextReplayVerificationReceipt",
     "build_packed_sequence",
     "build_branched_sequence",
     "ATTEND_ALL_SUBSEGMENT_ID",

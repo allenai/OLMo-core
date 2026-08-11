@@ -1,0 +1,33 @@
+# This is deliberately a non-launchable template. Replace every __PIN_*__ value with an exact,
+# reviewed Weka artifact, save the result as real_canary_v1.yaml, and check it in before dry-run.
+version: 1
+name: vision-alignment-bridge-real-canary-v1
+description: >-
+  Real-data 250-step canary for the separate vision-alignment connector bridge. The data root,
+  serialized-source audit, calibration, and image-disjoint validation manifest must all identify
+  the same filtered PixMoCap materialization.
+phase: bridge
+launch:
+  cluster: ai2/holmes
+  workspace: ai2/molmofication
+  budget: ai2/oe-other
+  num_nodes: 2
+  num_gpus: 8
+  priority: normal
+overrides:
+  - --data.pixmo_cap_path=__PIN_FILTERED_PIXMO_CAP_ARROW_ROOT__
+  - --data.source_audit_path=__PIN_BRIDGE_SOURCE_AUDIT_JSON__
+  - --data.source_audit_fingerprint=__PIN_64_HEX_SOURCE_AUDIT_FINGERPRINT__
+  - --data.mixture.mean_loss_weight.pixmo_caption=__PIN_AUDITED_CAPTION_MEAN_LOSS_WEIGHT__
+  - --data.mixture.mean_loss_weight.pixmo_transcript=__PIN_AUDITED_TRANSCRIPT_MEAN_LOSS_WEIGHT__
+  - --evaluation.validation_manifest_path=__PIN_VALIDATION_MANIFEST_V3_JSON__
+  - --evaluation.validation_manifest_sha256=__PIN_64_HEX_VALIDATION_MANIFEST_SHA256__
+  - --evaluation.interval=100
+  - --evaluation.examples_per_source=512
+  - --evaluation.eval_on_startup=true
+  - --evaluation.eval_on_finish=true
+  - --trainer.max_duration.value=250
+  - --trainer.callbacks.checkpointer.save_interval=null
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --trainer.callbacks.checkpointer.fixed_steps=[100, 200]
+  - --trainer.callbacks.checkpointer.max_checkpoints=4

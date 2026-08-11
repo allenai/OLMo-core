@@ -2,6 +2,8 @@
 assembly, text-only handling, and the weighted mixture loader."""
 
 import itertools
+import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -17,6 +19,7 @@ from olmo_core.data.multimodal.grounding import (
     normalize_points,
     pointing_answer,
 )
+from olmo_core.data.multimodal.native_text_replay import NativeTextReplayDataset
 from olmo_core.data.multimodal.packing import (
     _select_buffered_pack_indices,
     greedy_pack_indices,
@@ -25,6 +28,7 @@ from olmo_core.data.multimodal.packing import (
 )
 from olmo_core.data.multimodal.prefetch import prefetch_map
 from olmo_core.data.multimodal.rng import make_random_state
+from olmo_core.exceptions import OLMoConfigurationError
 
 _SEQ = 8
 _PATCH_DIM = 14 * 14 * 3
@@ -142,6 +146,18 @@ class _CountingFakeDataset(_FakeDataset):
         out = super().__getitem__(i)
         out["input_ids"] = np.full(len(out["input_ids"]), self.tag + i, dtype=np.int64)
         return out
+
+
+class _FingerprintedFakeDataset(_FakeDataset):
+    """Fake source implementing the preferred content-fingerprint protocol."""
+
+    content_fingerprint_version = "fake-content-v1"
+
+    def __init__(self, n: int, tag: int, content_fingerprint: str):
+        super().__init__(n, tag)
+        self.content_fingerprint = content_fingerprint
+        # Ensure the explicit content protocol wins over the backwards-compatible fallback.
+        self.fingerprint = "must-not-be-used"
 
 
 class _FailingFakeDataset(_CountingFakeDataset):
@@ -606,8 +622,9 @@ def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_pat
     original_iter.close()
 
     packing_state = state["packing_state"]
-    assert packing_state["version"] == 4
+    assert packing_state["version"] == 5
     assert packing_state["pack_image_weight"] == 30.0
+    assert packing_state["dataset_fingerprints"] == [None, None]
     assert packing_state["packs_emitted"] == 20
     assert len(packing_state["buffer_refs"]) <= 4
 
@@ -625,8 +642,9 @@ def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_pat
         np.testing.assert_array_equal(actual[key], expected[key])
     assert fast_resume_loads == len(packing_state["buffer_refs"]) + 2
 
-    # Checkpoints written before cursor state was added remain resumable. They replay the
-    # old prefix once, then subsequent checkpoints use the bounded path above.
+    # Checkpoints written before cursor state was added remain resumable. They restart the
+    # loader and replay the old prefix once; unlike state v5, this fallback cannot validate
+    # source contents. Subsequent checkpoints use the bounded, fingerprinted path above.
     legacy_state = dict(state)
     legacy_state.pop("packing_state")
     for dataset in datasets:
@@ -640,6 +658,118 @@ def test_mixture_data_loader_buffered_resume_restores_only_bounded_state(tmp_pat
 
     np.testing.assert_array_equal(legacy_actual["input_ids"], expected["input_ids"])
     assert sum(dataset.loads for dataset in datasets) > fast_resume_loads
+
+
+def test_mixture_data_loader_v5_validates_source_content_fingerprints(tmp_path):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir, fingerprint):
+        return MixtureDataLoader(
+            [_FingerprintedFakeDataset(200, 1000, fingerprint), _FakeDataset(100, 2000)],
+            [0.5, 0.5],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=29,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            dataset_names=["native-replay", "caption"],
+        )
+
+    original = build_loader(tmp_path / "original", "content-a")
+    original.reshuffle(epoch=2)
+    original_iter = iter(original)
+    next(original_iter)
+    state = original.state_dict()
+    expected = next(original_iter)
+    original_iter.close()
+
+    fingerprints = state["packing_state"]["dataset_fingerprints"]
+    assert fingerprints[0]["type"].endswith("._FingerprintedFakeDataset")
+    assert fingerprints[0]["version"] == "fake-content-v1"
+    assert fingerprints[0]["value"] == "content-a"
+    assert fingerprints[1] is None
+
+    restored = build_loader(tmp_path / "restored", "content-a")
+    restored.load_state_dict(state)
+    restored.reshuffle()
+    restored_iter = iter(restored)
+    actual = next(restored_iter)
+    restored_iter.close()
+    np.testing.assert_array_equal(actual["input_ids"], expected["input_ids"])
+
+    changed = build_loader(tmp_path / "changed", "content-b")
+    changed.load_state_dict(state)
+    changed.reshuffle()
+    with pytest.raises(
+        OLMoConfigurationError,
+        match="dataset content fingerprint changed for source 'native-replay'",
+    ):
+        next(iter(changed))
+
+
+def test_mixture_data_loader_recognizes_native_text_replay_fingerprint():
+    dataset = object.__new__(NativeTextReplayDataset)
+    setattr(dataset, "manifest", SimpleNamespace(content_fingerprint="a" * 64))
+
+    fingerprint = MixtureDataLoader._dataset_fingerprint(dataset, "native-replay")
+
+    assert fingerprint == {
+        "type": "olmo_core.data.multimodal.native_text_replay.NativeTextReplayDataset",
+        "version": "native-text-replay-v1",
+        "value": "a" * 64,
+    }
+
+
+def test_mixture_data_loader_can_require_fingerprinted_resume_for_legacy_v4(tmp_path):
+    datasets = [_FingerprintedFakeDataset(200, 1000, "content-a")]
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir, *, allow_legacy=True):
+        return MixtureDataLoader(
+            datasets,
+            [1.0],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=43,
+            pack=True,
+            pack_max_crops=1,
+            pack_buffer_size=4,
+            dataset_names=["native-replay"],
+            allow_legacy_state_without_dataset_fingerprints=allow_legacy,
+        )
+
+    original = build_loader(tmp_path / "original")
+    original.reshuffle(epoch=1)
+    original_iter = iter(original)
+    next(original_iter)
+    state = original.state_dict()
+    expected = next(original_iter)
+    original_iter.close()
+
+    packing_state = dict(state["packing_state"])
+    packing_state["version"] = 4
+    packing_state.pop("dataset_fingerprints")
+    legacy_state = dict(state, packing_state=packing_state)
+
+    rejected = build_loader(tmp_path / "rejected", allow_legacy=False)
+    rejected.load_state_dict(legacy_state)
+    rejected.reshuffle()
+    with pytest.raises(
+        OLMoConfigurationError,
+        match="allow_legacy_state_without_dataset_fingerprints=True",
+    ):
+        next(iter(rejected))
+
+    opted_in = build_loader(tmp_path / "opted-in", allow_legacy=True)
+    opted_in.load_state_dict(legacy_state)
+    opted_in.reshuffle()
+    opted_in_iter = iter(opted_in)
+    actual = next(opted_in_iter)
+    opted_in_iter.close()
+    np.testing.assert_array_equal(actual["input_ids"], expected["input_ids"])
 
 
 def test_mixture_data_loader_prefetch_skips_errors_in_reference_order(tmp_path):
@@ -801,6 +931,22 @@ def test_mixture_data_loader_normalizes_weights(tmp_path):
     np.testing.assert_allclose(dl.weights, [0.75, 0.25])
 
 
+@pytest.mark.parametrize("weights", [[1.0, 0.0], [1.0, float("nan")], [1.0, float("inf")]])
+def test_mixture_data_loader_rejects_nonpositive_or_nonfinite_weights(tmp_path, weights):
+    datasets = [_FakeDataset(10, 1), _FakeDataset(10, 2)]
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    with pytest.raises(OLMoConfigurationError, match="finite and strictly positive"):
+        MixtureDataLoader(
+            datasets,
+            weights,
+            collator,
+            work_dir=str(tmp_path),
+            global_batch_size=2 * _SEQ,
+            seed=0,
+        )
+
+
 def test_buffered_mixture_reference_stream_matches_molmo2(tmp_path):
     sizes = [7, 5, 11]
     weights = [0.6, 0.3, 0.1]
@@ -890,6 +1036,11 @@ def _pixmo_cap(mode, **kw):
     return cfg.build(_FakeTok())
 
 
+def test_pixmo_cap_can_fail_closed_when_named_split_is_required():
+    with pytest.raises(ValueError, match="does not provide named splits"):
+        _pixmo_cap("caption", split="validation", require_split=True)
+
+
 def test_pixmo_cap_style_length_prefix_format():
     ds = _pixmo_cap("caption")
     rng = np.random.RandomState(0)
@@ -914,6 +1065,82 @@ def test_pixmo_cap_select_branches_styles():
     assert [s for s, _ in _pixmo_cap("transcript")._select_branches(row, rng)] == [TRANSCRIPT_STYLE]
     both = _pixmo_cap("transcript_and_caption")._select_branches(row, rng)
     assert [s for s, _ in both] == [CAPTION_STYLE, TRANSCRIPT_STYLE]
+
+
+def test_pixmo_cap_transcript_fallback_is_backward_compatible_and_can_be_disabled():
+    from olmo_core.data.multimodal.pixmo_cap import CAPTION_STYLE
+
+    row = {"caption": "caption fallback", "transcripts": []}
+    rng = np.random.RandomState(0)
+
+    assert _pixmo_cap("transcript")._select_branches(row, rng) == [
+        (CAPTION_STYLE, "caption fallback")
+    ]
+    strict = _pixmo_cap("transcript", require_transcript=True)
+    with pytest.raises(ValueError, match="requires at least one non-blank transcript"):
+        strict._select_branches(row, rng)
+    with pytest.raises(ValueError, match="requires at least one non-blank transcript"):
+        strict._select_branches({"caption": "caption", "transcripts": ["", "  "]}, rng)
+
+
+def test_pixmo_cap_validates_strict_transcript_completeness_without_loading_images(tmp_path):
+    jsonl_path = tmp_path / "pixmo-cap.jsonl"
+    jsonl_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "image": "missing-image-a.png",
+                        "caption": "caption a",
+                        "transcripts": ["spoken a"],
+                    }
+                ),
+                json.dumps(
+                    {
+                        "image": "missing-image-b.png",
+                        "caption": "caption b",
+                        "transcripts": ["", "  "],
+                    }
+                ),
+                json.dumps({"image": "missing-image-c.png", "caption": "caption c"}),
+            ]
+        )
+        + "\n"
+    )
+    from olmo_core.data.multimodal.pixmo_cap import PixMoCapDatasetConfig
+
+    dataset = PixMoCapDatasetConfig(
+        dataset_path=str(jsonl_path),
+        mode="transcript",
+        require_transcript=True,
+        message_format="document",
+    ).build(_FakeTok())
+
+    with pytest.raises(ValueError, match=r"found 2 invalid rows out of 3.*\[1, 2\]"):
+        dataset.validate_required_annotations()
+
+
+def test_pixmo_cap_validates_arrow_and_synthetic_transcripts_without_image_access():
+    class TranscriptOnlyArrow:
+        def __init__(self):
+            self.transcript_column_reads = 0
+
+        def __getitem__(self, column):
+            assert column == "transcripts"
+            self.transcript_column_reads += 1
+            return [["spoken a"], ["spoken b"]]
+
+        def __len__(self):
+            return 2
+
+    arrow = TranscriptOnlyArrow()
+    dataset = _pixmo_cap("transcript", require_transcript=True)
+    dataset._kind = "arrow"
+    dataset._hf = arrow
+    dataset.validate_required_annotations()
+    assert arrow.transcript_column_reads == 1
+
+    _pixmo_cap("transcript", require_transcript=True).validate_required_annotations()
 
 
 def test_pixmo_cap_conditioning_injects_per_branch_prefix():

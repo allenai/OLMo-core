@@ -6,6 +6,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+import olmo_core.train.train_module.transformer.multimodal_train_module as multimodal_train_module
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
@@ -425,6 +426,86 @@ def test_multimodal_data_metrics_report_packing_and_token_density():
     torch.testing.assert_close(recorded["data/image token density"][0], torch.tensor(2 / 8))
     torch.testing.assert_close(recorded["data/examples per sequence"][0], torch.tensor(1.5))
     assert all(reduction == ReduceType.mean for _, reduction in recorded.values())
+
+
+def test_multimodal_source_metrics_report_realized_loss_mass():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.source_loss_mass_targets = {"caption": 0.75, "native": 0.25}
+    recorded = {}
+
+    def record_metric(name, value, reduce_type=None, namespace=None, **kwargs):
+        del kwargs
+        recorded[f"{namespace}/{name}"] = (value, reduce_type)
+
+    train_module.record_metric = record_metric
+    train_module._record_data_metrics(
+        {
+            "router_token_mask": torch.tensor([[True, True, True, True, True, False]]),
+            "loss_masks": torch.tensor([[1.0, 1.0, 1.0, 0.5, 0.5, 0.0]]),
+            "labels": torch.tensor([[10, 11, 12, 13, -100, -100]]),
+            "token_type_ids": torch.zeros((1, 6), dtype=torch.long),
+            "example_ids": torch.tensor([[0, 0, 0, 1, 1, -1]]),
+            "pack_source_names": [["caption", "native"]],
+        }
+    )
+
+    torch.testing.assert_close(recorded["data/source/caption/examples"][0], torch.tensor(1.0))
+    torch.testing.assert_close(recorded["data/source/caption/tokens"][0], torch.tensor(3.0))
+    torch.testing.assert_close(recorded["data/source/caption/loss_weight"][0], torch.tensor(3.0))
+    torch.testing.assert_close(
+        recorded["data/source/native/active_loss_weight"][0], torch.tensor(0.5)
+    )
+    torch.testing.assert_close(recorded["data/source/native/positive_tokens"][0], torch.tensor(1.0))
+    torch.testing.assert_close(
+        recorded["data/source/caption/loss_mass_share"][0], torch.tensor(0.75)
+    )
+    torch.testing.assert_close(
+        recorded["data/source/native/loss_mass_target_abs_error"][0], torch.tensor(0.0)
+    )
+    assert recorded["data/source/caption/examples"][1] == ReduceType.mean
+    assert recorded["data/source/caption/loss_mass_share"][1] == ReduceType.mean
+
+
+def test_multimodal_source_loss_mass_share_uses_global_sums(monkeypatch):
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.source_loss_mass_targets = {"caption": 0.5, "native": 0.5}
+    train_module.device = torch.device("cpu")
+    train_module.dp_group = object()
+    recorded = {}
+
+    def record_metric(name, value, reduce_type=None, namespace=None, **kwargs):
+        del kwargs
+        recorded[f"{namespace}/{name}"] = (value, reduce_type)
+
+    def all_reduce(value, group=None):
+        assert group is train_module.dp_process_group
+        # The local rank contributes caption=3/native=1 loss weight. Model a second
+        # rank with caption=1/native=7; the correct global share is 4 / 12, whereas
+        # averaging the rank-local shares would incorrectly produce 0.4375.
+        remote = torch.zeros_like(value)
+        remote[3] = 1.0
+        remote[8] = 7.0
+        value += remote
+
+    train_module.record_metric = record_metric
+    monkeypatch.setattr(multimodal_train_module, "is_distributed", lambda: True)
+    monkeypatch.setattr(multimodal_train_module.dist, "all_reduce", all_reduce)
+    train_module._record_source_data_metrics(
+        {
+            "loss_masks": torch.tensor([[1.0, 1.0, 1.0, 0.5, 0.5]]),
+            "labels": torch.tensor([[10, 11, 12, 13, 14]]),
+            "example_ids": torch.tensor([[0, 0, 0, 1, 1]]),
+            "pack_source_names": [["caption", "native"]],
+        },
+        torch.ones((1, 5), dtype=torch.bool),
+    )
+
+    torch.testing.assert_close(
+        recorded["data/source/caption/loss_mass_share"][0], torch.tensor(1 / 3)
+    )
+    torch.testing.assert_close(
+        recorded["data/source/native/loss_mass_share"][0], torch.tensor(2 / 3)
+    )
 
 
 def test_multimodal_router_loss_divisor_requires_explicit_token_mask():

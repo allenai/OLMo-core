@@ -93,8 +93,14 @@ class PixMoCapDatasetConfig(Config):
     """``"synthetic"``, a ``.jsonl`` file, or a HF Arrow directory."""
 
     split: str = "train"
+    require_split: bool = False
+    """Fail instead of falling back to an unsplit dataset when ``split`` is absent."""
     mode: str = "transcript_and_caption"
     """One of ``"caption"``, ``"transcript"``, ``"transcript_and_caption"``."""
+
+    require_transcript: bool = False
+    """When ``mode="transcript"``, reject rows without a non-blank transcript instead of
+    falling back to their caption. The default preserves the historical fallback behavior."""
 
     image_root: Optional[str] = None
     """Optional prefix joined to relative image paths from a jsonl source."""
@@ -145,8 +151,12 @@ class PixMoCapDataset:
 
         path = config.dataset_path
         if path == "synthetic":
+            if config.require_split:
+                raise ValueError("Synthetic PixMoCap data does not provide named splits")
             self._kind = "synthetic"
         elif path.endswith(".jsonl"):
+            if config.require_split:
+                raise ValueError("A single PixMoCap JSONL file cannot prove a named split")
             self._kind = "jsonl"
             self._rows = self._load_jsonl(path)
         else:
@@ -154,6 +164,8 @@ class PixMoCapDataset:
             from .dataset_compat import load_from_disk_compat
 
             ds = load_from_disk_compat(path)
+            if config.require_split and config.split not in ds:
+                raise ValueError(f"PixMoCap dataset {path!r} lacks required split {config.split!r}")
             self._hf = ds[config.split] if config.split in ds else ds
 
         self._eos_id = tokenizer.eos_token_id
@@ -207,6 +219,51 @@ class PixMoCapDataset:
             return Image.open(path)
         raise TypeError(f"Unsupported image field type: {type(img)}")
 
+    def validate_required_annotations(self) -> None:
+        """Validate annotations required by this dataset's strict mode.
+
+        This performs a dataset-wide transcript completeness check without reading or
+        decoding image fields. Synthetic data is known to generate one non-blank
+        transcript per example; JSONL and Arrow sources are scanned directly.
+
+        :raises ValueError: If strict transcript mode is enabled and any row lacks a
+            non-blank transcript.
+        """
+        if self.config.mode != "transcript" or not self.config.require_transcript:
+            return
+        if self._kind == "synthetic":
+            return
+
+        transcripts_by_row: Any
+        if self._kind == "jsonl":
+            assert self._rows is not None
+            transcripts_by_row = (row.get("transcripts") for row in self._rows)
+        else:
+            assert self._hf is not None
+            try:
+                transcripts_by_row = iter(self._hf["transcripts"])
+            except (KeyError, ValueError):
+                raise ValueError(
+                    "PixMoCap transcript mode requires a 'transcripts' annotation column"
+                ) from None
+
+        invalid_count = 0
+        first_invalid_indices: List[int] = []
+        for index, transcripts in enumerate(transcripts_by_row):
+            if not isinstance(transcripts, (list, tuple)) or not any(
+                isinstance(transcript, str) and transcript.strip() for transcript in transcripts
+            ):
+                invalid_count += 1
+                if len(first_invalid_indices) < 8:
+                    first_invalid_indices.append(index)
+
+        if invalid_count:
+            raise ValueError(
+                "PixMoCap transcript mode requires at least one non-blank transcript on every "
+                f"row; found {invalid_count} invalid rows out of {len(self)} "
+                f"(first indices: {first_invalid_indices})"
+            )
+
     # -- core -------------------------------------------------------------------
 
     def _select_branches(
@@ -223,7 +280,17 @@ class PixMoCapDataset:
         if mode == "caption":
             return [(CAPTION_STYLE, caption)]
         if mode == "transcript":
+            if self.config.require_transcript:
+                transcripts = [
+                    transcript
+                    for transcript in transcripts
+                    if isinstance(transcript, str) and transcript.strip()
+                ]
             if not transcripts:
+                if self.config.require_transcript:
+                    raise ValueError(
+                        "PixMoCap transcript mode requires at least one non-blank transcript"
+                    )
                 return [(CAPTION_STYLE, caption)]
             return [(TRANSCRIPT_STYLE, transcripts[rng.randint(len(transcripts))])]
         # transcript_and_caption: caption first, then a random transcript (if any).

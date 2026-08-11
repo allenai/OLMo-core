@@ -1,5 +1,18 @@
 # Vision-MoE launch profiles
 
+## Vision alignment (new continued-pretraining recipe)
+
+The new [`vision_alignment/`](vision_alignment/README.md) tree is independent from the
+historical Molmo2 Stage 1/2 recipes below. It starts from the bare s002 pretrained LM, uses
+native document serialization, separates connector/vision/joint unfreezing into model-only
+phase forks, and replaces Tulu retention data with fingerprinted native `OLMo-mix-0925`
+replay when the LM is unfrozen. Its mixture is calibrated by supervised-loss mass and its
+profiles select the Holmes cluster without pinning individual nodes.
+
+Only a synthetic bridge smoke profile is currently launchable. Real bridge, perception, and
+joint profiles remain intentionally absent until their exact data audits and manifests are
+pinned.
+
 ## Stage 1
 
 These profiles exercise EP8 topology on one or two 8-GPU B300 nodes in

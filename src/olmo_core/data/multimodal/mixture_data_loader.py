@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
 DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
+PACKED_LOADER_STATE_VERSION = 5
+LEGACY_PACKED_LOADER_STATE_VERSIONS = (3, 4)
 
 __all__ = ["MixtureDataLoader"]
 
@@ -164,6 +166,12 @@ class MixtureDataLoader(DataLoaderBase):
     :param global_batch_size: global batch size in *tokens* (= global instances × seq len).
     :param epoch_instances: number of (global) instances that make up one epoch; defaults to
         the sum of the source lengths.
+    :param allow_legacy_state_without_dataset_fingerprints: Allow restoring version 3 or 4
+        buffered-packing cursor state, which predates per-source content fingerprints. This
+        remains enabled by default for existing recipes and emits a warning. New recipes that
+        require exact content validation should disable it explicitly. State from before
+        buffered cursor support is still replayed from the beginning for backwards
+        compatibility; that fallback is not an exact content-validated resume.
     """
 
     _epoch: Optional[int]
@@ -190,6 +198,7 @@ class MixtureDataLoader(DataLoaderBase):
         dp_rank: int = 0,
         fs_local_rank: Optional[int] = None,
         dataset_names: Optional[Sequence[str]] = None,
+        allow_legacy_state_without_dataset_fingerprints: bool = True,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -225,7 +234,16 @@ class MixtureDataLoader(DataLoaderBase):
             )
         else:
             self.dataset_names = list(dataset_names)
+        self.dataset_fingerprints = [
+            self._dataset_fingerprint(dataset, name)
+            for dataset, name in zip(self.datasets, self.dataset_names)
+        ]
+        self.allow_legacy_state_without_dataset_fingerprints = (
+            allow_legacy_state_without_dataset_fingerprints
+        )
         w = np.asarray(weights, dtype=np.float64)
+        if not np.isfinite(w).all() or (w <= 0).any() or not math.isfinite(float(w.sum())):
+            raise OLMoConfigurationError("Mixture weights must be finite and strictly positive")
         self.weights = (w / w.sum()).tolist()
         # Molmo2 casts the normalized rates to float32 in IterableDatasetMixture. Keep that
         # exact dtype because it determines the multinomial source-choice boundaries.
@@ -248,6 +266,65 @@ class MixtureDataLoader(DataLoaderBase):
         self._order: Optional[List[ExampleRef]] = None
         self._active_packer: Optional[_BufferedPackingIterator] = None
         self._packing_state: Optional[Dict[str, Any]] = None
+
+    @staticmethod
+    def _dataset_fingerprint(dataset: Any, dataset_name: str) -> Optional[Dict[str, Any]]:
+        """Return a stable content identity advertised by a mixture source, if any.
+
+        ``content_fingerprint`` is the preferred protocol. ``fingerprint`` is accepted for
+        existing OLMo datasets, including ``NativeTextReplayDataset``. Fingerprint values
+        must be non-empty strings so an accidentally unstable or unserializable value cannot
+        silently weaken checkpoint validation.
+        """
+        fingerprint = None
+        for attribute in ("content_fingerprint", "fingerprint"):
+            fingerprint = getattr(dataset, attribute, None)
+            if fingerprint is not None:
+                break
+        if fingerprint is None:
+            return None
+        if callable(fingerprint):
+            fingerprint = fingerprint()
+        if not isinstance(fingerprint, str) or not fingerprint:
+            raise OLMoConfigurationError(
+                f"Mixture dataset {dataset_name!r} advertises an invalid content fingerprint: "
+                f"{fingerprint!r}"
+            )
+
+        version = getattr(dataset, "content_fingerprint_version", None)
+        if version is None:
+            version = getattr(dataset, "fingerprint_version", None)
+        if callable(version):
+            version = version()
+        if version is not None and (not isinstance(version, str) or not version):
+            raise OLMoConfigurationError(
+                f"Mixture dataset {dataset_name!r} advertises an invalid fingerprint version: "
+                f"{version!r}"
+            )
+        dataset_type = f"{type(dataset).__module__}.{type(dataset).__qualname__}"
+        return {"type": dataset_type, "version": version, "value": fingerprint}
+
+    def _validate_dataset_fingerprints(self, saved_fingerprints: Any) -> None:
+        """Require every version-5 source identity to match the current mixture exactly."""
+        if not isinstance(saved_fingerprints, (list, tuple)):
+            raise OLMoConfigurationError(
+                "Packed-loader version-5 state is missing its dataset_fingerprints list"
+            )
+        if len(saved_fingerprints) != len(self.dataset_fingerprints):
+            raise OLMoConfigurationError(
+                "Packed-loader resume state contains "
+                f"{len(saved_fingerprints)} dataset fingerprints, but the current loader "
+                f"has {len(self.dataset_fingerprints)} sources"
+            )
+        for dataset_name, saved, current in zip(
+            self.dataset_names, saved_fingerprints, self.dataset_fingerprints
+        ):
+            if saved != current:
+                raise OLMoConfigurationError(
+                    f"Packed-loader dataset content fingerprint changed for source "
+                    f"{dataset_name!r}: checkpoint has {saved!r}, current dataset has "
+                    f"{current!r}"
+                )
 
     @property
     def _global_instances(self) -> int:
@@ -514,12 +591,26 @@ class MixtureDataLoader(DataLoaderBase):
 
         state = self._packing_state
         state_version = int(state.get("version", 0))
+        if state_version in LEGACY_PACKED_LOADER_STATE_VERSIONS:
+            if not self.allow_legacy_state_without_dataset_fingerprints:
+                raise OLMoConfigurationError(
+                    f"Packed-loader state version {state_version} predates dataset content "
+                    "fingerprints. Set "
+                    "allow_legacy_state_without_dataset_fingerprints=True to resume it "
+                    "without content validation."
+                )
+            log.warning(
+                "Restoring legacy packed-loader state version %d without validating dataset "
+                "content fingerprints because "
+                "allow_legacy_state_without_dataset_fingerprints=True",
+                state_version,
+            )
         if state_version == 3:
             if self.pack_image_weight != 1.0:
                 raise OLMoConfigurationError(
                     "Version-3 packed-loader state implies pack_image_weight=1.0"
                 )
-        elif state_version != 4:
+        elif state_version not in (4, PACKED_LOADER_STATE_VERSION):
             raise OLMoConfigurationError(f"Unsupported packed-loader state version {state_version}")
         expected = {
             "epoch": self._epoch,
@@ -536,6 +627,8 @@ class MixtureDataLoader(DataLoaderBase):
         }
         if state_version >= 4:
             expected["pack_image_weight"] = self.pack_image_weight
+        if state_version >= PACKED_LOADER_STATE_VERSION:
+            self._validate_dataset_fingerprints(state.get("dataset_fingerprints"))
         for key, expected_value in expected.items():
             if state.get(key) != expected_value:
                 raise OLMoConfigurationError(
@@ -595,7 +688,7 @@ class MixtureDataLoader(DataLoaderBase):
         state = packer.state_dict()
         state.update(
             {
-                "version": 4,
+                "version": PACKED_LOADER_STATE_VERSION,
                 "epoch": self._epoch,
                 "seed": self.seed,
                 "dp_world_size": self.dp_world_size,
@@ -607,6 +700,7 @@ class MixtureDataLoader(DataLoaderBase):
                 "pack_image_weight": self.pack_image_weight,
                 "dataset_sizes": self._sizes,
                 "dataset_names": self.dataset_names,
+                "dataset_fingerprints": self.dataset_fingerprints,
                 "weights": self.weights,
             }
         )

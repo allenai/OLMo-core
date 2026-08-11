@@ -1,6 +1,6 @@
 import torch
 
-from olmo_core.eval import MultimodalLMEvaluator
+from olmo_core.eval import MultimodalBlankImageEvaluator, MultimodalLMEvaluator
 
 
 def _make_evaluator() -> MultimodalLMEvaluator:
@@ -43,3 +43,24 @@ def test_multimodal_lm_evaluator_accumulates_by_loss_weight():
     metrics = evaluator.compute_metrics()
 
     torch.testing.assert_close(metrics["CE loss"], torch.tensor(3.5))
+
+
+def test_multimodal_blank_image_control_changes_only_images():
+    images = torch.arange(6, dtype=torch.float32).reshape(1, 1, 2, 3)
+    batch = {
+        "images": images,
+        "input_ids": torch.tensor([[1, 2]]),
+        "labels": torch.tensor([[2, -100]]),
+        "loss_masks": torch.tensor([[1.0, 0.0]]),
+    }
+    evaluator = MultimodalBlankImageEvaluator(
+        name="blank-image",
+        batches=[batch],
+        device=torch.device("cpu"),
+    )
+
+    [transformed] = list(evaluator)
+
+    torch.testing.assert_close(transformed["images"], torch.zeros_like(images))
+    torch.testing.assert_close(transformed["input_ids"], batch["input_ids"])
+    torch.testing.assert_close(batch["images"], images)

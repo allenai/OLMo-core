@@ -98,7 +98,7 @@ class PixMoPointsDatasetConfig(Config):
 
     split: str = "train"
     kind: str = "both"  # "basic" (points-pointing) | "high_frequency" (points-counting) | "both"
-    counting: str = "both"  # "both" randomly selects point_count/pointing per annotation
+    counting: str | bool = "both"  # "both" randomly selects; bool fixes one style
     both_mode: Literal["per_annotation", "duplicate"] = "per_annotation"
     """How ``counting='both'`` is sampled. Stage 2 follows mm_olmo and samples a style
     per annotation. The Stage 1 recipe explicitly selects ``duplicate`` for compatibility
