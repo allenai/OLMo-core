@@ -42,6 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
         "them will do; prefer a local directory so the node needs no network.",
     )
     ap.add_argument(
+        "--pad-token-id",
+        type=int,
+        default=None,
+        help="generation pad id. Must DIFFER from eos -- olmo_core rejects equality, and every "
+        "Qwen tokenizer here sets pad == eos. Defaults to the pre-migration fallback (151645).",
+    )
+    ap.add_argument(
         "--eos-token-id",
         type=int,
         default=None,
@@ -95,6 +102,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         attn=args.attn,
         max_length=args.max_length,
         eos_token_id=args.eos_token_id,
+        pad_token_id=args.pad_token_id,
     )
     print(f"[validate] tokenizer={args.tokenizer} eos_id={backend.eos_id}")
     stop = STOP_PRESETS[spec.stop]

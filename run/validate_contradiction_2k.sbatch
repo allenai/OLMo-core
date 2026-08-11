@@ -2,7 +2,7 @@
 # Port validation: reproduce a known contradiction @2k number with the ctc package.
 #
 # TARGET (results/ctc_suite/all_results.jsonl, 2026-07-19, git e57aaea6c):
-#   ckpt      ctc-t0-contra-n20-full/step750
+#   ckpt      ctc-t0-contra-n20-full  (root; provenance ckpt_path, not a step dir)
 #   data      contradiction_eval_pubmed_both_n20_k3.jsonl   (488 lines, verified)
 #   arm       full (plain causal)
 #   f1        0.9583333333333334      exact_match 0.8770491803278688
@@ -42,7 +42,9 @@ set -euo pipefail
 
 STAGE=/data/prasann/ctc_validate
 REPO=$STAGE/repo
-CKPT=$STAGE/ckpts/ctc-t0-contra-n20-full/step750
+# The results row's provenance names the checkpoint ROOT, not a step subdirectory:
+# config.json and model_and_optim both live there. step750/ has weights but no config.
+CKPT=$STAGE/ckpts/ctc-t0-contra-n20-full
 DATA=$STAGE/contradiction_eval_pubmed_both_n20_k3.jsonl
 OUT=$STAGE/contra_2k_full.json
 

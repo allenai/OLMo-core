@@ -30,6 +30,12 @@ __all__ = ["NativeBackend"]
 
 ATTENTION_MODES = ("full", "chunked", "landmark")
 
+#: Generation pad id used when the tokenizer's pad collides with eos, which every Qwen tokenizer
+#: here does. Matches the pre-migration ``--pad-fallback-id`` default, so a reproduction run uses
+#: the same value the original did. Any distinct reserved id would work; this one is
+#: ``<|im_end|>`` in the Qwen3 vocabulary.
+PAD_FALLBACK_ID = 151645
+
 
 class NativeBackend:
     """
@@ -77,11 +83,18 @@ class NativeBackend:
 
         self.tok = AutoTokenizer.from_pretrained(tokenizer)
         self.eos_id = eos_token_id if eos_token_id is not None else self.tok.eos_token_id
+
+        # Qwen tokenizers set pad == eos, and olmo_core's GenerationConfig rejects that outright:
+        # left-padding with eos would make the model read padding as a real end-of-sequence. Any
+        # DISTINCT reserved id works, and at batch size 1 no pad token ever enters the stream --
+        # but the config still validates it, so a real one has to be supplied.
         pad = pad_token_id if pad_token_id is not None else self.tok.pad_token_id
         if pad is None or pad == self.eos_id:
-            # Qwen3 sets pad == eos. Left-padding with eos makes the model treat padding as a real
-            # end-of-sequence, so it is given its own id.
-            pad = self.eos_id
+            pad = PAD_FALLBACK_ID
+        if pad == self.eos_id:
+            raise ValueError(
+                f"pad_token_id and eos_token_id are both {pad}; pass a distinct pad_token_id"
+            )
 
         gen_cfg = GenerationConfig(
             pad_token_id=pad,
