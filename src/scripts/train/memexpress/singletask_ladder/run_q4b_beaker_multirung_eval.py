@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, query_position, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -73,6 +73,7 @@ def build_eval_launch_config(
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
+        f"QUERY_POSITION='{query_position}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
         f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
@@ -116,6 +117,11 @@ def main():
     ap.add_argument("--results-dir", default="",
                     help="ABSOLUTE weka dir for the per-task result JSONs "
                          "(default: checkpoints/prasanns/<run_name>/eval).")
+    ap.add_argument("--query-position", choices=["both", "after", "before"], default="both",
+                    help="Prompt layout; MUST match the SFT shards the model was trained on. "
+                         "xlong5_2k256k_qwen35 -> both (default, and what every result before "
+                         "2026-08-11 used); xlong5_2k256k_qwen35_qafter -> after. It lands in the "
+                         "inner eval_command, so the launch ledger records it automatically.")
     ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat",
                     help="chat=SFT (apply_chat_template, matches training); raw=BASE/CPT models; alpaca=legacy.")
     ap.add_argument("--max-test", type=int, default=600)
@@ -162,6 +168,7 @@ def main():
         lc = build_eval_launch_config(
             run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
             step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
+            query_position=args.query_position,
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
