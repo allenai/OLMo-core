@@ -79,6 +79,7 @@ def build_eval_launch_config(
     ckpt,
     results_dir,
     prompt_format,
+    query_position,
     ngpu,
     max_test,
     max_length,
@@ -118,6 +119,7 @@ def build_eval_launch_config(
     inner = (
         f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
+        f"QUERY_POSITION='{query_position}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_ONLY={int(xlong_only)} "
         f"XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
@@ -212,6 +214,15 @@ def main():
         default="",
         help="ABSOLUTE weka dir for the per-task result JSONs "
         "(default: checkpoints/prasanns/<run_name>/eval).",
+    )
+    ap.add_argument(
+        "--query-position",
+        choices=["both", "after", "before"],
+        default="both",
+        help="Prompt layout; MUST match the SFT shards the model was trained on. "
+        "xlong5_2k256k_qwen35 -> both (default, and what every result before "
+        "2026-08-11 used); xlong5_2k256k_qwen35_qafter -> after. It lands in the "
+        "inner eval_command, so the launch ledger records it automatically.",
     )
     ap.add_argument(
         "--prompt-format",
@@ -412,6 +423,7 @@ def main():
             ckpt=args.ckpt,
             results_dir=args.results_dir,
             prompt_format=args.prompt_format,
+            query_position=args.query_position,
             tokenizer=tokenizer,
             ngpu=args.ngpu,
             max_test=args.max_test,
