@@ -162,18 +162,29 @@ def test_read_returns_none_for_a_directory_without_one(tmp_path):
     assert FormatFingerprint.read(tmp_path) is None
 
 
+def _write_raw(tmp_path, *records):
+    (tmp_path / FINGERPRINT_FILENAME).write_text(
+        json.dumps({"schema_version": 1, "formats": list(records)})
+    )
+
+
 def test_unknown_field_is_rejected_rather_than_dropped(tmp_path):
     """An old reader must not validate a newer record it cannot fully understand."""
-    (tmp_path / FINGERPRINT_FILENAME).write_text(
-        json.dumps({**make().to_dict(), "attention_variant": "landmark"})
-    )
+    _write_raw(tmp_path, {**make().to_dict(), "attention_variant": "landmark"})
     with pytest.raises(ValueError, match="unknown field"):
         FormatFingerprint.read(tmp_path)
 
 
 def test_truncated_record_raises_rather_than_matching(tmp_path):
-    (tmp_path / FINGERPRINT_FILENAME).write_text(json.dumps({"task": "contradiction"}))
+    _write_raw(tmp_path, {"task": "contradiction"})
     with pytest.raises(TypeError):
+        FormatFingerprint.read(tmp_path)
+
+
+def test_a_bare_record_is_not_mistaken_for_a_set(tmp_path):
+    """Accepting one would silently lose every other task in a mix's record."""
+    (tmp_path / FINGERPRINT_FILENAME).write_text(json.dumps(make().to_dict()))
+    with pytest.raises(ValueError, match="not a fingerprint set"):
         FormatFingerprint.read(tmp_path)
 
 

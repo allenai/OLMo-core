@@ -20,7 +20,7 @@ golden fixture it checks against.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .prompts import (
     CLAIM_TEMPLATE,
@@ -36,7 +36,14 @@ from .prompts import (
     TEXTGROUPS_TEMPLATE,
 )
 
-__all__ = ["format_doc", "format_documents", "ITEM_SEPARATOR", "TASKS_WITH_DOC_IDS"]
+__all__ = [
+    "format_doc",
+    "format_documents",
+    "shows_doc_ids",
+    "visible_doc_id_range",
+    "ITEM_SEPARATOR",
+    "TASKS_WITH_DOC_IDS",
+]
 
 #: Items are always joined by a blank line -- the chunk-boundary delimiter. See the module note.
 ITEM_SEPARATOR = "\n\n"
@@ -153,6 +160,53 @@ _SERIALIZERS: Dict[str, Callable[[Sequence[Document]], List[str]]] = {
     "summarization": _verbatim,
     "ruler": _verbatim,
 }
+
+
+#: Serializers that emit no identifier at all. Everything else numbers items from 1.
+_UNNUMBERED = ("oolong", "summarization", "ruler")
+
+
+def shows_doc_ids(task: str) -> bool:
+    """
+    :param task: Task name.
+
+    :returns: Whether this task's rendered context shows a per-item identifier. Only then is
+        :data:`~ctc.format.fingerprint.FormatFingerprint.doc_id_range` meaningful -- a task whose
+        items are unnumbered cannot suffer the digit-range failure, and recording a range for it
+        would invent a constraint.
+    """
+    if task in _UNNUMBERED:
+        return False
+    return task in _SERIALIZERS or task in TASKS_WITH_DOC_IDS
+
+
+def visible_doc_id_range(
+    examples: Sequence[Mapping[str, Any]], task: str
+) -> Optional[Tuple[int, int]]:
+    """
+    Measure the span of document identifiers a dataset actually shows the model.
+
+    This is the field behind the digit-range bug: training never rendered an id above 697, eval
+    rendered up to 1423, and the model's failure on ids it had never seen read as long-context
+    collapse. Measuring it from the data is the point -- the intended corpus size is a claim, and
+    the claim is what was wrong.
+
+    :param examples: Unified-format examples.
+    :param task: Task name.
+
+    :returns: ``(min, max)`` identifier, or ``None`` when this task renders items unnumbered or
+        the examples carry no documents.
+    """
+    if not shows_doc_ids(task):
+        return None
+    counts = [len(ex.get("documents") or ()) for ex in examples]
+    counts = [c for c in counts if c > 0]
+    if not counts:
+        return None
+    # Every serializer numbers from 1 through len(documents), so the span over a dataset is
+    # 1..max. Derived rather than assumed: if a serializer ever numbers differently, this is the
+    # one place to fix.
+    return (1, max(counts))
 
 
 def format_documents(

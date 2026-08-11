@@ -29,11 +29,15 @@ Two design choices worth knowing:
 
 Usage::
 
-    # tokenize time, alongside the shards; and train time, alongside the checkpoint
-    fp.write(shard_dir)
+    # tokenize time, alongside the shards -- one task per shard directory
+    spec.fingerprint(query_position=..., tokenizer=...).write(shard_dir)
+
+    # train time, alongside every checkpoint -- a mix trains several tasks, so this is a SET.
+    # ctc.train.FormatFingerprintCallback does this automatically, collecting from the shard dirs.
+    FingerprintSet(formats).write(ckpt_dir)
 
     # eval time -- raises before a single token is generated
-    FormatFingerprint.of(task=...).require_compatible_with(FormatFingerprint.read(ckpt_dir))
+    check_or_explain_missing(spec.fingerprint(query_position=...), ckpt_dir)
 """
 
 from __future__ import annotations
@@ -46,10 +50,14 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = [
     "FormatFingerprint",
+    "FingerprintSet",
     "Mismatch",
     "FormatMismatchError",
+    "TaskNotTrainedError",
     "FINGERPRINT_FILENAME",
     "hash_prompt",
+    "collect_fingerprints",
+    "conflicting_formats",
 ]
 
 #: Written into both the shard directory and the checkpoint directory.
@@ -287,9 +295,156 @@ class FormatFingerprint:
 
     def write(self, directory: Path) -> Path:
         """
-        Write the fingerprint into ``directory``.
+        Write this single fingerprint into ``directory``, replacing anything already there.
 
-        :param directory: Shard directory (at tokenize time) or checkpoint directory (at train time).
+        A shard directory holds one task, so this is its natural writer. A *checkpoint* directory
+        usually holds several -- training mixes tasks -- so use :meth:`FingerprintSet.write` there,
+        or this will drop the others.
+
+        :param directory: Shard directory (at tokenize time).
+
+        :returns: The path written.
+        """
+        return FingerprintSet([self]).write(directory)
+
+    @classmethod
+    def read(cls, directory: Path) -> Optional["FormatFingerprint"]:
+        """
+        Read a single fingerprint from ``directory``.
+
+        :param directory: Shard directory.
+
+        :returns: The fingerprint, or ``None`` if the directory predates fingerprinting.
+
+        :raises ValueError: If the directory records more than one format. Picking one arbitrarily
+            would answer a question the caller did not ask -- use :meth:`FingerprintSet.read` and
+            :meth:`FingerprintSet.for_task`.
+        """
+        found = FingerprintSet.read(directory)
+        if found is None:
+            return None
+        if len(found.formats) != 1:
+            raise ValueError(
+                f"{Path(directory) / FINGERPRINT_FILENAME} records {len(found.formats)} formats "
+                f"({', '.join(found.tasks)}); read it as a FingerprintSet and select a task"
+            )
+        return found.formats[0]
+
+    def evolve(self, **changes: Any) -> "FormatFingerprint":
+        """
+        :param changes: Field overrides.
+
+        :returns: A copy with those fields replaced.
+        """
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class FingerprintSet:
+    """
+    Every format a checkpoint was trained under.
+
+    A checkpoint is rarely bound to one format. The canonical SFT mix trains five tasks at once,
+    so its record has five entries, and eval asks a narrower question than "does this checkpoint
+    match" -- it asks "was *this task* trained, and in the format I am about to use".
+
+    Two entries may share a task name. That is not a mistake: a curriculum can legitimately train
+    one task under two layouts, and such a checkpoint is compatible with both. :meth:`for_task`
+    therefore returns a list, and :meth:`require_compatible` passes if *any* of them matches.
+
+    :param formats: The recorded formats, in a stable order.
+    """
+
+    formats: Tuple[FormatFingerprint, ...]
+
+    def __init__(self, formats: Sequence[FormatFingerprint]):
+        object.__setattr__(self, "formats", tuple(formats))
+        if not self.formats:
+            raise ValueError(
+                "a fingerprint set must record at least one format; writing an empty one would "
+                "make an unfingerprinted checkpoint look fingerprinted"
+            )
+
+    @property
+    def tasks(self) -> List[str]:
+        """:returns: The task names recorded, deduplicated, in first-seen order."""
+        seen: Dict[str, None] = {}
+        for fp in self.formats:
+            seen.setdefault(fp.task, None)
+        return list(seen)
+
+    def for_task(self, task: str) -> List[FormatFingerprint]:
+        """
+        :param task: Task name.
+
+        :returns: Every recorded format for that task; empty if it was not trained.
+        """
+        return [fp for fp in self.formats if fp.task == task]
+
+    def merge(self, other: "FingerprintSet") -> "FingerprintSet":
+        """
+        Combine two sets, dropping exact duplicates.
+
+        :param other: The set to fold in.
+
+        :returns: The union.
+        """
+        out = list(self.formats)
+        for fp in other.formats:
+            if fp not in out:
+                out.append(fp)
+        return FingerprintSet(out)
+
+    def require_compatible(self, eval_fp: FormatFingerprint) -> None:
+        """
+        Raise unless ``eval_fp`` matches one of the recorded formats for its task.
+
+        :param eval_fp: The format eval is about to use.
+
+        :raises FormatMismatchError: If the task was recorded but no entry matches. The reported
+            mismatches come from the *closest* entry, so a curriculum's several formats do not
+            produce several unrelated error lists.
+        :raises TaskNotTrainedError: If the task was never trained. This is a distinct failure:
+            nothing is mismatched, there is simply nothing to check against.
+        """
+        candidates = self.for_task(eval_fp.task)
+        if not candidates:
+            raise TaskNotTrainedError(eval_fp.task, self.tasks)
+        attempts = [eval_fp.compare(c) for c in candidates]
+        if any(not a for a in attempts):
+            return
+        raise FormatMismatchError(min(attempts, key=len))
+
+    # ── i/o ─────────────────────────────────────────────────────────────────────────────────────
+
+    def to_dict(self) -> Dict[str, Any]:
+        """:returns: A JSON-ready mapping."""
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "formats": [fp.to_dict() for fp in self.formats],
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "FingerprintSet":
+        """
+        :param d: A mapping produced by :meth:`to_dict`.
+
+        :returns: The set.
+
+        :raises ValueError: If the record is not a fingerprint set.
+        """
+        if "formats" not in d:
+            raise ValueError(
+                "not a fingerprint set: no 'formats' key. A record written by ctc always has one, "
+                "even for a single task."
+            )
+        return cls([FormatFingerprint.from_dict(f) for f in d["formats"]])
+
+    def write(self, directory: Path) -> Path:
+        """
+        Write the set into ``directory``, replacing any existing record.
+
+        :param directory: Shard directory (tokenize time) or checkpoint directory (train time).
 
         :returns: The path written.
         """
@@ -300,28 +455,107 @@ class FormatFingerprint:
         return path
 
     @classmethod
-    def read(cls, directory: Path) -> Optional["FormatFingerprint"]:
+    def read(cls, directory: Path) -> Optional["FingerprintSet"]:
         """
-        Read a fingerprint from ``directory``.
-
         :param directory: Shard or checkpoint directory.
 
-        :returns: The fingerprint, or ``None`` if the directory predates fingerprinting. Callers
-            must decide what to do with ``None`` explicitly -- see
-            :func:`check_or_explain_missing`.
+        :returns: The recorded set, or ``None`` if the directory predates fingerprinting. Callers
+            must decide what to do with ``None`` explicitly -- see :func:`check_or_explain_missing`.
         """
         path = Path(directory) / FINGERPRINT_FILENAME
         if not path.exists():
             return None
         return cls.from_dict(json.loads(path.read_text()))
 
-    def evolve(self, **changes: Any) -> "FormatFingerprint":
-        """
-        :param changes: Field overrides.
 
-        :returns: A copy with those fields replaced.
-        """
-        return replace(self, **changes)
+def collect_fingerprints(
+    directories: Sequence[Path],
+    *,
+    extra: Sequence[FormatFingerprint] = (),
+    allow_missing: bool = False,
+) -> Tuple[FingerprintSet, List[str]]:
+    """
+    Gather the formats recorded across several shard directories.
+
+    Used by both the training callback and ``ctc-fingerprint collect``, which is the point: a
+    checkpoint stamped at train time and one stamped afterwards must record the same thing, and
+    two implementations of "collect" would eventually not.
+
+    :param directories: Shard directories to read.
+    :param extra: Fingerprints to include that no directory records.
+    :param allow_missing: Tolerate a directory with no record. Off by default -- a partial record
+        is worse than none, because the eval guard then reports a trained task as untrained.
+
+    :returns: ``(set, skipped)`` where ``skipped`` names the directories that had no record. It is
+        non-empty only when ``allow_missing`` is set, and the caller must disclose it.
+
+    :raises FileNotFoundError: If a directory has no record and ``allow_missing`` is not set.
+    :raises ValueError: If nothing at all was found.
+    """
+    collected: List[FormatFingerprint] = list(extra)
+    missing: List[str] = []
+    for d in directories:
+        found = FingerprintSet.read(Path(d))
+        if found is None:
+            missing.append(str(d))
+            continue
+        for fp in found.formats:
+            if fp not in collected:
+                collected.append(fp)
+
+    if missing and not allow_missing:
+        raise FileNotFoundError(
+            f"no {FINGERPRINT_FILENAME} in {len(missing)} director(ies):\n  "
+            + "\n  ".join(missing)
+            + "\n\nFingerprint them first (ctc-fingerprint write --dir <shards> --task <name> …), "
+            "or allow them to be skipped. A partial record makes the eval guard report a trained "
+            "task as out-of-distribution."
+        )
+    if not collected:
+        raise ValueError(
+            "no formats found. Point this at the shard directories the run reads, or supply them "
+            "explicitly. Recording nothing while appearing to record something is the one outcome "
+            "this guard must not have."
+        )
+    return FingerprintSet(collected), missing
+
+
+def conflicting_formats(fingerprints: FingerprintSet) -> Dict[str, List[str]]:
+    """
+    Find tasks recorded under more than one format.
+
+    Legitimate for a curriculum that varies the layout deliberately, and
+    :meth:`FingerprintSet.require_compatible` accepts either. But it is also what accidental drift
+    between two shard builds looks like, and that case is otherwise invisible.
+
+    :param fingerprints: The set to inspect.
+
+    :returns: task -> the field names that differ, for each task with several formats.
+    """
+    by_task: Dict[str, List[FormatFingerprint]] = {}
+    for fp in fingerprints.formats:
+        by_task.setdefault(fp.task, []).append(fp)
+    return {
+        task: sorted({m.field for m in fps[0].compare(fps[1])})
+        for task, fps in by_task.items()
+        if len(fps) > 1
+    }
+
+
+class TaskNotTrainedError(RuntimeError):
+    """Raised when a checkpoint's fingerprint records no format for the task being graded."""
+
+    def __init__(self, task: str, trained: Sequence[str]):
+        self.task = task
+        self.trained = list(trained)
+        super().__init__(
+            f"this checkpoint records no training format for task {task!r}; it was trained on "
+            f"{', '.join(self.trained)}.\n"
+            "Either the task name is wrong, or this is a deliberate out-of-distribution eval. "
+            "The guard cannot verify an OOD eval -- there is no training format to compare "
+            "against -- so pass --ignore-format-fingerprint and the result will record that "
+            "compatibility was unverified."
+        )
 
 
 def check_or_explain_missing(
@@ -336,13 +570,15 @@ def check_or_explain_missing(
         before fingerprinting existed have none, so batch-grading old runs needs ``strict=False``
         -- but then the guard is off, and the caller should say so in the results file.
 
-    :returns: A warning string when the fingerprint is absent and ``strict`` is ``False``, else
-        ``None``.
+    :returns: A warning string when the check could not be performed and ``strict`` is ``False``,
+        else ``None``.
 
-    :raises FormatMismatchError: On an incompatible fingerprint.
+    :raises FormatMismatchError: On an incompatible fingerprint. Always raised, in both modes: an
+        actual mismatch is never merely a warning.
     :raises FileNotFoundError: When the fingerprint is absent and ``strict`` is ``True``.
+    :raises TaskNotTrainedError: When the task was not trained and ``strict`` is ``True``.
     """
-    trained = FormatFingerprint.read(ckpt_dir)
+    trained = FingerprintSet.read(ckpt_dir)
     if trained is None:
         msg = (
             f"no {FINGERPRINT_FILENAME} in {ckpt_dir}; train/eval format compatibility is "
@@ -354,5 +590,11 @@ def check_or_explain_missing(
                 "that predates fingerprinting."
             )
         return msg
-    eval_fp.require_compatible_with(trained)
+    try:
+        trained.require_compatible(eval_fp)
+    except TaskNotTrainedError as e:
+        if strict:
+            raise
+        return f"{e.task!r} is not among this checkpoint's trained tasks ({', '.join(e.trained)}); "\
+               "grading it as out-of-distribution, format compatibility UNVERIFIED"
     return None

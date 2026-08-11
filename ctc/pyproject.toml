@@ -40,6 +40,7 @@ dev = ["pytest"]
 [project.scripts]
 ctc-data = "ctc.data.cli:main"
 ctc-eval = "ctc.eval.cli:main"
+ctc-fingerprint = "ctc.format.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

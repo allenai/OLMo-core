@@ -16,6 +16,9 @@ ctc-eval --ckpt CKPT --task contradiction --rungs 2k --backend vllm
 
 ctc-data list
 ctc-data build --task contradiction --rungs 2k,4k,8k --out /data/ctc/v3
+
+ctc-fingerprint show CKPT           # what format was this checkpoint trained on?
+ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
 ```
 
 From inside the repo, `run/eval.sh` and `run/data.sh` wrap these and resolve the cluster
@@ -28,8 +31,22 @@ document/chunk serialization, the task registry, gold-index conventions, answer 
 Both halves read one definition, so a prompt-format change that breaks grading fails a test rather
 than quietly shifting a number.
 
-It imports no olmo-core. Only `ctc.eval.backends.native` and `ctc.eval.masking.native` may, and
-both sit behind the `native` extra.
+It imports no olmo-core. Only `ctc.eval.backends.native`, `ctc.eval.masking.native` and
+`ctc.train` may, and the first two sit behind the `native` extra.
+
+## The format guard
+
+A checkpoint is only meaningful against the format it was trained on, and every way that can go
+wrong produces plausible output and a plausible score. So the format is **recorded** — beside the
+shards at tokenize time, and inside every checkpoint at train time via
+`ctc.train.FormatFingerprintCallback` — and eval **refuses** to grade a mismatch.
+
+The record is per-task, because a mix trains several; eval asks "was *this* task trained, in *this*
+layout". Absence and mismatch are different answers: an untrained task is an out-of-distribution
+eval, which the guard can only decline to verify, while a mismatch is an error in both modes.
+
+This is not hypothetical. Reproducing one pre-migration number took two extra runs to find that
+`query_position` differed, because nothing recorded it. It is now a fingerprint field.
 
 ## Layout
 
