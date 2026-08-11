@@ -806,12 +806,23 @@ class SegmentTreeNode:
 
 
 class SegmentTree:
+    """
+    A max-segment-tree over bin capacities ``1..N``, where leaf ``i`` stands for capacity ``i + 1``.
+
+    ``N`` need not be a power of 2: the tree is built over the next power of 2 above ``N`` and the
+    surplus leaves are left at weight 0, so they are never selected by :meth:`query`. When ``N``
+    *is* a power of 2 this is exactly the old power-of-2-only tree, node for node.
+    """
+
     def __init__(self, N: int):
-        assert math.log2(N) % 1 == 0, "N should be a power of 2"
+        assert N >= 1, "N should be at least 1"
+        self.N = N
         self.root_node = SegmentTreeNode()
         self.leaf_nodes: List[SegmentTreeNode] = []
 
-        max_depth = int(math.log2(N))
+        # Number of leaves, rounded up to a power of 2 so the tree stays perfect.
+        num_leaves = 1 << (N - 1).bit_length()
+        max_depth = num_leaves.bit_length() - 1
         leaf_id = 0
         queue: deque[Tuple[SegmentTreeNode, int]] = deque([(self.root_node, 0)])
         while queue:
@@ -825,8 +836,9 @@ class SegmentTree:
                 self.leaf_nodes.append(parent)
                 leaf_id += 1
 
-        assert len(self.leaf_nodes) == N
-        self.leaf_nodes[-1].update(N)
+        assert len(self.leaf_nodes) == num_leaves
+        # Leaf ``N - 1`` (capacity ``N``) stands for the always-available "open a fresh bin" option.
+        self.leaf_nodes[N - 1].update(N)
 
     def query(self, weight: int) -> SegmentTreeNode:
         node = self.root_node
@@ -859,6 +871,22 @@ class InstancePacker:
     @property
     def total_tokens(self) -> int:
         return self.max_sequence_length * len(self.instance_bins) - self.total_padding
+
+    def pack_document(self, document_id: int, document_length: int) -> int:
+        """
+        Place a single document of ``document_length`` units into the tightest bin that fits it,
+        opening a new bin if none does.
+
+        Callers that need to control the document ordering themselves (best-fit-*decreasing*
+        requires longest-first) can drive the packer with this instead of :meth:`pack_documents`.
+
+        :param document_id: An opaque id recorded in :data:`instance_bins`.
+        :param document_length: The document's length, in the same units as
+            ``max_sequence_length``.
+
+        :returns: The index of the bin the document landed in.
+        """
+        return self._pack_document(document_id, document_length)
 
     def _pack_document(self, document_id: int, document_length: int) -> int:
         # Query for best-fit capacity.

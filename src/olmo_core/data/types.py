@@ -31,6 +31,29 @@ class LongDocStrategy(StrEnum):
     """
 
 
+class LandmarkPackingStrategy(StrEnum):
+    """
+    Specifies the bin-packing algorithm
+    :class:`~olmo_core.data.composable.LandmarkPackingInstanceSource` uses to fill its windows.
+    """
+
+    next_fit = "next_fit"
+    """
+    Greedy next-fit in document order: when a document doesn't fit the open window, close that
+    window and start a new one. Cheap and order-preserving, but wasteful on a heavy-tailed document
+    length distribution.
+    """
+
+    best_fit_decreasing = "best_fit_decreasing"
+    """
+    Best-fit-decreasing: place documents longest-first into the tightest window that still fits
+    them. This is the same algorithm
+    :class:`~olmo_core.data.composable.PackingInstanceSource` uses for dense packing (both go
+    through :class:`~olmo_core.data.utils.InstancePacker`), so a landmark arm using it is
+    packing-matched to a dense arm. It reorders documents across windows.
+    """
+
+
 class NumpyDatasetDType(StrEnum):
     """
     Supported numpy unsigned integer data types for datasets.

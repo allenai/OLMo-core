@@ -7,6 +7,30 @@ Three arms, one per finished Qwen3.5 CPT run on the dolma3_longmino sample (all 
   * ``fast-landmark``   -> full-attention layers swapped to ``AttentionType.fast_landmark``
   * ``sparse-landmark`` -> full-attention layers swapped to ``AttentionType.sparse_landmark``
 
+plus two **data-vs-compute ablation** arms, both ``fast_landmark`` against the ``dense`` arm:
+
+  * ``fast-landmark-datamatch``  -> same *original data* as dense; spends more tokens for it
+  * ``fast-landmark-tokenmatch`` -> same *token budget* as dense; therefore sees less data
+
+Landmark training inserts one landmark token per ``MEM_FREQ=63`` content tokens, so a document
+occupies 64/63 = 1.0159x its original length and every token-matched landmark-vs-dense comparison
+we have run saw *less original data* on the landmark side. These two arms bracket that: if they
+agree, the landmark result is an architecture effect; if they disagree, it is a data effect. They
+remove the two confounds catalogued in ``records/POSSIBLE_BUG_SFT_DATA.md``:
+
+1. **Window width.** ``ABLATION_SEQ_LEN = 33344`` (521 blocks of 64) has a content capacity of
+   521 x 63 = 32,823 >= the dense arm's 32,768, so one landmark window carries at least as much
+   original content as one dense window.
+2. **Packing algorithm.** Both use ``LandmarkPackingStrategy.best_fit_decreasing``, the same
+   algorithm the dense arm's ``PackingInstanceSource`` uses, instead of the default next-fit that
+   inflated the landmark instance count by ~13%. What remains is the genuine landmark cost: each
+   document is ceil'd to a whole number of blocks.
+
+They also take the dense arm's ``2.9/1.3`` sampling weights, not the landmark arms' ``2.0/1.0``:
+those weights compensate for over-long documents the packer drops, and at 33,344 the landmark drop
+threshold (content > 32,823) is within 0.17% of the dense one, so the same compensation applies.
+The ``fast-landmark`` (40960) and ``sparse-landmark`` arms are untouched by all of this.
+
 The data recipe is the canonical 32k one carried over from the Qwen3 runs (75% the 5 long-context
 tasks / 25% ``allenai/Dolci-Instruct-SFT``, p10 NQ, no CPT text), **re-tokenized for the Qwen3.5
 vocabulary from the same source JSONL in the same row order**, so each arm draws the same examples
@@ -40,6 +64,7 @@ from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     LandmarkPackingInstanceSourceConfig,
+    LandmarkPackingStrategy,
     LongDocStrategy,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
@@ -126,29 +151,83 @@ LR = 1e-5
 # Per-arm config. ``weights`` is the within-5-task upsampling; the dense arm keeps the
 # contra-2.9 / oolong-1.3 compensation for the docs its 32768 packer drops, exactly as the Qwen3
 # dense launchers do, while the landmark arms (which drop ~0% at 40960) keep the base 2.0/1.0.
-# ``target_tokens`` matches the corresponding Qwen3 arm's budget.
+# ``target_tokens`` matches the corresponding Qwen3 arm's budget; an arm may instead pin
+# ``target_steps`` directly (used by the data-matched ablation arm, whose step count comes from a
+# measured instance count rather than from a token budget).
 # ---------------------------------------------------------------------------
+_DENSE_WEIGHTS = {"contra": 2.9, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.3}
+_LANDMARK_WEIGHTS = {"contra": 2.0, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.0}
+
+# --- Data-vs-compute ablation geometry (the ``*-datamatch`` / ``*-tokenmatch`` arms) -------------
+# 33344 = 521 blocks x 64: the smallest landmark window whose *content* capacity, 521 x 63 = 32823,
+# is >= the dense arm's 32768. One landmark window therefore carries at least as much original
+# content as one dense window, and the landmark-token overhead is paid in window width instead of
+# in dropped content. It is not a power of 2 -- fine for LandmarkPackingInstanceSource (which only
+# needs a multiple of the block size) but impossible for the dense PackingInstanceSource, whose
+# SegmentTree requires one.
+ABLATION_SEQ_LEN = 33344
+# Instances the dense baseline's BFD packer produced from this exact mixture, measured in the
+# q35-4b-dense-5task-dolci25-32k-nocpt run (Beaker 01KZAF94DPA971G2J7YCESFC74): 2,133,805,797
+# content tokens -> 65,121 windows of 32768, averaging 1.2 padding tokens each. Its 10,700 steps x
+# 2 windows = 21,400 instances = 32.86% of one epoch.
+DENSE_BASELINE_INSTANCES = 65121
+DENSE_BASELINE_STEPS = 10700
+
+# Instances the *landmark* BFD packer produces from the same mixture at ABLATION_SEQ_LEN. Measure
+# it with `launch_prep` and grep the log for "LandmarkPackingInstanceSource packed"; until it is
+# set, the data-matched arm refuses to build rather than guess.
+LANDMARK_ABLATION_INSTANCES: Optional[int] = None
 _ARMS: Dict[str, Dict[str, Any]] = {
     "dense": dict(
         attn_type=None,
         sequence_length=32768,
-        weights={"contra": 2.9, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.3},
+        weights=_DENSE_WEIGHTS,
         target_tokens=10700 * 65536,  # the Qwen3 dense-dolci25 budget: 701.2M
         checkpoint=f"{_CPT_ROOT}/qwen35-4b-dense-longmino/step2385/model_and_optim",
     ),
     "fast-landmark": dict(
         attn_type=AttentionType.fast_landmark,
         sequence_length=40960,  # landmark-token space; 640 blocks of 64
-        weights={"contra": 2.0, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.0},
+        weights=_LANDMARK_WEIGHTS,
         target_tokens=8550 * 81920,  # the Qwen3 landmark budget: 700.4M
         checkpoint=f"{_CPT_ROOT}/qwen35-4b-fast-landmark-dolma3longmino/step2385/model_and_optim",
     ),
     "sparse-landmark": dict(
         attn_type=AttentionType.sparse_landmark,
         sequence_length=40960,
-        weights={"contra": 2.0, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.0},
+        weights=_LANDMARK_WEIGHTS,
         target_tokens=8550 * 81920,
         checkpoint=f"{_CPT_ROOT}/qwen35-4b-sparse-landmark-dolma3longmino/step2385/model_and_optim",
+    ),
+    # --- Data-vs-compute ablation, both vs. the `dense` arm above -------------------------------
+    # Same architecture, same CPT checkpoint, same packing algorithm (BFD) and the same sampling
+    # weights as `dense`; they differ from each other *only* in how long they run.
+    "fast-landmark-datamatch": dict(
+        attn_type=AttentionType.fast_landmark,
+        sequence_length=ABLATION_SEQ_LEN,
+        weights=_DENSE_WEIGHTS,
+        packing_strategy=LandmarkPackingStrategy.best_fit_decreasing,
+        # Setting 1: consume the same *original data* as the baseline, i.e. the same fraction of
+        # the same document stream -- the baseline's 21,400/65,121 = 32.86% of an epoch. The
+        # landmark arm then spends slightly more tokens/compute for that same data.
+        target_steps=(
+            None
+            if LANDMARK_ABLATION_INSTANCES is None
+            else round(
+                DENSE_BASELINE_STEPS * LANDMARK_ABLATION_INSTANCES / DENSE_BASELINE_INSTANCES
+            )
+        ),
+        checkpoint=f"{_CPT_ROOT}/qwen35-4b-fast-landmark-dolma3longmino/step2385/model_and_optim",
+    ),
+    "fast-landmark-tokenmatch": dict(
+        attn_type=AttentionType.fast_landmark,
+        sequence_length=ABLATION_SEQ_LEN,
+        weights=_DENSE_WEIGHTS,
+        packing_strategy=LandmarkPackingStrategy.best_fit_decreasing,
+        # Setting 2: spend the same token budget as the baseline (701.2M window tokens), which at
+        # a 66,688-token global batch is 10,515 steps -- and therefore see less original data.
+        target_tokens=DENSE_BASELINE_STEPS * 65536,
+        checkpoint=f"{_CPT_ROOT}/qwen35-4b-fast-landmark-dolma3longmino/step2385/model_and_optim",
     ),
 }
 
@@ -163,6 +242,7 @@ def arm_geometry(arm: str) -> Dict[str, Any]:
         ``max_steps`` and per-task top-level fractions.
 
     :raises KeyError: If ``arm`` is not a known arm.
+    :raises ValueError: If the arm pins ``target_steps`` but it hasn't been measured yet.
     """
     spec = _ARMS[arm]
     seq_len = int(spec["sequence_length"])
@@ -171,7 +251,18 @@ def arm_geometry(arm: str) -> Dict[str, Any]:
     num_nodes = int(topo["num_nodes"])
     dp_degree = num_nodes * GPUS_PER_NODE // cp_degree
     global_batch_size = dp_degree * seq_len  # one window per DP replica per step, grad-accum 1
-    max_steps = max(1, round(int(spec["target_tokens"]) / global_batch_size))
+    if "target_steps" in spec:
+        if spec["target_steps"] is None:
+            raise ValueError(
+                f"Arm '{arm}' pins its step count to a measured instance count, but "
+                f"LANDMARK_ABLATION_INSTANCES is still None. Run\n"
+                f"    python <launcher> launch_prep <run-name> ai2/jupiter "
+                f"--launch.follow=false --launch.step_soft_timeout=null\n"
+                f"and set it from the 'LandmarkPackingInstanceSource packed ...' log line."
+            )
+        max_steps = max(1, int(spec["target_steps"]))
+    else:
+        max_steps = max(1, round(int(spec["target_tokens"]) / global_batch_size))
 
     w = dict(spec["weights"])
     wsum = sum(w.values())
@@ -192,6 +283,7 @@ def arm_geometry(arm: str) -> Dict[str, Any]:
         shard_degree=dp_degree,  # shard params+grads+optim across all DP ranks
         global_batch_size=global_batch_size,
         max_steps=max_steps,
+        packing_strategy=spec.get("packing_strategy", LandmarkPackingStrategy.next_fit),
         checkpoint=spec["checkpoint"],
         contra_frac=contra_frac,
         nq_frac=nq_frac,
@@ -352,6 +444,7 @@ def build_qwen35_sft_experiment(cli_context: CliContext, *, arm: str) -> Experim
             mem_freq=MEM_FREQ,
             mem_id=LANDMARK_TOKEN_ID,
             pad_id=tokenizer_config.pad_token_id,
+            packing_strategy=geom["packing_strategy"],
         )
         # Doc boundaries come from the landmark packer, not from EOS scanning.
         generate_doc_lengths = False

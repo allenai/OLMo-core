@@ -7,6 +7,7 @@ from olmo_core.data.composable.landmark_packing_instance_source import (
 )
 from olmo_core.data.composable.token_source import InMemoryDocumentSource
 from olmo_core.data.tokenizer import TokenizerConfig
+from olmo_core.data.types import LandmarkPackingStrategy
 from olmo_core.exceptions import OLMoConfigurationError
 
 
@@ -205,6 +206,107 @@ def test_rejects_unaligned_sequence_length(tmp_path: Path, tokenizer: TokenizerC
         _packed(
             [1, 2, 3, tokenizer.eos_token_id], tmp_path, tokenizer, sequence_length=10, mem_freq=3
         )
+
+
+def test_best_fit_decreasing_beats_next_fit_on_a_bad_order(
+    tmp_path: Path, tokenizer: TokenizerConfig
+):
+    """Next-fit closes a window as soon as a document misses; BFD comes back and fills it."""
+    eos = tokenizer.eos_token_id
+    # mem_freq=3, block_size=4, seq_len=16 -> 4 blocks per window.
+    # Doc sizes in blocks, in this order: 3, 2, 1. Total 6 blocks -> 2 windows is optimal.
+    big = list(range(1, 9)) + [eos]  # 9 content tokens -> ceil(9/3)=3 blocks
+    mid = [1, 2, 3, 4, eos]  # 5 content tokens -> 2 blocks
+    small = [7, eos]  # 2 content tokens -> 1 block
+    tokens = big + mid + small
+
+    next_fit = _packed(
+        tokens, tmp_path / "nf", tokenizer, sequence_length=16, mem_freq=3, mem_id=50
+    )
+    # next-fit: [big] (3 blocks, mid doesn't fit) | [mid, small] -> 2 windows, 1 wasted block.
+    assert len(next_fit) == 2
+    assert list(next_fit[0]["doc_lens"]) == [12, 4]  # big + tail pad
+
+    bfd = _packed(
+        tokens,
+        tmp_path / "bfd",
+        tokenizer,
+        sequence_length=16,
+        mem_freq=3,
+        mem_id=50,
+        packing_strategy=LandmarkPackingStrategy.best_fit_decreasing,
+    )
+    # BFD: big(3) + small(1) fills a window exactly; mid(2) takes the second.
+    assert len(bfd) == 2
+    assert list(bfd[0]["doc_lens"]) == [12, 4]  # big + small, no tail pad
+    assert list(bfd[0]["input_ids"])[12:16] == [7, eos, tokenizer.pad_token_id, 50]
+
+
+def test_best_fit_decreasing_invariants(tmp_path: Path, tokenizer: TokenizerConfig):
+    """Every document appears once, windows never overflow, and doc_lens stay block-aligned."""
+    import random
+
+    eos = tokenizer.eos_token_id
+    mem_freq, block_size, seq_len = 3, 4, 64
+    random.seed(11)
+    tokens: list = []
+    n_docs = 200
+    for _ in range(n_docs):
+        # Up to 15 blocks of content -- always short enough to fit a 16-block window.
+        tokens.extend([random.randint(1, 40) for _ in range(random.randint(1, 44))] + [eos])
+
+    src = _packed(
+        tokens,
+        tmp_path,
+        tokenizer,
+        sequence_length=seq_len,
+        mem_freq=mem_freq,
+        mem_id=50,
+        packing_strategy=LandmarkPackingStrategy.best_fit_decreasing,
+    )
+    assert src._num_dropped == 0
+
+    packed_docs = [d for window in src._windows for d in window]
+    assert sorted(packed_docs) == list(range(n_docs))  # each document exactly once
+
+    for i in range(len(src)):
+        inst = src[i]
+        doc_lens = list(inst["doc_lens"])
+        assert len(inst["input_ids"]) == seq_len
+        assert sum(doc_lens) == seq_len
+        assert all(dl % block_size == 0 and dl > 0 for dl in doc_lens)
+
+    # BFD must not need more windows than next-fit on the same documents.
+    next_fit = _packed(
+        tokens, tmp_path / "nf", tokenizer, sequence_length=seq_len, mem_freq=mem_freq, mem_id=50
+    )
+    assert len(src) <= len(next_fit)
+
+
+def test_packing_strategy_changes_the_fingerprint(tmp_path: Path, tokenizer: TokenizerConfig):
+    """BFD must not reuse next-fit's cached shuffle indices -- but next-fit's hash can't move."""
+    tokens = [1, 2, 3, tokenizer.eos_token_id] * 4
+    default = _packed(tokens, tmp_path / "a", tokenizer, sequence_length=16, mem_freq=3, mem_id=50)
+    explicit_next_fit = _packed(
+        tokens,
+        tmp_path / "b",
+        tokenizer,
+        sequence_length=16,
+        mem_freq=3,
+        mem_id=50,
+        packing_strategy=LandmarkPackingStrategy.next_fit,
+    )
+    bfd = _packed(
+        tokens,
+        tmp_path / "c",
+        tokenizer,
+        sequence_length=16,
+        mem_freq=3,
+        mem_id=50,
+        packing_strategy=LandmarkPackingStrategy.best_fit_decreasing,
+    )
+    assert default.fingerprint == explicit_next_fit.fingerprint
+    assert bfd.fingerprint != default.fingerprint
 
 
 def test_doc_lens_consumable_as_cu_doc_lens(tmp_path: Path, tokenizer: TokenizerConfig):

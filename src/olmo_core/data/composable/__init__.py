@@ -478,6 +478,7 @@ from .landmark_instance_source import (
 from .landmark_packing_instance_source import (
     LandmarkPackingInstanceSource,
     LandmarkPackingInstanceSourceConfig,
+    LandmarkPackingStrategy,
 )
 from .mixing_document_source import (
     MixingDocumentSource,
@@ -582,6 +583,7 @@ __all__ = [
     "LandmarkInstanceSourceConfig",
     "LandmarkPackingInstanceSource",
     "LandmarkPackingInstanceSourceConfig",
+    "LandmarkPackingStrategy",
     "PackingInstanceSource",
     "PackingInstanceSourceConfig",
     "PadToLengthInstanceSource",

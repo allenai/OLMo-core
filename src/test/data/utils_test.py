@@ -1,3 +1,4 @@
+import math
 from collections import namedtuple
 
 import numpy as np
@@ -286,6 +287,43 @@ def test_segment_tree():
     leaf = seg_tree.query(3)  # leaf_id=3, weight=4
     assert leaf.leaf_id == 3
     assert leaf.weight == 4
+
+
+@pytest.mark.parametrize("N", [1, 2, 3, 5, 8, 63, 64, 521, 1000])
+def test_segment_tree_non_power_of_2(N: int):
+    """The tree is padded to the next power of 2, but only capacities 1..N are addressable."""
+    seg_tree = SegmentTree(N)
+    assert seg_tree.N == N
+    # The fresh-bin option sits on leaf N-1 (capacity N) and is the max, whatever the padding.
+    assert seg_tree.root_node.weight == N
+    assert seg_tree.leaf_nodes[N - 1].weight == N
+    assert len(seg_tree.leaf_nodes) == 1 << (N - 1).bit_length()
+    # Padding leaves stay empty, so query() can never return one.
+    assert all(leaf.weight == 0 for leaf in seg_tree.leaf_nodes[N:])
+    for weight in range(1, N + 1):
+        assert seg_tree.query(weight).leaf_id == N - 1
+
+
+def test_instance_packer_non_power_of_2_capacity():
+    """Best-fit-decreasing over a capacity that isn't a power of 2 (e.g. 521 landmark blocks)."""
+    import random
+
+    capacity = 521
+    random.seed(0)
+    lengths = [random.randint(1, capacity) for _ in range(5000)]
+
+    packer = InstancePacker(capacity)
+    for doc_id in sorted(range(len(lengths)), key=lambda i: -lengths[i]):
+        packer.pack_document(doc_id, lengths[doc_id])
+
+    bins = packer.instance_bins
+    # No bin may exceed the real capacity, and every document lands in exactly one bin.
+    assert all(sum(lengths[d] for d in b) <= capacity for b in bins)
+    assert sorted(d for b in bins for d in b) == list(range(len(lengths)))
+    assert packer.total_tokens == sum(lengths)
+    # BFD should land within a few percent of the information-theoretic bin count.
+    lower_bound = math.ceil(sum(lengths) / capacity)
+    assert lower_bound <= len(bins) <= lower_bound * 1.02
 
 
 def test_instance_packer():

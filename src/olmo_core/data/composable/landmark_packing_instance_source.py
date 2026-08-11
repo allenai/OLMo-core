@@ -7,6 +7,8 @@ from typing import List, Optional, Tuple
 from olmo_core.aliases import PathOrStr
 from olmo_core.exceptions import OLMoConfigurationError
 
+from ..types import LandmarkPackingStrategy
+from ..utils import InstancePacker
 from .instance_source import Instance, InstanceSource, InstanceSourceConfig
 from .token_source import DocumentSource, DocumentSourceConfig
 
@@ -35,6 +37,10 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
         :class:`~olmo_core.data.composable.landmark_instance_source.LandmarkInstanceSource`).
     :param warn_drop_fraction: Log a warning if at least this fraction of documents are dropped for
         being longer than a single packed window (a signal to raise ``sequence_length``).
+    :param packing_strategy: Which bin-packing algorithm to use; see
+        :class:`~olmo_core.data.types.LandmarkPackingStrategy`. Defaults to ``next_fit``, which is
+        the historical behavior. Use ``best_fit_decreasing`` to packing-match a dense arm built
+        with :class:`PackingInstanceSource`.
     """
 
     source: DocumentSourceConfig
@@ -45,6 +51,7 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
     num_landmarks: int = 1
     exclude_landmark_predictors: bool = False
     warn_drop_fraction: float = 0.01
+    packing_strategy: LandmarkPackingStrategy = LandmarkPackingStrategy.next_fit
     label: Optional[str] = None
 
     def build(self, work_dir: PathOrStr) -> "LandmarkPackingInstanceSource":
@@ -71,6 +78,7 @@ class LandmarkPackingInstanceSourceConfig(InstanceSourceConfig):
             pad_id=self.pad_id,
             exclude_landmark_predictors=self.exclude_landmark_predictors,
             warn_drop_fraction=self.warn_drop_fraction,
+            packing_strategy=self.packing_strategy,
             work_dir=work_dir,
             label=self.label,
         )
@@ -85,8 +93,11 @@ class LandmarkPackingInstanceSource(InstanceSource):
     inserting landmarks, so document boundaries land at arbitrary, non-block-aligned positions), this
     source inserts landmarks **per document**: each document's content is padded to a multiple of
     ``mem_freq`` and ``num_landmarks`` landmark tokens are appended to every block, so the document
-    occupies a whole number of landmark blocks. Documents are then greedily concatenated (next-fit)
-    into windows of ``sequence_length`` tokens, and the tail of each window is padded. Because every
+    occupies a whole number of landmark blocks. Documents are then bin-packed into windows of
+    ``sequence_length`` tokens (see :class:`~olmo_core.data.types.LandmarkPackingStrategy`: the
+    default ``next_fit`` concatenates greedily in document order, while ``best_fit_decreasing``
+    runs the same algorithm as the dense :class:`PackingInstanceSource`, in units of whole landmark
+    blocks), and the tail of each window is padded. Because every
     document (and the tail pad) is a whole number of blocks, every document boundary is a multiple of
     ``block_size`` --
     exactly the alignment :class:`~olmo_core.nn.attention.LandmarkAttention` (and the fast/sparse
@@ -124,6 +135,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
         num_landmarks: int = 1,
         exclude_landmark_predictors: bool = False,
         warn_drop_fraction: float = 0.01,
+        packing_strategy: LandmarkPackingStrategy = LandmarkPackingStrategy.next_fit,
         label=None,
     ):
         if mem_freq < 1:
@@ -150,6 +162,7 @@ class LandmarkPackingInstanceSource(InstanceSource):
         self.block_size = block_size
         self.exclude_landmark_predictors = exclude_landmark_predictors
         self.warn_drop_fraction = warn_drop_fraction
+        self.packing_strategy = LandmarkPackingStrategy(packing_strategy)
         self._build_plan()
 
     @property
@@ -162,12 +175,13 @@ class LandmarkPackingInstanceSource(InstanceSource):
         return n_blocks * self.block_size
 
     def _build_plan(self) -> None:
-        """Greedy next-fit packing of documents into windows; record window -> document ranges."""
+        """Pack documents into windows; record window -> document ranges."""
         offsets = [(int(s), int(e)) for s, e in self._source.get_document_offsets()]
-        windows: List[List[int]] = []
-        current: List[int] = []
-        remaining = self.sequence_length
+
+        # Documents that survive the over-long cut, as (document index, landmark-space length).
+        kept: List[Tuple[int, int]] = []
         dropped = 0
+        content_tokens = 0
         for i, (s, e) in enumerate(offsets):
             content_len = e - s
             if content_len <= 0:
@@ -176,20 +190,31 @@ class LandmarkPackingInstanceSource(InstanceSource):
             if lm_len > self.sequence_length:
                 dropped += 1
                 continue
-            if lm_len > remaining:
-                if current:
-                    windows.append(current)
-                current = []
-                remaining = self.sequence_length
-            current.append(i)
-            remaining -= lm_len
-        if current:
-            windows.append(current)
+            kept.append((i, lm_len))
+            content_tokens += content_len
+
+        if self.packing_strategy == LandmarkPackingStrategy.best_fit_decreasing:
+            windows = self._pack_best_fit_decreasing(kept)
+        else:
+            windows = self._pack_next_fit(kept)
 
         self._offsets = offsets
         self._windows = windows
         self._num_dropped = dropped
+
         n_docs = sum(1 for s, e in offsets if e - s > 0)
+        n_instances = len(windows)
+        if n_instances:
+            # Everything in a window that isn't upstream content is overhead: the landmark tokens,
+            # the per-document pad up to a multiple of ``mem_freq``, and the window tail.
+            overhead = self.sequence_length * n_instances - content_tokens
+            log.info(
+                f"LandmarkPackingInstanceSource packed {content_tokens:,d} content tokens from "
+                f"{len(kept):,d}/{n_docs:,d} documents into {n_instances:,d} instances of sequence "
+                f"length {self.sequence_length:,d} using '{self.packing_strategy}', with an average "
+                f"of {overhead / n_instances:.1f} non-content tokens per instance (landmarks + "
+                f"block padding + tail)."
+            )
         if dropped:
             frac = dropped / max(n_docs, 1)
             msg = (
@@ -201,6 +226,42 @@ class LandmarkPackingInstanceSource(InstanceSource):
                 log.warning(msg + " Consider increasing sequence_length.")
             else:
                 log.info(msg)
+
+    def _pack_next_fit(self, kept: List[Tuple[int, int]]) -> List[List[int]]:
+        """Greedy next-fit in document order: close the open window as soon as a document misses."""
+        windows: List[List[int]] = []
+        current: List[int] = []
+        remaining = self.sequence_length
+        for i, lm_len in kept:
+            if lm_len > remaining:
+                if current:
+                    windows.append(current)
+                current = []
+                remaining = self.sequence_length
+            current.append(i)
+            remaining -= lm_len
+        if current:
+            windows.append(current)
+        return windows
+
+    def _pack_best_fit_decreasing(self, kept: List[Tuple[int, int]]) -> List[List[int]]:
+        """
+        Best-fit-decreasing packing, in *block* units.
+
+        Every document occupies a whole number of ``block_size`` blocks, so we can run the same
+        :class:`~olmo_core.data.utils.InstancePacker` the dense
+        :class:`~olmo_core.data.composable.PackingInstanceSource` uses over a window capacity of
+        ``sequence_length // block_size`` blocks instead of tokens. That keeps the two arms on the
+        same packing algorithm and shrinks the segment tree by a factor of ``block_size``.
+        """
+        capacity_blocks = self.sequence_length // self.block_size
+        packer = InstancePacker(capacity_blocks)
+        # Longest-first; ties broken by document order so the plan is deterministic.
+        order = sorted(range(len(kept)), key=lambda j: (-kept[j][1], kept[j][0]))
+        for j in order:
+            doc_i, lm_len = kept[j]
+            packer.pack_document(doc_i, lm_len // self.block_size)
+        return packer.instance_bins
 
     @property
     def num_instances(self) -> int:
@@ -221,6 +282,10 @@ class LandmarkPackingInstanceSource(InstanceSource):
                 f"source={self._source.fingerprint},"
             ).encode()
         )
+        if self.packing_strategy != LandmarkPackingStrategy.next_fit:
+            # Only mixed in for non-default strategies, so the fingerprints of the arms that
+            # predate this option (and their cached shuffle indices) are unchanged.
+            sha256_hash.update(f"packing_strategy={self.packing_strategy},".encode())
         return sha256_hash.hexdigest()
 
     def __len__(self) -> int:
