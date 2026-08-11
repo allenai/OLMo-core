@@ -8,6 +8,9 @@
 #   f1        0.9583333333333334      exact_match 0.8770491803278688
 #   parse_rate 1.0                    eval_size   488
 #   max_length 4096                   max_new     512
+#   query_position BOTH -- hardcoded at eval_lc_native_docchunk_contra.py:496, NOT the "after"
+#   default. run_rung_eval never overrides it. For contradiction (unified) this repeats the
+#   instruction after the documents, so it is a materially different prompt.
 #
 # This is a REPRODUCTION check, not a science run: the question is only whether the ported code
 # gets the same number from the same inputs. If the FEVER filler leak affects this eval file it
@@ -46,7 +49,12 @@ REPO=$STAGE/repo
 # config.json and model_and_optim both live there. step750/ has weights but no config.
 CKPT=$STAGE/ckpts/ctc-t0-contra-n20-full
 DATA=$STAGE/contradiction_eval_pubmed_both_n20_k3.jsonl
-OUT=$STAGE/contra_2k_full.json
+# STOP_PRESET lets one run isolate the stop-rule hypothesis without editing anything:
+#   (unset)      -> the task's own rule, stop="pairs"
+#   eos          -> what the pre-migration contradiction run actually did (a rule whose
+#                   should_stop returns False unconditionally, so it decoded to the budget)
+STOP_PRESET=${STOP_PRESET:-}
+OUT=$STAGE/contra_2k_full${STOP_PRESET:+_stop-$STOP_PRESET}.json
 
 mkdir -p /data/prasann/joblogs "$STAGE"
 
@@ -89,8 +97,10 @@ exec "$PY" -m ctc.eval.validate \
   --attn full \
   --tokenizer "$TOKENIZER" \
   --eos-token-id 248044 \
+  --query-position both \
   --max-length 4096 \
   --max-new-tokens 512 \
   --out "$OUT" \
   --expect-f1 0.9583333333333334 \
-  --expect-eval-size 488
+  --expect-eval-size 488 \
+  ${STOP_PRESET:+--stop-preset $STOP_PRESET}
