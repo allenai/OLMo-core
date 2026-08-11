@@ -2199,9 +2199,20 @@ def _eval_summarization(examples, responses):
         from rouge_score import rouge_scorer
         scorer = rouge_scorer.RougeScorer(["rouge1", "rougeL"], use_stemmer=True)
         use_rouge = True
-    except ImportError:
+    except ImportError as e:
+        # This fallback still writes its value under the keys "rouge1_f"/"rougeL_f", so a missing
+        # dependency silently relabels token-F1 as ROUGE. It did exactly that for the whole
+        # helmet_summ column of the CTC grid: `rouge_score` was installed on sneetches but its
+        # dependency `absl-py` was not, so every reported "rouge1_f" was really token-F1 (the
+        # tell is rouge1_f == rougeL_f to full precision, which ROUGE-1 and ROUGE-L never are).
+        # Be loud about it -- see records/helmet-narrativeqa-govreport-repair.md.
         from corpus_reasoning.lib.metrics import token_f1
         use_rouge = False
+        print(
+            f"!! _eval_summarization: rouge_score unavailable ({e}); falling back to token_f1. "
+            f"The reported 'rouge1_f'/'rougeL_f' are NOT ROUGE -- check the 'metric' field before "
+            f"quoting them. Fix with: pip install rouge_score absl-py nltk"
+        )
 
     r1s, rls, details = [], [], []
     for ex, resp in zip(examples, responses):
