@@ -73,6 +73,48 @@ def test_score_reports_whether_it_parsed(spec):
 
 # ── fingerprint derivation ──────────────────────────────────────────────────────────────────────
 
+# The pre-migration `force_unified` set inside build_prompt, verbatim. Restated here so that as the
+# remaining 19 specs land, each one's `unified` flag is checked against what the old code actually
+# did rather than against someone's recollection of it. matching_ngram and ruler are in the old set
+# but are not canonical native tasks.
+HISTORICAL_UNIFIED = {
+    "contradiction", "qdmatch", "xabsence", "redundancy", "absence", "matching_ngram",
+    "mathmatch", "strmatch", "cycle", "groups4", "textgroups", "reorder", "ruler",
+}
+
+
+@pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
+def test_unified_flag_matches_the_pre_migration_behaviour(spec):
+    """`unified` is not a preference -- it must match what build_prompt did for this task."""
+    assert spec.unified == (spec.name in HISTORICAL_UNIFIED)
+
+
+def test_fingerprint_records_query_position():
+    """query_position really varies across runs (both/before/after are all in use) and changes the
+    token stream substantially -- 'both' repeats the whole query block after the documents.
+
+    Without it in the fingerprint, two checkpoints differing only here would compare as compatible.
+    """
+    spec = registry.get("contradiction")
+    a = spec.fingerprint(query_position="before")
+    b = spec.fingerprint(query_position="both")
+    with pytest.raises(Exception):
+        a.require_compatible_with(b)
+
+
+def test_fingerprint_records_prompt_shape():
+    spec = registry.get("contradiction")
+    assert spec.fingerprint().prompt_shape == "unified"
+    unified_fp = spec.fingerprint()
+    classic_fp = spec.fingerprint(prompt_shape="classic")
+    assert unified_fp.compare(classic_fp)
+
+
+def test_invalid_query_position_is_rejected():
+    with pytest.raises(ValueError, match="query_position"):
+        registry.get("contradiction").fingerprint(query_position="middle")
+
+
 def test_fingerprint_is_derived_from_the_spec():
     spec = registry.get("contradiction")
     fp = spec.fingerprint(tokenizer="Qwen3.5-4B", doc_id_range=(1, 705))

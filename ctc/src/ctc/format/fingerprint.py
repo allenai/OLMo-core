@@ -141,6 +141,8 @@ _RULES = {
     "serializer": ("exact", _exact),
     "item_separator": ("exact", _exact),
     "gold_index_base": ("exact", _exact),
+    "prompt_shape": ("exact", _exact),
+    "query_position": ("exact", _exact),
     "chunk_layout": ("exact", _exact),
     "marker_token_ids": ("exact", _optional_exact),
     "tokenizer": ("exact", _optional_exact),
@@ -158,6 +160,14 @@ class FormatFingerprint:
     :param serializer: Which document serializer rendered the context block.
     :param item_separator: The delimiter between items -- the chunk boundary the masks split on.
     :param gold_index_base: ``0`` or ``1``; differs per task and is an easy off-by-one.
+    :param prompt_shape: ``"unified"`` (generic alpaca header, task instruction positioned with the
+        documents) or ``"classic"`` (task instruction in the header, per-example query positioned).
+        Which one a task uses is a property of the task, not a knob -- see :class:`TaskSpec`.
+    :param query_position: ``"before"``, ``"after"`` or ``"both"``. Recorded because it is a real
+        knob that really varies (``both`` and ``before`` and ``after`` are all in use across runs)
+        and it changes the token stream substantially -- ``both`` repeats the entire query block on
+        the far side of the documents. Two checkpoints differing only here would otherwise share a
+        fingerprint, and the guard would pass on a format that genuinely differs.
     :param chunk_layout: Chunk-wrapping scheme, e.g. ``"wrap_documents"`` or ``"none"``.
     :param doc_id_range: ``(min, max)`` document id actually present. Compared by containment.
     :param marker_token_ids: Reserved marker ids, when the format uses them.
@@ -170,6 +180,8 @@ class FormatFingerprint:
     serializer: str
     item_separator: str
     gold_index_base: int
+    prompt_shape: str = "classic"
+    query_position: str = "after"
     chunk_layout: str = "none"
     doc_id_range: Optional[Tuple[int, int]] = None
     marker_token_ids: Optional[Tuple[int, ...]] = None
@@ -188,6 +200,12 @@ class FormatFingerprint:
             lo, hi = self.doc_id_range
             if lo > hi:
                 raise ValueError(f"doc_id_range {self.doc_id_range!r} is inverted")
+        if self.prompt_shape not in ("unified", "classic"):
+            raise ValueError(f"prompt_shape must be 'unified' or 'classic', got {self.prompt_shape!r}")
+        if self.query_position not in ("before", "after", "both"):
+            raise ValueError(
+                f"query_position must be 'before', 'after' or 'both', got {self.query_position!r}"
+            )
 
     # ── comparison ──────────────────────────────────────────────────────────────────────────────
 

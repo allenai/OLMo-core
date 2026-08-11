@@ -122,6 +122,9 @@ SPEC = TaskSpec(
     gold_index_base=1,
     instruction=CONTRADICTION_INSTRUCTION,
     serializer="contradiction",
+    # No per-example query -- "find every contradicting pair" IS the ask, so the instruction takes
+    # the positioned slot and the alpaca header is the generic one.
+    unified=True,
     rungs=("2k", "4k", "8k", "16k", "32k"),
     build_prompt=build_prompt,
     parse=parse,

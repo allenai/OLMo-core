@@ -51,6 +51,17 @@ class TaskSpec:
     :param instruction: The task's instruction string, verbatim. Hashed into the fingerprint, so
         editing it correctly invalidates every checkpoint trained under the old wording.
     :param serializer: Key into the table in :mod:`ctc.format.documents`, or ``"default"``.
+    :param unified: Whether this task uses the unified prompt shape -- a generic alpaca header with
+        the task instruction positioned alongside the documents. True for tasks with **no
+        per-example query**, where the instruction ("find every contradicting pair") *is* the whole
+        ask: 11 of the 20 canonical tasks. False for tasks that carry a real question per example
+        (retrieval, qa, oolong, grouping, outlier, rerank, summarization, cot_retrieval,
+        grouping_labeled), which keep the task instruction in the header and position the question.
+
+        In the pre-migration code this was a hardcoded ``force_unified`` set inside ``build_prompt``,
+        and a separate ``unified_prompt`` argument that could force it on for any task -- but that
+        argument was never once enabled, so the hardcoded set was the whole behaviour. Declaring it
+        per task makes the split visible and lets the fingerprint record it.
     :param rungs: This task's own context-length ladder. There is no global set -- nq runs 2k-8k
         while the xlong ladders reach 512k -- so ``--rungs all`` is only answerable per task.
     :param primary_metric: Which key of ``score``'s output is *the* number for this task. Named
@@ -73,6 +84,7 @@ class TaskSpec:
     score: Callable[..., Dict[str, float]]
     instruction: str = ""
     serializer: str = "default"
+    unified: bool = False
     rungs: Tuple[str, ...] = ()
     primary_metric: str = "f1"
     max_new_tokens: int = 512
@@ -95,11 +107,13 @@ class TaskSpec:
 
         Everything defining the format is already declared on the spec, so the fingerprint is
         computed from it rather than written out a second time -- which is what stops the two from
-        disagreeing. The caller supplies only what the spec cannot know: the tokenizer, the marker
-        ids, the chunk layout, and the document-id range actually present in the built data.
+        disagreeing. The caller supplies only what the spec cannot know: the build options
+        (``query_position``), the tokenizer, the marker ids, the chunk layout, and the document-id
+        range actually present in the built data.
 
-        :param overrides: Fingerprint fields to set, typically ``tokenizer``, ``marker_token_ids``,
-            ``chunk_layout`` and ``doc_id_range``.
+        :param overrides: Fingerprint fields to set. ``query_position`` should always be passed --
+            it is a real build option that varies across runs, and its default here is only the
+            most common value, not a safe assumption.
 
         :returns: The fingerprint to write beside the shards or the checkpoint.
         """
@@ -111,6 +125,7 @@ class TaskSpec:
             serializer=self.serializer,
             item_separator=ITEM_SEPARATOR,
             gold_index_base=self.gold_index_base,
+            prompt_shape="unified" if self.unified else "classic",
         )
         base.update(overrides)
         return FormatFingerprint(**base)
