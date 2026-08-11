@@ -7,6 +7,11 @@ cd /accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 
 WORK='
 set -e
+export PATH=/opt/conda/bin:$PATH
+if ! command -v aws >/dev/null 2>&1; then
+  echo "installing awscli into conda env..."; python -m pip install -q awscli
+fi
+AWS=$(command -v aws); echo "using aws: $AWS ($($AWS --version 2>&1 | head -1))"
 mkdir -p ~/.aws
 printf "%s" "$AWS_CREDS" > ~/.aws/credentials
 printf "%s" "$AWS_CFG" > ~/.aws/config
@@ -15,7 +20,7 @@ S3=s3://ai2-llm/checkpoints/prasanns/ctc_suite
 WK=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite
 for d in bases/qwen3-4b-base-trainedmark shards/contra_mix_qwen3_10k shards/contra_mix_qwen35_10k; do
   echo "=== sync $d ==="
-  aws s3 sync "$S3/$d" "$WK/$d"
+  "$AWS" s3 sync "$S3/$d" "$WK/$d"
 done
 echo "=== verify ==="
 ls "$WK/bases/qwen3-4b-base-trainedmark/model_and_optim/.metadata" && echo QWEN3_BASE_OK

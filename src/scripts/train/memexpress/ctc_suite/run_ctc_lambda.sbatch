@@ -38,6 +38,7 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
   export CTC_LAUNCH_TS="$(date -Is)"   # provenance: true submit time, not job-start time
   exec sbatch \
     --time="${TIME:-01:00:00}" \
+    ${QOS:+--qos="$QOS"} \
     ${NODE:+-w "$NODE"} \
     ${RUN:+--job-name="$RUN"} \
     --export=ALL "$0"
@@ -62,6 +63,11 @@ GLOBAL_BATCH="${GLOBAL_BATCH:-8}"
 MICRO_BATCH="${MICRO_BATCH:-1}"
 MAX_STEPS="${MAX_STEPS:-0}"
 SEED="${SEED:-0}"
+# 40960-seq at 0.8B OOMs on 80GB A100 without these (validated: job 109705 OOM'd at step 1,
+# 77.7GB allocated -- 0.8B's default shard_degree=1/no-AC only fits 141GB H200). Force full AC +
+# FSDP param sharding on lambda. Empty -> trainer default (auto).
+ACT_CKPT="${ACT_CKPT:-full}"              # full | none | auto
+SHARD_DEGREE="${SHARD_DEGREE:-8}"         # FSDP shard_degree across the 8 A100s
 ATTN_BACKEND="${ATTN_BACKEND:-flash_2}"   # A100 = sm80, flash_2 verified importable + supported
 RUN="${RUN:-ctc-${TASK}-${VARIANT}-${SCALE}-lambda}"
 WANDB_GROUP="${WANDB_GROUP:-ctc-suite-${TASK}}"
@@ -76,12 +82,24 @@ source "$ENV/bin/activate"
 conda-unpack 2>/dev/null || true
 export PYTHONPATH="$REPO/src"
 export TOKENIZERS_PARALLELISM=false
-export HF_HOME=$LROOT/hf-cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# HF_HOME must point at a cache that actually HAS the tokenizer: lambda is air-gapped, so with
+# HF_HUB_OFFLINE=1 a miss is a hard failure, not a download. $LROOT/hf-cache never existed -- training
+# survived only because the shards are pre-tokenized and never load a tokenizer. EVAL does load one,
+# so it would have died on every run. The populated cache (Qwen3.5-0.8B-Base tokenizer, which the
+# whole qwen3_5 family shares) lives in the sewonm home cache below.
+export HF_HOME="${HF_HOME_OVERRIDE:-/accounts/projects/sewonm/prasann/.cache/huggingface}"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export WANDB_MODE=offline WANDB_API_KEY=offline_dummy_air_gapped
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True OMP_NUM_THREADS=8
 export PYTHONWARNINGS=ignore
 export PYTHONUNBUFFERED=1
-export TRITON_CACHE_DIR=/tmp/triton_$SLURM_JOB_ID
+# Triton cache: node-local and STABLE across jobs. Keying it on $SLURM_JOB_ID (the old behaviour)
+# meant every job JIT-recompiled the Gated-DeltaNet kernels from scratch -- several minutes of ptxas
+# before step 1, paid again on every run of a fan-out, and easy to misread as a hung job. /tmp is
+# node-local (safe to share, unlike an NFS cache -- see the flashinfer NFS wedge) and Triton's cache
+# writes are atomic renames, so concurrent jobs on a node can share it.
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/tmp/$USER/triton_cache}"
+mkdir -p "$TRITON_CACHE_DIR"
 
 # ---- base: read the shared distcp directly from LROOT (NFS); guard the .metadata marker ----
 BASE_CKPT="$BASE_SRC/model_and_optim"
@@ -89,15 +107,21 @@ if [ ! -f "$BASE_CKPT/.metadata" ]; then
   echo "FATAL: base checkpoint $BASE_CKPT missing .metadata -> would silently train from scratch"; exit 3
 fi
 
-# ---- data + workdir + save folder: all under LROOT (NFS) -- mirrors the working lambda scripts,
-# no node-local /data invented here even though the nodes do have it (see header note) ----
+# ---- data + workdir + save folder ----
+# Default to LROOT (NFS), mirroring the working lambda scripts. But NFS is a per-USER 1.30T quota
+# that a fan-out of 12G distcp ckpts blows through (see records/overnight-stage345-plan.md quota
+# watch). SAVE_ROOT/WORK_ROOT let a launch redirect ckpt+cache to compute-node-local /data (14TB
+# NVMe, NOT quota'd) -- the job runs ON a compute node so /data exists there. Harvest = node-pin the
+# eval to the training host (log banner prints HOST). Data is READ-only from NFS, doesn't grow quota.
+SAVE_ROOT="${SAVE_ROOT:-$LROOT/ckpts}"
+WORK_ROOT="${WORK_ROOT:-$LROOT}"
 DATA_LOCAL="$LROOT/data/$DATA_SRC"
 [ -f "$DATA_LOCAL/metadata.json" ] || { echo "FATAL: $DATA_LOCAL/metadata.json missing -- stage the shard first"; exit 3; }
-WORK_LOCAL=$LROOT/cache-$SLURM_JOB_ID
+WORK_LOCAL=$WORK_ROOT/cache-$SLURM_JOB_ID
 mkdir -p "$WORK_LOCAL"
-SAVE_LOCAL=$LROOT/ckpts/$RUN
+SAVE_LOCAL=$SAVE_ROOT/$RUN
 mkdir -p "$SAVE_LOCAL"
-echo "BASE_CKPT=$BASE_CKPT DATA_LOCAL=$DATA_LOCAL SAVE=$SAVE_LOCAL"
+echo "BASE_CKPT=$BASE_CKPT DATA_LOCAL=$DATA_LOCAL SAVE=$SAVE_LOCAL WORK=$WORK_LOCAL"
 
 cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
@@ -110,6 +134,8 @@ torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   --data "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
   --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --lr "$LR" --attn-backend "$ATTN_BACKEND" \
   --global-batch "$GLOBAL_BATCH" --micro-batch-instances "$MICRO_BATCH" --seed "$SEED" \
+  ${ACT_CKPT:+--activation-checkpointing "$ACT_CKPT"} \
+  ${SHARD_DEGREE:+--shard-degree "$SHARD_DEGREE"} \
   --save-checkpoint --no-compile \
   $MAXARG
 echo "=== DONE $(date '+%F %T')  rc=$? ==="

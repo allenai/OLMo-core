@@ -199,13 +199,21 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         max_grad_norm=1.0,
     )
 
-    # ---- Data: 5-task PadToLength mix ----
+    # ---- Data: PadToLength mix over --tasks (default: the full 5-task mix) ----
+    # A single-task subset keeps this launcher usable as the LOCAL twin of the Beaker single-task
+    # ladder runs (same shards, same base) when the Beaker cluster is saturated. Ratios are
+    # renormalised over the selected tasks, so a single task trivially gets ratio 1.0.
+    names = tuple(t.strip() for t in opts.tasks.split(",") if t.strip())
+    unknown = [t for t in names if t not in _W]
+    if unknown:
+        raise SystemExit(f"unknown --tasks {unknown}; choose from {sorted(_W)}")
+    wsum = sum(_W[n] for n in names)
     specs = [
         MixingDocumentSourceSpecConfig(
             source=_task_source(data_root, emit, name, doc_tokenizer_config),
-            ratio=_W[name] / _WSUM, max_repetition_factor=8.0, label=_TASK_LABEL[name],
+            ratio=_W[name] / wsum, max_repetition_factor=8.0, label=_TASK_LABEL[name],
         )
-        for name in ("contra", "nq", "oolong", "rerank", "outlier")
+        for name in names
     ]
     instance_source_config = PadToLengthInstanceSourceConfig(
         sources=[MixingDocumentSourceConfig(source_specs=specs)],
@@ -257,6 +265,9 @@ def main() -> None:
     ap.add_argument("--variant", required=True, choices=["dense", "hierarchical", "landmark", "compressive"])
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--data-root", required=True, help="dir holding {task}_{dense,landmark} shard subdirs")
+    ap.add_argument("--tasks", default="contra,nq,oolong,rerank,outlier",
+                    help="comma list of tasks to mix (default: all 5). Pass a single task to run the "
+                         "local twin of a single-task ladder row.")
     ap.add_argument("--seq-len", type=int, default=40960)
     ap.add_argument("--save-folder", default=None)
     ap.add_argument("--base-ckpt", default=None)

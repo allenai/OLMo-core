@@ -28,7 +28,7 @@ EVALDIR="${5:-contradiction}"
 MAXLEN="${MAXLEN:-}"
 MAXLEN_ARG=""
 [ -n "$MAXLEN" ] && MAXLEN_ARG="--max-length $MAXLEN"
-NAME="olmo3-eval-$(echo "$ARM-$TASK" | tr '_' '-')-$(date +%H%M%S)"
+NAME="olmo3-eval-$(echo "$ARM-$TASK" | tr '_' '-')${RUNGS:+-r${RUNGS// /_}}-$(date +%H%M%S)"
 
 WORK='
 set -uo pipefail
@@ -50,7 +50,7 @@ done
 echo "checkpoint present after ${WAITED}s"
 ls -l CKPT_SUB/config.json
 RC_ALL=0
-for RUNG in 2048 4096 8192 16384; do
+for RUNG in RUNGS_LIST_SUB; do
   JSONL=$WK/eval_rungs/EVALDIR_SUB/rung_${RUNG}.jsonl
   if [ ! -f "$JSONL" ]; then echo "MISSING eval rung $JSONL"; RC_ALL=1; continue; fi
   PORT=$((29000 + RANDOM % 1000))
@@ -73,6 +73,7 @@ command -v aws >/dev/null 2>&1 || python -m pip install -q awscli
 AWS=$(command -v aws)
 AWS_PROFILE=S3 "$AWS" s3 sync "$OUT" s3://ai2-llm/checkpoints/prasanns/ctc_olmo3/results --only-show-errors
 echo "EVAL_LADDER_DONE rc=$RC_ALL"
+exit $RC_ALL
 '
 WORK="${WORK//CKPT_SUB/$CKPT}"
 WORK="${WORK//VARIANT_SUB/$VARIANT}"
@@ -80,6 +81,7 @@ WORK="${WORK//ARM_SUB/$ARM}"
 WORK="${WORK//TASK_SUB/$TASK}"
 WORK="${WORK//EVALDIR_SUB/$EVALDIR}"
 WORK="${WORK//MAXLEN_SUB/$MAXLEN_ARG}"
+WORK="${WORK//RUNGS_LIST_SUB/${RUNGS:-2048 4096 8192 16384}}"
 
 # NOTE the REAL `--install`, not the `--install true` no-op that beaker.md recommends for baked
 # images: this image predates olmo-core's `dataclass_extensions` dependency, so the no-op path dies
@@ -92,4 +94,5 @@ gantry run --name "$NAME" -w ai2/flex2 -b ai2/oe-other \
   --weka oe-training-default:/weka/oe-training-default \
   --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
   --env-secret WANDB_API_KEY=PRASANNS_WANDB_API_KEY \
-  --install 'pip install -e .' --allow-dirty --timeout 0 --yes -- bash -c "$WORK"
+  --install 'pip install -e . && python -c "import transformers" 2>/dev/null || pip install transformers' \
+  --allow-dirty --timeout 0 --yes -- bash -c "$WORK"
