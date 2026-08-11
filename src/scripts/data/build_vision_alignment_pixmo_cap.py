@@ -40,7 +40,7 @@ CANONICAL_VALIDATION_EXAMPLES = 2_048
 _SPLITS = ("train", "validation")
 _STATE_FORMAT = "vision_alignment_pixmo_cap_build_state"
 _STATE_VERSION = 1
-_CACHE_SCHEMA_VERSION = 1
+_CACHE_SCHEMA_VERSION = 2
 _HASH_CHUNK_BYTES = 8 * 1024 * 1024
 _HASH_BATCH_SIZE = 2_048
 
@@ -72,9 +72,20 @@ class FileSignature:
     inode: int
     device: int
 
-    def as_tuple(self) -> Tuple[int, int, int, int, int]:
-        """Return the signature in SQLite column order."""
-        return (self.size_bytes, self.mtime_ns, self.ctime_ns, self.inode, self.device)
+    def as_cache_tuple(self) -> Tuple[str, str, str, str, str]:
+        """Return a lossless SQLite representation in cache-column order.
+
+        Some distributed filesystems expose unsigned 64-bit inode or device identifiers,
+        which are larger than SQLite's signed ``INTEGER`` range. Decimal text preserves the
+        full identity without coercion to an imprecise floating-point value.
+        """
+        return (
+            str(self.size_bytes),
+            str(self.mtime_ns),
+            str(self.ctime_ns),
+            str(self.inode),
+            str(self.device),
+        )
 
 
 def _canonical_json(value: Any) -> str:
@@ -272,8 +283,8 @@ class ImageHashCache:
         )
         self.connection.execute(
             "CREATE TABLE IF NOT EXISTS hashes ("
-            "path TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, "
-            "ctime_ns INTEGER NOT NULL, inode INTEGER NOT NULL, device INTEGER NOT NULL, "
+            "path TEXT PRIMARY KEY, size_bytes TEXT NOT NULL, mtime_ns TEXT NOT NULL, "
+            "ctime_ns TEXT NOT NULL, inode TEXT NOT NULL, device TEXT NOT NULL, "
             "sha256 TEXT NOT NULL)"
         )
         expected = {
@@ -293,7 +304,7 @@ class ImageHashCache:
             "SELECT size_bytes, mtime_ns, ctime_ns, inode, device, sha256 FROM hashes WHERE path=?",
             (path,),
         ).fetchone()
-        if row is None or tuple(row[:5]) != signature.as_tuple():
+        if row is None or tuple(row[:5]) != signature.as_cache_tuple():
             return None
         digest = row[5]
         if not isinstance(digest, str) or len(digest) != 64:
@@ -302,11 +313,15 @@ class ImageHashCache:
 
     def store_many(self, rows: Sequence[Tuple[str, FileSignature, str]]) -> None:
         """Persist a batch of freshly computed file hashes."""
-        self.connection.executemany(
-            "INSERT OR REPLACE INTO hashes VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [(path, *signature.as_tuple(), digest) for path, signature, digest in rows],
-        )
-        self.connection.commit()
+        try:
+            self.connection.executemany(
+                "INSERT OR REPLACE INTO hashes VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(path, *signature.as_cache_tuple(), digest) for path, signature, digest in rows],
+            )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def close(self) -> None:
         """Checkpoint and close the cache before its staging directory is renamed."""

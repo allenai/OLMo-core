@@ -264,3 +264,20 @@ def test_exact_resume_reuses_durable_path_hash_cache(tmp_path, monkeypatch):
     assert fresh_hashes == []
     assert len(set(train_images + validation_images)) > 0
     assert output.is_dir()
+
+
+def test_hash_cache_preserves_unsigned_64_bit_filesystem_identity(tmp_path):
+    module = _load_module()
+    cache = module.ImageHashCache(tmp_path / "hash-cache.sqlite3", "a" * 64)
+    signature = module.FileSignature(
+        size_bytes=17,
+        mtime_ns=2**63 + 1,
+        ctime_ns=2**63 + 2,
+        inode=2**64 - 2,
+        device=2**64 - 1,
+    )
+    try:
+        cache.store_many([("/images/example.jpg", signature, "b" * 64)])
+        assert cache.lookup("/images/example.jpg", signature) == "b" * 64
+    finally:
+        cache.close()
