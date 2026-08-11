@@ -103,6 +103,48 @@ if you want them counted and reported instead.
 **`rerank` has no 32k rung** (its CE-filtered hard-negative pool caps at 100 documents) and `fiqa`
 stops at 16k. `--rungs all` handles this; an explicit `--rungs 32k` skips those tasks with a note.
 
+## Bundles: which eval data, and why the name matters
+
+`--bundle` picks the eval data. `ctc-eval --list-bundles` shows what's registered; a directory path
+works too, for a staged local copy.
+
+| bundle | kind | what it is |
+|---|---|---|
+| `v2_clean` | reliable | **default.** The v2 ladder with contradiction rebuilt against a PubMed-only filler pool and its rungs recalibrated. |
+| `v2` | reliable | The original v2 ladder. Kept because existing results — including the 256k runs — were produced against it. |
+
+**Bundles are not interchangeable, and this is the one thing to get right.** The same rung label
+maps to *different files with different corpus sizes*: contradiction's 64k rung is `n=1602` in `v2`
+and `n=1525` in `v2_clean`, because the clean rebuild recalibrated after the original's filler pool
+turned out to be 92–99% FEVER/wiki rather than PubMed. A "64k contradiction" number from one bundle
+is not comparable to one from the other. Every result file therefore records `bundle`,
+`bundle_root` and `bundle_kind`.
+
+`kind` distinguishes **reliable** (one independently sampled corpus per row, so 500 rows are 500
+independent measurements) from **fast** (many queries share a corpus so a prefill can be reused).
+Rebuilding an eval set to share corpora measurably moves scores, so the two kinds are separate
+bundles rather than a flag on one.
+
+### Ultra-long rungs (64k–2M) are opt-in
+
+```bash
+--rungs xlong            # 64k, 128k, 256k, 512k, 1M, 2M
+--rungs 64k,256k         # or pick them individually
+```
+
+Deliberately excluded from `--rungs all`: one 256k rung is hours per task, and it should never start
+by accident. Asking for `xlong` on a task that has none raises rather than returning an empty list —
+a missing row reads as "scored nothing", not "never ran".
+
+**Coverage differs by bundle**, verified against weka:
+
+| | contradiction | nq | outlier | rerank |
+|---|---|---|---|---|
+| `v2` | 64k–2M | 64k–2M | 64k–2M | 64k–2M |
+| `v2_clean` | 64k–2M | — | — | 128k, 256k, 1M, 2M |
+
+So **for 64k+ on nq or outlier you must pass `--bundle v2`.** The default has no such files.
+
 ## Which data this runs on
 
 The `_eval_bundle_eval500_v2_clean` bundle on weka. Every rung of a task grades the **same
