@@ -36,6 +36,13 @@ ATTENTION_MODES = ("full", "chunked", "landmark")
 #: ``<|im_end|>`` in the Qwen3 vocabulary.
 PAD_FALLBACK_ID = 151645
 
+#: Tokens between host-side stop-rule checks during decode. Each check decodes the whole completion
+#: so far, which is O(n) per call and quadratic over a generation -- checking every token was the
+#: dominant cost of this loop. The interval cannot affect the result: :func:`ctc.eval.stopping.apply`
+#: performs the authoritative truncation afterwards over the full string, so a late check only means
+#: a few extra tokens were generated and discarded.
+STOP_CHECK_INTERVAL = 8
+
 
 class NativeBackend:
     """
@@ -198,16 +205,25 @@ class NativeBackend:
             nxt = self._decode_step(torch, logits)
 
             produced: List[int] = []
-            for _ in range(stop.max_new_tokens):
+            for step in range(stop.max_new_tokens):
                 if stop.eos and nxt == self.eos_id:
                     break
                 produced.append(nxt)
 
-                # Check the stop rule against decoded text, not token ids: "]]" and "\n" are text
-                # facts, and a tokenizer is free to split them however it likes.
-                text = self.tok.decode(produced, skip_special_tokens=True)
-                if should_stop(strip_think(text) if stop.strip_think else text, stop) is not None:
-                    break
+                # The stop rule is checked against decoded TEXT, not token ids -- "]]" and "\n" are
+                # text facts and a tokenizer may split them anywhere. But decoding is host-side and
+                # costs O(len(produced)) each time, so doing it every token is quadratic in the
+                # generation length and dominated this loop.
+                #
+                # Checking on an interval cannot change the OUTPUT, only the work: the authoritative
+                # truncation is the apply_stop below, which sees the whole string. A late check just
+                # means a few extra tokens were generated and then discarded.
+                if (step + 1) % STOP_CHECK_INTERVAL == 0:
+                    text = self.tok.decode(produced, skip_special_tokens=True)
+                    if stop.strip_think:
+                        text = strip_think(text)
+                    if should_stop(text, stop) is not None:
+                        break
 
                 logits = self.gm.model(
                     torch.tensor([[nxt]], device=self.device), logits_to_keep=1
