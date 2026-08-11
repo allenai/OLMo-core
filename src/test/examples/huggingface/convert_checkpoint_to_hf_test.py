@@ -188,6 +188,16 @@ def test_load_ddp_optimizer_model_state(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert torch.equal(state["lm_head.weight"], main.reshape(4, 3))
     assert torch.equal(state["score_bias"], score_bias)
 
+    model.embeddings.weight.data.zero_()
+    model.score_bias.zero_()
+    state = convert_checkpoint_module._load_ddp_optimizer_model_state(
+        tmp_path, model, work_dir=tmp_path, return_state_dict=False
+    )
+
+    assert state == {}
+    assert torch.equal(model.embeddings.weight, main.reshape(4, 3))
+    assert torch.equal(model.score_bias, score_bias)
+
 
 def test_convert_checkpoint_to_hf_correct_config(
     tmp_path: Path,
