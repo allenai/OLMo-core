@@ -150,6 +150,36 @@ def test_an_xlong_rung_absent_from_a_bundle_names_the_bundle():
         bundles.resolve("nq", "64k", root="v2_clean")
 
 
+def test_the_fast_bundle_supplies_its_own_ladders():
+    """Its filenames encode the construction (``_tail10`` / ``_mux``), not the corpus size, so
+    inheriting the base ladder would resolve to files that do not exist."""
+    fast = bundles.get_bundle("fast")
+    assert fast.kind == "fast"
+    assert fast.declares_own_ladder("contradiction")
+    assert not bundles.get_bundle("v2").declares_own_ladder("contradiction")
+    assert "tail10" in fast.rungs_for("contradiction")["8k"]
+    assert "mux" in fast.rungs_for("nq")["8k"]
+
+
+def test_fast_all_is_filtered_to_the_rungs_it_actually_has():
+    """The fast bundle starts at 8k. Returning the base ladder's 2k would name a missing file."""
+    labels = [label for label, _ in bundles.resolve("contradiction", "all", root="fast")]
+    assert labels == ["8k", "16k", "32k"]
+    assert "2k" in bundles.get("contradiction").labels
+
+
+def test_fast_reaches_1m_but_not_2m():
+    labels = [label for label, _ in bundles.resolve("contradiction", "xlong", root="fast")]
+    assert labels == ["64k", "128k", "256k", "512k", "1M"]
+
+
+def test_a_task_the_fast_bundle_cannot_construct_says_so():
+    """outlier's construction needs per-document topic labels the eval files strip. Failing with
+    the reason beats resolving to a filename nobody ever wrote."""
+    with pytest.raises(KeyError, match="no outlier"):
+        bundles.resolve("outlier", "all", root="fast")
+
+
 def _args(**kwargs) -> argparse.Namespace:
     base = dict(tasks="main", rungs="all", bundle="/bundle")
     base.update(kwargs)

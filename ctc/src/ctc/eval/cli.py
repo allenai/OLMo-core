@@ -107,6 +107,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="where the question is rendered (default both). MUST match training: these "
         "checkpoints trained with 'both', and 'after' collapses them (nq 0.860 -> 0.074).",
     )
+    how.add_argument(
+        "--share-prefix",
+        action="store_true",
+        help="prefill each corpus group's shared token prefix once and reuse its KV. Only does "
+        "anything on a fast bundle, whose rows carry corpus_id; the reuse is measured and printed "
+        "rather than assumed, and falls back to plain prefills when there is nothing to share.",
+    )
     how.add_argument("--mem-freq", type=int, default=63, help="(landmark) block = mem-freq + 1")
     how.add_argument("--limit", type=int, default=None, help="grade only the first N per rung")
     how.add_argument(
@@ -325,6 +332,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(f"[ctc-eval] loading {args.ckpt} on the {backend_name} backend ...", flush=True)
     started = time.time()
+    extra = {}
+    if args.share_prefix:
+        # Only the native backend implements KV reuse. hf and vllm forward unknown kwargs straight
+        # into `from_pretrained` / `LLM(...)`, so passing it to them would surface as an unrelated
+        # loader error rather than as "that backend cannot do this".
+        if backend_name != "native":
+            raise SystemExit(
+                f"--share-prefix is implemented on the native backend only, not {backend_name!r}."
+            )
+        extra["share_prefix"] = True
+
     backend = backends.load(
         backend_name,
         ckpt=args.ckpt,
@@ -333,6 +351,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         max_length=args.max_length,
         query_position=args.query_position,
         mem_freq=args.mem_freq,
+        **extra,
     )
     print(f"[ctc-eval] loaded in {time.time() - started:.0f}s", flush=True)
 
@@ -398,6 +417,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         payload["bundle"] = bundle.name
         payload["bundle_root"] = str(root)
         payload["bundle_kind"] = bundle.kind
+        # Whether KV was reused across the corpus group. Recorded because reuse is supposed to be
+        # score-preserving, which is only checkable after the fact if the results say which path
+        # produced them.
+        payload["share_prefix"] = bool(args.share_prefix)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 

@@ -86,7 +86,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=0, help="grade only the first N per rung (0 = all)"
     )
     ap.add_argument(
-        "--bundle", default="", help=f"eval bundle root (default {bundles.DEFAULT_ROOT})"
+        "--bundle",
+        default="",
+        help=f"eval bundle name or root (default {bundles.DEFAULT_BUNDLE}). 'fast' is the "
+        "shared-corpus bundle and is NOT comparable to a reliable one.",
+    )
+    ap.add_argument(
+        "--share-prefix",
+        action="store_true",
+        help="reuse each corpus group's shared-prefix KV. Only does anything on --bundle fast.",
     )
     ap.add_argument(
         "--results-dir",
@@ -180,6 +188,8 @@ fi"""
         f'--bundle "{bundle}"',
         f'--out "{results}"',
     ]
+    if args.share_prefix:
+        flags.append("--share-prefix")
     if args.tag:
         flags.append(f"--tag {args.tag}")
     if args.limit:

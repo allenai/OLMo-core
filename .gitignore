@@ -60,3 +60,6 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# Built eval data: large JSONL, rebuildable from the reliable bundle.
+debug/fast_bundle/out/

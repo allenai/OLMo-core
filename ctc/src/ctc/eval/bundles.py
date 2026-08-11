@@ -309,6 +309,48 @@ _XLONG_V2_CLEAN: Dict[str, Dict[str, str]] = {
 }
 
 
+#: The fast bundle's own ladders, written by ``src/scripts/ctc/build_fast_bundle.py``. Filenames
+#: encode the construction, not the corpus: ``_tail10`` is prefix+tail with a 10% per-query tail
+#: (90% of the prefill shared), ``_mux`` is query-multiplexed (100% of the documents shared, though
+#: with ``query_position="both"`` almost none of that is a *token* prefix).
+#:
+#: Only three tasks are here. ``outlier`` needs per-document topic labels its eval files strip, and
+#: the clustering that recovers them passes its exactness gate 2/25 of the time at 32k and 0/25
+#: below -- so it cannot be built at these lengths without regenerating with labels. ``oolong``
+#: builds from a source split that has no ultra-long member.
+_FAST_LADDERS: Dict[str, Dict[str, str]] = {
+    "contradiction": {
+        "8k": "contradiction/rung_8192_tail10.jsonl",
+        "16k": "contradiction/rung_16384_tail10.jsonl",
+        "32k": "contradiction/rung_32768_tail10.jsonl",
+        "64k": "contradiction/rung_65536_tail10.jsonl",
+        "128k": "contradiction/rung_131072_tail10.jsonl",
+        "256k": "contradiction/rung_262144_tail10.jsonl",
+        "512k": "contradiction/rung_524288_tail10.jsonl",
+        "1M": "contradiction/rung_1048576_tail10.jsonl",
+    },
+    "nq": {
+        "8k": "nq/rung_8192_mux.jsonl",
+        "16k": "nq/rung_16384_mux.jsonl",
+        "32k": "nq/rung_32768_mux.jsonl",
+        "64k": "nq/rung_65536_mux.jsonl",
+        "128k": "nq/rung_131072_mux.jsonl",
+        "256k": "nq/rung_262144_mux.jsonl",
+        "512k": "nq/rung_524288_mux.jsonl",
+        "1M": "nq/rung_1048576_mux.jsonl",
+    },
+    "rerank": {
+        "8k": "rerank/rung_8192_mux.jsonl",
+        "16k": "rerank/rung_16384_mux.jsonl",
+        "64k": "rerank/rung_65536_mux.jsonl",
+        "128k": "rerank/rung_131072_mux.jsonl",
+        "256k": "rerank/rung_262144_mux.jsonl",
+        "512k": "rerank/rung_524288_mux.jsonl",
+        "1M": "rerank/rung_1048576_mux.jsonl",
+    },
+}
+
+
 @dataclass(frozen=True)
 class Bundle:
     """
@@ -326,6 +368,10 @@ class Bundle:
         measurably moved scores (+0.215/+0.261 on outlier, -0.10..-0.18 on contradiction), with a
         control isolating the cause to document placement rather than to the sharing.
     :param xlong: Extra ultra-long rungs, per task.
+    :param ladders: Tasks whose entire rung table this bundle supplies itself, replacing the base
+        one. The fast bundle needs this: its files are named for the construction that built them,
+        and it carries only the tasks and rungs that construction supports, so inheriting the base
+        ladder would resolve to filenames that do not exist.
     :param description: One line, shown by ``--list-bundles``.
     """
 
@@ -333,15 +379,22 @@ class Bundle:
     root: str
     kind: str = "reliable"
     xlong: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    ladders: Dict[str, Dict[str, str]] = field(default_factory=dict)
     description: str = ""
+
+    def declares_own_ladder(self, task: str) -> bool:
+        """:returns: Whether this bundle supplies ``task``'s rung table itself."""
+        return task in self.ladders
 
     def rungs_for(self, task: str) -> Dict[str, str]:
         """
         :param task: Ladder name.
 
-        :returns: ``{rung label: path relative to the root}``, base ladder plus this bundle's xlong
-            rungs.
+        :returns: ``{rung label: path relative to the root}`` -- this bundle's own table if it has
+            one for the task, otherwise the base ladder plus this bundle's xlong rungs.
         """
+        if task in self.ladders:
+            return dict(self.ladders[task])
         merged = dict(BUNDLE[task].rungs)
         merged.update(self.xlong.get(task, {}))
         return merged
@@ -366,6 +419,17 @@ BUNDLES: Dict[str, Bundle] = {
             "The original v2 ladder, kept because existing results were produced against it -- "
             "including the 256k runs' xlong rungs. Its contradiction rungs overshoot their labels "
             "by ~1.8x (FEVER/wiki filler), so read contradiction numbers from it with that in mind."
+        ),
+    ),
+    "fast": Bundle(
+        name="fast",
+        root=f"{_WEKA}/_eval_bundle_eval500_v2_fast",
+        kind="fast",
+        ladders=_FAST_LADDERS,
+        description=(
+            "Shared-corpus rungs, 8k-1M. contradiction shares 90% of its prefill; nq and rerank "
+            "share every document but almost no token prefix. NOT comparable to a reliable "
+            "bundle -- the construction moves scores on its own."
         ),
     ),
 }
@@ -451,10 +515,21 @@ def resolve(task: str, rungs: str = "all", *, root: Optional[str] = None) -> Lis
     base = Path(bundle.root)
     available = bundle.rungs_for(task)
 
+    if bundle.kind == "fast" and not bundle.declares_own_ladder(task):
+        raise KeyError(
+            f"bundle {bundle.name!r} has no {task}: a shared-corpus construction exists for "
+            f"{', '.join(sorted(bundle.ladders))} only. Grade {task} against a reliable bundle."
+        )
+
     if rungs == "all":
         # Base ladder only. The ultra-long rungs are opt-in because one 256k rung is hours per task,
         # and `--rungs all` must not silently start one.
+        #
+        # A bundle that supplies its own ladder is filtered to what it actually has: the fast
+        # bundle starts at 8k, and asking for its 2k rung is a missing file, not a missing score.
         wanted = entry.labels
+        if bundle.declares_own_ladder(task):
+            wanted = [r for r in wanted if r in available]
     elif rungs == "xlong":
         wanted = [r for r in XLONG_RUNGS if r in available]
         if not wanted:
