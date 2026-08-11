@@ -65,13 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     what.add_argument(
         "--rungs",
         default="all",
-        help="'all' (default) or a comma list like '2k,8k'. Ladders differ per task, so an "
-        "explicit list is checked against the task rather than against a fixed set.",
+        help="'all' (default, the 2k-32k ladder), 'xlong' (64k-2M, opt-in because one 256k rung is "
+        "hours per task), or a comma list like '2k,8k' / '64k,256k'. Checked against the task and "
+        "bundle rather than against a fixed set.",
     )
     what.add_argument(
         "--bundle",
         default=None,
-        help=f"eval bundle root (default: $CTC_EVAL_BUNDLE, else {bundles.DEFAULT_ROOT})",
+        help="eval bundle: a registered name (see --list-bundles) or a directory path. "
+        f"Default: $CTC_EVAL_BUNDLE, else {bundles.DEFAULT_BUNDLE}.",
     )
 
     how = ap.add_argument_group("how to run it")
@@ -140,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     info = ap.add_argument_group("information")
     info.add_argument("--list-tasks", action="store_true", help="list ladders and rungs, then exit")
+    info.add_argument("--list-bundles", action="store_true", help="list eval bundles, then exit")
     info.add_argument(
         "--list-backends", action="store_true", help="list backends and availability, then exit"
     )
@@ -172,6 +175,26 @@ def _list_tasks() -> int:
     for line in bundles.describe():
         print(line)
     print("\ngroups: " + ", ".join(f"{k} ({len(v)} tasks)" for k, v in bundles.GROUPS.items()))
+    return 0
+
+
+def _list_bundles() -> int:
+    print("eval bundles:\n")
+    for name, bundle in bundles.BUNDLES.items():
+        mark = "  (default)" if name == bundles.DEFAULT_BUNDLE else ""
+        print(f"  {name:<10} [{bundle.kind}]{mark}")
+        print(f"  {'':<10} {bundle.root}")
+        if bundle.description:
+            print(f"  {'':<10} {bundle.description}")
+        if bundle.xlong:
+            have = ", ".join(sorted(bundle.xlong, key=str))
+            print(f"  {'':<10} ultra-long rungs for: {have}   (--rungs xlong)")
+        print()
+    print(
+        "A path is accepted too, for a staged local copy.\n"
+        "Bundles are NOT interchangeable: the same rung label maps to different files with "
+        "different corpus sizes,\nso a number is only comparable to another from the same bundle."
+    )
     return 0
 
 
@@ -246,6 +269,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.list_tasks:
         return _list_tasks()
+    if args.list_bundles:
+        return _list_bundles()
     if args.list_backends:
         return _list_backends()
 
@@ -254,10 +279,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ctc.tasks.load_all()
 
     todo = plan(args)
-    root = bundles.bundle_root(args.bundle)
+    bundle = bundles.get_bundle(args.bundle)
+    root = Path(bundle.root)
     out_dir = Path(args.out)
 
-    print(f"[ctc-eval] bundle {root}")
+    print(f"[ctc-eval] bundle {bundle.name} [{bundle.kind}]  {root}")
     print(
         f"[ctc-eval] {len(todo)} rung(s) over {len({i['task'] for i in todo})} task(s), "
         f"attn={args.attn}, query_position={args.query_position}"
@@ -366,6 +392,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         payload["ladder"] = item["task"]
         payload["spec"] = spec.name
         payload["seconds"] = round(time.time() - rung_started, 1)
+        # Which eval data produced this. The same rung label maps to different files with different
+        # corpus sizes across bundles -- contradiction's 64k is n=1602 in v2 and n=1525 in v2_clean
+        # -- so a number without its bundle cannot be compared to another number.
+        payload["bundle"] = bundle.name
+        payload["bundle_root"] = str(root)
+        payload["bundle_kind"] = bundle.kind
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 

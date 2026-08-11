@@ -105,6 +105,51 @@ def test_filename_row_counts_are_not_trusted():
     assert bundles.get("contra_fever").eval_size == 599
 
 
+def test_named_bundles_resolve_and_a_path_still_works():
+    assert bundles.get_bundle("v2").name == "v2"
+    assert bundles.get_bundle(None).name == bundles.DEFAULT_BUNDLE
+    ad_hoc = bundles.get_bundle("/staged/copy")
+    assert ad_hoc.root == "/staged/copy"
+    assert ad_hoc.kind == "reliable"
+
+
+def test_the_two_bundles_disagree_on_the_same_rung_label():
+    """The whole reason bundles are named. contradiction's 64k is n=1602 in v2 and n=1525 in
+    v2_clean, because the clean rebuild recalibrated against a PubMed-only filler pool. A number
+    quoted without its bundle is not comparable to another."""
+    v2 = dict(bundles.resolve("contradiction", "xlong", root="v2"))
+    clean = dict(bundles.resolve("contradiction", "xlong", root="v2_clean"))
+    assert "n1602" in v2["64k"].name
+    assert "n1525" in clean["64k"].name
+    assert v2["64k"].name != clean["64k"].name
+
+
+def test_xlong_rungs_are_opt_in():
+    """One 256k rung is hours per task, so `--rungs all` must not start one."""
+    labels = [label for label, _ in bundles.resolve("contradiction", "all", root="v2")]
+    assert labels == ["2k", "8k", "16k", "32k"]
+    assert not set(labels) & set(bundles.XLONG_RUNGS)
+
+
+def test_rungs_xlong_selects_only_the_ultra_long_ladder():
+    labels = [label for label, _ in bundles.resolve("contradiction", "xlong", root="v2")]
+    assert labels == list(bundles.XLONG_RUNGS)
+
+
+def test_xlong_on_a_task_without_it_raises_rather_than_returning_nothing():
+    """An empty result would read as "ran and found nothing" in a results table."""
+    with pytest.raises(KeyError, match="no ultra-long rungs"):
+        bundles.resolve("fiqa", "xlong", root="v2")
+
+
+def test_an_xlong_rung_absent_from_a_bundle_names_the_bundle():
+    """nq has xlong rungs in v2 but not in v2_clean; the error has to say which bundle it looked in
+    or the reader assumes the rung does not exist at all."""
+    bundles.resolve("nq", "64k", root="v2")
+    with pytest.raises(KeyError, match="v2_clean"):
+        bundles.resolve("nq", "64k", root="v2_clean")
+
+
 def _args(**kwargs) -> argparse.Namespace:
     base = dict(tasks="main", rungs="all", bundle="/bundle")
     base.update(kwargs)

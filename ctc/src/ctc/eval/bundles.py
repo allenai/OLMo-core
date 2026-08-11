@@ -27,32 +27,43 @@ Two properties hold across every ladder here, and both are load-bearing:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 __all__ = [
     "DEFAULT_ROOT",
+    "DEFAULT_BUNDLE",
+    "Bundle",
+    "BUNDLES",
     "BundleTask",
     "BUNDLE",
     "GROUPS",
+    "XLONG_RUNGS",
     "bundle_root",
     "get",
+    "get_bundle",
     "names",
     "resolve",
 ]
 
-#: The weka bundle every Beaker eval reads. ``_clean`` rather than the original
-#: ``_eval_bundle_eval500_v2``: the contradiction rungs in that one were calibrated against a filler
-#: pool that turned out to be 92-99% FEVER/wiki rather than PubMed, so every contradiction rung
-#: overshot its label by ~1.8x. The clean bundle is the default and has been since 2026-07-29.
-DEFAULT_ROOT = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean"
-)
+_WEKA = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 
-#: Environment variable overriding :data:`DEFAULT_ROOT`, so a local run points at a staged copy
-#: without editing anything.
+#: Default bundle name. ``_clean`` rather than the original ``_eval_bundle_eval500_v2``: the
+#: contradiction rungs in that one were calibrated against a filler pool that turned out to be
+#: 92-99% FEVER/wiki rather than PubMed, so every contradiction rung overshot its label by ~1.8x.
+#: The clean bundle has been the default since 2026-07-29.
+DEFAULT_BUNDLE = "v2_clean"
+
+DEFAULT_ROOT = f"{_WEKA}/_eval_bundle_eval500_v2_clean"
+
+#: Environment variable overriding the default, so a local run points at a staged copy without
+#: editing anything. Accepts a bundle NAME or a path.
 ROOT_ENV = "CTC_EVAL_BUNDLE"
+
+#: Ultra-long rung labels, kept apart from the 2k-32k ladder because they are **opt-in**: a 256k
+#: rung is hours per task, and asking for ``--rungs all`` should not silently start one.
+XLONG_RUNGS: Tuple[str, ...] = ("64k", "128k", "256k", "512k", "1M", "2M")
 
 
 @dataclass(frozen=True)
@@ -235,16 +246,156 @@ GROUPS: Dict[str, Tuple[str, ...]] = {
 }
 
 
+#: Ultra-long rungs, per bundle. **These are not the same files across bundles**, and the difference
+#: is not cosmetic: ``_v2`` puts contradiction's 64k rung at n=1602 while ``_v2_clean`` puts it at
+#: n=1525, because the clean rebuild recalibrated against a PubMed-only filler pool after the
+#: original was found to be 92-99% FEVER/wiki. Quoting a "64k" number without saying which bundle it
+#: came from compares two different eval sets.
+#:
+#: Recorded per bundle rather than derived, because there is no formula -- each is a measured
+#: calibration. Rows land here as they are listed on weka; an absent rung raises rather than guesses.
+_XLONG_V2: Dict[str, Dict[str, str]] = {
+    "contradiction": {
+        "64k": "contra/contradiction_eval_pubmed_both_n1602_k3_xlong_64k.jsonl",
+        "128k": "contra/contradiction_eval_pubmed_both_n3204_k3_xlong_128k.jsonl",
+        "256k": "contra/contradiction_eval_pubmed_both_n6408_k3_xlong_256k.jsonl",
+        "512k": "contra/contradiction_eval_pubmed_both_n9888_k3_xlong_512k.jsonl",
+        "1M": "contra/contradiction_eval_pubmed_both_n19775_k3_xlong_1M.jsonl",
+        "2M": "contra/contradiction_eval_pubmed_both_n39550_k3_xlong_2M.jsonl",
+    },
+    "nq": {
+        "64k": "nq/nq_validation_k418_xlong_64k.jsonl",
+        "128k": "nq/nq_validation_k835_xlong_128k.jsonl",
+        "256k": "nq/nq_validation_k1670_xlong_256k.jsonl",
+        "512k": "nq/nq_validation_k3342_xlong_512k.jsonl",
+        "1M": "nq/nq_validation_k6683_xlong_1M.jsonl",
+        "2M": "nq/nq_validation_k13366_xlong_2M.jsonl",
+    },
+    "rerank": {
+        "64k": "rerank/msmarco_trainhn_eval_k777_xlong_64k.jsonl",
+        "128k": "rerank/msmarco_trainhn_eval_k1553_xlong_128k.jsonl",
+        "256k": "rerank/msmarco_trainhn_eval_k3106_xlong_256k.jsonl",
+        "512k": "rerank/msmarco_trainhn_eval_k6121_xlong_512k.jsonl",
+        "1M": "rerank/msmarco_trainhn_eval_k12242_xlong_1M.jsonl",
+        "2M": "rerank/msmarco_trainhn_eval_k24485_xlong_2M.jsonl",
+    },
+    "outlier": {
+        "64k": "outlier/outlier_wiki100w_n448_k3_eval_xlong_64k.jsonl",
+        "128k": "outlier/outlier_wiki100w_n897_k3_eval_xlong_128k.jsonl",
+        "256k": "outlier/outlier_wiki100w_n1793_k3_eval_xlong_256k.jsonl",
+        "512k": "outlier/outlier_wiki100w_n3605_k3_eval_xlong_512k.jsonl",
+        "1M": "outlier/outlier_wiki100w_n7209_k3_eval_xlong_1M.jsonl",
+        "2M": "outlier/outlier_wiki100w_n14419_k3_eval_xlong_2M.jsonl",
+    },
+}
+
+#: The clean bundle's own recalibrated xlong rungs. Only the rows verified on weka are listed;
+#: rerank's 1M/2M were carried over unchanged from ``_v2``, which is why those two share a filename.
+_XLONG_V2_CLEAN: Dict[str, Dict[str, str]] = {
+    "contradiction": {
+        "64k": "contra/contradiction_eval_pubmed_both_n1525_k3_xlong_64k.jsonl",
+        "128k": "contra/contradiction_eval_pubmed_both_n3051_k3_xlong_128k.jsonl",
+        "256k": "contra/contradiction_eval_pubmed_both_n6102_k3_xlong_256k.jsonl",
+        "512k": "contra/contradiction_eval_pubmed_both_n12204_k3_xlong_512k.jsonl",
+        "1M": "contra/contradiction_eval_pubmed_both_n24408_k3_xlong_1M.jsonl",
+        "2M": "contra/contradiction_eval_pubmed_both_n48816_k3_xlong_2M.jsonl",
+    },
+    "rerank": {
+        "128k": "rerank/msmarco_trainhn_eval_k1530_xlong_128k.jsonl",
+        "256k": "rerank/msmarco_trainhn_eval_k3061_xlong_256k.jsonl",
+        "1M": "rerank/msmarco_trainhn_eval_k12242_xlong_1M.jsonl",
+        "2M": "rerank/msmarco_trainhn_eval_k24485_xlong_2M.jsonl",
+    },
+}
+
+
+@dataclass(frozen=True)
+class Bundle:
+    """
+    A named collection of eval files on disk.
+
+    More than one exists because eval data gets rebuilt, and a rebuilt rung is a *different eval
+    set* rather than a corrected copy of the same one. Naming them makes "which data produced this
+    number" answerable from the results file instead of from memory.
+
+    :param name: What ``--bundle`` takes.
+    :param root: Directory the task paths resolve against.
+    :param kind: ``"reliable"`` -- one independently sampled corpus per row, so N rows are N
+        independent measurements -- or ``"fast"``, where many queries share a corpus so a prefill
+        can be reused. The two are **not interchangeable**: rebuilding an eval set to share corpora
+        measurably moved scores (+0.215/+0.261 on outlier, -0.10..-0.18 on contradiction), with a
+        control isolating the cause to document placement rather than to the sharing.
+    :param xlong: Extra ultra-long rungs, per task.
+    :param description: One line, shown by ``--list-bundles``.
+    """
+
+    name: str
+    root: str
+    kind: str = "reliable"
+    xlong: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    description: str = ""
+
+    def rungs_for(self, task: str) -> Dict[str, str]:
+        """
+        :param task: Ladder name.
+
+        :returns: ``{rung label: path relative to the root}``, base ladder plus this bundle's xlong
+            rungs.
+        """
+        merged = dict(BUNDLE[task].rungs)
+        merged.update(self.xlong.get(task, {}))
+        return merged
+
+
+#: Every bundle this repo knows how to read.
+BUNDLES: Dict[str, Bundle] = {
+    "v2_clean": Bundle(
+        name="v2_clean",
+        root=f"{_WEKA}/_eval_bundle_eval500_v2_clean",
+        xlong=_XLONG_V2_CLEAN,
+        description=(
+            "Default. The v2 ladder with contradiction rebuilt against a PubMed-only filler pool "
+            "and its rungs recalibrated."
+        ),
+    ),
+    "v2": Bundle(
+        name="v2",
+        root=f"{_WEKA}/_eval_bundle_eval500_v2",
+        xlong=_XLONG_V2,
+        description=(
+            "The original v2 ladder, kept because existing results were produced against it -- "
+            "including the 256k runs' xlong rungs. Its contradiction rungs overshoot their labels "
+            "by ~1.8x (FEVER/wiki filler), so read contradiction numbers from it with that in mind."
+        ),
+    ),
+}
+
+
+def get_bundle(name_or_path: Optional[str] = None) -> Bundle:
+    """
+    Resolve ``--bundle``: a registered name, a filesystem path, or the default.
+
+    A path is accepted so a staged local copy works without registering anything; it is treated as
+    a ``reliable`` bundle carrying the base ladder only.
+
+    :param name_or_path: A key of :data:`BUNDLES`, a directory path, or ``None``.
+
+    :returns: The bundle.
+    """
+    raw = name_or_path or os.environ.get(ROOT_ENV) or DEFAULT_BUNDLE
+    if raw in BUNDLES:
+        return BUNDLES[raw]
+    return Bundle(name=Path(raw).name or raw, root=raw, description="ad-hoc path")
+
+
 def bundle_root(explicit: Optional[str] = None) -> Path:
     """
-    Resolve the bundle root: an explicit path, else ``$CTC_EVAL_BUNDLE``, else :data:`DEFAULT_ROOT`.
-
-    :param explicit: A path from the command line, if given.
+    :param explicit: A bundle name or path from the command line, if given.
 
     :returns: The root directory. Not checked for existence here -- a launcher resolves this on the
         submitting host, where the weka mount does not exist.
     """
-    return Path(explicit or os.environ.get(ROOT_ENV) or DEFAULT_ROOT)
+    return Path(get_bundle(explicit).root)
 
 
 def names(group: str = "all") -> List[str]:
@@ -296,17 +447,28 @@ def resolve(task: str, rungs: str = "all", *, root: Optional[str] = None) -> Lis
         is read as "the model scored nothing there", not as "that cell was never run".
     """
     entry = get(task)
-    base = bundle_root(root)
-    available = dict(entry.rungs)
+    bundle = get_bundle(root)
+    base = Path(bundle.root)
+    available = bundle.rungs_for(task)
 
     if rungs == "all":
+        # Base ladder only. The ultra-long rungs are opt-in because one 256k rung is hours per task,
+        # and `--rungs all` must not silently start one.
         wanted = entry.labels
+    elif rungs == "xlong":
+        wanted = [r for r in XLONG_RUNGS if r in available]
+        if not wanted:
+            raise KeyError(
+                f"{task} has no ultra-long rungs in bundle {bundle.name!r}; "
+                f"it has {', '.join(available)}"
+            )
     else:
         wanted = [r.strip() for r in rungs.split(",") if r.strip()]
         missing = [r for r in wanted if r not in available]
         if missing:
             raise KeyError(
-                f"{task} has no rung(s) {', '.join(missing)}; it has {', '.join(entry.labels)}"
+                f"{task} has no rung(s) {', '.join(missing)} in bundle {bundle.name!r}; "
+                f"it has {', '.join(available)}"
             )
     return [(label, base / available[label]) for label in wanted]
 
