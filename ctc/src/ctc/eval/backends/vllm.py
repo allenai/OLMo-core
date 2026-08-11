@@ -169,7 +169,7 @@ def build(
     max_length: int = 4096,
     max_new_tokens: int = 512,
     task: Optional[str] = None,
-    query_position: str = "after",
+    query_position: str = "both",
     structural: bool = True,
     tensor_parallel_size: int = 1,
     gpu_memory_utilization: float = 0.6,

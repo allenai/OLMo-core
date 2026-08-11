@@ -78,7 +78,7 @@ class StructuralPrefill:
         *,
         task: str,
         attn: str = "full",
-        query_position: str = "after",
+        query_position: str = "both",
         mem_freq: int = DEFAULT_MEM_FREQ,
         doc_start_id: Optional[int] = None,
         doc_end_id: Optional[int] = None,

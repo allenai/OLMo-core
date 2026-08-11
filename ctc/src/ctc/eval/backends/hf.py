@@ -120,7 +120,7 @@ def build(
     tokenizer: Optional[str] = None,
     attn: str = "full",
     task: Optional[str] = None,
-    query_position: str = "after",
+    query_position: str = "both",
     structural: bool = True,
     device: str = "cuda",
     dtype: str = "bfloat16",

@@ -79,7 +79,7 @@ class NativeBackend:
         dtype: str = "bfloat16",
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
-        query_position: str = "after",
+        query_position: str = "both",
         mem_freq: int = 63,
         doc_start_id: Optional[int] = None,
         doc_end_id: Optional[int] = None,

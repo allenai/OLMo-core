@@ -128,7 +128,7 @@ class EvalConfig:
     backend: str = "native"
     max_length: Optional[int] = None
     max_new_tokens: Optional[int] = None
-    query_position: str = "after"
+    query_position: str = "both"
     limit: Optional[int] = None
     allow_truncated: bool = False
     ignore_fingerprint: bool = False
