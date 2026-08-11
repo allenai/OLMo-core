@@ -59,8 +59,15 @@ because a check of the whole repo found:
 - 150 of 150 CTC-suite result rows are `no-cot`, and `cot_mode` was never even recorded in them.
 - Every non-`none` `--cot-mode` in the tree is docstring, `--help` text, or a validation *error
   message*. All 59 real invocations pass `none`.
-- The one pipeline that would have used CoT (`build_combined_unified.py`, "24 of 184 files are CoT
-  variants") was never written.
+- The pipeline that would have consumed CoT data (`build_combined_unified.py`, "24 of 184 files are
+  CoT variants") was never written.
+
+**The builders were not entirely unused, though.** Three `*_cotmix_*` files were built on
+2026-06-13 and still sit in `/net/horton/data/prasann/corpus-reasoning/data/` — contradiction
+(`enumerate`), outlier (`template`) and reorder (`successor`), each row tagged `_task` /
+`_cot_mode`. Nothing in the reported results consumes them, so they read as an abandoned branch
+rather than live data, but rebuilding those specific files would need the builders back from git
+history.
 
 Results still carry a `cot_label` field, per the project's labelling convention. If a task needs CoT
 targets later, it is one builder in that task's own directory rather than a branch in shared code.
