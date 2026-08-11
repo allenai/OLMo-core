@@ -43,7 +43,14 @@ Standard sbatch header (jsteinhardt):
 - `/accounts` (home, this repo) and `/scratch` — **shared NFS, slow**. `/scratch` writes ≈ 5 MB/s;
   imports from the NFS conda env pay a ~5–60 s tax. Fine for code and few-KB artifacts.
 - `/data` — **node-local ZFS, fast, NOT shared** (mooney's `/data` ≠ cubbins's `/data`). Reachable
-  cross-node read-only-ish via `/net/<host>/data/...` (NFS speed).
+  cross-node via `/net/<host>/data/...` — **at NFS speed, and for auditing only.**
+- `/net/<node>/...` — every node's local disk, readable from anywhere. Nodes: `balrog`, `cubbins`,
+  `feanor`, `horton`, `lorax`, `mcfuzz`, `mooney`, `rainbowquartz`, `saruman`, `shadowfax`,
+  `smaug`, `smokyquartz`, `sneetches`, `sunstone`, `thidwick`. Good for "does this checkpoint
+  exist", "what's in that job log", "what schema does that JSONL have" without an `srun` — keep it
+  light. **`/net` IS the slow NFS layer**: a job on horton must read `/data/...`, never
+  `/net/horton/data/...`, or it recreates the deadlock below against its own local disk. Recursive
+  `find` across `/net` is slow enough to time out; go straight to the directory.
 
 **Rule: for multi-rank GPU jobs, NOTHING job-I/O touches NFS — logs, work dir, data, checkpoints
 all go on the target node's `/data`.** Concurrent NFS appends/locks deadlock ranks in

@@ -169,7 +169,7 @@ reference anything in there; when you retire a script, `git mv` it in and log it
 
 Experiment diagnoses, task briefs, and setup notes live in `records/` (see its README for the
 index). New writeups of this kind go there — the repo root keeps only
-README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/beaker.md.
+README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/lambda_cluster.md/beaker.md.
 
 ## Local (Berkeley) cluster
 
@@ -177,6 +177,97 @@ We also train/eval on Berkeley slurm H200 nodes without AI2 infra (no weka, no B
 pipeline — nodes/QOS, the NFS-vs-`/data` rule, env setup, the weka-free training recipe, and the
 known traps — is documented in `local_cluster.md`. Read it before touching any `*local*.sbatch`
 launcher or debugging a hung/crashed local run.
+
+**`/scratch` IS NFS — it is not a fast local disk.** Both `/accounts` (home, this repo) and
+`/scratch` are shared NFS: `/scratch` writes at roughly 5 MB/s, and importing from an NFS conda env
+costs a ~5–60 s tax per process. The ONLY node-local fast storage is the target node's `/data`
+(and `/tmp`). So moving job I/O from `/accounts` to `/scratch` is **not** a mitigation for an NFS
+problem — it is the same class of storage, and it will still deadlock concurrent readers/writers in
+`nfs_wait_bit_killable`. Job logs, work dirs, JIT/index caches (triton, flashinfer, pyserini) and
+checkpoints all belong on `/data`; `/scratch` is fine for code and small artifacts you read once.
+
+**`/net/<node>/...` reads any node's local disk from anywhere — for INSPECTION ONLY.** Every
+compute node is exported at `/net/<hostname>`, so `/net/horton/data/prasann/...` reads horton's
+node-local `/data` from the login node or from another node. Nodes today: `balrog`, `cubbins`,
+`feanor`, `horton`, `lorax`, `mcfuzz`, `mooney`, `rainbowquartz`, `saruman`, `shadowfax`, `smaug`,
+`smokyquartz`, `sneetches`, `sunstone`, `thidwick`.
+
+This is genuinely useful for auditing — checking what data or checkpoints exist on a node, reading a
+job log, confirming a file's schema — without an `srun`. Use it that way and keep it light.
+
+**It does NOT make `/data` remotely fast, and it is not a way to share data between nodes.** `/net`
+*is* the NFS layer this section is about: a `/net` path has every property that makes `/scratch`
+slow, so pointing job I/O, an interpreter, a checkpoint read or a cache directory at one recreates
+exactly the `nfs_wait_bit_killable` deadlock described above. A job running on horton must use
+`/data/...`, never `/net/horton/data/...` — the same bytes, one over the local disk and one over a
+~5 MB/s link. Recursive `find` across `/net` is also slow enough to hit command timeouts; go
+straight to the directory you want.
+
+**The INTERPRETER itself must be node-local for any torch/vLLM job.** The "~5–60 s import tax"
+above is the *best* case (small scripts). A vLLM or torch job launched with
+`/scratch/users/prasann/conda/envs/corpus-reasoning-eval/bin/python` has to page multiple GB of
+shared objects over a ~5 MB/s link and parks in `D` state / `nfs_wait_bit_killable` at ~0% CPU for
+many minutes — it looks like a hung GPU or a slow model load, and it is neither. Use the
+node-local venv **`/data/prasann/ctc_vllm_venv/bin/python`** (vllm 0.25.1 / torch 2.11.0+cu130)
+for vLLM work, together with `export CUDA_HOME=/usr/local/cuda-12.8` and
+`export PATH=$CUDA_HOME/bin:$PATH` for the GDN JIT. Diagnose with
+`ps -o stat,wchan,%cpu` — `Dl` + `nfs_wait_bit_killabl` + ~0% CPU is this bug, not a compile.
+
+### Loading an olmo-exported Qwen3.5 in vLLM: use the serving copy
+
+`export_olmo_to_hf.py` emits a **text-only** checkpoint (`model_type: qwen3_5_text`, flat config,
+no `vision_config`). vLLM 0.25.1 resolves *any* `Qwen3_5*` architecture to a **multimodal** class
+whose `__init__` reads `config.vision_config`, so pointing vLLM at the raw export — even with
+`hf_overrides={"architectures": ["Qwen3_5ForCausalLM"]}` — dies at model construction with
+`AttributeError: 'Qwen3_5TextConfig' object has no attribute 'vision_config'`, before any memory
+is touched.
+
+**FIRST, look for an existing serving copy — do not rebuild one.** Prebuilt, already-validated
+copies live at `/data/prasann/ctc_suite/vllm_serving_4b{,_v2,_v3}/<ckpt-name>/` on horton (`_v3`
+is current). Point vLLM straight at that directory.
+
+Building one from scratch takes **three** scripts in `debug/ctc_vllm_validation/`, not one — miss
+any and the load dies:
+1. `make_vllm_serving_copy.py` — wrapper `config.json` (base VL config with our `text_config`).
+2. `make_vl_weights.py` — key rename `model.*` → `model.language_model.*`. Without it:
+   `ValueError: There is no module or parameter named 'model' in Qwen3_5ForConditionalGeneration`.
+3. `add_dummy_visual.py` — ~297 synthesized `visual.*` params. Without them vLLM's
+   `track_weights_loading` errors on the uninitialized vision tower.
+
+Sanity-check a serving dir before launching: it should have **~426 `model.language_model.*` and
+~297 `visual.*`** keys, and `vision_config` in `config.json`.
+
+The arch override and `limit_mm_per_prompt={"image": 0, "video": 0}` are *part* of the recipe, not
+the whole of it — see [[qwen35-4b-vllm-load-recipe]] for all seven pieces. Copying two lines out of
+`run_vllm_eval.py` without the serving copy is a repeat failure; that driver is always pointed at
+a serving copy someone else already built.
+
+**`hf_overrides` REPLACES a nested sub-config, it does not merge.** Passing
+`hf_overrides={"text_config": {"rope_scaling": ...}}` wipes every other `text_config` field and
+fails pydantic validation with *"text_config … does not have `num_attention_heads`"*. To change
+RoPE/YaRN or any other nested field, patch `config.json` on disk in a symlinked copy (see
+`debug/ctx_ceiling_4b/make_yarn_copy.py`) rather than fighting override semantics.
+
+## Lambda cluster
+
+A third pool: a **separate A100 SLURM cluster reached via `ssh lambda`**, sharing no filesystem, no
+git remote, and no internet with the Berkeley cluster. Use it to drain a queue of independent
+training runs when the Berkeley per-user GPU quota is saturated — its GPUs are often idle while
+jsteinhardt is contended.
+
+**Fair-share rule (Lambda only): cap your *preempting* footprint at two nodes — at most 8 GPUs on
+`preemptive_high` and 8 on `preemptive` at any time. Take anything beyond that at `normal`, which
+can't preempt and is itself preemptible.** The cluster is shared with one other regular user, and
+this is what guarantees both of you can always get 2 nodes. Do NOT carry over the Berkeley
+"default to highest QOS and preempt freely" directive.
+
+**`lambda_cluster.md` (repo root)** documents access, the QOS table and that policy, the per-user
+1.30T `/accounts` quota (the usual blocker) vs. node-local disk, the rsync staging recipe,
+`run_ctc_lambda.sbatch` knobs, and the trap index. Read it before touching any `*lambda*.sbatch`
+launcher. Two traps worth knowing up front: the launcher header hardcodes
+`--gres=gpu:A100:8` so a direct execution eats your whole GPU quota, and **`sbatch` routinely
+reports `FAILED` on runs that fully succeeded** — verify via the loss curve and checkpoint, never
+the exit code.
 
 ## Docker and Beaker Launch
 
