@@ -61,7 +61,47 @@ __all__ = [
     "hash_prompt",
     "collect_fingerprints",
     "conflicting_formats",
+    "chunk_layout_for",
 ]
+
+
+def chunk_layout_for(emit: str, chunk_by: str, doc_markers: bool = True) -> str:
+    """
+    The canonical ``chunk_layout`` name for a set of converter options.
+
+    One function so the converter that writes a shard's fingerprint and the evaluator that checks it
+    cannot drift into two spellings of the same layout -- which would read as a format mismatch on
+    data that matches perfectly.
+
+    **This names the token stream, not the attention mask.** The box markers are present in the
+    ``full`` arm too: "full" is a mask, not a token layout, and the full-vs-chunked comparison is
+    run over identically tokenized shards precisely so the mask is the only difference. So a
+    checkpoint trained on ``wrap_documents`` shards may legitimately be evaluated with ``--attn
+    full``, and the fingerprint must not object. What it does object to is evaluating it against a
+    prompt rendered *without* the markers, which is a different token stream and costs ~0.01 f1.
+
+    :param emit: ``"dense"`` (wrapped tokens only) or ``"landmark"`` (packed into landmark windows).
+    :param chunk_by: ``"document"`` (each ``documents[i]``) or ``"line"`` (each matching item line;
+        OOLONG only).
+    :param doc_markers: Whether the ``<|box_start|>``/``<|box_end|>`` boundary tokens are emitted.
+
+    :returns: One of ``none``, ``wrap_documents``, ``wrap_lines``, ``landmark_documents``,
+        ``landmark_lines``.
+
+    :raises ValueError: On an unknown ``emit`` or ``chunk_by``.
+    """
+    if emit not in ("dense", "landmark"):
+        raise ValueError(f"emit must be 'dense' or 'landmark', got {emit!r}")
+    if chunk_by not in ("document", "line"):
+        raise ValueError(f"chunk_by must be 'document' or 'line', got {chunk_by!r}")
+    if not doc_markers:
+        # No boundary tokens at all: the marker-free baseline. Whether the build *would* have
+        # chunked by document or by line is not observable in the stream, so it is not recorded --
+        # recording it would make two byte-identical shards compare as different formats.
+        return "none"
+    unit = "documents" if chunk_by == "document" else "lines"
+    return f"wrap_{unit}" if emit == "dense" else f"landmark_{unit}"
+
 
 #: Written into both the shard directory and the checkpoint directory.
 FINGERPRINT_FILENAME = "ctc_format_fingerprint.json"
@@ -186,7 +226,8 @@ class FormatFingerprint:
         and it changes the token stream substantially -- ``both`` repeats the entire query block on
         the far side of the documents. Two checkpoints differing only here would otherwise share a
         fingerprint, and the guard would pass on a format that genuinely differs.
-    :param chunk_layout: Chunk-wrapping scheme, e.g. ``"wrap_documents"`` or ``"none"``.
+    :param chunk_layout: Chunk-wrapping scheme; see :func:`chunk_layout_for` for the vocabulary
+        and for why it describes the TOKEN STREAM rather than the attention mask.
     :param doc_id_range: ``(min, max)`` document id actually present. Compared by containment.
     :param marker_token_ids: Reserved marker ids, when the format uses them.
     :param tokenizer: Tokenizer identifier.
