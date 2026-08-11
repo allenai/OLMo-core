@@ -103,6 +103,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         max_length=args.max_length,
         eos_token_id=args.eos_token_id,
         pad_token_id=args.pad_token_id,
+        query_position=args.query_position,
     )
     print(f"[validate] tokenizer={args.tokenizer} eos_id={backend.eos_id}")
     stop = STOP_PRESETS[spec.stop]
@@ -124,7 +125,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     outcome = run_task(
         cfg,
-        lambda prompts: backend.generate(prompts, stop=stop),
+        lambda prompts, examples: backend.generate(
+            prompts, examples, stop=stop, task=spec.name
+        ),
         count_tokens=backend.count_tokens,
     )
 

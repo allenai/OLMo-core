@@ -215,8 +215,13 @@ def run_task(
     Grade one task at one rung.
 
     :param cfg: What to run.
-    :param generate: ``(prompts) -> texts``. The whole of a backend's contribution; everything else
-        comes from the task spec, which is what makes backends comparable.
+    :param generate: ``(prompts, examples) -> texts``. The whole of a backend's contribution;
+        everything else comes from the task spec, which is what makes backends comparable.
+
+        ``examples`` accompanies the prompts because tokenization is a backend concern and some
+        backends need STRUCTURE, not just text: the native path wraps each document in markers, and
+        document boundaries are not reliably recoverable from a flat string. Backends that plain-
+        tokenize ignore it.
     :param count_tokens: ``(text) -> n``. Used for the length audit. Without it the audit is
         skipped and the result says so -- an unaudited run cannot rule out the silent-zero failure.
 
@@ -283,7 +288,7 @@ def run_task(
         )
 
     # --- generate and score ---------------------------------------------------------------------
-    raw = list(generate(prompts))
+    raw = list(generate(prompts, examples))
     if len(raw) != len(prompts):
         raise ValueError(f"backend returned {len(raw)} generations for {len(prompts)} prompts")
 

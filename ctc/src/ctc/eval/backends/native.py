@@ -22,7 +22,7 @@ Requires ``pip install 'ctc[native]'`` -- torch, transformers and olmo-core itse
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..stopping import StopCondition, apply as apply_stop, should_stop, strip_think
 
@@ -70,6 +70,10 @@ class NativeBackend:
         dtype: str = "bfloat16",
         pad_token_id: Optional[int] = None,
         eos_token_id: Optional[int] = None,
+        query_position: str = "after",
+        mem_freq: int = 63,
+        doc_start_id: Optional[int] = None,
+        doc_end_id: Optional[int] = None,
     ):
         if attn not in ATTENTION_MODES:
             raise ValueError(f"attn must be one of {ATTENTION_MODES}, got {attn!r}")
@@ -87,6 +91,12 @@ class NativeBackend:
         self.attn = attn
         self.max_length = max_length
         self.device = device
+        # Needed by build_prefill: the segmenter rebuilds the prompt itself, so it must be told the
+        # same layout ctc.format used, or the two disagree silently.
+        self.query_position = query_position
+        self.mem_freq = mem_freq
+        self.doc_start_id = doc_start_id
+        self.doc_end_id = doc_end_id
 
         self.tok = AutoTokenizer.from_pretrained(tokenizer)
         self.eos_id = eos_token_id if eos_token_id is not None else self.tok.eos_token_id
@@ -137,6 +147,58 @@ class NativeBackend:
             if disable is not None:
                 disable()
 
+    def build_prefill(self, example: Mapping[str, Any], task: str) -> List[int]:
+        """
+        Tokenize one example the way the model was trained, not as flat text.
+
+        **The token stream carries document markers even in the ``full`` arm.** ``full`` means the
+        attention *mask* is plain causal; the tokens still wrap each document in
+        ``<|box_start|>``/``<|box_end|>``, exactly as training did. Plain-tokenizing the prompt
+        string instead produces a stream the model has never seen, which is worth roughly -0.01 f1
+        on contradiction @2k -- small enough to be mistaken for numerical noise, which is what makes
+        it dangerous.
+
+        This is why the structure has to come from the example rather than from the assembled text:
+        the segmenter needs document boundaries, and recovering them from a flat string means
+        re-deriving what the generator already knew.
+
+        :param example: A unified-format example.
+        :param task: Task name.
+
+        :returns: Prompt token ids, markers included.
+        """
+        from olmo_core.data.document_chunk_landmark import (
+            DOC_END_ID,
+            DOC_START_ID,
+            LANDMARK_TOKEN_ID,
+            PAD_TOKEN_ID,
+            emit_document_chunk_dense,
+            emit_document_chunk_landmark,
+            segment_prompt_to_chunks,
+        )
+
+        segs, _, _ = segment_prompt_to_chunks(
+            self.tok,
+            example,
+            task,
+            query_position=self.query_position,
+            cot_mode="none",
+            chunk_by="document",
+            item_regex=r"\|\|",
+            include_answer=False,
+            doc_start_id=self.doc_start_id if self.doc_start_id is not None else DOC_START_ID,
+            doc_end_id=self.doc_end_id if self.doc_end_id is not None else DOC_END_ID,
+        )
+        if self.attn in ("full", "chunked"):
+            # Both arms share one token stream; they differ only in the MASK, which
+            # _configure_attention set at load time.
+            ids, _ = emit_document_chunk_dense(segs)
+        else:
+            ids, _ = emit_document_chunk_landmark(
+                segs, mem_freq=self.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+            )
+        return list(ids)
+
     def count_tokens(self, text: str) -> int:
         """
         :param text: A prompt.
@@ -148,8 +210,10 @@ class NativeBackend:
     def generate(
         self,
         prompts: Sequence[str],
+        examples: Optional[Sequence[Mapping[str, Any]]] = None,
         *,
         stop: StopCondition,
+        task: Optional[str] = None,
         progress_every: int = 25,
     ) -> List[str]:
         """
@@ -159,7 +223,12 @@ class NativeBackend:
         chunked mask's chunk-id reconstruction, so the unbatched path is the one that is known
         correct; batching belongs in a later change with its own parity check.
 
-        :param prompts: Prompts, already assembled by the task spec.
+        :param prompts: Prompts, already assembled by the task spec. Used only when ``examples``
+            is absent -- plain tokenization omits the document markers the model was trained with,
+            so it is a fallback, not the intended path.
+        :param examples: The unified-format examples the prompts came from. When given, each is
+            tokenized through :meth:`build_prefill` so the token stream carries markers.
+        :param task: Task name, required alongside ``examples``.
         :param stop: The task's stop condition, checked after each token so generation ends at the
             answer rather than at the budget.
         :param progress_every: Print progress every N examples. Long rungs are slow enough that a
@@ -169,9 +238,15 @@ class NativeBackend:
         """
         import torch
 
+        if examples is not None and task is None:
+            raise ValueError("passing examples requires task=")
+
         out: List[str] = []
         for i, prompt in enumerate(prompts):
-            ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
+            if examples is not None:
+                ids = self.build_prefill(examples[i], task)
+            else:
+                ids = self.tok(prompt, add_special_tokens=False)["input_ids"]
             out.append(self._generate_one(torch, ids, stop))
             if progress_every and (i + 1) % progress_every == 0:
                 print(f"[ctc-eval] {i + 1}/{len(prompts)}", flush=True)
