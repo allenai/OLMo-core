@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-10
+
 ### Added
 
 - Added `max_checkpoints` parameter to `CheckpointerCallback` (default: 3) to limit the number of permanent checkpoints retained. Oldest checkpoints are removed automatically when the limit is exceeded. Set to `None` to keep all (previous behavior).
