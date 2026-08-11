@@ -125,6 +125,11 @@ PROMPT_CASES = [
     ("mathmatch", "after", True),
     ("groups4", "after", True),
     ("textgroups", "after", True),
+    # retrieval's instruction depends on the EXAMPLE, not just the task: single-gold vs multi-gold
+    # vs multi-query select three different strings. All three shapes are pinned.
+    ("retrieval_multigold", "after", True),
+    ("retrieval_multiquery", "after", True),
+    ("cot_retrieval", "after", True),
 ]
 
 #: One example per task, shaped like the unified JSONL the generators emit.
@@ -257,6 +262,35 @@ PROMPT_EXAMPLES = {
         "gold_doc_indices": [[1, 2, 3]],
         "source": "synthetic",
     },
+    # Same task, three instruction shapes. The `_task_of` map below routes these back to the real
+    # task name when generating.
+    "retrieval_multigold": {
+        "documents": [{"title": "T1", "text": "body one"}, {"title": "T2", "text": "body two"}],
+        "queries": ["Who built it?"],
+        "answers": ["Ada"],
+        "gold_doc_indices": [0, 1],  # >1 gold -> the multi-doc instruction
+        "source": "hotpotqa",
+    },
+    "retrieval_multiquery": {
+        "documents": [{"title": "T1", "text": "body one"}, {"title": "T2", "text": "body two"}],
+        "queries": ["Who built it?", "When was it built?"],
+        "answers": ["Ada", "1931"],
+        "gold_doc_indices": [[0], [1]],  # >1 query -> the multi-query instruction
+        "source": "hotpotqa",
+    },
+    "cot_retrieval": {
+        "documents": [{"title": "T1", "text": "body one"}, {"title": "T2", "text": "body two"}],
+        "queries": ["Who built it?"],
+        "answers": ["Ada"],
+        "gold_doc_indices": [0],
+        "source": "nq",
+    },
+}
+
+#: Fixture-key -> real task name, for keys that exist only to pin an example-dependent variant.
+TASK_OF = {
+    "retrieval_multigold": "retrieval",
+    "retrieval_multiquery": "retrieval",
 }
 
 PAIR_CASES = [
@@ -390,7 +424,7 @@ def _build_prompts(old_df) -> dict:
         try:
             prompt, target = old_df.build_prompt(
                 PROMPT_EXAMPLES[task],
-                task=task,
+                task=TASK_OF.get(task, task),
                 query_position=pos,
                 use_alpaca=alpaca,
                 cot_mode="none",

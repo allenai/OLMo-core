@@ -50,6 +50,12 @@ class TaskSpec:
     :param score: ``(parsed, gold) -> dict[str, float]``. The metric(s) for this task.
     :param instruction: The task's instruction string, verbatim. Hashed into the fingerprint, so
         editing it correctly invalidates every checkpoint trained under the old wording.
+    :param instruction_variants: Additional instruction strings this task can use, when the choice
+        depends on the *example* rather than the task. retrieval picks among three (single-doc,
+        multi-doc, multi-query) by inspecting query and gold counts; qa and cot_retrieval pick
+        among two. All of them are hashed into the fingerprint, because a checkpoint is bound to
+        every wording it was trained under, not just the most common one -- hashing only
+        ``instruction`` would let a variant be edited without invalidating anything.
     :param serializer: Key into the table in :mod:`ctc.format.documents`, or ``"default"``.
     :param unified: Whether this task uses the unified prompt shape -- a generic alpaca header with
         the task instruction positioned alongside the documents. True for tasks with **no
@@ -91,6 +97,7 @@ class TaskSpec:
     parse: Callable[..., object]
     score: Callable[..., Dict[str, float]]
     instruction: str = ""
+    instruction_variants: Tuple[str, ...] = ()
     serializer: str = "default"
     unified: bool = False
     rungs: Tuple[str, ...] = ()
@@ -130,7 +137,9 @@ class TaskSpec:
 
         base: Dict[str, Any] = dict(
             task=self.name,
-            prompt_hash=hash_prompt(self.instruction, self.serializer),
+            prompt_hash=hash_prompt(
+                self.instruction, *self.instruction_variants, self.serializer
+            ),
             serializer=self.serializer,
             item_separator=ITEM_SEPARATOR,
             gold_index_base=self.gold_index_base,

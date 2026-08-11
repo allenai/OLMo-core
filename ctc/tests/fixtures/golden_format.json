@@ -547,6 +547,10 @@
       "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\nClaim 1: The bridge opened in 1931.\n\nClaim 2: The bridge opened in 1937.\n\nGiven the following corpus of numbered claims, identify all pairs of claims that contradict each other. A pair of claims is contradictory if they cannot both be true at the same time.\n\nOutput your answer as a JSON list of pairs, where each pair is a list of two claim IDs. For example: [[1, 4], [3, 7]]\nIf there are no contradicting pairs, output: []\n\n### Response:\n",
       "[[1, 2]]"
     ],
+    "cot_retrieval|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to identify which document is most relevant to answering the question. Think step by step about why the document is relevant, then give your answer.\nWrite your answer in the following format:\n[chain of thought reasoning]\nRelevant Document: [id]\n\n### Input:\nDocument [1] (Title: T1): body one\n\nDocument [2] (Title: T2): body two\n\nQuestion: Who built it?\n\n### Response:\n",
+      "Relevant Document: [1]"
+    ],
     "cycle|after|alpaca=True": [
       "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nClaim 1: A outranks B.\n\nClaim 2: B outranks A.\n\nFind cycles.\n\nOutput your answer as a JSON list of cycles, where each cycle is a list of the claim IDs whose comparisons form the loop. For example: [[3, 8, 12]]\nIf there are no cycles, output: []\n\n### Response:\n",
       "[[1, 2]]"
@@ -586,6 +590,14 @@
     "reorder|after|alpaca=True": [
       "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nYou will be asked to do a long-context processing task for a context.\n\n### Input:\nPassage [1]: First para.\nSecond para.\n\nPassage [2]: A later passage.\n\nYou are given a list of text passages presented in a random order. They were originally consecutive segments of a single document. Output the permutation that restores them to their original order, as a JSON array of the passage IDs.\nWrite your answer in the following format:\n[id1, id2, id3, ...]\n\n### Response:\n",
       "[2, 1]"
+    ],
+    "retrieval_multigold|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to identify which documents are relevant to answering the question. List all relevant document IDs.\nWrite your answer in the following format:\nRelevant Documents: [id1], [id2]\n\n### Input:\nDocument [1] (Title: T1): body one\n\nDocument [2] (Title: T2): body two\n\nQuestion: Who built it?\n\n### Response:\n",
+      "[1], [2]"
+    ],
+    "retrieval_multiquery|after|alpaca=True": [
+      "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to identify which documents are relevant to answering each of the following questions. For each question, list the relevant document IDs.\nWrite your answer in the following format:\nRelevant Documents: Q1: [id1], [id2]; Q2: [id3], [id4]; ...\n\n### Input:\nDocument [1] (Title: T1): body one\n\nDocument [2] (Title: T2): body two\n\nQuestion 1: Who built it?\nQuestion 2: When was it built?\n\n### Response:\n",
+      "Q1: [1]; Q2: [2]"
     ],
     "retrieval|after|alpaca=True": [
       "Below is an instruction that describes a task, paired with an input that provides further context. Write a response that appropriately completes the request.\n\n### Instruction:\nUse the given documents to identify which document is most relevant to answering the question.\nWrite your answer in the following format:\nRelevant Document: [id]\n\n### Input:\nDocument [1] (Title: T1): body one\n\nDocument [2]: untitled body\n\nQuestion: Who built it?\n\n### Response:\n",

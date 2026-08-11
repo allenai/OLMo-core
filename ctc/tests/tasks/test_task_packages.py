@@ -76,13 +76,33 @@ def test_set_answer_tasks_terminate_on_an_empty_answer(spec):
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
-def test_set_answer_tasks_terminate_on_a_populated_answer(spec):
+def test_stop_rule_terminates_on_this_task_s_own_target(spec):
+    """A rambling model must be truncated back to exactly the answer it was trained to emit.
+
+    Uses each task's own build_target rather than a fixed string. An earlier version asserted the
+    bracketed-pair shape for every answer_is_set task, which was wrong: retrieval's set answer is
+    "[1], [2]" on one line and cot_retrieval's is "Relevant Document: [1]". The shapes differ per
+    task, so the only meaningful generic check is against the task's own target.
+    """
+    import importlib
+
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
     from ctc.eval.stopping import STOP_PRESETS, apply
 
-    if not spec.answer_is_set:
-        pytest.skip("not a set-answer task")
-    out = apply("[[1, 4], [3, 7]] then rambling", STOP_PRESETS[spec.stop])
-    assert out.strip() == "[[1, 4], [3, 7]]"
+    key = next((k for k in PROMPT_EXAMPLES if k == spec.name), None)
+    if key is None:
+        pytest.skip(f"no fixture example for {spec.name}")
+    mod = importlib.import_module(f"ctc.tasks.{spec.name}.spec")
+    build_target = getattr(mod, "build_target", None)
+    if build_target is None:
+        pytest.skip(f"{spec.name} declares no build_target")
+
+    target = build_target(PROMPT_EXAMPLES[key])
+    out = apply(f"{target}\nand now some rambling", STOP_PRESETS[spec.stop])
+    assert out.strip() == target.strip(), (
+        f"{spec.name} (stop={spec.stop!r}) did not truncate back to its own target"
+    )
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
