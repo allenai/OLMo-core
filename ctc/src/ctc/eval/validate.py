@@ -35,7 +35,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--rung", required=True)
     ap.add_argument("--data", required=True, type=Path)
     ap.add_argument("--attn", default="full", choices=("full", "chunked", "landmark"))
-    ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
+    ap.add_argument(
+        "--tokenizer",
+        default="Qwen/Qwen3.5-0.8B-Base",
+        help="HF id or local dir. The tokenizer.json is shared across Qwen3.5 sizes, so any of "
+        "them will do; prefer a local directory so the node needs no network.",
+    )
+    ap.add_argument(
+        "--eos-token-id",
+        type=int,
+        default=None,
+        help="override the tokenizer's EOS. Required for Qwen3.5, where the suite driver passes "
+        "248044 (a reserved marker id) rather than the tokenizer's own value -- decoding against "
+        "the wrong EOS means generation never terminates on its own.",
+    )
     ap.add_argument("--max-length", type=int, default=4096)
     ap.add_argument("--max-new-tokens", type=int, default=None)
     ap.add_argument("--query-position", default="after", choices=("before", "after", "both"))
@@ -81,7 +94,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         tokenizer=args.tokenizer,
         attn=args.attn,
         max_length=args.max_length,
+        eos_token_id=args.eos_token_id,
     )
+    print(f"[validate] tokenizer={args.tokenizer} eos_id={backend.eos_id}")
     stop = STOP_PRESETS[spec.stop]
     if args.max_new_tokens is not None:
         stop = stop.__class__(**{**stop.__dict__, "max_new_tokens": args.max_new_tokens})
