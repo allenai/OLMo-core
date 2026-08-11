@@ -1271,7 +1271,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             )
         return None
 
-    def _frozen_checkpoint_param_state_dict_for_load(self, checkpoint_keys):
+    def _frozen_checkpoint_model_param_state_dict_for_load(self, checkpoint_keys):
         """Load frozen multimodal parameters from stable or native optimizer-main keys.
 
         Native s002 checkpoints predate ``frozen_model.*`` entries and store every model tensor
@@ -1279,18 +1279,23 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         recipe is absent from the current optimizer state, so explicitly map that native tensor
         onto the frozen model parameter without routing trainable masters through BF16.
         """
-        state = super()._frozen_checkpoint_param_state_dict_for_load(checkpoint_keys)
+        state = super()._frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys)
         stable_prefix = self._FROZEN_MODEL_PARAM_KEY_PREFIX
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
         for model_part in self.model_parts:
             for name, param in model_part.named_parameters():
-                if param.requires_grad:
+                if param.requires_grad or id(param) in optimizer_owned_anchor_ids:
                     continue
                 stable_key = stable_prefix + self._strip_wrapper_prefixes(name)
                 if stable_key in state:
                     continue
                 checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
                 if checkpoint_key is not None and checkpoint_key.endswith(".main"):
-                    state[checkpoint_key] = param.data.view(-1)
+                    if checkpoint_key in state:
+                        raise RuntimeError(
+                            f"Multiple frozen parameters map to checkpoint key '{checkpoint_key}'"
+                        )
+                    state[checkpoint_key] = param
         return state
 
     def _resolve_optimizer_checkpoint_key(self, state_key: str, checkpoint_keys) -> Optional[str]:

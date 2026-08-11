@@ -1125,6 +1125,8 @@ class RoutedExperts(nn.Module):
             if self.activation in (ExpertActivation.swiglu, ExpertActivation.gpt_oss_swiglu)
             else 1
         )
+        w_up_gate_requires_grad = self.w_up_gate.requires_grad
+        w_down_requires_grad = self.w_down.requires_grad
         self.w_up_gate = nn.Parameter(
             torch.empty(
                 self.num_local_experts,
@@ -1133,6 +1135,7 @@ class RoutedExperts(nn.Module):
                 dtype=self.w_up_gate.dtype,
                 device=self.w_up_gate.device,
             ),
+            requires_grad=w_up_gate_requires_grad,
         )
 
         self.w_down = nn.Parameter(
@@ -1143,9 +1146,12 @@ class RoutedExperts(nn.Module):
                 dtype=self.w_down.dtype,
                 device=self.w_down.device,
             ),
+            requires_grad=w_down_requires_grad,
         )
         if self.bias:
             assert self.b_up_gate is not None and self.b_down is not None
+            b_up_gate_requires_grad = self.b_up_gate.requires_grad
+            b_down_requires_grad = self.b_down.requires_grad
             self.b_up_gate = nn.Parameter(
                 torch.empty(
                     self.num_local_experts,
@@ -1153,6 +1159,7 @@ class RoutedExperts(nn.Module):
                     dtype=self.b_up_gate.dtype,
                     device=self.b_up_gate.device,
                 ),
+                requires_grad=b_up_gate_requires_grad,
             )
             self.b_down = nn.Parameter(
                 torch.empty(
@@ -1161,6 +1168,7 @@ class RoutedExperts(nn.Module):
                     dtype=self.b_down.dtype,
                     device=self.b_down.device,
                 ),
+                requires_grad=b_down_requires_grad,
             )
         owner_ref = weakref.ref(self)
         self.w_up_gate._moe_rowwise_fp8_cache_owner = owner_ref  # type: ignore[attr-defined]

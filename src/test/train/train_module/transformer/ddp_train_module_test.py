@@ -5,9 +5,11 @@ from typing import Optional
 import pytest
 import torch
 import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 
 import olmo_core.train.train_module.transformer.multimodal_train_module as multimodal_train_module
 from olmo_core.config import DType
+from olmo_core.distributed.checkpoint import RemoteFileSystemReader
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
@@ -370,6 +372,36 @@ def test_multimodal_checkpoint_frozen_params_can_become_trainable():
     )
     assert set(checkpoint_state) == {"lm.weight.main"}
     assert checkpoint_to_current == {"lm.weight.main": "lm.weight.main"}
+
+
+def test_frozen_checkpoint_skips_optimizer_owned_fp8_anchors():
+    class _WeightStore:
+        optimizer_enabled = True
+
+        def __init__(self, anchor_param):
+            self.anchor_param = anchor_param
+
+    class _Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.ones(4), requires_grad=False)
+            self.store = _WeightStore(self.anchor)
+
+        def named_fp8_weight_stores(self):
+            return [("anchor", self.store)]
+
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    model = _Model()
+    object.__setattr__(train_module, "model_parts", [model])
+
+    assert train_module._optimizer_owned_anchor_param_ids() == {id(model.anchor)}
+    assert train_module._frozen_model_param_state_dict() == {}
+    assert (
+        train_module._frozen_checkpoint_model_param_state_dict_for_load(
+            {"frozen_model.anchor", "anchor.main"}
+        )
+        == {}
+    )
 
 
 def test_multimodal_loss_divisor_uses_float_weights():
@@ -851,7 +883,10 @@ def test_multimodal_olmo_ddp_ep_padding_compile_and_checkpoint_step():
 
 
 def _build_multimodal_ddp_train_module_for_checkpoint(
-    *, freeze_vision: bool = True, freeze_lm_head: bool = False
+    *,
+    freeze_vision: bool = True,
+    freeze_lm_head: bool = False,
+    freeze_lm_blocks: bool = False,
 ):
     model = _tiny_multimodal_model_config(dtype=DType.bfloat16).build(init_device="meta")
     freeze_params = []
@@ -859,6 +894,8 @@ def _build_multimodal_ddp_train_module_for_checkpoint(
         freeze_params.append("vision.*")
     if freeze_lm_head:
         freeze_params.append("lm.lm_head.w_out.weight")
+    if freeze_lm_blocks:
+        freeze_params.append("lm.blocks.*")
     config = MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=8,
         max_sequence_length=8,
@@ -873,6 +910,21 @@ def _build_multimodal_ddp_train_module_for_checkpoint(
 def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     native = _build_ddp_train_module_for_checkpoint(ep_degree=2)
     native_model = getattr(native.model_parts[0], "module", native.model_parts[0])
+    native_optim = native._require_optimizer()
+    assert native.moe_mesh is not None
+    ep_mp_rank = native.moe_mesh["ep_mp"].get_local_rank()
+    mutated_expert_names = set()
+    expert_idx = 0
+    with torch.no_grad():
+        for group in native_optim.param_groups:
+            for name, param in group["named_params"].items():
+                if ".routed_experts.w_" not in name:
+                    continue
+                param.fill_(100 * (ep_mp_rank + 1) + expert_idx)
+                expert_idx += 1
+                mutated_expert_names.add(name)
+    assert mutated_expert_names
+    native_optim._copy_model_params_to_main_params(mutated_expert_names)
     expected_lm = {name: param.detach().clone() for name, param in native_model.named_parameters()}
     native.save_state_dict_direct(native_dir)
 
@@ -893,8 +945,17 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, unfrozen_connector_before[name], rtol=0, atol=0)
     unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
-    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_lm_head=True)
+    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(
+        freeze_lm_head=True,
+        freeze_lm_blocks=True,
+    )
     multimodal = hybrid.multimodal_model
+    assert all(not param.requires_grad for param in multimodal.lm.blocks.parameters())
+    assert not any(
+        "lm.blocks." in name
+        for group in hybrid._require_optimizer().param_groups
+        for name in group["named_params"]
+    )
     connector_before = {
         name: param.detach().clone() for name, param in multimodal.connector.named_parameters()
     }
@@ -907,6 +968,19 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, expected_lm[name], rtol=0, atol=0)
     for name, param in multimodal.connector.named_parameters():
         torch.testing.assert_close(param, connector_before[name], rtol=0, atol=0)
+
+    frozen_state = hybrid._frozen_model_param_state_dict()
+    frozen_expert_keys = []
+    for name, param in multimodal.lm.named_parameters():
+        if ".routed_experts.w_" not in name:
+            continue
+        key = f"frozen_model.lm.{name}"
+        checkpoint_view = frozen_state[key]
+        assert isinstance(checkpoint_view, DTensor)
+        assert checkpoint_view.numel() == 2 * param.numel()
+        assert checkpoint_view.to_local().data_ptr() == param.data.data_ptr()
+        frozen_expert_keys.append(key)
+    assert frozen_expert_keys
 
     optim = hybrid._require_optimizer()
     embedding_name = next(
@@ -965,6 +1039,10 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     saved_lm = {name: param.detach().clone() for name, param in multimodal.lm.named_parameters()}
     hybrid.save_state_dict_direct(hybrid_dir)
 
+    metadata = RemoteFileSystemReader(hybrid_dir).read_metadata()
+    for key in frozen_expert_keys:
+        assert metadata.state_dict_metadata[key].size.numel() == frozen_state[key].numel()
+
     with torch.no_grad():
         for param in multimodal.parameters():
             param.fill_(-0.75)
@@ -1002,6 +1080,19 @@ def test_native_checkpoint_loads_into_multimodal_and_roundtrips(tmp_path):
     run_distributed_test(
         _run_native_checkpoint_into_multimodal,
         world_size=2,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "native"), str(tmp_path / "hybrid")),
+    )
+
+
+@requires_multi_gpu
+def test_native_checkpoint_roundtrip_with_replicated_ep_dp_shards(tmp_path):
+    if torch.cuda.device_count() < 4:
+        pytest.skip("requires at least four GPUs to cover EP-DP replication")
+    run_distributed_test(
+        _run_native_checkpoint_into_multimodal,
+        world_size=4,
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "native"), str(tmp_path / "hybrid")),
