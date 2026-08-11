@@ -136,7 +136,47 @@ class NativeBackend:
             gen_cfg, float8_config=None, dtype=DType(dtype), compile_model=False
         ).build(checkpoint_dir=str(self.ckpt), device=device)
 
+        self._check_tokenizer_matches_model()
         self._configure_attention()
+
+    def _check_tokenizer_matches_model(self) -> None:
+        """
+        Refuse a tokenizer whose vocabulary does not fit the checkpoint's.
+
+        The two Qwen families in this project have different vocabularies -- Qwen3 is 151,936 and
+        Qwen3.5 is 248,320 -- and ``--tokenizer`` defaults to a Qwen3 id. Point that at a Qwen3.5
+        checkpoint and every token id is wrong, the EOS is wrong (151,645 against 248,044), and the
+        run completes normally and reports **f1 = 0.000**, which reads as a dead model rather than
+        as a mis-set flag. Measured on ``ctc-s5-contra-full-4b``: f1 0.000 at parse_rate 0.000.
+
+        Checked against the embedding matrix rather than the config, because the embedding is what
+        the ids actually index.
+
+        :raises ValueError: If the tokenizer's vocabulary exceeds the model's, or the two differ
+            enough that they cannot be the same family.
+        """
+        embeddings = getattr(self.gm.model, "embeddings", None)
+        weight = getattr(embeddings, "weight", None)
+        if weight is None:  # pragma: no cover - depends on the model class
+            return
+        model_vocab = int(weight.shape[0])
+        tok_vocab = int(getattr(self.tok, "vocab_size", 0) or 0)
+        if not tok_vocab:  # pragma: no cover - tokenizer without a declared size
+            return
+
+        # Padded vocabularies are normal (the model rounds up for kernel alignment), so a model
+        # LARGER than the tokenizer by a little is fine. A tokenizer larger than the model, or a
+        # gap far past any padding, means they are different families.
+        if tok_vocab > model_vocab or model_vocab - tok_vocab > 4096:
+            raise ValueError(
+                f"tokenizer/checkpoint mismatch: the tokenizer has {tok_vocab:,} tokens but this "
+                f"checkpoint's embedding is {model_vocab:,}. These are different tokenizers, so "
+                f"every id -- including EOS -- would be wrong and the run would score ~0.0 rather "
+                f"than fail.\n"
+                f"  Qwen3   (vocab 151,936): --tokenizer Qwen/Qwen3-4B\n"
+                f"  Qwen3.5 (vocab 248,320): --tokenizer Qwen/Qwen3.5-0.8B-Base "
+                f"(one tokenizer across all Qwen3.5 sizes)"
+            )
 
     def _configure_attention(self) -> None:
         """

@@ -21,5 +21,6 @@ $PY -m ctc.eval.cli --tasks contradiction --rungs 2k --bundle "$BUNDLE" --dry-ru
 echo "=== real eval (limit 12) ==="
 $PY -m ctc.eval.cli --ckpt "$CKPT" --tasks contradiction --rungs 2k \
     --bundle "$BUNDLE" --out /data/prasann/ctc_local_results \
-    --limit 12 --max-length 8192 --attn full --ignore-format-fingerprint
+    --limit 12 --max-length 8192 --attn full --ignore-format-fingerprint \
+    --tokenizer Qwen/Qwen3.5-0.8B-Base
 echo "=== exit=$? ==="
