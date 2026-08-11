@@ -333,3 +333,63 @@ def test_generate_reports_what_is_missing_rather_than_returning_nothing():
 
     with pytest.raises(NotImplementedError, match="generate_pubmed_contradiction_data"):
         list(generate.build("pubmed", rung="2k"))
+
+
+# ── an inert knob must actually be inert ────────────────────────────────────────────────────────
+#
+# Three tasks declare honors_query_position=False because their legacy path hardcodes
+# documents-then-query. The fingerprint takes that declaration at its word and PINS the field to
+# "after" for them, so that two runs differing only in a setting that does nothing still compare as
+# compatible. If the knob is not in fact inert, the pin becomes a false claim: a --query-position
+# before run writes a fingerprint saying "after" and the guard certifies a format the checkpoint
+# was never trained on.
+#
+# grouping_labeled forwarded the option instead of discarding it, so it changed the prompt at
+# `before` and `both` while still declaring itself inert. outlier and qdmatch discarded it
+# correctly. Asserting the property for every such task, rather than fixing the one, is the point.
+
+
+def _example_for(name: str):
+    """
+    :param name: Task name.
+
+    :returns: That task's golden example, or ``None``. Absent is legitimate for a task with no
+        pre-migration behaviour to snapshot -- the fixture records the old code, it is not a
+        per-task requirement -- so the tests below skip rather than fail.
+    """
+    from fixtures.generate_golden import PROMPT_EXAMPLES
+
+    return PROMPT_EXAMPLES.get(name)
+
+
+@pytest.mark.parametrize(
+    "name", [n for n in registry.names() if not registry.get(n).honors_query_position]
+)
+def test_a_task_declaring_the_knob_inert_ignores_it(name):
+    example = _example_for(name)
+    if example is None:
+        pytest.skip(f"no golden example for {name}")
+    spec = registry.get(name)
+    prompts = {p: spec.build_prompt(example, query_position=p) for p in ("before", "after", "both")}
+    assert len(set(prompts.values())) == 1, (
+        f"{name} declares honors_query_position=False, but its prompt changes with the option. "
+        "The fingerprint pins the field to 'after' for such tasks, so this makes the guard certify "
+        "a format that was never trained."
+    )
+
+
+@pytest.mark.parametrize(
+    "name", [n for n in registry.names() if registry.get(n).honors_query_position]
+)
+def test_a_task_declaring_the_knob_live_actually_uses_it(name):
+    """The converse: a task claiming to honour it must not silently hardcode a position."""
+    example = _example_for(name)
+    if example is None:
+        pytest.skip(f"no golden example for {name}")
+    spec = registry.get(name)
+    before = spec.build_prompt(example, query_position="before")
+    after = spec.build_prompt(example, query_position="after")
+    assert before != after, (
+        f"{name} declares honors_query_position=True but ignores it. The fingerprint then records "
+        "a distinction the prompt does not make, and two incompatible-looking runs are identical."
+    )

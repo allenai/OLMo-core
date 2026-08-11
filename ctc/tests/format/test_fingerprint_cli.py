@@ -66,10 +66,28 @@ def test_an_asserted_range_is_labelled_as_asserted(tmp_path, capsys):
     assert "ASSERTED" in capsys.readouterr().out
 
 
+def test_the_file_a_range_was_measured_from_is_recorded(tmp_path):
+    """The range must describe TRAINING data; measured from an eval rung it contains itself."""
+    data = rung(tmp_path)
+    main(["write", "--dir", str(tmp_path), "--task", "retrieval", "--data", data])
+    assert written(tmp_path).formats[0].notes["measured_from"] == data
+
+
 def test_an_unnumbered_task_records_no_range(tmp_path):
     """oolong renders items verbatim; a range there would invent a constraint."""
     main(["write", "--dir", str(tmp_path), "--task", "oolong", "--data", rung(tmp_path)])
     assert written(tmp_path).formats[0].doc_id_range is None
+
+
+def test_a_numbered_task_with_no_range_says_the_check_is_off(tmp_path, capsys):
+    """Distinct from oolong above: here the check COULD apply and simply is not recorded."""
+    main(["write", "--dir", str(tmp_path), "--task", "retrieval"])
+    assert "digit-range check is inactive" in capsys.readouterr().out
+
+
+def test_an_unnumbered_task_is_not_nagged_about_a_range(tmp_path, capsys):
+    main(["write", "--dir", str(tmp_path), "--task", "oolong"])
+    assert "digit-range check is inactive" not in capsys.readouterr().out
 
 
 def test_write_replaces_by_default(tmp_path):
@@ -185,6 +203,28 @@ def test_show_surfaces_that_a_record_was_asserted(tmp_path, capsys):
 def test_show_exits_nonzero_for_an_unfingerprinted_directory(tmp_path, capsys):
     assert main(["show", str(tmp_path)]) == 1
     assert "UNVERIFIED" in capsys.readouterr().out
+
+
+def test_show_distinguishes_an_inapplicable_range_from_an_unrecorded_one(tmp_path, capsys):
+    """Both print as absent; conflating them is how a field quietly stops guarding."""
+    numbered, unnumbered = tmp_path / "a", tmp_path / "b"
+    main(["write", "--dir", str(numbered), "--task", "retrieval"])
+    main(["write", "--dir", str(unnumbered), "--task", "oolong"])
+
+    capsys.readouterr()
+    main(["show", str(numbered)])
+    assert "NOT RECORDED" in capsys.readouterr().out
+
+    main(["show", str(unnumbered)])
+    assert "unnumbered" in capsys.readouterr().out
+
+
+def test_show_names_the_file_a_measured_record_came_from(tmp_path, capsys):
+    data = rung(tmp_path)
+    main(["write", "--dir", str(tmp_path), "--task", "retrieval", "--data", data])
+    capsys.readouterr()
+    main(["show", str(tmp_path)])
+    assert data in capsys.readouterr().out
 
 
 def test_show_json_round_trips(tmp_path, capsys):

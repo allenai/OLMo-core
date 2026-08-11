@@ -130,12 +130,27 @@ def make_grouping_spec(
     """
 
     def build_prompt(example: Dict, **opts) -> str:
+        """
+        :param example: A unified-format example.
+        :param opts: Assembly options. ``query_position`` is accepted and **ignored**, matching the
+            legacy path this reproduces.
+
+        :returns: The prompt.
+        """
+        # Discarded, not forwarded. The spec declares honors_query_position=False, and the
+        # fingerprint pins the field to "after" for such tasks so that two runs differing only in
+        # an inert knob still compare as compatible. Letting the knob through made it NOT inert:
+        # a --query-position before run produced a genuinely different prompt while writing a
+        # fingerprint that claimed "after", i.e. the guard would certify a format the checkpoint
+        # was never trained on. outlier and qdmatch already discarded it; this one did not.
+        opts.pop("query_position", None)
         return assemble.assemble(
             example,
             task=name,
             unified=False,
             header=instruction,
             positioned=query_builder(example),
+            query_position="after",
             **opts,
         )
 

@@ -22,7 +22,7 @@ from typing import Optional, Sequence
 
 from .. import tasks
 from . import registry
-from .documents import visible_doc_id_range
+from .documents import shows_doc_ids, visible_doc_id_range
 from .fingerprint import (
     FINGERPRINT_FILENAME,
     FingerprintSet,
@@ -68,8 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--data",
         default=None,
         help=(
-            "a rung JSONL to measure doc_id_range from. Strongly preferred over --doc-id-range: "
-            "the digit-range bug was a wrong claim about the data, so measuring beats asserting."
+            "the TRAINING JSONL to measure doc_id_range from -- not an eval rung. Measuring beats "
+            "asserting, since the digit-range bug was a wrong claim about the corpus. But the "
+            "range describes what training showed the model, so measuring it from the eval set "
+            "produces a field that contains itself by construction: a check that passes because "
+            "it was derived from the thing being checked. The path is recorded so `show` can "
+            "reveal which file was used."
         ),
     )
     write.add_argument(
@@ -157,18 +161,33 @@ def _show(args: argparse.Namespace) -> int:
         )
         print(f"    gold ids      {fp.gold_index_base}-based")
         print(f"    chunk layout  {fp.chunk_layout}")
-        print(f"    doc id range  {fp.doc_id_range if fp.doc_id_range else '(unnumbered)'}")
+        print(f"    doc id range  {_describe_range(fp)}")
         print(f"    tokenizer     {fp.tokenizer or '(unrecorded)'}")
         print(
             f"    provenance    {provenance}"
             + (
                 "   <-- asserted by hand, not measured from data"
                 if provenance == "asserted"
-                else ""
+                else f"   from {fp.notes.get('measured_from', 'data')}"
             )
         )
         print()
     return 0
+
+
+def _describe_range(fp: FormatFingerprint) -> str:
+    """
+    Render ``doc_id_range``, keeping "cannot apply" distinct from "nobody recorded it".
+
+    Both print as an absent value, and conflating them is how a field silently stops guarding: for
+    ``oolong`` there is genuinely no id to constrain, while for ``contradiction`` an absent range
+    means the digit-range check is simply off for this checkpoint.
+    """
+    if fp.doc_id_range is not None:
+        return str(fp.doc_id_range)
+    if shows_doc_ids(fp.task):
+        return "(NOT RECORDED -- the digit-range check is inactive for this checkpoint)"
+    return "(n/a: this task renders items unnumbered)"
 
 
 def _build(args: argparse.Namespace, examples: Optional[Sequence[dict]]) -> FormatFingerprint:
@@ -193,7 +212,14 @@ def _build(args: argparse.Namespace, examples: Optional[Sequence[dict]]) -> Form
         overrides["notes"] = {"provenance": "asserted"}
     elif examples is not None:
         overrides["doc_id_range"] = visible_doc_id_range(examples, args.task)
-        overrides["notes"] = {"provenance": "measured", "measured_over": len(examples)}
+        # Record WHICH file this came from. The range describes the data the model was TRAINED on,
+        # and pointing --data at an eval rung instead produces a field that trivially contains
+        # itself -- a check that passes because it was derived from the thing it is checking.
+        overrides["notes"] = {
+            "provenance": "measured",
+            "measured_over": len(examples),
+            "measured_from": str(getattr(args, "data", "")),
+        }
     else:
         overrides["notes"] = {"provenance": "asserted"}
     return spec.fingerprint(**overrides)
@@ -214,11 +240,15 @@ def _write(args: argparse.Namespace) -> int:
     path = new.write(directory)
 
     print(f"wrote {path}")
+    if fp.doc_id_range is None and shows_doc_ids(fp.task):
+        print(
+            f"  ! no doc_id_range recorded, so the digit-range check is inactive for {fp.task}. "
+            "Pass --data pointing at the TRAINING data to measure it."
+        )
     if fp.notes.get("provenance") == "asserted":
         print(
-            "  ! recorded as ASSERTED: nothing here was measured from data. If the assertion is "
-            "wrong, the guard now certifies a mismatch instead of catching it. Pass --data to "
-            "measure the id range."
+            "  ! recorded as ASSERTED: every field here was stated by hand, not measured. If the "
+            "assertion is wrong, the guard now certifies a mismatch instead of catching it."
         )
     return 0
 
