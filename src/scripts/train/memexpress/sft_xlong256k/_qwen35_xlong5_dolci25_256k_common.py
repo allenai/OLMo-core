@@ -44,6 +44,15 @@ WHAT IS *NOT* MATCHED BETWEEN THE ARMS, AND WHICH WAY IT BIASES
   which is the cap alone. The 112 dropped instances reconcile exactly: contra 27, nq 22, oolong 7,
   outlier 20, rerank 36.
 
+  A second, smaller consequence of the same size gap, measured at prep (see ``packed_windows``):
+  the mixture packs into 8,971 windows on qboth against 8,808 on qafter, i.e. 2,242.8 vs 2,202.0
+  steps per epoch at DP=4. At the shared MAX_STEPS of 2,240 the control therefore lands at 0.999
+  epochs and the treatment at 1.017 -- qafter sees ~1.7% of its data twice, qboth none. Both arms
+  still consume the identical 2.35B-token budget, and the asymmetry points the same way as the cap
+  gap (the treatment arm sees marginally less UNIQUE data). Deliberately left as-is on 2026-08-11 to
+  keep the budget token-matched to the legacy runs; dropping MAX_STEPS to 2,200 is the alternative
+  that puts both arms strictly inside one epoch, at the cost of 1.8% of the budget.
+
 RELATIONSHIP TO THE LEGACY 256k RUNS
   ``src/scripts/train/sft/amanda-landmark/Qwen3.5-4B-dense-xlong5-dolci25-256k-SFT.py`` (run
   ``q35-4b-dense-xlong5-dolci25-256k``) trained the qboth data from the same base checkpoint at
@@ -143,6 +152,11 @@ _ARMS: Dict[str, Dict[str, Any]] = {
         tokens=1_763_719_249,
         instances=99_944,
         longest_example=262_072,
+        # Packed windows of 262,144 for the FULL 75/25 mixture (~2.4B tokens), measured at prep
+        # 2026-08-11, Beaker 01KZSH0PJA8XFF9420H7BRP85Z. The packer reported "Reusing cached packing
+        # results", i.e. it hit the legacy run's cache -- independent confirmation that this arm
+        # reproduces q35-4b-dense-xlong5-dolci25-256k's data exactly, which is the point of it.
+        packed_windows=8_971,
     ),
     "qafter": dict(
         data_root=f"{_XLONG_ROOT}/xlong5_2k256k_qwen35_qafter/shards_full",
@@ -151,6 +165,9 @@ _ARMS: Dict[str, Dict[str, Any]] = {
         tokens=1_731_810_480,
         instances=99_832,
         longest_example=249_950,
+        # 2,308,926,030 mixture tokens -> 8,808 windows at 4.4 padding tokens each, measured at prep
+        # 2026-08-11, Beaker 01KZSGF1J0DVDZB8J3K9KPA00Q.
+        packed_windows=8_808,
     ),
 }
 
