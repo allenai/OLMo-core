@@ -259,9 +259,15 @@ def main(argv=None) -> int:
         return 0
 
     workload = launch.launch(follow=False)
-    wid = getattr(workload, "id", workload)
-    print(f"\nsubmitted: {wid}")
-    print(f"  https://beaker.org/ex/{wid}")
+    # `workload` is a protobuf whose `.id` is nested on the experiment, not on the top level -- a
+    # plain getattr returns the whole message and prints a URL that does not resolve. gantry has
+    # already printed the real link by this point, so a failure here is cosmetic, not a lost job.
+    experiment = getattr(workload, "experiment", None)
+    wid = getattr(experiment, "id", None) or getattr(workload, "id", None)
+    if wid:
+        print(f"\nsubmitted: {wid}\n  https://beaker.org/ex/{wid}")
+    else:  # pragma: no cover - depends on the beaker client version
+        print("\nsubmitted; see the experiment link gantry printed above.")
     return 0
 
 
