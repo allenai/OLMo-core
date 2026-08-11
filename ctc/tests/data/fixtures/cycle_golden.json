@@ -1,0 +1,749 @@
+{
+ "seed": 1234,
+ "source": "pre-migration-source",
+ "cases": [
+  {
+   "name": "n24_len3_k1",
+   "config": {
+    "num_docs": 24,
+    "cycle_len": 3,
+    "num_cycles": 1
+   },
+   "examples": [
+    {
+     "documents": [
+      {
+       "text": "Remy lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Jamal"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Faye lifts heavier weights than Remy"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Raj"
+      },
+      {
+       "text": "Raj lifts heavier weights than Lily"
+      },
+      {
+       "text": "Remy lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Remy lifts heavier weights than Lily"
+      },
+      {
+       "text": "Faye lifts heavier weights than Lily"
+      },
+      {
+       "text": "Faye lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Faye"
+      },
+      {
+       "text": "Lily lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Raj lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Faye lifts heavier weights than Jamal"
+      },
+      {
+       "text": "Faye lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Cleo lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Raj lifts heavier weights than Remy"
+      },
+      {
+       "text": "Tom lifts heavier weights than Raj"
+      },
+      {
+       "text": "Raj lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Lily lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Remy lifts heavier weights than Jamal"
+      },
+      {
+       "text": "Tom lifts heavier weights than Lily"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       5,
+       19,
+       23
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 3,
+      "num_cycles": 1,
+      "predicate": "{a} lifts heavier weights than {b}"
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "Rune has more money than Val"
+      },
+      {
+       "text": "Carlos has more money than Val"
+      },
+      {
+       "text": "Rune has more money than Will"
+      },
+      {
+       "text": "Juno has more money than Val"
+      },
+      {
+       "text": "Alice has more money than Diego"
+      },
+      {
+       "text": "Rune has more money than Diego"
+      },
+      {
+       "text": "Will has more money than Xena"
+      },
+      {
+       "text": "Juno has more money than Carlos"
+      },
+      {
+       "text": "Carlos has more money than Alice"
+      },
+      {
+       "text": "Val has more money than Alice"
+      },
+      {
+       "text": "Xena has more money than Val"
+      },
+      {
+       "text": "Will has more money than Val"
+      },
+      {
+       "text": "Will has more money than Alice"
+      },
+      {
+       "text": "Rune has more money than Alice"
+      },
+      {
+       "text": "Carlos has more money than Diego"
+      },
+      {
+       "text": "Juno has more money than Will"
+      },
+      {
+       "text": "Xena has more money than Diego"
+      },
+      {
+       "text": "Diego has more money than Val"
+      },
+      {
+       "text": "Rune has more money than Carlos"
+      },
+      {
+       "text": "Juno has more money than Diego"
+      },
+      {
+       "text": "Juno has more money than Alice"
+      },
+      {
+       "text": "Rune has more money than Xena"
+      },
+      {
+       "text": "Juno has more money than Xena"
+      },
+      {
+       "text": "Carlos has more money than Will"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       5,
+       10,
+       18
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 3,
+      "num_cycles": 1,
+      "predicate": "{a} has more money than {b}"
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "Zoe has more money than Esme"
+      },
+      {
+       "text": "Viktor has more money than Jada"
+      },
+      {
+       "text": "Greta has more money than Viktor"
+      },
+      {
+       "text": "Jada has more money than Kane"
+      },
+      {
+       "text": "Jada has more money than Zoe"
+      },
+      {
+       "text": "Greta has more money than Esme"
+      },
+      {
+       "text": "Greta has more money than Hiro"
+      },
+      {
+       "text": "Viktor has more money than Hiro"
+      },
+      {
+       "text": "Kane has more money than Viktor"
+      },
+      {
+       "text": "Uma has more money than Greta"
+      },
+      {
+       "text": "Uma has more money than Jada"
+      },
+      {
+       "text": "Uma has more money than Kane"
+      },
+      {
+       "text": "Uma has more money than Esme"
+      },
+      {
+       "text": "Zoe has more money than Hiro"
+      },
+      {
+       "text": "Viktor has more money than Zoe"
+      },
+      {
+       "text": "Viktor has more money than Esme"
+      },
+      {
+       "text": "Jada has more money than Esme"
+      },
+      {
+       "text": "Jada has more money than Hiro"
+      },
+      {
+       "text": "Uma has more money than Zoe"
+      },
+      {
+       "text": "Greta has more money than Zoe"
+      },
+      {
+       "text": "Uma has more money than Hiro"
+      },
+      {
+       "text": "Greta has more money than Jada"
+      },
+      {
+       "text": "Hiro has more money than Esme"
+      },
+      {
+       "text": "Kane has more money than Zoe"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       2,
+       4,
+       9
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 3,
+      "num_cycles": 1,
+      "predicate": "{a} has more money than {b}"
+     }
+    }
+   ]
+  },
+  {
+   "name": "n40_len4_k2",
+   "config": {
+    "num_docs": 40,
+    "cycle_len": 4,
+    "num_cycles": 2
+   },
+   "examples": [
+    {
+     "documents": [
+      {
+       "text": "Raj lifts heavier weights than Lily"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Lily"
+      },
+      {
+       "text": "Omar lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Remy lifts heavier weights than Lily"
+      },
+      {
+       "text": "Raj lifts heavier weights than Faye"
+      },
+      {
+       "text": "Raj lifts heavier weights than Remy"
+      },
+      {
+       "text": "Tom lifts heavier weights than Faye"
+      },
+      {
+       "text": "Remy lifts heavier weights than Juno"
+      },
+      {
+       "text": "Omar lifts heavier weights than Juno"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Faye"
+      },
+      {
+       "text": "Remy lifts heavier weights than Tom"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Omar lifts heavier weights than Lily"
+      },
+      {
+       "text": "Remy lifts heavier weights than Faye"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Raj"
+      },
+      {
+       "text": "Juno lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Juno"
+      },
+      {
+       "text": "Omar lifts heavier weights than Tom"
+      },
+      {
+       "text": "Raj lifts heavier weights than Juno"
+      },
+      {
+       "text": "Tom lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Omar lifts heavier weights than Faye"
+      },
+      {
+       "text": "Remy lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Ugo lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Juno lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Remy lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Juno"
+      },
+      {
+       "text": "Jamal lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Omar lifts heavier weights than Jamal"
+      },
+      {
+       "text": "Tom lifts heavier weights than Jamal"
+      },
+      {
+       "text": "Lily lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Omar lifts heavier weights than Ugo"
+      },
+      {
+       "text": "Tom lifts heavier weights than Lily"
+      },
+      {
+       "text": "Omar lifts heavier weights than Raj"
+      },
+      {
+       "text": "Cleo lifts heavier weights than Faye"
+      },
+      {
+       "text": "Raj lifts heavier weights than Cleo"
+      },
+      {
+       "text": "Juno lifts heavier weights than Lily"
+      },
+      {
+       "text": "Omar lifts heavier weights than Remy"
+      },
+      {
+       "text": "Faye lifts heavier weights than Lily"
+      },
+      {
+       "text": "Juno lifts heavier weights than Faye"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       6,
+       11,
+       15,
+       29
+      ],
+      [
+       23,
+       30,
+       35,
+       39
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 4,
+      "num_cycles": 2,
+      "predicate": "{a} lifts heavier weights than {b}"
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "Aisha runs faster than Nina"
+      },
+      {
+       "text": "Felix runs faster than Omar"
+      },
+      {
+       "text": "Nina runs faster than Xia"
+      },
+      {
+       "text": "Aisha runs faster than Yael"
+      },
+      {
+       "text": "Xia runs faster than Jamal"
+      },
+      {
+       "text": "Felix runs faster than Jamal"
+      },
+      {
+       "text": "Zeb runs faster than Felix"
+      },
+      {
+       "text": "Yael runs faster than Felix"
+      },
+      {
+       "text": "Nina runs faster than Jane"
+      },
+      {
+       "text": "Raj runs faster than Jane"
+      },
+      {
+       "text": "Nina runs faster than Omar"
+      },
+      {
+       "text": "Aisha runs faster than Jamal"
+      },
+      {
+       "text": "Aisha runs faster than Omar"
+      },
+      {
+       "text": "Raj runs faster than Xia"
+      },
+      {
+       "text": "Felix runs faster than Nina"
+      },
+      {
+       "text": "Aisha runs faster than Xia"
+      },
+      {
+       "text": "Aisha runs faster than Jane"
+      },
+      {
+       "text": "Yael runs faster than Nina"
+      },
+      {
+       "text": "Yael runs faster than Xia"
+      },
+      {
+       "text": "Zeb runs faster than Jane"
+      },
+      {
+       "text": "Zeb runs faster than Raj"
+      },
+      {
+       "text": "Jamal runs faster than Omar"
+      },
+      {
+       "text": "Zeb runs faster than Nina"
+      },
+      {
+       "text": "Yael runs faster than Jane"
+      },
+      {
+       "text": "Raj runs faster than Aisha"
+      },
+      {
+       "text": "Zeb runs faster than Yael"
+      },
+      {
+       "text": "Zeb runs faster than Omar"
+      },
+      {
+       "text": "Nina runs faster than Jamal"
+      },
+      {
+       "text": "Omar runs faster than Jane"
+      },
+      {
+       "text": "Zeb runs faster than Jamal"
+      },
+      {
+       "text": "Felix runs faster than Jane"
+      },
+      {
+       "text": "Zeb runs faster than Aisha"
+      },
+      {
+       "text": "Zeb runs faster than Xia"
+      },
+      {
+       "text": "Raj runs faster than Nina"
+      },
+      {
+       "text": "Yael runs faster than Jamal"
+      },
+      {
+       "text": "Yael runs faster than Omar"
+      },
+      {
+       "text": "Felix runs faster than Raj"
+      },
+      {
+       "text": "Jane runs faster than Xia"
+      },
+      {
+       "text": "Felix runs faster than Xia"
+      },
+      {
+       "text": "Raj runs faster than Jamal"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       4,
+       8,
+       25,
+       37
+      ],
+      [
+       5,
+       22,
+       29,
+       38
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 4,
+      "num_cycles": 2,
+      "predicate": "{a} runs faster than {b}"
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "Val scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Yael scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Finn scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Zara scored higher on the exam than Erik"
+      },
+      {
+       "text": "Finn scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Kofi scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Clara scored higher on the exam than Jane"
+      },
+      {
+       "text": "Finn scored higher on the exam than Zara"
+      },
+      {
+       "text": "Erik scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Val scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Jane scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Jane scored higher on the exam than Erik"
+      },
+      {
+       "text": "Yael scored higher on the exam than Erik"
+      },
+      {
+       "text": "Clara scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Val scored higher on the exam than Erik"
+      },
+      {
+       "text": "Yael scored higher on the exam than Zara"
+      },
+      {
+       "text": "Zara scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Val scored higher on the exam than Jane"
+      },
+      {
+       "text": "Finn scored higher on the exam than Yael"
+      },
+      {
+       "text": "Clara scored higher on the exam than Zara"
+      },
+      {
+       "text": "Clara scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Carlos scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Yael scored higher on the exam than Kofi"
+      },
+      {
+       "text": "Jane scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Val scored higher on the exam than Zara"
+      },
+      {
+       "text": "Zara scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Yael scored higher on the exam than Jane"
+      },
+      {
+       "text": "Finn scored higher on the exam than Erik"
+      },
+      {
+       "text": "Clara scored higher on the exam than Erik"
+      },
+      {
+       "text": "Yael scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Finn scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Val scored higher on the exam than Oscar"
+      },
+      {
+       "text": "Val scored higher on the exam than Finn"
+      },
+      {
+       "text": "Clara scored higher on the exam than Val"
+      },
+      {
+       "text": "Oscar scored higher on the exam than Erik"
+      },
+      {
+       "text": "Finn scored higher on the exam than Jane"
+      },
+      {
+       "text": "Zara scored higher on the exam than Jane"
+      },
+      {
+       "text": "Yael scored higher on the exam than Clara"
+      },
+      {
+       "text": "Zara scored higher on the exam than Carlos"
+      },
+      {
+       "text": "Jane scored higher on the exam than Kofi"
+      }
+     ],
+     "queries": [
+      "Each claim asserts a strict comparison (the first person ranks strictly above the second). Find every set of claims that forms a cycle \u2014 an impossible loop where the ranking comes back to where it started."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       6,
+       9,
+       22,
+       35
+      ],
+      [
+       19,
+       33,
+       34,
+       38
+      ]
+     ],
+     "source": "cycle",
+     "_meta": {
+      "cycle_len": 4,
+      "num_cycles": 2,
+      "predicate": "{a} scored higher on the exam than {b}"
+     }
+    }
+   ]
+  }
+ ]
+}
