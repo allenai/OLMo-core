@@ -128,8 +128,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             except ValueError as e:
                 raise SystemExit(str(e)) from None
 
-    print(f"plan: {args.command} {'suite' if args.suite else 'task'}="
-          f"{args.suite or args.task}")
+    print(f"plan: {args.command} {'suite' if args.suite else 'task'}=" f"{args.suite or args.task}")
     print("\nGenerators are not ported yet, so there is nothing to build.")
     print("Next step in the port: ctc/src/ctc/format/ (task #2).")
     return 1

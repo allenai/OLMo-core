@@ -91,7 +91,10 @@ def score(parsed: Optional[List[int]], gold_order: List[int]) -> Dict[str, float
     """
     if parsed is None:
         return {
-            "kendall_tau": 0.0, "pmr": 0.0, "position_accuracy": 0.0, "parsed": 0.0,
+            "kendall_tau": 0.0,
+            "pmr": 0.0,
+            "position_accuracy": 0.0,
+            "parsed": 0.0,
         }
     n = len(gold_order)
     correct = sum(1 for a, b in zip(parsed, gold_order) if a == b)

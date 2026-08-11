@@ -90,8 +90,7 @@ def retrieval_instruction(example: Dict) -> str:
     if is_multi_query(example):
         return RETRIEVAL_INSTRUCTION_MULTI_QUERY
     return (
-        RETRIEVAL_INSTRUCTION_MULTI_DOC if has_multi_gold(example)
-        else RETRIEVAL_INSTRUCTION_SINGLE
+        RETRIEVAL_INSTRUCTION_MULTI_DOC if has_multi_gold(example) else RETRIEVAL_INSTRUCTION_SINGLE
     )
 
 
@@ -103,7 +102,8 @@ def cot_retrieval_instruction(example: Dict) -> str:
         this task, so it is not consulted.
     """
     return (
-        COT_RETRIEVAL_INSTRUCTION_MULTI_DOC if has_multi_gold(example)
+        COT_RETRIEVAL_INSTRUCTION_MULTI_DOC
+        if has_multi_gold(example)
         else COT_RETRIEVAL_INSTRUCTION_SINGLE
     )
 
@@ -144,7 +144,11 @@ def score_ids(parsed, example: Dict) -> Dict[str, float]:
     gold_ids = {g + 1 for g in flatten_gold(example)}
     if parsed is None:
         return {
-            "exact_match": 0.0, "recall": 0.0, "precision": 0.0, "f1": 0.0, "parsed": 0.0,
+            "exact_match": 0.0,
+            "recall": 0.0,
+            "precision": 0.0,
+            "f1": 0.0,
+            "parsed": 0.0,
         }
     pred = set(parsed)
     return {

@@ -37,8 +37,12 @@ def parse(text: str, n_docs: int) -> Optional[List[List[int]]]:
 #: Zero score for an unparseable partition. Named so the shape cannot drift from what :func:`score`
 #: returns on the success path.
 _ZERO = {
-    "pairwise_precision": 0.0, "pairwise_recall": 0.0, "pairwise_f1": 0.0,
-    "k_exact": 0.0, "coverage": 0.0, "parsed": 0.0,
+    "pairwise_precision": 0.0,
+    "pairwise_recall": 0.0,
+    "pairwise_f1": 0.0,
+    "k_exact": 0.0,
+    "coverage": 0.0,
+    "parsed": 0.0,
 }
 
 

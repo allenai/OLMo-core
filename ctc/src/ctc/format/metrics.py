@@ -238,8 +238,11 @@ def cycle_metrics(
     gold_set = {frozenset(c) for c in gold}
     if not pred_set and not gold_set:
         return {
-            "precision": 1.0, "recall": 1.0, "f1": 1.0,
-            "exact_match": 1.0, "claim_f1": 1.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "exact_match": 1.0,
+            "claim_f1": 1.0,
         }
     tp = len(pred_set & gold_set)
     p = tp / len(pred_set) if pred_set else 0.0
@@ -253,8 +256,11 @@ def cycle_metrics(
     cr = ctp / len(gold_ids) if gold_ids else 0.0
     claim_f1 = (2 * cp * cr / (cp + cr)) if (cp + cr) > 0 else 0.0
     return {
-        "precision": p, "recall": r, "f1": f1,
-        "exact_match": float(pred_set == gold_set), "claim_f1": claim_f1,
+        "precision": p,
+        "recall": r,
+        "f1": f1,
+        "exact_match": float(pred_set == gold_set),
+        "claim_f1": claim_f1,
     }
 
 
@@ -283,9 +289,7 @@ def set_metrics(predicted: Set, gold: Set) -> Dict[str, float]:
     return {"precision": p, "recall": r, "f1": f1, "exact_match": float(predicted == gold)}
 
 
-def pairwise_metrics(
-    pred_labels: Sequence[int], gold_labels: Sequence[int]
-) -> Dict[str, float]:
+def pairwise_metrics(pred_labels: Sequence[int], gold_labels: Sequence[int]) -> Dict[str, float]:
     """
     Pairwise clustering metrics for the grouping tasks.
 
@@ -310,12 +314,8 @@ def pairwise_metrics(
             "both must cover every document"
         )
     n = len(pred_labels)
-    pred_pairs = {
-        (i, j) for i, j in combinations(range(n), 2) if pred_labels[i] == pred_labels[j]
-    }
-    gold_pairs = {
-        (i, j) for i, j in combinations(range(n), 2) if gold_labels[i] == gold_labels[j]
-    }
+    pred_pairs = {(i, j) for i, j in combinations(range(n), 2) if pred_labels[i] == pred_labels[j]}
+    gold_pairs = {(i, j) for i, j in combinations(range(n), 2) if gold_labels[i] == gold_labels[j]}
     tp = len(pred_pairs & gold_pairs)
     p = tp / len(pred_pairs) if pred_pairs else 0.0
     r = tp / len(gold_pairs) if gold_pairs else 0.0
@@ -356,9 +356,7 @@ def kendall_tau(pred: Sequence[int], gold: Sequence[int]) -> float:
     return (concordant - discordant) / total
 
 
-def clustering_extras(
-    pred_labels: Sequence[int], gold_labels: Sequence[int]
-) -> Dict[str, float]:
+def clustering_extras(pred_labels: Sequence[int], gold_labels: Sequence[int]) -> Dict[str, float]:
     """
     ARI and NMI for the grouping tasks, when scikit-learn is available.
 

@@ -41,6 +41,7 @@ def shards(tmp_path, name, *fps):
 
 # ── collection ──────────────────────────────────────────────────────────────────────────────────
 
+
 def test_a_mix_is_gathered_from_its_shard_dirs(tmp_path):
     got, skipped = collect_fingerprints(
         [shards(tmp_path, "contradiction"), shards(tmp_path, "outlier")]
@@ -80,14 +81,17 @@ def test_the_same_format_from_two_dirs_is_recorded_once(tmp_path):
 
 
 def test_two_different_formats_for_one_task_are_both_kept(tmp_path):
-    got, _ = collect_fingerprints([
-        shards(tmp_path, "a", make(query_position="before")),
-        shards(tmp_path, "b", make(query_position="after")),
-    ])
+    got, _ = collect_fingerprints(
+        [
+            shards(tmp_path, "a", make(query_position="before")),
+            shards(tmp_path, "b", make(query_position="after")),
+        ]
+    )
     assert len(got.for_task("contradiction")) == 2
 
 
 # ── drift detection ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_conflicting_formats_names_the_differing_field(tmp_path):
     conflicts = conflicting_formats(

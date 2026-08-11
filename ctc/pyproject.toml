@@ -47,7 +47,18 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
+# src/ctc/format/prompts.py is excluded on purpose. Its string literals ARE the training data --
+# every checkpoint we have is bound to them. The file was copied verbatim from the pre-migration
+# source so that a diff against the frozen `pre-migration-source` tag shows zero drift, and that
+# check is worth more than uniform formatting here. Reformatting could not change a string's VALUE,
+# but it would end the property that makes the drift check a one-liner.
+#
+# The same exclusion is repeated in the repo-root pyproject.toml: black picks its config by walking
+# up from the files it was given, so `black ctc/` reads THIS file while `make style` (which runs
+# `black .` from the root) reads that one. Only having it here would silently do nothing.
+force-exclude = 'src/ctc/format/prompts\.py'
 
 [tool.isort]
 profile = "black"
 line_length = 100
+skip_glob = ["src/ctc/format/prompts.py"]

@@ -46,6 +46,7 @@ def a_mix() -> FingerprintSet:
 
 # ── the mix ─────────────────────────────────────────────────────────────────────────────────────
 
+
 def test_a_mix_records_every_task():
     assert a_mix().tasks == MIX
 
@@ -71,6 +72,7 @@ def test_an_untrained_task_is_an_absence_not_a_mismatch():
 
 # ── a task trained under two layouts ────────────────────────────────────────────────────────────
 
+
 def test_either_of_two_recorded_layouts_is_accepted():
     """A curriculum can vary the layout on purpose; such a checkpoint is bound to both."""
     both = FingerprintSet([make(query_position="before"), make(query_position="after")])
@@ -86,16 +88,19 @@ def test_a_third_layout_is_still_refused():
 
 def test_the_error_reports_the_closest_candidate_only():
     """Several unrelated mismatch lists would obscure which one nearly matched."""
-    candidates = FingerprintSet([
-        make(query_position="before"),
-        make(query_position="after", gold_index_base=0, item_separator="\n"),
-    ])
+    candidates = FingerprintSet(
+        [
+            make(query_position="before"),
+            make(query_position="after", gold_index_base=0, item_separator="\n"),
+        ]
+    )
     with pytest.raises(FormatMismatchError) as e:
         candidates.require_compatible(make(query_position="both"))
     assert [m.field for m in e.value.mismatches] == ["query_position"]
 
 
 # ── set algebra ─────────────────────────────────────────────────────────────────────────────────
+
 
 def test_merge_is_a_union_that_drops_exact_duplicates():
     merged = FingerprintSet([make("a"), make("b")]).merge(FingerprintSet([make("b"), make("c")]))
@@ -121,6 +126,7 @@ def test_for_task_returns_nothing_for_an_absent_task():
 
 
 # ── i/o ─────────────────────────────────────────────────────────────────────────────────────────
+
 
 def test_round_trip(tmp_path):
     a_mix().write(tmp_path)
@@ -154,6 +160,7 @@ def test_the_filename_is_the_one_eval_looks_for(tmp_path):
 
 
 # ── the enforcement helper, through a set ───────────────────────────────────────────────────────
+
 
 def test_helper_passes_a_task_in_the_mix(tmp_path):
     a_mix().write(tmp_path)

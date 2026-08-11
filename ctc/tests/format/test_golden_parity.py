@@ -16,14 +16,15 @@ import json
 from pathlib import Path
 
 import pytest
+from fixtures.generate_golden import DOC_CASES  # made importable by tests/conftest.py
 
 from ctc.format import documents, metrics, parsing, prompts
-from fixtures.generate_golden import DOC_CASES  # made importable by tests/conftest.py
 
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text())
 
 
 # ── Prompt constants ────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("name", sorted(GOLDEN["prompt_constants"]))
 def test_prompt_constants_are_unchanged(name):
@@ -46,6 +47,7 @@ def test_rerank_instruction(top_k):
 
 
 # ── Document serialization ──────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("key", sorted(GOLDEN["documents"]))
 def test_format_documents_matches_golden(key):
@@ -87,6 +89,7 @@ def test_default_serializer_numbers_only_id_tasks():
 
 
 # ── Parsers ─────────────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("text", sorted(GOLDEN["parse_doc_ids"]))
 def test_parse_doc_ids(text):
@@ -290,6 +293,7 @@ def test_parse_permutation_rejects_a_near_miss():
 
 
 # ── Metrics ─────────────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("text", sorted(GOLDEN["normalize_answer"]))
 def test_normalize_answer(text):

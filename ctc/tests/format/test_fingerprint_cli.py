@@ -38,6 +38,7 @@ def written(directory):
 
 # ── write ───────────────────────────────────────────────────────────────────────────────────────
 
+
 def test_write_records_the_task(tmp_path):
     assert main(["write", "--dir", str(tmp_path), "--task", "contradiction"]) == 0
     assert written(tmp_path).tasks == ["contradiction"]
@@ -84,14 +85,22 @@ def test_merge_accumulates_a_mix(tmp_path):
 
 
 def test_marker_ids_are_parsed(tmp_path):
-    main([
-        "write", "--dir", str(tmp_path), "--task", "contradiction",
-        "--marker-token-ids", "151648,151649",
-    ])
+    main(
+        [
+            "write",
+            "--dir",
+            str(tmp_path),
+            "--task",
+            "contradiction",
+            "--marker-token-ids",
+            "151648,151649",
+        ]
+    )
     assert written(tmp_path).formats[0].marker_token_ids == (151648, 151649)
 
 
 # ── collect ─────────────────────────────────────────────────────────────────────────────────────
+
 
 def test_collect_stamps_a_checkpoint_from_its_shard_dirs(tmp_path):
     a, b, ckpt = tmp_path / "a", tmp_path / "b", tmp_path / "ckpt"
@@ -113,31 +122,40 @@ def test_collect_refuses_an_unfingerprinted_source(tmp_path, capsys):
 def test_collect_can_be_forced_but_says_the_record_is_incomplete(tmp_path, capsys):
     a = tmp_path / "a"
     main(["write", "--dir", str(a), "--task", "contradiction"])
-    rc = main([
-        "collect", "--ckpt", str(tmp_path / "ckpt"),
-        "--from", str(a), str(tmp_path / "x"), "--allow-missing",
-    ])
+    rc = main(
+        [
+            "collect",
+            "--ckpt",
+            str(tmp_path / "ckpt"),
+            "--from",
+            str(a),
+            str(tmp_path / "x"),
+            "--allow-missing",
+        ]
+    )
     assert rc == 0
     assert "INCOMPLETE" in capsys.readouterr().out
 
 
 # ── check ───────────────────────────────────────────────────────────────────────────────────────
 
+
 def test_check_passes_a_matching_format(tmp_path):
     ckpt = tmp_path / "ckpt"
     main(["write", "--dir", str(ckpt), "--task", "contradiction", "--query-position", "both"])
-    assert main([
-        "check", "--ckpt", str(ckpt), "--task", "contradiction", "--query-position", "both"
-    ]) == 0
+    assert (
+        main(["check", "--ckpt", str(ckpt), "--task", "contradiction", "--query-position", "both"])
+        == 0
+    )
 
 
 def test_check_catches_the_query_position_mismatch_without_a_gpu(tmp_path, capsys):
     """The point of the subcommand: find this in a second rather than in a rung of decoding."""
     ckpt = tmp_path / "ckpt"
     main(["write", "--dir", str(ckpt), "--task", "contradiction", "--query-position", "both"])
-    rc = main([
-        "check", "--ckpt", str(ckpt), "--task", "contradiction", "--query-position", "after"
-    ])
+    rc = main(
+        ["check", "--ckpt", str(ckpt), "--task", "contradiction", "--query-position", "after"]
+    )
     assert rc == 1
     assert "query_position" in capsys.readouterr().err
 
@@ -155,6 +173,7 @@ def test_check_reports_an_unfingerprinted_checkpoint(tmp_path, capsys):
 
 
 # ── show ────────────────────────────────────────────────────────────────────────────────────────
+
 
 def test_show_surfaces_that_a_record_was_asserted(tmp_path, capsys):
     main(["write", "--dir", str(tmp_path), "--task", "retrieval", "--doc-id-range", "1:697"])
@@ -176,6 +195,7 @@ def test_show_json_round_trips(tmp_path, capsys):
 
 
 # ── argument handling ───────────────────────────────────────────────────────────────────────────
+
 
 def test_an_unknown_task_is_rejected(tmp_path):
     with pytest.raises(KeyError):

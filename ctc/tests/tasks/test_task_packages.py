@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from ctc import tasks
-from ctc.format import registry, rungs as rung_util
-
+from ctc.format import registry
+from ctc.format import rungs as rung_util
 
 # Loaded at import, not in a fixture: the parametrize calls below run at collection time, which is
 # before any fixture would have registered anything.
@@ -57,7 +57,7 @@ def test_stop_preset_exists(spec):
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
 def test_set_answer_tasks_terminate_on_an_empty_answer(spec):
-    """"[]" is a CORRECT answer -- there were no pairs -- and must not run to the budget.
+    """ "[]" is a CORRECT answer -- there were no pairs -- and must not run to the budget.
 
     An earlier version of this suite asserted the opposite property (that set-answer tasks never
     newline-stop, on the theory that a newline could cut a wrapped list). That was wrong: these
@@ -70,9 +70,9 @@ def test_set_answer_tasks_terminate_on_an_empty_answer(spec):
     if not spec.answer_is_set:
         pytest.skip("not a set-answer task")
     cond = STOP_PRESETS[spec.stop]
-    assert should_stop("[]\nand now some rambling", cond) is not None, (
-        f"{spec.name} (stop={spec.stop!r}) has no terminator for an empty answer"
-    )
+    assert (
+        should_stop("[]\nand now some rambling", cond) is not None
+    ), f"{spec.name} (stop={spec.stop!r}) has no terminator for an empty answer"
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
@@ -114,9 +114,9 @@ def test_stop_rule_terminates_on_this_task_s_own_target(spec):
     out = apply(generation, cond)
     if cond.require_before is not None:
         out = out.split(cond.require_before, 1)[1].strip()
-    assert out.strip() == target.strip(), (
-        f"{spec.name} (stop={spec.stop!r}) did not truncate back to its own target"
-    )
+    assert (
+        out.strip() == target.strip()
+    ), f"{spec.name} (stop={spec.stop!r}) did not truncate back to its own target"
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
@@ -129,9 +129,9 @@ def test_instruction_is_declared(spec):
 def test_primary_metric_is_produced_by_score(spec):
     """Named so a results table cannot switch between f1 and exact_match unnoticed."""
     produced = spec.score(None, [])
-    assert spec.primary_metric in produced, (
-        f"{spec.name}.primary_metric={spec.primary_metric!r} is not in {sorted(produced)}"
-    )
+    assert (
+        spec.primary_metric in produced
+    ), f"{spec.name}.primary_metric={spec.primary_metric!r} is not in {sorted(produced)}"
 
 
 @pytest.mark.parametrize("spec", _specs(), ids=lambda s: s.name)
@@ -153,8 +153,19 @@ def test_score_reports_whether_it_parsed(spec):
 # did rather than against someone's recollection of it. matching_ngram and ruler are in the old set
 # but are not canonical native tasks.
 HISTORICAL_UNIFIED = {
-    "contradiction", "qdmatch", "xabsence", "redundancy", "absence", "matching_ngram",
-    "mathmatch", "strmatch", "cycle", "groups4", "textgroups", "reorder", "ruler",
+    "contradiction",
+    "qdmatch",
+    "xabsence",
+    "redundancy",
+    "absence",
+    "matching_ngram",
+    "mathmatch",
+    "strmatch",
+    "cycle",
+    "groups4",
+    "textgroups",
+    "reorder",
+    "ruler",
 }
 
 
@@ -213,6 +224,7 @@ def test_a_spec_fingerprint_matches_itself():
 
 # ── contradiction specifics ─────────────────────────────────────────────────────────────────────
 
+
 def test_contradiction_gold_is_one_based():
     """1-based here, 0-based for outlier/rerank/nq. The off-by-one read as a modelling result."""
     assert registry.get("contradiction").gold_index_base == 1
@@ -254,9 +266,7 @@ def test_unparseable_on_empty_gold_does_not_score_perfect():
 # The fixture was snapshotted from the pre-migration build_prompt BEFORE assemble.py was written,
 # so these are an independent target, not a description of the port.
 
-GOLDEN = json.loads(
-    (Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text()
-)
+GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text())
 #: Golden prompt cases whose task is registered. Grows automatically as specs land, so a newly
 #: ported task is held to the pre-migration bytes without anyone adding a test for it.
 _PROMPT_KEYS = [k for k in GOLDEN["prompts"] if k.split("|")[0] in registry.names()]

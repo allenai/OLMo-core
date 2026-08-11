@@ -12,8 +12,8 @@ import pytest
 
 from ctc.eval.stopping import STOP_PRESETS, StopCondition, apply, should_stop, strip_think
 
-
 # ── the newline-inside-think collapse ───────────────────────────────────────────────────────────
+
 
 def test_newline_stop_does_not_fire_inside_an_unclosed_think():
     """The single most important rule.
@@ -44,6 +44,7 @@ def test_a_second_think_block_reopens_suppression():
 
 # ── the rambling no-cot checkpoint ──────────────────────────────────────────────────────────────
 
+
 def test_pairs_stop_terminates_a_rambling_generation():
     """No-cot checkpoints frequently never emit EOS: they answer, then keep talking."""
     text = "[[1, 4], [3, 7]] and here are some further thoughts about the claims"
@@ -65,6 +66,7 @@ def test_earliest_stop_wins_when_several_match():
 
 
 # ── the leading formatting newline ──────────────────────────────────────────────────────────────
+
 
 def test_leading_newline_does_not_end_generation():
     """Models clear their throat with a newline. Stopping there emptied EVERY generation, and
@@ -88,6 +90,7 @@ def test_require_content_can_be_disabled():
 
 # ── oolong's templated answer line ──────────────────────────────────────────────────────────────
 
+
 def test_oolong_ignores_newlines_before_the_answer_line():
     text = "Counting the items.\nStill counting.\nanswer: 42\ntrailing"
     assert apply(text, STOP_PRESETS["oolong"]).endswith("answer: 42")
@@ -102,6 +105,7 @@ def test_oolong_does_not_stop_before_the_marker_appears():
 
 
 # ── think stripping ─────────────────────────────────────────────────────────────────────────────
+
 
 def test_think_is_stripped_before_parsing():
     """Otherwise a parser finds the ids the model CONSIDERED, not the ones it concluded with."""
@@ -125,6 +129,7 @@ def test_strip_can_be_disabled():
 
 # ── validation ──────────────────────────────────────────────────────────────────────────────────
 
+
 def test_a_condition_that_can_only_hit_the_budget_is_rejected():
     """That combination is exactly how a no-cot checkpoint rambles past a correct answer."""
     with pytest.raises(ValueError, match="ramble"):
@@ -137,6 +142,7 @@ def test_zero_budget_is_rejected():
 
 
 # ── incremental and whole-string paths agree ────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize(
     "text",
@@ -168,6 +174,7 @@ def test_apply_matches_incremental_truncation(text):
 
 
 # ── presets are sane ────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.parametrize("name", sorted(STOP_PRESETS))
 def test_presets_have_a_positive_budget(name):

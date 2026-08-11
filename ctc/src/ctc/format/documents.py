@@ -101,7 +101,9 @@ def _qdmatch(documents: Sequence[Document]) -> List[str]:
 
 def _xabsence(documents: Sequence[Document]) -> List[str]:
     """Two corpora A and B, pre-ordered as an A block then a B block, one shared 1-based index."""
-    return [f"[{i + 1}] {item.get('corpus', 'A')}: {item['text']}" for i, item in enumerate(documents)]
+    return [
+        f"[{i + 1}] {item.get('corpus', 'A')}: {item['text']}" for i, item in enumerate(documents)
+    ]
 
 
 def _absence(documents: Sequence[Document]) -> List[str]:
@@ -209,9 +211,7 @@ def visible_doc_id_range(
     return (1, max(counts))
 
 
-def format_documents(
-    documents: Sequence[Document], task: str, use_titles: bool = True
-) -> str:
+def format_documents(documents: Sequence[Document], task: str, use_titles: bool = True) -> str:
     """
     Render a document list into the context block for ``task``.
 

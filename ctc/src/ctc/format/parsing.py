@@ -45,6 +45,7 @@ __all__ = [
 
 # ── Document ids ────────────────────────────────────────────────────────────────────────────────
 
+
 def parse_doc_ids(text: str) -> Set[int]:
     """
     Extract document ids from text like ``"[3], [7]"`` or ``"Document [3]"``.
@@ -61,6 +62,7 @@ def parse_doc_ids(text: str) -> Set[int]:
 
 
 # ── Outlier ─────────────────────────────────────────────────────────────────────────────────────
+
 
 def parse_outlier_ids(text: str, n_docs: int) -> Optional[List[int]]:
     """
@@ -98,6 +100,7 @@ def parse_outlier_ids(text: str, n_docs: int) -> Optional[List[int]]:
 #
 # Shared by every pair task -- contradiction, redundancy, mathmatch, matching_ngram, strmatch. One
 # definition on purpose: five copies of a parser this fiddly is how the copies drift apart.
+
 
 def parse_pairs(text: str) -> Optional[List[List[int]]]:
     """
@@ -174,9 +177,7 @@ def parse_qd_pairs(text: str) -> Optional[List[List[int]]]:
             parsed = json.loads(s)
             if isinstance(parsed, list):
                 return [
-                    [int(p[0]), int(p[1])]
-                    for p in parsed
-                    if isinstance(p, list) and len(p) == 2
+                    [int(p[0]), int(p[1])] for p in parsed if isinstance(p, list) and len(p) == 2
                 ]
         except (json.JSONDecodeError, ValueError, TypeError):
             continue
@@ -283,6 +284,7 @@ def parse_snippet_list(text: str) -> Optional[List[str]]:
 # Shared by cycle, groups4 and textgroups. The answer is a set of ID-*sets* of variable size, which
 # is what distinguishes it from the pair tasks -- there, every group has exactly two members.
 
+
 def parse_cycles(text: str) -> Optional[List[List[int]]]:
     """
     Extract a list of cycles/groups, each a list of item ids.
@@ -333,6 +335,7 @@ def parse_cycles(text: str) -> Optional[List[List[int]]]:
 
 # ── Grouping ────────────────────────────────────────────────────────────────────────────────────
 
+
 def _first_groups_object(text: str) -> Optional[List[List[int]]]:
     """
     Return the clusters from the **first complete** ``{"groups": ...}`` object in ``text``.
@@ -348,7 +351,7 @@ def _first_groups_object(text: str) -> Optional[List[List[int]]]:
     decoder = json.JSONDecoder()
     for m in re.finditer(r"\{", text):
         try:
-            obj, _ = decoder.raw_decode(text[m.start():])
+            obj, _ = decoder.raw_decode(text[m.start() :])
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(obj, dict) and "groups" in obj:
@@ -443,6 +446,7 @@ def partition_to_labels(clusters: List[List[int]], n_docs: int) -> List[int]:
 
 # ── Reorder ─────────────────────────────────────────────────────────────────────────────────────
 
+
 def parse_permutation(text: str, n: int) -> Optional[List[int]]:
     """
     Extract a permutation of ``1..n``.
@@ -467,7 +471,7 @@ def parse_permutation(text: str, n: int) -> Optional[List[int]]:
             continue
     ints = [int(x) for x in re.findall(r"-?\d+", text)]
     for start in range(len(ints) - n + 1):
-        cand = ints[start:start + n]
+        cand = ints[start : start + n]
         if len(cand) == n and sorted(cand) == list(range(1, n + 1)):
             return cand
     return None

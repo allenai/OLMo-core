@@ -125,9 +125,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     outcome = run_task(
         cfg,
-        lambda prompts, examples: backend.generate(
-            prompts, examples, stop=stop, task=spec.name
-        ),
+        lambda prompts, examples: backend.generate(prompts, examples, stop=stop, task=spec.name),
         count_tokens=backend.count_tokens,
     )
 
@@ -169,8 +167,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "run used a rule that never fired, decoding to the budget. Re-run with "
                     "--stop-preset eos to isolate."
                 )
-                print(f"  2. prompt assembly or tokenization -- check parse_rate "
-                      f"({outcome.parse_rate:.3f}) and read the generations.")
+                print(
+                    f"  2. prompt assembly or tokenization -- check parse_rate "
+                    f"({outcome.parse_rate:.3f}) and read the generations."
+                )
                 print("  3. attention mode -- confirm the target row's arm matches --attn.")
     return 0 if ok else 1
 

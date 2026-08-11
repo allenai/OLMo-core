@@ -61,6 +61,7 @@ def attached(cb):
 
 # ── failing early ───────────────────────────────────────────────────────────────────────────────
 
+
 def test_a_bad_configuration_fails_at_step_zero(tmp_path):
     """Not at checkpoint one, hours later, with the GPU time already spent."""
     cb = attached(FormatFingerprintCallback(collect_from=[str(tmp_path / "unfingerprinted")]))
@@ -76,6 +77,7 @@ def test_attaching_the_callback_with_nothing_configured_is_an_error(tmp_path):
 
 # ── the write ───────────────────────────────────────────────────────────────────────────────────
 
+
 def test_every_checkpoint_gets_the_record(tmp_path):
     cb = attached(FormatFingerprintCallback(collect_from=[shards(tmp_path, "contradiction")]))
     cb.pre_train()
@@ -89,9 +91,11 @@ def test_every_checkpoint_gets_the_record(tmp_path):
 
 def test_what_training_writes_is_what_eval_reads_back(tmp_path):
     """The round trip is the whole contract; a writer eval cannot parse is worse than none."""
-    cb = attached(FormatFingerprintCallback(
-        collect_from=[shards(tmp_path, "contradiction"), shards(tmp_path, "outlier")]
-    ))
+    cb = attached(
+        FormatFingerprintCallback(
+            collect_from=[shards(tmp_path, "contradiction"), shards(tmp_path, "outlier")]
+        )
+    )
     cb.pre_train()
     cb.post_checkpoint_saved("/ckpt/step100")
 

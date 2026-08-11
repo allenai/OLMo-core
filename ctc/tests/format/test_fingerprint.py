@@ -39,6 +39,7 @@ def make(**overrides) -> FormatFingerprint:
 
 # ── the historical failures ─────────────────────────────────────────────────────────────────────
 
+
 def test_identical_formats_are_compatible():
     assert make().compare(make()) == []
     make().require_compatible_with(make())
@@ -89,13 +90,16 @@ def test_an_edited_instruction_is_caught():
 
 # ── the error is actionable ─────────────────────────────────────────────────────────────────────
 
+
 def test_error_names_every_bad_field_not_just_the_first():
     """A bare hash would say 'something differs'; bisecting that is the cost this avoids."""
     evaluating = make(gold_index_base=0, chunk_layout="none", item_separator="\n")
     with pytest.raises(FormatMismatchError) as e:
         evaluating.require_compatible_with(make())
     assert {m.field for m in e.value.mismatches} == {
-        "gold_index_base", "chunk_layout", "item_separator"
+        "gold_index_base",
+        "chunk_layout",
+        "item_separator",
     }
     text = str(e.value)
     for f in ("gold_index_base", "chunk_layout", "item_separator"):
@@ -109,6 +113,7 @@ def test_notes_are_recorded_but_never_compared():
 
 
 # ── hashing ─────────────────────────────────────────────────────────────────────────────────────
+
 
 def test_hash_is_order_sensitive():
     assert hash_prompt("a", "b") != hash_prompt("b", "a")
@@ -125,6 +130,7 @@ def test_hash_is_stable_across_processes():
 
 
 # ── validation ──────────────────────────────────────────────────────────────────────────────────
+
 
 def test_bad_gold_index_base_is_rejected_at_construction():
     with pytest.raises(ValueError, match="gold_index_base"):
@@ -143,6 +149,7 @@ def test_schema_version_mismatch_refuses_to_compare():
 
 
 # ── i/o ─────────────────────────────────────────────────────────────────────────────────────────
+
 
 def test_round_trip(tmp_path):
     fp = make()
@@ -189,6 +196,7 @@ def test_a_bare_record_is_not_mistaken_for_a_set(tmp_path):
 
 
 # ── the enforcement helper ──────────────────────────────────────────────────────────────────────
+
 
 def test_strict_mode_refuses_an_unfingerprinted_checkpoint(tmp_path):
     with pytest.raises(FileNotFoundError, match="UNVERIFIED"):

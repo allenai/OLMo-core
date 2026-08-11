@@ -74,7 +74,9 @@ def _check_gold(gold: Sequence[Sequence[int]]) -> None:
             )
 
 
-def score(parsed: Optional[Sequence[Sequence[int]]], gold: Sequence[Sequence[int]]) -> Dict[str, float]:
+def score(
+    parsed: Optional[Sequence[Sequence[int]]], gold: Sequence[Sequence[int]]
+) -> Dict[str, float]:
     """
     Score predicted pairs against gold.
 

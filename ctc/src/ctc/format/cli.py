@@ -89,11 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     collect.add_argument("--ckpt", required=True, help="checkpoint directory to stamp")
     collect.add_argument(
-        "--from", dest="sources", nargs="+", required=True, metavar="DIR",
+        "--from",
+        dest="sources",
+        nargs="+",
+        required=True,
+        metavar="DIR",
         help="shard directories to collect from",
     )
     collect.add_argument(
-        "--allow-missing", action="store_true",
+        "--allow-missing",
+        action="store_true",
         help="skip source directories with no fingerprint (leaves an INCOMPLETE record)",
     )
 
@@ -118,11 +123,14 @@ def _add_format_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--tokenizer", default=None, help="tokenizer id or path")
     p.add_argument(
-        "--chunk-layout", default="none",
+        "--chunk-layout",
+        default="none",
         help="chunk-wrapping scheme, e.g. wrap_documents for document-chunked data",
     )
     p.add_argument(
-        "--marker-token-ids", default=None, metavar="A,B",
+        "--marker-token-ids",
+        default=None,
+        metavar="A,B",
         help="reserved marker ids, when the format uses them",
     )
 
@@ -143,15 +151,22 @@ def _show(args: argparse.Namespace) -> int:
     for fp in found.formats:
         provenance = fp.notes.get("provenance", "measured")
         print(f"  {fp.task}")
-        print(f"    prompt        {fp.prompt_shape}, query {fp.query_position}, "
-              f"serializer {fp.serializer}")
+        print(
+            f"    prompt        {fp.prompt_shape}, query {fp.query_position}, "
+            f"serializer {fp.serializer}"
+        )
         print(f"    gold ids      {fp.gold_index_base}-based")
         print(f"    chunk layout  {fp.chunk_layout}")
         print(f"    doc id range  {fp.doc_id_range if fp.doc_id_range else '(unnumbered)'}")
         print(f"    tokenizer     {fp.tokenizer or '(unrecorded)'}")
-        print(f"    provenance    {provenance}"
-              + ("   <-- asserted by hand, not measured from data" if provenance == "asserted"
-                 else ""))
+        print(
+            f"    provenance    {provenance}"
+            + (
+                "   <-- asserted by hand, not measured from data"
+                if provenance == "asserted"
+                else ""
+            )
+        )
         print()
     return 0
 

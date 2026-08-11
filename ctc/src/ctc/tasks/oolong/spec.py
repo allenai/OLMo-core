@@ -130,7 +130,7 @@ def score(parsed: Optional[str], gold, answer_type: str = "") -> Dict[str, float
             err = abs(float(gold_list[0]) - float(nums[-1]))
             # Geometric decay, not a threshold: off-by-one must score better than off-by-ten, and
             # a hard exact-match would report both as total failure.
-            return {"score": 0.75 ** err, "exact_match": float(err == 0), "parsed": 1.0}
+            return {"score": 0.75**err, "exact_match": float(err == 0), "parsed": 1.0}
         except (ValueError, IndexError):
             return {"score": 0.0, "exact_match": 0.0, "parsed": 1.0}
 

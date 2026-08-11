@@ -24,7 +24,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from ..stopping import StopCondition, apply as apply_stop, should_stop, strip_think
+from ..stopping import StopCondition
+from ..stopping import apply as apply_stop
+from ..stopping import should_stop, strip_think
 
 __all__ = ["NativeBackend"]
 
@@ -79,13 +81,12 @@ class NativeBackend:
             raise ValueError(f"attn must be one of {ATTENTION_MODES}, got {attn!r}")
 
         import torch  # noqa: F401 -- imported for its side effect on device init
-        from transformers import AutoTokenizer
-
         from olmo_core.config import DType
         from olmo_core.generate.generation_module.config import GenerationConfig
         from olmo_core.generate.generation_module.transformer import (
             TransformerGenerationModuleConfig,
         )
+        from transformers import AutoTokenizer
 
         self.ckpt = Path(ckpt)
         self.attn = attn
@@ -300,9 +301,7 @@ class NativeBackend:
                     if should_stop(text, stop) is not None:
                         break
 
-                logits = self.gm.model(
-                    torch.tensor([[nxt]], device=self.device), logits_to_keep=1
-                )
+                logits = self.gm.model(torch.tensor([[nxt]], device=self.device), logits_to_keep=1)
                 nxt = self._decode_step(torch, logits)
 
         return apply_stop(self.tok.decode(produced, skip_special_tokens=True), stop)

@@ -209,7 +209,9 @@ class FormatFingerprint:
             if lo > hi:
                 raise ValueError(f"doc_id_range {self.doc_id_range!r} is inverted")
         if self.prompt_shape not in ("unified", "classic"):
-            raise ValueError(f"prompt_shape must be 'unified' or 'classic', got {self.prompt_shape!r}")
+            raise ValueError(
+                f"prompt_shape must be 'unified' or 'classic', got {self.prompt_shape!r}"
+            )
         if self.query_position not in ("before", "after", "both"):
             raise ValueError(
                 f"query_position must be 'before', 'after' or 'both', got {self.query_position!r}"
@@ -239,8 +241,11 @@ class FormatFingerprint:
             if why is not None:
                 out.append(
                     Mismatch(
-                        field=name, train=getattr(trained, name), eval=getattr(self, name),
-                        rule=rule, why=why,
+                        field=name,
+                        train=getattr(trained, name),
+                        eval=getattr(self, name),
+                        rule=rule,
+                        why=why,
                     )
                 )
         return out
@@ -595,6 +600,8 @@ def check_or_explain_missing(
     except TaskNotTrainedError as e:
         if strict:
             raise
-        return f"{e.task!r} is not among this checkpoint's trained tasks ({', '.join(e.trained)}); "\
-               "grading it as out-of-distribution, format compatibility UNVERIFIED"
+        return (
+            f"{e.task!r} is not among this checkpoint's trained tasks ({', '.join(e.trained)}); "
+            "grading it as out-of-distribution, format compatibility UNVERIFIED"
+        )
     return None

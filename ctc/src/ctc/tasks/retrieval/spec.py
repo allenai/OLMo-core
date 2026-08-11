@@ -104,7 +104,8 @@ def score(parsed, example_or_gold) -> Dict[str, float]:
     :returns: ``exact_match``, ``recall``, ``precision``, ``f1``, ``parsed``.
     """
     example = (
-        example_or_gold if isinstance(example_or_gold, dict)
+        example_or_gold
+        if isinstance(example_or_gold, dict)
         else {"gold_doc_indices": example_or_gold, "queries": [""]}
     )
     return score_ids(parsed, example)

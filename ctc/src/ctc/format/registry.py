@@ -143,9 +143,7 @@ class TaskSpec:
 
         base: Dict[str, Any] = dict(
             task=self.name,
-            prompt_hash=hash_prompt(
-                self.instruction, *self.instruction_variants, self.serializer
-            ),
+            prompt_hash=hash_prompt(self.instruction, *self.instruction_variants, self.serializer),
             serializer=self.serializer,
             item_separator=ITEM_SEPARATOR,
             gold_index_base=self.gold_index_base,

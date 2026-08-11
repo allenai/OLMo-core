@@ -51,8 +51,12 @@ def score(parsed, gold: Sequence[Sequence[int]]) -> Dict[str, float]:
     """
     if parsed is None:
         return {
-            "precision": 0.0, "recall": 0.0, "f1": 0.0,
-            "exact_match": 0.0, "claim_f1": 0.0, "parsed": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "exact_match": 0.0,
+            "claim_f1": 0.0,
+            "parsed": 0.0,
         }
     return {**metrics.cycle_metrics(parsed, gold), "parsed": 1.0}
 

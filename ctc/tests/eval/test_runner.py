@@ -55,6 +55,7 @@ def _cfg(tmp_path, data_path, **kw):
 
 # ── the happy path ──────────────────────────────────────────────────────────────────────────────
 
+
 def test_perfect_predictions_score_one(tmp_path):
     data = _rung_file(tmp_path, [_example() for _ in range(3)])
     out = run_task(_cfg(tmp_path, data), lambda ps, ex=None: ["[[1, 2]]"] * len(ps))
@@ -83,6 +84,7 @@ def test_stop_rule_is_applied_to_generations(tmp_path):
 
 # ── parse rate is reported separately from score ────────────────────────────────────────────────
 
+
 def test_unparseable_output_lowers_parse_rate_not_just_score(tmp_path):
     """Both score zero. Without parse_rate, a decoding regression looks like a weaker model."""
     data = _rung_file(tmp_path, [_example() for _ in range(4)])
@@ -100,18 +102,23 @@ def test_full_parse_rate_produces_no_parse_warning(tmp_path):
 
 # ── the silent-zero trap ────────────────────────────────────────────────────────────────────────
 
+
 def test_overlong_prompts_raise_rather_than_scoring_zero(tmp_path):
     """354/500 examples were once skipped and scored 0.0 -- in both arms, so it read as 'no gap'."""
     data = _rung_file(tmp_path, [_example() for _ in range(2)])
     cfg = _cfg(tmp_path, data, max_length=10)
     with pytest.raises(ValueError, match="indistinguishable"):
-        run_task(cfg, lambda ps, ex=None: ["[[1, 2]]"] * len(ps), count_tokens=lambda t: len(t.split()))
+        run_task(
+            cfg, lambda ps, ex=None: ["[[1, 2]]"] * len(ps), count_tokens=lambda t: len(t.split())
+        )
 
 
 def test_overlong_prompts_can_be_allowed_but_are_counted(tmp_path):
     data = _rung_file(tmp_path, [_example() for _ in range(2)])
     cfg = _cfg(tmp_path, data, max_length=10, allow_truncated=True)
-    out = run_task(cfg, lambda ps, ex=None: ["[[1, 2]]"] * len(ps), count_tokens=lambda t: len(t.split()))
+    out = run_task(
+        cfg, lambda ps, ex=None: ["[[1, 2]]"] * len(ps), count_tokens=lambda t: len(t.split())
+    )
     assert out.truncated == 2
     assert any("NOT averaged in as zeros" in w for w in out.warnings)
 
@@ -125,13 +132,15 @@ def test_missing_tokenizer_is_disclosed_not_silently_skipped(tmp_path):
 def test_prompt_length_distribution_is_recorded(tmp_path):
     data = _rung_file(tmp_path, [_example(), _example(n_docs=8)])
     out = run_task(
-        _cfg(tmp_path, data), lambda ps, ex=None: ["[[1, 2]]"] * len(ps),
+        _cfg(tmp_path, data),
+        lambda ps, ex=None: ["[[1, 2]]"] * len(ps),
         count_tokens=lambda t: len(t.split()),
     )
     assert out.prompt_tokens["max"] > out.prompt_tokens["min"]
 
 
 # ── uncertainty travels with the number ─────────────────────────────────────────────────────────
+
 
 def test_small_eval_sets_are_flagged(tmp_path):
     data = _rung_file(tmp_path, [_example() for _ in range(3)])
@@ -169,6 +178,7 @@ def test_standard_error_of_nothing_is_zero():
 
 # ── provenance ──────────────────────────────────────────────────────────────────────────────────
 
+
 def test_provenance_records_what_is_needed_to_reproduce(tmp_path):
     data = _rung_file(tmp_path, [_example()])
     out = run_task(_cfg(tmp_path, data), lambda ps, ex=None: ["[[1, 2]]"] * len(ps))
@@ -200,6 +210,7 @@ def test_limit_marks_the_run_as_a_preview(tmp_path):
 
 # ── input validation ────────────────────────────────────────────────────────────────────────────
 
+
 def test_empty_rung_file_raises(tmp_path):
     """Otherwise the result is eval_size=0 with metrics 0.0, which looks like total failure."""
     p = tmp_path / "empty.jsonl"
@@ -221,6 +232,7 @@ def test_backend_returning_the_wrong_count_raises(tmp_path):
 
 # ── output ──────────────────────────────────────────────────────────────────────────────────────
 
+
 def test_result_round_trips_through_json(tmp_path):
     data = _rung_file(tmp_path, [_example()])
     out = run_task(_cfg(tmp_path, data), lambda ps, ex=None: ["[[1, 2]]"] * len(ps))
@@ -237,11 +249,14 @@ def test_generations_are_kept_by_default(tmp_path):
 
 def test_generations_can_be_suppressed(tmp_path):
     data = _rung_file(tmp_path, [_example()])
-    out = run_task(_cfg(tmp_path, data, dump_generations=False), lambda ps, ex=None: ["[[1, 2]]"] * len(ps))
+    out = run_task(
+        _cfg(tmp_path, data, dump_generations=False), lambda ps, ex=None: ["[[1, 2]]"] * len(ps)
+    )
     assert out.generations == []
 
 
 # ── backend-agnosticism, the property the parity test depends on ────────────────────────────────
+
 
 def test_identical_text_from_two_backends_scores_identically(tmp_path):
     """The runner contributes everything except the text, so only the text can move the score."""

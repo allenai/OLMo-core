@@ -144,9 +144,7 @@ def _position(context: str, positioned: str, query_position: str) -> str:
         return f"{positioned}\n\n{context}\n\n{positioned}"
     if query_position == "after":
         return f"{context}\n\n{positioned}"
-    raise ValueError(
-        f"query_position must be one of {QUERY_POSITIONS}, got {query_position!r}"
-    )
+    raise ValueError(f"query_position must be one of {QUERY_POSITIONS}, got {query_position!r}")
 
 
 def assemble_parts(

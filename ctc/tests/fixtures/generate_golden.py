@@ -26,7 +26,10 @@ from pathlib import Path
 # exercise the formatting hazards: embedded blank lines (which reorder collapses), missing titles,
 # and items whose `type`/`corpus` tag drives the rendering.
 DOC_CASES = {
-    "contradiction": [{"text": "The bridge opened in 1931."}, {"text": "The bridge opened in 1937."}],
+    "contradiction": [
+        {"text": "The bridge opened in 1931."},
+        {"text": "The bridge opened in 1937."},
+    ],
     "redundancy": [{"text": "Sales rose 4%."}, {"text": "Revenue increased four percent."}],
     "cycle": [{"text": "A outranks B."}, {"text": "B outranks A."}],
     "absence": [{"text": "line one"}, {"text": "line two"}],
@@ -136,7 +139,10 @@ PROMPT_CASES = [
 #: One example per task, shaped like the unified JSONL the generators emit.
 PROMPT_EXAMPLES = {
     "contradiction": {
-        "documents": [{"text": "The bridge opened in 1931."}, {"text": "The bridge opened in 1937."}],
+        "documents": [
+            {"text": "The bridge opened in 1931."},
+            {"text": "The bridge opened in 1937."},
+        ],
         "queries": ["Find contradicting claims."],
         "answers": [""],
         "gold_doc_indices": [[1, 2]],
@@ -270,7 +276,7 @@ PROMPT_EXAMPLES = {
         "queries": ["Which is most relevant?"],
         "answers": [""],
         "gold_doc_indices": [1, 0],  # ranked order, 0-based
-        "ce_scores": [0.2, 0.9],     # CE-graded; the binary format is disabled
+        "ce_scores": [0.2, 0.9],  # CE-graded; the binary format is disabled
         "source": "msmarco",
     },
     "summarization": {
@@ -456,7 +462,9 @@ def _pairwise_reference(old_et) -> dict:
         r = tp / len(gp) if gp else 0.0
         f1 = 2 * p * r / (p + r) if (p + r) else 0.0
         out[f"{json.dumps(pred)}|{json.dumps(gold)}|{n}"] = {
-            "pairwise_precision": p, "pairwise_recall": r, "pairwise_f1": f1,
+            "pairwise_precision": p,
+            "pairwise_recall": r,
+            "pairwise_f1": f1,
         }
     return out
 
@@ -536,9 +544,7 @@ def build(old_repo: Path) -> dict:
 
     # Constants: every module-level string. These ARE the training data.
     constants = {
-        k: v
-        for k, v in vars(old_p).items()
-        if not k.startswith("_") and isinstance(v, (str, dict))
+        k: v for k, v in vars(old_p).items() if not k.startswith("_") and isinstance(v, (str, dict))
     }
     constants.pop("__doc__", None)
 
@@ -554,12 +560,8 @@ def build(old_repo: Path) -> dict:
         "rerank_instruction": {str(k): old_p.rerank_instruction(k) for k in (-1, 0, 5, 10)},
         "documents": documents,
         "parse_doc_ids": {t: sorted(old_m.parse_doc_ids(t)) for t in PARSE_DOC_ID_CASES},
-        "parse_outlier_ids": {
-            f"{t}|{n}": old_et.parse_outlier_ids(t, n) for t, n in OUTLIER_CASES
-        },
-        "parse_partition": {
-            f"{t}|{n}": old_et.parse_partition(t, n) for t, n in PARTITION_CASES
-        },
+        "parse_outlier_ids": {f"{t}|{n}": old_et.parse_outlier_ids(t, n) for t, n in OUTLIER_CASES},
+        "parse_partition": {f"{t}|{n}": old_et.parse_partition(t, n) for t, n in PARTITION_CASES},
         "partition_to_labels": {
             f"{t}|{n}": old_et.partition_to_labels(old_et.parse_partition(t, n) or [], n)
             for t, n in PARTITION_CASES
@@ -573,9 +575,7 @@ def build(old_repo: Path) -> dict:
         "pairwise_f1": _pairwise_reference(old_et),
         "kendall_tau": _kendall_reference(),
         "parse_id_set": {
-            f"{t}|{n}": (
-                sorted(r) if (r := old_ev._parse_id_set(t, n)) is not None else None
-            )
+            f"{t}|{n}": (sorted(r) if (r := old_ev._parse_id_set(t, n)) is not None else None)
             for t, n in ID_SET_CASES
         },
         "parse_snippet_list": {t: old_ev._parse_snippet_list(t) for t in SNIPPET_CASES},

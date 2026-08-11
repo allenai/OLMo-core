@@ -13,7 +13,8 @@ import argparse
 import sys
 from typing import List, Optional
 
-from ..format import registry, rungs as rung_util
+from ..format import registry
+from ..format import rungs as rung_util
 from .backends import base as backends
 
 

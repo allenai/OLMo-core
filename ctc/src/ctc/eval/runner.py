@@ -38,7 +38,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from ..format import metrics as metrics_mod
 from ..format.fingerprint import FormatFingerprint, check_or_explain_missing
 from ..format.registry import TaskSpec
-from .stopping import STOP_PRESETS, apply as apply_stop
+from .stopping import STOP_PRESETS
+from .stopping import apply as apply_stop
 
 __all__ = ["EvalConfig", "EvalOutcome", "run_task", "standard_error", "load_examples"]
 
@@ -198,7 +199,10 @@ def _git_commit() -> Optional[str]:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5, check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
         )
         return out.stdout.strip()
     except (subprocess.SubprocessError, OSError):
@@ -250,9 +254,7 @@ def run_task(
     if cfg.limit is not None:
         warnings.append(f"limited to the first {cfg.limit} examples; this is a preview, not a run")
 
-    prompts = [
-        spec.build_prompt(ex, query_position=cfg.query_position) for ex in examples
-    ]
+    prompts = [spec.build_prompt(ex, query_position=cfg.query_position) for ex in examples]
 
     # --- length audit ---------------------------------------------------------------------------
     # The failure this guards: a prompt longer than the budget was skipped and scored as an empty
@@ -262,7 +264,8 @@ def run_task(
     if count_tokens is not None:
         lengths = [count_tokens(p) for p in prompts]
         prompt_tokens = {
-            "min": min(lengths), "max": max(lengths),
+            "min": min(lengths),
+            "max": max(lengths),
             "mean": int(sum(lengths) / len(lengths)),
         }
         budget = cfg.max_length if cfg.max_length is not None else max(lengths) + max_new + 512

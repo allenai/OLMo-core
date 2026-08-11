@@ -110,7 +110,10 @@ def score(parsed: Optional[str], gold: Sequence[str]) -> Dict[str, float]:
     """
     if parsed is None:
         return {
-            "exact_match": 0.0, "substring_exact_match": 0.0, "f1": 0.0, "parsed": 0.0,
+            "exact_match": 0.0,
+            "substring_exact_match": 0.0,
+            "f1": 0.0,
+            "parsed": 0.0,
         }
     answers = list(gold) if not isinstance(gold, str) else [gold]
     best = {"exact_match": 0.0, "substring_exact_match": 0.0, "f1": 0.0}
@@ -122,7 +125,9 @@ def score(parsed: Optional[str], gold: Sequence[str]) -> Dict[str, float]:
             best["substring_exact_match"],
             float(metrics.max_over_answers(metrics.substring_match, span, answers)),
         )
-        best["f1"] = max(best["f1"], float(metrics.max_over_answers(metrics.token_f1, span, answers)))
+        best["f1"] = max(
+            best["f1"], float(metrics.max_over_answers(metrics.token_f1, span, answers))
+        )
     return {**best, "parsed": 1.0}
 
 
