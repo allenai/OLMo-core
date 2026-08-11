@@ -53,6 +53,7 @@ def _load_ddp_optimizer_model_state(
     model: Transformer,
     *,
     work_dir: str | Path,
+    return_state_dict: bool = True,
 ) -> Dict[str, Any] | None:
     """Load weights from an OLMo DDP optimizer-backed checkpoint.
 
@@ -116,6 +117,8 @@ def _load_ddp_optimizer_model_state(
                 raise TypeError(f"Checkpoint value '{checkpoint_key}' is not a tensor")
             buffer.copy_(value.reshape(buffer.shape).to(buffer.dtype))
 
+    if not return_state_dict:
+        return {}
     options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
     return dist_cp_sd.get_model_state_dict(model, options=options)
 
