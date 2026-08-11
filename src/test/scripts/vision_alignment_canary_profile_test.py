@@ -90,6 +90,7 @@ def test_real_canary_inherits_the_locked_bridge_trainability_and_loss_mass_polic
     assert policy.sequence_length == 2560
     assert policy.connector_lr == 2e-4
     assert policy.connector_warmup == 100
+    assert policy.connector_t_max == 250
     assert policy.vision_lr == 0.0
     assert policy.lm_lr == 0.0
     assert policy.freeze_params == (

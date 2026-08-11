@@ -173,7 +173,14 @@ def test_git_provenance_rejects_train_worker_outside_beaker(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("phase", "freeze_params", "lm_lr", "vision_lr", "microbatch_instances"),
+    (
+        "phase",
+        "freeze_params",
+        "lm_lr",
+        "vision_lr",
+        "microbatch_instances",
+        "connector_t_max",
+    ),
     [
         (
             "bridge",
@@ -181,6 +188,7 @@ def test_git_provenance_rejects_train_worker_outside_beaker(monkeypatch):
             0.0,
             0.0,
             4,
+            250,
         ),
         (
             "perception",
@@ -188,12 +196,13 @@ def test_git_provenance_rejects_train_worker_outside_beaker(monkeypatch):
             0.0,
             3e-6,
             4,
+            None,
         ),
-        ("joint", ["lm.lm_head.w_out.weight"], 1e-6, 2e-6, 1),
+        ("joint", ["lm.lm_head.w_out.weight"], 1e-6, 2e-6, 1, None),
     ],
 )
 def test_phase_trainability_and_lr_contract(
-    phase, freeze_params, lm_lr, vision_lr, microbatch_instances
+    phase, freeze_params, lm_lr, vision_lr, microbatch_instances, connector_t_max
 ):
     vision_alignment = _load_module()
     policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase(phase)]
@@ -209,9 +218,14 @@ def test_phase_trainability_and_lr_contract(
     assert groups[("*lm.embeddings.weight",)]["lr"] == policy.connector_lr
     assert groups[("*connector.*",)]["lr"] == policy.connector_lr
     assert groups[("*vision.*",)]["lr"] == vision_lr
-    assert config.scheduler.schedulers["connector"].t_max is None
+    assert config.scheduler.schedulers["connector"].t_max == connector_t_max
     assert config.scheduler.schedulers["vision"].t_max is None
     assert config.scheduler.default.t_max is None
+    if phase == "bridge":
+        connector_scheduler = config.scheduler.schedulers["connector"]
+        assert connector_scheduler.get_lr(policy.connector_lr, 200, 500) == pytest.approx(6.5e-5)
+        assert connector_scheduler.get_lr(policy.connector_lr, 250, 500) == pytest.approx(2e-5)
+        assert connector_scheduler.get_lr(policy.connector_lr, 500, 500) == pytest.approx(2e-5)
 
 
 @pytest.mark.parametrize(
@@ -237,6 +251,7 @@ def test_intrinsic_eval_uses_phase_supported_rank_batch(phase, rank_batch_instan
         "reroute_scheduler",
         "fixed_scheduler_horizon",
         "warmup_not_shorter_than_duration",
+        "horizon_longer_than_duration",
     ],
 )
 def test_optimizer_scheduler_contract_rejects_unsafe_overrides(mutation):
@@ -263,6 +278,9 @@ def test_optimizer_scheduler_contract_rejects_unsafe_overrides(mutation):
         train_module.scheduler.schedulers["connector"].t_max = policy.max_steps
     elif mutation == "warmup_not_shorter_than_duration":
         config.trainer.max_duration = vision_alignment.Duration.steps(policy.connector_warmup)
+    elif mutation == "horizon_longer_than_duration":
+        assert policy.connector_t_max is not None
+        config.trainer.max_duration = vision_alignment.Duration.steps(policy.connector_t_max - 1)
     else:  # pragma: no cover - parameter table is exhaustive.
         raise AssertionError(mutation)
 

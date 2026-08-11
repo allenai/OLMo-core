@@ -9,6 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from torch.distributed.checkpoint.metadata import (
+    TensorProperties,
+    TensorStorageMetadata,
+)
 
 
 def _load_module():
@@ -132,6 +136,84 @@ def test_pairing_paths_are_explicit_per_source(tmp_path):
         )
 
 
+def test_expected_pairing_sha256_pins_are_source_specific_and_strict():
+    module = _load_module()
+    caption_sha = "a" * 64
+    transcript_sha = "b" * 64
+    assert module._parse_expected_pairing_sha256(
+        [
+            f"pixmo_caption={caption_sha}",
+            f"pixmo_transcript={transcript_sha}",
+        ],
+        ["pixmo_caption", "pixmo_transcript"],
+    ) == {"pixmo_caption": caption_sha, "pixmo_transcript": transcript_sha}
+
+    with pytest.raises(ValueError, match="lowercase hex"):
+        module._parse_expected_pairing_sha256([f"pixmo_caption={'A' * 64}"], ["pixmo_caption"])
+    with pytest.raises(ValueError, match="Invalid or duplicate"):
+        module._parse_expected_pairing_sha256(
+            [f"pixmo_transcript={transcript_sha}"], ["pixmo_caption"]
+        )
+
+
+def test_artifact_preflight_rejects_unpinned_pairing_and_existing_output(tmp_path, monkeypatch):
+    module = _load_module()
+    pairing = tmp_path / "caption.json"
+    pairing.write_text("pairing\n")
+    output = tmp_path / "result.json"
+    monkeypatch.setattr(module.dist, "get_rank", lambda: 0)
+    monkeypatch.setattr(module.dist, "broadcast_object_list", lambda packet, src: None)
+
+    with pytest.raises(RuntimeError, match="requires --expected-pairing-sha256"):
+        module._preflight_artifact_paths_distributed(
+            output=output,
+            overwrite_output=False,
+            pairing_paths={"pixmo_caption": pairing},
+            expected_pairing_sha256={},
+        )
+    with pytest.raises(RuntimeError, match="SHA-256 differs"):
+        module._preflight_artifact_paths_distributed(
+            output=output,
+            overwrite_output=False,
+            pairing_paths={"pixmo_caption": pairing},
+            expected_pairing_sha256={"pixmo_caption": "c" * 64},
+        )
+    pairing_sha = module._sha256_file(pairing)
+    module._preflight_artifact_paths_distributed(
+        output=output,
+        overwrite_output=False,
+        pairing_paths={"pixmo_caption": pairing},
+        expected_pairing_sha256={"pixmo_caption": pairing_sha},
+    )
+
+    output.write_text("existing\n")
+    with pytest.raises(RuntimeError, match="Refusing to overwrite"):
+        module._preflight_artifact_paths_distributed(
+            output=output,
+            overwrite_output=False,
+            pairing_paths={"pixmo_caption": pairing},
+            expected_pairing_sha256={"pixmo_caption": pairing_sha},
+        )
+    module._preflight_artifact_paths_distributed(
+        output=output,
+        overwrite_output=True,
+        pairing_paths={"pixmo_caption": pairing},
+        expected_pairing_sha256={"pixmo_caption": pairing_sha},
+    )
+
+
+def test_atomic_json_write_refuses_overwrite_without_explicit_opt_in(tmp_path):
+    module = _load_module()
+    output = tmp_path / "result.json"
+    output.write_text("original\n")
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        module._write_json_atomic(output, {"replacement": True})
+    assert output.read_text() == "original\n"
+
+    module._write_json_atomic(output, {"replacement": True}, overwrite=True)
+    assert json.loads(output.read_text()) == {"replacement": True}
+
+
 def test_validation_manifest_pins_dataset_and_row_content(tmp_path):
     module = _load_module()
     artifact = tmp_path / "artifact"
@@ -236,7 +318,8 @@ def test_rank_zero_output_write_failure_is_broadcast_and_raised(tmp_path, monkey
         module.dist, "broadcast_object_list", lambda packet, src: packets.append(dict(packet[0]))
     )
 
-    def fail_write(path, payload):
+    def fail_write(path, payload, *, overwrite):
+        assert overwrite is False
         raise OSError("disk full")
 
     monkeypatch.setattr(module, "_write_json_atomic", fail_write)
@@ -261,6 +344,79 @@ def test_nonzero_rank_raises_broadcast_output_failure_without_writing(tmp_path, 
     )
     with pytest.raises(RuntimeError, match="OSError: disk full"):
         module._write_result_distributed(tmp_path / "result.json", {"result": 1})
+
+
+def test_native_checkpoint_load_coverage_requires_every_parameter_and_buffer(tmp_path, monkeypatch):
+    module = _load_module()
+    connector = torch.nn.Parameter(torch.zeros(2, 2))
+    frozen_lm = torch.nn.Parameter(torch.zeros(3, 3), requires_grad=False)
+
+    class ModelPart:
+        def named_parameters(self):
+            return [("connector.weight", connector), ("lm.weight", frozen_lm)]
+
+    class TrainModule:
+        def __init__(self):
+            self.model_parts = [ModelPart()]
+
+        @staticmethod
+        def _get_model_state_dict_for_eval_load(metadata):
+            return {"optim.connector.main": connector.data.view(-1)}
+
+        @staticmethod
+        def _resolve_model_checkpoint_key(name, checkpoint_keys):
+            if name == "connector.weight":
+                return "optim.connector.main"
+            return None
+
+        @staticmethod
+        def _frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys):
+            return {"frozen_model.lm.weight": frozen_lm}
+
+        @staticmethod
+        def _frozen_checkpoint_param_state_dict_for_load(checkpoint_keys):
+            return {"frozen_model.lm.weight": frozen_lm.data}
+
+        @staticmethod
+        def _persistent_model_buffer_state_dict():
+            return {"model_buffer.router": torch.zeros(1)}
+
+    def tensor_metadata(shape):
+        return TensorStorageMetadata(
+            properties=TensorProperties(dtype=torch.float32),
+            size=torch.Size(shape),
+            chunks=[],
+        )
+
+    metadata = SimpleNamespace(
+        state_dict_metadata={
+            "optim.connector.main": tensor_metadata((4,)),
+            "frozen_model.lm.weight": tensor_metadata((3, 3)),
+            "model_buffer.router": tensor_metadata((1,)),
+        }
+    )
+    monkeypatch.setattr(module, "get_checkpoint_metadata", lambda path: metadata)
+    report = module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
+    assert report["complete"] is True
+    assert report["model_parameter_count"] == 2
+    assert report["model_parameter_checkpoint_key_count"] == 2
+    assert report["persistent_buffer_count"] == 1
+
+    TrainModule._resolve_model_checkpoint_key = staticmethod(
+        lambda name, checkpoint_keys: "optim.connector.main"
+    )
+    TrainModule._frozen_checkpoint_model_param_state_dict_for_load = staticmethod(lambda keys: {})
+    TrainModule._frozen_checkpoint_param_state_dict_for_load = staticmethod(lambda keys: {})
+    with pytest.raises(RuntimeError, match="multiple distinct model parameters"):
+        module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
+
+    TrainModule._resolve_model_checkpoint_key = staticmethod(
+        lambda name, checkpoint_keys: "optim.connector.main" if name == "connector.weight" else None
+    )
+    TrainModule._frozen_checkpoint_model_param_state_dict_for_load = staticmethod(lambda keys: {})
+    TrainModule._frozen_checkpoint_param_state_dict_for_load = staticmethod(lambda keys: {})
+    with pytest.raises(RuntimeError, match="does not cover every model parameter"):
+        module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
 
 
 def test_model_builder_preserves_saved_freeze_surface(monkeypatch):

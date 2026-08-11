@@ -104,11 +104,11 @@ sources also run their dataset-wide required-annotation scan before probe export
 validation.
 
 `bridge/synthetic_smoke.yaml` is only a code/topology smoke profile. Its calibration was
-measured over the deterministic synthetic dataset and is not valid for PixMoCap. No materialized
-real-data production profile is checked in until its row manifest, held-out image-hash split,
-and loss-mass audit are durable. `bridge/real_canary_v1.yaml.template` is a deliberately
-non-launchable contract for the first 250-step real-data canary; every `__PIN_*__` value must be
-replaced with an exact reviewed artifact before the result is saved as `real_canary_v1.yaml`.
+measured over the deterministic synthetic dataset and is not valid for PixMoCap. A materialized
+real-data profile is accepted only after its row manifest, held-out image-hash split, and
+loss-mass audit are durable. `bridge/real_canary_v1.yaml.template` remains the deliberately
+non-launchable template for reconstructing the first 250-step real-data canary; every
+`__PIN_*__` value must be replaced with an exact reviewed artifact before use.
 Production evaluation is mandatory at startup and finish and uses a separately pinned validation
 manifest whose image hashes have zero overlap with training.
 The validation-manifest v3 schema points to the actual sorted, unique train and validation
@@ -188,6 +188,14 @@ The canary evaluates the ordinary and blank-image caption/transcript suites at s
 100 and 200; its normal post-train hook writes the final permanent step-250 checkpoint. Periodic
 and ephemeral intervals are disabled, and `max_checkpoints=4` retains all four canary states.
 
+The completed canary passed its technical and semantic gates. Under the exact matched wrong-image
+protocol, the all-token caption gap and win rate progressed from `-0.0027 / 50.6%` at step 0 to
+`+0.0420 / 95.1%` at step 250; transcript progressed from `+0.0007 / 51.2%` to
+`+0.0329 / 92.6%`. Both gaps had confidence intervals containing zero at initialization, became
+significantly positive by step 100, and improved monotonically through step 250. This supersedes
+the earlier interpretation of the blank-image gap: blank images remain a path-ablation diagnostic,
+not the semantic promotion gate.
+
 Inspect the fully materialized profile without submitting:
 
 ```bash
@@ -205,23 +213,65 @@ itself. Because duration is part of the trainable contract, do not extend this r
 longer bridge is needed, start a fresh named bridge from the bare checkpoint with a separately
 reviewed profile.
 
-Run the post-hoc binding check on one 8-GPU node. The first command builds and pins the caption
-and transcript pairings; every later checkpoint must reuse that exact directory:
+Run the post-hoc binding check on one 8-GPU node. The completed canary receipts already produced
+the immutable caption and transcript pairings, so every v3 replay pins their exact SHA-256 values
+and writes to a new output path:
 
 ```bash
 for step in 0 100 200 250; do
-  torchrun --standalone --nproc-per-node=8 \
+  PYTHONPATH=src torchrun --standalone --nproc-per-node=8 \
     src/scripts/eval/vision_alignment_matched_wrong.py \
     --checkpoint=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/checkpoints/vision-alignment-bridge-real-canary-v1/step${step} \
     --pairing-dir=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/bridge-real-canary-v1-matched-wrong-v2/pairings \
-    --output=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/bridge-real-canary-v1-matched-wrong-v2/step${step}.json
+    --expected-pairing-sha256=pixmo_caption=9d37a3719b51804c26214625b4651faee2046e1c2cdb21a8990add17230cdb31 \
+    --expected-pairing-sha256=pixmo_transcript=49d8b3f1b3b1e96a5547c1408750b1569668d1dfda7b57eeea1f33995908731a \
+    --output=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/bridge-real-canary-v1-matched-wrong-v3/step${step}.json
 done
 ```
+
+Existing result paths fail closed; use a new path rather than `--overwrite-output` for scientific
+receipts. The v3 evaluator hashes every checkpoint state file before model construction and
+requires every model parameter and persistent buffer to have one unambiguous native load source
+on every rank.
 
 This metric is explicitly conditional on the exact-geometry matched-eligible subset recorded in
 the pairing artifact. Compare `wrong_ce - correct_ce`, its bootstrap interval, and win rate across
 the four checkpoints; do not compare it to the in-training blank-image gap as if they were the
 same intervention or population.
+
+## Full bridge refinement
+
+`bridge/real_bridge_v1.yaml` is a fresh 500-step run from the bare checkpoint, not a resume from
+the canary. Its connector and image-token-row scheduler exactly reproduces the successful canary:
+100 warmup steps, cosine decay to `2e-5` at step 250, then the same floor through step 500. This
+explicit `t_max=250` is important—a duration-derived 500- or 1,000-step cosine would keep the
+connector near peak LR at step 250 and would be a different high-LR experiment.
+
+The profile keeps the audited data and 70/30 effective-loss mix unchanged. It writes permanent
+checkpoints at steps 0, 100, 200, 250, 300, 400, and 500, with recoverable ephemeral checkpoints
+between them. Ordinary/blank intrinsic evaluation runs every 100 steps and at finish; semantic
+selection uses the standalone matched wrong-image evaluator on every permanent checkpoint.
+
+Validate the exact profile before launch:
+
+```bash
+PYTHONPATH=src python src/scripts/train/Vision-Alignment.py dry_run \
+  vision-alignment-bridge-real-v1 \
+  --profile=configs/vision_moe/vision_alignment/bridge/real_bridge_v1.yaml
+```
+
+After committing and pushing the exact validated revision, replace `dry_run` with `launch` to
+submit the profile. Evaluate each committed checkpoint with the same pairing directory and the
+two exact SHA-256 pins above, writing results under a new
+`bridge-real-v1-matched-wrong-v3/` directory.
+
+At step 250, require every caption/transcript `first_8`, `first_32`, and all-token gap lower
+confidence bound to be positive. Require at least 90% of the canary's step-250 point gaps and
+correct-image all-token CE no more than 2% above the canary. At steps 300/400/500, retain at least
+80% of this run's step-250 `first_8` and `first_32` gaps, keep correct-image CE within the same 2%
+bound, deliver caption/transcript loss mass within two percentage points of 70/30, and preserve
+every frozen LM/vision tensor and non-image embedding row exactly. Do not use transcript
+`first_1` as a gate because its generic opening token is not expected to identify image content.
 
 The perception and joint directories contain no launch profile yet. Their default contracts
 deliberately fail closed until explicit scalar-count, OCR/document, audited-alignment, and

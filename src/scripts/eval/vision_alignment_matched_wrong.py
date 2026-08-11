@@ -32,6 +32,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+from torch.distributed.checkpoint.metadata import TensorStorageMetadata
 
 from olmo_core.data.multimodal import MultimodalCollator, MultimodalDataLoader
 from olmo_core.data.multimodal.vision_alignment_sources import (
@@ -42,6 +43,7 @@ from olmo_core.data.multimodal.vision_alignment_sources import (
     runtime_dataset_fingerprint,
     vision_alignment_source_registry_sha256,
 )
+from olmo_core.distributed.checkpoint import get_checkpoint_metadata
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.eval import (
     MultimodalFixedValidationDataset,
@@ -76,7 +78,7 @@ WINDOWS: tuple[tuple[str, int | None], ...] = (
 )
 WORLD_SIZE = 8
 EP_DEGREE = 8
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -97,6 +99,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--pairing-dir", help="Directory for unspecified pairing JSON files.")
     parser.add_argument(
+        "--expected-pairing-sha256",
+        action="append",
+        default=[],
+        metavar="SOURCE=SHA256",
+        help=(
+            "Require this exact pairing artifact SHA-256. May be repeated. Every existing "
+            "pairing file must have an explicit source pin."
+        ),
+    )
+    parser.add_argument(
         "--pairing-seed",
         type=int,
         help="Pairing seed (defaults to the checkpoint's intrinsic-evaluation seed).",
@@ -110,6 +122,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--work-dir", help="Evaluator data-loader work directory.")
     parser.add_argument("--output", help="Atomic result JSON path.")
+    parser.add_argument(
+        "--overwrite-output",
+        action="store_true",
+        help="Explicitly allow replacement of an existing result JSON.",
+    )
     parser.add_argument("--checkpoint-load-threads", type=int, default=8)
     parser.add_argument(
         "--checkpoint-hash-workers",
@@ -169,7 +186,7 @@ def _load_json(path: Path) -> Any:
     return _strict_json_loads(path.read_text(), source=path)
 
 
-def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+def _write_bytes_atomic(path: Path, payload: bytes, *, overwrite: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
@@ -177,15 +194,24 @@ def _write_bytes_atomic(path: Path, payload: bytes) -> None:
             file_handle.write(payload)
             file_handle.flush()
             os.fsync(file_handle.fileno())
-        temporary.replace(path)
+        if overwrite:
+            temporary.replace(path)
+        else:
+            try:
+                os.link(temporary, path)
+            except FileExistsError as error:
+                raise FileExistsError(
+                    f"Refusing to overwrite existing artifact {path}; choose a new path or "
+                    "explicitly allow replacement"
+                ) from error
     finally:
         if temporary.exists():
             temporary.unlink()
 
 
-def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+def _write_json_atomic(path: Path, payload: Mapping[str, Any], *, overwrite: bool = False) -> None:
     raw = (json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
-    _write_bytes_atomic(path, raw)
+    _write_bytes_atomic(path, raw, overwrite=overwrite)
 
 
 def _checkpoint_state_dir(checkpoint: Path) -> Path:
@@ -222,6 +248,31 @@ def _parse_pairing_paths(values: Sequence[str]) -> dict[str, Path]:
             raise ValueError(f"Invalid or duplicate --pairing value {value!r}")
         paths[source] = Path(raw_path).expanduser().resolve()
     return paths
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _parse_expected_pairing_sha256(values: Sequence[str], sources: Sequence[str]) -> dict[str, str]:
+    pins: dict[str, str] = {}
+    enabled_sources = set(sources)
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"--expected-pairing-sha256 must be SOURCE=SHA256, got {value!r}")
+        source, digest = value.split("=", 1)
+        if source not in SOURCE_NAMES or source not in enabled_sources or source in pins:
+            raise ValueError(f"Invalid or duplicate pairing SHA-256 pin {value!r}")
+        if not _is_sha256(digest):
+            raise ValueError(
+                f"Pairing SHA-256 pin for {source!r} must be 64 lowercase hex characters"
+            )
+        pins[source] = digest
+    return pins
 
 
 def _resolve_pairing_paths(
@@ -262,6 +313,46 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--checkpoint-load-threads must be positive")
     if args.checkpoint_hash_workers <= 0:
         raise ValueError("--checkpoint-hash-workers must be positive")
+
+
+def _preflight_artifact_paths_distributed(
+    *,
+    output: Path,
+    overwrite_output: bool,
+    pairing_paths: Mapping[str, Path],
+    expected_pairing_sha256: Mapping[str, str],
+) -> None:
+    """Fail before checkpoint hashing when output or reused-pairing policy is violated."""
+    packet: list[Any] = [None]
+    if dist.get_rank() == 0:
+        try:
+            if output.exists() and not overwrite_output:
+                raise FileExistsError(
+                    f"Refusing to overwrite existing result {output}; pass --overwrite-output "
+                    "only when replacement is intentional"
+                )
+            for source, path in pairing_paths.items():
+                expected = expected_pairing_sha256.get(source)
+                if path.exists() and expected is None:
+                    raise ValueError(
+                        f"Existing {source} pairing {path} requires "
+                        f"--expected-pairing-sha256={source}=SHA256"
+                    )
+                if path.exists():
+                    actual = _sha256_file(path)
+                    if actual != expected:
+                        raise ValueError(
+                            f"Existing {source} pairing SHA-256 differs: expected {expected}, "
+                            f"got {actual}"
+                        )
+            packet[0] = {"ok": True}
+        except Exception as error:  # noqa: BLE001 - every rank-zero failure must be propagated.
+            packet[0] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    dist.broadcast_object_list(packet, src=0)
+    result = packet[0]
+    if not isinstance(result, Mapping) or result.get("ok") is not True:
+        detail = result.get("error") if isinstance(result, Mapping) else repr(result)
+        raise RuntimeError(f"Artifact preflight failed: {detail}")
 
 
 def _configure_lm_for_eval(lm_config: OLMoDDPModelConfig) -> None:
@@ -462,6 +553,8 @@ def _load_or_build_pairing(
     dataset: Any,
     *,
     path: Path,
+    source_name: str,
+    expected_sha256: str | None,
     examples: int,
     seed: int,
     content_ids: Sequence[str],
@@ -470,8 +563,13 @@ def _load_or_build_pairing(
     if dist.get_rank() == 0:
         try:
             if path.exists():
+                if expected_sha256 is None:
+                    raise ValueError(
+                        f"Existing {source_name} pairing {path} requires an explicit SHA-256 pin"
+                    )
                 payload = _load_json(path)
                 provenance = "loaded"
+                persist_pairing = False
             else:
                 payload = build_matched_wrong_image_pairing(
                     dataset,
@@ -480,8 +578,8 @@ def _load_or_build_pairing(
                     content_ids=content_ids,
                     epoch=0,
                 )
-                _write_bytes_atomic(path, serialize_matched_wrong_image_pairing(payload))
                 provenance = "built"
+                persist_pairing = True
             validate_matched_wrong_image_pairing(
                 payload,
                 dataset_size=len(dataset),
@@ -490,10 +588,18 @@ def _load_or_build_pairing(
                 epoch=0,
                 content_ids_sha256=_content_ids_sha256(content_ids),
             )
+            pairing_sha256 = matched_wrong_image_pairing_sha256(payload)
+            if expected_sha256 is not None and pairing_sha256 != expected_sha256:
+                raise ValueError(
+                    f"{source_name} pairing SHA-256 differs: expected {expected_sha256}, "
+                    f"got {pairing_sha256}"
+                )
+            if persist_pairing:
+                _write_bytes_atomic(path, serialize_matched_wrong_image_pairing(payload))
             packet[0] = {
                 "ok": True,
                 "payload": payload,
-                "sha256": matched_wrong_image_pairing_sha256(payload),
+                "sha256": pairing_sha256,
                 "provenance": provenance,
             }
         except Exception as error:  # noqa: BLE001 - every rank-zero failure must be propagated.
@@ -515,6 +621,8 @@ def _load_or_build_pairing(
     )
     if matched_wrong_image_pairing_sha256(payload) != pairing_sha:
         raise RuntimeError("Broadcast pairing SHA-256 differs from its payload")
+    if expected_sha256 is not None and pairing_sha != expected_sha256:
+        raise RuntimeError(f"Broadcast {source_name} pairing SHA-256 differs from its expected pin")
     return payload, pairing_sha, str(result["provenance"])
 
 
@@ -811,6 +919,174 @@ def _checkpoint_identity_distributed(
     return identity
 
 
+def _native_checkpoint_load_coverage(train_module: Any, state_dir: Path) -> dict[str, Any]:
+    """Prove that the eval-only native load maps every model parameter and buffer."""
+    metadata = get_checkpoint_metadata(state_dir)
+    checkpoint_keys = set(metadata.state_dict_metadata)
+    required_methods = {
+        "eval state": "_get_model_state_dict_for_eval_load",
+        "checkpoint-key resolver": "_resolve_model_checkpoint_key",
+        "frozen parameters": "_frozen_checkpoint_model_param_state_dict_for_load",
+        "frozen tensors": "_frozen_checkpoint_param_state_dict_for_load",
+        "persistent buffers": "_persistent_model_buffer_state_dict",
+    }
+    methods: dict[str, Any] = {}
+    for label, name in required_methods.items():
+        method = getattr(train_module, name, None)
+        if not callable(method):
+            raise TypeError(f"Native checkpoint load lacks the required {label} API {name}")
+        methods[name] = method
+
+    eval_state = methods["_get_model_state_dict_for_eval_load"](metadata)
+    frozen_parameters = methods["_frozen_checkpoint_model_param_state_dict_for_load"](
+        checkpoint_keys
+    )
+    frozen_tensors = methods["_frozen_checkpoint_param_state_dict_for_load"](checkpoint_keys)
+    if set(frozen_parameters) != set(frozen_tensors):
+        raise RuntimeError("Native frozen-parameter and frozen-tensor load keys differ")
+    persistent_buffers = methods["_persistent_model_buffer_state_dict"]()
+    missing_buffers = sorted(set(persistent_buffers) - checkpoint_keys)
+    if missing_buffers:
+        raise RuntimeError(
+            "Native checkpoint is missing persistent model buffers: " f"{missing_buffers[:10]}"
+        )
+
+    for label, state in (
+        ("eval", eval_state),
+        ("frozen", frozen_tensors),
+        ("buffer", persistent_buffers),
+    ):
+        for key, target in state.items():
+            tensor_metadata = metadata.state_dict_metadata.get(key)
+            if not isinstance(tensor_metadata, TensorStorageMetadata):
+                raise TypeError(f"Native {label} load target {key!r} lacks tensor metadata")
+            if tuple(target.size()) != tuple(tensor_metadata.size):
+                raise RuntimeError(
+                    f"Native {label} load target {key!r} shape {tuple(target.size())} differs "
+                    f"from checkpoint shape {tuple(tensor_metadata.size)}"
+                )
+
+    model_parts = getattr(train_module, "model_parts", None)
+    if not isinstance(model_parts, Sequence) or not model_parts:
+        raise RuntimeError("Native checkpoint load does not expose non-empty model_parts")
+    frozen_keys_by_parameter: dict[int, list[str]] = {}
+    for key, parameter in frozen_parameters.items():
+        frozen_keys_by_parameter.setdefault(id(parameter), []).append(key)
+
+    parameter_names: dict[int, list[str]] = {}
+    parameter_by_id: dict[int, Any] = {}
+    for part_index, model_part in enumerate(model_parts):
+        for name, parameter in model_part.named_parameters():
+            parameter_names.setdefault(id(parameter), []).append(f"part{part_index}.{name}")
+            parameter_by_id[id(parameter)] = parameter
+    if not parameter_by_id:
+        raise RuntimeError("Native checkpoint load model has no parameters")
+    orphan_frozen_keys = sorted(
+        key for key, parameter in frozen_parameters.items() if id(parameter) not in parameter_by_id
+    )
+    if orphan_frozen_keys:
+        raise RuntimeError(
+            "Native checkpoint frozen load targets are absent from model_parts: "
+            f"{orphan_frozen_keys[:10]}"
+        )
+
+    covered_keys: set[str] = set()
+    parameter_ids_by_checkpoint_key: dict[str, set[int]] = {}
+    assignments: list[dict[str, Any]] = []
+    missing_parameters: list[str] = []
+    resolver = methods["_resolve_model_checkpoint_key"]
+    for parameter_id, parameter in parameter_by_id.items():
+        names = parameter_names[parameter_id]
+        resolved_keys = {
+            key
+            for name in names
+            if (key := resolver(name.split(".", 1)[1], checkpoint_keys)) is not None
+        }
+        resolved_keys &= set(eval_state)
+        frozen_keys = set(frozen_keys_by_parameter.get(id(parameter), ()))
+        if not resolved_keys and not frozen_keys:
+            missing_parameters.extend(names)
+            continue
+        authoritative_keys = resolved_keys | frozen_keys
+        if len(authoritative_keys) != 1:
+            raise RuntimeError(
+                f"Native model parameter {names} resolves ambiguously to "
+                f"{sorted(authoritative_keys)}"
+            )
+        for key in authoritative_keys:
+            parameter_ids_by_checkpoint_key.setdefault(key, set()).add(parameter_id)
+        covered_keys.update(authoritative_keys)
+        assignments.append(
+            {
+                "parameter_names": sorted(names),
+                "checkpoint_keys": sorted(authoritative_keys),
+            }
+        )
+    if missing_parameters:
+        raise RuntimeError(
+            "Native checkpoint load does not cover every model parameter; missing "
+            f"{missing_parameters[:10]}"
+        )
+    multiply_mapped = sorted(
+        key
+        for key, parameter_ids in parameter_ids_by_checkpoint_key.items()
+        if len(parameter_ids) > 1
+    )
+    if multiply_mapped:
+        raise RuntimeError(
+            "Native checkpoint keys resolve to multiple distinct model parameters: "
+            f"{multiply_mapped[:10]}"
+        )
+
+    report = {
+        "complete": True,
+        "checkpoint_key_count": len(checkpoint_keys),
+        "model_parameter_count": len(parameter_by_id),
+        "model_parameter_checkpoint_key_count": len(covered_keys),
+        "model_parameter_checkpoint_keys_sha256": _canonical_sha256(sorted(covered_keys)),
+        "model_parameter_assignments_sha256": _canonical_sha256(
+            sorted(assignments, key=lambda assignment: assignment["parameter_names"])
+        ),
+        "eval_state_key_count": len(eval_state),
+        "frozen_state_key_count": len(frozen_parameters),
+        "persistent_buffer_count": len(persistent_buffers),
+        "persistent_buffer_keys_sha256": _canonical_sha256(sorted(persistent_buffers)),
+        "prepared_load_key_count": len(
+            set(eval_state) | set(frozen_tensors) | set(persistent_buffers)
+        ),
+    }
+    report["sha256"] = _canonical_sha256(report)
+    return report
+
+
+def _native_checkpoint_load_coverage_distributed(
+    train_module: Any, state_dir: Path
+) -> dict[str, Any]:
+    """Require every rank to produce the same complete native-load coverage report."""
+    try:
+        local: dict[str, Any] = {
+            "ok": True,
+            "report": _native_checkpoint_load_coverage(train_module, state_dir),
+        }
+    except Exception as error:  # noqa: BLE001 - all ranks must receive every local failure.
+        local = {"ok": False, "error": f"{type(error).__name__}: {error}"}
+    gathered: list[Any] = [None for _ in range(dist.get_world_size())]
+    dist.all_gather_object(gathered, local)
+    failures = [
+        f"rank {rank}: {packet.get('error')}"
+        if isinstance(packet, Mapping)
+        else f"rank {rank}: malformed report {packet!r}"
+        for rank, packet in enumerate(gathered)
+        if not isinstance(packet, Mapping) or packet.get("ok") is not True
+    ]
+    if failures:
+        raise RuntimeError(f"Native checkpoint load coverage failed: {failures}")
+    reports = [packet["report"] for packet in gathered]
+    if any(report != reports[0] for report in reports[1:]):
+        raise RuntimeError("Native checkpoint load coverage differs across ranks")
+    return reports[0]
+
+
 def _git_identity() -> dict[str, Any]:
     def command(*args: str) -> bytes | None:
         try:
@@ -829,12 +1105,14 @@ def _git_identity() -> dict[str, Any]:
     }
 
 
-def _write_result_distributed(output: Path, payload: Mapping[str, Any]) -> None:
+def _write_result_distributed(
+    output: Path, payload: Mapping[str, Any], *, overwrite: bool = False
+) -> None:
     """Atomically write on rank zero and propagate persistence failure to every rank."""
     packet: list[Any] = [None]
     if dist.get_rank() == 0:
         try:
-            _write_json_atomic(output, payload)
+            _write_json_atomic(output, payload, overwrite=overwrite)
             packet[0] = {"ok": True}
         except Exception as error:  # noqa: BLE001 - every rank-zero failure must be propagated.
             packet[0] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
@@ -881,6 +1159,20 @@ def main(argv: Sequence[str] | None = None) -> None:
             Path(args.output).expanduser().resolve() if args.output else _default_output(checkpoint)
         )
         pairing_paths = _resolve_pairing_paths(args, output, args.sources)
+        expected_pairing_sha256 = _parse_expected_pairing_sha256(
+            args.expected_pairing_sha256, args.sources
+        )
+        _preflight_artifact_paths_distributed(
+            output=output,
+            overwrite_output=args.overwrite_output,
+            pairing_paths=pairing_paths,
+            expected_pairing_sha256=expected_pairing_sha256,
+        )
+        checkpoint_identity = _checkpoint_identity_distributed(
+            checkpoint,
+            config_path,
+            hash_workers=args.checkpoint_hash_workers,
+        )
         work_dir = (
             Path(args.work_dir).expanduser().resolve()
             if args.work_dir
@@ -919,6 +1211,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             pairing, pairing_sha, provenance = _load_or_build_pairing(
                 datasets[source],
                 path=pairing_paths[source],
+                source_name=source,
+                expected_sha256=expected_pairing_sha256.get(source),
                 examples=args.examples,
                 seed=pairing_seed,
                 content_ids=content_ids,
@@ -930,6 +1224,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             pairings[source] = {
                 "path": str(pairing_paths[source]),
                 "sha256": pairing_sha,
+                "expected_sha256": expected_pairing_sha256.get(source),
                 "provenance": provenance,
                 "population": "matched_eligible_validation_subset",
                 "pairing_schema_version": pairing["version"],
@@ -949,12 +1244,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         train_module = module_config.build(model, eval_only=True)
         state_dir = _checkpoint_state_dir(checkpoint)
+        native_load_coverage = _native_checkpoint_load_coverage_distributed(
+            train_module,
+            state_dir,
+        )
         log.info("Loading native Vision Alignment checkpoint from %s", state_dir)
         train_module.load_state_dict_direct(
             state_dir,
             process_group=dist.group.WORLD,
             thread_count=args.checkpoint_load_threads,
             load_optim_state=False,
+        )
+        native_load_coverage["load_completed"] = True
+        native_load_coverage["sha256"] = _canonical_sha256(
+            {key: value for key, value in native_load_coverage.items() if key != "sha256"}
         )
         dp_world_size = get_world_size(train_module.dp_process_group)
         dp_rank = get_rank(train_module.dp_process_group)
@@ -993,7 +1296,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             results[source] = source_result
 
         protocol = {
-            "name": "vision-alignment-native-matched-wrong-image-v2",
+            "name": "vision-alignment-native-matched-wrong-image-v3",
             "sources": list(args.sources),
             "dataset_split": "validation",
             "evaluation_population": "matched_eligible_validation_subset",
@@ -1005,6 +1308,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             "examples_per_source": args.examples,
             "source_epoch": 0,
             "pairing_seed": pairing_seed,
+            "pairing_sha256": {source: pairings[source]["sha256"] for source in args.sources},
+            "pairing_pin_policy": (
+                "every existing pairing file requires an exact source-specific CLI SHA-256 pin"
+            ),
             "pairing_rule": (
                 "distinct pinned content and materialized pixels; identical image tensor shape "
                 "and byte-identical pooled_patches_idx; explicit unique donors"
@@ -1045,15 +1352,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         if pairing_implementation_path_value is None:
             raise RuntimeError("Could not resolve matched-wrong pairing implementation source")
         pairing_implementation_path = Path(pairing_implementation_path_value).resolve()
-        checkpoint_identity = _checkpoint_identity_distributed(
-            checkpoint,
-            config_path,
-            hash_workers=args.checkpoint_hash_workers,
-        )
         payload: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "checkpoint": checkpoint_identity,
+            "native_checkpoint_load": native_load_coverage,
             "config_path": str(config_path),
             "git": _git_identity(),
             "evaluator": {
@@ -1064,6 +1367,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             },
             "validation": manifest_identity,
             "pairings": pairings,
+            "artifact_policy": {
+                "existing_pairing_requires_sha256_pin": True,
+                "expected_pairing_sha256": expected_pairing_sha256,
+                "output_overwrite_enabled": args.overwrite_output,
+            },
             "protocol": protocol,
             "results": results,
         }
@@ -1074,7 +1382,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "pairing_sha256": {source: pairings[source]["sha256"] for source in args.sources},
             }
         )
-        _write_result_distributed(output, payload)
+        _write_result_distributed(output, payload, overwrite=args.overwrite_output)
     finally:
         teardown_training_environment()
 

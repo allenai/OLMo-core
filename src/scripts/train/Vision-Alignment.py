@@ -306,6 +306,7 @@ class _PhasePolicy:
     vision_lr: float
     lm_lr: float
     connector_warmup: int
+    connector_t_max: Optional[int]
     vision_warmup: int
     lm_warmup: int
 
@@ -328,6 +329,7 @@ _PHASE_POLICIES: Dict[VisionAlignmentPhase, _PhasePolicy] = {
         vision_lr=0.0,
         lm_lr=0.0,
         connector_warmup=100,
+        connector_t_max=250,
         vision_warmup=100,
         lm_warmup=100,
     ),
@@ -347,6 +349,7 @@ _PHASE_POLICIES: Dict[VisionAlignmentPhase, _PhasePolicy] = {
         vision_lr=3e-6,
         lm_lr=0.0,
         connector_warmup=200,
+        connector_t_max=None,
         vision_warmup=500,
         lm_warmup=500,
     ),
@@ -362,6 +365,7 @@ _PHASE_POLICIES: Dict[VisionAlignmentPhase, _PhasePolicy] = {
         vision_lr=2e-6,
         lm_lr=1e-6,
         connector_warmup=200,
+        connector_t_max=None,
         vision_warmup=500,
         lm_warmup=500,
     ),
@@ -673,7 +677,11 @@ def _build_train_module_config(
         compile_model=True,
         scheduler=PerGroupScheduler(
             schedulers={
-                "connector": CosWithWarmup(warmup=policy.connector_warmup, alpha_f=0.1, t_max=None),
+                "connector": CosWithWarmup(
+                    warmup=policy.connector_warmup,
+                    alpha_f=0.1,
+                    t_max=policy.connector_t_max,
+                ),
                 "vision": CosWithWarmup(warmup=policy.vision_warmup, alpha_f=0.1, t_max=None),
             },
             default=CosWithWarmup(warmup=policy.lm_warmup, alpha_f=0.1, t_max=None),
@@ -1847,15 +1855,15 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
     ):
         raise ValueError("Vision alignment requires the pinned per-group scheduler topology")
     expected_schedulers = (
-        (scheduler.schedulers["connector"], policy.connector_warmup),
-        (scheduler.schedulers["vision"], policy.vision_warmup),
-        (scheduler.default, policy.lm_warmup),
+        (scheduler.schedulers["connector"], policy.connector_warmup, policy.connector_t_max),
+        (scheduler.schedulers["vision"], policy.vision_warmup, None),
+        (scheduler.default, policy.lm_warmup, None),
     )
-    for component_scheduler, expected_warmup in expected_schedulers:
+    for component_scheduler, expected_warmup, expected_t_max in expected_schedulers:
         if (
             not isinstance(component_scheduler, CosWithWarmup)
             or component_scheduler.warmup != expected_warmup
-            or component_scheduler.t_max is not None
+            or component_scheduler.t_max != expected_t_max
             or not math.isclose(component_scheduler.alpha_f, 0.1)
         ):
             raise ValueError("Vision-alignment scheduler shape or warmup was overridden")
@@ -1870,6 +1878,14 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
         active_warmups.append(policy.lm_warmup)
     if not config.data.allow_unpinned_synthetic_smoke and max(active_warmups) >= duration.value:
         raise ValueError("Every active warmup must be shorter than the production phase duration")
+    if (
+        not config.data.allow_unpinned_synthetic_smoke
+        and policy.connector_t_max is not None
+        and not (policy.connector_warmup < policy.connector_t_max <= duration.value)
+    ):
+        raise ValueError(
+            "The connector decay horizon must follow warmup and fit inside the phase duration"
+        )
 
 
 def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None:
