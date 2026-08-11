@@ -24,7 +24,9 @@ patch is a no-op for any model run with FLEX_ATTENTION disabled or before
 
 from __future__ import annotations
 
+import os
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -62,6 +64,68 @@ def get_debug_state() -> dict:
 # input_batch reference to the patched metadata builder. We need the token IDs
 # from `input_batch.token_ids_cpu` to derive chunk IDs each step.
 _local = threading.local()
+
+# ---------------------------------------------------------------------------
+# Optional per-stage profiling (CHUNK_PROFILE=1).
+#
+# Chunked eval runs ~20-29x slower than dense (grouping 2k: 28.6s vs 586s;
+# contradiction 2k: ~41s vs 1199s), and the metadata builder is invoked on EVERY
+# decode step. A CPU microbenchmark showed the chunk_ids rebuild accounts for
+# only ~0.4% of runtime at the 2k rung (4.5s per 500 examples vs 1199s total),
+# so the cost is elsewhere. This attributes it per stage instead of guessing.
+#
+# OFF by default: with CHUNK_PROFILE unset both helpers return immediately and
+# no CUDA syncs are inserted, so already-validated numbers are bit-unaffected.
+# ---------------------------------------------------------------------------
+_PROFILE = os.environ.get("CHUNK_PROFILE") == "1"
+_prof_state: dict = {}
+
+
+def _prof_now():
+    return time.perf_counter() if _PROFILE else None
+
+
+def _prof_add(label: str, t0, sync: bool = False) -> None:
+    """Accumulate elapsed seconds under `label`.
+
+    `sync=True` forces a CUDA synchronize first, so GPU work *launched* inside
+    the stage is attributed to that stage rather than to whatever later call
+    happens to block on it. Only done when profiling is enabled.
+    """
+    if not _PROFILE or t0 is None:
+        return
+    if sync:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+    slot = _prof_state.setdefault(label, [0.0, 0])
+    slot[0] += time.perf_counter() - t0
+    slot[1] += 1
+
+
+def profile_report() -> dict:
+    """Return (and print) {stage: {seconds, calls, ms_per_call}}."""
+    out = {}
+    for label, (secs, n) in sorted(_prof_state.items(), key=lambda kv: -kv[1][0]):
+        out[label] = {"seconds": secs, "calls": n,
+                      "ms_per_call": (secs / n * 1000.0) if n else 0.0}
+    if _PROFILE:
+        print("\n[vllm_chunked_patch] === stage profile ===")
+        print(f"{'stage':24s} {'seconds':>10s} {'calls':>9s} {'ms/call':>10s}")
+        for label, d in out.items():
+            print(f"{label:24s} {d['seconds']:10.2f} {d['calls']:9d} {d['ms_per_call']:10.3f}")
+    return out
+
+
+if _PROFILE:
+    # Self-contained: emit the breakdown at interpreter exit so no shared,
+    # already-validated driver script has to be edited to get the numbers.
+    import atexit
+
+    atexit.register(profile_report)
+
 
 
 def set_doc_token_ids(doc_start_id: int, doc_end_id: int) -> None:
@@ -163,6 +227,16 @@ def _patch_flex_kernel_options_pow2() -> None:
             # Cap the kernel's inner block to the largest power-of-2 that
             # still divides the logical KV page (288 -> 32).
             block_n = block_n_pow2
+        # CHUNK_BLOCK_N: experimental override to measure how much the forced
+        # BLOCK_N=32 costs. Profiling (48 ex, contradiction 2k) attributed 83%
+        # of chunked runtime to the kernel/forward and only 17% to this patch's
+        # metadata work, so the KV tile size is the main remaining suspect:
+        # Qwen3.5 pads the attention page to 288 to match the mamba page, and
+        # 288 = 2^5 * 9, so the largest power-of-2 divisor is only 32 (vs 128+
+        # for a pure-softmax model). Unset -> stock behaviour, unchanged.
+        _override = os.environ.get("CHUNK_BLOCK_N")
+        if _override:
+            block_n = int(_override)
         return orig(query, block_m, block_n, use_direct_build)
 
     flex_mod.get_kernel_options = patched
@@ -304,9 +378,11 @@ def _patch_flex_metadata_builder() -> None:
     _debug_state = _DEBUG_STATE
 
     def wrapped(self, common_prefix_len, common_attn_metadata, fast_build=False):
+        _t_orig = _prof_now()
         metadata = orig_build(
             self, common_prefix_len, common_attn_metadata, fast_build=fast_build
         )
+        _prof_add("orig_build", _t_orig)
         _debug_state["calls"] += 1
         if _DOC_START_ID is None or _DOC_END_ID is None:
             if not _debug_state["logged"]:
@@ -325,9 +401,11 @@ def _patch_flex_metadata_builder() -> None:
                 _debug_state["logged"] = True
             return metadata
 
+        _t_cid = _prof_now()
         chunk_ids = _build_chunk_ids_for_batch(
             ib, common_attn_metadata, metadata.block_table.device,
         )
+        _prof_add("build_chunk_ids", _t_cid, sync=True)
         if chunk_ids is None:
             return metadata
         _debug_state["applied"] += 1
@@ -365,11 +443,14 @@ def _patch_flex_metadata_builder() -> None:
         # up per-request chunk IDs. The default `get_causal_mask_mod` strips
         # the request index when it calls `logical_mask_mod`, so we install
         # our own `final_mask_mod` directly.
+        _t_mm = _prof_now()
         metadata.mask_mod = _build_chunked_final_mask_mod(metadata, chunk_ids)
+        _prof_add("make_mask_mod", _t_mm)
 
         # Rebuild block_mask with the new mask_mod. FlexAttention has no
         # update_block_table path (supports_update_block_table=False), so the
         # builder is called every step — same path as the default backend.
+        _t_bm = _prof_now()
         if metadata.direct_build and metadata.causal:
             _debug_state["direct"] += 1
             metadata.block_mask = metadata._build_block_mask_direct()
@@ -399,6 +480,7 @@ def _patch_flex_metadata_builder() -> None:
                 device=metadata.block_table.device,
                 BLOCK_SIZE=(metadata.q_block_size, metadata.kv_block_size),
             )
+        _prof_add("build_block_mask", _t_bm, sync=True)
         return metadata
 
     FlexAttentionMetadataBuilder.build = wrapped

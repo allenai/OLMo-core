@@ -140,6 +140,7 @@ def build_eval_prefill(
     doc_start_id=DOC_START_ID,
     doc_end_id=DOC_END_ID,
     mem_freq=63,
+    query_position="both",
 ):
     """
     Render one eval example's **prompt-only prefill** token ids for any ``TASK_CFG`` task.
@@ -173,7 +174,7 @@ def build_eval_prefill(
         tok,
         raw_example,
         task,
-        query_position="both",
+        query_position=query_position,
         cot_mode=cm,
         chunk_by=chunk_by,
         item_regex=r"\|\|",
@@ -254,6 +255,27 @@ def main():
         default=None,
         help="landmark variant: top-k = ceil(fraction * num_prompt_blocks), set per example. "
         "Overridden by --landmark-top-k-blocks.",
+    )
+    ap.add_argument(
+        "--query-position",
+        default="both",
+        choices=("before", "after", "both"),
+        help="Where the question block sits relative to the documents. Default 'both' matches how "
+        "these checkpoints were trained (the converters' own default) and MUST stay the default. "
+        "'after' exists to measure one specific thing: with 'both', a per-query question is emitted "
+        "BEFORE the shared corpus, so the shared documents are not a token prefix and "
+        "--shared-corpus-cache can reuse nothing on any task that has a real query (measured: nq "
+        "0.5%, rerank 0.9%, oolong 0.1% reusable). 'after' makes the corpus a true prefix, at the "
+        "cost of an off-distribution prompt -- quantify that cost before using it for real numbers.",
+    )
+    ap.add_argument(
+        "--shared-corpus-cache",
+        action="store_true",
+        help="prefill each corpus's shared document prefix ONCE and rewind to it for every query "
+        "that shares it (files built by corpus_reasoning.data.build_shared_corpus_evals, which "
+        "adds corpus_id / shared_prefix_len). Pure optimisation: the decode loop, stop rules and "
+        "scoring are unchanged, so scores must match the same file run without this flag. "
+        "--variant dense|full only; not compatible with --batch-size > 1.",
     )
     ap.add_argument(
         "--batch-size",
@@ -438,11 +460,33 @@ def main():
             doc_start_id=ds_id,
             doc_end_id=de_id,
             mem_freq=args.mem_freq,
+            query_position=args.query_position,
         )
 
     block_size = (
         args.mem_freq + 1
     )  # landmark window (64); the eager landmark forward needs T % 64 == 0
+
+    @torch.no_grad()
+    def decode_from_logits(logits):
+        """Greedy decode loop for dense/full, starting from the last prompt token's logits.
+
+        Factored out of ``generate_one`` so the shared-corpus prefix-cache path
+        (``--shared-corpus-cache``) can reuse the EXACT decode behaviour -- stop rules, think-strip
+        and all -- while changing only where the prompt's KV came from.
+        """
+        nxt = int(logits[0, -1].argmax().item())
+        new_content = []
+        for _ in range(max_new_tokens):
+            if nxt == eos_id:
+                break
+            new_content.append(nxt)
+            if should_stop(nxt, new_content):
+                break
+            logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
+            nxt = int(logits[0, -1].argmax().item())
+        text = tok.decode(new_content, skip_special_tokens=True)
+        return text.split("</think>", 1)[1] if "</think>" in text else text
 
     @torch.no_grad()
     def generate_one(prefill):
@@ -454,18 +498,7 @@ def main():
             logits = gm.model(
                 torch.tensor([prefill], device=device), logits_to_keep=1, cache_leftpad=leftpad
             )
-            nxt = int(logits[0, -1].argmax().item())
-            new_content = []
-            for _ in range(max_new_tokens):
-                if nxt == eos_id:
-                    break
-                new_content.append(nxt)
-                if should_stop(nxt, new_content):
-                    break
-                logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
-                nxt = int(logits[0, -1].argmax().item())
-            text = tok.decode(new_content, skip_special_tokens=True)
-            return text.split("</think>", 1)[1] if "</think>" in text else text
+            return decode_from_logits(logits)
 
         # Landmark: KV-cached decode. The prefill (block-aligned, landmark at every block end) is run
         # once with the chunked grouped-softmax mask + K,V cached; then each generated token is fed
@@ -501,7 +534,7 @@ def main():
         eval_data,
         args.max_test_samples,
         task=seg_task,
-        query_position="both",
+        query_position=args.query_position,
         use_alpaca=True,
     )
     import math
@@ -517,7 +550,54 @@ def main():
     my_gidx = list(range(rank, len(examples), world))
     local = []
     skipped = 0
-    if args.batch_size <= 1:
+    shared_stats = {"groups": 0, "prefill_tokens": 0, "suffix_tokens": 0, "naive_tokens": 0}
+    if args.shared_corpus_cache:
+        # Shared-corpus path: rows carrying the same `corpus_id` share a byte-identical document
+        # prefix, so prefill it once per corpus and rewind to it for each query. Sharding is by
+        # GROUP, not by example -- splitting a group across ranks would prefill the same corpus on
+        # every rank and throw the saving away.
+        from corpus_reasoning.eval.shared_corpus_cache import (
+            generate_group_with_shared_prefix,
+            group_by_corpus,
+        )
+
+        if args.variant not in ("dense", "full"):
+            raise SystemExit(
+                f"--shared-corpus-cache supports --variant dense|full, not {args.variant!r}. "
+                "The landmark decode inserts periodic landmark tokens, so its cache cursor is not "
+                "a plain rewind."
+            )
+        all_groups = list(group_by_corpus(examples).items())
+        for cid, member_idx in all_groups[rank::world]:
+            keep_idx, prefills = [], []
+            for gi in member_idx:
+                raw = examples[gi].get("ex", examples[gi])
+                prefill = build_prefill(raw)
+                if len(prefill) > cap:
+                    skipped += 1
+                    local.append((gi, ""))
+                    continue
+                keep_idx.append(gi)
+                prefills.append(prefill)
+            if not prefills:
+                continue
+            texts, st = generate_group_with_shared_prefix(
+                gm, prefills, device, args.max_length, decode_from_logits
+            )
+            local.extend(zip(keep_idx, texts))
+            shared_stats["groups"] += 1
+            shared_stats["prefill_tokens"] += st["prefill_tokens"]
+            shared_stats["suffix_tokens"] += st["suffix_tokens"]
+            shared_stats["naive_tokens"] += sum(len(p) for p in prefills)
+        if shared_stats["naive_tokens"]:
+            fed = shared_stats["prefill_tokens"] + shared_stats["suffix_tokens"]
+            print(
+                f"[shared-corpus] rank={rank} groups={shared_stats['groups']} "
+                f"prompt tokens fed {fed:,} vs {shared_stats['naive_tokens']:,} naive "
+                f"({shared_stats['naive_tokens'] / max(1, fed):.1f}x fewer)",
+                flush=True,
+            )
+    elif args.batch_size <= 1:
         for gi in my_gidx:
             raw = examples[gi].get("ex", examples[gi])
             prefill = build_prefill(raw)

@@ -389,6 +389,13 @@ def build_parser() -> argparse.ArgumentParser:
         "batching -- see corpus_reasoning.eval.batched_native_decode and "
         "results/ctc_suite/batched_eval_status.md for the parity proof + safe batch sizes.",
     )
+    ap.add_argument(
+        "--shared-corpus-cache",
+        action="store_true",
+        help="pass --shared-corpus-cache to the evaluator: prefill each corpus's shared document "
+        "prefix once and rewind to it per query. Requires a shared-corpus eval file and "
+        "--batch-size 1. A pure optimisation -- the score must be unchanged.",
+    )
     ap.add_argument("--master-port", type=int, default=None, help="torchrun --master_port")
     ap.add_argument(
         "--trained-ctx",
@@ -563,6 +570,11 @@ def resolve(args: argparse.Namespace):
         "--batch-size",
         str(args.batch_size),
     ]
+    if getattr(args, "shared_corpus_cache", False):
+        # Prefix-KV reuse across queries sharing a corpus. Only meaningful on a shared-corpus eval
+        # file, and only where the corpus is a real TOKEN prefix -- i.e. tasks whose question block
+        # is empty or fixed (contradiction, outlier). Verified score-identical to the plain path.
+        cmd += ["--shared-corpus-cache"]
     if task == "contradiction":
         cmd += [
             "--contra-data",

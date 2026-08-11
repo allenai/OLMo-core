@@ -24,7 +24,9 @@ patch is a no-op for any model run with FLEX_ATTENTION disabled or before
 
 from __future__ import annotations
 
+import os
 import threading
+import time
 from typing import Optional
 
 import numpy as np
@@ -48,6 +50,56 @@ _PAD_CHUNK_ID = -2
 # input_batch reference to the patched metadata builder. We need the token IDs
 # from `input_batch.token_ids_cpu` to derive chunk IDs each step.
 _local = threading.local()
+
+# ---------------------------------------------------------------------------
+# Optional per-stage profiling (CHUNK_PROFILE=1).
+#
+# Chunked eval runs ~20-29x slower than dense (grouping 2k: 28.6s vs 586s;
+# contradiction 2k: ~41s vs 1199s) and the builder is invoked on EVERY decode
+# step. A CPU microbenchmark showed the chunk_ids rebuild is only ~0.4% of
+# runtime at the 2k rung, so the cost is elsewhere -- this attributes it
+# instead of guessing. OFF by default: when disabled both helpers are a
+# predictable-branch no-op, so already-validated numbers are untouched.
+# ---------------------------------------------------------------------------
+_PROFILE = os.environ.get("CHUNK_PROFILE") == "1"
+_prof_state: dict[str, list] = {}
+
+
+def _prof_now():
+    if not _PROFILE:
+        return None
+    return time.perf_counter()
+
+
+def _prof_add(label: str, t0, sync: bool = False) -> None:
+    """Accumulate elapsed seconds under `label`. `sync` forces a CUDA sync first
+    so GPU work launched in the stage is actually attributed to it."""
+    if not _PROFILE or t0 is None:
+        return
+    if sync:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+        except Exception:
+            pass
+    slot = _prof_state.setdefault(label, [0.0, 0])
+    slot[0] += time.perf_counter() - t0
+    slot[1] += 1
+
+
+def profile_report() -> dict:
+    """Return {label: {seconds, calls, ms_per_call}} and print it. No-op unless
+    CHUNK_PROFILE=1."""
+    out = {}
+    for label, (secs, n) in sorted(_prof_state.items(), key=lambda kv: -kv[1][0]):
+        out[label] = {"seconds": secs, "calls": n,
+                      "ms_per_call": (secs / n * 1000.0) if n else 0.0}
+    if _PROFILE:
+        print("\n[vllm_chunked_patch] === stage profile ===")
+        print(f"{'stage':22s} {'seconds':>10s} {'calls':>9s} {'ms/call':>10s}")
+        for label, d in out.items():
+            print(f"{label:22s} {d['seconds']:10.2f} {d['calls']:9d} {d['ms_per_call']:10.3f}")
+    return out
 
 
 def set_doc_token_ids(doc_start_id: int, doc_end_id: int) -> None:
@@ -280,9 +332,11 @@ def _patch_flex_metadata_builder() -> None:
     _debug_state = {"calls": 0, "applied": 0, "logged": False}
 
     def wrapped(self, common_prefix_len, common_attn_metadata, fast_build=False):
+        _t_orig = _prof_now()
         metadata = orig_build(
             self, common_prefix_len, common_attn_metadata, fast_build=fast_build
         )
+        _prof_add("orig_build", _t_orig)
         _debug_state["calls"] += 1
         if _DOC_START_ID is None or _DOC_END_ID is None:
             if not _debug_state["logged"]:
@@ -301,9 +355,11 @@ def _patch_flex_metadata_builder() -> None:
                 _debug_state["logged"] = True
             return metadata
 
+        _t_cid = _prof_now()
         chunk_ids = _build_chunk_ids_for_batch(
             ib, common_attn_metadata, metadata.block_table.device,
         )
+        _prof_add("build_chunk_ids", _t_cid)
         if chunk_ids is None:
             return metadata
         _debug_state["applied"] += 1
@@ -328,10 +384,12 @@ def _patch_flex_metadata_builder() -> None:
         # Rebuild block_mask with the new mask_mod. FlexAttention has no
         # update_block_table path (supports_update_block_table=False), so the
         # builder is called every step — same path as the default backend.
+        _t_bm = _prof_now()
         if metadata.direct_build and metadata.causal:
             metadata.block_mask = metadata._build_block_mask_direct()
         else:
             metadata.block_mask = metadata.build_block_mask()
+        _prof_add("build_block_mask", _t_bm, sync=True)
         return metadata
 
     FlexAttentionMetadataBuilder.build = wrapped
