@@ -28,7 +28,7 @@ from ..feed_forward import ActivationFunction, FeedForwardConfig, FeedForwardTyp
 from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
-from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from ..rope import PIRoPEScalingConfig, RoPEConfig, RoPEScalingConfig, RoPEType
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -2230,11 +2230,15 @@ class TransformerConfig(ModelConfig):
         local_window_size: int = 1024,
         local_rope_theta: int = 10_000,
         global_rope_theta: int = 1_000_000,
+        global_rope_linear_scaling_factor: float = 0.0,
         global_layer_interval: int = 6,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
         use_flash: Optional[bool] = None,
         attn_backend: Optional[AttentionBackendName] = None,
+        document_chunked: bool = False,
+        cross_doc_mode: Optional[str] = None,
+        flex_block_size: Optional[int] = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -2250,8 +2254,25 @@ class TransformerConfig(ModelConfig):
         :param local_window_size: Sliding window size for local attention layers.
         :param local_rope_theta: RoPE base frequency for local attention layers.
         :param global_rope_theta: RoPE base frequency for global attention layers.
+        :param global_rope_linear_scaling_factor: Position-interpolation (HF ``rope_type="linear"``)
+            factor applied to the **global** layers only, matching Gemma 3's
+            ``text_config.rope_scaling`` (``factor=8`` for the released 4B/12B/27B checkpoints).
+            ``0`` (default) leaves RoPE unscaled.
         :param global_layer_interval: Number of layers per pattern cycle (default 6 = 5 local + 1 global).
+        :param document_chunked: Use :class:`~olmo_core.nn.attention.DocumentChunkedAttention` on the
+            **global** (full-attention) layers. The local layers keep plain sliding-window attention:
+            :class:`DocumentChunkedAttention` rejects ``window_size`` outright (the chunked mask and a
+            sliding window are two different key restrictions), so the chunked mask can only live on
+            the global layers. This mirrors the Qwen3.5 hybrid, where the chunked mask applies to the
+            full-attention blocks and the GDN blocks are left alone.
+        :param cross_doc_mode: The chunked-attention pattern for the global layers; only valid with
+            ``document_chunked=True``.
+        :param flex_block_size: FlexAttention block size for the chunked global layers.
         """
+        if not document_chunked and (cross_doc_mode is not None or flex_block_size is not None):
+            raise OLMoConfigurationError(
+                "'cross_doc_mode' / 'flex_block_size' are only valid with 'document_chunked=True'."
+            )
         layer_norm = LayerNormConfig(
             name=LayerNormType.fused_rms if fused_ops else LayerNormType.rms,
             eps=layer_norm_eps,
@@ -2291,8 +2312,20 @@ class TransformerConfig(ModelConfig):
 
         global_block = local_block.copy()
         sequence_mixer = cast(AttentionConfig, global_block.sequence_mixer.copy())
-        sequence_mixer.rope = RoPEConfig(name=RoPEType.default, theta=global_rope_theta)
+        sequence_mixer.rope = RoPEConfig(
+            name=RoPEType.default,
+            theta=global_rope_theta,
+            scaling=(
+                PIRoPEScalingConfig(factor=float(global_rope_linear_scaling_factor))
+                if global_rope_linear_scaling_factor and global_rope_linear_scaling_factor > 1
+                else None
+            ),
+        )
         sequence_mixer.sliding_window = None
+        if document_chunked:
+            sequence_mixer.name = AttentionType.document_chunked
+            sequence_mixer.cross_doc_mode = cross_doc_mode
+            sequence_mixer.flex_block_size = flex_block_size
         global_block.sequence_mixer = sequence_mixer
 
         blocks = {"local": local_block, "global": global_block}

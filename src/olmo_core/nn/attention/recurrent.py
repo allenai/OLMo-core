@@ -237,6 +237,7 @@ class GatedDeltaNet(SequenceMixer):
         self,
         x: torch.Tensor,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -246,6 +247,18 @@ class GatedDeltaNet(SequenceMixer):
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
+        :param cache_leftpad: Per-row count of **left-padding** tokens, shape ``(batch_size,)``
+            (see :func:`~olmo_core.data.utils.attention_mask_to_cache_leftpad`). Unlike attention,
+            this recurrent mixer's causal conv + delta-rule scan is not automatically invariant to
+            garbage history: a left-padded row's real tokens would otherwise be corrupted by
+            whatever the pad tokens' embeddings happen to convolve/decay into. When given (and this
+            is a multi-token, i.e. prefill, call) every padded position's query/key/value is zeroed
+            before the causal conv (matching the conv's own causal zero-init, so the first few real
+            tokens see an all-zero history exactly as they would with no padding at all) and its
+            gate/decay is forced to a pure pass-through (``beta=0``, ``g=0`` -> the recurrent state
+            is untouched at that step), so the state after processing the row is bit-identical to
+            processing only its real tokens from a zero initial state. Ignored during single-token
+            cached decode (no padding is ever fed there).
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -267,6 +280,22 @@ class GatedDeltaNet(SequenceMixer):
         if self.allow_neg_eigval:
             beta = beta * 2.0
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
+
+        pad_mask: Optional[torch.Tensor] = None  # (B, T_og) bool, True = left-padded position
+        if cache_leftpad is not None and not use_precomputed and bool(cache_leftpad.any()):
+            if cu_doc_lens is not None:
+                raise NotImplementedError(
+                    "GatedDeltaNet does not support cache_leftpad together with cu_doc_lens "
+                    "(intra-document packing) simultaneously."
+                )
+            pos = torch.arange(T_og, device=x.device).unsqueeze(0)  # (1, T_og)
+            pad_mask = pos < cache_leftpad.to(x.device).unsqueeze(1)  # (B, T_og)
+            not_pad = (~pad_mask).unsqueeze(-1)  # (B, T_og, 1)
+            q = q * not_pad.to(q.dtype)
+            k = k * not_pad.to(k.dtype)
+            v = v * not_pad.to(v.dtype)
+            beta = beta * not_pad.to(beta.dtype)
+            g = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(g), g)
 
         if self.cp_enabled and self.uly is not None:
             assert (
