@@ -97,6 +97,13 @@
     "Paris|[\"London\", \"Paris\"]": 1.0,
     "Paris|[[\"London\"], [\"Paris\", \"paris\"]]": 1.0
   },
+  "norm_snippet": {
+    "  Bob was not happy  ": "bob was not happy",
+    "\"Bob was not happy\"": "bob was not happy",
+    "...Bob was not happy!!!": "bob was not happy",
+    "BOB WAS NOT HAPPY": "bob was not happy",
+    "Bob was not happy indeed and more": "bob was not happy"
+  },
   "normalize_answer": {
     "Answer: Paris.": "answer paris",
     "The Golden Gate Bridge": "golden gate bridge",
@@ -218,6 +225,31 @@
       7
     ],
     "no ids here": []
+  },
+  "parse_id_set": {
+    "Missing: 3, 7|10": [
+      3,
+      7
+    ],
+    "Missing: [1]\nactually no\nMissing: [4]|10": [
+      4
+    ],
+    "Missing: [3], [7]|10": [
+      3,
+      7
+    ],
+    "Missing: [99]|10": [],
+    "Missing:|10": [],
+    "Unmatched: [3], [7]|10": [
+      3,
+      7
+    ],
+    "[]|10": [],
+    "no anchor and no ids|10": null,
+    "reasoning first\nMissing: [3]|10": [
+      3
+    ],
+    "|10": []
   },
   "parse_outlier_ids": {
     "Outlier: [1], [1], [2]|10": [
@@ -379,6 +411,26 @@
       ]
     ],
     "[]": []
+  },
+  "parse_snippet_list": {
+    "": null,
+    "\"Bob was not happy\", \"Jane felt sad that\"]": [
+      "Bob was not happy",
+      "Jane felt sad that"
+    ],
+    "Bob was not happy\", \"Jane felt sad that\"]": [
+      "Bob was not happy",
+      "Jane felt sad that"
+    ],
+    "Here you go: [\"Bob was not happy\"]": [
+      "Bob was not happy"
+    ],
+    "[\"Bob was not happy\", \"Jane felt sad that\"]": [
+      "Bob was not happy",
+      "Jane felt sad that"
+    ],
+    "[]": [],
+    "not a list at all": null
   },
   "partition_to_labels": {
     "1 2\n3|3": [

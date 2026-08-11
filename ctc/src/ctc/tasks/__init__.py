@@ -42,6 +42,8 @@ TASK_MODULES: tuple = (
     "cycle",
     "groups4",
     "textgroups",
+    "absence",
+    "xabsence",
 )
 
 _loaded: List[str] = []

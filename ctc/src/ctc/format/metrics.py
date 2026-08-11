@@ -40,6 +40,7 @@ __all__ = [
     "retrieval_f1",
     "pair_metrics",
     "cycle_metrics",
+    "set_metrics",
     "aggregate",
 ]
 
@@ -250,6 +251,31 @@ def cycle_metrics(
         "precision": p, "recall": r, "f1": f1,
         "exact_match": float(pred_set == gold_set), "claim_f1": claim_f1,
     }
+
+
+def set_metrics(predicted: Set, gold: Set) -> Dict[str, float]:
+    """
+    Precision / recall / F1 / exact-match over two flat sets.
+
+    Used by the absence family, where the answer is a set of item ids (or of normalized text
+    snippets, for the Gutenberg variant -- the metric does not care which, as long as both sides
+    were normalized the same way).
+
+    :param predicted: What the model named.
+    :param gold: The gold set.
+
+    :returns: ``precision``, ``recall``, ``f1``, ``exact_match``. Two empty sets score a perfect
+        1.0, which is correct but means a task whose examples mostly have nothing missing can be
+        gamed by always answering empty -- check the positive rate before reading much into a high
+        score.
+    """
+    if not predicted and not gold:
+        return {"precision": 1.0, "recall": 1.0, "f1": 1.0, "exact_match": 1.0}
+    tp = len(predicted & gold)
+    p = tp / len(predicted) if predicted else 0.0
+    r = tp / len(gold) if gold else 0.0
+    f1 = 2 * p * r / (p + r) if (p + r) else 0.0
+    return {"precision": p, "recall": r, "f1": f1, "exact_match": float(predicted == gold)}
 
 
 def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:

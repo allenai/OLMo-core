@@ -33,6 +33,10 @@ __all__ = [
     "parse_pairs",
     "parse_qd_pairs",
     "parse_cycles",
+    "parse_id_set",
+    "parse_snippet_list",
+    "normalize_snippet",
+    "ID_SET_ANCHORS",
     "parse_partition",
     "partition_to_labels",
     "parse_permutation",
@@ -180,6 +184,98 @@ def parse_qd_pairs(text: str) -> Optional[List[List[int]]]:
     if matches:
         return [[int(a), int(b)] for a, b in matches]
     return [] if text in ("[]", "") else None
+
+
+# ── Id sets (absence family) ────────────────────────────────────────────────────────────────────
+
+#: Answer-line anchors for the absence family. The **last** occurrence wins, so a model that
+#: reasons aloud and revises itself is scored on its final answer rather than its first thought.
+ID_SET_ANCHORS = ("Missing:", "Unmatched:")
+
+
+def parse_id_set(text: str, n_docs: int) -> Optional[Set[int]]:
+    """
+    Extract a set of 1-indexed ids from an absence-style answer.
+
+    Unlike :func:`parse_pairs`, ids **are** range-filtered to ``1..n_docs``. The difference is
+    deliberate: this parser falls back to scraping bare integers when no bracketed ids are present,
+    and without the range check that fallback would pick up any number in the surrounding prose.
+
+    :param text: Raw model generation, e.g. ``"Missing: [3], [7]"``.
+    :param n_docs: Corpus size, bounding valid ids.
+
+    :returns: The ids; an empty set for an explicitly empty answer; ``None`` when nothing parsed.
+        Empty and ``None`` differ -- "nothing is missing" is a real answer and can be correct.
+    """
+    for anchor in ID_SET_ANCHORS:
+        if anchor in text:
+            text = text.rsplit(anchor, 1)[1]
+            break
+    ids = re.findall(r"\[(\d+)\]", text)
+    if not ids:
+        ids = re.findall(r"\b(\d+)\b", text)
+    out = {int(x) for x in ids if 1 <= int(x) <= n_docs}
+    return out if (ids or text.strip() in ("", "Missing:", "[]")) else None
+
+
+def normalize_snippet(s: str) -> str:
+    """
+    Normalize a first-four-words snippet for matching.
+
+    :param s: A snippet.
+
+    :returns: Lowercased, punctuation-stripped, whitespace-collapsed, truncated to four tokens --
+        so a model that quotes slightly more or less of a sentence still matches.
+    """
+    s = re.sub(r"\s+", " ", str(s)).strip().strip("\"'").lower()
+    s = re.sub(r"^[^\w]+|[^\w]+$", "", s)
+    return " ".join(s.split()[:4])
+
+
+def parse_snippet_list(text: str) -> Optional[List[str]]:
+    """
+    Extract the JSON list of snippets used by the Gutenberg text-diff absence variant.
+
+    The opening bracket is treated as optional, for the same reason as in :func:`parse_doc_ids`:
+    this task's target is a bare JSON array with no natural-language lead-in, and some checkpoints
+    -- notably under document-chunked attention -- drop the leading ``[`` (sometimes the whole
+    ``["``) and start directly at the first snippet. Requiring it scored every such response as a
+    parse failure: absence_gutenberg under chunked attention read ``parse_rate ~0.01`` while the
+    snippets it emitted were coherent and correct.
+
+    :param text: Raw model generation.
+
+    :returns: The snippets, or ``None`` when nothing parsed.
+    """
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if m:
+        try:
+            arr = json.loads(m.group(0))
+            if isinstance(arr, list):
+                return [str(x) for x in arr]
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+        quoted = re.findall(r'"([^"]*)"', m.group(0))
+        if quoted:
+            return quoted
+
+    # No bracketed array at all: rebuild one and retry, rather than scoring coherent output as a
+    # parse failure.
+    if "]" in text and "[" not in text:
+        stripped = text.strip()
+        rebuilt = ("[" + stripped) if stripped.startswith('"') else ('["' + stripped)
+        m2 = re.search(r"\[.*\]", rebuilt, re.DOTALL)
+        if m2:
+            try:
+                arr = json.loads(m2.group(0))
+                if isinstance(arr, list):
+                    return [str(x) for x in arr]
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+            quoted = re.findall(r'"([^"]*)"', m2.group(0))
+            if quoted:
+                return quoted
+    return None
 
 
 # ── Cycles and groups ───────────────────────────────────────────────────────────────────────────

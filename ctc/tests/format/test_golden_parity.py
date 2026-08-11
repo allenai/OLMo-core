@@ -157,6 +157,64 @@ def test_pair_metrics_perfect_on_mutual_empty():
     assert metrics.pair_metrics([], [])["f1"] == 1.0
 
 
+@pytest.mark.parametrize("key", sorted(GOLDEN["parse_id_set"]))
+def test_parse_id_set(key):
+    text, n = key.rsplit("|", 1)
+    got = parsing.parse_id_set(text, int(n))
+    want = GOLDEN["parse_id_set"][key]
+    assert (sorted(got) if got is not None else None) == want
+
+
+def test_id_set_anchor_takes_the_last_occurrence():
+    """A model that reasons aloud and revises itself is scored on its final answer."""
+    assert parsing.parse_id_set("Missing: [1]\nactually no\nMissing: [4]", 10) == {4}
+
+
+def test_id_set_filters_out_of_range_ids():
+    """This parser scrapes bare integers as a fallback, so without the range check it would pick
+    up any number in the surrounding prose. parse_pairs deliberately does NOT filter."""
+    assert parsing.parse_id_set("Missing: [99]", 10) == set()
+
+
+def test_id_set_distinguishes_empty_from_unparseable():
+    """'nothing is missing' is a real answer and can be correct."""
+    assert parsing.parse_id_set("Missing:", 10) == set()
+    assert parsing.parse_id_set("no anchor and no ids", 10) is None
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_snippet_list"]))
+def test_parse_snippet_list(text):
+    assert parsing.parse_snippet_list(text) == GOLDEN["parse_snippet_list"][text]
+
+
+def test_snippet_list_recovers_a_dropped_opening_bracket():
+    """absence_gutenberg under chunked attention read parse_rate ~0.01 because of this, while the
+    snippets it emitted were coherent and correct."""
+    got = parsing.parse_snippet_list('Bob was not happy", "Jane felt sad that"]')
+    assert got == ["Bob was not happy", "Jane felt sad that"]
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["norm_snippet"]))
+def test_normalize_snippet(text):
+    assert parsing.normalize_snippet(text) == GOLDEN["norm_snippet"][text]
+
+
+def test_snippet_normalization_keeps_four_tokens():
+    """The task asks for the first four words; a model quoting more still matches."""
+    assert parsing.normalize_snippet("Bob was not happy indeed and more") == "bob was not happy"
+
+
+def test_set_metrics_empty_both_sides_is_perfect():
+    assert metrics.set_metrics(set(), set())["f1"] == 1.0
+
+
+def test_set_metrics_partial_overlap():
+    got = metrics.set_metrics({1, 2, 3}, {2, 3, 4})
+    assert got["precision"] == pytest.approx(2 / 3)
+    assert got["recall"] == pytest.approx(2 / 3)
+    assert got["exact_match"] == 0.0
+
+
 @pytest.mark.parametrize("text", sorted(GOLDEN["parse_cycles"]))
 def test_parse_cycles(text):
     assert parsing.parse_cycles(text) == GOLDEN["parse_cycles"][text]

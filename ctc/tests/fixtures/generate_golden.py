@@ -291,6 +291,37 @@ CYCLE_CASES = [
     "no cycles anywhere",
 ]
 
+ID_SET_CASES = [
+    ("Missing: [3], [7]", 10),
+    ("Unmatched: [3], [7]", 10),
+    ("Missing: 3, 7", 10),  # bare ints, no brackets
+    ("reasoning first\nMissing: [3]", 10),  # anchor takes the LAST occurrence
+    ("Missing: [1]\nactually no\nMissing: [4]", 10),
+    ("Missing: [99]", 10),  # out of range -> filtered
+    ("Missing:", 10),  # explicit empty answer
+    ("[]", 10),
+    ("", 10),
+    ("no anchor and no ids", 10),
+]
+
+SNIPPET_CASES = [
+    '["Bob was not happy", "Jane felt sad that"]',
+    'Bob was not happy", "Jane felt sad that"]',  # dropped leading '["' -- chunked failure mode
+    '"Bob was not happy", "Jane felt sad that"]',  # dropped leading '[' only
+    "[]",
+    "",
+    'Here you go: ["Bob was not happy"]',
+    "not a list at all",
+]
+
+SNIPPET_NORM_CASES = [
+    "  Bob was not happy  ",
+    '"Bob was not happy"',
+    "Bob was not happy indeed and more",  # keeps first 4 tokens only
+    "...Bob was not happy!!!",
+    "BOB WAS NOT HAPPY",
+]
+
 CYCLE_METRIC_CASES = [
     ([[3, 8, 12]], [[3, 8, 12]]),
     ([[3, 8]], [[3, 8, 12]]),  # partial: cycle-level 0, claim-level > 0
@@ -433,6 +464,14 @@ def build(old_repo: Path) -> dict:
         "prompts": _build_prompts(old_df),
         "parse_pairs": {t: old_ev.parse_pairs(t) for t in PAIR_CASES},
         "parse_cycles": {t: old_ev.parse_cycles(t) for t in CYCLE_CASES},
+        "parse_id_set": {
+            f"{t}|{n}": (
+                sorted(r) if (r := old_ev._parse_id_set(t, n)) is not None else None
+            )
+            for t, n in ID_SET_CASES
+        },
+        "parse_snippet_list": {t: old_ev._parse_snippet_list(t) for t in SNIPPET_CASES},
+        "norm_snippet": {s: old_ev._norm_snippet(s) for s in SNIPPET_NORM_CASES},
         "cycle_metrics": {
             f"{json.dumps(p)}|{json.dumps(g)}": old_ev.cycle_metrics(p, g)
             for p, g in CYCLE_METRIC_CASES
