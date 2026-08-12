@@ -311,16 +311,19 @@ def main():
             E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
             print(f"[ladder] EVAL500_ROOT unset -> {E5} "
                   f"(ladder_version={args.ladder_version})", flush=True)
-        # Only CONTRADICTION differs between v2 and v3, so v3 overrides just that task's root and
-        # keeps reading nq/outlier/oolong/rerank from the v2 bundle. Pointing the whole root at v3
-        # would orphan those four (they would resolve to a directory that does not contain them and
-        # every rung would read MISSING) and would mean duplicating multi-GB xlong files for no
-        # reason. Override with EVAL500_CONTRA_ROOT if the v3 contra files live elsewhere.
-        E5_CONTRA = E5
-        if args.ladder_version == "v3":
-            E5_CONTRA = os.environ.get("EVAL500_CONTRA_ROOT", _V3_BUNDLE)
-            print(f"[ladder] ladder_version=v3 -> contradiction from {E5_CONTRA}; "
-                  f"all other tasks from {E5}", flush=True)
+        # v3 is a SELF-CONTAINED bundle: contra and outlier are real directories holding the rebuilt
+        # files, and nq/rerank/oolong are directory symlinks to v2_clean (so "identical to v2" is
+        # true by construction rather than a claim to re-verify, and no multi-GB file is duplicated).
+        # So v3 points the WHOLE root at the v3 bundle.
+        #
+        # It did NOT start that way. v3 originally redirected contradiction alone via EVAL500_CONTRA_ROOT,
+        # on the reasoning that contra was the only task that differed. Outlier's xlong rungs were then
+        # rebuilt too (the shipped ones had K pinned at 25 while n grew 32x), and a contra-only
+        # redirect would have quietly served those K-frozen outlier rungs under a v3 tag.
+        if args.ladder_version == "v3" and not os.environ.get("EVAL500_ROOT"):
+            E5 = os.environ.get("EVAL500_CONTRA_ROOT", _V3_BUNDLE)  # legacy name, still honored
+            print(f"[ladder] ladder_version=v3 -> {E5} (contra + outlier rebuilt; "
+                  f"nq/rerank/oolong symlinked to v2_clean)", flush=True)
         # ---- FAST (shared-corpus) bundle -------------------------------------------------
         # Many queries share one corpus, so the shared part is prefilled once. NOT comparable to a
         # v2 number: rebuilding an eval set this way moves scores on its own (outlier +0.215/+0.261
@@ -369,10 +372,10 @@ def main():
             # generator. This one token is the whole v2/v3 difference.
             _CM = "realistic" if args.ladder_version == "v3" else "both"
             LADDERS = {
-                "contradiction": [("2k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
-                    ("8k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n190_k3.jsonl"),
-                    ("16k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n385_k3.jsonl"),
-                    ("32k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl")],
+                "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
+                    ("8k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n190_k3.jsonl"),
+                    ("16k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n385_k3.jsonl"),
+                    ("32k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl")],
                 "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
                     ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
                     ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
@@ -427,7 +430,7 @@ def main():
         # The v2 oolong ladder starts at 8k because no shorter synthesized rungs existed. Added
         # conditionally so an EVAL500_ROOT without them still works. Prepended, not appended, so
         # the rungs stay in ascending length order.
-        if args.ladder_version == "v2" and "oolong" in LADDERS:
+        if args.ladder_version in ("v2", "v3") and "oolong" in LADDERS:
             _short = []
             for _lab, _ctx in (("2k", 2048), ("4k", 4096)):
                 _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
@@ -439,14 +442,21 @@ def main():
         # ---- OPT-IN ultra-long rungs (64k..2M), OFF by default ----
         # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
         # (rebuild with a different --count/tokenizer) without editing this file.
-        if args.xlong and args.ladder_version == "v2":
+        # v3 MUST be here too. While this read `== "v2"`, `--ladder-version v3 --xlong` silently
+        # produced a BASE-ONLY ladder -- no error, no missing-file warning (there are no paths to
+        # check), just a 2k-32k result written under an xlong tag. A partial ladder that looks
+        # complete is worse than a crash.
+        if args.xlong and args.ladder_version in ("v2", "v3"):
             import glob as _glob
             # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
             # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),
             # so they are wired here. oolong does NOT use the `_xlong_` convention -- it is a packed
             # item stream labelled by its token budget (ctx{N}_spliteval), so it gets its own map.
             _XL = {
-                "contradiction": ("contra",  "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
+                # _CM, not a hardcoded "both": v3's contra files are named ..._realistic_..., so a
+                # literal "both" here would match nothing and drop every contra xlong rung while the
+                # base rungs still resolved -- a silently short ladder.
+                "contradiction": ("contra",  f"contradiction_eval_pubmed_{_CM}_n*_k3_xlong_{{s}}.jsonl"),
                 "nq":            ("nq",       "nq_validation_k*_xlong_{s}.jsonl"),
                 "outlier":       ("outlier",  "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
                 # ⚠ APPROXIMATE above k100: the added negatives are random non-gold docs carrying
