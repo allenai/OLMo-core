@@ -322,11 +322,13 @@ def main():
             _rungs = _FAST_BASE + (_FAST_XL if args.xlong else [])
             LADDERS = {}
             for _t, _sfx in _FAST_SUFFIX.items():
+                # Every task runs the full 8k..1M ladder here. rerank reaches 32k in this bundle
+                # even though its RELIABLE ladder stops at 16k: multiplexing pools several queries
+                # into one corpus, so the corpus size is no longer capped by any single query's
+                # CE-filtered hard-negative pool.
                 LADDERS[_t] = [
                     (_lab, os.path.join(E5, _t, f"rung_{_tok}_{_sfx}.jsonl"))
                     for _lab, _tok in _rungs
-                    # rerank has no 32k rung: its CE-filtered hard-negative pool caps at k100.
-                    if not (_t == "rerank" and _lab == "32k")
                 ]
             # ⚠ outlier's 8k rung leaks. The answer's topic is the one candidate the per-query tail
             # does not top up, and an 8k corpus holds too few topics for that absence to hide in:
