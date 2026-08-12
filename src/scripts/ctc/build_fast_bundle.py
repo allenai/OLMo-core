@@ -105,6 +105,18 @@ OOLONG_SOURCE = (
     "oolong_validation_synth_ctx{tokens}.jsonl"
 )
 
+#: Rungs the fast bundle reaches that the reliable ladder cannot, as
+#: ``(task, label) -> (corpus size, which reliable rung to pool from)``.
+#:
+#: Pooling makes the corpus size a FREE parameter: each query keeps its own CE-filtered hard
+#: negatives and the remaining slots are filled with other queries' documents, so a pooled corpus
+#: is not capped by any single query's pool. rerank's reliable ladder stops at 16k because its
+#: CE-filtered pool caps at 100 documents per query; multiplexed, it reaches 32k like every other
+#: task. The distractors added beyond a query's own hard negatives are other queries' documents --
+#: topically unrelated, so easier than a mined hard negative. That shift is real and is exactly
+#: what the fast-vs-reliable alignment measures.
+NDOCS_OVERRIDE = {("rerank", "32k"): (200, "16k")}
+
 DEFAULT_TASKS = "contradiction,nq,rerank"
 DEFAULT_RUNGS = "all,xlong"
 
@@ -203,6 +215,18 @@ def plan(args: argparse.Namespace):
                 if tokens > ceiling or tokens < floor:
                     continue
                 out.append((task, label, Path(path)))
+
+        for (_t, _lab), (_n, _from) in NDOCS_OVERRIDE.items():
+            if _t != task or not (floor <= RUNG_TOKENS[_lab] <= ceiling):
+                continue
+            if any(t == _t and lab == _lab for t, lab, _ in out):
+                continue
+            try:
+                src = dict(bundles.resolve(_t, _from, root=args.from_bundle))[_from]
+            except KeyError as e:
+                print(f"  skipping {_t} {_lab}: {e}", file=sys.stderr)
+                continue
+            out.append((_t, _lab, Path(src)))
     return out
 
 
@@ -220,6 +244,11 @@ def remote_command(args: argparse.Namespace, task: str, label: str, source: Path
         f"--rung {RUNG_TOKENS[label]}",
         f'--out-root "{args.out_root}"',
     ]
+    override = NDOCS_OVERRIDE.get((task, label))
+    if override:
+        # Pooled to a size the source rung does not have; --plain-name keeps the filename on the
+        # same pattern as every other rung so the registry needs no special case.
+        flags += [f"--ndocs {override[0]}", "--plain-name"]
     if FAMILY[task] == "planted":
         # The pool is the source, and the rung contributes only its document count.
         flags += [f'--pool "{source}"', f"--ndocs {OUTLIER_NDOCS[label]}"]

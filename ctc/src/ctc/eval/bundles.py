@@ -370,9 +370,13 @@ _FAST_LADDERS: Dict[str, Dict[str, str]] = {
         "512k": "oolong/rung_524288_mux.jsonl",
         "1M": "oolong/rung_1048576_mux.jsonl",
     },
+    # Note the 32k rung, which the RELIABLE rerank ladder does not have: its CE-filtered pool caps
+    # at 100 documents per query, but pooling makes the corpus size a free parameter, so a fast
+    # rerank rung reaches 32k like every other task.
     "rerank": {
         "8k": "rerank/rung_8192_mux.jsonl",
         "16k": "rerank/rung_16384_mux.jsonl",
+        "32k": "rerank/rung_32768_mux.jsonl",
         "64k": "rerank/rung_65536_mux.jsonl",
         "128k": "rerank/rung_131072_mux.jsonl",
         "256k": "rerank/rung_262144_mux.jsonl",

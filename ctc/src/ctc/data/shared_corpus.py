@@ -153,7 +153,15 @@ def build_oolong_shared(rung, out_root, source=None, **_):
 
 
 def build_multiplexed(
-    task, rung, out_root, queries_per_corpus=None, seed=SEED, target_ndocs=None, source=None, **_
+    task,
+    rung,
+    out_root,
+    queries_per_corpus=None,
+    seed=SEED,
+    target_ndocs=None,
+    source=None,
+    plain_name=False,
+    **_,
 ):
     """nq / rerank: pool each query's own gold + hard negatives into one shared corpus.
 
@@ -270,7 +278,10 @@ def build_multiplexed(
                 r["ce_scores"] = rebuilt
             out.append(annotate(r, f"{task}-{rung}-c{cid}", len(corpus)))
 
-    suffix = "mux" if target_ndocs is None else f"mux_n{ndocs}"
+    # The n-suffix exists so an --ndocs build cannot clobber a default one in the same directory.
+    # The fast bundle builds exactly one variant per rung, so `plain_name` keeps every task's
+    # filenames on one pattern -- which is what lets a reader resolve a rung without a lookup table.
+    suffix = "mux" if (target_ndocs is None or plain_name) else f"mux_n{ndocs}"
     path = f"{out_root}/{task}/rung_{rung}_{suffix}.jsonl"
     save_jsonl(path, out)
     return path, {
@@ -281,7 +292,14 @@ def build_multiplexed(
         "docs_per_query_median": sorted(len(k) for k in keeps)[len(keeps) // 2],
         "ndocs": ndocs,
         "shared_token_fraction": 1.0,
-        "ce_scores_dropped": task == "rerank",
+        # NOT dropped -- rebuilt aligned to the pooled corpus, carrying this query's own scores
+        # across and marking foreign documents None. The old field said the opposite of what the
+        # code does, which would have read as "this rung cannot be Kendall-tau graded".
+        "ce_scores": (
+            "rebuilt aligned to the pooled corpus; foreign documents carry None"
+            if task == "rerank"
+            else "n/a"
+        ),
     }
 
 
@@ -1045,6 +1063,11 @@ def main():
         "--n-rows", type=int, default=500, help="queries to emit (outlier only); the eval size"
     )
     p.add_argument(
+        "--plain-name",
+        action="store_true",
+        help="with --ndocs, keep the plain _mux filename instead of appending _n<ndocs>",
+    )
+    p.add_argument(
         "--queries-per-corpus",
         type=int,
         default=None,
@@ -1115,6 +1138,7 @@ def main():
             source=args.source,
             variant_tag=args.variant_tag,
             scatter_gold=args.scatter_gold,
+            plain_name=args.plain_name,
         )
         if args.task == "outlier":
             kwargs.update(ndocs=args.ndocs, pool_path=args.pool, n_rows=args.n_rows)
