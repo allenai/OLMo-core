@@ -171,11 +171,35 @@ def _evaluate_text(
     summary = validate_text_sentinel(sentinel)
     input_ids = summary["input_ids"]
     labels = summary["labels"]
+    if len(input_ids) != len(labels) or not input_ids:
+        raise RuntimeError("Text sentinel inputs and labels are not aligned")
+    sequence_length = len(input_ids[0])
+    if sequence_length <= 0 or any(len(row) != sequence_length for row in [*input_ids, *labels]):
+        raise RuntimeError("Text sentinel rows do not have one fixed positive sequence length")
+    group = train_module.dp_process_group
+    if group is None:
+        raise RuntimeError("Text sentinel evaluation requires an explicit DP process group")
+    dp_world_size = dist.get_world_size(group)
+    dp_rank = dist.get_rank(group)
+    if dp_world_size != WORLD_SIZE:
+        raise RuntimeError(
+            f"Text sentinel DP process group must contain all {WORLD_SIZE} EP8 ranks, "
+            f"got {dp_world_size}"
+        )
+    global_batch_size = batch_size * dp_world_size
+    if len(input_ids) % global_batch_size:
+        raise ValueError(
+            f"Text sentinel example count {len(input_ids)} must be divisible by global batch "
+            f"{global_batch_size} ({batch_size} per rank x {dp_world_size} DP ranks)"
+        )
+
     token_ce: list[torch.Tensor] = []
     argmax: list[torch.Tensor] = []
-    for start in range(0, len(input_ids), batch_size):
-        batch_input = torch.tensor(input_ids[start : start + batch_size], dtype=torch.long)
-        batch_labels = torch.tensor(labels[start : start + batch_size], dtype=torch.long)
+    for global_start in range(0, len(input_ids), global_batch_size):
+        local_start = global_start + dp_rank * batch_size
+        local_end = local_start + batch_size
+        batch_input = torch.tensor(input_ids[local_start:local_end], dtype=torch.long)
+        batch_labels = torch.tensor(labels[local_start:local_end], dtype=torch.long)
         batch = {
             "input_ids": batch_input,
             "labels": batch_labels,
@@ -187,13 +211,105 @@ def _evaluate_text(
         if logits is None or logits.ndim != 2 or logits.shape[0] != batch_labels.numel():
             raise RuntimeError("Text sentinel forward did not return one logit row per token")
         flat_labels = device_batch["labels"].reshape(-1)
-        token_ce.append(
-            F.cross_entropy(logits.float(), flat_labels, reduction="none").detach().cpu()
+        batch_ce = (
+            F.cross_entropy(logits.float(), flat_labels, reduction="none")
+            .detach()
+            .cpu()
+            .reshape(batch_size, sequence_length)
         )
-        argmax.append(logits.argmax(dim=-1).detach().cpu())
+        batch_argmax = logits.argmax(dim=-1).detach().cpu().reshape(batch_size, sequence_length)
+        local_packet = {
+            "global_start": local_start,
+            "token_ce": batch_ce,
+            "argmax": batch_argmax,
+        }
+        gathered: list[Any] = [None for _ in range(dp_world_size)]
+        dist.all_gather_object(gathered, local_packet, group=group)
+        gathered_ce, gathered_argmax = _reconstruct_text_batch(
+            gathered,
+            global_start=global_start,
+            batch_size=batch_size,
+            sequence_length=sequence_length,
+        )
+        token_ce.append(gathered_ce)
+        argmax.append(gathered_argmax)
         del device_batch, output, logits
         gc_cuda()
     return {"token_ce": torch.cat(token_ce), "argmax": torch.cat(argmax)}
+
+
+def _reconstruct_text_batch(
+    gathered: Sequence[Any],
+    *,
+    global_start: int,
+    batch_size: int,
+    sequence_length: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Validate and concatenate one global text batch in DP-rank order."""
+    expected_fields = {"global_start", "token_ce", "argmax"}
+    token_ce: list[torch.Tensor] = []
+    argmax: list[torch.Tensor] = []
+    expected_shape = (batch_size, sequence_length)
+    for rank, packet in enumerate(gathered):
+        if not isinstance(packet, Mapping) or set(packet) != expected_fields:
+            fields = sorted(packet) if isinstance(packet, Mapping) else type(packet).__name__
+            raise RuntimeError(f"Text sentinel rank {rank} returned malformed fields: {fields}")
+        expected_start = global_start + rank * batch_size
+        packet_start = packet["global_start"]
+        if type(packet_start) is not int or packet_start != expected_start:
+            raise RuntimeError(
+                f"Text sentinel rank {rank} returned global_start={packet_start!r}; "
+                f"expected {expected_start}"
+            )
+        packet_ce = packet["token_ce"]
+        packet_argmax = packet["argmax"]
+        if (
+            not isinstance(packet_ce, torch.Tensor)
+            or packet_ce.device.type != "cpu"
+            or packet_ce.dtype != torch.float32
+            or tuple(packet_ce.shape) != expected_shape
+        ):
+            raise RuntimeError(
+                f"Text sentinel rank {rank} returned malformed token CE: "
+                f"{_tensor_description(packet_ce)}; expected CPU float32 {expected_shape}"
+            )
+        if (
+            not isinstance(packet_argmax, torch.Tensor)
+            or packet_argmax.device.type != "cpu"
+            or packet_argmax.dtype != torch.int64
+            or tuple(packet_argmax.shape) != expected_shape
+        ):
+            raise RuntimeError(
+                f"Text sentinel rank {rank} returned malformed argmax: "
+                f"{_tensor_description(packet_argmax)}; expected CPU int64 {expected_shape}"
+            )
+        token_ce.append(packet_ce)
+        argmax.append(packet_argmax)
+    return torch.cat(token_ce).reshape(-1), torch.cat(argmax).reshape(-1)
+
+
+def _tensor_description(value: Any) -> str:
+    if not isinstance(value, torch.Tensor):
+        return type(value).__name__
+    return f"device={value.device}, dtype={value.dtype}, shape={tuple(value.shape)}"
+
+
+def _assert_rank_summary_consensus(
+    local: Mapping[str, Any], *, world_size: int = WORLD_SIZE
+) -> None:
+    """Require exact receipt-summary identity and report every differing rank."""
+    gathered: list[Any] = [None for _ in range(world_size)]
+    dist.all_gather_object(gathered, dict(local))
+    failures = [
+        f"rank {rank}: {summary!r}"
+        for rank, summary in enumerate(gathered)
+        if summary != gathered[0]
+    ]
+    if failures:
+        raise RuntimeError(
+            f"State/text audit summary differs across EP ranks; rank 0: {gathered[0]!r}; "
+            f"differences: {failures}"
+        )
 
 
 def _checkpoint_reference(identity: Mapping[str, Any], *, step: int) -> dict[str, Any]:
@@ -462,10 +578,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "frozen_inventory_sha256": frozen_receipt["summary"]["comparison_inventory_sha256"],
             "text_metrics": text_receipt["metrics"],
         }
-        gathered: list[Any] = [None for _ in range(WORLD_SIZE)]
-        dist.all_gather_object(gathered, local_summary)
-        if any(summary != gathered[0] for summary in gathered[1:]):
-            raise RuntimeError("State/text audit summary differs across EP ranks")
+        _assert_rank_summary_consensus(local_summary)
         _write_outputs(
             module,
             frozen_output=frozen_output,

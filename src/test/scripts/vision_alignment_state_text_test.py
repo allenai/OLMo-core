@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from olmo_core.eval import vision_alignment_promotion as promotion
@@ -59,11 +60,13 @@ def _sentinel(tmp_path: Path) -> dict:
     return json.loads(json.dumps(value))
 
 
-def test_evaluate_text_uses_all_supervised_positions(tmp_path: Path) -> None:
+def test_evaluate_text_uses_all_supervised_positions(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
+    group = object()
 
     class FakeTrainModule:
         device = torch.device("cpu")
+        dp_process_group = group
 
         def eval_batch(self, batch, *, return_response_logits):
             assert return_response_logits is True
@@ -73,10 +76,169 @@ def test_evaluate_text_uses_all_supervised_positions(tmp_path: Path) -> None:
             logits[torch.arange(labels.numel()), labels] = 10.0
             return SimpleNamespace(logits=logits)
 
+    monkeypatch.setattr(module.dist, "get_world_size", lambda selected: 1)
+    monkeypatch.setattr(module.dist, "get_rank", lambda selected: 0)
+    monkeypatch.setattr(module, "WORLD_SIZE", 1)
+
+    def gather(output, value, *, group):
+        output[0] = value
+
+    monkeypatch.setattr(module.dist, "all_gather_object", gather)
     result = module._evaluate_text(FakeTrainModule(), _sentinel(tmp_path), batch_size=8)
     assert result["token_ce"].shape == (32_768,)
     assert result["argmax"].shape == (32_768,)
     assert torch.all(result["argmax"] < 1000)
+
+
+@pytest.mark.parametrize("dp_rank", [0, 1])
+def test_evaluate_text_shards_and_reconstructs_in_global_order(
+    tmp_path: Path, monkeypatch, dp_rank: int
+) -> None:
+    module = _load_module()
+    sentinel = _sentinel(tmp_path)
+    summary = promotion.validate_text_sentinel(sentinel)
+    group = object()
+    batch_size = 8
+    sequence_length = 256
+    observed_first_tokens: list[int] = []
+
+    class FakeTrainModule:
+        device = torch.device("cpu")
+        dp_process_group = group
+
+        def eval_batch(self, batch, *, return_response_logits):
+            assert return_response_logits is True
+            observed_first_tokens.extend(batch["input_ids"][:, 0].tolist())
+            labels = batch["labels"].reshape(-1)
+            logits = torch.full((labels.numel(), 1001), -10.0)
+            logits[torch.arange(labels.numel()), labels] = 10.0
+            return SimpleNamespace(logits=logits)
+
+    monkeypatch.setattr(module.dist, "get_world_size", lambda selected: 2)
+    monkeypatch.setattr(module.dist, "get_rank", lambda selected: dp_rank)
+    monkeypatch.setattr(module, "WORLD_SIZE", 2)
+
+    def gather(output, value, *, group):
+        assert value["global_start"] % (batch_size * 2) == dp_rank * batch_size
+        global_start = value["global_start"] - dp_rank * batch_size
+        local_labels = torch.tensor(
+            summary["labels"][value["global_start"] : value["global_start"] + batch_size],
+            dtype=torch.int64,
+        )
+        assert torch.equal(value["argmax"], local_labels)
+        for rank in range(2):
+            rank_start = global_start + rank * batch_size
+            output[rank] = {
+                "global_start": rank_start,
+                "token_ce": torch.arange(rank_start, rank_start + batch_size, dtype=torch.float32)
+                .reshape(batch_size, 1)
+                .expand(batch_size, sequence_length)
+                .clone(),
+                "argmax": torch.tensor(
+                    summary["labels"][rank_start : rank_start + batch_size],
+                    dtype=torch.int64,
+                ),
+            }
+
+    monkeypatch.setattr(module.dist, "all_gather_object", gather)
+    result = module._evaluate_text(FakeTrainModule(), sentinel, batch_size=batch_size)
+
+    expected_rows = [
+        row
+        for global_start in range(0, 128, batch_size * 2)
+        for row in range(
+            global_start + dp_rank * batch_size,
+            global_start + (dp_rank + 1) * batch_size,
+        )
+    ]
+    assert observed_first_tokens == expected_rows
+    assert torch.equal(
+        result["argmax"], torch.tensor(summary["labels"], dtype=torch.int64).reshape(-1)
+    )
+    assert torch.equal(
+        result["token_ce"].reshape(128, sequence_length)[:, 0],
+        torch.arange(128, dtype=torch.float32),
+    )
+
+
+def test_evaluate_text_requires_exact_global_batch_divisibility(
+    tmp_path: Path, monkeypatch
+) -> None:
+    module = _load_module()
+    group = object()
+
+    class FakeTrainModule:
+        device = torch.device("cpu")
+        dp_process_group = group
+
+        def eval_batch(self, batch, *, return_response_logits):
+            raise AssertionError("Divisibility must be checked before evaluation")
+
+    monkeypatch.setattr(module.dist, "get_world_size", lambda selected: 3)
+    monkeypatch.setattr(module.dist, "get_rank", lambda selected: 0)
+    monkeypatch.setattr(module, "WORLD_SIZE", 3)
+    with pytest.raises(ValueError, match="global batch 24"):
+        module._evaluate_text(FakeTrainModule(), _sentinel(tmp_path), batch_size=8)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "error"),
+    [
+        ({"global_start": 2, "token_ce": torch.zeros(2, 3)}, "malformed fields"),
+        (
+            {
+                "global_start": 3,
+                "token_ce": torch.zeros(2, 3),
+                "argmax": torch.zeros(2, 3, dtype=torch.int64),
+            },
+            "expected 2",
+        ),
+        (
+            {
+                "global_start": 2,
+                "token_ce": torch.zeros(2, 3, dtype=torch.float64),
+                "argmax": torch.zeros(2, 3, dtype=torch.int64),
+            },
+            "malformed token CE",
+        ),
+        (
+            {
+                "global_start": 2,
+                "token_ce": torch.zeros(2, 3),
+                "argmax": torch.zeros(6, dtype=torch.int64),
+            },
+            "malformed argmax",
+        ),
+    ],
+)
+def test_reconstruct_text_batch_rejects_malformed_rank_packets(replacement, error) -> None:
+    module = _load_module()
+    packets = [
+        {
+            "global_start": 0,
+            "token_ce": torch.zeros(2, 3),
+            "argmax": torch.zeros(2, 3, dtype=torch.int64),
+        },
+        replacement,
+    ]
+    with pytest.raises(RuntimeError, match=error):
+        module._reconstruct_text_batch(packets, global_start=0, batch_size=2, sequence_length=3)
+
+
+def test_rank_summary_consensus_reports_differing_rank(monkeypatch) -> None:
+    module = _load_module()
+    local = {"frozen_inventory_sha256": "a" * 64, "text_metrics": {"all_finite": True}}
+
+    def gather(output, value):
+        output[0] = value
+        output[1] = {
+            "frozen_inventory_sha256": "b" * 64,
+            "text_metrics": {"all_finite": True},
+        }
+
+    monkeypatch.setattr(module.dist, "all_gather_object", gather)
+    with pytest.raises(RuntimeError, match=r"rank 1:.*bbbb"):
+        module._assert_rank_summary_consensus(local, world_size=2)
 
 
 def test_model_state_descriptors_include_non_image_rows(monkeypatch) -> None:
