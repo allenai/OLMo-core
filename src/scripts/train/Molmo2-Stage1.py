@@ -1,9 +1,12 @@
 """
 Molmo2 "stage 1" caption-pretraining (reproduction of ``mm_olmo``'s captioner).
 
-Trains the connector + LM on PixMoCap captions/transcripts with the vision encoder
-**frozen**, using the float ``root_subsegments``-weighted loss and per-component
-learning rates / warmups. In-loop evaluation is intentionally omitted.
+Trains the connector, vision encoder and LM on PixMoCap captions/transcripts as three
+separate optimizer groups, matching mm_olmo's captioner (``ft_connector``/``ft_vit``/
+``ft_llm`` all true): connector lr 2e-4 warmup 200, ViT lr 6e-6 warmup 2000, LM lr 2e-5
+warmup 2000, all cosine to ``alpha_f=0.1``. Uses the float ``root_subsegments``-weighted
+loss. ``--train_vit=false`` freezes the encoder and trains two groups instead. In-loop
+evaluation is intentionally omitted.
 
 Weights start from **base** checkpoints, matching mm_olmo's ``reset_with_pretrained_weights``:
 the LM from the base Qwen3 backbone, the ViT from ``google/siglip2-so400m-patch14-384``, and
@@ -143,6 +146,7 @@ MODEL_SIZES = {
 # (`--init_from=molmo2`), kept for parity tests and continuation experiments.
 INIT_FROM = "scratch"
 INIT_FROM_CHOICES = ("scratch", "molmo2")
+_BOOLS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
 SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 variant
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
@@ -173,6 +177,13 @@ CONNECTOR_LR = 2e-4
 LLM_LR = 2e-5
 CONNECTOR_WARMUP = 200
 LLM_WARMUP = 2000
+# Train the ViT as well (mm_olmo captioner `ft_vit=True`), giving it its own optimizer group.
+# mm_olmo's vit_betas/vit_eps/vit_weight_decay equal the LLM's, so the group only overrides
+# the learning rate and inherits betas (0.9, 0.95) / eps 1e-6 / wd 0.0 from `AdamWConfig`.
+# Set False to freeze the encoder and train connector + LM only.
+TRAIN_VIT = True
+VIT_LR = 6e-6
+VIT_WARMUP = 2000
 ALPHA_F = 0.1
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
@@ -222,6 +233,10 @@ class ExperimentConfig(Config):
     """Fraction of mixture samples from pointing/counting sources (mm_olmo ``--pointing``)."""
     nlp_rate: float = NLP_RATE
     """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
+    train_vit: bool = TRAIN_VIT
+    """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
+    the encoder is frozen and kept in eval mode."""
+
     pack_sequences: bool = PACK_SEQUENCES
     """Pack several short examples per sequence (mm_olmo dynamic packer)."""
 
@@ -261,6 +276,14 @@ def _read_override(overrides: List[str], key: str, default: str) -> str:
     return value
 
 
+def _read_bool_override(overrides: List[str], key: str, default: bool) -> bool:
+    """Read a boolean top-level scalar out of the raw overrides."""
+    raw = _read_override(overrides, key, str(default)).strip().lower()
+    if raw not in _BOOLS:
+        raise OLMoConfigurationError(f"{key}={raw!r} is not a boolean")
+    return _BOOLS[raw]
+
+
 def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
     """Resolve ``(model_size, init_from)`` from the raw overrides, validating both."""
     model_size = _read_override(overrides, "model_size", MODEL_SIZE).lower()
@@ -280,6 +303,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     assert beaker_user is not None
 
     model_size, init_from = _resolve_model_spec(overrides)
+    # Resolved pre-merge because it shapes `freeze_params`, the optimizer groups and the
+    # per-group scheduler, all of which are built before `Config.merge` runs.
+    train_vit = _read_bool_override(overrides, "train_vit", TRAIN_VIT)
     model_config = _build_model_config(model_size, init_from)
 
     dataset_config = PixMoCapDatasetConfig(
@@ -312,15 +338,35 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                     params=["connector.*"],
                     opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
                 ),
+                # mm_olmo's third component group (`ft_vit=True`, vit_learning_rate=6e-6).
+                *(
+                    [
+                        OptimGroupOverride(
+                            params=["vision.*"],
+                            opts=dict(lr=VIT_LR, weight_decay=0.0, scheduler_name="vision"),
+                        )
+                    ]
+                    if train_vit
+                    else []
+                ),
             ],
         ),
-        freeze_params=["vision.*"],
+        # An empty list keeps the encoder trainable *and* in train mode — the train module
+        # only forces `vision.eval()` when `vision.*` is frozen.
+        freeze_params=[] if train_vit else ["vision.*"],
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=COMPILE_MODEL,
         autocast_precision=DType.bfloat16,
         scheduler=PerGroupScheduler(
-            schedulers={"connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F)},
+            schedulers={
+                "connector": CosWithWarmup(warmup=CONNECTOR_WARMUP, alpha_f=ALPHA_F),
+                **(
+                    {"vision": CosWithWarmup(warmup=VIT_WARMUP, alpha_f=ALPHA_F)}
+                    if train_vit
+                    else {}
+                ),
+            },
             default=CosWithWarmup(warmup=LLM_WARMUP, alpha_f=ALPHA_F),
         ),
         dp_config=TransformerDataParallelConfig(
@@ -400,12 +446,13 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     ).merge(overrides)
 
     # `_resolve_model_spec` already validated the pre-merge values; re-check the merged
-    # config so a stray `--model_size`/`--init_from` cannot slip through, and fail here
-    # rather than after a Beaker job has queued, started and downloaded weights.
-    if (config.model_size, config.init_from) != (model_size, init_from):
+    # config so a stray `--model_size`/`--init_from`/`--train_vit` cannot slip through, and
+    # fail here rather than after a Beaker job has queued, started and downloaded weights.
+    resolved = (model_size, init_from, train_vit)
+    merged = (config.model_size, config.init_from, config.train_vit)
+    if merged != resolved:
         raise OLMoConfigurationError(
-            f"model_size / init_from changed during merge: "
-            f"({model_size!r}, {init_from!r}) -> ({config.model_size!r}, {config.init_from!r})"
+            f"model_size / init_from / train_vit changed during merge: " f"{resolved} -> {merged}"
         )
 
     return config
