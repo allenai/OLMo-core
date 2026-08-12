@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
 import importlib.util
 import json
+import subprocess
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,84 @@ def _load_module():
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _production_perception_data_contract_sha256(recipe) -> str:
+    data = recipe.VisionAlignmentDataConfig(
+        sequence_length=2560,
+        mixture=recipe.VisionAlignmentMixtureConfig(phase="perception"),
+    )
+    data.pixmo_cap_path = (
+        "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/"
+        "artifacts/pixmo-cap-content-disjoint-v1/dataset"
+    )
+    data.perception_provenance_path = (
+        "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/"
+        "artifacts/perception-provenance-v2/vision-alignment-perception-provenance.json"
+    )
+    data.perception_provenance_sha256 = (
+        "73cb3920676db5e16d789f7257800dcb44b2553b6463cff81beb740213d921e2"
+    )
+    data.source_audit_path = (
+        "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/"
+        "artifacts/perception-source-audit-v2.json"
+    )
+    data.source_audit_fingerprint = (
+        "2e9bf63765c674b6a1161cd12313580e29dac028f990bfd9d304a00d844d5d3b"
+    )
+    data.mixture.mean_loss_weight = {
+        "audited_alignment": 18.58728085551411,
+        "cosyn_point": 20.31768759561237,
+        "ocr_document": 4.165374373900704,
+        "pixmo_caption": 29.374187365814578,
+        "pixmo_points_basic": 33.16318166248675,
+        "pixmo_points_high_frequency": 27.629776440531714,
+        "pixmo_transcript": 29.7867612372429,
+        "scalar_count": 3.464101552963257,
+    }
+    evaluation = recipe.VisionAlignmentEvalConfig(
+        interval=500,
+        examples_per_source=512,
+        rank_batch_instances=4,
+        seed=6198,
+        eval_on_startup=True,
+        eval_on_finish=True,
+    )
+    collator = recipe.MultimodalCollatorConfig(
+        pad_token_id=100277,
+        label_ignore_index=-100,
+        pad_sequence_length=2560,
+    )
+    return recipe._canonical_sha256(
+        {
+            "phase": "perception",
+            "formatter_version": recipe.FORMATTER_VERSION,
+            "data": data.as_config_dict(),
+            "evaluation": evaluation.as_config_dict(),
+            "collator": collator.as_config_dict(),
+            "global_batch_size": 327680,
+            "data_seed": 95818,
+        }
+    )
+
+
+def _load_real_recipe_with_legacy_generated_module(path: Path):
+    raw = path.read_bytes()
+    recipe_sha256 = hashlib.sha256(raw).hexdigest()
+    module_name = f"_vision_alignment_profile_pair_recipe_{recipe_sha256[:20]}"
+    recipe = types.ModuleType(module_name)
+    recipe.__file__ = str(path)
+    recipe.__loader__ = importlib.machinery.SourceFileLoader(module_name, str(path))
+    recipe.__package__ = ""
+    recipe.__spec__ = importlib.machinery.ModuleSpec(
+        module_name, recipe.__loader__, origin=str(path)
+    )
+    sys.modules[module_name] = recipe
+    try:
+        exec(compile(raw, str(path), "exec"), recipe.__dict__)
+    finally:
+        sys.modules.pop(module_name, None)
+    return recipe
 
 
 _FAKE_RECIPE = r"""
@@ -71,6 +153,22 @@ class FakeConfig:
         if not self.validated:
             raise RuntimeError("config was not validated after profile application")
         return copy.deepcopy(self.value)
+
+
+def _module_sensitive_contract_sha256():
+    payload = {
+        "data": {
+            "_CLASS_": f"{FakeConfig.__module__}.{FakeConfig.__name__}",
+        }
+    }
+    raw = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ) + "\n"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _load_profile(overrides):
@@ -186,7 +284,7 @@ def build_config(
         },
         "vision_alignment": {
             "lineage_id": run_name,
-            "data_contract_sha256": "c" * 64,
+            "data_contract_sha256": _module_sensitive_contract_sha256(),
             "trainable_contract_sha256": ("d" if control else "e") * 64,
             "parent_checkpoint": "/synthetic/bridge/step500",
             "parent_config_sha256": "9" * 64,
@@ -240,6 +338,10 @@ def _validate_phase_contract(config, run_name, *, runtime):
     if config.value["required_run_name"] != run_name:
         raise RuntimeError("run identity mismatch")
     config.validated = True
+
+
+if __name__ == "__main__":
+    print(json.dumps({"data_contract_sha256": _module_sensitive_contract_sha256()}))
 """
 
 
@@ -368,6 +470,8 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
     first_raw = case["output"].read_bytes()
     assert json.loads(first_raw) == receipt
     assert receipt["status"] == "passed"
+    assert receipt["version"] == 2
+    assert receipt["recipe_execution_module"] == "__main__"
     producer = (
         Path(__file__).resolve().parents[2]
         / "scripts"
@@ -388,7 +492,14 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
         "priority": "urgent",
         "workspace": "ai2/molmofication",
     }
-    assert receipt["data"]["data_contract_sha256"] == "c" * 64
+    direct = subprocess.run(
+        [sys.executable, str(case["recipe"])],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    direct_contract_sha256 = json.loads(direct.stdout)["data_contract_sha256"]
+    assert receipt["data"]["data_contract_sha256"] == direct_contract_sha256
     assert receipt["data"]["perception_provenance_sha256"] == "a" * 64
     assert receipt["save_folders"]["status"] == "verified_absent_and_distinct"
     assert receipt["comparison"]["trainable_contract_sha256"] == {
@@ -411,6 +522,32 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
     second = module.build_profile_pair_receipt(**_kwargs(case))
     assert second == receipt
     assert case["output"].read_bytes() == first_raw
+
+
+def test_real_recipe_data_contract_matches_direct_main_execution() -> None:
+    module = _load_module()
+    recipe_path = (
+        Path(__file__).resolve().parents[2] / "scripts" / "train" / "Vision-Alignment.py"
+    ).resolve()
+    recipe_sha256 = _sha256(recipe_path)
+    assert recipe_sha256 == "b8a96d946224e42cd0cb6422d27081da09265ea4d0e963f8e7509ac6f39267a5"
+
+    recipe = module._load_pinned_recipe(recipe_path, recipe_sha256)
+    assert recipe.__name__ == "__main__"
+    assert recipe.__package__ is None
+    assert recipe.__spec__ is None
+    with module._recipe_main_module(recipe):
+        direct_contract_sha256 = _production_perception_data_contract_sha256(recipe)
+    assert (
+        direct_contract_sha256 == "1116f73987da8c94fb8158a2b4e38629fc18cd3227d2c88d5cadeafeadbfd916"
+    )
+
+    legacy_recipe = _load_real_recipe_with_legacy_generated_module(recipe_path)
+    legacy_contract_sha256 = _production_perception_data_contract_sha256(legacy_recipe)
+    assert (
+        legacy_contract_sha256 == "ef34edca6edadba5023b0a8a4a916e59e0e46bdbd222c710cfb71a68f9c690f1"
+    )
+    assert legacy_contract_sha256 != direct_contract_sha256
 
 
 def test_rejects_recipe_that_differs_from_caller_pin(tmp_path: Path) -> None:

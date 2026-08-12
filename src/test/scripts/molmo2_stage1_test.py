@@ -200,7 +200,10 @@ def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     stage1 = _load_stage1_module()
     launch = SimpleNamespace(
         beaker_image=None,
-        env_vars=[BeakerEnvVar(name="EXPLICIT_SETTING", value="kept")],
+        env_vars=[
+            BeakerEnvVar(name="PYTHONPATH", value="/stale/source"),
+            BeakerEnvVar(name="EXPLICIT_SETTING", value="kept"),
+        ],
         post_setup=None,
     )
 
@@ -212,6 +215,8 @@ def test_stage1_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     assert launch.post_setup == preset.post_setup
     assert "pip install" not in (launch.post_setup or "")
     assert env["EXPLICIT_SETTING"] == "kept"
+    assert env["PYTHONPATH"] == "/gantry-runtime/src"
+    assert [item.name for item in launch.env_vars].count("PYTHONPATH") == 1
     assert env["TORCHINDUCTOR_COMPILE_THREADS"] == "8"
     assert env["TORCH_LOGS"] == "-dynamo"
 

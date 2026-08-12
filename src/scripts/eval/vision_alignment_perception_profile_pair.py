@@ -20,6 +20,7 @@ Example::
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import hashlib
 import importlib.machinery
@@ -30,11 +31,12 @@ import sys
 import tempfile
 import types
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 FORMAT = "vision_alignment_perception_profile_pair_audit"
-VERSION = 1
+VERSION = 2
 CONTROL_ARM = "frozen_vision_control"
 TREATMENT_ARM = "treatment"
 ARM_OVERRIDE_PREFIX = "--perception_trainability_arm="
@@ -181,8 +183,54 @@ def _reject_symlink_components(path: Path, *, name: str) -> None:
             raise ProfilePairAuditError(f"{name} may not contain symlinks: {component}")
 
 
+def _is_main_guard(node: ast.stmt) -> bool:
+    """Return whether an AST node is exactly ``if __name__ == "__main__"``."""
+    if not isinstance(node, ast.If) or node.orelse:
+        return False
+    test = node.test
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+    )
+
+
+def _recipe_import_tree(raw: bytes, *, path: Path) -> ast.Module:
+    """Parse a recipe and remove only its final, conventional CLI entrypoint guard."""
+    try:
+        tree = ast.parse(raw, filename=str(path))
+    except (SyntaxError, ValueError) as error:
+        raise ProfilePairAuditError(f"Could not parse pinned recipe {path}: {error}") from error
+    guards = [index for index, node in enumerate(tree.body) if _is_main_guard(node)]
+    if guards != [len(tree.body) - 1]:
+        raise ProfilePairAuditError(
+            "Pinned recipe must contain exactly one final if __name__ == '__main__' CLI guard"
+        )
+    tree.body.pop()
+    return tree
+
+
+@contextmanager
+def _recipe_main_module(recipe: types.ModuleType) -> Iterator[None]:
+    """Temporarily expose a pinned recipe under its real script module identity."""
+    previous = sys.modules.get("__main__")
+    sys.modules["__main__"] = recipe
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("__main__", None)
+        else:
+            sys.modules["__main__"] = previous
+
+
 def _load_pinned_recipe(path: Path, expected_sha256: str) -> types.ModuleType:
-    """Dynamically execute exactly the caller-pinned recipe bytes."""
+    """Execute caller-pinned recipe definitions with their real ``__main__`` identity."""
     raw = path.read_bytes()
     actual_sha256 = _sha256_bytes(raw)
     if actual_sha256 != expected_sha256:
@@ -190,19 +238,19 @@ def _load_pinned_recipe(path: Path, expected_sha256: str) -> types.ModuleType:
             f"recipe SHA-256 changed before import: expected {expected_sha256}, "
             f"got {actual_sha256}"
         )
-    module_name = f"_vision_alignment_profile_pair_recipe_{actual_sha256[:20]}"
+    tree = _recipe_import_tree(raw, path=path)
+    module_name = "__main__"
     module = types.ModuleType(module_name)
     module.__file__ = str(path)
     module.__loader__ = importlib.machinery.SourceFileLoader(module_name, str(path))
-    module.__package__ = ""
-    module.__spec__ = importlib.machinery.ModuleSpec(
-        module_name, module.__loader__, origin=str(path)
-    )
-    sys.modules[module_name] = module
+    # Match ``python path/to/recipe.py`` rather than import-module semantics. In particular,
+    # Config.as_config_dict() records recipe-local classes as ``__main__.ClassName``.
+    module.__package__ = None
+    module.__spec__ = None
     try:
-        exec(compile(raw, str(path), "exec"), module.__dict__)
+        with _recipe_main_module(module):
+            exec(compile(tree, str(path), "exec"), module.__dict__)
     except Exception:
-        sys.modules.pop(module_name, None)
         raise
 
     for symbol in (
@@ -282,7 +330,8 @@ def _load_reviewed_profile(
     profile_path: Path,
 ) -> tuple[dict[str, Any], list[str]]:
     try:
-        profile, overrides = recipe._load_profile([f"--profile={profile_path}"])
+        with _recipe_main_module(recipe):
+            profile, overrides = recipe._load_profile([f"--profile={profile_path}"])
     except Exception as error:
         raise ProfilePairAuditError(
             f"Pinned recipe rejected reviewed profile {profile_path}: {error}"
@@ -313,16 +362,17 @@ def _build_profile_config(
     if not all(isinstance(value, str) and value for value in review_fields.values()):
         raise ProfilePairAuditError("Recipe profile loader omitted reviewed profile metadata")
     try:
-        config = recipe.build_config(
-            command_path,
-            run_name,
-            overrides,
-            runtime=False,
-            **review_fields,
-        )
-        config = recipe._apply_profile_launch(config, profile, run_name=run_name)
-        recipe._validate_phase_contract(config, run_name, runtime=False)
-        config_dict = config.as_config_dict()
+        with _recipe_main_module(recipe):
+            config = recipe.build_config(
+                command_path,
+                run_name,
+                overrides,
+                runtime=False,
+                **review_fields,
+            )
+            config = recipe._apply_profile_launch(config, profile, run_name=run_name)
+            recipe._validate_phase_contract(config, run_name, runtime=False)
+            config_dict = config.as_config_dict()
     except Exception as error:
         raise ProfilePairAuditError(
             f"Pinned recipe could not build and validate profile {run_name!r}: {error}"
@@ -969,7 +1019,8 @@ def build_profile_pair_receipt(
             "Pinned recipe does not declare the canonical molmofication/Holmes launch constants"
         )
     try:
-        recipe.prepare_cli_environment()
+        with _recipe_main_module(recipe):
+            recipe.prepare_cli_environment()
     except Exception as error:
         raise ProfilePairAuditError(
             f"Pinned recipe CLI environment preparation failed: {error}"
@@ -1019,6 +1070,7 @@ def build_profile_pair_receipt(
         "format": FORMAT,
         "version": VERSION,
         "status": "passed",
+        "recipe_execution_module": "__main__",
         "producer": {
             "path": str(producer_path),
             "repository_path": producer_repository_path,

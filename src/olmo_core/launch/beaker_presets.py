@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["LaunchPreset", "PRESETS", "get_preset"]
+__all__ = ["PRESETS", "LaunchPreset", "get_preset"]
 
 
 @dataclass
@@ -53,6 +53,9 @@ class LaunchPreset:
 #  - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True: the fused OLMoDDP stack sits close to
 #    device-memory capacity and fragments the caching allocator; expandable segments reclaim
 #    the stranded reserved memory that otherwise triggers spurious OOMs.
+#  - PYTHONPATH=/gantry-runtime/src: Gantry installs the checkout into system Python as a regular
+#    wheel before running the command. Prefer the exact cloned source tree at runtime so code that
+#    verifies repository-owned script bytes resolves those scripts beside the active checkout.
 #  - post_setup builds the symm_mem_vdev2d extension once per node (post_setup runs on each
 #    replica before torchrun spawns ranks), so the rowwise-EP path imports a ready .so with no
 #    cross-rank build race and no first-step compile stall. Requires an image with nvcc + NVSHMEM
@@ -65,6 +68,7 @@ OLMO_DDP = LaunchPreset(
     description="OLMoDDP / fused MoE-v2 runs: B300 fa4-rma image, alloc-fragmentation fix, symm_mem_vdev2d prebuild.",
     beaker_image="akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24",
     env_vars=[
+        ("PYTHONPATH", "/gantry-runtime/src"),
         ("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"),
         ("OLMO_SYMM_VDEV2D_AUTO_BUILD", "1"),
     ],

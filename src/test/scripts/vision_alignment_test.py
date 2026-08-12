@@ -118,6 +118,25 @@ def test_git_provenance_requires_owned_branch_for_local_launch(monkeypatch):
         vision_alignment._validate_git_provenance(config, runtime=False)
 
 
+def test_runtime_launch_imports_the_exact_gantry_checkout_source():
+    vision_alignment = _load_module()
+    launch = vision_alignment.BeakerLaunchConfig(
+        name="vision-alignment-runtime-test",
+        cmd=["true"],
+        env_vars=[
+            vision_alignment.BeakerEnvVar(name="PYTHONPATH", value="/stale/source"),
+            vision_alignment.BeakerEnvVar(name="EXPLICIT_SETTING", value="kept"),
+        ],
+    )
+
+    vision_alignment._configure_launch_runtime(launch)
+
+    realized_env = dict(launch._get_env_vars())
+    assert realized_env["PYTHONPATH"] == "/gantry-runtime/src"
+    assert realized_env["EXPLICIT_SETTING"] == "kept"
+    assert [item.name for item in launch.env_vars].count("PYTHONPATH") == 1
+
+
 def test_git_provenance_accepts_matching_detached_beaker_checkout(monkeypatch):
     vision_alignment = _load_module()
     git_ref = "b" * 40

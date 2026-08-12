@@ -154,7 +154,10 @@ def test_stage2_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     launch = BeakerLaunchConfig(
         name="stage2-runtime-test",
         cmd=["true"],
-        env_vars=[BeakerEnvVar(name="EXPLICIT_SETTING", value="kept")],
+        env_vars=[
+            BeakerEnvVar(name="PYTHONPATH", value="/stale/source"),
+            BeakerEnvVar(name="EXPLICIT_SETTING", value="kept"),
+        ],
     )
 
     stage2._configure_launch_runtime(launch)
@@ -167,6 +170,8 @@ def test_stage2_runtime_preserves_pinned_dataset_stack_and_quiets_dynamo_logs():
     assert launch.min_runtime == "8h"
     assert "pip install" not in (launch.post_setup or "")
     assert env["EXPLICIT_SETTING"] == "kept"
+    assert env["PYTHONPATH"] == "/gantry-runtime/src"
+    assert [item.name for item in launch.env_vars].count("PYTHONPATH") == 1
     assert env["TORCHINDUCTOR_COMPILE_THREADS"] == "8"
     assert env["TORCH_LOGS"] == "-dynamo"
 

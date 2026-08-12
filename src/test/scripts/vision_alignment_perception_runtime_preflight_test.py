@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -130,6 +133,7 @@ def test_validate_rank_metadata_requires_two_distinct_eight_rank_nodes() -> None
     [
         ("--expected-recipe-sha256", "A" * 64, "64 lowercase"),
         ("--expected-profile-sha256", "a" * 63, "64 lowercase"),
+        ("--expected-profile-pair-receipt-sha256", "d" * 65, "64 lowercase"),
         ("--expected-git-ref", "a" * 64, "40 lowercase"),
     ],
 )
@@ -140,6 +144,8 @@ def test_cli_rejects_malformed_identity_pins(flag, value, message, capsys) -> No
         f"--expected-recipe-sha256={'a' * 64}",
         "--profile=profile.yaml",
         f"--expected-profile-sha256={'b' * 64}",
+        "--profile-pair-receipt=pair.json",
+        f"--expected-profile-pair-receipt-sha256={'d' * 64}",
         f"--expected-git-ref={'c' * 40}",
     ]
     prefix = f"{flag}="
@@ -158,6 +164,221 @@ def test_pinned_file_rejects_changed_bytes(tmp_path: Path) -> None:
     path.write_bytes(b"changed bytes\n")
     with pytest.raises(module.PerceptionRuntimePreflightError, match="SHA-256 differs"):
         module._pinned_file(path, expected, name="profile")
+
+
+def test_pinned_recipe_uses_direct_main_identity_without_running_cli(tmp_path: Path) -> None:
+    module = _load_module()
+    recipe = tmp_path / "recipe.py"
+    marker = tmp_path / "cli-ran"
+    recipe.write_text(
+        f"""import hashlib
+
+class ModuleSensitiveConfig:
+    pass
+
+_PERCEPTION_PROVENANCE_RUNTIME_CACHE = {{}}
+
+def contract_sha256():
+    value = f"{{ModuleSensitiveConfig.__module__}}.{{ModuleSensitiveConfig.__name__}}"
+    return hashlib.sha256(value.encode()).hexdigest()
+
+def _load_profile(*args, **kwargs): pass
+def build_config(*args, **kwargs): pass
+def _apply_profile_launch(*args, **kwargs): pass
+def _validate_phase_contract(*args, **kwargs): pass
+def _perception_provenance(*args, **kwargs): pass
+
+if __name__ == "__main__":
+    print(contract_sha256())
+    open({str(marker)!r}, "w").close()
+"""
+    )
+    expected_sha256 = hashlib.sha256(recipe.read_bytes()).hexdigest()
+    direct = subprocess.run(
+        [sys.executable, str(recipe)], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    marker.unlink()
+
+    loaded = module._load_pinned_recipe(recipe, expected_sha256)
+
+    assert loaded.__name__ == "__main__"
+    assert loaded.__package__ is None
+    assert loaded.__spec__ is None
+    assert loaded.ModuleSensitiveConfig.__module__ == "__main__"
+    assert loaded.contract_sha256() == direct
+    assert not marker.exists()
+
+
+def _profile_pair_case(tmp_path: Path, module):
+    recipe = tmp_path / module.RECIPE_REPOSITORY_PATH
+    recipe.parent.mkdir(parents=True)
+    recipe.write_text("# pinned recipe\n")
+    profile = (
+        tmp_path
+        / "configs"
+        / "vision_moe"
+        / "vision_alignment"
+        / "perception"
+        / "treatment_v1.yaml"
+    )
+    profile.parent.mkdir(parents=True)
+    profile.write_text("name: vision-alignment-perception-treatment-v1\n")
+    control = profile.with_name("frozen_vision_control_v1.yaml")
+    control.write_text("name: vision-alignment-perception-frozen-vision-control-v1\n")
+
+    def sha256(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    sha_fields = {
+        "config_sha256": "1" * 64,
+        "data_contract_sha256": "b" * 64,
+        "evaluation_config_sha256": "2" * 64,
+        "perception_provenance_sha256": "c" * 64,
+        "source_audit_fingerprint": "3" * 64,
+    }
+    receipt = {
+        "format": module.PROFILE_PAIR_FORMAT,
+        "version": module.PROFILE_PAIR_VERSION,
+        "status": "passed",
+        "recipe_execution_module": "__main__",
+        "producer": {
+            "path": str(tmp_path / "producer.py"),
+            "repository_path": "src/scripts/eval/producer.py",
+            "sha256": "4" * 64,
+        },
+        "recipe": {
+            "path": str(recipe),
+            "command_path": module.RECIPE_REPOSITORY_PATH,
+            "sha256": sha256(recipe),
+        },
+        "review_allowlist": {
+            "path": str(tmp_path / "allowlist.json"),
+            "repository_path": "configs/allowlist.json",
+            "sha256": "5" * 64,
+        },
+        "git": {"branch": module.CANONICAL_GIT_BRANCH, "ref": "a" * 40},
+        "launch_contract": {
+            "workspace": module.CANONICAL_WORKSPACE,
+            "cluster": module.CANONICAL_CLUSTER,
+            "budget": module.CANONICAL_BUDGET,
+            "num_nodes": module.NUM_NODES,
+            "num_gpus": module.LOCAL_WORLD_SIZE,
+            "priority": "urgent",
+            "min_runtime": "8h",
+        },
+        "profiles": {
+            "frozen_vision_control": {
+                "name": "vision-alignment-perception-frozen-vision-control-v1",
+                "path": str(control),
+                "repository_path": control.relative_to(tmp_path).as_posix(),
+                "sha256": sha256(control),
+            },
+            "treatment": {
+                "name": "vision-alignment-perception-treatment-v1",
+                "path": str(profile),
+                "repository_path": profile.relative_to(tmp_path).as_posix(),
+                "sha256": sha256(profile),
+            },
+        },
+        "comparison": {
+            "allowed_identity_config_paths": [],
+            "allowed_arm_config_paths": [],
+            "arm_config_sha256": {
+                "frozen_vision_control": "6" * 64,
+                "treatment": "7" * 64,
+            },
+            "shared_config_sha256": "8" * 64,
+            "trainable_contract_sha256": {
+                "frozen_vision_control": "9" * 64,
+                "treatment": "a" * 64,
+            },
+        },
+        "data": sha_fields,
+        "initialization": {
+            "checkpoint": str(tmp_path / "parent"),
+            "parent_config_sha256": "d" * 64,
+            "parent_gate_path": str(tmp_path / "gate.json"),
+            "parent_gate_sha256": "e" * 64,
+        },
+        "perception_contract": {},
+        "save_folders": {
+            "status": "verified_absent_and_distinct",
+            "frozen_vision_control": str(tmp_path / "control-output"),
+            "treatment": str(tmp_path / "treatment-output"),
+        },
+    }
+    return {
+        "root": tmp_path,
+        "recipe_sha256": sha256(recipe),
+        "profile": profile,
+        "profile_sha256": sha256(profile),
+        "receipt": receipt,
+        "receipt_path": tmp_path / "artifacts" / module.PROFILE_PAIR_NAME,
+    }
+
+
+def _write_receipt(case) -> str:
+    case["receipt_path"].parent.mkdir(exist_ok=True)
+    case["receipt_path"].write_text(
+        json.dumps(case["receipt"], sort_keys=True, separators=(",", ":")) + "\n"
+    )
+    return hashlib.sha256(case["receipt_path"].read_bytes()).hexdigest()
+
+
+def _load_receipt_case(module, case, receipt_sha256):
+    return module._load_profile_pair_receipt(
+        case["receipt_path"],
+        receipt_sha256,
+        repository_root=case["root"],
+        recipe_sha256=case["recipe_sha256"],
+        profile_path=case["profile"],
+        profile_sha256=case["profile_sha256"],
+        git_ref="a" * 40,
+    )
+
+
+def test_profile_pair_receipt_binds_runtime_recipe_profile_git_and_data(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _profile_pair_case(tmp_path, module)
+    receipt_sha256 = _write_receipt(case)
+
+    assert _load_receipt_case(module, case, receipt_sha256) == {
+        "path": str(case["receipt_path"].resolve()),
+        "sha256": receipt_sha256,
+        "arm": "treatment",
+        "profile_name": "vision-alignment-perception-treatment-v1",
+        "data_contract_sha256": "b" * 64,
+        "perception_provenance_sha256": "c" * 64,
+        "control_save_folder": str(tmp_path / "control-output"),
+        "treatment_save_folder": str(tmp_path / "treatment-output"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda receipt: receipt.update(version=1), "identity, version, or passed"),
+        (lambda receipt: receipt.update(status="failed"), "identity, version, or passed"),
+        (lambda receipt: receipt["git"].update(ref="d" * 40), "git identity"),
+        (lambda receipt: receipt["recipe"].update(sha256="e" * 64), "recipe differs"),
+        (
+            lambda receipt: receipt["profiles"]["treatment"].update(sha256="f" * 64),
+            "not exactly one arm",
+        ),
+        (
+            lambda receipt: receipt["data"].update(data_contract_sha256="invalid"),
+            "data_contract_sha256",
+        ),
+    ],
+)
+def test_profile_pair_receipt_rejects_contract_drift(tmp_path: Path, mutate, message) -> None:
+    module = _load_module()
+    case = _profile_pair_case(tmp_path, module)
+    mutate(case["receipt"])
+    receipt_sha256 = _write_receipt(case)
+
+    with pytest.raises(module.PerceptionRuntimePreflightError, match=message):
+        _load_receipt_case(module, case, receipt_sha256)
 
 
 def test_credential_env_names_reports_names_only() -> None:

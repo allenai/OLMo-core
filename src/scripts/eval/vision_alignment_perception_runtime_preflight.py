@@ -12,21 +12,26 @@ Run this under the same two-node Gantry/torchrun topology as production::
       --expected-recipe-sha256=<sha256> \
       --profile=configs/vision_moe/vision_alignment/perception/treatment_v1.yaml \
       --expected-profile-sha256=<sha256> \
+      --profile-pair-receipt=<path> \
+      --expected-profile-pair-receipt-sha256=<sha256> \
       --expected-git-ref=<40-character-commit>
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib.machinery
 import json
 import os
 import re
+import stat
 import sys
 import types
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, TypeVar
@@ -35,6 +40,8 @@ import torch
 import torch.distributed as dist
 from git import Repo
 
+import olmo_core
+from olmo_core.data.multimodal import vision_alignment_perception_provenance
 from olmo_core.train import prepare_training_environment, teardown_training_environment
 
 WORLD_SIZE = 16
@@ -46,6 +53,44 @@ CANONICAL_CLUSTER = "ai2/holmes"
 CANONICAL_BUDGET = "ai2/oe-other"
 CANONICAL_GIT_BRANCH = "vision-moe"
 RECIPE_REPOSITORY_PATH = "src/scripts/train/Vision-Alignment.py"
+PROFILE_PAIR_FORMAT = "vision_alignment_perception_profile_pair_audit"
+PROFILE_PAIR_VERSION = 2
+PROFILE_ARMS = ("frozen_vision_control", "treatment")
+PROFILE_NAMES = {
+    "frozen_vision_control": "vision-alignment-perception-frozen-vision-control-v1",
+    "treatment": "vision-alignment-perception-treatment-v1",
+}
+PROFILE_PAIR_NAME = "perception-profile-pair-v2.json"
+_PROFILE_PAIR_ROOT_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "status",
+        "recipe_execution_module",
+        "producer",
+        "recipe",
+        "review_allowlist",
+        "profiles",
+        "launch_contract",
+        "comparison",
+        "data",
+        "git",
+        "initialization",
+        "perception_contract",
+        "save_folders",
+    }
+)
+_PATH_IDENTITY_FIELDS = frozenset({"path", "repository_path", "sha256"})
+_PROFILE_FIELDS = frozenset({"name", "path", "repository_path", "sha256"})
+_DATA_FIELDS = frozenset(
+    {
+        "config_sha256",
+        "data_contract_sha256",
+        "evaluation_config_sha256",
+        "perception_provenance_sha256",
+        "source_audit_fingerprint",
+    }
+)
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_REF_RE = re.compile(r"[0-9a-f]{40}")
 _HOLMES_HOSTNAME_RE = re.compile(r"holmes-[a-z0-9][a-z0-9.-]*")
@@ -119,6 +164,67 @@ def _absolute_lexical_path(path_value: str | Path) -> Path:
     return Path(os.path.abspath(os.path.expanduser(os.fspath(path_value))))
 
 
+def _reject_symlink_components(path: Path, *, name: str) -> None:
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        if os.path.lexists(current) and current.is_symlink():
+            raise PerceptionRuntimePreflightError(f"{name} may not contain symlinks: {current}")
+
+
+def _pinned_profile_pair_receipt(path_value: str | Path, expected_sha256: str) -> Path:
+    path = _absolute_lexical_path(path_value)
+    if path.name != PROFILE_PAIR_NAME or path.parent.name != "artifacts":
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt must be artifacts/{PROFILE_PAIR_NAME}"
+        )
+    _reject_symlink_components(path, name="profile-pair receipt")
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt is unavailable: {path}"
+        ) from error
+    if not stat.S_ISREG(info.st_mode) or path.is_symlink():
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt is not a regular non-symlink file: {path}"
+        )
+    actual_sha256 = _sha256_file(path)
+    if actual_sha256 != expected_sha256:
+        raise PerceptionRuntimePreflightError(
+            "profile-pair receipt SHA-256 differs: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    return path
+
+
+def _runtime_source_identity(repository_root: Path) -> dict[str, str]:
+    source_root = (repository_root / "src").resolve()
+    if os.environ.get("PYTHONPATH") != str(source_root):
+        raise PerceptionRuntimePreflightError(
+            f"Runtime PYTHONPATH must be exactly the checkout source root {source_root}"
+        )
+    expected = {
+        "olmo_core": source_root / "olmo_core" / "__init__.py",
+        "perception_provenance": (
+            source_root
+            / "olmo_core"
+            / "data"
+            / "multimodal"
+            / "vision_alignment_perception_provenance.py"
+        ),
+    }
+    actual = {
+        "olmo_core": Path(olmo_core.__file__).resolve(),
+        "perception_provenance": Path(vision_alignment_perception_provenance.__file__).resolve(),
+    }
+    if actual != expected:
+        raise PerceptionRuntimePreflightError(
+            f"Runtime imports do not resolve to the exact checkout source: {actual}"
+        )
+    return {name: path.relative_to(repository_root).as_posix() for name, path in actual.items()}
+
+
 def _repository_root(recipe_path: Path) -> Path:
     try:
         root = recipe_path.parents[3]
@@ -137,27 +243,72 @@ def _repository_root(recipe_path: Path) -> Path:
     return root
 
 
+def _is_main_guard(node: ast.stmt) -> bool:
+    """Return whether an AST node is exactly ``if __name__ == "__main__"``."""
+    if not isinstance(node, ast.If) or node.orelse:
+        return False
+    test = node.test
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value == "__main__"
+    )
+
+
+def _recipe_import_tree(raw: bytes, *, path: Path) -> ast.Module:
+    """Parse a recipe and remove only its final, conventional CLI entrypoint guard."""
+    try:
+        tree = ast.parse(raw, filename=str(path))
+    except (SyntaxError, ValueError) as error:
+        raise PerceptionRuntimePreflightError(
+            f"Could not parse pinned recipe {path}: {error}"
+        ) from error
+    guards = [index for index, node in enumerate(tree.body) if _is_main_guard(node)]
+    if guards != [len(tree.body) - 1]:
+        raise PerceptionRuntimePreflightError(
+            "Pinned recipe must contain exactly one final if __name__ == '__main__' CLI guard"
+        )
+    tree.body.pop()
+    return tree
+
+
+@contextmanager
+def _recipe_main_module(recipe: types.ModuleType) -> Iterator[None]:
+    """Temporarily expose a pinned recipe under its real script module identity."""
+    previous = sys.modules.get("__main__")
+    sys.modules["__main__"] = recipe
+    try:
+        yield
+    finally:
+        if previous is None:
+            sys.modules.pop("__main__", None)
+        else:
+            sys.modules["__main__"] = previous
+
+
 def _load_pinned_recipe(path: Path, expected_sha256: str) -> types.ModuleType:
-    """Dynamically execute the exact caller-pinned training recipe bytes."""
+    """Execute the exact pinned recipe definitions with their real ``__main__`` identity."""
     raw = path.read_bytes()
     actual_sha256 = hashlib.sha256(raw).hexdigest()
     if actual_sha256 != expected_sha256:
         raise PerceptionRuntimePreflightError(
             f"Recipe changed before import: expected {expected_sha256}, got {actual_sha256}"
         )
-    module_name = f"_vision_alignment_perception_preflight_recipe_{actual_sha256[:20]}"
+    tree = _recipe_import_tree(raw, path=path)
+    module_name = "__main__"
     module = types.ModuleType(module_name)
     loader = importlib.machinery.SourceFileLoader(module_name, str(path))
     module.__file__ = str(path)
     module.__loader__ = loader
-    module.__package__ = ""
-    module.__spec__ = importlib.machinery.ModuleSpec(module_name, loader, origin=str(path))
-    sys.modules[module_name] = module
-    try:
-        exec(compile(raw, str(path), "exec"), module.__dict__)
-    except Exception:
-        sys.modules.pop(module_name, None)
-        raise
+    module.__package__ = None
+    module.__spec__ = None
+    with _recipe_main_module(module):
+        exec(compile(tree, str(path), "exec"), module.__dict__)  # noqa: S102
 
     required = (
         "_load_profile",
@@ -177,6 +328,263 @@ def _load_pinned_recipe(path: Path, expected_sha256: str) -> types.ModuleType:
             "Pinned recipe must begin with an empty perception provenance runtime cache"
         )
     return module
+
+
+def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate key {key!r}")
+        value[key] = item
+    return value
+
+
+def _required_mapping(
+    value: Any,
+    *,
+    name: str,
+    fields: frozenset[str] | None = None,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise PerceptionRuntimePreflightError(f"Profile-pair receipt {name} must be an object")
+    if fields is not None and set(value) != fields:
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt {name} fields differ: expected {sorted(fields)}, "
+            f"got {sorted(value)}"
+        )
+    return value
+
+
+def _receipt_sha256(value: Any, *, name: str) -> str:
+    if not isinstance(value, str) or _SHA256_RE.fullmatch(value) is None:
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt {name} must be a lowercase SHA-256"
+        )
+    return value
+
+
+def _load_profile_pair_receipt(
+    path: Path,
+    expected_sha256: str,
+    *,
+    repository_root: Path,
+    recipe_sha256: str,
+    profile_path: Path,
+    profile_sha256: str,
+    git_ref: str,
+) -> dict[str, str]:
+    """Load and bind the exact v2 pair receipt to this preflight's pinned inputs."""
+    receipt_path = _pinned_profile_pair_receipt(path, expected_sha256)
+    try:
+        raw = receipt_path.read_bytes()
+        receipt = json.loads(
+            raw,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON number {value}")
+            ),
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise PerceptionRuntimePreflightError(
+            f"Profile-pair receipt is not strict JSON: {error}"
+        ) from error
+    root = _required_mapping(receipt, name="root", fields=_PROFILE_PAIR_ROOT_FIELDS)
+    canonical = (
+        json.dumps(
+            root,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if raw != canonical:
+        raise PerceptionRuntimePreflightError("Profile-pair receipt bytes are not canonical JSON")
+    if (
+        root.get("format") != PROFILE_PAIR_FORMAT
+        or root.get("version") != PROFILE_PAIR_VERSION
+        or isinstance(root.get("version"), bool)
+        or root.get("status") != "passed"
+        or root.get("recipe_execution_module") != "__main__"
+    ):
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt identity, version, or passed status differs"
+        )
+
+    producer = _required_mapping(
+        root.get("producer"), name="producer", fields=_PATH_IDENTITY_FIELDS
+    )
+    review_allowlist = _required_mapping(
+        root.get("review_allowlist"),
+        name="review_allowlist",
+        fields=_PATH_IDENTITY_FIELDS,
+    )
+    for name, record in (("producer", producer), ("review_allowlist", review_allowlist)):
+        _receipt_sha256(record.get("sha256"), name=f"{name}.sha256")
+        if not all(isinstance(record.get(field), str) and record[field] for field in record):
+            raise PerceptionRuntimePreflightError(
+                f"Profile-pair receipt {name} path identity is malformed"
+            )
+    recipe = _required_mapping(
+        root.get("recipe"),
+        name="recipe",
+        fields=frozenset({"path", "command_path", "sha256"}),
+    )
+    if (
+        recipe.get("command_path") != RECIPE_REPOSITORY_PATH
+        or recipe.get("sha256") != recipe_sha256
+    ):
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt recipe differs from the pinned runtime recipe"
+        )
+    _receipt_sha256(recipe.get("sha256"), name="recipe.sha256")
+    git = _required_mapping(root.get("git"), name="git", fields=frozenset({"branch", "ref"}))
+    if git.get("branch") != CANONICAL_GIT_BRANCH or git.get("ref") != git_ref:
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt git identity differs from the pinned checkout"
+        )
+    launch = _required_mapping(
+        root.get("launch_contract"),
+        name="launch_contract",
+        fields=frozenset(
+            {"workspace", "cluster", "budget", "num_nodes", "num_gpus", "priority", "min_runtime"}
+        ),
+    )
+    expected_launch = {
+        "workspace": CANONICAL_WORKSPACE,
+        "cluster": CANONICAL_CLUSTER,
+        "budget": CANONICAL_BUDGET,
+        "num_nodes": NUM_NODES,
+        "num_gpus": LOCAL_WORLD_SIZE,
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    if dict(launch) != expected_launch:
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt launch contract differs from production"
+        )
+
+    try:
+        profile_repository_path = profile_path.relative_to(repository_root).as_posix()
+    except ValueError as error:
+        raise PerceptionRuntimePreflightError(
+            "Pinned profile must be inside the recipe repository"
+        ) from error
+    profiles = _required_mapping(
+        root.get("profiles"), name="profiles", fields=frozenset(PROFILE_ARMS)
+    )
+    if set(profiles) != set(PROFILE_ARMS):
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt does not contain exactly the canonical two arms"
+        )
+    selected: list[tuple[str, Mapping[str, Any]]] = []
+    for arm in PROFILE_ARMS:
+        record = _required_mapping(profiles[arm], name=f"profiles.{arm}", fields=_PROFILE_FIELDS)
+        if (
+            record.get("name") != PROFILE_NAMES[arm]
+            or not isinstance(record.get("path"), str)
+            or not record["path"]
+            or not isinstance(record.get("repository_path"), str)
+            or not record["repository_path"]
+        ):
+            raise PerceptionRuntimePreflightError(
+                f"Profile-pair receipt profiles.{arm} identity is malformed"
+            )
+        _receipt_sha256(record.get("sha256"), name=f"profiles.{arm}.sha256")
+        if (
+            record.get("repository_path") == profile_repository_path
+            and record.get("sha256") == profile_sha256
+        ):
+            selected.append((arm, record))
+    if len(selected) != 1:
+        raise PerceptionRuntimePreflightError(
+            "Pinned profile is not exactly one arm in the profile-pair receipt"
+        )
+    arm, profile_record = selected[0]
+    profile_name = profile_record.get("name")
+    if not isinstance(profile_name, str) or not profile_name:
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt selected profile lacks a run name"
+        )
+
+    data = _required_mapping(root.get("data"), name="data", fields=_DATA_FIELDS)
+    for field in _DATA_FIELDS:
+        _receipt_sha256(data.get(field), name=f"data.{field}")
+    data_contract_sha256 = _receipt_sha256(
+        data.get("data_contract_sha256"), name="data.data_contract_sha256"
+    )
+    provenance_sha256 = _receipt_sha256(
+        data.get("perception_provenance_sha256"),
+        name="data.perception_provenance_sha256",
+    )
+    comparison = _required_mapping(
+        root.get("comparison"),
+        name="comparison",
+        fields=frozenset(
+            {
+                "allowed_identity_config_paths",
+                "allowed_arm_config_paths",
+                "arm_config_sha256",
+                "shared_config_sha256",
+                "trainable_contract_sha256",
+            }
+        ),
+    )
+    _receipt_sha256(comparison.get("shared_config_sha256"), name="comparison.shared_config_sha256")
+    for field in ("arm_config_sha256", "trainable_contract_sha256"):
+        values = _required_mapping(
+            comparison.get(field), name=f"comparison.{field}", fields=frozenset(PROFILE_ARMS)
+        )
+        for arm in PROFILE_ARMS:
+            _receipt_sha256(values.get(arm), name=f"comparison.{field}.{arm}")
+    initialization = _required_mapping(
+        root.get("initialization"),
+        name="initialization",
+        fields=frozenset(
+            {"checkpoint", "parent_config_sha256", "parent_gate_path", "parent_gate_sha256"}
+        ),
+    )
+    for field in ("parent_config_sha256", "parent_gate_sha256"):
+        _receipt_sha256(initialization.get(field), name=f"initialization.{field}")
+    _required_mapping(root.get("perception_contract"), name="perception_contract")
+    save_folders = _required_mapping(
+        root.get("save_folders"),
+        name="save_folders",
+        fields=frozenset({"status", *PROFILE_ARMS}),
+    )
+    if save_folders.get("status") != "verified_absent_and_distinct":
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt save-folder status is not verified"
+        )
+    save_folder_paths: dict[str, Path] = {}
+    for save_arm in PROFILE_ARMS:
+        value = save_folders.get(save_arm)
+        if not isinstance(value, str) or not value:
+            raise PerceptionRuntimePreflightError(
+                f"Profile-pair receipt save_folders.{save_arm} is malformed"
+            )
+        save_path = _absolute_lexical_path(value)
+        _reject_symlink_components(save_path, name=f"save_folders.{save_arm}")
+        if os.path.lexists(save_path):
+            raise PerceptionRuntimePreflightError(
+                f"Profile-pair receipt production save folder already exists: {save_path}"
+            )
+        save_folder_paths[save_arm] = save_path
+    if len(set(save_folder_paths.values())) != len(PROFILE_ARMS):
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt production save folders are not distinct"
+        )
+    return {
+        "path": str(receipt_path),
+        "sha256": expected_sha256,
+        "arm": arm,
+        "profile_name": profile_name,
+        "data_contract_sha256": data_contract_sha256,
+        "perception_provenance_sha256": provenance_sha256,
+        "control_save_folder": str(save_folder_paths["frozen_vision_control"]),
+        "treatment_save_folder": str(save_folder_paths["treatment"]),
+    }
 
 
 def _required_env(name: str) -> str:
@@ -413,12 +821,21 @@ def _collective_stage(name: str, operation: Callable[[], _T]) -> _T:
     return value  # type: ignore[return-value]
 
 
+def _collective_identical(name: str, value: _T) -> _T:
+    values: list[Any] = [None] * dist.get_world_size()
+    dist.all_gather_object(values, value)
+    if any(item != values[0] for item in values[1:]):
+        raise PerceptionRuntimePreflightError(f"{name} differs across ranks")
+    return values[0]
+
+
 def _load_reviewed_profile(
     recipe: types.ModuleType,
     profile_path: Path,
     expected_profile_sha256: str,
 ) -> tuple[dict[str, Any], list[str], str, dict[str, str]]:
-    profile, overrides = recipe._load_profile([f"--profile={profile_path}"])
+    with _recipe_main_module(recipe):
+        profile, overrides = recipe._load_profile([f"--profile={profile_path}"])
     if not isinstance(profile, dict) or not isinstance(overrides, list):
         raise PerceptionRuntimePreflightError("Pinned recipe returned malformed profile data")
     if not all(isinstance(value, str) for value in overrides):
@@ -458,6 +875,8 @@ def _validate_runtime_config(
     run_name: str,
     expected_git_ref: str,
     expected_profile_sha256: str,
+    expected_data_contract_sha256: str,
+    expected_provenance_sha256: str,
     expected_save_folder: Path,
 ) -> None:
     phase = getattr(config.phase, "value", config.phase)
@@ -496,6 +915,13 @@ def _validate_runtime_config(
         )
     if config.reviewed_profile_sha256 != expected_profile_sha256:
         raise PerceptionRuntimePreflightError("Runtime config profile SHA-256 differs from its pin")
+    if (
+        config.vision_alignment.data_contract_sha256 != expected_data_contract_sha256
+        or config.data.perception_provenance_sha256 != expected_provenance_sha256
+    ):
+        raise PerceptionRuntimePreflightError(
+            "Runtime data contract differs from the pinned profile-pair receipt"
+        )
     profile_path = config.reviewed_profile_path
     expected_command = [
         RECIPE_REPOSITORY_PATH,
@@ -523,6 +949,11 @@ def _validate_runtime_config(
         raise PerceptionRuntimePreflightError(
             "Runtime config unexpectedly exposes cloud credentials"
         )
+    launch_pythonpaths = [item.value for item in launch.env_vars if item.name == "PYTHONPATH"]
+    if launch_pythonpaths != [str(Path("/gantry-runtime/src"))]:
+        raise PerceptionRuntimePreflightError(
+            "Runtime launch must contain exactly PYTHONPATH=/gantry-runtime/src"
+        )
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -531,6 +962,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--expected-recipe-sha256", type=_sha256_arg, required=True)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--expected-profile-sha256", type=_sha256_arg, required=True)
+    parser.add_argument("--profile-pair-receipt", type=Path, required=True)
+    parser.add_argument(
+        "--expected-profile-pair-receipt-sha256",
+        type=_sha256_arg,
+        required=True,
+    )
     parser.add_argument("--expected-git-ref", type=_git_ref_arg, required=True)
     return parser.parse_args(argv)
 
@@ -553,6 +990,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     recipe_path = Path(args.recipe).expanduser().resolve()
     repository_root = _repository_root(recipe_path)
+    receipt_path = _absolute_lexical_path(args.profile_pair_receipt)
     prepare_training_environment(timeout=timedelta(minutes=60))
     try:
         if dist.get_world_size() != WORLD_SIZE:
@@ -562,14 +1000,35 @@ def main(argv: Sequence[str] | None = None) -> None:
         packets: list[Any] = [None] * WORLD_SIZE
         dist.all_gather_object(packets, _runtime_metadata_packet(repository_root))
         topology = _validate_rank_metadata(packets, expected_git_ref=args.expected_git_ref)
+        source_identity = _collective_stage(
+            "runtime source identity", lambda: _runtime_source_identity(repository_root)
+        )
+        source_identity = _collective_identical("Runtime source identity", source_identity)
 
-        recipe_path, profile_path = _collective_stage(
+        recipe_path, profile_path, receipt_path = _collective_stage(
             "input identity pin",
             lambda: (
                 _pinned_file(recipe_path, args.expected_recipe_sha256, name="recipe"),
                 _pinned_file(args.profile, args.expected_profile_sha256, name="profile"),
+                _pinned_profile_pair_receipt(
+                    receipt_path,
+                    args.expected_profile_pair_receipt_sha256,
+                ),
             ),
         )
+        receipt = _collective_stage(
+            "profile-pair receipt validation",
+            lambda: _load_profile_pair_receipt(
+                receipt_path,
+                args.expected_profile_pair_receipt_sha256,
+                repository_root=repository_root,
+                recipe_sha256=args.expected_recipe_sha256,
+                profile_path=profile_path,
+                profile_sha256=args.expected_profile_sha256,
+                git_ref=args.expected_git_ref,
+            ),
+        )
+        receipt = _collective_identical("Profile-pair receipt summary", receipt)
 
         recipe = _collective_stage(
             "pinned recipe import",
@@ -580,6 +1039,18 @@ def main(argv: Sequence[str] | None = None) -> None:
             lambda: _load_reviewed_profile(recipe, profile_path, args.expected_profile_sha256),
         )
         profile, overrides, run_name, review_fields = profile_data
+        _collective_stage(
+            "profile-pair arm selection",
+            lambda: (
+                None
+                if receipt["profile_name"] == run_name
+                else (_ for _ in ()).throw(
+                    PerceptionRuntimePreflightError(
+                        "Reviewed profile run name differs from the profile-pair receipt"
+                    )
+                )
+            ),
+        )
 
         def require_absent_output() -> Path:
             root = getattr(recipe, "VISION_ALIGNMENT_ROOT", None)
@@ -597,23 +1068,26 @@ def main(argv: Sequence[str] | None = None) -> None:
         expected_save_folder = _collective_stage("production output absence", require_absent_output)
 
         def build_runtime_config() -> Any:
-            config = recipe.build_config(
-                RECIPE_REPOSITORY_PATH,
-                run_name,
-                overrides,
-                runtime=True,
-                **review_fields,
-            )
-            config = recipe._apply_profile_launch(config, profile, run_name=run_name)
-            recipe._validate_phase_contract(config, run_name, runtime=True)
-            _validate_runtime_config(
-                recipe,
-                config,
-                run_name=run_name,
-                expected_git_ref=args.expected_git_ref,
-                expected_profile_sha256=args.expected_profile_sha256,
-                expected_save_folder=expected_save_folder,
-            )
+            with _recipe_main_module(recipe):
+                config = recipe.build_config(
+                    RECIPE_REPOSITORY_PATH,
+                    run_name,
+                    overrides,
+                    runtime=True,
+                    **review_fields,
+                )
+                config = recipe._apply_profile_launch(config, profile, run_name=run_name)
+                recipe._validate_phase_contract(config, run_name, runtime=True)
+                _validate_runtime_config(
+                    recipe,
+                    config,
+                    run_name=run_name,
+                    expected_git_ref=args.expected_git_ref,
+                    expected_profile_sha256=args.expected_profile_sha256,
+                    expected_data_contract_sha256=receipt["data_contract_sha256"],
+                    expected_provenance_sha256=receipt["perception_provenance_sha256"],
+                    expected_save_folder=expected_save_folder,
+                )
             return config
 
         config = _collective_stage("runtime profile construction", build_runtime_config)
@@ -632,7 +1106,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
         def confirm_exact_provenance_call() -> Any:
-            manifest = recipe._perception_provenance(config)
+            with _recipe_main_module(recipe):
+                manifest = recipe._perception_provenance(config)
             if manifest is not cache[expected_cache_key]:
                 raise PerceptionRuntimePreflightError(
                     "Explicit provenance confirmation did not return the runtime-validated snapshot"
@@ -641,6 +1116,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise PerceptionRuntimePreflightError("Recipe changed during runtime preflight")
             if _sha256_file(profile_path) != args.expected_profile_sha256:
                 raise PerceptionRuntimePreflightError("Profile changed during runtime preflight")
+            if _sha256_file(receipt_path) != args.expected_profile_pair_receipt_sha256:
+                raise PerceptionRuntimePreflightError(
+                    "Profile-pair receipt changed during runtime preflight"
+                )
+            for field in ("control_save_folder", "treatment_save_folder"):
+                save_folder = _absolute_lexical_path(receipt[field])
+                _reject_symlink_components(save_folder, name=field)
+                if os.path.lexists(save_folder):
+                    raise PerceptionRuntimePreflightError(
+                        f"Production save folder appeared during preflight: {save_folder}"
+                    )
             if os.path.lexists(expected_save_folder):
                 raise PerceptionRuntimePreflightError(
                     f"Production save folder appeared during preflight: {expected_save_folder}"
@@ -664,8 +1150,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "sha256": args.expected_profile_sha256,
                             "name": run_name,
                         },
+                        "profile_pair_receipt": {
+                            "path": receipt["path"],
+                            "sha256": receipt["sha256"],
+                            "version": PROFILE_PAIR_VERSION,
+                            "arm": receipt["arm"],
+                            "recipe_execution_module": "__main__",
+                            "data_contract_sha256": receipt["data_contract_sha256"],
+                            "perception_provenance_sha256": receipt["perception_provenance_sha256"],
+                        },
                         "git_ref": args.expected_git_ref,
                         "perception_provenance_sha256": config.data.perception_provenance_sha256,
+                        "vision_alignment": {
+                            "data_contract_sha256": (config.vision_alignment.data_contract_sha256),
+                        },
+                        "runtime_source": source_identity,
                         "topology": topology,
                     },
                     indent=2,
