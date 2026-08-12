@@ -1,0 +1,128 @@
+# Launch ledger — one file per checkpoint evaluated.
+# Path: records/eval_launches/<YYYY-MM-DD>_<run-name>[_<tag>].yaml   (LOCAL ONLY, never committed)
+#
+# Written AT SUBMISSION TIME by the `run-evals` skill. It holds only what the eval's own result
+# JSON cannot know: the model-side results-hub columns, and one Beaker experiment ID per job.
+# `pull-evals` reads it back, fetches each experiment, ingests, and flips each job to `done`.
+#
+# NOT recorded here, because every result file records it for itself and retyping it is how a
+# number gets mislabelled:
+#   eval_version / eval_set_weka_pointer   <- the run's `_meta` block  (ladder_version, eval_bundle)
+#   eval_context_length / eval_data_quantity <- `rung`, `eval_size`
+#   metric_name / metric_value / extra_metrics <- `primary_metric`, `primary_value`, `metrics`
+#   git_commit, query_position, max_length, backend, share_prefix <- `provenance`, top level
+#
+# eval_version in particular: DO NOT write it here and DO NOT pass --eval-version on ingest.
+# Valid values are v1 / v2 / fast, and a typed value contradicting the run's own record is a hard
+# error. "fast" is the shared-corpus bundle and is a separate series, not a v2 substitute.
+
+checkpoint:
+  run_name: q4b-example-5task-dolci25-32k
+  # The resolved step. The launcher resolves it on the node; the job log prints `CKPT=...`.
+  # Backfill it from the log if you launched by run name.
+  ckpt: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/q4b-example/step8550
+  model_type: compressive            # normal | landmark | compressive | doc-chunked-landmark
+  model_subtype: block64
+  attention_type: doc_chunked        # --attn full -> full, --attn chunked -> doc_chunked
+  pipeline_stage: SFT                # none | CPT | SFT | RL
+  chat_template: chat                # chat = SFT, raw = BASE/CPT
+  # SHORT slug -> results-hub `model_train_data_hparams`. Describes the MODEL, never the eval.
+  # Identical across every row of this checkpoint. Derived by pull-evals on the first push, then
+  # reused verbatim; leave blank at launch unless you already know it.
+  model_slug: q4b-compressive-block64-32K
+  # The long training description -> results-hub `other_notes`, NOT the slug column.
+  training_description: >
+    5task(75%)+Dolci-Instruct-SFT(25%) SFT, ~700M tok (TARGET_STEPS=8550, GBS=2*40960),
+    lr1e-5, Ulysses CP=8; init weights-only from qwen3-4b-compressive-block64/step2385
+
+common:
+  who_ran: <git user / $USER; results-hub auto-fills it>
+  date_eval_ran: <YYYY-MM-DD of submission>
+  cluster: ai2/jupiter-cirrascale-2
+  priority: urgent
+  tokenizer: Qwen/Qwen3-4B           # Qwen3.5 checkpoints: Qwen/Qwen3.5-0.8B-Base
+  attn: chunked                      # must match how the checkpoint was trained
+  query_position: both               # must match training
+  launch_commit: <pushed HEAD; the launcher prints "the node will run commit ...">
+
+# One entry per submitted job. A job is one `eval_beaker.py` launch and covers many task-rungs, so
+# it produces many results-hub rows.
+jobs:
+
+  - name: main-2k-32k
+    command: >
+      python src/scripts/ctc/eval_beaker.py q4b-example-5task-dolci25-32k
+      --tasks main --rungs all --attn chunked
+    tasks: main                      # main | ood | all | comma list
+    rungs: all                       # all | xlong | comma list
+    bundle: default                  # v2_clean (default) | v2 | fast | a path
+    share_prefix: false              # only meaningful on --bundle fast
+    tag: ""                          # REQUIRED whenever two passes share a results dir
+    # REQUIRED. The launcher prints `submitted: <id>`. This is what pull-evals queries; without it
+    # that skill is reduced to guessing which job wrote which file.
+    beaker_experiment_id: 01KZQ58X21CM4GPW9R70YK0W5D
+    beaker_job_name: ctceval-main-chunked-q4b-example-5task-dolci25-32k
+    results_dir: /weka/.../checkpoints/prasanns/q4b-example-5task-dolci25-32k/ctc_eval
+    status: submitted                # submitted | done | failed | requeued
+    # filled by pull-evals:
+    rungs_ingested: []               # e.g. [contradiction@2k, contradiction@8k, ...]
+    pulled_at: ""                    # YYYY-MM-DD
+    notes: ""                        # e.g. "oolong@32k failed OOM", "requeued as 01K..."
+
+  - name: ood-2k-32k
+    command: >
+      python src/scripts/ctc/eval_beaker.py q4b-example-5task-dolci25-32k
+      --tasks ood --rungs all --attn chunked
+    tasks: ood                       # fiqa, scifact, outlier_review, contra_fever
+    rungs: all
+    bundle: default
+    tag: ""
+    beaker_experiment_id: ""
+    beaker_job_name: ""
+    results_dir: <same>
+    status: submitted
+    rungs_ingested: []
+    pulled_at: ""
+    notes: "scifact ladder is eval_size=299 — flag it inline wherever it is quoted"
+
+  # Optional passes. Delete what you did not launch rather than leaving it as `submitted`.
+
+  - name: xlong
+    command: >
+      python src/scripts/ctc/eval_beaker.py q4b-example-5task-dolci25-32k
+      --tasks contradiction,rerank --rungs xlong --attn chunked --tag xlong
+    tasks: contradiction,rerank      # v2_clean has xlong for these two only
+    rungs: xlong                     # 64k, 128k, 256k, 512k, 1M, 2M
+    bundle: default                  # nq/outlier at 64k+ need `--bundle v2` instead
+    tag: xlong
+    beaker_experiment_id: ""
+    beaker_job_name: ""
+    results_dir: <same>
+    status: submitted
+    rungs_ingested: []
+    pulled_at: ""
+    notes: >
+      No RoPE-extension helper exists in this repo, so these run at the model's native positions.
+      Note on any row that sits past the model's ceiling.
+
+  - name: fast
+    command: >
+      python src/scripts/ctc/eval_beaker.py q4b-example-5task-dolci25-32k
+      --bundle fast --share-prefix --tasks contradiction --rungs xlong --tag fast
+    tasks: contradiction
+    rungs: xlong
+    bundle: fast
+    share_prefix: true
+    tag: fast                        # keeps these files off the v2_clean ones
+    beaker_experiment_id: ""
+    beaker_job_name: ""
+    results_dir: <same>
+    status: submitted
+    rungs_ingested: []
+    pulled_at: ""
+    notes: >
+      Shared-corpus construction — a DIFFERENT measurement, not a cheaper v2_clean
+      (outlier +0.215/+0.261, contradiction -0.102..-0.175). It lands in results-hub as
+      eval_version=fast automatically, from the run's own _meta block. Keep it as its own
+      series; never fill a v2_clean cell with it. Fast outlier below 32k has a measured
+      shortcut (0.203 at 8k) — do not quote an 8k outlier number from this bundle.
