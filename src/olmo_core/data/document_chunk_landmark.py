@@ -60,7 +60,7 @@ __all__ = [
 # Document-boundary markers are *existing* Qwen3 reserved special tokens, so using them costs no
 # vocab growth and no embedding resize. The catch: Qwen3 never TRAINED these rows, so their
 # embeddings are bit-identical out-of-distribution vectors -- run
-# ``src/scripts/data/fix_marker_embeddings.py`` on any base checkpoint before training on
+# ``src/scripts/ctc/fix_marker_embeddings.py`` on any base checkpoint before training on
 # marker-bearing shards. See ``document-chunked-marker-embeddings.md``.
 # ---------------------------------------------------------------------------------------------
 DOC_START_STR = "<|box_start|>"

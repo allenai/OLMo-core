@@ -249,7 +249,7 @@ lives in ported code, and against the frozen old tree where it does not.
 
 | # | trap | lives in | status | rebuild data? |
 |---|---|---|---|---|
-| 1 | Qwen3 marker embeddings: cosine 1.0000, then wrong norm | `OLD: src/scripts/data/fix_marker_embeddings.py` — **no equivalent exists in this repo yet** | FIXED old-side (seeds from real delimiter rows, asserts in-dist norm) | No — checkpoint fix. Re-repair any base from before 2026-07-14 |
+| 1 | Qwen3 marker embeddings: cosine 1.0000, then wrong norm | `OLD: src/scripts/data/fix_marker_embeddings.py` → **PORTED 2026-08-12** as `NEW: src/scripts/ctc/fix_marker_embeddings.py`, pinned by `ctc/tests/train/test_fix_marker_embeddings.py` — which tests the **norm** half, not just the cosine | FIXED both sides (seeds from real delimiter rows, asserts in-dist norm; `--check-only` exits non-zero so it gates a launcher under `set -e`) | No — checkpoint fix. Re-repair any base from before 2026-07-14 |
 | 2 | oolong `--item-regex '\|\|'` matches every line | `OLD: src/scripts/data/convert_unified_to_document_landmark.py:365-382` — **no equivalent here**; conversion in this repo is `NEW: src/scripts/ctc/convert_to_shards.py` | FIXED old-side (startup guard rejects any regex matching `""`) | **Yes** — shards built before 2026-07-27 |
 | 3 | oolong preamble train/eval layout mismatch | old converter's oolong prompt construction vs `OLD: src/olmo_core/data/document_chunk_landmark.py:251-272` | see `records/oolong-preamble-trap-investigation.md` for the current reading | Yes, if it is real |
 | 4 | FEVER/wiki fillers in PubMed contradiction evals | old `harvest_fillers` glob | **FIXED, and now structurally impossible** — §3.2 | Contaminated rung files exist old-side; training data was always clean |

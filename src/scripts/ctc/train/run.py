@@ -8,12 +8,50 @@ that drifted, so the local run and the cluster run were not the same experiment.
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import List
 
 from options import TrainOptions, describe
 
 __all__ = ["run"]
+
+
+def _check_base_is_a_checkpoint(base: str) -> None:
+    """
+    Fail early, and with the fix in the message, if ``--base`` is not a checkpoint olmo-core loads.
+
+    olmo-core accepts either a checkpoint directory or a directory of ``stepN/`` checkpoints. A
+    directory that merely *contains* ``model_and_optim/`` -- which is exactly what
+    ``save_model_and_optim_state`` writes, and therefore what a marker-repair script produces -- is
+    neither. With ``load_strategy=always`` the run does fail rather than train from random init, but
+    it fails from inside ``trainer.fit()``, after both GPUs have built the model and FSDP has
+    wrapped it: ~2 minutes of a multi-GPU allocation to learn about a missing path component.
+
+    Only local directories are checked. A remote ``s3://``/``gs://`` base is left to olmo-core.
+
+    :param base: The ``--base`` path.
+
+    :raises SystemExit: If the path exists locally but is not loadable as a checkpoint.
+    """
+    if not os.path.isdir(base):
+        return
+
+    from olmo_core.train.checkpoint import Checkpointer
+
+    if Checkpointer.contains_checkpoint(base):
+        return
+    hint = ""
+    if Checkpointer.contains_checkpoint(os.path.join(base, "model_and_optim")):
+        hint = (
+            f"\nIt holds a loadable checkpoint one level down. Pass:\n"
+            f"    --base {os.path.join(base, 'model_and_optim')}"
+        )
+    raise SystemExit(
+        f"--base {base!r} is not a checkpoint olmo-core can load: it is neither a checkpoint "
+        f"directory (a '.metadata', or all of 'train/rank0.pt' + 'model_and_optim/.metadata' + "
+        f"'.metadata.json') nor a directory of 'stepN/' checkpoints.{hint}"
+    )
 
 
 def _save_folder(options: TrainOptions, root_dir: str) -> str:
@@ -44,6 +82,9 @@ def run(options: TrainOptions, argv: List[str]) -> int:
     from olmo_core.utils import prepare_cli_environment, seed_all
 
     prepare_cli_environment()
+
+    if options.base:
+        _check_base_is_a_checkpoint(options.base)
 
     root_dir = get_root_dir(options.cluster) if not options.is_local else ""
     work_dir = str(get_work_dir(root_dir)) if not options.is_local else "/data/prasann/ctc_work"

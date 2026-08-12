@@ -7,6 +7,7 @@ belongs here.
 | script | what it does |
 |---|---|
 | `convert_to_shards.py` | unified task JSONL → `.npy` SFT shards (dense or landmark document-chunked layout), plus `metadata.json` and the shard's format fingerprint |
+| `fix_marker_embeddings.py` | audit (`--check-only`) or repair a base checkpoint's reserved marker rows. **Run on every fresh base before document-chunked or landmark training** — Qwen3's marker rows are bit-identical out of the box, and training on them yields a chance-level result that reads as a modeling finding |
 | `train/sft.py` | reference SFT run — loss on answer tokens, one padded example per window |
 | `train/cpt.py` | reference CPT run — loss on every token, documents packed |
 | `train/options.py` | the arguments, and nothing that needs a GPU |
