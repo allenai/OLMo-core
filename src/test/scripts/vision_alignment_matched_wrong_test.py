@@ -202,6 +202,45 @@ def test_artifact_preflight_rejects_unpinned_pairing_and_existing_output(tmp_pat
     )
 
 
+def test_excluded_primary_pairing_requires_pin_and_allows_pinned_reuse(tmp_path, monkeypatch):
+    module = _load_module()
+    primary = tmp_path / "primary.json"
+    primary.write_text("primary\n")
+    target = tmp_path / "independent.json"
+    monkeypatch.setattr(module.dist, "get_rank", lambda: 0)
+    monkeypatch.setattr(module.dist, "broadcast_object_list", lambda packet, src: None)
+
+    with pytest.raises(RuntimeError, match="requires one exact"):
+        module._preflight_artifact_paths_distributed(
+            output=tmp_path / "result.json",
+            overwrite_output=False,
+            pairing_paths={"pixmo_caption": target},
+            expected_pairing_sha256={},
+            excluded_pairing_paths={"pixmo_caption": primary},
+            expected_excluded_pairing_sha256={},
+        )
+
+    primary_sha = module._sha256_file(primary)
+    module._preflight_artifact_paths_distributed(
+        output=tmp_path / "result.json",
+        overwrite_output=False,
+        pairing_paths={"pixmo_caption": target},
+        expected_pairing_sha256={},
+        excluded_pairing_paths={"pixmo_caption": primary},
+        expected_excluded_pairing_sha256={"pixmo_caption": primary_sha},
+    )
+
+    target.write_text("existing\n")
+    module._preflight_artifact_paths_distributed(
+        output=tmp_path / "result.json",
+        overwrite_output=False,
+        pairing_paths={"pixmo_caption": target},
+        expected_pairing_sha256={"pixmo_caption": module._sha256_file(target)},
+        excluded_pairing_paths={"pixmo_caption": primary},
+        expected_excluded_pairing_sha256={"pixmo_caption": primary_sha},
+    )
+
+
 def test_atomic_json_write_refuses_overwrite_without_explicit_opt_in(tmp_path):
     module = _load_module()
     output = tmp_path / "result.json"
@@ -361,12 +400,12 @@ def test_native_checkpoint_load_coverage_requires_every_parameter_and_buffer(tmp
 
         @staticmethod
         def _get_model_state_dict_for_eval_load(metadata):
-            return {"optim.connector.main": connector.data.view(-1)}
+            return {"module.connector.weight.main": connector.data.view(-1)}
 
         @staticmethod
         def _resolve_model_checkpoint_key(name, checkpoint_keys):
             if name == "connector.weight":
-                return "optim.connector.main"
+                return "module.connector.weight.main"
             return None
 
         @staticmethod
@@ -390,7 +429,7 @@ def test_native_checkpoint_load_coverage_requires_every_parameter_and_buffer(tmp
 
     metadata = SimpleNamespace(
         state_dict_metadata={
-            "optim.connector.main": tensor_metadata((4,)),
+            "module.connector.weight.main": tensor_metadata((4,)),
             "frozen_model.lm.weight": tensor_metadata((3, 3)),
             "model_buffer.router": tensor_metadata((1,)),
         }
@@ -401,9 +440,20 @@ def test_native_checkpoint_load_coverage_requires_every_parameter_and_buffer(tmp
     assert report["model_parameter_count"] == 2
     assert report["model_parameter_checkpoint_key_count"] == 2
     assert report["persistent_buffer_count"] == 1
+    assert report["unused_model_bearing_key_count"] == 0
+
+    metadata.state_dict_metadata["frozen_model.connector.weight"] = tensor_metadata((2, 2))
+    report = module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
+    assert report["shadowed_frozen_key_count"] == 1
+    metadata.state_dict_metadata.pop("frozen_model.connector.weight")
+
+    metadata.state_dict_metadata["module.orphan.weight.main"] = tensor_metadata((1,))
+    with pytest.raises(RuntimeError, match="unused model-bearing keys"):
+        module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
+    metadata.state_dict_metadata.pop("module.orphan.weight.main")
 
     TrainModule._resolve_model_checkpoint_key = staticmethod(
-        lambda name, checkpoint_keys: "optim.connector.main"
+        lambda name, checkpoint_keys: "module.connector.weight.main"
     )
     TrainModule._frozen_checkpoint_model_param_state_dict_for_load = staticmethod(lambda keys: {})
     TrainModule._frozen_checkpoint_param_state_dict_for_load = staticmethod(lambda keys: {})
@@ -411,7 +461,9 @@ def test_native_checkpoint_load_coverage_requires_every_parameter_and_buffer(tmp
         module._native_checkpoint_load_coverage(TrainModule(), tmp_path)
 
     TrainModule._resolve_model_checkpoint_key = staticmethod(
-        lambda name, checkpoint_keys: "optim.connector.main" if name == "connector.weight" else None
+        lambda name, checkpoint_keys: (
+            "module.connector.weight.main" if name == "connector.weight" else None
+        )
     )
     TrainModule._frozen_checkpoint_model_param_state_dict_for_load = staticmethod(lambda keys: {})
     TrainModule._frozen_checkpoint_param_state_dict_for_load = staticmethod(lambda keys: {})

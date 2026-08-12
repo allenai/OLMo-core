@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -261,6 +262,8 @@ def test_optimizer_scheduler_contract_rejects_unsafe_overrides(mutation):
         policy, [100, 101, 102, 103, 104, 105]
     )
     config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.bridge,
+        perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
         train_module=train_module,
         trainer=SimpleNamespace(max_duration=vision_alignment.Duration.steps(policy.max_steps)),
         data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
@@ -288,6 +291,40 @@ def test_optimizer_scheduler_contract_rejects_unsafe_overrides(mutation):
         vision_alignment._validate_optimizer_scheduler_contract(config, policy)
 
 
+def test_perception_control_changes_only_vision_trainability():
+    vision_alignment = _load_module()
+    policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase.perception]
+    image_rows = [100, 101, 102, 103, 104, 105]
+
+    treatment_module = vision_alignment._build_train_module_config(policy, image_rows)
+    treatment = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
+        train_module=treatment_module,
+        trainer=SimpleNamespace(max_duration=vision_alignment.Duration.steps(policy.max_steps)),
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+    )
+    vision_alignment._validate_optimizer_scheduler_contract(treatment, policy)
+    assert treatment_module.freeze_params == list(policy.freeze_params)
+    assert treatment_module.optim.group_overrides[2].opts["lr"] == policy.vision_lr
+
+    control_module = vision_alignment._build_train_module_config(policy, image_rows)
+    control_module.freeze_params = ["vision.*", *(control_module.freeze_params or [])]
+    control_module.optim.group_overrides[2].opts["lr"] = 0.0
+    control = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        perception_trainability_arm=(
+            vision_alignment.PerceptionTrainabilityArm.frozen_vision_control
+        ),
+        train_module=control_module,
+        trainer=SimpleNamespace(max_duration=vision_alignment.Duration.steps(policy.max_steps)),
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+    )
+    vision_alignment._validate_optimizer_scheduler_contract(control, policy)
+    assert control_module.freeze_params == ["vision.*", *policy.freeze_params]
+    assert control_module.optim.group_overrides[2].opts["lr"] == 0.0
+
+
 def test_vision_alignment_uses_a_dedicated_checkpoint_namespace():
     vision_alignment = _load_module()
 
@@ -302,6 +339,7 @@ def test_bridge_uses_stable_document_caption_and_transcript_formats():
     token_ids = Molmo2TokenIds()
     config = SimpleNamespace(
         phase=vision_alignment.VisionAlignmentPhase.bridge,
+        perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
         data=vision_alignment.VisionAlignmentDataConfig(),
         evaluation=vision_alignment.VisionAlignmentEvalConfig(),
     )
@@ -429,7 +467,7 @@ def test_synthetic_smoke_uses_the_same_canonical_bridge_policy():
     vision_alignment._validate_canonical_data_policy(config)
 
 
-def test_default_future_phases_fail_closed_on_unaudited_sources():
+def test_perception_sources_are_supported_but_require_pinned_audit():
     vision_alignment = _load_module()
     mixture = vision_alignment.VisionAlignmentMixtureConfig(phase="perception")
     targets = mixture.resolved_targets()
@@ -441,11 +479,13 @@ def test_default_future_phases_fail_closed_on_unaudited_sources():
         )
     )
 
-    with pytest.raises(ValueError, match="without audited adapters") as exc_info:
-        vision_alignment._build_mixture_sources(object(), Molmo2TokenIds(), config)
+    config.phase = vision_alignment.VisionAlignmentPhase.perception
+    config.data.allow_unpinned_synthetic_smoke = False
+    config.data.source_audit_path = None
+    config.data.source_audit_fingerprint = None
 
-    assert "ocr_document" in str(exc_info.value)
-    assert "scalar_count" in str(exc_info.value)
+    with pytest.raises(ValueError, match="pinned successful serialized-source audit"):
+        vision_alignment._build_mixture_sources(object(), Molmo2TokenIds(), config)
 
 
 def test_profile_owns_phase_and_forbids_a_second_selector(tmp_path):
@@ -470,6 +510,75 @@ def test_profile_owns_phase_and_forbids_a_second_selector(tmp_path):
         vision_alignment._load_profile([f"--profile={profile}", "--phase=perception"])
 
 
+def test_profile_rejects_duplicate_yaml_and_override_keys(tmp_path):
+    vision_alignment = _load_module()
+    duplicate_yaml = tmp_path / "duplicate-yaml.yaml"
+    duplicate_yaml.write_text("version: 1\nphase: bridge\nphase: perception\n")
+    with pytest.raises(ValueError, match="duplicate key"):
+        vision_alignment._load_profile([f"--profile={duplicate_yaml}"])
+
+    duplicate_override = tmp_path / "duplicate-override.yaml"
+    duplicate_override.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "phase: bridge",
+                "overrides:",
+                "  - --data.prefetch_workers=0",
+                "  - --data.prefetch_workers=1",
+            ]
+        )
+    )
+    with pytest.raises(ValueError, match="repeat a destination"):
+        vision_alignment._load_profile([f"--profile={duplicate_override}"])
+
+
+def test_perception_profile_requires_exact_reviewed_allowlist_entry(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    fake_script = tmp_path / "src" / "scripts" / "train" / "Vision-Alignment.py"
+    profile = (
+        tmp_path / "configs" / "vision_moe" / "vision_alignment" / "perception" / "reviewed.yaml"
+    )
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "name: reviewed",
+                "phase: perception",
+                "overrides:",
+                "  - --data.prefetch_workers=0",
+            ]
+        )
+    )
+    relative = "configs/vision_moe/vision_alignment/perception/reviewed.yaml"
+    allowlist = profile.parent / "approved_profiles.json"
+    allowlist.write_text(
+        '{"format":"vision_alignment_perception_profile_allowlist",' '"profiles":{},"version":1}\n'
+    )
+    monkeypatch.setattr(vision_alignment, "__file__", str(fake_script))
+
+    with pytest.raises(ValueError, match="reviewed SHA-256 allowlist"):
+        vision_alignment._load_profile([f"--profile={profile}"])
+
+    allowlist.write_text(
+        json.dumps(
+            {
+                "format": "vision_alignment_perception_profile_allowlist",
+                "profiles": {relative: hashlib.sha256(profile.read_bytes()).hexdigest()},
+                "version": 1,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    loaded, overrides = vision_alignment._load_profile([f"--profile={profile}"])
+    assert loaded is not None
+    assert loaded["__reviewed_path__"] == relative
+    assert overrides == ["--phase=perception", "--data.prefetch_workers=0"]
+
+
 def test_profile_launch_schema_has_no_hostname_escape_hatch():
     vision_alignment = _load_module()
     launch = SimpleNamespace(
@@ -486,12 +595,22 @@ def test_profile_launch_schema_has_no_hostname_escape_hatch():
     config = SimpleNamespace(launch=launch)
     profile = {
         "version": 1,
+        "name": "test-profile",
         "phase": "bridge",
         "launch": {"hostnames": ["holmes-cs-aus-500"]},
     }
 
     with pytest.raises(ValueError, match="Unknown profile launch fields"):
         vision_alignment._apply_profile_launch(config, profile)
+
+
+def test_profile_name_must_match_positional_run_name():
+    vision_alignment = _load_module()
+    config = SimpleNamespace(launch=SimpleNamespace())
+    profile = {"version": 1, "name": "reviewed-run", "phase": "bridge"}
+
+    with pytest.raises(ValueError, match="must match positional run name"):
+        vision_alignment._apply_profile_launch(config, profile, run_name="different-run")
 
 
 def test_parent_output_paths_must_be_disjoint(tmp_path):
@@ -564,6 +683,128 @@ def test_cross_phase_parent_requires_pinned_approved_quality_gate(tmp_path):
         )
 
 
+def test_production_perception_requires_v2_gate_and_exact_human_waivers(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    from olmo_core.eval import vision_alignment_promotion as promotion
+
+    parent = tmp_path / "step500"
+    parent.mkdir()
+    (parent / ".metadata.json").write_text(json.dumps({"ephemeral": False, "version": "2.5.0"}))
+    parent_meta = {
+        "phase": "bridge",
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+    }
+    parent_config = {"vision_alignment": parent_meta}
+    parent_config_sha = "c" * 64
+    bundle = tmp_path / "promotion-bundle.json"
+    bundle.write_text(json.dumps({"created_at": "2026-08-12T00:00:00+00:00"}) + "\n")
+    bundle_sha = promotion.sha256_file(bundle)
+    deviations = {
+        promotion.STEP250_WAIVER_ID: "d" * 64,
+        promotion.STEP356_WAIVER_ID: "e" * 64,
+    }
+    monkeypatch.setattr(
+        promotion,
+        "validate_promotion_bundle",
+        lambda value, **kwargs: {
+            "candidate": {"checkpoint_identity_sha256": "f" * 64},
+            "deviation_sha256": deviations,
+        },
+    )
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 2,
+        "status": "approved",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "phase": "bridge",
+        "checkpoint": str(parent),
+        "checkpoint_config_sha256": parent_config_sha,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "global_step": 500,
+        "metrics_artifact_sha256": bundle_sha,
+        "promotion_bundle_path": str(bundle),
+        "promotion_bundle_sha256": bundle_sha,
+        "checkpoint_identity_sha256": "f" * 64,
+        "approved_by": "rustin@allenai.org",
+        "approved_at": "2026-08-12T00:00:00+00:00",
+        "waivers": [
+            {"id": waiver_id, "decision": "approved", "deviation_sha256": deviations[waiver_id]}
+            for waiver_id in sorted(promotion.REQUIRED_WAIVER_IDS)
+        ],
+    }
+    gate_path = tmp_path / "gate-v2.json"
+    gate_path.write_text(json.dumps(gate))
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        initialization=SimpleNamespace(
+            parent_gate_path=str(gate_path),
+            parent_gate_sha256=vision_alignment._sha256_file(gate_path),
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.bridge,
+        ),
+    )
+
+    assert vision_alignment._validate_parent_gate(
+        config, str(parent), parent_config, parent_config_sha
+    ) == vision_alignment._sha256_file(gate_path)
+
+    gate["waivers"][0]["id"] = "free_form_waiver"
+    gate_path.write_text(json.dumps(gate))
+    config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(gate_path)
+    with pytest.raises(ValueError, match="unknown or unapproved waiver"):
+        vision_alignment._validate_parent_gate(
+            config, str(parent), parent_config, parent_config_sha
+        )
+
+
+def test_production_perception_rejects_legacy_v1_parent_gate(tmp_path):
+    vision_alignment = _load_module()
+    parent = tmp_path / "step500"
+    parent.mkdir()
+    (parent / ".metadata.json").write_text(json.dumps({"ephemeral": False, "version": "2.5.0"}))
+    parent_config_sha = "c" * 64
+    parent_config = {
+        "vision_alignment": {
+            "phase": "bridge",
+            "data_contract_sha256": "a" * 64,
+            "trainable_contract_sha256": "b" * 64,
+        }
+    }
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 1,
+        "status": "approved",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "phase": "bridge",
+        "checkpoint": str(parent),
+        "checkpoint_config_sha256": parent_config_sha,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "global_step": 500,
+        "metrics_artifact_sha256": "d" * 64,
+    }
+    gate_path = tmp_path / "gate-v1.json"
+    gate_path.write_text(json.dumps(gate))
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        initialization=SimpleNamespace(
+            parent_gate_path=str(gate_path),
+            parent_gate_sha256=vision_alignment._sha256_file(gate_path),
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.bridge,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a v2 parent gate"):
+        vision_alignment._validate_parent_gate(
+            config, str(parent), parent_config, parent_config_sha
+        )
+
+
 def test_runtime_trainability_rejects_stale_freeze_patterns():
     vision_alignment = _load_module()
     model = nn.Module()
@@ -611,6 +852,7 @@ def test_resume_contract_hashes_cover_full_data_and_train_module_config():
     policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase.bridge]
     config = SimpleNamespace(
         phase=vision_alignment.VisionAlignmentPhase.bridge,
+        perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
         data=vision_alignment.VisionAlignmentDataConfig(),
         evaluation=vision_alignment.VisionAlignmentEvalConfig(),
         collator=SimpleNamespace(as_config_dict=lambda: {"pad_sequence_length": 2560}),
@@ -623,12 +865,31 @@ def test_resume_contract_hashes_cover_full_data_and_train_module_config():
         trainer=SimpleNamespace(max_duration=vision_alignment.Duration.steps(policy.max_steps)),
         router_lb_loss_weight=0.015,
         vision_alignment=vision_alignment.VisionAlignmentMetadataConfig(),
+        reviewed_profile_path="configs/perception/control.yaml",
+        reviewed_profile_sha256="a" * 64,
+        reviewed_profile_allowlist_path="configs/perception/approved_profiles.json",
+        reviewed_profile_allowlist_sha256="b" * 64,
     )
 
     vision_alignment._set_contract_hashes(config)
     original_data_hash = config.vision_alignment.data_contract_sha256
     original_train_hash = config.vision_alignment.trainable_contract_sha256
     original_preprocessing_hash = vision_alignment._preprocessing_config_sha256(config)
+
+    config.perception_trainability_arm = (
+        vision_alignment.PerceptionTrainabilityArm.frozen_vision_control
+    )
+    vision_alignment._set_contract_hashes(config)
+    assert config.vision_alignment.data_contract_sha256 == original_data_hash
+    assert config.vision_alignment.trainable_contract_sha256 != original_train_hash
+    config.perception_trainability_arm = vision_alignment.PerceptionTrainabilityArm.treatment
+
+    config.reviewed_profile_path = "configs/perception/treatment.yaml"
+    config.reviewed_profile_sha256 = "c" * 64
+    config.reviewed_profile_allowlist_sha256 = "d" * 64
+    vision_alignment._set_contract_hashes(config)
+    assert config.vision_alignment.data_contract_sha256 == original_data_hash
+    assert config.vision_alignment.trainable_contract_sha256 == original_train_hash
 
     config.data.caption_prompt = "Caption:"
     vision_alignment._set_contract_hashes(config)

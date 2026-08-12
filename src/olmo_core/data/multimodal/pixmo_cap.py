@@ -21,6 +21,8 @@ Three data sources are supported via ``dataset_path``:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -201,6 +203,47 @@ class PixMoCapDataset:
             return self._rows[index]
         assert self._hf is not None
         return self._hf[index]
+
+    def raw_image_references(self, index: int) -> Tuple[Any, ...]:
+        """Return the exact source image reference for one non-synthetic logical row.
+
+        :param index: Dataset row index.
+        :returns: A one-element tuple containing the original image path/cell.
+        :raises ValueError: If called for generated synthetic data.
+        """
+        if self._kind == "synthetic":
+            raise ValueError("Synthetic PixMoCap rows have no durable raw image reference")
+        return (self._get_row(index)["image"],)
+
+    def annotation_content_sha256(self) -> str:
+        """Hash every ordered caption/transcript annotation without opening images.
+
+        This perception-only attestation is deliberately separate from the historical
+        bridge dataset fingerprint. It therefore strengthens new provenance without changing
+        the completed bridge contract.
+        """
+        if self._kind == "synthetic":
+            raise ValueError("Synthetic PixMoCap has no durable annotation attestation")
+        digest = hashlib.sha256()
+        for index in range(len(self)):
+            row = self._get_row(index)
+            payload = {
+                "caption": row.get("caption"),
+                "image": row.get("image"),
+                "index": index,
+                "transcripts": row.get("transcripts"),
+            }
+            digest.update(
+                json.dumps(
+                    payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+                + b"\n"
+            )
+        return digest.hexdigest()
 
     def _load_image(self, row: Dict[str, Any]):
         from PIL import Image

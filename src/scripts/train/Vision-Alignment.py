@@ -32,12 +32,14 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
 
 from olmo_core.config import Config, DType
 from olmo_core.data.data_loader import DataLoaderBase
@@ -52,6 +54,24 @@ from olmo_core.data.multimodal.mixtures.vision_alignment import (
     expected_loss_mass,
 )
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
+from olmo_core.data.multimodal.vision_alignment_perception_provenance import (
+    PERCEPTION_SOURCE_NAMES,
+    PerceptionProvenanceManifest,
+    build_selected_perception_dataset,
+    load_perception_provenance_manifest,
+)
+from olmo_core.data.multimodal.vision_alignment_perception_sources import (
+    VISION_ALIGNMENT_PERCEPTION_PROBE_EPOCHS,
+    VISION_ALIGNMENT_PERCEPTION_PROBE_EXAMPLES,
+    VISION_ALIGNMENT_PERCEPTION_PROBE_FORMAT,
+    VISION_ALIGNMENT_PERCEPTION_PROBE_SEED,
+    VISION_ALIGNMENT_PERCEPTION_PROBE_SELECTION_ALGORITHM,
+    VISION_ALIGNMENT_PERCEPTION_PROBE_VERSION,
+    VISION_ALIGNMENT_PERCEPTION_SOURCE_CATALOG_VERSION,
+    VISION_ALIGNMENT_PERCEPTION_SOURCE_REGISTRY_VERSION,
+    vision_alignment_perception_implementation_inventory,
+    vision_alignment_perception_source_registry_sha256,
+)
 from olmo_core.data.multimodal.vision_alignment_sources import (
     VISION_ALIGNMENT_FORMATTER_VERSION,
     VISION_ALIGNMENT_PIXMO_ROW_PATH_INVENTORY_ALGORITHM,
@@ -71,6 +91,7 @@ from olmo_core.data.multimodal.vision_alignment_sources import (
     pixmo_row_path_inventory,
     runtime_dataset_fingerprint,
     select_deterministic_probe_indices,
+    serialized_example_sha256,
     validate_serialized_runtime_probe,
     vision_alignment_source_registry_sha256,
 )
@@ -159,6 +180,10 @@ DATA_SEED = 95818
 INIT_SEED = 6198
 EVAL_SEED = 6198
 MIN_SOURCE_AUDIT_EXAMPLES = 1024
+_PERCEPTION_PROVENANCE_RUNTIME_CACHE: Dict[Tuple[str, str], PerceptionProvenanceManifest] = {}
+PERCEPTION_PROFILE_ROOT = "configs/vision_moe/vision_alignment/perception"
+PERCEPTION_PROFILE_ALLOWLIST = f"{PERCEPTION_PROFILE_ROOT}/approved_profiles.json"
+PERCEPTION_PROFILE_ALLOWLIST_FORMAT = "vision_alignment_perception_profile_allowlist"
 
 _SOURCE_AUDIT_FIELDS = frozenset(
     {
@@ -204,6 +229,57 @@ _SOURCE_AUDIT_INPUT_FIELDS = frozenset(
 )
 _SOURCE_AUDIT_PROBE_FIELDS = frozenset(
     {"format", "version", "selection_algorithm", "seed", "epoch", "examples_per_source"}
+)
+_PERCEPTION_AUDIT_PROBE_FIELDS = frozenset(
+    {"format", "version", "selection_algorithm", "seed", "epochs", "examples_per_source"}
+)
+_PERCEPTION_AUDIT_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "status",
+        "phase",
+        "recipe_version",
+        "formatter_version",
+        "source_catalog_version",
+        "auditor_sha256",
+        "shared_auditor_sha256",
+        "catalog_path",
+        "catalog_sha256",
+        "input_content_sha256",
+        "source_registry_version",
+        "source_registry_sha256",
+        "source_implementation_inventory",
+        "exporter_sha256",
+        "image_provenance",
+        "preprocessing_config",
+        "preprocessing_config_sha256",
+        "probe",
+        "inputs",
+        "target_loss_mass",
+        "sources",
+        "mean_loss_weight",
+        "sampling_probabilities",
+        "expected_loss_mass",
+        "failures",
+        "fingerprint",
+    }
+)
+_PERCEPTION_AUDIT_INPUT_FIELDS = frozenset(
+    {
+        "name",
+        "format",
+        "path",
+        "dataset_fingerprint",
+        "dataset_size",
+        "sha256",
+        "probe_indices",
+        "probe_indices_sha256",
+        "probe_epochs",
+        "serialized_row_hashes_sha256",
+        "probe_image_content_sha256",
+        "serialized_row_hashes",
+    }
 )
 
 _PIXMO_MANIFEST_FIELDS = frozenset(
@@ -257,6 +333,7 @@ _CANONICAL_PIXMO_SOURCE_SPLITS: Mapping[str, Tuple[str, int]] = {
 _RUN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
 _ALLOWED_OVERRIDE_PREFIXES = (
     "--phase=",
+    "--perception_trainability_arm=",
     "--data.",
     "--evaluation.",
     "--initialization.checkpoint=",
@@ -291,6 +368,13 @@ class InitializationMode(StrEnum):
 
     bare = "bare"
     checkpoint = "checkpoint"
+
+
+class PerceptionTrainabilityArm(StrEnum):
+    """Causal perception comparison with an identical data/provenance contract."""
+
+    treatment = "treatment"
+    frozen_vision_control = "frozen_vision_control"
 
 
 @dataclass(frozen=True)
@@ -420,6 +504,8 @@ class VisionAlignmentDataConfig(Config):
     mixture: VisionAlignmentMixtureConfig = field(default_factory=VisionAlignmentMixtureConfig)
     source_audit_path: Optional[str] = None
     source_audit_fingerprint: Optional[str] = None
+    perception_provenance_path: Optional[str] = None
+    perception_provenance_sha256: Optional[str] = None
     allow_unpinned_synthetic_smoke: bool = False
     native_text_replay: Optional[NativeTextReplayDatasetConfig] = None
     native_text_replay_fingerprint: Optional[str] = None
@@ -475,6 +561,7 @@ class ExperimentConfig(Config):
     train_module: MultimodalOLMoDDPTrainModuleConfig
     trainer: TrainerConfig
     phase: VisionAlignmentPhase
+    perception_trainability_arm: PerceptionTrainabilityArm
     artifacts: ArtifactConfig
     initialization: InitializationConfig
     data: VisionAlignmentDataConfig
@@ -487,6 +574,10 @@ class ExperimentConfig(Config):
     router_lb_loss_weight: Optional[float] = 0.015
     required_run_name: str = ""
     expected_launch_command: List[str] = field(default_factory=list)
+    reviewed_profile_path: Optional[str] = None
+    reviewed_profile_sha256: Optional[str] = None
+    reviewed_profile_allowlist_path: Optional[str] = None
+    reviewed_profile_allowlist_sha256: Optional[str] = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -744,6 +835,99 @@ def _build_console_logger() -> ConsoleLoggerCallback:
     return callback
 
 
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects ambiguous duplicate mapping keys."""
+
+    def construct_mapping(self, node: MappingNode, deep: bool = False) -> Dict[Any, Any]:
+        if not isinstance(node, MappingNode):
+            raise ConstructorError(
+                None,
+                None,
+                f"expected a mapping node, got {node.id}",
+                node.start_mark,
+            )
+        self.flatten_mapping(node)
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError as error:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found an unhashable mapping key",
+                    key_node.start_mark,
+                ) from error
+            if duplicate:
+                raise ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    f"found duplicate key {key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _load_profile_yaml(raw: bytes, *, path: Path) -> Mapping[str, Any]:
+    """Parse one profile with strict duplicate-key and root-schema handling."""
+    try:
+        profile = yaml.load(raw, Loader=_UniqueKeySafeLoader)
+    except (UnicodeDecodeError, yaml.YAMLError) as error:
+        raise ValueError(f"Could not parse vision-alignment profile {path}: {error}") from error
+    if not isinstance(profile, Mapping):
+        raise ValueError(f"Invalid vision-alignment profile {path}: expected a mapping")
+    return profile
+
+
+def _load_approved_perception_profiles(repository_root: Path) -> Tuple[Mapping[str, str], str]:
+    """Load the exact code-reviewed perception-profile SHA allowlist."""
+    allowlist_path = (repository_root / PERCEPTION_PROFILE_ALLOWLIST).resolve()
+    try:
+        raw = allowlist_path.read_bytes()
+        value = json.loads(raw, object_pairs_hook=_strict_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(
+            f"Invalid perception profile allowlist {allowlist_path}: {error}"
+        ) from error
+    if not isinstance(value, Mapping) or set(value) != {"format", "version", "profiles"}:
+        raise ValueError("Perception profile allowlist schema differs")
+    if (
+        value["format"] != PERCEPTION_PROFILE_ALLOWLIST_FORMAT
+        or isinstance(value["version"], bool)
+        or value["version"] != 1
+        or not isinstance(value["profiles"], Mapping)
+    ):
+        raise ValueError("Perception profile allowlist identity differs")
+    expected_raw = (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    if raw != expected_raw:
+        raise ValueError("Perception profile allowlist must use canonical JSON bytes")
+    profiles: Dict[str, str] = {}
+    for profile_path, profile_sha256 in value["profiles"].items():
+        if (
+            not isinstance(profile_path, str)
+            or not profile_path.startswith(f"{PERCEPTION_PROFILE_ROOT}/")
+            or Path(profile_path).parent.as_posix() != PERCEPTION_PROFILE_ROOT
+            or Path(profile_path).suffix != ".yaml"
+            or Path(profile_path).name.endswith(".yaml.template")
+            or not isinstance(profile_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", profile_sha256) is None
+        ):
+            raise ValueError("Perception profile allowlist contains an invalid path or SHA-256")
+        profiles[profile_path] = profile_sha256
+    return profiles, hashlib.sha256(raw).hexdigest()
+
+
 def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
     prefix = "--profile="
     paths = [value[len(prefix) :] for value in overrides if value.startswith(prefix)]
@@ -751,10 +935,20 @@ def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[
         raise ValueError("At most one --profile may be supplied")
     if not paths:
         return None, overrides
-    profile_path = Path(paths[0])
-    with profile_path.open() as file_handle:
-        profile = yaml.safe_load(file_handle)
-    if not isinstance(profile, dict) or profile.get("version") != 1:
+    repository_root = Path(__file__).resolve().parents[3]
+    profile_path = Path(paths[0]).expanduser().resolve()
+    try:
+        raw_profile = profile_path.read_bytes()
+    except OSError as error:
+        raise ValueError(
+            f"Could not read vision-alignment profile {profile_path}: {error}"
+        ) from error
+    profile = dict(_load_profile_yaml(raw_profile, path=profile_path))
+    if (
+        isinstance(profile.get("version"), bool)
+        or not isinstance(profile.get("version"), int)
+        or profile.get("version") != 1
+    ):
         raise ValueError(f"Invalid vision-alignment profile {profile_path}: expected version: 1")
     unknown = set(profile) - {"version", "name", "description", "phase", "launch", "overrides"}
     if unknown:
@@ -767,17 +961,71 @@ def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[
         isinstance(value, str) and value.startswith("--") for value in profile_overrides
     ):
         raise ValueError(f"{profile_path}: overrides must be '--key=value' strings")
+    override_destinations: list[str] = []
+    for value in profile_overrides:
+        destination, separator, _ = value[2:].partition("=")
+        if not separator or not destination:
+            raise ValueError(f"{profile_path}: every profile override must be '--key=value'")
+        override_destinations.append(destination)
+    if len(set(override_destinations)) != len(override_destinations):
+        raise ValueError(f"{profile_path}: profile overrides repeat a destination")
     cli = [value for value in overrides if not value.startswith(prefix)]
     if any(value.startswith("--phase=") for value in [*profile_overrides, *cli]):
         raise ValueError("Set phase in the profile or on the CLI, not both")
+    if phase == VisionAlignmentPhase.perception.value:
+        approved_root = (
+            repository_root / "configs" / "vision_moe" / "vision_alignment" / "perception"
+        ).resolve()
+        if (
+            profile_path.parent != approved_root
+            or profile_path.suffix != ".yaml"
+            or profile_path.name.endswith(".yaml.template")
+        ):
+            raise ValueError(
+                "Production perception requires a checked-in .yaml profile directly under "
+                f"{approved_root}"
+            )
+        if cli:
+            raise ValueError(
+                "Production perception profiles own the complete configuration; additional "
+                "CLI overrides are forbidden"
+            )
+    try:
+        relative_profile_path = profile_path.relative_to(repository_root).as_posix()
+    except ValueError:
+        if phase == VisionAlignmentPhase.perception.value:
+            raise ValueError("Production perception profiles must live inside the repository")
+        relative_profile_path = str(profile_path)
+    raw_profile_sha256 = hashlib.sha256(raw_profile).hexdigest()
+    if phase == VisionAlignmentPhase.perception.value:
+        approved_profiles, allowlist_sha256 = _load_approved_perception_profiles(repository_root)
+        approved_sha256 = approved_profiles.get(relative_profile_path)
+        if approved_sha256 != raw_profile_sha256:
+            raise ValueError(
+                "Production perception profile bytes are not in the reviewed SHA-256 allowlist"
+            )
+        profile["__reviewed_allowlist_path__"] = PERCEPTION_PROFILE_ALLOWLIST
+        profile["__reviewed_allowlist_sha256__"] = allowlist_sha256
+    profile["__reviewed_path__"] = relative_profile_path
+    profile["__reviewed_sha256__"] = raw_profile_sha256
     return profile, [f"--phase={phase}", *profile_overrides, *cli]
 
 
 def _apply_profile_launch(
-    config: ExperimentConfig, profile: Optional[Dict[str, Any]]
+    config: ExperimentConfig,
+    profile: Optional[Dict[str, Any]],
+    *,
+    run_name: Optional[str] = None,
 ) -> ExperimentConfig:
     if profile is None:
         return config
+    profile_name = profile.get("name")
+    if not isinstance(profile_name, str) or not profile_name:
+        raise ValueError("Vision-alignment profiles must declare a non-empty name")
+    if run_name is not None and profile_name != run_name:
+        raise ValueError(
+            f"Profile name {profile_name!r} must match positional run name {run_name!r}"
+        )
     launch = profile.get("launch", {})
     if not isinstance(launch, dict):
         raise ValueError("Profile launch must be a mapping")
@@ -804,6 +1052,35 @@ def _apply_profile_launch(
     config.launch.priority = str(launch.get("priority", config.launch.priority))
     config.launch.min_runtime = launch.get("min_runtime", config.launch.min_runtime)
     config.launch.description = profile.get("description")
+    reviewed_path = profile.get("__reviewed_path__")
+    reviewed_sha256 = profile.get("__reviewed_sha256__")
+    if reviewed_path is not None or reviewed_sha256 is not None:
+        if (
+            not isinstance(reviewed_path, str)
+            or not reviewed_path
+            or not isinstance(reviewed_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", reviewed_sha256) is None
+        ):
+            raise ValueError("Vision-alignment profile review identity is malformed")
+        config.reviewed_profile_path = reviewed_path
+        config.reviewed_profile_sha256 = reviewed_sha256
+        if config.phase is VisionAlignmentPhase.perception:
+            allowlist_path = profile.get("__reviewed_allowlist_path__")
+            allowlist_sha256 = profile.get("__reviewed_allowlist_sha256__")
+            if (
+                allowlist_path != PERCEPTION_PROFILE_ALLOWLIST
+                or not isinstance(allowlist_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", allowlist_sha256) is None
+            ):
+                raise ValueError("Perception profile allowlist identity is malformed")
+            config.reviewed_profile_allowlist_path = allowlist_path
+            config.reviewed_profile_allowlist_sha256 = allowlist_sha256
+            profile_command = [
+                *config.expected_launch_command[:3],
+                f"--profile={reviewed_path}",
+            ]
+            config.expected_launch_command = profile_command
+            config.launch.cmd = list(profile_command)
     return config
 
 
@@ -858,7 +1135,7 @@ def _validate_parent_gate(
         )
     if not isinstance(gate, dict):
         raise ValueError(f"Parent-quality gate must be an object: {gate_path}")
-    allowed_fields = {
+    version_1_fields = {
         "format",
         "version",
         "status",
@@ -872,7 +1149,17 @@ def _validate_parent_gate(
         "global_step",
         "metrics_artifact_sha256",
     }
-    if set(gate) != allowed_fields:
+    version_2_fields = version_1_fields | {
+        "promotion_bundle_path",
+        "promotion_bundle_sha256",
+        "checkpoint_identity_sha256",
+        "approved_by",
+        "approved_at",
+        "waivers",
+    }
+    gate_version = gate.get("version")
+    allowed_fields = version_1_fields if gate_version == 1 else version_2_fields
+    if gate_version not in (1, 2) or set(gate) != allowed_fields:
         raise ValueError(
             "Parent-quality gate fields differ from the locked schema: "
             f"missing={sorted(allowed_fields - set(gate))}, "
@@ -883,7 +1170,6 @@ def _validate_parent_gate(
     assert isinstance(parent_meta, Mapping)
     if (
         gate["format"] != "vision_alignment_parent_gate"
-        or gate["version"] != 1
         or gate["status"] != "approved"
         or gate["recipe_version"] != RECIPE_VERSION
         or gate["formatter_version"] != FORMATTER_VERSION
@@ -903,6 +1189,108 @@ def _validate_parent_gate(
         raise ValueError("Parent-quality gate global_step must match the checkpoint directory")
     if re.fullmatch(r"[0-9a-f]{64}", str(gate["metrics_artifact_sha256"])) is None:
         raise ValueError("Parent-quality gate must pin its evaluation artifact SHA-256")
+    production_perception = getattr(
+        config, "phase", None
+    ) is VisionAlignmentPhase.perception and not bool(
+        getattr(getattr(config, "data", None), "allow_unpinned_synthetic_smoke", False)
+    )
+    if production_perception and gate_version != 2:
+        raise ValueError(
+            "Production perception requires a v2 parent gate with an audited promotion bundle"
+        )
+    if gate_version == 2:
+        from olmo_core.eval import vision_alignment_promotion as promotion
+
+        bundle_path = Path(str(gate["promotion_bundle_path"])).expanduser().resolve()
+        expected_bundle_sha = gate["promotion_bundle_sha256"]
+        if re.fullmatch(r"[0-9a-f]{64}", str(expected_bundle_sha)) is None:
+            raise ValueError("Parent-quality gate promotion bundle SHA-256 is invalid")
+        if gate["metrics_artifact_sha256"] != expected_bundle_sha:
+            raise ValueError(
+                "Parent-quality gate metrics artifact must be the pinned promotion bundle"
+            )
+        try:
+            actual_bundle_sha = promotion.sha256_file(bundle_path)
+            bundle = promotion.load_json(bundle_path)
+        except (OSError, promotion.PromotionValidationError) as error:
+            raise ValueError(f"Invalid parent promotion bundle {bundle_path}: {error}") from error
+        if actual_bundle_sha != expected_bundle_sha:
+            raise ValueError(
+                f"Parent promotion bundle SHA mismatch: configured {expected_bundle_sha}, "
+                f"actual {actual_bundle_sha}"
+            )
+        if not isinstance(bundle, Mapping):
+            raise ValueError("Parent promotion bundle must be a JSON object")
+        try:
+            summary = promotion.validate_promotion_bundle(
+                bundle,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+            )
+        except promotion.PromotionValidationError as error:
+            raise ValueError(f"Parent promotion bundle failed validation: {error}") from error
+        candidate = summary["candidate"]
+        checkpoint_identity_sha = gate["checkpoint_identity_sha256"]
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", str(checkpoint_identity_sha)) is None
+            or checkpoint_identity_sha != candidate["checkpoint_identity_sha256"]
+        ):
+            raise ValueError("Parent gate checkpoint identity differs from the promotion bundle")
+        approved_by = gate["approved_by"]
+        if (
+            not isinstance(approved_by, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@:/+\-]{2,127}", approved_by) is None
+        ):
+            raise ValueError("Parent-quality gate approved_by is not a durable human identity")
+        approved_at = gate["approved_at"]
+        if not isinstance(approved_at, str):
+            raise ValueError("Parent-quality gate approved_at must be an ISO-8601 timestamp")
+        try:
+            parsed_approval = datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError(
+                "Parent-quality gate approved_at must be an ISO-8601 timestamp"
+            ) from error
+        if parsed_approval.tzinfo is None or parsed_approval.utcoffset() is None:
+            raise ValueError("Parent-quality gate approved_at must include a timezone")
+        bundle_created_at = bundle.get("created_at")
+        if not isinstance(bundle_created_at, str):
+            raise ValueError("Parent promotion bundle lacks its creation timestamp")
+        try:
+            parsed_bundle_created_at = datetime.fromisoformat(
+                bundle_created_at.replace("Z", "+00:00")
+            )
+        except ValueError as error:
+            raise ValueError("Parent promotion bundle creation timestamp is invalid") from error
+        if (
+            parsed_bundle_created_at.tzinfo is None
+            or parsed_bundle_created_at.utcoffset() is None
+            or parsed_approval < parsed_bundle_created_at
+        ):
+            raise ValueError("Parent approval must occur after the promotion bundle was created")
+
+        waivers = gate["waivers"]
+        if not isinstance(waivers, list):
+            raise ValueError("Parent-quality gate waivers must be a list")
+        expected_deviation_sha = summary["deviation_sha256"]
+        observed_waiver_ids: list[str] = []
+        for waiver in waivers:
+            if not isinstance(waiver, Mapping) or set(waiver) != {
+                "id",
+                "decision",
+                "deviation_sha256",
+            }:
+                raise ValueError("Parent-quality gate waiver fields differ from the v2 schema")
+            waiver_id = waiver["id"]
+            if waiver_id not in promotion.REQUIRED_WAIVER_IDS or waiver["decision"] != "approved":
+                raise ValueError("Parent-quality gate contains an unknown or unapproved waiver")
+            if waiver["deviation_sha256"] != expected_deviation_sha.get(waiver_id):
+                raise ValueError("Parent-quality gate waiver is not bound to its deviation")
+            observed_waiver_ids.append(waiver_id)
+        if observed_waiver_ids != sorted(promotion.REQUIRED_WAIVER_IDS):
+            raise ValueError(
+                "Parent-quality gate must explicitly approve exactly the two locked deviations"
+            )
     marker_path = Path(parent) / ".metadata.json"
     try:
         marker = json.loads(marker_path.read_bytes(), object_pairs_hook=_strict_json_object)
@@ -945,21 +1333,78 @@ class _AuditedDataset:
             )
         probe_indices = cast(Sequence[int], source["probe_indices"])
         row_hashes = cast(Sequence[str], source["serialized_row_hashes"])
-        validate_serialized_runtime_probe(dataset, probe_indices, row_hashes, epoch=0)
-        self.content_fingerprint = _canonical_sha256(
-            {
-                "audit_fingerprint": audit["fingerprint"],
-                "source_registry_sha256": audit["source_registry_sha256"],
-                "exporter_sha256": audit["exporter_sha256"],
-                "input_content_sha256": audit["input_content_sha256"],
-                "source": source_name,
-                "source_sha256": source["sha256"],
-                "probe_indices_sha256": source["probe_indices_sha256"],
-                "serialized_row_hashes_sha256": source["serialized_row_hashes_sha256"],
-                "runtime_dataset_fingerprint": runtime_fingerprint,
-                "runtime_dataset_length": len(dataset),
-            }
-        )
+        probe_image_content_sha256 = source.get("probe_image_content_sha256")
+        if audit.get("format") == "vision_alignment_perception_source_audit":
+            probe_epochs = cast(int, source["probe_epochs"])
+            validate_image_content = getattr(dataset, "validate_image_content", None)
+            if not callable(validate_image_content):
+                raise ValueError(
+                    f"Live perception dataset {source_name!r} lacks image-content validation"
+                )
+            if validate_image_content(probe_indices) != probe_image_content_sha256:
+                raise ValueError(
+                    f"Live perception probe image bytes for {source_name!r} differ from "
+                    "the pinned source audit"
+                )
+            probe_pairs = tuple(
+                (index, epoch) for epoch in range(probe_epochs) for index in probe_indices
+            )
+            if len(probe_pairs) != len(row_hashes):
+                raise ValueError(
+                    f"Perception probe epoch panel for {source_name!r} has inconsistent rows"
+                )
+            get = getattr(dataset, "get", None)
+            live_loss_weight_total = 0.0
+            for (probe_index, probe_epoch), row_hash in zip(probe_pairs, row_hashes):
+                example = get(probe_index, probe_epoch) if callable(get) else dataset[probe_index]
+                if serialized_example_sha256(example) != row_hash:
+                    raise ValueError(
+                        f"Live perception probe {source_name!r} serialized row differs at "
+                        f"index {probe_index}, epoch {probe_epoch}"
+                    )
+                loss_masks = example.get("loss_masks")
+                if loss_masks is None:
+                    raise ValueError(f"Live perception probe {source_name!r} lacks loss masks")
+                row_loss_weight = math.fsum(float(value) for value in loss_masks)
+                if not math.isfinite(row_loss_weight) or row_loss_weight < 0:
+                    raise ValueError(f"Live perception probe {source_name!r} has invalid loss mass")
+                live_loss_weight_total = math.fsum((live_loss_weight_total, row_loss_weight))
+            live_mean_loss_weight = live_loss_weight_total / len(probe_pairs)
+            source_summary = cast(Mapping[str, Any], audit["sources"])[source_name]
+            pinned_mean_loss_weight = source_summary.get("mean_sum_loss_masks")
+            if (
+                isinstance(pinned_mean_loss_weight, bool)
+                or not isinstance(pinned_mean_loss_weight, (int, float))
+                or not math.isclose(
+                    live_mean_loss_weight,
+                    float(pinned_mean_loss_weight),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    f"Live perception probe loss mass for {source_name!r} differs from "
+                    "the pinned source audit"
+                )
+        else:
+            validate_serialized_runtime_probe(dataset, probe_indices, row_hashes, epoch=0)
+        fingerprint_payload = {
+            "audit_fingerprint": audit["fingerprint"],
+            "source_registry_sha256": audit["source_registry_sha256"],
+            "exporter_sha256": audit["exporter_sha256"],
+            "input_content_sha256": audit["input_content_sha256"],
+            "source": source_name,
+            "source_sha256": source["sha256"],
+            "probe_indices_sha256": source["probe_indices_sha256"],
+            "serialized_row_hashes_sha256": source["serialized_row_hashes_sha256"],
+            "runtime_dataset_fingerprint": runtime_fingerprint,
+            "runtime_dataset_length": len(dataset),
+        }
+        if probe_image_content_sha256 is not None:
+            fingerprint_payload["probe_image_content_sha256"] = probe_image_content_sha256
+        if audit.get("format") == "vision_alignment_perception_source_audit":
+            fingerprint_payload["probe_epochs"] = source["probe_epochs"]
+        self.content_fingerprint = _canonical_sha256(fingerprint_payload)
 
     def __len__(self) -> int:
         return len(self._dataset)
@@ -970,6 +1415,82 @@ class _AuditedDataset:
     def get(self, index: int, epoch: int = 0) -> Dict[str, Any]:
         get = getattr(self._dataset, "get", None)
         return get(index, epoch) if get is not None else self._dataset[index]
+
+
+def _perception_provenance(config: ExperimentConfig) -> PerceptionProvenanceManifest:
+    """Load the externally SHA-pinned perception train/validation provenance."""
+    data = config.data
+    if data.perception_provenance_path is None or data.perception_provenance_sha256 is None:
+        raise ValueError("Perception requires a pinned image-provenance artifact")
+    cache_key = (
+        str(Path(data.perception_provenance_path).expanduser().resolve()),
+        data.perception_provenance_sha256,
+    )
+    manifest = _PERCEPTION_PROVENANCE_RUNTIME_CACHE.get(cache_key)
+    if manifest is None:
+        import torch.distributed as dist
+
+        distributed = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if distributed else 0
+        error_message: Optional[str] = None
+        if rank == 0:
+            try:
+                manifest = load_perception_provenance_manifest(
+                    data.perception_provenance_path,
+                    expected_sha256=data.perception_provenance_sha256,
+                )
+                manifest.validate_image_path_signatures()
+                # Close the long path-restat window by rechecking the FineVision receipt and
+                # output signatures after it. The validator's exact-stat cache makes the
+                # unchanged case metadata-only, but any drift forces a full byte revalidation.
+                load_perception_provenance_manifest(
+                    data.perception_provenance_path,
+                    expected_sha256=data.perception_provenance_sha256,
+                    load_image_path_signatures=False,
+                )
+            except Exception as error:
+                error_message = f"{type(error).__name__}: {error}"
+        if distributed:
+            result = [error_message]
+            dist.broadcast_object_list(result, src=0)
+            error_message = cast(Optional[str], result[0])
+        if error_message is not None:
+            raise ValueError(
+                f"Perception provenance runtime snapshot validation failed: {error_message}"
+            )
+        if rank != 0:
+            try:
+                manifest = load_perception_provenance_manifest(
+                    data.perception_provenance_path,
+                    expected_sha256=data.perception_provenance_sha256,
+                    verify_finevision_materialization=False,
+                    load_image_path_signatures=False,
+                )
+            except Exception as error:
+                error_message = f"rank {rank}: {type(error).__name__}: {error}"
+        if distributed:
+            rank_errors: list[Optional[str]] = [None] * dist.get_world_size()
+            dist.all_gather_object(rank_errors, error_message)
+            failures = [value for value in rank_errors if value is not None]
+            if failures:
+                raise ValueError(
+                    "Perception provenance rank-local validation failed: " + "; ".join(failures)
+                )
+        assert manifest is not None
+        _PERCEPTION_PROVENANCE_RUNTIME_CACHE[cache_key] = manifest
+    if manifest.source_spec.pixmo_cap_path != str(Path(data.pixmo_cap_path).resolve()):
+        raise ValueError("Perception provenance PixMoCap path differs from the training config")
+    if (
+        manifest.source_spec.sequence_length != data.sequence_length
+        or manifest.source_spec.max_crops != data.max_crops
+        or manifest.source_spec.message_format != data.message_format
+        or manifest.source_spec.loss_token_weighting != data.loss_token_weighting
+        or manifest.source_spec.caption_prompt != data.caption_prompt
+        or manifest.source_spec.transcript_prompt != data.transcript_prompt
+        or manifest.source_spec.require_transcript != data.require_transcript
+    ):
+        raise ValueError("Perception provenance serialization differs from the training config")
+    return manifest
 
 
 def _source_spec(config: ExperimentConfig) -> VisionAlignmentSourceSpec:
@@ -1003,6 +1524,8 @@ def _runtime_dataset_fingerprint(dataset: Any) -> Optional[str]:
 
 def _preprocessing_config_sha256(config: ExperimentConfig) -> str:
     """Hash every recipe field that changes serialized source examples."""
+    if config.phase is VisionAlignmentPhase.perception:
+        return _perception_provenance(config).source_spec_sha256
     return _source_spec(config).preprocessing_sha256
 
 
@@ -1033,6 +1556,8 @@ def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, A
         raise ValueError(f"Invalid vision-alignment source audit {audit_path}: {error}") from error
     if not isinstance(audit, dict):
         raise ValueError(f"Vision-alignment source audit must be an object: {audit_path}")
+    if config.phase is VisionAlignmentPhase.perception:
+        return _validate_perception_source_audit(config, audit_path, audit)
     if set(audit) != _SOURCE_AUDIT_FIELDS:
         raise ValueError("Vision-alignment source audit fields differ from the locked schema")
     recorded_fingerprint = audit.get("fingerprint")
@@ -1226,6 +1751,215 @@ def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, A
                 f"Vision-alignment audit summary for {source_name!r} is incomplete, too "
                 "small, or inconsistent with its calibrated loss weight"
             )
+    return audit
+
+
+def _validate_perception_source_audit(
+    config: ExperimentConfig,
+    audit_path: Path,
+    audit: Mapping[str, Any],
+) -> Mapping[str, Any]:
+    """Validate the separate, provenance-bound eight-source perception audit."""
+    if set(audit) != _PERCEPTION_AUDIT_FIELDS:
+        raise ValueError("Perception source-audit fields differ from the locked schema")
+    unsigned = dict(audit)
+    recorded_fingerprint = unsigned.pop("fingerprint", None)
+    computed_fingerprint = _canonical_sha256(unsigned)
+    if (
+        recorded_fingerprint != computed_fingerprint
+        or config.data.source_audit_fingerprint != computed_fingerprint
+    ):
+        raise ValueError("Perception source-audit fingerprint differs")
+    auditor_path = (
+        Path(__file__).resolve().parents[1] / "data" / "audit_vision_alignment_perception_mix.py"
+    )
+    shared_auditor_path = (
+        Path(__file__).resolve().parents[1] / "data" / "audit_vision_alignment_mix.py"
+    )
+    exporter_path = (
+        Path(__file__).resolve().parents[1] / "data" / "export_vision_alignment_perception_probe.py"
+    )
+    if (
+        audit.get("format") != "vision_alignment_perception_source_audit"
+        or audit.get("version") != 2
+        or audit.get("status") != "ok"
+        or audit.get("phase") != "perception"
+        or audit.get("recipe_version") != RECIPE_VERSION
+        or audit.get("formatter_version") != FORMATTER_VERSION
+        or audit.get("source_catalog_version") != VISION_ALIGNMENT_PERCEPTION_SOURCE_CATALOG_VERSION
+        or audit.get("auditor_sha256") != _sha256_file(auditor_path)
+        or audit.get("shared_auditor_sha256") != _sha256_file(shared_auditor_path)
+        or audit.get("exporter_sha256") != _sha256_file(exporter_path)
+        or audit.get("source_registry_version")
+        != VISION_ALIGNMENT_PERCEPTION_SOURCE_REGISTRY_VERSION
+        or audit.get("source_registry_sha256")
+        != vision_alignment_perception_source_registry_sha256()
+        or audit.get("source_implementation_inventory")
+        != vision_alignment_perception_implementation_inventory()
+        or audit.get("failures") != []
+    ):
+        raise ValueError("Perception source-audit implementation, identity, or status differs")
+    catalog_path = Path(str(audit.get("catalog_path", ""))).expanduser().resolve()
+    if not catalog_path.is_file() or audit.get("catalog_sha256") != _sha256_file(catalog_path):
+        raise ValueError("Perception source-audit catalog bytes differ")
+
+    provenance = _perception_provenance(config)
+    provenance_ref = audit.get("image_provenance")
+    if not isinstance(provenance_ref, Mapping) or provenance_ref != {
+        "path": str(provenance.path),
+        "sha256": provenance.raw_sha256,
+        "content_sha256": provenance.content_sha256,
+        "source_spec_sha256": provenance.source_spec_sha256,
+    }:
+        raise ValueError("Perception source audit identifies different image provenance")
+    if (
+        audit.get("preprocessing_config") != provenance.source_spec.as_canonical_dict()
+        or audit.get("preprocessing_config_sha256") != provenance.source_spec_sha256
+    ):
+        raise ValueError("Perception source-audit preprocessing identity differs")
+    probe = audit.get("probe")
+    if not isinstance(probe, Mapping) or set(probe) != _PERCEPTION_AUDIT_PROBE_FIELDS:
+        raise ValueError("Perception source-audit probe fields differ")
+    examples_per_source = probe.get("examples_per_source")
+    probe_seed = probe.get("seed")
+    probe_epochs = probe.get("epochs")
+    if (
+        probe.get("format") != VISION_ALIGNMENT_PERCEPTION_PROBE_FORMAT
+        or probe.get("version") != VISION_ALIGNMENT_PERCEPTION_PROBE_VERSION
+        or probe.get("selection_algorithm") != VISION_ALIGNMENT_PERCEPTION_PROBE_SELECTION_ALGORITHM
+        or isinstance(probe_epochs, bool)
+        or not isinstance(probe_epochs, int)
+        or probe_epochs != VISION_ALIGNMENT_PERCEPTION_PROBE_EPOCHS
+        or isinstance(probe_seed, bool)
+        or not isinstance(probe_seed, int)
+        or probe_seed != VISION_ALIGNMENT_PERCEPTION_PROBE_SEED
+        or isinstance(examples_per_source, bool)
+        or not isinstance(examples_per_source, int)
+        or examples_per_source != VISION_ALIGNMENT_PERCEPTION_PROBE_EXAMPLES
+    ):
+        raise ValueError("Perception source-audit probe identity or size differs")
+
+    targets = config.data.mixture.resolved_targets()
+    means = config.data.mixture.mean_loss_weight
+    sampling = config.data.mixture.sampling_weights()
+    for field_name, expected in (
+        ("target_loss_mass", targets),
+        ("mean_loss_weight", means),
+        ("sampling_probabilities", sampling),
+    ):
+        actual = audit.get(field_name)
+        if not isinstance(actual, Mapping) or _canonical_sha256(actual) != _canonical_sha256(
+            expected
+        ):
+            raise ValueError(f"Perception source-audit {field_name} differs from training")
+    expected_mass = audit.get("expected_loss_mass")
+    if (
+        not isinstance(expected_mass, Mapping)
+        or set(expected_mass) != set(targets)
+        or any(
+            isinstance(expected_mass[source_name], bool)
+            or not isinstance(expected_mass[source_name], (int, float))
+            or not math.isfinite(float(expected_mass[source_name]))
+            or not math.isclose(
+                float(expected_mass[source_name]),
+                float(targets[source_name]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            for source_name in targets
+        )
+    ):
+        raise ValueError("Perception source-audit expected loss mass differs from targets")
+    inputs = audit.get("inputs")
+    summaries = audit.get("sources")
+    if (
+        not isinstance(inputs, Mapping)
+        or not isinstance(summaries, Mapping)
+        or set(inputs) != set(PERCEPTION_SOURCE_NAMES)
+        or set(summaries) != set(PERCEPTION_SOURCE_NAMES)
+        or set(targets) != set(PERCEPTION_SOURCE_NAMES)
+    ):
+        raise ValueError("Perception source-audit source set differs")
+    input_descriptors: List[Dict[str, Any]] = []
+    for source_name in PERCEPTION_SOURCE_NAMES:
+        source = inputs[source_name]
+        summary = summaries[source_name]
+        selection = provenance.selection(source_name, "train")
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != _PERCEPTION_AUDIT_INPUT_FIELDS
+            or source.get("name") != source_name
+            or source.get("format") != "jsonl"
+            or source.get("dataset_fingerprint") != selection.runtime_dataset_fingerprint
+            or source.get("dataset_size") != len(selection.indices)
+            or not isinstance(summary, Mapping)
+        ):
+            raise ValueError(f"Perception audit source {source_name!r} identity differs")
+        probe_indices = source.get("probe_indices")
+        row_hashes = source.get("serialized_row_hashes")
+        if (
+            not isinstance(probe_indices, list)
+            or len(probe_indices) != examples_per_source // probe_epochs
+            or tuple(probe_indices)
+            != select_deterministic_probe_indices(
+                len(selection.indices),
+                examples_per_source // probe_epochs,
+                seed=probe_seed,
+                dataset_fingerprint=selection.runtime_dataset_fingerprint,
+            )
+            or _canonical_sha256(probe_indices) != source.get("probe_indices_sha256")
+            or source.get("probe_epochs") != probe_epochs
+            or not isinstance(row_hashes, list)
+            or len(row_hashes) != examples_per_source
+            or _canonical_sha256(row_hashes) != source.get("serialized_row_hashes_sha256")
+        ):
+            raise ValueError(f"Perception audit source {source_name!r} probe differs")
+        expected_probe_image_content_sha256 = _canonical_sha256(
+            [
+                {
+                    "index": index,
+                    "image_sha256": selection.row_image_content_sha256[index],
+                }
+                for index in probe_indices
+            ]
+        )
+        if source.get("probe_image_content_sha256") != expected_probe_image_content_sha256:
+            raise ValueError(f"Perception audit source {source_name!r} image-content probe differs")
+        input_descriptors.append(
+            {
+                "name": source_name,
+                "sha256": source["sha256"],
+                "dataset_fingerprint": selection.runtime_dataset_fingerprint,
+                "probe_indices_sha256": source["probe_indices_sha256"],
+                "probe_epochs": probe_epochs,
+                "serialized_row_hashes_sha256": source["serialized_row_hashes_sha256"],
+                "probe_image_content_sha256": expected_probe_image_content_sha256,
+            }
+        )
+        source_path = (catalog_path.parent / str(source["path"])).resolve()
+        if (
+            not source_path.is_relative_to(catalog_path.parent)
+            or not source_path.is_file()
+            or source.get("sha256") != _sha256_file(source_path)
+        ):
+            raise ValueError(f"Perception audit source {source_name!r} bytes differ")
+        examples = summary.get("examples")
+        if (
+            not isinstance(examples, Mapping)
+            or examples
+            != {
+                "seen": examples_per_source,
+                "valid": examples_per_source,
+                "errors": 0,
+            }
+            or summary.get("zero_loss_examples") != 0
+            or summary.get("truncated_examples") != 0
+            or summary.get("error_samples") != []
+            or summary.get("mean_sum_loss_masks") != means[source_name]
+        ):
+            raise ValueError(f"Perception audit source {source_name!r} summary differs")
+    if audit.get("input_content_sha256") != _canonical_sha256(input_descriptors):
+        raise ValueError("Perception source-audit input-content identity differs")
     return audit
 
 
@@ -1589,6 +2323,7 @@ def _set_contract_hashes(config: ExperimentConfig) -> None:
     config.vision_alignment.data_contract_sha256 = _canonical_sha256(data_contract)
     config.vision_alignment.trainable_contract_sha256 = _canonical_sha256(
         {
+            "perception_trainability_arm": config.perception_trainability_arm.value,
             "model": config.model.as_config_dict(),
             "train_module": config.train_module.as_config_dict(),
             "router_lb_loss_weight": config.router_lb_loss_weight,
@@ -1818,10 +2553,16 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
     ):
         raise ValueError("Vision alignment requires the pinned distributed optimizer safeguards")
 
+    effective_vision_lr = (
+        0.0
+        if config.phase is VisionAlignmentPhase.perception
+        and config.perception_trainability_arm is PerceptionTrainabilityArm.frozen_vision_control
+        else policy.vision_lr
+    )
     expected_groups = (
         ("*lm.embeddings.weight", policy.connector_lr, "connector"),
         ("*connector.*", policy.connector_lr, "connector"),
-        ("*vision.*", policy.vision_lr, "vision"),
+        ("*vision.*", effective_vision_lr, "vision"),
     )
     groups = optim.group_overrides or []
     if len(groups) != len(expected_groups):
@@ -1840,7 +2581,9 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
         ):
             raise ValueError("Vision-alignment optimizer LR or scheduler routing was overridden")
     if policy.connector_lr <= 0 or (
-        policy.phase is not VisionAlignmentPhase.bridge and policy.vision_lr <= 0
+        policy.phase is not VisionAlignmentPhase.bridge
+        and config.perception_trainability_arm is PerceptionTrainabilityArm.treatment
+        and effective_vision_lr <= 0
     ):
         raise ValueError("Every trainable visual component requires a positive LR")
     if (policy.phase is VisionAlignmentPhase.joint) != (policy.lm_lr > 0):
@@ -1921,6 +2664,83 @@ def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None
         raise ValueError("Vision alignment runtime checkout reports an unexpected active branch")
 
 
+def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
+    """Bind production perception to one exact checked-in, override-free profile."""
+    if config.phase is not VisionAlignmentPhase.perception:
+        return
+    path_value = config.reviewed_profile_path
+    expected_sha256 = config.reviewed_profile_sha256
+    allowlist_path_value = config.reviewed_profile_allowlist_path
+    expected_allowlist_sha256 = config.reviewed_profile_allowlist_sha256
+    if (
+        not isinstance(path_value, str)
+        or not path_value
+        or Path(path_value).is_absolute()
+        or ".." in Path(path_value).parts
+        or not isinstance(expected_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+    ):
+        raise ValueError("Production perception requires an exact reviewed profile identity")
+    repository_root = Path(__file__).resolve().parents[3]
+    if (
+        allowlist_path_value != PERCEPTION_PROFILE_ALLOWLIST
+        or not isinstance(expected_allowlist_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", expected_allowlist_sha256) is None
+    ):
+        raise ValueError("Production perception requires an exact profile-allowlist identity")
+    approved_profiles, actual_allowlist_sha256 = _load_approved_perception_profiles(repository_root)
+    if actual_allowlist_sha256 != expected_allowlist_sha256:
+        raise ValueError("Production perception profile allowlist bytes differ from their pin")
+    approved_root = (
+        repository_root / "configs" / "vision_moe" / "vision_alignment" / "perception"
+    ).resolve()
+    profile_path = (repository_root / path_value).resolve()
+    if (
+        profile_path.parent != approved_root
+        or profile_path.suffix != ".yaml"
+        or profile_path.name.endswith(".yaml.template")
+        or not profile_path.is_file()
+    ):
+        raise ValueError("Production perception profile path is not a checked-in profile")
+    try:
+        raw = profile_path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"Could not verify perception profile {profile_path}: {error}") from error
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+    if raw_sha256 != expected_sha256:
+        raise ValueError("Production perception profile bytes differ from their review pin")
+    if approved_profiles.get(path_value) != raw_sha256:
+        raise ValueError("Production perception profile is not in the reviewed SHA-256 allowlist")
+    profile = _load_profile_yaml(raw, path=profile_path)
+    if (
+        set(profile) - {"version", "name", "description", "phase", "launch", "overrides"}
+        or isinstance(profile.get("version"), bool)
+        or not isinstance(profile.get("version"), int)
+        or profile.get("version") != 1
+        or profile.get("name") != config.required_run_name
+        or profile.get("phase") != VisionAlignmentPhase.perception.value
+    ):
+        raise ValueError("Production perception profile identity or schema differs")
+    profile_launch = profile.get("launch")
+    required_launch = {
+        "num_nodes": 2,
+        "num_gpus": 8,
+        "workspace": BEAKER_WORKSPACE,
+        "cluster": BEAKER_CLUSTER,
+        "budget": BEAKER_BUDGET,
+        "priority": "urgent",
+        "min_runtime": "8h",
+    }
+    if not isinstance(profile_launch, Mapping) or any(
+        type(profile_launch.get(field_name)) is not type(expected_value)
+        or profile_launch.get(field_name) != expected_value
+        for field_name, expected_value in required_launch.items()
+    ):
+        raise ValueError(
+            "Production perception requires the reviewed 2x8 Holmes urgent/eight-hour launch"
+        )
+
+
 def _validate_phase_contract(
     config: ExperimentConfig, run_name: str, *, runtime: bool = False
 ) -> None:
@@ -1931,6 +2751,7 @@ def _validate_phase_contract(
         raise ValueError(
             "Positional run name, required_run_name, and lineage_id must match exactly"
         )
+    _validate_reviewed_perception_profile(config)
     expected_save_folder = f"{VISION_ALIGNMENT_ROOT}/checkpoints/{run_name}"
     if config.trainer.save_folder != expected_save_folder:
         raise ValueError(
@@ -2008,8 +2829,19 @@ def _validate_phase_contract(
         )
     if config.initialization.expected_parent_phase is not policy.expected_parent_phase:
         raise ValueError("Initialization parent-phase contract was overridden")
-    if list(policy.freeze_params) != (config.train_module.freeze_params or []):
+    expected_freeze_params = list(policy.freeze_params)
+    if (
+        config.phase is VisionAlignmentPhase.perception
+        and config.perception_trainability_arm is PerceptionTrainabilityArm.frozen_vision_control
+    ):
+        expected_freeze_params.insert(0, "vision.*")
+    if expected_freeze_params != (config.train_module.freeze_params or []):
         raise ValueError("Phase freeze patterns are derived and may not be overridden")
+    if (
+        config.phase is not VisionAlignmentPhase.perception
+        and config.perception_trainability_arm is not PerceptionTrainabilityArm.treatment
+    ):
+        raise ValueError("The frozen-vision control is defined only for perception")
     if (
         config.train_module.train_embedding_rows is None
         or len(config.train_module.train_embedding_rows) != 6
@@ -2083,7 +2915,29 @@ def _validate_phase_contract(
         raise ValueError(f"Native text replay is forbidden while the LM is frozen ({config.phase})")
 
     source_audit = _validated_source_audit(config)
-    _validate_validation_manifest(config, source_audit)
+    if config.phase is VisionAlignmentPhase.perception:
+        provenance = _perception_provenance(config)
+        if any(
+            len(provenance.selection(source_name, "validation").indices)
+            != config.evaluation.examples_per_source
+            for source_name in PERCEPTION_SOURCE_NAMES
+        ):
+            raise ValueError(
+                "Perception provenance must provide exactly the configured held-out rows "
+                "for every source"
+            )
+        if (
+            config.evaluation.validation_manifest_path is not None
+            or config.evaluation.validation_manifest_sha256 is not None
+        ):
+            raise ValueError("Perception uses its union provenance, not the PixMo-only manifest")
+    else:
+        if (
+            config.data.perception_provenance_path is not None
+            or config.data.perception_provenance_sha256 is not None
+        ):
+            raise ValueError("Perception provenance is forbidden outside the perception phase")
+        _validate_validation_manifest(config, source_audit)
 
     parent = config.initialization.checkpoint
     if config.phase is VisionAlignmentPhase.bridge:
@@ -2119,7 +2973,15 @@ def _validate_phase_contract(
 
 
 def build_config(
-    script: str, run_name: str, overrides: List[str], *, runtime: bool = False
+    script: str,
+    run_name: str,
+    overrides: List[str],
+    *,
+    runtime: bool = False,
+    reviewed_profile_path: Optional[str] = None,
+    reviewed_profile_sha256: Optional[str] = None,
+    reviewed_profile_allowlist_path: Optional[str] = None,
+    reviewed_profile_allowlist_sha256: Optional[str] = None,
 ) -> ExperimentConfig:
     """Build and validate one phase config after resolving its phase selector first."""
     _validate_run_name(run_name)
@@ -2215,6 +3077,7 @@ def build_config(
         train_module=train_module,
         trainer=trainer,
         phase=phase,
+        perception_trainability_arm=PerceptionTrainabilityArm.treatment,
         artifacts=artifacts,
         initialization=initialization,
         data=data,
@@ -2228,7 +3091,21 @@ def build_config(
         global_batch_size=GLOBAL_BATCH_INSTANCES * policy.sequence_length,
         required_run_name=run_name,
         expected_launch_command=[script, "train", run_name, *overrides],
+        reviewed_profile_path=reviewed_profile_path,
+        reviewed_profile_sha256=reviewed_profile_sha256,
+        reviewed_profile_allowlist_path=reviewed_profile_allowlist_path,
+        reviewed_profile_allowlist_sha256=reviewed_profile_allowlist_sha256,
     ).merge(overrides)
+    if (
+        config.phase is VisionAlignmentPhase.perception
+        and config.perception_trainability_arm is PerceptionTrainabilityArm.frozen_vision_control
+    ):
+        config.train_module.freeze_params = [
+            "vision.*",
+            *(config.train_module.freeze_params or []),
+        ]
+        vision_override = (config.train_module.optim.group_overrides or [])[2]
+        vision_override.opts["lr"] = 0.0
     if (
         config.phase is not VisionAlignmentPhase.bridge
         and config.trainer.load_path is None
@@ -2274,6 +3151,9 @@ def _build_mixture_sources(
         "pixmo_points_high_frequency",
         "cosyn_point",
         "native_text_replay",
+        "ocr_document",
+        "scalar_count",
+        "audited_alignment",
     }
     missing = sorted(set(targets) - supported)
     if missing:
@@ -2282,6 +3162,9 @@ def _build_mixture_sources(
             f"{missing}. Implement and audit them; do not substitute QA/SFT sources."
         )
     audit = _validated_source_audit(config)
+    perception_provenance = (
+        _perception_provenance(config) if config.phase is VisionAlignmentPhase.perception else None
+    )
     weights = config.data.mixture.sampling_weights()
     sources: List[Tuple[str, Any, float]] = []
     for name in targets:
@@ -2294,14 +3177,25 @@ def _build_mixture_sources(
             if dataset.sequence_length != config.data.sequence_length:
                 raise ValueError("Native replay and joint training sequence lengths must match")
         else:
-            dataset = build_vision_alignment_dataset(
-                _source_spec(config),
-                tokenizer,
-                token_ids,
-                name,
-                split="train",
-                validate_required_annotations=True,
-            )
+            if perception_provenance is not None:
+                dataset = build_selected_perception_dataset(
+                    perception_provenance,
+                    tokenizer,
+                    token_ids,
+                    name,
+                    logical_split="train",
+                    validate_required_annotations=True,
+                    verify_finevision_materialization=False,
+                )
+            else:
+                dataset = build_vision_alignment_dataset(
+                    _source_spec(config),
+                    tokenizer,
+                    token_ids,
+                    name,
+                    split="train",
+                    validate_required_annotations=True,
+                )
         if audit is not None:
             dataset = _AuditedDataset(dataset, name, audit)
         sources.append((name, dataset, weights[name]))
@@ -2335,14 +3229,42 @@ def _add_intrinsic_visual_evaluators(
         raise ValueError("examples_per_source must divide the global evaluation batch")
     eval_batches = eval_config.examples_per_source // global_instances
     evaluators: List[Evaluator] = []
-    validation_manifest = _validate_validation_manifest(
-        config, _validated_source_audit(config), validate_live_datasets=False
-    )
-    for source_name in ("pixmo_caption", "pixmo_transcript"):
-        dataset = _visual_dataset_config(config, token_ids, source_name, split="validation").build(
-            tokenizer
+    validation_manifest = None
+    perception_provenance = None
+    validation_sources: Tuple[str, ...]
+    if config.phase is VisionAlignmentPhase.perception:
+        perception_provenance = _perception_provenance(config)
+        validation_sources = PERCEPTION_SOURCE_NAMES
+    else:
+        validation_manifest = _validate_validation_manifest(
+            config, _validated_source_audit(config), validate_live_datasets=False
         )
-        _validate_live_validation_dataset(dataset, validation_manifest)
+        validation_sources = ("pixmo_caption", "pixmo_transcript")
+    for source_name in validation_sources:
+        if perception_provenance is not None:
+            dataset = build_selected_perception_dataset(
+                perception_provenance,
+                tokenizer,
+                token_ids,
+                source_name,
+                logical_split="validation",
+                validate_required_annotations=True,
+                verify_finevision_materialization=False,
+            )
+            if len(dataset) != eval_config.examples_per_source:
+                raise ValueError(
+                    f"Perception validation {source_name!r} must contain exactly "
+                    f"{eval_config.examples_per_source} provenance-selected rows"
+                )
+            # Rehash the complete pinned held-out population before constructing the
+            # evaluator. This is small (512 rows/source) and prevents mutable image paths
+            # from silently invalidating train/eval disjointness after provenance build.
+            dataset.validate_image_content()
+        else:
+            dataset = _visual_dataset_config(
+                config, token_ids, source_name, split="validation"
+            ).build(tokenizer)
+            _validate_live_validation_dataset(dataset, validation_manifest)
         loader = MultimodalDataLoader(
             dataset,
             collator,
@@ -2362,15 +3284,16 @@ def _add_intrinsic_visual_evaluators(
                 deterministic=True,
             )
         )
-        evaluators.append(
-            MultimodalBlankImageEvaluator(
-                name=f"vision-alignment-{source_name}-blank-image",
-                batches=loader,
-                device=trainer.device,
-                process_group=trainer.dp_process_group,
-                deterministic=True,
+        if source_name in ("pixmo_caption", "pixmo_transcript"):
+            evaluators.append(
+                MultimodalBlankImageEvaluator(
+                    name=f"vision-alignment-{source_name}-blank-image",
+                    batches=loader,
+                    device=trainer.device,
+                    process_group=trainer.dp_process_group,
+                    deterministic=True,
+                )
             )
-        )
     if config.phase is VisionAlignmentPhase.joint:
         holdout_config = config.evaluation.native_text_holdout
         assert holdout_config is not None
@@ -2603,8 +3526,29 @@ so do not also pass --phase when --profile is used.
         prepare_cli_environment()
     profile, overrides = _load_profile(raw_overrides)
     runtime = command == "train"
-    experiment = build_config(script, run_name, overrides, runtime=runtime)
-    experiment = _apply_profile_launch(experiment, profile)
+    experiment = build_config(
+        script,
+        run_name,
+        overrides,
+        runtime=runtime,
+        reviewed_profile_path=(
+            cast(str, profile["__reviewed_path__"]) if profile is not None else None
+        ),
+        reviewed_profile_sha256=(
+            cast(str, profile["__reviewed_sha256__"]) if profile is not None else None
+        ),
+        reviewed_profile_allowlist_path=(
+            cast(str, profile["__reviewed_allowlist_path__"])
+            if profile is not None and "__reviewed_allowlist_path__" in profile
+            else None
+        ),
+        reviewed_profile_allowlist_sha256=(
+            cast(str, profile["__reviewed_allowlist_sha256__"])
+            if profile is not None and "__reviewed_allowlist_sha256__" in profile
+            else None
+        ),
+    )
+    experiment = _apply_profile_launch(experiment, profile, run_name=run_name)
     _validate_phase_contract(experiment, run_name, runtime=runtime)
     log.info(experiment)
     if command == "train":

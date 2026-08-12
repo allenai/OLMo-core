@@ -199,6 +199,7 @@ def build_matched_wrong_image_pairing(
     seed: int,
     content_ids: Sequence[str],
     epoch: int = 0,
+    excluded_selection_indices: Sequence[int] | None = None,
 ) -> Dict[str, Any]:
     """Build a deterministic explicit pairing over one fixed validation dataset.
 
@@ -208,6 +209,10 @@ def build_matched_wrong_image_pairing(
     number of eligible recipients across the complete validation split. Every selected recipient
     receives a unique donor from its group. Singleton and otherwise unusable geometry groups are
     skipped; construction fails if the full requested recipient set cannot be matched.
+
+    Rows named by ``excluded_selection_indices`` remain represented in the complete dataset and
+    eligibility coverage, but cannot be selected as either a recipient or donor. This supports an
+    independently sampled replication population without changing the serialized v2 schema.
 
     The returned JSON-compatible payload contains the selected global recipient indices, donor
     indices, exact runtime descriptors needed for rank-local replay and drift detection, and a
@@ -219,6 +224,9 @@ def build_matched_wrong_image_pairing(
     :param content_ids: Row-aligned lowercase source-image SHA-256 identities. This argument is
         required; callers must not infer source identity from a batch-local image tensor.
     :param epoch: Dataset source epoch used to materialize every descriptor.
+    :param excluded_selection_indices: Optional validation row indices forbidden as both
+        recipients and donors. Callers must pin the primary pairing and independently verify
+        content and index disjointness; the exclusion is not trusted from serialized metadata.
     :returns: Canonicalizable explicit pairing payload.
     :raises OLMoConfigurationError: If inputs are invalid or a full pairing is impossible.
     """
@@ -252,6 +260,14 @@ def build_matched_wrong_image_pairing(
                 f"Wrong-image content identity at validation index {index} is not a lowercase "
                 "SHA-256"
             )
+    excluded_indices = set(excluded_selection_indices or ())
+    if any(
+        isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < dataset_size
+        for index in excluded_indices
+    ):
+        raise OLMoConfigurationError(
+            "Wrong-image excluded selection indices must be valid validation row indices"
+        )
 
     rows: list[Dict[str, Any]] = []
     for index, content_id in enumerate(content_ids):
@@ -294,8 +310,17 @@ def build_matched_wrong_image_pairing(
             eligible_by_geometry[geometry] = distinct
             all_eligible.extend(distinct)
 
+    selectable_by_geometry = {
+        geometry: [row for row in eligible if row["index"] not in excluded_indices]
+        for geometry, eligible in eligible_by_geometry.items()
+    }
+    selectable_by_geometry = {
+        geometry: eligible
+        for geometry, eligible in selectable_by_geometry.items()
+        if len(eligible) >= 2
+    }
     selected = sorted(
-        all_eligible,
+        (row for eligible in selectable_by_geometry.values() for row in eligible),
         key=lambda row: (
             _order_digest(seed, "recipient-selection", row["index"], row["content_id"]),
             row["index"],
@@ -314,7 +339,7 @@ def build_matched_wrong_image_pairing(
     donor_by_recipient: Dict[int, int] = {}
     for geometry, recipients in selected_by_geometry.items():
         donors = sorted(
-            eligible_by_geometry[geometry],
+            selectable_by_geometry[geometry],
             key=lambda row: (
                 _order_digest(seed, "donor", row["index"], row["content_id"]),
                 row["index"],

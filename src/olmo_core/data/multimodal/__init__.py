@@ -68,6 +68,18 @@ from .sequence_builder import (
 )
 from .sft_formatter import SftFormatter
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
+from .vision_alignment_perception import (
+    VISION_ALIGNMENT_OCR_SOURCES,
+    VisionAlignmentAuditedAlignmentDataset,
+    VisionAlignmentAuditedAlignmentDatasetConfig,
+    VisionAlignmentOcrDocumentDataset,
+    VisionAlignmentOcrDocumentDatasetConfig,
+)
+from .vision_alignment_perception_sources import (
+    VisionAlignmentPerceptionSourceSpec,
+    build_vision_alignment_perception_dataset,
+    build_vision_alignment_perception_dataset_config,
+)
 
 __all__ = [
     "FineVisionDataset",
@@ -118,4 +130,12 @@ __all__ = [
     "build_branched_sequence",
     "ATTEND_ALL_SUBSEGMENT_ID",
     "pack_examples",
+    "VISION_ALIGNMENT_OCR_SOURCES",
+    "VisionAlignmentAuditedAlignmentDataset",
+    "VisionAlignmentAuditedAlignmentDatasetConfig",
+    "VisionAlignmentOcrDocumentDataset",
+    "VisionAlignmentOcrDocumentDatasetConfig",
+    "VisionAlignmentPerceptionSourceSpec",
+    "build_vision_alignment_perception_dataset",
+    "build_vision_alignment_perception_dataset_config",
 ]

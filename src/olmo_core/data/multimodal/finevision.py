@@ -41,10 +41,12 @@ stripped so it is never tokenized as literal text).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -98,6 +100,13 @@ class FineVisionDatasetConfig(Config):
     """Explicit parquet directory / glob / file, or a ``save_to_disk`` Arrow directory.
     Overrides :attr:`root` + :attr:`config_name` when set."""
 
+    expected_materialized_fingerprint: Optional[str] = None
+    """Externally pinned, path-independent materialization fingerprint.
+
+    Strict perception adapters require this for reviewed Arrow artifacts. Historical
+    FineVision consumers may leave it unset and use the live Arrow fingerprint.
+    """
+
     split: str = "train"
 
     texts_column: str = "texts"
@@ -118,6 +127,24 @@ class FineVisionDatasetConfig(Config):
 
     min_relevance: Optional[int] = None
     """Keep rows with ``relevance_min >=`` this (1-5)."""
+
+    require_quality_columns: bool = False
+    """Fail when a configured quality column is absent instead of ignoring that filter."""
+
+    strict_annotations: bool = False
+    """Require every selected row to contain usable text and exactly one image/turn.
+
+    This is the fail-closed mode used by vision-alignment continued pretraining. The
+    historical Stage-2 loader keeps its permissive defaults.
+    """
+
+    skip_bad_rows: bool = True
+    """Deterministically advance over bad rows.
+
+    Vision-alignment perception sets this to false because its provenance manifest binds each
+    logical index to one exact source row and image; substituting a later row would violate that
+    contract. The default preserves historical Stage-2 behavior.
+    """
 
     max_crops: int = 8
     """Max high-res crops *per image*. Rows with several images cost a multiple of this."""
@@ -158,6 +185,8 @@ class VisualWebInstructDatasetConfig(FineVisionDatasetConfig):
 class FineVisionDataset:
     """Map-style dataset yielding packed FineVision instruction examples."""
 
+    content_fingerprint_version = "finevision-runtime-v1"
+
     def __init__(self, config: FineVisionDatasetConfig, tokenizer):
         validate_sft_message_format(
             config.message_format,
@@ -174,6 +203,8 @@ class FineVisionDataset:
             + list(_QUALITY_COLUMNS.values()),
         )
         self._index = self._build_index()
+        if config.strict_annotations:
+            self.content_fingerprint = self._build_content_fingerprint()
         self._warned = 0
 
     def _build_index(self) -> Optional[np.ndarray]:
@@ -190,6 +221,10 @@ class FineVisionDataset:
         keep = np.ones(len(self._data), dtype=bool)
         for column, threshold in active.items():
             if column not in self._data.column_names:
+                if cfg.require_quality_columns:
+                    raise ValueError(
+                        f"FineVision[{cfg.config_name}] lacks required quality column {column!r}"
+                    )
                 log.warning("FineVision: no %r column; ignoring that filter", column)
                 continue
             values = np.array(
@@ -207,12 +242,128 @@ class FineVisionDataset:
         )
         return index
 
+    def _build_content_fingerprint(self) -> str:
+        """Build a stable identity for source rows, filtering, and serialization policy."""
+        cfg = self.config
+        arrow_fingerprint = (
+            cfg.expected_materialized_fingerprint
+            if cfg.expected_materialized_fingerprint is not None
+            else getattr(self._data, "_fingerprint", None)
+        )
+        if not isinstance(arrow_fingerprint, str) or not arrow_fingerprint:
+            raise ValueError(
+                f"FineVision[{cfg.config_name}] lacks a stable Arrow dataset fingerprint"
+            )
+        selected = (
+            np.arange(len(self._data), dtype="<i8")
+            if self._index is None
+            else np.asarray(self._index, dtype="<i8")
+        )
+        selection_sha256 = hashlib.sha256(selected.tobytes()).hexdigest()
+        payload = {
+            "version": self.content_fingerprint_version,
+            "arrow_fingerprint": arrow_fingerprint,
+            "config_name": cfg.config_name,
+            "dataset_path": os.path.realpath(cfg.resolved_path()),
+            "split": cfg.split,
+            "texts_column": cfg.texts_column,
+            "images_column": cfg.images_column,
+            "quality_filters": {
+                field_name: getattr(cfg, field_name) for field_name in _QUALITY_COLUMNS
+            },
+            "require_quality_columns": cfg.require_quality_columns,
+            "strict_annotations": cfg.strict_annotations,
+            "skip_bad_rows": cfg.skip_bad_rows,
+            "max_crops": cfg.max_crops,
+            "max_images": cfg.max_images,
+            "max_sequence_length": cfg.max_sequence_length,
+            "loss_token_weighting": cfg.loss_token_weighting,
+            "message_format": cfg.message_format,
+            "seed": cfg.seed,
+            "selected_rows": len(selected),
+            "selection_sha256": selection_sha256,
+        }
+        canonical = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def validate_required_annotations(self) -> None:
+        """Validate the fail-closed single-image/single-turn annotation contract.
+
+        The scan reads Arrow list lengths and text structs but does not decode image bytes.
+        It is intentionally opt-in through :attr:`FineVisionDatasetConfig.strict_annotations`
+        so legacy instruction-tuning sources preserve their existing behavior.
+
+        :raises ValueError: If a selected row lacks exactly one image or one non-empty
+            ``(user, assistant)`` turn.
+        """
+        if not self.config.strict_annotations:
+            return
+
+        import pyarrow.compute as pc
+
+        table = self._data.data
+        try:
+            image_lengths = pc.list_value_length(table.column(self.config.images_column))
+            texts = table.column(self.config.texts_column)
+        except (KeyError, ValueError) as error:
+            raise ValueError("FineVision strict annotation columns are unavailable") from error
+
+        positions = (
+            range(len(self._data))
+            if self._index is None
+            else (int(position) for position in self._index)
+        )
+        invalid_count = 0
+        first_invalid: List[int] = []
+        for dataset_index, position in enumerate(positions):
+            image_count = image_lengths[position].as_py()
+            row_turns = texts[position].as_py()
+            valid_turn = (
+                isinstance(row_turns, list)
+                and len(row_turns) == 1
+                and isinstance(row_turns[0], dict)
+                and isinstance(row_turns[0].get("user"), str)
+                and bool(row_turns[0]["user"].strip())
+                and isinstance(row_turns[0].get("assistant"), str)
+                and bool(row_turns[0]["assistant"].strip())
+            )
+            if image_count != 1 or not valid_turn:
+                invalid_count += 1
+                if len(first_invalid) < 8:
+                    first_invalid.append(dataset_index)
+        if invalid_count:
+            raise ValueError(
+                "FineVision strict mode requires exactly one image and one non-empty turn; "
+                f"found {invalid_count} invalid selected rows (first indices: {first_invalid})"
+            )
+
     def __len__(self) -> int:
         return len(self._data) if self._index is None else len(self._index)
 
     def _row(self, i: int) -> Dict:
         pos = int(i if self._index is None else self._index[i])
         return self._data[pos]
+
+    def raw_image_references(self, index: int) -> Tuple[Any, ...]:
+        """Return the encoded image cells for one logical row without decoding them.
+
+        :param index: Logical filtered-dataset index.
+        :returns: The row's exact image structs/paths in serialized order.
+        """
+        position = int(index if self._index is None else self._index[index])
+        try:
+            raw = self._data.data.column(self.config.images_column)[position].as_py()
+        except (KeyError, ValueError) as error:
+            raise ValueError("FineVision image column is unavailable") from error
+        if not isinstance(raw, list):
+            raise ValueError(f"FineVision image row {index} is not a list")
+        return tuple(raw)
 
     def _build(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         cfg = self.config
@@ -247,11 +398,20 @@ class FineVisionDataset:
             message_format=cfg.message_format,
             shuffle_rng=sft_example_rng(cfg.seed, i, epoch, cfg.message_format),
         )
-        return truncate_example(
+        original_length = len(seq["input_ids"]) if cfg.strict_annotations else None
+        example = truncate_example(
             seq,
             cfg.max_sequence_length,
             image_token_ids=cfg.token_ids.image_token_ids,
         )
+        if cfg.strict_annotations:
+            assert original_length is not None
+            example["metadata"] = {
+                **example.get("metadata", {}),
+                "original_length": original_length,
+                "truncated": original_length > cfg.max_sequence_length,
+            }
+        return example
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
         """Build the example at ``index``, skipping ahead over unusable rows.
@@ -262,7 +422,9 @@ class FineVisionDataset:
 
     def get(self, index: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         """Build one example with epoch-aware augmentation and deterministic bad-row skips."""
-        return get_example_with_skip(self, index, len(self), epoch)
+        if self.config.skip_bad_rows:
+            return get_example_with_skip(self, index, len(self), epoch)
+        return self._build(index, epoch)
 
 
 # Backwards-compatible alias: the loader used to be VisualWebInstruct-specific.

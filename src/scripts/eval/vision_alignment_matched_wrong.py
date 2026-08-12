@@ -19,6 +19,7 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import os
 import subprocess
 import time
@@ -26,7 +27,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -55,6 +56,7 @@ from olmo_core.eval import (
 )
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.attention.backend import AttentionBackendName
+from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.nn.transformer import OLMoDDPModelConfig
@@ -107,6 +109,23 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Require this exact pairing artifact SHA-256. May be repeated. Every existing "
             "pairing file must have an explicit source pin."
         ),
+    )
+    parser.add_argument(
+        "--exclude-pairing",
+        action="append",
+        default=[],
+        metavar="SOURCE=PATH",
+        help=(
+            "When creating or reusing a pairing, exclude or validate against every recipient "
+            "and donor in this pinned primary pairing. May be repeated by source."
+        ),
+    )
+    parser.add_argument(
+        "--expected-exclude-pairing-sha256",
+        action="append",
+        default=[],
+        metavar="SOURCE=SHA256",
+        help="Require the exact raw/canonical SHA-256 of each --exclude-pairing artifact.",
     )
     parser.add_argument(
         "--pairing-seed",
@@ -238,14 +257,16 @@ def _default_output(checkpoint: Path) -> Path:
     return root / "eval" / "vision-alignment-matched-wrong-image.json"
 
 
-def _parse_pairing_paths(values: Sequence[str]) -> dict[str, Path]:
+def _parse_pairing_paths(
+    values: Sequence[str], *, option_name: str = "--pairing"
+) -> dict[str, Path]:
     paths: dict[str, Path] = {}
     for value in values:
         if "=" not in value:
-            raise ValueError(f"--pairing must be SOURCE=PATH, got {value!r}")
+            raise ValueError(f"{option_name} must be SOURCE=PATH, got {value!r}")
         source, raw_path = value.split("=", 1)
         if source not in SOURCE_NAMES or not raw_path or source in paths:
-            raise ValueError(f"Invalid or duplicate --pairing value {value!r}")
+            raise ValueError(f"Invalid or duplicate {option_name} value {value!r}")
         paths[source] = Path(raw_path).expanduser().resolve()
     return paths
 
@@ -321,6 +342,8 @@ def _preflight_artifact_paths_distributed(
     overwrite_output: bool,
     pairing_paths: Mapping[str, Path],
     expected_pairing_sha256: Mapping[str, str],
+    excluded_pairing_paths: Mapping[str, Path] | None = None,
+    expected_excluded_pairing_sha256: Mapping[str, str] | None = None,
 ) -> None:
     """Fail before checkpoint hashing when output or reused-pairing policy is violated."""
     packet: list[Any] = [None]
@@ -345,6 +368,22 @@ def _preflight_artifact_paths_distributed(
                             f"Existing {source} pairing SHA-256 differs: expected {expected}, "
                             f"got {actual}"
                         )
+            excluded_pairing_paths = excluded_pairing_paths or {}
+            expected_excluded_pairing_sha256 = expected_excluded_pairing_sha256 or {}
+            if set(excluded_pairing_paths) != set(expected_excluded_pairing_sha256):
+                raise ValueError(
+                    "Every excluded primary pairing requires one exact source-specific SHA-256"
+                )
+            for source, path in excluded_pairing_paths.items():
+                if not path.is_file():
+                    raise FileNotFoundError(f"Excluded primary {source} pairing is missing: {path}")
+                actual = _sha256_file(path)
+                expected = expected_excluded_pairing_sha256[source]
+                if actual != expected:
+                    raise ValueError(
+                        f"Excluded primary {source} pairing SHA-256 differs: "
+                        f"expected {expected}, got {actual}"
+                    )
             packet[0] = {"ok": True}
         except Exception as error:  # noqa: BLE001 - every rank-zero failure must be propagated.
             packet[0] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
@@ -356,7 +395,14 @@ def _preflight_artifact_paths_distributed(
 
 
 def _configure_lm_for_eval(lm_config: OLMoDDPModelConfig) -> None:
-    for block in [lm_config.block, *(lm_config.block_overrides or {}).values()]:
+    blocks = [
+        cast(OLMoDDPTransformerBlockConfig, lm_config.block),
+        *(
+            cast(OLMoDDPTransformerBlockConfig, block)
+            for block in (lm_config.block_overrides or {}).values()
+        ),
+    ]
+    for block in blocks:
         if isinstance(block.sequence_mixer, AttentionConfig):
             block.sequence_mixer.backend = AttentionBackendName.flex
         if block.ep is not None:
@@ -558,10 +604,44 @@ def _load_or_build_pairing(
     examples: int,
     seed: int,
     content_ids: Sequence[str],
-) -> tuple[Mapping[str, Any], str, str]:
+    excluded_pairing_path: Path | None = None,
+    expected_excluded_pairing_sha256: str | None = None,
+) -> tuple[Mapping[str, Any], str, str, dict[str, Any] | None]:
     packet: list[Any] = [None]
     if dist.get_rank() == 0:
         try:
+            exclusion_identity = None
+            excluded_indices: list[int] = []
+            if excluded_pairing_path is not None:
+                if expected_excluded_pairing_sha256 is None:
+                    raise ValueError(
+                        f"Excluded primary {source_name} pairing requires a SHA-256 pin"
+                    )
+                excluded_payload = _load_json(excluded_pairing_path)
+                validate_matched_wrong_image_pairing(
+                    excluded_payload,
+                    dataset_size=len(dataset),
+                    content_ids_sha256=_content_ids_sha256(content_ids),
+                )
+                actual_excluded_sha = matched_wrong_image_pairing_sha256(excluded_payload)
+                if (
+                    _sha256_file(excluded_pairing_path) != expected_excluded_pairing_sha256
+                    or actual_excluded_sha != expected_excluded_pairing_sha256
+                ):
+                    raise ValueError(f"Excluded primary {source_name} pairing differs from its pin")
+                excluded_indices = sorted(
+                    {
+                        int(index)
+                        for pair in excluded_payload["pairs"]
+                        for index in (pair["recipient"], pair["donor"])
+                    }
+                )
+                exclusion_identity = {
+                    "path": str(excluded_pairing_path),
+                    "sha256": actual_excluded_sha,
+                    "excluded_recipient_and_donor_count": len(excluded_indices),
+                    "excluded_indices_sha256": _canonical_sha256(excluded_indices),
+                }
             if path.exists():
                 if expected_sha256 is None:
                     raise ValueError(
@@ -577,6 +657,7 @@ def _load_or_build_pairing(
                     seed=seed,
                     content_ids=content_ids,
                     epoch=0,
+                    excluded_selection_indices=excluded_indices,
                 )
                 provenance = "built"
                 persist_pairing = True
@@ -588,6 +669,17 @@ def _load_or_build_pairing(
                 epoch=0,
                 content_ids_sha256=_content_ids_sha256(content_ids),
             )
+            selected_indices = {
+                int(index)
+                for pair in payload["pairs"]
+                for index in (pair["recipient"], pair["donor"])
+            }
+            overlap = selected_indices & set(excluded_indices)
+            if overlap:
+                raise ValueError(
+                    f"{source_name} pairing overlaps its excluded primary population: "
+                    f"{sorted(overlap)[:10]}"
+                )
             pairing_sha256 = matched_wrong_image_pairing_sha256(payload)
             if expected_sha256 is not None and pairing_sha256 != expected_sha256:
                 raise ValueError(
@@ -601,6 +693,7 @@ def _load_or_build_pairing(
                 "payload": payload,
                 "sha256": pairing_sha256,
                 "provenance": provenance,
+                "exclusion_identity": exclusion_identity,
             }
         except Exception as error:  # noqa: BLE001 - every rank-zero failure must be propagated.
             packet[0] = {"ok": False, "error": f"{type(error).__name__}: {error}"}
@@ -623,7 +716,12 @@ def _load_or_build_pairing(
         raise RuntimeError("Broadcast pairing SHA-256 differs from its payload")
     if expected_sha256 is not None and pairing_sha != expected_sha256:
         raise RuntimeError(f"Broadcast {source_name} pairing SHA-256 differs from its expected pin")
-    return payload, pairing_sha, str(result["provenance"])
+    return (
+        payload,
+        pairing_sha,
+        str(result["provenance"]),
+        result.get("exclusion_identity"),
+    )
 
 
 def _assert_batches_match(correct: Mapping[str, Any], wrong: Mapping[str, Any]) -> None:
@@ -965,6 +1063,12 @@ def _native_checkpoint_load_coverage(train_module: Any, state_dir: Path) -> dict
                     f"Native {label} load target {key!r} shape {tuple(target.size())} differs "
                     f"from checkpoint shape {tuple(tensor_metadata.size)}"
                 )
+            metadata_numel = math.prod(int(size) for size in tensor_metadata.size)
+            if target.numel() != metadata_numel:
+                raise RuntimeError(
+                    f"Native {label} load target {key!r} numel {target.numel()} differs "
+                    f"from checkpoint numel {metadata_numel}"
+                )
 
     model_parts = getattr(train_module, "model_parts", None)
     if not isinstance(model_parts, Sequence) or not model_parts:
@@ -1038,6 +1142,44 @@ def _native_checkpoint_load_coverage(train_module: Any, state_dir: Path) -> dict
             f"{multiply_mapped[:10]}"
         )
 
+    prepared_model_keys = set(eval_state) | set(frozen_tensors)
+    unused_prepared_keys = sorted(prepared_model_keys - covered_keys)
+    if unused_prepared_keys:
+        raise RuntimeError(
+            "Native checkpoint prepares model tensors not assigned to current parameters: "
+            f"{unused_prepared_keys[:10]}"
+        )
+
+    def model_bearing_key(key: str) -> bool:
+        return key.endswith(".main") or key.startswith(("frozen_model.", "model_buffer.", "model."))
+
+    def logical_model_name(key: str) -> str:
+        if key.startswith("frozen_model."):
+            return key.removeprefix("frozen_model.")
+        if key.endswith(".main"):
+            key = key.removesuffix(".main")
+            return key.removeprefix("module.")
+        return key
+
+    consumed_keys = covered_keys | set(persistent_buffers)
+    unused_model_bearing = {
+        key for key in checkpoint_keys - consumed_keys if model_bearing_key(key)
+    }
+    authoritative_main_names = {
+        logical_model_name(key) for key in covered_keys if key.endswith(".main")
+    }
+    shadowed_frozen_keys = {
+        key
+        for key in unused_model_bearing
+        if key.startswith("frozen_model.") and logical_model_name(key) in authoritative_main_names
+    }
+    unexpected_unused_model_keys = sorted(unused_model_bearing - shadowed_frozen_keys)
+    if unexpected_unused_model_keys:
+        raise RuntimeError(
+            "Native checkpoint contains unused model-bearing keys: "
+            f"{unexpected_unused_model_keys[:10]}"
+        )
+
     report = {
         "complete": True,
         "checkpoint_key_count": len(checkpoint_keys),
@@ -1051,6 +1193,9 @@ def _native_checkpoint_load_coverage(train_module: Any, state_dir: Path) -> dict
         "frozen_state_key_count": len(frozen_parameters),
         "persistent_buffer_count": len(persistent_buffers),
         "persistent_buffer_keys_sha256": _canonical_sha256(sorted(persistent_buffers)),
+        "shadowed_frozen_key_count": len(shadowed_frozen_keys),
+        "shadowed_frozen_keys_sha256": _canonical_sha256(sorted(shadowed_frozen_keys)),
+        "unused_model_bearing_key_count": 0,
         "prepared_load_key_count": len(
             set(eval_state) | set(frozen_tensors) | set(persistent_buffers)
         ),
@@ -1162,11 +1307,24 @@ def main(argv: Sequence[str] | None = None) -> None:
         expected_pairing_sha256 = _parse_expected_pairing_sha256(
             args.expected_pairing_sha256, args.sources
         )
+        excluded_pairing_paths = _parse_pairing_paths(
+            args.exclude_pairing, option_name="--exclude-pairing"
+        )
+        unexpected_exclusions = sorted(set(excluded_pairing_paths) - set(args.sources))
+        if unexpected_exclusions:
+            raise ValueError(
+                f"Excluded pairings were supplied for disabled sources: {unexpected_exclusions}"
+            )
+        expected_excluded_pairing_sha256 = _parse_expected_pairing_sha256(
+            args.expected_exclude_pairing_sha256, args.sources
+        )
         _preflight_artifact_paths_distributed(
             output=output,
             overwrite_output=args.overwrite_output,
             pairing_paths=pairing_paths,
             expected_pairing_sha256=expected_pairing_sha256,
+            excluded_pairing_paths=excluded_pairing_paths,
+            expected_excluded_pairing_sha256=expected_excluded_pairing_sha256,
         )
         checkpoint_identity = _checkpoint_identity_distributed(
             checkpoint,
@@ -1208,7 +1366,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         pairing_payloads: dict[str, Mapping[str, Any]] = {}
         pairings: dict[str, Any] = {}
         for source in args.sources:
-            pairing, pairing_sha, provenance = _load_or_build_pairing(
+            pairing, pairing_sha, provenance, exclusion_identity = _load_or_build_pairing(
                 datasets[source],
                 path=pairing_paths[source],
                 source_name=source,
@@ -1216,6 +1374,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 examples=args.examples,
                 seed=pairing_seed,
                 content_ids=content_ids,
+                excluded_pairing_path=excluded_pairing_paths.get(source),
+                expected_excluded_pairing_sha256=expected_excluded_pairing_sha256.get(source),
             )
             pairing_payloads[source] = pairing
             coverage = pairing.get("coverage")
@@ -1235,6 +1395,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "donor_indices_sha256": _canonical_sha256(
                     [pair["donor"] for pair in pairing["pairs"]]
                 ),
+                "excluded_primary_pairing": exclusion_identity,
             }
 
         model, module_config = _build_model_and_module(
@@ -1314,7 +1475,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             ),
             "pairing_rule": (
                 "distinct pinned content and materialized pixels; identical image tensor shape "
-                "and byte-identical pooled_patches_idx; explicit unique donors"
+                "and byte-identical pooled_patches_idx; explicit unique donors; when an "
+                "excluded primary pairing is supplied, none of its recipients or donors may "
+                "be selected"
             ),
             "recipient_replay": "correct and wrong forwards use exactly the same recipients",
             "response_logits": "only positive-loss-mask positions are materialized",
@@ -1370,6 +1533,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "artifact_policy": {
                 "existing_pairing_requires_sha256_pin": True,
                 "expected_pairing_sha256": expected_pairing_sha256,
+                "expected_excluded_pairing_sha256": expected_excluded_pairing_sha256,
                 "output_overwrite_enabled": args.overwrite_output,
             },
             "protocol": protocol,

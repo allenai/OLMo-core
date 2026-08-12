@@ -244,6 +244,41 @@ def test_matched_wrong_image_pairing_reports_deterministic_selection_coverage():
         validate_matched_wrong_image_pairing(unordered)
 
 
+def test_matched_wrong_image_pairing_excludes_primary_recipients_and_donors():
+    rows = [_row(index) for index in range(12)]
+    dataset = _MutableMultimodalDataset(rows)
+    primary = build_matched_wrong_image_pairing(
+        dataset, recipient_count=4, seed=1, content_ids=_content_ids(len(rows))
+    )
+    primary_population = {
+        index for pair in primary["pairs"] for index in (pair["recipient"], pair["donor"])
+    }
+
+    independent = build_matched_wrong_image_pairing(
+        dataset,
+        recipient_count=2,
+        seed=2,
+        content_ids=_content_ids(len(rows)),
+        excluded_selection_indices=sorted(primary_population),
+    )
+    independent_population = {
+        index for pair in independent["pairs"] for index in (pair["recipient"], pair["donor"])
+    }
+
+    assert not primary_population & independent_population
+    assert independent["coverage"]["dataset_count"] == len(rows)
+    validate_matched_wrong_image_pairing(independent)
+
+    with pytest.raises(OLMoConfigurationError, match="excluded selection indices"):
+        build_matched_wrong_image_pairing(
+            dataset,
+            recipient_count=2,
+            seed=2,
+            content_ids=_content_ids(len(rows)),
+            excluded_selection_indices=[len(rows)],
+        )
+
+
 def test_matched_wrong_image_pairing_fails_closed_on_insufficient_pairs_and_drift():
     singleton_geometry = _MutableMultimodalDataset([_row(0, pooled=(0, 1)), _row(1, pooled=(1, 0))])
     with pytest.raises(OLMoConfigurationError, match="select enough validation rows"):
