@@ -234,7 +234,7 @@ def main():
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
     ap.add_argument(
         "--ladder-version",
-        choices=["v2"],
+        choices=["v2", "v3"],
         default="v2",
         help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
         "500 questions/answers and only distractors vary (reads the "

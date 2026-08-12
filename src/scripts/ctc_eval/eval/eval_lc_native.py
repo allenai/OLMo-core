@@ -49,7 +49,7 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2", "v3", "fast"], default="v2",
                     help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
                          "500 questions/answers and only the distractor documents vary, read "
                          "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
@@ -384,21 +384,85 @@ def main():
             "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/eval",
             "/scratch/users/prasann/cpt_data/eval500_v2",
         ]
+        # ---- V3 (train/eval IID) bundle --------------------------------------------------
+        # v3 == v2 with ONE change: contradiction's rungs are `realistic`-mode, matching the
+        # perturbation generator the training data actually used. v2 scores a realistic-trained
+        # model on `both`-mode gold (Jaccard 0.388 with 38% of pairs >0.5, i.e. largely
+        # near-duplicate detection) against training's 0.306 with a hard 0.500 cap and zero mass
+        # above it. On the CTC checkpoint that mismatch alone was worth 0.559 -> 0.946 f1 at n=762.
+        # nq / rerank / oolong / outlier rungs are UNCHANGED: all four were audited 2026-08-11 and
+        # are already in-distribution (see records/contradiction-train-eval-non-iid.md §2b).
+        # v3 contradiction numbers are NOT comparable to v2 ones -- different eval set, report in
+        # its own column.
+        _V3_BUNDLE = ("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
+                      "_eval_bundle_eval500_v3")
         E5 = os.environ.get("EVAL500_ROOT")
         if not E5:
             E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
-            print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version=v2)", flush=True)
-        if args.ladder_version == "v2":
+            print(f"[ladder] EVAL500_ROOT unset -> {E5} "
+                  f"(ladder_version={args.ladder_version})", flush=True)
+        # Only CONTRADICTION differs between v2 and v3, so v3 overrides just that task's root and
+        # keeps reading nq/outlier/oolong/rerank from the v2 bundle. Pointing the whole root at v3
+        # would orphan those four (they would resolve to a directory that does not contain them and
+        # every rung would read MISSING) and would mean duplicating multi-GB xlong files for no
+        # reason. Override with EVAL500_CONTRA_ROOT if the v3 contra files live elsewhere.
+        E5_CONTRA = E5
+        if args.ladder_version == "v3":
+            E5_CONTRA = os.environ.get("EVAL500_CONTRA_ROOT", _V3_BUNDLE)
+            print(f"[ladder] ladder_version=v3 -> contradiction from {E5_CONTRA}; "
+                  f"all other tasks from {E5}", flush=True)
+        # ---- FAST (shared-corpus) bundle -------------------------------------------------
+        # Many queries share one corpus, so the shared part is prefilled once. NOT comparable to a
+        # v2 number: rebuilding an eval set this way moves scores on its own (outlier +0.215/+0.261
+        # and contradiction -0.102..-0.175 for the ORIGINAL prefix+tail build; the outlier rungs
+        # here use a different construction that puts the answer back in the shared prefix). Report
+        # fast numbers in their own column, never beside a v2 one.
+        _FAST_BUNDLE = ("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
+                        "_eval_bundle_eval500_v2_fast")
+        if args.ladder_version == "fast" and not os.environ.get("EVAL500_ROOT"):
+            E5 = _FAST_BUNDLE
+            print(f"[ladder] ladder_version=fast -> {E5}", flush=True)
+
+        if args.ladder_version == "fast":
+            # Filenames encode the construction, not the corpus size: contradiction is prefix+tail
+            # with a 10% tail, outlier plants its candidates in the shared prefix and eliminates
+            # them from the tail, and nq/rerank/oolong are query-multiplexed.
+            _FAST_SUFFIX = {"contradiction": "tail10", "outlier": "planted",
+                            "nq": "mux", "rerank": "mux", "oolong": "mux"}
+            _FAST_BASE = [("8k", 8192), ("16k", 16384), ("32k", 32768)]
+            _FAST_XL = [("64k", 65536), ("128k", 131072), ("256k", 262144),
+                        ("512k", 524288), ("1M", 1048576)]
+            _rungs = _FAST_BASE + (_FAST_XL if args.xlong else [])
+            LADDERS = {}
+            for _t, _sfx in _FAST_SUFFIX.items():
+                # Every task runs the full 8k..1M ladder here. rerank reaches 32k in this bundle
+                # even though its RELIABLE ladder stops at 16k: multiplexing pools several queries
+                # into one corpus, so the corpus size is no longer capped by any single query's
+                # CE-filtered hard-negative pool.
+                LADDERS[_t] = [
+                    (_lab, os.path.join(E5, _t, f"rung_{_tok}_{_sfx}.jsonl"))
+                    for _lab, _tok in _rungs
+                ]
+            # ⚠ outlier's 8k rung leaks. The answer's topic is the one candidate the per-query tail
+            # does not top up, and an 8k corpus holds too few topics for that absence to hide in:
+            # guessing among the topics missing from the tail scores 0.203 there, against ~0.09
+            # chance. It decays with length (0.090 at 16k, 0.048 at 32k, 0.0015 at 1M).
+            # ⚠ oolong is eval_size=100 at every rung, a fifth of the 500 floor -- quote the size
+            # and its error bar (~±0.046 at 0.7) inline next to any oolong number from this bundle.
+        elif args.ladder_version in ("v2", "v3"):
             # v2: every rung of a task shares the SAME >=500 questions/answers; only the
             # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
             # under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle). oolong rungs are
             # freshly synthesized so they are DISJOINT from training (the v1 oolong eval overlapped
             # its own train split) while keeping the same question-type + corpus-type distribution.
+            # v2 -> `both`-mode contradiction gold; v3 -> `realistic`, matching the training
+            # generator. This one token is the whole v2/v3 difference.
+            _CM = "realistic" if args.ladder_version == "v3" else "both"
             LADDERS = {
-                "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
-                    ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
-                    ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-                    ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
+                "contradiction": [("2k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
+                    ("8k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n190_k3.jsonl"),
+                    ("16k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n385_k3.jsonl"),
+                    ("32k", f"{E5_CONTRA}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl")],
                 "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
                     ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
                     ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
