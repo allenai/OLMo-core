@@ -34,6 +34,7 @@ QWEN3_BUILDERS = {
 # Keyed on (text hidden_size, text num_hidden_layers).
 QWEN35_BUILDERS = {
     (1024, 24): "qwen3_5_0_8B",
+    (2048, 24): "qwen3_5_2B",
     (2560, 32): "qwen3_5_4B",
     (4096, 32): "qwen3_5_9B",
     (5120, 64): "qwen3_5_27B",

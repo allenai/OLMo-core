@@ -152,6 +152,7 @@ FAMILY_TOKENIZER = {
 MODEL_FACTORIES = {
     "qwen3_5": {
         "0.8b": TransformerConfig.qwen3_5_0_8B,
+        "2b": TransformerConfig.qwen3_5_2B,
         "4b": TransformerConfig.qwen3_5_4B,
         "9b": TransformerConfig.qwen3_5_9B,
     },
@@ -448,8 +449,10 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
 #: Scales that need FULL parameter sharding + activation checkpointing to fit 40960 on an 80GB
 #: H100 (proven OOM on jupiter: 76.71 GiB allocated then OOM in the first dry-run batch at
 #: shard_degree=1 / no AC). 0.8B already fits at shard_degree=1 / no AC on 141GB H200s -- keep it
-#: on that path so its proven runs don't change.
-_LARGE_SCALES = ("4b", "9b")
+#: on that path so its proven runs don't change. 2B is grouped with the large scales: it is 2.4B
+#: params and the model-scale study runs it on 80GB A100s, where even 0.8B needs full sharding +
+#: AC at 40960 (lambda_cluster.md).
+_LARGE_SCALES = ("2b", "4b", "9b")
 
 
 def resolve_activation_checkpointing(opts: argparse.Namespace) -> str:

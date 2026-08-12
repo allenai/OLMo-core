@@ -1,0 +1,33 @@
+2026-08-12T09:47:26-07:00	ctcms-contradiction-full-08b	contradiction	full	0.8b	40960	laneA	preemptive_high	110071
+2026-08-12T09:47:27-07:00	ctcms-contradiction-cmix-08b	contradiction	chunked-mix	0.8b	40960	laneB	preemptive	110072
+2026-08-12T09:47:28-07:00	ctcms-hotpotqa-full-08b	hotpotqa	full	0.8b	26112	laneC	normal	110073
+2026-08-12T09:47:28-07:00	ctcms-hotpotqa-cmix-08b	hotpotqa	chunked-mix	0.8b	26112	laneA	preemptive_high	110074
+2026-08-12T09:47:29-07:00	ctcms-reorder-full-08b	reorder	full	0.8b	40960	laneB	preemptive	110075
+2026-08-12T09:47:30-07:00	ctcms-reorder-cmix-08b	reorder	chunked-mix	0.8b	40960	laneC	normal	110076
+2026-08-12T09:47:30-07:00	ctcms-qdmatch_nq-full-08b	qdmatch_nq	full	0.8b	33792	laneA	preemptive_high	110077
+2026-08-12T09:47:31-07:00	ctcms-qdmatch_nq-cmix-08b	qdmatch_nq	chunked-mix	0.8b	33792	laneB	preemptive	110078
+2026-08-12T09:52:57-07:00	ctcms-qdmatch_nq-full-4b	qdmatch_nq	full	4b	33792	mooney	jsteinhardt	3439642
+2026-08-12T09:52:57-07:00	ctcms-qdmatch_nq-cmix-4b	qdmatch_nq	chunked-mix	4b	33792	mooney	jsteinhardt	3439643
+2026-08-12T09:52:57-07:00	ctcms-hotpotqa-full-4b	hotpotqa	full	4b	26112	mooney	jsteinhardt	3439644
+2026-08-12T10:04:19-07:00	ctcms-contradiction-full-2b	contradiction	full	2b	40960	laneA	preemptive_high	110079
+2026-08-12T10:04:20-07:00	ctcms-contradiction-cmix-2b	contradiction	chunked-mix	2b	40960	laneB	preemptive	110080
+2026-08-12T10:04:20-07:00	ctcms-hotpotqa-full-2b	hotpotqa	full	2b	26112	laneC	normal	110081
+2026-08-12T10:04:21-07:00	ctcms-hotpotqa-cmix-2b	hotpotqa	chunked-mix	2b	26112	laneA	preemptive_high	110082
+2026-08-12T10:04:22-07:00	ctcms-reorder-full-2b	reorder	full	2b	40960	laneB	preemptive	110083
+2026-08-12T10:04:23-07:00	ctcms-reorder-cmix-2b	reorder	chunked-mix	2b	40960	laneC	normal	110084
+2026-08-12T10:04:23-07:00	ctcms-qdmatch_nq-full-2b	qdmatch_nq	full	2b	33792	laneA	preemptive_high	110085
+2026-08-12T10:04:24-07:00	ctcms-qdmatch_nq-cmix-2b	qdmatch_nq	chunked-mix	2b	33792	laneB	preemptive	110086
+2026-08-12T10:04:50-07:00	ctcms-contradiction-full-08b	contradiction	full	0.8b	40960	laneA	preemptive_high	110087	RESUBMIT
+2026-08-12T10:04:51-07:00	ctcms-contradiction-cmix-08b	contradiction	chunked-mix	0.8b	40960	laneB	preemptive	110088	RESUBMIT
+2026-08-12T10:07:46-07:00	lengthgen-contradiction-4b-dense	contradiction	full	4b	65536,131072	cubbins	jsteinhardt	3439662
+2026-08-12T10:07:46-07:00	lengthgen-niah-4b-dense	niah	full	4b	65536,131072	cubbins	jsteinhardt	3439663
+2026-08-12T10:07:47-07:00	lengthgen-nq-4b-dense	nq	full	4b	65536,131072	cubbins	jsteinhardt	3439664
+2026-08-12T10:10:51-07:00	ctcms-qdmatch_nq-full-08b	qdmatch_nq	full	0.8b	33792	laneA	preemptive_high	110089	REPAIRED-SHARD
+2026-08-12T10:10:52-07:00	ctcms-qdmatch_nq-cmix-08b	qdmatch_nq	chunked-mix	0.8b	33792	laneB	preemptive	110090	REPAIRED-SHARD
+2026-08-12T10:10:52-07:00	ctcms-qdmatch_nq-full-2b	qdmatch_nq	full	2b	33792	laneC	normal	110091	REPAIRED-SHARD
+2026-08-12T10:10:53-07:00	ctcms-qdmatch_nq-cmix-2b	qdmatch_nq	chunked-mix	2b	33792	laneA	preemptive_high	110092	REPAIRED-SHARD
+2026-08-12T10:11:05-07:00	ctcms-qdmatch_nq-full-4b-r2	qdmatch_nq	full	4b	33792	mooney	jsteinhardt	3439775	REPAIRED-SHARD
+2026-08-12T10:11:05-07:00	ctcms-qdmatch_nq-cmix-4b-r2	qdmatch_nq	chunked-mix	4b	33792	mooney	jsteinhardt	3439776	REPAIRED-SHARD
+2026-08-12T10:52:52-07:00	ctcms-qdmatch_nq-full-4b-r3	qdmatch_nq	full	4b	33792	sneetches	jsteinhardt	3440286	REPAIRED-SHARD;mooney-drng
+2026-08-12T10:52:53-07:00	ctcms-qdmatch_nq-cmix-4b-r3	qdmatch_nq	chunked-mix	4b	33792	sneetches	jsteinhardt	3440287	REPAIRED-SHARD;mooney-drng
+2026-08-12T10:54:26-07:00	outlier_fixedM-databuild	outlier_fixedM	-	-	-	sneetches	jsteinhardt	data-build	K=3-pinned

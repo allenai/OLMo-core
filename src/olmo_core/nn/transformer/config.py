@@ -1486,6 +1486,21 @@ class TransformerConfig(ModelConfig):
         )
 
     @classmethod
+    def qwen3_5_2B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
+        return cls.qwen3_5_like(
+            d_model=2048,
+            vocab_size=vocab_size,
+            n_layers=kwargs.pop("n_layers", 24),
+            n_heads=kwargs.pop("n_heads", 8),
+            n_kv_heads=kwargs.pop("n_kv_heads", 2),
+            head_dim=kwargs.pop("head_dim", 256),
+            intermediate_size=kwargs.pop("intermediate_size", 6144),
+            linear_num_key_heads=kwargs.pop("linear_num_key_heads", 16),
+            linear_num_value_heads=kwargs.pop("linear_num_value_heads", 16),
+            **kwargs,
+        )
+
+    @classmethod
     def qwen3_5_4B(cls, vocab_size: int, **kwargs) -> "TransformerConfig":
         return cls.qwen3_5_like(
             d_model=2560,
