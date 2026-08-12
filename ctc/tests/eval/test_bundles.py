@@ -222,3 +222,21 @@ def test_plan_carries_the_grading_spec_not_just_the_ladder_name():
     item = next(i for i in cli.plan(_args(tasks="contra_fever")) if i["rung"] == "2k")
     assert item["task"] == "contra_fever"
     assert item["spec"] == "contradiction"
+
+
+def test_every_registered_bundle_declares_its_results_hub_series():
+    """``eval_version`` is a facet, so a bundle that does not name its series produces rows that
+    cannot be filtered apart from another series' rows."""
+    for name, bundle in bundles.BUNDLES.items():
+        assert bundle.ladder_version, f"registered bundle {name} declares no ladder_version"
+    assert bundles.BUNDLES["fast"].ladder_version == "fast"
+    assert bundles.BUNDLES["v2"].ladder_version == "v2"
+    assert bundles.BUNDLES["v2_clean"].ladder_version == "v2"
+
+
+def test_an_ad_hoc_bundle_refuses_to_guess_its_series():
+    """A staged path may hold anything. Deriving the facet from ``kind`` would tag it ``v2`` and
+    file it into the reliable series -- the mislabelling the ``_meta`` block exists to prevent."""
+    adhoc = bundles.get_bundle("/data/somewhere/_eval_bundle_staged_copy")
+    assert adhoc.kind == "reliable"  # the default, and exactly why it must not imply a series
+    assert adhoc.ladder_version is None

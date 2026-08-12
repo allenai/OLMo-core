@@ -35,6 +35,7 @@ for _src in (_REPO / "src", _REPO / "ctc" / "src"):
         sys.path.insert(0, str(_src))
 
 from ctc.eval import bundles  # noqa: E402
+from ctc.eval.backends import base as backends  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _launch import pushed_head  # noqa: E402
@@ -42,6 +43,12 @@ from _launch import pushed_head  # noqa: E402
 #: Default results root on weka, alongside the checkpoints rather than in a separate tree -- a
 #: results file is only interpretable next to the checkpoint that produced it.
 RESULTS_SUBDIR = "ctc_eval"
+
+#: Where ``--check-bundle`` points its (unused) results directory. That mode passes ``--dry-run``
+#: to the eval and writes nothing, so it must not create -- let alone default to -- a results
+#: directory shared by every checkpoint: result filenames carry no run name, so a shared directory
+#: is precisely where two checkpoints' numbers overwrite each other.
+CHECK_BUNDLE_RESULTS = "/tmp/ctc-eval-check-bundle"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,7 +84,22 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("full", "chunked", "landmark"),
         help="attention mask to grade under. Must match how the checkpoint was trained.",
     )
+    ap.add_argument(
+        "--backend",
+        default=None,
+        choices=sorted(backends.BACKENDS),
+        help="generation backend. Default: the first one installed on the node, preferring "
+        "native, then vllm, then hf -- and the standard image always has native, so vllm is "
+        "unreachable unless it is named here.",
+    )
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
+    ap.add_argument(
+        "--mem-freq",
+        type=int,
+        default=63,
+        help="(landmark only) block size = mem-freq + 1, default 63. Must match training: a "
+        "landmark checkpoint trained with another block size is ungradable without this.",
+    )
     ap.add_argument("--max-length", type=int, default=40960)
     ap.add_argument(
         "--query-position",
@@ -97,14 +119,25 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--share-prefix",
         action="store_true",
-        help="reuse each corpus group's shared-prefix KV. Only does anything on --bundle fast.",
+        help="reuse each corpus group's shared-prefix KV. Only does anything on --bundle fast, "
+        "and only the native backend implements it -- pairing it with --backend vllm/hf is "
+        "rejected here rather than on the node.",
     )
     ap.add_argument(
         "--results-dir",
         default="",
-        help=f"absolute weka results dir (default <ckpt>/../{RESULTS_SUBDIR})",
+        help="absolute weka results dir. Default: beside the checkpoint, in "
+        f"<ckpt>/../{RESULTS_SUBDIR} -- i.e. the run's own directory, never one shared with "
+        "other runs.",
     )
     ap.add_argument("--tag", default="", help="extra label in result filenames")
+    ap.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace results in --results-dir that a different checkpoint, bundle or "
+        "query-position wrote. Without it the eval refuses at startup and names both, since the "
+        "filenames cannot distinguish them; the usual answer is --tag, not this.",
+    )
     ap.add_argument("--gpus", type=int, default=1, help="GPUs (the 4B model fits on one)")
     ap.add_argument(
         "--priority",
@@ -124,9 +157,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--keep-going",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="record a failed rung and continue (default on for a sweep)",
+        help="record a failed rung and continue. On by default, which is the opposite of the "
+        "ctc-eval default and deliberate: a Beaker job is unattended and a sweep is many rungs, "
+        "so stopping at the first failure throws away every rung that already succeeded. Pass "
+        "--no-keep-going to stop on the first failure, e.g. when debugging one rung. Note the "
+        "job still exits non-zero if anything failed.",
     )
     ap.add_argument(
         "--check-bundle",
@@ -136,6 +173,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--dry-run", action="store_true", help="print the command, do not submit")
     return ap
+
+
+def default_results_dir(args: argparse.Namespace, root_dir: str) -> str:
+    """
+    Where results land when ``--results-dir`` was not given.
+
+    Always *beside the checkpoint* -- ``<the directory holding stepN>/ctc_eval``. Both branches
+    below compute the same thing, because ``--ckpt`` points at a ``stepN`` inside the run
+    directory; they differ only in whether the run directory is known by name or by path.
+
+    The rejected alternative was a shared ``checkpoints/prasanns/ctc_eval`` for the ``--ckpt``
+    case. Result filenames carry the task, rung and mask but not the run, so a directory shared
+    between checkpoints is one where two runs' numbers overwrite each other -- the collision
+    :func:`ctc.eval.cli.collisions` now refuses at startup, here avoided outright.
+
+    :param args: Parsed arguments.
+    :param root_dir: The cluster's weka root.
+
+    :returns: An absolute directory path for ``--out``.
+    """
+    if args.ckpt:
+        return f"{Path(args.ckpt).parent}/{RESULTS_SUBDIR}"
+    if args.run_name:
+        return f"{root_dir}/checkpoints/prasanns/{args.run_name}/{RESULTS_SUBDIR}"
+    # Only reachable under --check-bundle, which main() requires when neither is given.
+    return CHECK_BUNDLE_RESULTS
 
 
 def remote_command(args: argparse.Namespace, root_dir: str) -> str:
@@ -175,11 +238,7 @@ if [ -z "$CKPT" ]; then
   echo "FATAL: no complete stepN/model_and_optim under $RUN_DIR"; ls -la "$RUN_DIR" 2>&1 | head -20; exit 1
 fi"""
 
-    results = args.results_dir or (
-        f"{root_dir}/checkpoints/prasanns/{args.run_name}/{RESULTS_SUBDIR}"
-        if args.run_name
-        else f"{root_dir}/checkpoints/prasanns/{RESULTS_SUBDIR}"
-    )
+    results = args.results_dir or default_results_dir(args, root_dir)
 
     flags = [
         f"--tasks {args.tasks}",
@@ -188,13 +247,20 @@ fi"""
         f"--tokenizer {args.tokenizer}",
         f"--max-length {args.max_length}",
         f"--query-position {args.query_position}",
+        # Always passed, never conditionally: the block size silently changes what a landmark
+        # checkpoint is graded as, so the node's command should state it rather than inherit it.
+        f"--mem-freq {args.mem_freq}",
         f'--bundle "{bundle}"',
         f'--out "{results}"',
     ]
+    if args.backend:
+        flags.append(f"--backend {args.backend}")
     if args.share_prefix:
         flags.append("--share-prefix")
     if args.tag:
         flags.append(f"--tag {args.tag}")
+    if args.overwrite:
+        flags.append("--overwrite")
     if args.limit:
         flags.append(f"--limit {args.limit}")
     if args.ignore_format_fingerprint:
@@ -233,6 +299,13 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if not args.run_name and not args.ckpt and not args.check_bundle:
         raise SystemExit("pass a run_name, or --ckpt, or --check-bundle")
+    # ctc.eval.cli rejects this combination too, but only after the job has been queued, scheduled
+    # and started -- the same SystemExit is worth minutes here and an hour of turnaround there.
+    if args.share_prefix and args.backend not in (None, "native"):
+        raise SystemExit(
+            f"--share-prefix is implemented on the native backend only, not {args.backend!r}. "
+            "Drop --backend to take the node's default (native), or drop --share-prefix."
+        )
 
     from olmo_core.internal.common import build_launch_config, get_root_dir
     from olmo_core.launch.beaker import OLMoCoreBeakerImage

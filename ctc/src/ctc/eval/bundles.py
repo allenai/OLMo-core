@@ -407,6 +407,12 @@ class Bundle:
         one. The fast bundle needs this: its files are named for the construction that built them,
         and it carries only the tasks and rungs that construction supports, so inheriting the base
         ladder would resolve to filenames that do not exist.
+    :param ladder_version: The results-hub ``eval_version`` facet this bundle's numbers belong to,
+        or ``None`` when it is not known. Only the registered bundles below can answer this: an
+        ad-hoc ``--bundle /some/path`` may hold anything, so it leaves the field unset and the
+        person ingesting has to say. Deriving it from :attr:`kind` instead would tag every staged
+        or experimental bundle ``v2`` -- filing it into the reliable series, which is the precise
+        mislabelling the ``_meta`` block exists to prevent.
     :param description: One line, shown by ``--list-bundles``.
     """
 
@@ -415,6 +421,7 @@ class Bundle:
     kind: str = "reliable"
     xlong: Dict[str, Dict[str, str]] = field(default_factory=dict)
     ladders: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    ladder_version: Optional[str] = None
     description: str = ""
 
     def declares_own_ladder(self, task: str) -> bool:
@@ -441,6 +448,7 @@ BUNDLES: Dict[str, Bundle] = {
         name="v2_clean",
         root=f"{_WEKA}/_eval_bundle_eval500_v2_clean",
         xlong=_XLONG_V2_CLEAN,
+        ladder_version="v2",
         description=(
             "Default. The v2 ladder with contradiction rebuilt against a PubMed-only filler pool "
             "and its rungs recalibrated."
@@ -450,6 +458,7 @@ BUNDLES: Dict[str, Bundle] = {
         name="v2",
         root=f"{_WEKA}/_eval_bundle_eval500_v2",
         xlong=_XLONG_V2,
+        ladder_version="v2",
         description=(
             "The original v2 ladder, kept because existing results were produced against it -- "
             "including the 256k runs' xlong rungs. Its contradiction rungs overshoot their labels "
@@ -461,6 +470,7 @@ BUNDLES: Dict[str, Bundle] = {
         root=f"{_WEKA}/_eval_bundle_eval500_v2_fast",
         kind="fast",
         ladders=_FAST_LADDERS,
+        ladder_version="fast",
         description=(
             "Shared-corpus rungs, 8k-1M. contradiction shares 90% of its prefill; nq and rerank "
             "share every document but almost no token prefix. NOT comparable to a reliable "

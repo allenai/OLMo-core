@@ -19,6 +19,8 @@ rather than plausible numbers:
 * an over-long prompt **stops the run** instead of being skipped and scored 0.0;
 * a checkpoint whose training format does not match the eval format is **reported**, not assumed
   compatible;
+* a result file written by a *different* checkpoint, bundle or query position is **refused**
+  before the model loads, rather than silently replaced -- result names cannot tell those apart;
 * every result carries ``eval_size``, a standard error, and its ``parse_rate``.
 """
 
@@ -141,6 +143,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--tag", default="", help="extra label in the result filenames, e.g. the run name"
     )
     out.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace result files that a DIFFERENT checkpoint, bundle or query position wrote. "
+        "Off by default: those files have the same name as this run's and the difference is "
+        "invisible afterwards. Rerunning the same pass overwrites without needing this.",
+    )
+    out.add_argument(
         "--no-dump-generations",
         action="store_true",
         help="skip writing raw generations. Not recommended: every grading bug found in this "
@@ -257,10 +266,126 @@ def plan(args: argparse.Namespace) -> List[Dict[str, Any]]:
 
 
 def _result_path(out_dir: Path, item: Dict[str, Any], attn: str, tag: str) -> Path:
+    """
+    :param out_dir: Results directory.
+    :param item: One entry from :func:`plan`.
+    :param attn: The mask being graded under.
+    :param tag: The caller's ``--tag``, or ``""``.
+
+    :returns: Where this rung's result is written.
+
+    .. note::
+       The name carries the task, the rung and the mask -- **not** the checkpoint, the bundle or
+       the query position. That is deliberate and stays: the eval skills, the launch ledger and
+       results-hub's ingest all read these names, and silently widening the pattern would leave
+       every reader looking for files that no longer exist. The collision it allows is caught by
+       :func:`collisions` instead, which turns a silent overwrite into a startup error.
+    """
     stem = f"{item['task']}_{item['rung']}_{attn}"
     if tag:
         stem = f"{stem}_{tag}"
     return out_dir / f"{stem}.json"
+
+
+def _identity(bundle_root: str, query_position: str, ckpt: str) -> Dict[str, str]:
+    """
+    The fields that make two result files different *measurements* rather than a rerun of one.
+
+    Deliberately short. A rerun of the same pass -- same checkpoint, same eval data, same prompt
+    layout -- is a normal thing to want and must keep overwriting; only the axes that change what
+    the number means are compared.
+
+    :param bundle_root: The resolved bundle directory. The same rung label maps to different files
+        with different corpus sizes across bundles.
+    :param query_position: Where the question is rendered; a mismatch is a different measurement,
+        not noise (nq 0.860 -> 0.074).
+    :param ckpt: The checkpoint being graded.
+
+    :returns: The identity mapping, paths normalised so a trailing slash is not a difference.
+    """
+    return {
+        "bundle_root": str(Path(bundle_root)),
+        "query_position": query_position,
+        "ckpt": str(Path(ckpt)) if ckpt else "",
+    }
+
+
+def _identity_of(path: Path) -> Dict[str, str]:
+    """
+    Recover the identity of a result file already on disk.
+
+    Fields the file does not record are **omitted rather than defaulted**. A result written before
+    a field existed says nothing about it, and treating that silence as a value would either block
+    a legitimate rerun or wave a real collision through -- both worse than comparing less.
+
+    :param path: An existing result ``.json``.
+
+    :returns: Whichever identity fields the file records; possibly none.
+    """
+    try:
+        previous = json.loads(path.read_text())
+    except (OSError, ValueError):
+        # Unreadable, or not JSON at all. Refusing to run because a results directory happens to
+        # contain something else would be its own failure mode.
+        return {}
+    if not isinstance(previous, dict):
+        return {}
+    meta = previous.get("_meta") if isinstance(previous.get("_meta"), dict) else {}
+    prov = previous.get("provenance") if isinstance(previous.get("provenance"), dict) else {}
+    found: Dict[str, str] = {}
+    for key, value in (
+        # `bundle_root` is the modern field; `_meta.eval_bundle` is the same path and is what the
+        # older files carry.
+        ("bundle_root", previous.get("bundle_root") or meta.get("eval_bundle")),
+        ("query_position", meta.get("query_position") or prov.get("query_position")),
+        ("ckpt", prov.get("ckpt")),
+    ):
+        if isinstance(value, str) and value:
+            found[key] = value if key == "query_position" else str(Path(value))
+    return found
+
+
+def collisions(
+    todo: List[Dict[str, Any]],
+    out_dir: Path,
+    attn: str,
+    tag: str,
+    identity: Dict[str, str],
+) -> List[str]:
+    """
+    Find result files this run would overwrite with a *different* measurement.
+
+    Checked up front, before the checkpoint loads, for the same reason :func:`plan` is: the answer
+    is available in milliseconds and the alternative is discovering it after a rung that took
+    hours. It cannot stop two jobs racing into one directory, which is a different problem; it
+    does stop the case that has actually happened -- a second pass over the same checkpoint with
+    another bundle or query position, landing on the first pass's filenames.
+
+    :param todo: The resolved plan.
+    :param out_dir: Results directory.
+    :param attn: The mask being graded under.
+    :param tag: The caller's ``--tag``, or ``""``.
+    :param identity: This run's identity, from :func:`_identity`.
+
+    :returns: One human-readable block per colliding file, naming the value on disk and the value
+        this run would write. Empty when nothing would be lost.
+    """
+    report: List[str] = []
+    for item in todo:
+        path = _result_path(out_dir, item, attn, tag)
+        if not path.exists():
+            continue
+        previous = _identity_of(path)
+        # `identity.get(key, value)` so a field this run cannot state is not counted as differing.
+        differing = [key for key, value in previous.items() if identity.get(key, value) != value]
+        if not differing:
+            continue
+        lines = [f"  {path}"]
+        for key in differing:
+            lines.append(f"      on disk:  {key} = {previous[key]}")
+            lines.append(f"      this run: {key} = {identity.get(key, '?')}")
+        report.append("\n".join(lines))
+    return report
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -317,6 +442,32 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if not args.ckpt:
         ap.error("--ckpt is required (or use --list-tasks / --list-backends / --dry-run)")
+
+    if not args.overwrite:
+        clashes = collisions(
+            todo,
+            out_dir,
+            args.attn,
+            args.tag,
+            _identity(str(root), args.query_position, args.ckpt),
+        )
+        if clashes:
+            shown = clashes[:10]
+            more = (
+                f"\n  ... and {len(clashes) - len(shown)} more" if len(clashes) > len(shown) else ""
+            )
+            raise SystemExit(
+                f"{len(clashes)} result file(s) under {out_dir} were written by a different run "
+                "and would be overwritten:\n"
+                + "\n".join(shown)
+                + more
+                + "\n\nResult names are <task>_<rung>_<attn>[_<tag>].json -- they carry neither "
+                "the checkpoint nor the bundle, so these two passes cannot share one directory "
+                "and the survivor would be indistinguishable from the other.\n"
+                "  --tag <what distinguishes this pass>   keep both\n"
+                "  --out <dir>                            keep both, separate directories\n"
+                "  --overwrite                            replace them on purpose"
+            )
 
     backend_name = args.backend
     if backend_name is None:
@@ -425,10 +576,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         # coarse eval_version facet (v2 vs fast); the exact bundle goes in the pointer, because
         # v2 and v2_clean are different data under one facet value.
         payload["_meta"] = {
-            "ladder_version": "fast" if bundle.kind == "fast" else "v2",
             "eval_bundle": str(root),
             "query_position": args.query_position,
         }
+        # Only a registered bundle knows which series its numbers belong to. An ad-hoc
+        # `--bundle /some/path` stays silent rather than guessing: deriving the facet from `kind`
+        # would tag every staged bundle "v2" and file it into the reliable series, which is the
+        # mislabelling this block exists to prevent. Silent here means the ingester asks.
+        if bundle.ladder_version:
+            payload["_meta"]["ladder_version"] = bundle.ladder_version
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
