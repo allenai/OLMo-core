@@ -1,11 +1,17 @@
 """
-The pool shape shared by every retrieval-flavoured ladder: ``nq``, ``fiqa``, ``scifact``, ``rerank``.
+The pool shape shared by every retrieval-flavoured ladder: ``nq``, ``hotpotqa``, ``fiqa``,
+``scifact``, ``rerank``.
 
-Four corpora, four mining strategies, one shape -- a query, its gold document(s), a hardest-first
+Five corpora, five mining strategies, one shape -- a query, its gold document(s), a hardest-first
 list of *verified* hard negatives, and a corpus to draw ordinary distractors from. The
 pre-migration tree wrote the tag/shuffle/enumerate idiom eight times across seven files and mined
 hard negatives four different ways; only the mining genuinely differs, so only the mining is
 per-corpus.
+
+``hotpotqa`` is the one that does not mine at all: its candidates are the benchmark's own labelled
+distractors, so its cross-encoder pass only *ranks* them (see :mod:`ctc.data.sources.hotpotqa`).
+It is also the only one whose gold is reliably plural, which is why the multi-gold instruction and
+scoring paths have a ladder exercising them.
 
 .. warning::
    **A "hard negative" here is one that survived a relevance check.** BM25's top hits for a query

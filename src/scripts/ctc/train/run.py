@@ -54,6 +54,33 @@ def _check_base_is_a_checkpoint(base: str) -> None:
     )
 
 
+def _record_config(trainer, *configs) -> None:
+    """
+    Hand the assembled configuration to the ``config_saver`` callback.
+
+    The callback is attached in :mod:`recipe`, but it writes nothing until someone sets its
+    ``config`` -- it logs *"Config not set on ConfigSaverCallback, doing nothing"* and returns. So
+    every checkpoint this repo trained came out with ``model_and_optim/``, a fingerprint, and **no
+    ``config.json``**.
+
+    That is not cosmetic provenance. ``TransformerGenerationModule.from_checkpoint`` reads
+    ``<ckpt>/config.json`` to rebuild the model, so without it the native eval backend cannot load
+    the checkpoint at all: `ctc-eval` died before its first prompt on anything trained here. The
+    train->eval loop could not be closed until this was set.
+
+    :param trainer: The built trainer, whose callbacks the config is recorded on.
+    :param configs: ``(model, train_module, dataset, data_loader, trainer_cfg)``, in the order
+        :func:`recipe.build_experiment` returns them. Keys match olmo-core's own experiment config
+        so a reader -- and ``from_checkpoint``, which wants ``config_dict["model"]`` -- finds what
+        it expects.
+    """
+    saver = trainer.callbacks.get("config_saver")
+    if saver is None:  # a recipe that dropped the callback; nothing to record on
+        return
+    names = ("model", "train_module", "dataset", "data_loader", "trainer")
+    saver.config = {name: cfg.as_config_dict() for name, cfg in zip(names, configs)}
+
+
 def _save_folder(options: TrainOptions, root_dir: str) -> str:
     if options.save_folder:
         return options.save_folder
@@ -125,6 +152,7 @@ def run(options: TrainOptions, argv: List[str]) -> int:
     # already on the GPU -- because a Config has no __len__ for the instance-count check.
     loader = data_loader.build(dataset.build(work_dir))
     trainer = trainer_cfg.build(train_module_instance, loader)
+    _record_config(trainer, model, train_module, dataset, data_loader, trainer_cfg)
     trainer.fit()
     return 0
 

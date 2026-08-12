@@ -21,17 +21,26 @@ absent, not that the task is hard.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from itertools import combinations
-from typing import Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Callable, Dict, List, Mapping, Optional, Sequence, Set
 
+from ..format import metrics
 from ..format.registry import TaskSpec
 from .build import fingerprint, gold_fingerprint
 from .generators import base as generators
 from .schema import validate_all
 
-__all__ = ["AuditResult", "ProbeResult", "audit", "run_probes", "check_rung_sizes"]
+__all__ = [
+    "AuditResult",
+    "ProbeResult",
+    "audit",
+    "run_probes",
+    "check_rung_sizes",
+    "unmatched_by_lexical_overlap",
+]
 
 
 @dataclass
@@ -129,6 +138,18 @@ def _gold_positions(example: Mapping, spec: TaskSpec) -> List[int]:
 # ── shortcut probes ─────────────────────────────────────────────────────────────────────────────
 
 
+def _max_decile_chance(total: int) -> float:
+    """
+    :param total: Observations spread over the ten deciles.
+
+    :returns: What the *maximum* decile share scores when the observations are uniform. Uniform
+        data puts a tenth in each bin, but the max over ten noisy bins sits above 0.1, and more so
+        with few observations -- so a probe scored as "the heaviest decile" must be compared
+        against the expected maximum, not against the mean.
+    """
+    return min(1.0, 0.1 + 0.9 * (10 / total) ** 0.5) if total else 0.1
+
+
 def gold_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
     """
     Does gold sit at predictable positions? Measured as the largest share in any one decile.
@@ -139,7 +160,7 @@ def gold_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResu
     :param examples: Examples to probe.
     :param spec: Their task spec.
 
-    :returns: The probe result. Chance is 0.1.
+    :returns: The probe result, against :func:`_max_decile_chance`'s baseline.
     """
     deciles: Counter = Counter()
     for example in examples:
@@ -149,10 +170,9 @@ def gold_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResu
     if not total:
         return ProbeResult("gold_position_bias", 0.0, 0.1, "no gold indices")
     top, count = deciles.most_common(1)[0]
-    # Uniform gold puts a tenth in each decile, but the MAX over ten noisy bins sits above 0.1 --
-    # more so with few gold positions -- so the baseline is the expected maximum, not the mean.
-    chance = min(1.0, 0.1 + 0.9 * (10 / total) ** 0.5) if total else 0.1
-    return ProbeResult("gold_position_bias", count / total, chance, f"heaviest decile #{top}")
+    return ProbeResult(
+        "gold_position_bias", count / total, _max_decile_chance(total), f"heaviest decile #{top}"
+    )
 
 
 def gold_length_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
@@ -247,6 +267,225 @@ def closest_pair_is_gold(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeRe
     return ProbeResult("closest_pair_is_gold", score, chance, f"{hits}/{total} examples")
 
 
+#: Above this many documents the O(N^2) cross-corpus probe is skipped for that example. The probe
+#: is a heuristic over the *construction*, which does not change with the rung, so measuring it on
+#: the short rungs answers the question at a hundredth of the cost.
+PAIR_PROBE_MAX_DOCS = 300
+
+
+def _tokens(text: str) -> Set[str]:
+    """:param text: A document body. :returns: Its lowercased alphanumeric token set."""
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def unmatched_by_lexical_overlap(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
+    """
+    For ``xabsence``: can the unmatched claims be found by word overlap alone?
+
+    The task is supposed to require recognising a *paraphrase* across the corpus boundary. Score
+    every document by its best word-Jaccard against any document in the other corpus, take the ``k``
+    lowest, and ask how many of them are gold. A near-copy twin -- or the ``exact`` pool mode, whose
+    twin is byte-identical -- makes this 1.0, and the task is then a string match dressed up as a
+    semantic one.
+
+    :param examples: xabsence examples.
+    :param spec: The xabsence spec.
+
+    :returns: The probe result. Chance is ``k/n``: the share of gold recovered by naming ``k``
+        documents at random.
+    """
+    scores: List[float] = []
+    chances: List[float] = []
+    probed = 0
+    for example in examples:
+        docs = example["documents"]
+        gold = set(_gold_positions(example, spec))
+        if not gold or len(docs) < 3 or len(docs) > PAIR_PROBE_MAX_DOCS:
+            continue
+        probed += 1
+        sides = [doc.get("corpus", "A") for doc in docs]
+        tokens = [_tokens(doc["text"]) for doc in docs]
+        best: List[float] = []
+        for i, side in enumerate(sides):
+            others = [j for j in range(len(docs)) if sides[j] != side]
+            best.append(
+                max(
+                    (
+                        len(tokens[i] & tokens[j]) / max(1, len(tokens[i] | tokens[j]))
+                        for j in others
+                    ),
+                    default=0.0,
+                )
+            )
+        lowest = sorted(range(len(docs)), key=lambda i: best[i])[: len(gold)]
+        scores.append(len(gold & set(lowest)) / len(gold))
+        chances.append(len(gold) / len(docs))
+    score = sum(scores) / len(scores) if scores else 0.0
+    chance = sum(chances) / len(chances) if chances else 0.0
+    return ProbeResult(
+        "unmatched_by_lexical_overlap",
+        score,
+        chance,
+        f"{probed} example(s) at <= {PAIR_PROBE_MAX_DOCS} documents",
+    )
+
+
+def overlap_pair_is_gold(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
+    """
+    For the pair family: does ranking pairs by shared-word count alone find gold?
+
+    ``strmatch`` and ``redundancy`` both ask "which pairs of items stand in relation R?", and for
+    both there is a heuristic that never reads a word's position or meaning: score every pair by
+    how many words the two share, take the top one. This measures how often that pair is gold.
+
+    It is the same statistic that caught ``cycle``'s rarest-names shortcut, and it fires for two
+    very different reasons, which is why it is registered for both tasks and accepted for only one:
+
+    * on the pre-migration ``strmatch`` it scored **1.000** (200/200 on the shipped
+      ``rung_2048.jsonl``, chance 0.004) because gold shared exactly ``span_len`` words and the
+      hard negatives exactly one fewer -- the contiguity half of the criterion was decorative, and
+      the construction was fixed;
+    * on ``redundancy`` it scores well above chance because a paraphrase shares its original's
+      content words. That is the criterion showing through a blunt proxy, not an alternative route
+      to it, so it is recorded in :data:`ACCEPTED` with its number rather than fixed away.
+
+    :param examples: Pair-task examples.
+    :param spec: Their task spec.
+
+    :returns: The probe result. Chance is the mean share of pairs that are gold, i.e. what naming
+        one pair at random would score.
+    """
+    hits = probed = 0
+    chance_sum = 0.0
+    for example in examples:
+        docs = example["documents"]
+        gold = {tuple(sorted(pair)) for pair in (example.get("gold_doc_indices") or [])}
+        if not gold or len(docs) < 3 or len(docs) > PAIR_PROBE_MAX_DOCS:
+            continue
+        probed += 1
+        tokens = [_tokens(doc["text"]) for doc in docs]
+        pairs = list(combinations(range(len(docs)), 2))
+        best = max(pairs, key=lambda pair: len(tokens[pair[0]] & tokens[pair[1]]))
+        hits += tuple(sorted(p + spec.gold_index_base for p in best)) in gold
+        chance_sum += len(gold) / len(pairs)
+    score = hits / probed if probed else 0.0
+    chance = chance_sum / probed if probed else 0.0
+    return ProbeResult(
+        "overlap_pair_is_gold",
+        score,
+        chance,
+        f"{hits}/{probed} example(s) at <= {PAIR_PROBE_MAX_DOCS} documents",
+    )
+
+
+def reorder_display_order_leak(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
+    """
+    For ``reorder``: does the order the passages are *shown* in already carry the answer?
+
+    The whole task rests on one ``rng.shuffle``. A shuffle that is partial, biased, or accidentally
+    applied to the wrong list leaves display order correlated with source order, and a model that
+    answers ``[1, 2, 3, ...]`` without reading a word scores well on the suite's only Kendall-tau
+    metric. That failure would be invisible to every other check here: the data validates, the
+    permutation is a permutation, and only its *distribution* is wrong.
+
+    :param examples: reorder examples.
+    :param spec: The reorder spec.
+
+    :returns: The probe result. Score is the mean Kendall tau between ``gold_order`` and the
+        identity ordering, rescaled from ``[-1, 1]`` to ``[0, 1]``; chance is 0.5, since a uniform
+        permutation has expected tau 0. Passing the default margin means tau stayed below 0.4.
+    """
+    taus = []
+    for example in examples:
+        gold_order = example.get("gold_order") or []
+        if len(gold_order) < 3:
+            continue
+        taus.append(metrics.kendall_tau(list(range(1, len(gold_order) + 1)), list(gold_order)))
+    score = (sum(taus) / len(taus) + 1) / 2 if taus else 0.5
+    return ProbeResult(
+        "reorder_display_order_leak",
+        score,
+        0.5,
+        f"mean tau {2 * score - 1:+.3f} over {len(taus)} example(s)",
+    )
+
+
+def reorder_length_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
+    """
+    For ``reorder``: is a passage's length a clue to where it belongs?
+
+    The specific hazard is the trailing partial passage. Group consecutive sentences up to a word
+    target and the last group of every run is a short remainder; emit it and "the shortest passage
+    goes last" pins one position of the permutation for free, worth more Kendall tau the shorter
+    the rung. :func:`ctc.tasks.reorder.generate.passage_runs` drops it, and this is the check that
+    it still does.
+
+    :param examples: reorder examples.
+    :param spec: The reorder spec.
+
+    :returns: The probe result -- the heaviest decile of *source* position for the shortest passage
+        in each example, against the expected-maximum baseline for uniform data.
+    """
+    deciles: Counter = Counter()
+    for example in examples:
+        gold_order = example.get("gold_order") or []
+        docs = example["documents"]
+        if len(gold_order) != len(docs) or len(docs) < 3:
+            continue
+        # gold_order[source position] = display id, so this inverts it to lengths in source order.
+        lengths = [len(docs[display - 1]["text"]) for display in gold_order]
+        deciles[min(9, 10 * lengths.index(min(lengths)) // len(lengths))] += 1
+    total = sum(deciles.values())
+    if not total:
+        return ProbeResult("reorder_length_position_bias", 0.0, 0.1, "no gold_order")
+    top, count = deciles.most_common(1)[0]
+    return ProbeResult(
+        "reorder_length_position_bias",
+        count / total,
+        _max_decile_chance(total),
+        f"shortest passage sits in source decile #{top} most often",
+    )
+
+
+def qd_pair_position_bias(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeResult:
+    """
+    For ``qdmatch``: does a gold document sit at a predictable place in the document block?
+
+    The generic :func:`gold_position_bias` cannot see this task at all -- it reads
+    ``gold_doc_indices``, and qdmatch's gold is ``gold_pairs``. This measures the same property
+    over the right field, and *within the document block* rather than over the whole item list:
+    under the ``separate`` layout every document is in the back half by construction, so measuring
+    over all items would report a 0.2 concentration that means nothing.
+
+    :param examples: qdmatch examples.
+    :param spec: The qdmatch spec.
+
+    :returns: The probe result -- the heaviest decile of a gold document's rank among the document
+        items, against the expected-maximum baseline for uniform data.
+    """
+    deciles: Counter = Counter()
+    for example in examples:
+        docs = example["documents"]
+        positions = [i for i, item in enumerate(docs) if item.get("type") != "query"]
+        rank = {position: i for i, position in enumerate(positions)}
+        if len(positions) < 3:
+            continue
+        for pair in example.get("gold_pairs") or []:
+            index = pair[1] - spec.gold_index_base
+            if index in rank:
+                deciles[min(9, 10 * rank[index] // len(positions))] += 1
+    total = sum(deciles.values())
+    if not total:
+        return ProbeResult("qd_pair_position_bias", 0.0, 0.1, "no gold pairs")
+    top, count = deciles.most_common(1)[0]
+    return ProbeResult(
+        "qd_pair_position_bias",
+        count / total,
+        _max_decile_chance(total),
+        f"heaviest document-block decile #{top}",
+    )
+
+
 Probe = Callable[[Sequence[Mapping], TaskSpec], ProbeResult]
 
 #: task -> extra probes beyond the generic two.
@@ -255,18 +494,42 @@ PROBES: Dict[str, List[Probe]] = {
     "groups4": [closest_pair_is_gold],
     "mathmatch": [closest_pair_is_gold],
     "textgroups": [closest_pair_is_gold],
+    "strmatch": [overlap_pair_is_gold],
+    "redundancy": [overlap_pair_is_gold],
+    "xabsence": [unmatched_by_lexical_overlap],
+    # Keyed by LADDER name, like PROBES' other entries and like GENERATORS: the two qdmatch
+    # corpora are separate rows and either could regress on its own.
+    "reorder": [reorder_display_order_leak, reorder_length_position_bias],
+    "qdmatch_nq": [qd_pair_position_bias],
+    "qdmatch_hpqa": [qd_pair_position_bias],
 }
 
 #: Probes whose high score is a known property of the construction, not a defect. Recorded so a
 #: settled result is not rediscovered as a finding on every build.
 ACCEPTED: Dict[str, Dict[str, str]] = {
+    "redundancy": {
+        "overlap_pair_is_gold": (
+            "ACCEPTED: redundancy's gold IS a paraphrase pair, so the two sentences share content "
+            "words by definition and a bag-of-words ranking is a blunt version of the criterion "
+            "rather than a way around it. The construction bounds it as far as it can without an "
+            "LLM in the loop -- H=2K planted same-abstract non-redundant pairs, each the "
+            "highest-overlap pair its abstract offers, and gold above max_overlap word-Jaccard "
+            "dropped as a near duplicate -- and the residual is real, measured at matched size: "
+            "this probe scores 0.500 on the shipped redundancy_eval_pubmed_both_n100_k3_hn6.jsonl "
+            "and 0.400 on this construction, both at n=100 against a 0.001 chance baseline. By "
+            "word-Jaccard instead of raw shared-word count the shipped file scores 0.610, and a "
+            "top-3 Jaccard ranking recovers 52% of its gold pairs. Quote that alongside any "
+            "redundancy result; do not read the ACCEPTED tag as the shortcut having been ruled "
+            "out."
+        )
+    },
     "mathmatch": {
         "closest_pair_is_gold": (
             "ACCEPTED: mathmatch places every distractor more than X from everything, so at K=1 the "
             "closest pair is gold by construction. Its difficulty comes from N and from evaluating "
             "the arithmetic; groups4 is the variant that closes this deliberately."
         )
-    }
+    },
 }
 
 

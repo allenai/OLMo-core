@@ -66,6 +66,9 @@ class NativeBackend:
         -- wired so the path exists, but no scored run has gone through it in this repo. It is also
         inert for the current checkpoints: they train with ``query_position="both"``, which puts the
         per-query question before the corpus, so there is almost no shared token prefix to reuse.
+    :param attention_backend: Decode kernel, overriding the checkpoint config's. ``None`` picks the
+        first installed backend that can KV-cache; see :meth:`_decode_backend` for why one has to
+        be picked at all.
     """
 
     def __init__(
@@ -84,6 +87,7 @@ class NativeBackend:
         doc_start_id: Optional[int] = None,
         doc_end_id: Optional[int] = None,
         share_prefix: bool = False,
+        attention_backend: Optional[str] = None,
     ):
         if attn not in ATTENTION_MODES:
             raise ValueError(f"attn must be one of {ATTENTION_MODES}, got {attn!r}")
@@ -132,9 +136,21 @@ class NativeBackend:
             max_length=max_length,
             do_sample=False,  # greedy: eval must be reproducible run to run
         )
+        self.attention_backend = self._decode_backend(attention_backend)
+        # Printed, not merely logged: it is a kernel the checkpoint's config did not ask for, and
+        # anyone comparing two runs' numbers should be able to see it in the job log.
+        print(
+            f"[ctc-eval] decoding with attention backend "
+            f"{self.attention_backend or 'the checkpoint config default'}",
+            flush=True,
+        )
         self.gm = TransformerGenerationModuleConfig(
             gen_cfg, float8_config=None, dtype=DType(dtype), compile_model=False
-        ).build(checkpoint_dir=str(self.ckpt), device=device)
+        ).build(
+            checkpoint_dir=str(self.ckpt),
+            device=device,
+            attention_backend=self.attention_backend,
+        )
 
         self._check_tokenizer_matches_model()
         self._configure_attention()
@@ -142,6 +158,49 @@ class NativeBackend:
             # At load time, not at first generate: refusing after a rung has already been graded
             # wastes the run, and the answer depends only on the checkpoint.
             self._check_share_prefix_supported()
+
+    @staticmethod
+    def _decode_backend(requested: Optional[str]):
+        """
+        Choose the attention kernel to decode with.
+
+        **A checkpoint's own config is usually the wrong answer here.** A ``TransformerConfig``
+        that leaves ``backend`` unset resolves to ``torch``, and ``TorchAttentionBackend`` cannot
+        KV-cache: ``prepare_inference_cache`` raises *"'TorchAttentionBackend' doesn't support KV
+        caching"* at the first decoded token, after the checkpoint has loaded and the prompts have
+        been built. Nothing in the training recipe sets a backend, so this is the state of every
+        checkpoint this repo trains -- the fingerprint guard would accept the format and the run
+        would still produce no number.
+
+        Overriding is sound because the backend is not what the arms differ in. Under ``chunked``
+        the prefill mask is computed by :class:`DocumentChunkedAttention` itself (FlexAttention or
+        a materialized mask, neither of which is a backend), and decode is plain causal over the
+        cache. The backend supplies the kernel, not the mask.
+
+        :param requested: An explicit backend name, or ``None`` to pick.
+
+        :returns: An ``AttentionBackendName``, or ``None`` when nothing installed can KV-cache --
+            in which case the checkpoint's own backend is left alone and olmo-core raises its own
+            error, which says more than a guess would.
+        """
+        from olmo_core.nn.attention import AttentionBackendName
+
+        if requested is not None:
+            return AttentionBackendName(requested)
+        # flash_2 first: it is the version pinned in this project's environments. The others are
+        # tried so a node with a newer stack is not held back.
+        for name in (
+            AttentionBackendName.flash_2,
+            AttentionBackendName.flash_3,
+            AttentionBackendName.te,
+        ):
+            try:
+                name.assert_supported()
+                name.assert_supports_kv_cache()
+            except Exception:  # noqa: BLE001 - "not installed here" is the expected outcome
+                continue
+            return name
+        return None
 
     def _check_tokenizer_matches_model(self) -> None:
         """

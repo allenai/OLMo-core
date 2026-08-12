@@ -26,7 +26,8 @@ from fixtures import pools
 from ctc.data import audit as audit_mod
 from ctc.data import build, ladders
 from ctc.data.generators import base as generators
-from ctc.data.schema import validate
+from ctc.data.schema import gold_of, validate
+from ctc.data.sources import hotpotqa as hotpotqa_source
 from ctc.format import registry
 from ctc.tasks import load_all
 
@@ -34,22 +35,65 @@ from ctc.tasks import load_all
 #: without a fixture fails the coverage test below rather than silently going untested.
 POOLS = {
     "contradiction": pools.pubmed_pool,
+    "redundancy": pools.redundancy_pool,
     "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
+    # 2 gold and a supply of only 8 hard negatives, both of which are corpus properties HotpotQA's
+    # construction has to survive rather than fixture convenience.
+    "hotpotqa": lambda: pools.retrieval_pool(source="hotpotqa", gold=2, hard=8),
     "fiqa": lambda: pools.retrieval_pool(source="beir_fiqa"),
     "scifact": lambda: pools.retrieval_pool(source="beir_scifact"),
     "rerank": pools.rerank_pool,
     "outlier": pools.article_pool,
     "outlier_review": pools.review_pool,
     "oolong": pools.oolong_pool,
+    "absence": pools.book_pool,
+    "xabsence": pools.paraphrase_pool,
+    # reorder shares absence's Gutenberg pool -- one corpus, one loader, one split-by-book -- but
+    # needs LONGER runs: an example asks for num_docs * sentences_per_passage consecutive sentences
+    # from ONE run, so the 32k rung wants ~2800 of them.
+    "reorder": lambda: pools.book_pool(books=10, runs_per_book=1, sentences_per_run=3000),
+    "qdmatch_nq": pools.unit_pool,
+    # Two gold per question, so k relevant queries give 2k pairs -- the multi-gold path.
+    "qdmatch_hpqa": lambda: pools.unit_pool(gold=2, source="hotpotqa"),
+    "grouping_labeled": pools.openalex_pool,
 }
 
 CORPUS_BACKED = sorted(POOLS)
 
+#: Per-task overrides for the deliberately tiny corpora some checks below use. ``redundancy`` plants
+#: K gold *and* H hard-negative PAIRS, so its defaults need 18 documents and cannot be built at 8 at
+#: all -- the hard negatives are the task, not padding, so the generator refuses rather than
+#: dropping them.
+SMALL_CORPUS: dict = {
+    "redundancy": {"num_pairs": 1, "num_hardneg": 1},
+    # A HotpotQA bridge query brings TWO gold documents, so the default k=3 needs 6 document slots
+    # and an 8-item example only has 4. The generator returns None rather than dropping a hop --
+    # a one-gold "multi-hop" example would silently select the single-doc instruction wording.
+    "qdmatch_hpqa": {"num_relevant": 1},
+}
+
 #: Ladders that SAMPLE their pool rather than consuming one item per example -- an article, a
 #: review or a log line can back many examples. They take no example index, so the index-driven
 #: checks below do not apply to them.
-POOL_SAMPLING = {"outlier", "outlier_review", "oolong"}
+POOL_SAMPLING = {
+    "outlier",
+    "outlier_review",
+    "oolong",
+    "absence",
+    "xabsence",
+    # reorder draws a window of one book's prose; qdmatch consumes ~num_docs query units per
+    # example rather than one.
+    "reorder",
+    "qdmatch_nq",
+    "qdmatch_hpqa",
+}
+
+#: Ladders that take an example index for **stratification** rather than for pool consumption.
+#: ``grouping_labeled`` derives its concept LEVEL from the index -- deliberately, since drawing it
+#: from the RNG is what let the realised level mix drift with N (port record trap 14) -- but it
+#: samples its papers, so it can neither run off the end of its pool nor recycle it.
+STRATIFIED = {"grouping_labeled"}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -74,9 +118,19 @@ def build_one(task, *, index=0, seed=0, **overrides):
     return gen.build_example(random.Random(seed), **config)
 
 
-def gold_flat(example):
+def gold_flat(example, spec=None):
+    """
+    :param example: A unified-format example.
+    :param spec: Its task spec, so the gold field is read off the task rather than assumed.
+        ``reorder`` keeps its gold in ``gold_order`` and ``qdmatch`` in ``gold_pairs``; assuming
+        ``gold_doc_indices`` silently reports "no gold" for both, which would turn every check
+        below into a check of nothing.
+
+    :returns: Its gold indices, flattened.
+    """
+    gold = gold_of(example, spec) if spec is not None else example.get("gold_doc_indices")
     flat = []
-    for entry in example.get("gold_doc_indices") or []:
+    for entry in gold or []:
         flat.extend(entry) if isinstance(entry, (list, tuple)) else flat.append(entry)
     return flat
 
@@ -157,10 +211,12 @@ def test_gold_agrees_with_the_spec_declared_index_base(task):
     size = 8
     seen = set()
     for index in range(40):
-        example = build_one(task, index=index, seed=index, num_docs=size)
+        example = build_one(
+            task, index=index, seed=index, num_docs=size, **SMALL_CORPUS.get(task, {})
+        )
         if example is None:
             continue
-        flat = gold_flat(example)
+        flat = gold_flat(example, spec)
         n = len(example["documents"])
         assert min(flat) >= spec.gold_index_base, f"{task}: gold below the declared base"
         assert max(flat) <= n - 1 + spec.gold_index_base, f"{task}: gold past the last document"
@@ -203,7 +259,7 @@ def test_running_off_the_end_of_the_pool_returns_none_rather_than_recycling(task
     A generator that wrapped silently would emit the same gold under different filler and report a
     full-size split. Returning ``None`` is what lets the builder count the shortfall.
     """
-    if task in POOL_SAMPLING:
+    if task in POOL_SAMPLING | STRATIFIED:
         pytest.skip("samples from the pool rather than consuming it")
     assert build_one(task, index=10_000) is None
 
@@ -377,6 +433,187 @@ def test_retrieval_hard_neg_indices_tag_only_the_mined_negatives():
     example = gen.build_example(random.Random(0), index=0, corpus=pool, **gen.config(num_docs=51))
     tagged = {example["documents"][i]["text"] for i in example["hard_neg_indices"]}
     assert all("confused with" in text for text in tagged)
+
+
+# ── hotpotqa: two gold, and both have to survive everything ─────────────────────────────────────
+
+
+def _hotpot_row(titles=("Alpha", "Beta", "Gamma", "Delta"), supporting=("Alpha", "Gamma")):
+    """
+    :param titles: Context paragraph titles, in context order.
+    :param supporting: Titles ``supporting_facts`` names, once per supporting *sentence*.
+
+    :returns: A raw HotpotQA ``distractor`` row, in the dataset's parallel-array shape.
+    """
+    return {
+        "question": "Which of them came first?",
+        "answer": "Alpha",
+        "supporting_facts": {"title": list(supporting), "sent_id": [0] * len(supporting)},
+        "context": {
+            "title": list(titles),
+            "sentences": [[f"{t} is a thing.", "It was described in a book."] for t in titles],
+        },
+    }
+
+
+def test_hotpotqa_prepare_query_splits_gold_from_the_benchmark_s_own_distractors():
+    """
+    Where a multi-hop task goes wrong quietly: mixing one supporting paragraph into the distractors
+    leaves a structurally valid example whose second hop is scored as a model error.
+    """
+    query = hotpotqa_source.prepare_query(_hotpot_row())
+    assert [c.id for c in query.gold] == ["Alpha", "Gamma"]
+    assert [c.id for c in query.hard] == ["Beta", "Delta"]
+    assert query.answers == ("Alpha",)
+
+
+def test_hotpotqa_filler_comes_from_the_same_population_as_gold():
+    """
+    Filler is the other rows' *supporting* paragraphs, never their retrieved distractors, and the
+    reason is length. In HotpotQA the supporting paragraphs average 71.2 words and the
+    TF-IDF-retrieved distractors 96.1, so a corpus filled with distractors makes gold "the short
+    ones": on a 17-document build, naming the two shortest documents recovered 0.227 of gold
+    against a 0.118 chance baseline. Drawing filler from gold's own population took that to 0.137.
+
+    Nothing fails if this is reverted -- the generic ``gold_length_bias`` probe still passes,
+    because "is a gold document the single longest or shortest" is too weak a statistic to see a
+    25-word gap in a mean. Which is exactly why the rule is pinned here rather than left to the
+    audit.
+    """
+    fillers = hotpotqa_source.filler_candidates(_hotpot_row())
+    assert [c.id for c in fillers] == ["Alpha", "Gamma"]
+
+
+def test_hotpotqa_filler_keeps_context_order_rather_than_set_order():
+    """
+    ``supporting_facts`` is de-duplicated through a set, and a set of strings iterates in an order
+    that depends on ``PYTHONHASHSEED``. Emitting in that order would make the filler pool -- and so
+    every file built from it -- differ between two processes given the same seed, which is the one
+    guarantee :func:`ctc.data.build.build_train` is built on.
+    """
+    row = _hotpot_row(titles=("D", "C", "B", "A"), supporting=("A", "C"))
+    assert [c.id for c in hotpotqa_source.filler_candidates(row)] == ["C", "A"]
+
+
+def test_hotpotqa_prepare_query_does_not_render_the_title():
+    """Every shipped HotpotQA document is bare paragraph text. The title is the entity the question
+    is about, so rendering it hands over a hop; it survives only as the de-duplication id."""
+    query = hotpotqa_source.prepare_query(_hotpot_row())
+    assert query.gold[0].text == "Alpha is a thing. It was described in a book."
+
+
+def test_hotpotqa_prepare_query_drops_a_row_whose_gold_is_missing_from_the_context():
+    """Gold pointing at a paragraph the model is never shown is unanswerable, not hard."""
+    assert hotpotqa_source.prepare_query(_hotpot_row(supporting=("Alpha", "Omega"))) is None
+
+
+def test_hotpotqa_prepare_query_drops_a_row_that_is_not_two_hop():
+    """``supporting_facts`` holds one entry per supporting *sentence*, so two entries can name one
+    paragraph. That is a single-gold example, which selects the other instruction wording and stops
+    being a multi-hop question."""
+    assert hotpotqa_source.prepare_query(_hotpot_row(supporting=("Alpha", "Alpha"))) is None
+
+
+def test_hotpotqa_emits_exactly_two_zero_based_gold_documents():
+    """
+    Both hops or neither. All 500 examples at all four shipped rungs carry exactly two gold
+    indices, flat and 0-based; an example that lost one would still validate and still score, and
+    would simply mark the model wrong for a hop it was never shown gold for.
+    """
+    example = build_one("hotpotqa", num_docs=17)
+    gold = example["gold_doc_indices"]
+    assert len(gold) == 2 and not isinstance(gold[0], list)
+    assert min(gold) >= 0 and max(gold) <= 16
+
+
+def test_hotpotqa_keeps_both_gold_documents_at_every_rung_of_the_ladder():
+    """
+    The nested ladder is derived by shrinking the longest rung, and the shrink is only correct if
+    it keeps *both* hops. Losing one on the way down would leave the short rungs grading a
+    different, single-hop question while every row count still lined up.
+
+    Read through :func:`ctc.tasks._retrieval.flatten_gold` rather than off the raw field, because
+    that is the scorer's view and the two can disagree: a shrink that re-shaped a flat ``[3, 17]``
+    into ``[[3], [17]]`` leaves both hops present in the field and yet hands the grader only one.
+    Indexing the raw field would still find two documents and pass.
+    """
+    from ctc.tasks._retrieval import flatten_gold
+
+    spec = registry.get("retrieval")
+    labels = ladders.rungs_for("hotpotqa")
+    canonical = build_one("hotpotqa", num_docs=ladders.docs_for_rung("hotpotqa", labels[-1]))
+    gold_texts = {canonical["documents"][i]["text"] for i in flatten_gold(canonical)}
+    assert len(gold_texts) == 2
+    for label in labels[:-1]:
+        n_docs = ladders.docs_for_rung("hotpotqa", label)
+        shorter = build.shrink(canonical, n_docs, spec, random.Random(0))
+        assert len(shorter["documents"]) == n_docs
+        assert {shorter["documents"][i]["text"] for i in flatten_gold(shorter)} == gold_texts
+
+
+def test_hotpotqa_hard_negatives_run_out_rather_than_being_topped_up():
+    """
+    HotpotQA ships 8 distractors per question, so at the long rungs ``hard_frac=0.1`` asks for more
+    than exist. The cap has to come from the supply: a generator that made up the difference would
+    be mixing in a second corpus, which is the length mismatch this loader exists to avoid.
+    """
+    assert len(build_one("hotpotqa", num_docs=22)["hard_neg_indices"]) == 2  # round(0.1 * 20)
+    long = build_one("hotpotqa", num_docs=288)
+    assert len(long["hard_neg_indices"]) == 8  # the whole supply, not round(0.1 * 286)
+
+
+def test_shrinking_a_multi_gold_example_keeps_its_gold_flat_and_scorable():
+    """
+    Regression: :func:`ctc.data.build.shrink` used to rewrite a flat ``[3, 17]`` into ``[[3], [17]]``.
+    ``ctc.tasks._retrieval.flatten_gold`` reads a nested gold as one group per query and returns
+    only the first, so every shrunk multi-gold rung -- ``hotpotqa`` and ``fiqa`` alike -- was graded
+    on one gold document and marked wrong for the rest, while the longest rung was graded on all of
+    them. Nothing failed: the row counts matched, the audit's own flattener handled both shapes,
+    and the rungs simply disagreed for a reason unrelated to context length.
+    """
+    from ctc.tasks._retrieval import flatten_gold
+
+    spec = registry.get("retrieval")
+    example = build_one("hotpotqa", num_docs=40)
+    shorter = build.shrink(example, 17, spec, random.Random(0))
+    assert all(isinstance(g, int) for g in shorter["gold_doc_indices"])
+    assert len(flatten_gold(shorter)) == 2
+
+
+def test_hotpotqa_selects_the_multi_gold_instruction_and_names_both_ids():
+    """
+    The only in-distribution ladder that exercises the multi-gold path at all. The wording switches
+    on ``has_multi_gold`` and is hashed into the format fingerprint, and the target must name both
+    1-based ids -- ``nq``, ``fiqa`` and ``scifact`` never reach either branch.
+    """
+    from ctc.format.prompts import RETRIEVAL_INSTRUCTION_MULTI_DOC
+    from ctc.tasks.retrieval import spec as retrieval_spec
+
+    example = build_one("hotpotqa", num_docs=17)
+    assert RETRIEVAL_INSTRUCTION_MULTI_DOC in retrieval_spec.build_prompt(example)
+    target = retrieval_spec.build_target(example)
+    assert target == ", ".join(f"[{g + 1}]" for g in sorted(example["gold_doc_indices"]))
+
+
+def test_hotpotqa_defaults_match_the_shipped_build():
+    """
+    The staged pool is ``hotpotqa_train_k{11,24,50,100,205}_bridge_hn{1,2,5,10,20}_4000`` --
+    bridge-only, hard negatives at exactly n/10. Both are pinned here so a later edit has to be
+    deliberate; the suite-wide ban on the all-hard-negative regime rides on the second.
+    """
+    gen = generators.get("hotpotqa")
+    assert gen.defaults["hard_frac"] == 0.1
+    assert gen.corpus_defaults["question_type"] == "bridge"
+    assert gen.corpus_defaults["ce_filter"] is True
+    assert gen.eval_only is False
+
+
+def test_hotpotqa_ladder_is_the_recalibrated_one_not_the_build_matrix_row():
+    """
+    The shipped rung files carry 17/36/72/144 documents. BUILD_MATRIX row 2's 11/24/50/100/205 is
+    the ladder the 2026-07-19 FIX2 pass *measured at 0.64-0.69x of its labels* and replaced.
+    """
+    assert ladders.LADDERS["hotpotqa"] == {"2k": 17, "4k": 36, "8k": 72, "16k": 144, "32k": 288}
 
 
 # ── rerank: every document must be scored ───────────────────────────────────────────────────────
@@ -615,3 +852,356 @@ def test_a_pool_that_runs_out_is_reported_rather_than_silently_recycled(monkeypa
     )
     assert report.reused_pool >= 1
     assert len(train) == 30
+
+
+# ── absence: what is missing, and the ladder that cannot be nested ──────────────────────────────
+
+
+def _absence_second_version(example):
+    """:param example: An absence example. :returns: Its rendered Version B."""
+    return example["queries"][0]
+
+
+def test_absence_gold_names_the_removed_positions_zero_based():
+    """
+    The base flips here relative to the pair family: ``ctc.tasks._absence.score`` does
+    ``{int(g) + 1 for g in gold}``, so a generator emitting 1-based indices would shift every id by
+    one and read as a weak model rather than as a bug.
+    """
+    example = build_one("absence", num_docs=32)
+    gold = example["gold_doc_indices"]
+    assert min(gold) >= 0 and max(gold) <= 31
+    validate(example, registry.get("absence"))
+
+
+def test_absence_removes_exactly_the_gold_sentences_from_the_second_version():
+    """
+    The one property the whole task rests on. A sentence left in Version B while listed as gold is
+    an unanswerable question; one dropped without being listed is an unlabelled correct answer.
+    """
+    example = build_one("absence", num_docs=32)
+    second = _absence_second_version(example)
+    gold = set(example["gold_doc_indices"])
+    for i, doc in enumerate(example["documents"]):
+        assert (doc["text"] not in second) == (i in gold)
+
+
+def test_absence_answers_are_the_first_four_words_of_each_removed_sentence_in_order():
+    """The snippet answer form the shipped Gutenberg files carry; the prefix-uniqueness filter is
+    what makes it unambiguous, so it is worth pinning even while the spec grades ids."""
+    from ctc.tasks.absence.sources.gutenberg import first_four
+
+    example = build_one("absence", num_docs=32)
+    docs = example["documents"]
+    assert example["answers"] == [first_four(docs[i]["text"]) for i in example["gold_doc_indices"]]
+
+
+def test_absence_target_renders_the_ids_one_based():
+    from ctc.tasks.absence.spec import build_target
+
+    example = build_one("absence", num_docs=32)
+    expected = ", ".join(f"[{g + 1}]" for g in sorted(example["gold_doc_indices"]))
+    assert build_target(example) == f"Missing: {expected}"
+
+
+def test_absence_is_textdiff_reads_the_normalised_metadata_spelling():
+    """
+    Regression. ``make_example`` normalises metadata to ``_meta`` while the shipped pre-migration
+    files use bare ``meta``; reading only the bare one made this ``False`` for every example built
+    in this repo, so a textdiff example would be routed to the id scorer with nothing to show for
+    it.
+    """
+    from ctc.tasks.absence.spec import is_textdiff
+
+    assert is_textdiff(build_one("absence", num_docs=32))
+    assert is_textdiff({"meta": {"format": "textdiff"}})
+    assert not is_textdiff({"_meta": {"format": "ids"}})
+
+
+def test_absence_skips_a_window_whose_sentences_share_a_four_word_opening():
+    """Two sentences opening alike give an answer that matches both: one label, two correct
+    answers. The window is refused rather than emitted."""
+    from ctc.data.sources import gutenberg as gutenberg_source
+    from ctc.tasks.absence.sources.gutenberg import build_example
+
+    run = gutenberg_source.ProseRun(
+        book="b0",
+        sentences=tuple(f"Once upon a time there lived a person numbered {i}." for i in range(20)),
+    )
+    pool = gutenberg_source.BookPool(runs=(run,), provenance={})
+    assert build_example(random.Random(0), corpus=pool, num_docs=10, num_removed=3) is None
+
+
+def test_absence_rungs_are_generated_independently_and_the_build_says_so(monkeypatch):
+    """
+    Version B is *rendered text* in ``queries[0]``, so it is a function of the whole corpus: a
+    generic shrink drops a distractor and leaves the query still listing it. The audit's nesting
+    check keys a rung's identity on the gold text plus the query, so rebuilding the query per rung
+    reads as "the rungs grade different questions" -- which is why there is no ``build_ladder``
+    either, and why the ladder's rung-to-rung deltas carry eval-set resampling noise.
+    """
+    generator = generators.get("absence")
+    assert not generator.shrink_safe and generator.build_ladder is None
+    assert not generator.nested_ladder
+
+    spec = registry.get("absence")
+    monkeypatch.setitem(ladders.LADDERS, "absence", {"2k": 20, "4k": 30})
+    rungs, report = build.build_eval(
+        "absence", spec, size=500, seed=7, corpus=pools.book_pool(books=20)
+    )
+    assert {label: len(rows) for label, rows in rungs.items()} == {"2k": 500, "4k": 500}
+    assert any("independently" in note for note in report.notes)
+
+
+def test_absence_ladder_is_the_measured_one_not_build_matrix_row_18():
+    """
+    Row 18 charged each sentence once at ~20 tokens and landed on {90,180,360,720,1440}. An absence
+    prompt carries the corpus TWICE -- numbered as Version A, then again inside Version B -- and the
+    shipped n10/n50/n200 files measure 548/3117/14790 Qwen3 tokens, i.e. ~76 tok/document. The
+    estimate overshoots by ~3.4x, so the staged ``n1440`` file is a ~109k-token file labelled 32k.
+    """
+    assert ladders.LADDERS["absence"] == {"2k": 32, "4k": 60, "8k": 114, "16k": 222, "32k": 438}
+
+
+def test_absence_gold_is_not_findable_by_position_or_length():
+    """The two shortcuts an absence task is most exposed to: a removed item betrayed by where it
+    sat, or by being the longest or shortest thing in the corpus."""
+    examples = [build_one("absence", seed=s, num_docs=32) for s in range(60)]
+    results = {
+        p.name: p for p in audit_mod.run_probes("absence", examples, registry.get("absence"))
+    }
+    assert not results["gold_position_bias"].failed, str(results["gold_position_bias"])
+    assert not results["gold_length_bias"].failed, str(results["gold_length_bias"])
+
+
+# ── xabsence: two corpora, and the claims with no twin ──────────────────────────────────────────
+
+
+def _sides(example):
+    return [doc["corpus"] for doc in example["documents"]]
+
+
+def test_xabsence_documents_are_an_A_block_then_a_B_block_under_one_index():
+    """The serializer renders ``[i] A: text`` positionally and the instruction says "the OTHER
+    corpus"; interleaving the blocks would make the shared index meaningless."""
+    example = build_one("xabsence", num_docs=59)
+    sides = _sides(example)
+    assert set(sides) == {"A", "B"}
+    assert sides == sorted(sides)  # every A before every B
+    assert len(example["documents"]) == 59
+    validate(example, registry.get("xabsence"))
+
+
+def test_xabsence_gold_is_zero_based_and_every_gold_document_is_genuinely_unmatched():
+    """
+    Gold is 0-based (``_absence.score`` adds one), and the label has to be true: a gold document
+    whose twin is also in the context is not unmatched, and a matched document with no twin is an
+    unlabelled correct answer.
+    """
+    pool = pools.paraphrase_pool()
+    twins = {p.original: p.paraphrase for p in pool.pairs}
+    twins.update({p.paraphrase: p.original for p in pool.pairs})
+    for seed in range(20):
+        example = build_one("xabsence", seed=seed, num_docs=59)
+        gold = set(example["gold_doc_indices"])
+        assert min(gold) >= 0 and max(gold) < len(example["documents"])
+        texts = {doc["text"] for doc in example["documents"]}
+        for i, doc in enumerate(example["documents"]):
+            assert (twins[doc["text"]] in texts) == (i not in gold)
+
+
+def test_xabsence_an_orphan_is_rendered_in_the_form_its_own_corpus_uses():
+    """
+    The leak that made this task stop being an all-pairs task. Inserting every orphan as an
+    original left B-side orphans as the one non-paraphrase among paraphrases, and a trained 4B read
+    it off that single document -- recall 0.98 on B-side orphans against 0.08 on A-side, ``set_f1``
+    pinned at ~0.5 and FLAT in n from 39 to 669 documents.
+    """
+    pool = pools.paraphrase_pool()
+    originals = {p.original for p in pool.pairs}
+    paraphrases = {p.paraphrase for p in pool.pairs}
+    seen = set()
+    for seed in range(30):
+        example = build_one("xabsence", seed=seed, num_docs=59)
+        for i in example["gold_doc_indices"]:
+            doc = example["documents"][i]
+            seen.add(doc["corpus"])
+            assert doc["text"] in (originals if doc["corpus"] == "A" else paraphrases)
+    assert seen == {"A", "B"}, "orphans must land on both sides, or the probe above proves nothing"
+
+
+def test_xabsence_ladder_is_nested_and_grades_the_same_orphans_at_every_rung():
+    """
+    Dropping whole matched pairs is the only safe resize: removing one half of a pair orphans its
+    partner, which is a correct answer the label does not list. So the rungs nest by pair.
+    """
+    generator = generators.get("xabsence")
+    assert not generator.shrink_safe and generator.build_ladder is not None
+    row = generator.build_ladder(
+        random.Random(0),
+        index=0,
+        corpus=pools.paraphrase_pool(),
+        rungs={"2k": 59, "4k": 119, "8k": 243},
+        num_docs=59,
+    )
+    gold_texts = None
+    previous = None
+    for label in ("2k", "4k", "8k"):
+        example = row[label]
+        texts = {doc["text"] for doc in example["documents"]}
+        current = {example["documents"][i]["text"] for i in example["gold_doc_indices"]}
+        if gold_texts is None:
+            gold_texts, previous = current, texts
+        else:
+            assert current == gold_texts
+            assert previous <= texts
+            previous = texts
+
+
+def test_xabsence_a_generic_shrink_would_invent_gold_which_is_why_it_is_refused():
+    """
+    Not a style preference. ``build.shrink`` drops random non-gold documents; each one strands its
+    partner as a genuinely unmatched claim the label does not name, so the shorter rung would mark
+    a correct answer wrong.
+    """
+    spec = registry.get("xabsence")
+    example = build_one("xabsence", num_docs=119)
+    shorter = build.shrink(example, 59, spec, random.Random(0))
+    texts = {doc["text"] for doc in shorter["documents"]}
+    pool = pools.paraphrase_pool()
+    twins = {p.original: p.paraphrase for p in pool.pairs}
+    twins.update({p.paraphrase: p.original for p in pool.pairs})
+    labelled = set(shorter["gold_doc_indices"])
+    stranded = [
+        i
+        for i, doc in enumerate(shorter["documents"])
+        if twins[doc["text"]] not in texts and i not in labelled
+    ]
+    assert stranded, "if a random shrink no longer strands partners, revisit shrink_safe"
+
+
+def test_xabsence_every_orphan_keeps_its_lexical_decoys_at_the_shortest_rung():
+    """
+    The decoys are what stop the orphan being the one document with no lexically close counterpart.
+    They are placed at the head of the matched list precisely so a rung prefix keeps them; losing
+    them at the short rungs would leave the ladder more solvable at 2k than at 32k, which is the
+    opposite of the axis being measured.
+    """
+    generator = generators.get("xabsence")
+    row = generator.build_ladder(
+        random.Random(1),
+        index=0,
+        corpus=pools.paraphrase_pool(),
+        rungs={"2k": 59, "8k": 243},
+        num_docs=59,
+    )
+    short = {doc["text"] for doc in row["2k"]["documents"]}
+    long = {doc["text"] for doc in row["8k"]["documents"]}
+    assert short <= long
+    assert row["2k"]["_meta"]["decoys_per_unmatched"] == 2
+
+
+def test_xabsence_refuses_a_ladder_whose_shortest_rung_cannot_hold_the_decoys():
+    generator = generators.get("xabsence")
+    with pytest.raises(ValueError, match="lexical decoys"):
+        generator.build_ladder(
+            random.Random(0),
+            index=0,
+            corpus=pools.paraphrase_pool(),
+            rungs={"tiny": 11, "2k": 59},
+            num_docs=59,
+        )
+
+
+def test_xabsence_decoys_cut_the_lexical_shortcut():
+    """
+    Measured, not asserted in principle. On the shipped pre-migration files this heuristic recovers
+    0.867 / 0.727 / 0.453 of the orphans at 19 / 39 / 99 documents against chance baselines of
+    0.158 / 0.077 / 0.030 -- word overlap alone, with no comparison of meaning anywhere.
+    """
+    spec = registry.get("xabsence")
+    with_decoys = [build_one("xabsence", seed=s, num_docs=59) for s in range(25)]
+    without = [
+        build_one("xabsence", seed=s, num_docs=59, decoys_per_unmatched=0) for s in range(25)
+    ]
+    fixed = audit_mod.unmatched_by_lexical_overlap(with_decoys, spec)
+    raw = audit_mod.unmatched_by_lexical_overlap(without, spec)
+    assert raw.failed, "the shortcut has to be present without decoys, or this proves nothing"
+    assert fixed.score < raw.score
+    assert not fixed.failed, str(fixed)
+
+
+def test_xabsence_split_for_docs_meets_the_rung_exactly_and_refuses_an_all_orphan_corpus():
+    """
+    The rung label is a context length, so the document count is met exactly; an odd remainder
+    becomes one more orphan, which the model is never told the size of anyway. A rung with no
+    matched pair at all has no wrong answer left to give.
+    """
+    from ctc.tasks.xabsence.generate import split_for_docs
+
+    assert split_for_docs(59, 3) == (28, 3)
+    assert split_for_docs(58, 3) == (
+        27,
+        4,
+    )  # the odd one out becomes an answer, not a lost document
+    assert all(2 * p + k == n for n in range(9, 60) for p, k in [split_for_docs(n, 3)])
+    with pytest.raises(ValueError, match="matched pair"):
+        split_for_docs(4, 3)
+
+
+def test_xabsence_ladder_is_measured_and_odd_so_2p_plus_k_lands_on_the_label():
+    """
+    BUILD_MATRIX row 22 estimated ~95 tok/pair and gave P18/P39/P81/P165/P333, i.e. 39/81/165/333/
+    669 documents; the shipped p8/p18/p48 files measure 772/1394/3424 tokens at 19/39/99 documents,
+    so the estimate overshoots by ~1.4x. Every value is odd because an example is ``2P + k``.
+    """
+    assert ladders.LADDERS["xabsence"] == {"2k": 59, "4k": 119, "8k": 243, "16k": 489, "32k": 981}
+    assert all((n - 3) % 2 == 0 for n in ladders.LADDERS["xabsence"].values())
+
+
+def test_xabsence_pool_refilters_a_pool_mined_at_a_looser_threshold(tmp_path):
+    """
+    The staged pre-migration pool was mined at ``--max-overlap 0.3``, and that is exactly the
+    setting the lexical shortcut lives at. Re-applying the filter on read is what stops an old file
+    being trusted as-is.
+    """
+    from ctc.data.sources import paraphrase
+
+    path = tmp_path / "pool.jsonl"
+    path.write_text(
+        '{"claim": "aspirin reduced cardiac mortality in the cohort", '
+        '"paraphrase": "aspirin reduced cardiac mortality in the group"}\n'
+        '{"claim": "aspirin reduced cardiac mortality in the cohort two", '
+        '"paraphrase": "lower deaths from heart disease followed treatment"}\n',
+        encoding="utf-8",
+    )
+    loose = paraphrase.load_pool(pool_path=str(path), max_overlap=0.9)
+    tight = paraphrase.load_pool(pool_path=str(path), max_overlap=0.22)
+    assert len(loose) == 2
+    assert len(tight) == 1
+    assert tight.provenance["dropped_overlap"] == 1
+
+
+def test_xabsence_exact_copy_mode_is_the_string_matchable_variant():
+    """
+    Kept as the no-LLM fallback, and the probe is what stops it being used by accident: a
+    byte-identical twin makes "the document with no lexical counterpart" find every orphan.
+    """
+    from ctc.data.sources import paraphrase
+
+    pool = paraphrase.ParaphrasePool(
+        pairs=tuple(
+            paraphrase.ParaphrasePair(
+                f"Finding number {i} concerned outcome {i}.",
+                f"Finding number {i} concerned outcome {i}.",
+            )
+            for i in range(120)
+        ),
+        provenance={"pool": "exact-copy"},
+    )
+    generator = generators.get("xabsence")
+    examples = [
+        generator.build_example(random.Random(s), corpus=pool, num_docs=59) for s in range(10)
+    ]
+    result = audit_mod.unmatched_by_lexical_overlap(examples, registry.get("xabsence"))
+    assert result.score == 1.0 and result.failed

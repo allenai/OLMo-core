@@ -36,12 +36,19 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ..format import metrics as metrics_mod
-from ..format.fingerprint import check_or_explain_missing
+from ..format.fingerprint import FormatFingerprint, check_or_explain_missing
 from ..format.registry import TaskSpec
 from .stopping import STOP_PRESETS
 from .stopping import apply as apply_stop
 
-__all__ = ["EvalConfig", "EvalOutcome", "run_task", "standard_error", "load_examples"]
+__all__ = [
+    "EvalConfig",
+    "EvalOutcome",
+    "run_task",
+    "eval_fingerprint",
+    "standard_error",
+    "load_examples",
+]
 
 #: Below this, a result is flagged in the file. Small eval sets inflate noise into apparent
 #: findings, so the warning travels with the number rather than living in someone's memory.
@@ -235,6 +242,49 @@ def _git_commit() -> Optional[str]:
         return None
 
 
+def eval_fingerprint(cfg: EvalConfig, examples: Sequence[Dict]) -> FormatFingerprint:
+    """
+    The format this run is about to grade under, stated in the same terms training records.
+
+    Three of the compared fields are not knowable from the spec alone, and stating only the spec's
+    view is worse than not checking: **the fields eval leaves unset default to the values a plain,
+    marker-free build would have**, so the comparison is against a format nobody trained on.
+
+    * ``chunk_layout`` -- the token stream every backend builds here wraps each item in
+      ``<|box_start|>``/``<|box_end|>`` (:mod:`ctc.eval.prefill`), in the ``full`` arm too: ``full``
+      is a *mask*, not a token layout. Left at the field's ``"none"`` default it reported a
+      mismatch against every document-chunked checkpoint, i.e. against exactly the runs the guard
+      exists for. ``landmark`` is the one mode whose tokens genuinely differ.
+    * ``chunk_by`` comes from the spec's ``extra``, not from a flag -- oolong chunks by line -- for
+      the same reason :meth:`~ctc.eval.backends.native.NativeBackend.prefill_for` takes it there.
+    * ``doc_id_range`` is *measured* from the rows being graded, which is the only honest source,
+      and is what makes the containment rule live: the digit-range failure the fingerprint module
+      cites (training capped at 697, eval reaching 1423) is invisible unless eval states its range.
+
+    ``marker_token_ids`` and ``tokenizer`` are deliberately still unset. Both are backend
+    properties rather than runner ones, and both compare with :func:`_optional_exact`, so leaving
+    them out weakens the check rather than falsifying it -- an unset field is skipped, a wrong one
+    would fire.
+
+    :param cfg: The run.
+    :param examples: The rows being graded, after ``--limit``.
+
+    :returns: The eval-side fingerprint.
+    """
+    from ..format.documents import visible_doc_id_range
+    from ..format.fingerprint import chunk_layout_for
+
+    spec = cfg.task
+    return spec.fingerprint(
+        query_position=cfg.query_position,
+        chunk_layout=chunk_layout_for(
+            "landmark" if cfg.attn == "landmark" else "dense",
+            spec.extra.get("chunk_by", "document"),
+        ),
+        doc_id_range=visible_doc_id_range(examples, spec.name),
+    )
+
+
 def run_task(
     cfg: EvalConfig,
     generate: Callable[[Sequence[str]], Sequence[str]],
@@ -265,18 +315,22 @@ def run_task(
 
     warnings: List[str] = []
 
+    # Loaded before the fingerprint check because two of the fields the check compares --
+    # `chunk_layout` and `doc_id_range` -- are properties of the data being graded, not of the
+    # flags.
+    examples = load_examples(Path(cfg.data_path), limit=cfg.limit)
+
     # --- format compatibility -------------------------------------------------------------------
     if cfg.ignore_fingerprint:
         warnings.append(
             "format fingerprint check DISABLED; train/eval format compatibility is UNVERIFIED"
         )
     else:
-        eval_fp = spec.fingerprint(query_position=cfg.query_position)
-        missing = check_or_explain_missing(eval_fp, Path(cfg.ckpt), strict=False)
+        missing = check_or_explain_missing(
+            eval_fingerprint(cfg, examples), Path(cfg.ckpt), strict=False
+        )
         if missing:
             warnings.append(missing)
-
-    examples = load_examples(Path(cfg.data_path), limit=cfg.limit)
     if cfg.limit is not None:
         warnings.append(f"limited to the first {cfg.limit} examples; this is a preview, not a run")
 

@@ -35,8 +35,14 @@ def is_textdiff(example: Dict) -> bool:
     :param example: A unified-format example.
 
     :returns: Whether this example uses the Gutenberg snippet answer format rather than ids.
+
+    Both metadata spellings are accepted, and that is not tidiness: the shipped pre-migration files
+    write bare ``meta`` while :func:`ctc.data.schema.make_example` normalises to ``_meta``, so
+    reading only one spelling makes this return ``False`` for every example built in this repo --
+    silently routing textdiff data to the id scorer.
     """
-    return (example.get("meta") or {}).get("format") == "textdiff"
+    meta = example.get("_meta") or example.get("meta") or {}
+    return meta.get("format") == "textdiff"
 
 
 def build_query(example: Dict) -> str:

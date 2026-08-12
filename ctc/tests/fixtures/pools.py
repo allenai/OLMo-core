@@ -16,17 +16,32 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-from ctc.data.sources import amazon, fever, oolong, pubmed, wiki100w
+from ctc.data.sources import (
+    amazon,
+    fever,
+    gutenberg,
+    oolong,
+    openalex,
+    paraphrase,
+    pubmed,
+    pubmed_redundancy,
+    wiki100w,
+)
 from ctc.data.sources.retrieval import Candidate, QueryPool, RetrievalPool
 
 __all__ = [
     "pubmed_pool",
+    "redundancy_pool",
     "fever_pool",
     "retrieval_pool",
     "rerank_pool",
     "article_pool",
     "review_pool",
     "oolong_pool",
+    "book_pool",
+    "paraphrase_pool",
+    "unit_pool",
+    "openalex_pool",
 ]
 
 
@@ -56,6 +71,65 @@ def pubmed_pool(pairs: int = 40, abstracts: int = 60, per_abstract: int = 8) -> 
         for i in range(abstracts)
     }
     return pubmed.PubMedPool(pairs=claim_pairs, fillers=fillers, provenance={"pairs": "fixture"})
+
+
+def redundancy_pool(
+    pairs: int = 60, hardnegs: int = 60, abstracts: int = 120, per_abstract: int = 8
+) -> pubmed_redundancy.RedundancyPool:
+    """
+    :param pairs: Gold ``(claim, paraphrase)`` pairs.
+    :param hardnegs: Planted same-abstract non-redundant pairs.
+    :param abstracts: Filler abstracts. Includes the gold and hard-negative abstracts, so the
+        "fillers never come from an abstract this example already used" rule has something to
+        exclude.
+    :param per_abstract: Sentences per abstract.
+
+    :returns: A redundancy pool.
+    """
+    gold = tuple(
+        pubmed_redundancy.RedundantPair(
+            claim=f"Cohort {i} showed a {i + 3} percent drop in relapse over twelve months.",
+            paraphrase=f"Over one year, group {i} experienced {i + 3} percent fewer recurrences.",
+            abstract_id=f"g{i}",
+            mode="subtle",
+        )
+        for i in range(pairs)
+    )
+    hard = tuple(
+        pubmed_redundancy.HardNegativePair(
+            first=f"Study {i} enrolled {i + 20} participants across four sites.",
+            second=f"Study {i} reported a {i + 5} percent rise in adverse events.",
+            abstract_id=f"h{i}",
+            overlap=0.3,
+        )
+        for i in range(hardnegs)
+    )
+    fillers = {
+        f"g{i}": tuple(
+            f"Background note {i}.{j} from the gold abstract." for j in range(per_abstract)
+        )
+        for i in range(pairs)
+    }
+    fillers.update(
+        {
+            f"h{i}": tuple(
+                f"Background note h{i}.{j} from the hard-negative abstract."
+                for j in range(per_abstract)
+            )
+            for i in range(hardnegs)
+        }
+    )
+    fillers.update(
+        {
+            f"f{i}": tuple(
+                f"Unrelated finding {i}.{j} from another abstract." for j in range(per_abstract)
+            )
+            for i in range(abstracts)
+        }
+    )
+    return pubmed_redundancy.RedundancyPool(
+        pairs=gold, hardnegs=hard, fillers=fillers, provenance={"pairs": "fixture"}
+    )
 
 
 def fever_pool(pairs: int = 40, pages: int = 30, fillers: int = 400) -> fever.FeverPool:
@@ -90,13 +164,16 @@ def fever_pool(pairs: int = 40, pages: int = 30, fillers: int = 400) -> fever.Fe
 
 
 def retrieval_pool(
-    queries: int = 40, hard: int = 30, corpus: int = 600, source: str = "nq"
+    queries: int = 40, hard: int = 30, corpus: int = 600, source: str = "nq", gold: int = 1
 ) -> RetrievalPool:
     """
-    :param queries: Prepared queries, each with one gold document.
+    :param queries: Prepared queries.
     :param hard: Hard negatives per query, hardest first.
     :param corpus: Filler documents shared by every query.
     :param source: Corpus tag.
+    :param gold: Gold documents per query. More than one is not an edge case -- ``hotpotqa`` is
+        always two and FiQA averages ~2.6 -- and it selects a different instruction wording and a
+        different scoring path, so a single-gold-only fixture leaves both untested.
 
     :returns: A retrieval pool with no pre-drawn fill, so fillers come from ``corpus``.
     """
@@ -112,7 +189,22 @@ def retrieval_pool(
     prepared = tuple(
         QueryPool(
             query=f"who invented gadget {i}?",
-            gold=(Candidate(f"g{i}", body(f"Gadget {i} was invented by inventor {i}.", i * 3)),),
+            # k=0 is byte-identical to the single-gold pool this fixture has always produced, so
+            # raising `gold` adds hops without perturbing any existing ladder's fixture data.
+            gold=tuple(
+                Candidate(
+                    f"g{i}" if k == 0 else f"g{i}-{k}",
+                    body(
+                        (
+                            f"Gadget {i} was invented by inventor {i}."
+                            if k == 0
+                            else f"Gadget {i} hop {k} was first documented by archivist {i}."
+                        ),
+                        i * 3 + k * 11,
+                    ),
+                )
+                for k in range(gold)
+            ),
             hard=tuple(
                 Candidate(
                     f"h{i}-{j}",
@@ -241,4 +333,152 @@ def oolong_pool(items: int = 400, labels: Tuple[str, ...] = ("spam", "ham", "oth
         labels={"spamset": labels},
         preamble={"spamset": "Below are {N} labelled messages."},
         preamble_tokens={"spamset": 8},
+    )
+
+
+#: Ordinary words the fixture sentences are built from. Real enough that two sentences about the
+#: same subject share vocabulary and two about different subjects do not, which is what the
+#: xabsence decoy machinery has to have something to work on.
+_SUBJECTS = (
+    "cardiac", "hepatic", "renal", "pulmonary", "neural", "vascular",
+    "skeletal", "immune", "thyroid", "gastric", "ocular", "dermal",
+)  # fmt: skip
+_OUTCOMES = ("mortality", "recovery", "inflammation", "perfusion", "density", "latency")
+
+
+def book_pool(
+    books: int = 12, runs_per_book: int = 3, sentences_per_run: int = 240
+) -> gutenberg.BookPool:
+    """
+    :param books: Distinct books. ``BookPool.for_split`` cuts by book at a tenth, so this must be
+        at least 10 for the eval split to hold more than one.
+    :param runs_per_book: Prose runs per book.
+    :param sentences_per_run: Sentences per run. Must clear the largest rung under test -- the
+        absence ladder builds each rung independently from a window of that many CONSECUTIVE
+        sentences, so a short run makes the long rungs silently unbuildable rather than smaller.
+
+    :returns: A Gutenberg-style pool. Every sentence is unique and every four-word opening is
+        unique, so the prefix-uniqueness filter never rejects a fixture window for a reason the
+        test did not intend.
+    """
+    return gutenberg.BookPool(
+        runs=tuple(
+            gutenberg.ProseRun(
+                book=f"book{b}",
+                sentences=tuple(
+                    f"Passage {b}-{r}-{s} recounts a quiet afternoon beside the "
+                    f"{_SUBJECTS[(b + s) % len(_SUBJECTS)]} river."
+                    for s in range(sentences_per_run)
+                ),
+            )
+            for b in range(books)
+            for r in range(runs_per_book)
+        ),
+        provenance={"corpus": "fixture", "books": books},
+    )
+
+
+def paraphrase_pool(entries: int = 300, clusters: int = 15) -> paraphrase.ParaphrasePool:
+    """
+    :param entries: Claim/paraphrase twins. Must exceed ``P + k`` for the rung under test, and by
+        enough that two examples are not the same documents.
+    :param clusters: Topic groups. Entries in one cluster draw from one small vocabulary, so the
+        pool has genuine lexical near-neighbours -- roughly 20 of them per cluster at the defaults,
+        which is what gives an orphan a plausible impostor to be confused with.
+
+    :returns: A twin pool where a twin overlaps its original **more than, but not disjointly from**
+        a topic neighbour. Both halves matter: with no near-neighbours the orphan is the only
+        document without a lexical counterpart and the probe scores 1.0 whatever the generator
+        does; with a *deterministic* margin the twin always wins by the same token and the probe
+        scores 1.0 again. Real paraphrases sit in between, so the overlaps here are drawn.
+    """
+    import random as _random
+
+    pairs = []
+    for i in range(entries):
+        cluster = i % clusters
+        rng = _random.Random(i)
+        vocabulary = [f"t{cluster}w{j}" for j in range(14)]
+        shared = rng.sample(vocabulary, 5)
+        pairs.append(
+            paraphrase.ParaphrasePair(
+                original=" ".join(
+                    ["The", "study", "found", "that"] + shared + rng.sample(vocabulary, 3) + ["."]
+                ),
+                paraphrase=" ".join(
+                    ["Investigators", "reported"]
+                    + shared
+                    + rng.sample(vocabulary, 3)
+                    + ["overall."]
+                ),
+            )
+        )
+    return paraphrase.ParaphrasePool(
+        pairs=tuple(pairs),
+        provenance={"pool": "fixture", "entries": entries, "clusters": clusters},
+    )
+
+
+def unit_pool(queries: int = 400, gold: int = 1, source: str = "nq"):
+    """
+    :param queries: Query units. Must clear ``M + N - k`` for the rung under test *after*
+        ``for_split`` takes its tenth, or an example cannot be assembled at all.
+    :param gold: Gold documents per query. ``1`` is NQ, ``2`` is a HotpotQA bridge question -- and
+        the difference is the pair count, which is the property qdmatch's two ladders differ on.
+    :param source: Corpus tag, as ``"nq"`` or ``"hotpotqa"``.
+
+    :returns: A qdmatch unit pool, projected from :func:`retrieval_pool` exactly the way a real
+        build projects one -- so the fixture cannot drift from the production path.
+    """
+    from ctc.tasks.qdmatch.generate import UnitPool, units_from_retrieval
+
+    pool = retrieval_pool(queries=queries, hard=2, corpus=8, source=source, gold=gold)
+    return UnitPool(
+        units=units_from_retrieval(pool),
+        source=f"qdmatch_{'nq' if source == 'nq' else 'hpqa'}",
+        provenance={"corpus": "fixture"},
+    )
+
+
+#: Level-0 concept values for the OpenAlex fixture. Nineteen, because that is how many top-level
+#: fields the real taxonomy has -- a ceiling more data cannot raise, and the exact reason the
+#: capacity clamp exists (port record trap 14). A fixture with unlimited coarse values would let a
+#: regression in that clamp pass.
+_FIELDS = tuple(f"Field {i}" for i in range(19))
+
+
+def openalex_pool(
+    papers: int = 2000, eval_share: int = 4, eval_year_min: int = 2024
+) -> openalex.OpenAlexPool:
+    """
+    :param papers: Papers in the pool.
+    :param eval_share: One paper in this many is published in the held-out years, so both sides of
+        ``for_split`` are non-empty.
+    :param eval_year_min: The year cut.
+
+    :returns: An OpenAlex pool whose concept hierarchy narrows level by level -- 19 values at L0
+        and hundreds by L3 -- so the per-level K clamp is exercised against a real ceiling rather
+        than against an index that can supply any K asked of it.
+    """
+    built = []
+    for i in range(papers):
+        field = _FIELDS[i % len(_FIELDS)]
+        built.append(
+            openalex.Paper(
+                id=f"W{i}",
+                title=f"Paper {i} on {field}",
+                abstract=f"Abstract {i} reports a study of {field} across several conditions.",
+                year=eval_year_min if i % eval_share == 0 else eval_year_min - 5,
+                concepts={
+                    0: field,
+                    1: f"{field} area {i % 47}",
+                    2: f"{field} topic {i % 131}",
+                    3: f"{field} niche {i % 313}",
+                },
+            )
+        )
+    return openalex.OpenAlexPool(
+        papers=tuple(built),
+        eval_year_min=eval_year_min,
+        provenance={"corpus": "fixture", "papers": papers},
     )

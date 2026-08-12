@@ -20,6 +20,8 @@ from olmo_core.utils import log_or_print
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from olmo_core.nn.attention import AttentionBackendName
+
     from . import TransformerGenerationModule
 
 
@@ -54,6 +56,7 @@ class TransformerGenerationModuleConfig(Config):
         work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
+        attention_backend: Optional["AttentionBackendName"] = None,
     ) -> "TransformerGenerationModule":
         """
         Build the corresponding :class:`TransformerGenerationModule`.
@@ -65,6 +68,11 @@ class TransformerGenerationModuleConfig(Config):
         :param work_dir: Working directory for temporary files during loading.
         :param pre_download: Whether to pre-download remote checkpoints.
         :param load_thread_count: Number of threads to use for loading.
+        :param attention_backend: Override the checkpoint config's attention backend. Needed
+            because a config that leaves the backend unset resolves to ``torch``, which raises
+            ``'TorchAttentionBackend' doesn't support KV caching`` at the first decoded token --
+            :meth:`TransformerGenerationModule.from_checkpoint` already accepts this override, but
+            without this parameter it was unreachable through the config.
         """
         from olmo_core.generate.generation_module import TransformerGenerationModule
 
@@ -92,5 +100,6 @@ class TransformerGenerationModuleConfig(Config):
             pre_download=pre_download,
             load_thread_count=load_thread_count,
             dtype=dtype,
+            attention_backend=attention_backend,
             **config_dict,
         )

@@ -22,6 +22,10 @@ ctc-data audit --task <task> --dir DIR                     # re-check data alrea
 | `outlier` | outlier | wiki100w article pool (pickle) | `ctc-data build --task outlier -C cache=POOL.pkl --out DIR` |
 | `rerank` | rerank | MS MARCO + SBERT hard negatives + CE scores | `ctc-data build --task rerank --out DIR` |
 | `oolong` | oolong | `oolongbench/oolong-synth` + a tokenizer | `ctc-data build --task oolong --out DIR` |
+| **further in-distribution corpora**, graded by a spec that already exists | | | |
+| `hotpotqa` | retrieval | HotpotQA `distractor` (bridge) — 2 gold/question, the benchmark's own distractors as hard negatives, CE-ranked | `ctc-data build --task hotpotqa --out DIR` |
+| `absence` | absence | Project Gutenberg (`sedthh/gutenberg_english`) — a window of N sentences, K deleted in a second copy. Needs the punkt model; **rungs are built independently**, see below | `ctc-data build --task absence --out DIR` |
+| `xabsence` | xabsence | PubMed claim/paraphrase twins — mine a pool once (`-C base_url=...`), then reuse it with `-C pool_path=...` | `ctc-data build --task xabsence -C pool_path=POOL.jsonl --out DIR` |
 | **the four held-out (OOD) ladders** — eval only | | | |
 | `fiqa` | retrieval | BEIR FiQA + BM25 + CE | `ctc-data build --task fiqa --split eval --out DIR` |
 | `scifact` | retrieval | BEIR SciFact + BM25 | `ctc-data build --task scifact --split eval --out DIR` |
@@ -81,12 +85,16 @@ before quoting one as a context length. Contradiction's row is the *corrected* o
 the pre-migration ladder was fit against a filler pool that turned out to be 92–99.6 % FEVER/wiki
 rather than PubMed and overshoots every rung by ~1.8×.
 
-**Eval ladders are nested, and three tasks reach that differently.** Most shrink one canonical set
+**Eval ladders are nested, and four tasks reach that differently.** Most shrink one canonical set
 built at the longest rung. `outlier` cannot — dropping random distractors can shrink a majority
 topic below the outlier count, and then the question has two correct answers and one label — so it
-builds every rung of a row at once, fixing the outlier and growing the majority. `oolong` cannot
-nest at all, because its gold is recomputed over whichever items were drawn; its rungs are built
-independently and both the build report and the audit say so.
+builds every rung of a row at once, fixing the outlier and growing the majority. `xabsence` cannot
+either — dropping half of a matched pair leaves its partner unmatched, i.e. a correct answer the
+label does not list — so it drops whole *pairs* instead, which is safe. `oolong` cannot nest at
+all, because its gold is recomputed over whichever items were drawn; its rungs are built
+independently and both the build report and the audit say so. **`absence` is the same case**: its
+second version is rendered text inside `queries[0]`, so it is a function of the whole corpus and no
+resize survives it — its rung-to-rung deltas carry eval-set resampling noise.
 
 **The held-out ladders refuse to produce training data.** Not a warning: by the time a warning is
 noticed the checkpoint is trained and the whole OOD column means nothing.

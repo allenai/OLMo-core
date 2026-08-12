@@ -39,6 +39,16 @@ LADDERS: Dict[str, Dict[str, int]] = {
     # ~15-20 tok/expression -- the shortest documents in the suite, hence the largest counts.
     "groups4": {"2k": 100, "4k": 210, "8k": 440, "16k": 900, "32k": 1800},
     "mathmatch": {"2k": 48, "4k": 105, "8k": 220, "16k": 450, "32k": 900},
+    # ~27 tok/string at str_len=10, tokenizer-MEASURED (2022/4080/8201/16459/33193 median prompt
+    # tokens, every rung within 1.3% of its label). NOT the BUILD_MATRIX row-20 counts
+    # (38/82/170/350/700), which that row itself flagged `synth x1.5-3 ... calibrate before
+    # freezing n values`: the multiplier is not there. Re-measuring the SHIPPED
+    # `eval_rungs/strmatch/rung_{2048,32768}.jsonl` gives 1119 and 18696 median tokens against
+    # labels of 2048 and 32768 -- every shipped strmatch rung is ~0.56x its label, so a strmatch
+    # point plotted at 32k was really a 19k point. The wiki vocabulary those files used and the
+    # frozen wordlist here tokenize almost identically (26.7-29.5 vs 27.3-30.9 tok/doc), so this
+    # row is a recalibration, not a consequence of the vocabulary swap.
+    "strmatch": {"2k": 72, "4k": 149, "8k": 301, "16k": 606, "32k": 1216},
     # ~150 tok/passage: the feature must be spread densely over several sentences, so a textgroups
     # document is an order of magnitude longer than a groups4 one at the same task shape.
     "textgroups": {"2k": 11, "4k": 24, "8k": 50, "16k": 103, "32k": 210},
@@ -49,7 +59,20 @@ LADDERS: Dict[str, Dict[str, int]] = {
     # tok/doc, so re-running those counts against the corrected pool overshoots every rung by
     # ~1.8x (n=77 measured 3413 tokens, not 2048; n=1423 measured 61461, not 32768).
     "contradiction": {"2k": 44, "4k": 92, "8k": 187, "16k": 379, "32k": 762},
+    # ~42 tok/claim, tokenizer-MEASURED (2044/3980/8099/16648/32897 median prompt tokens). Its own
+    # BUILD_MATRIX row (17) was struck out when the task was dropped from the suite, so there is no
+    # pre-migration ladder to inherit -- but the corpus is contradiction's, at the same document
+    # shape, and the two fits agree to within 3% at every rung (46/95/193/390/784 vs 44/92/187/
+    # 379/762), which is the cross-check that says the fit is measuring the corpus and not noise.
+    "redundancy": {"2k": 46, "4k": 95, "8k": 193, "16k": 390, "32k": 784},
     "nq": {"2k": 11, "4k": 23, "8k": 48, "16k": 100, "32k": 200},  # ~160 tok/passage
+    # ~113 tok/paragraph, tokenizer-MEASURED. NOT the BUILD_MATRIX row-2 counts (11/24/50/100/205),
+    # which the 2026-07-19 "FIX2" recalibration found undershooting their labels by 0.64-0.69x: a
+    # least-squares fit over the built rungs gave `tokens ~= 66.6 + 113.36 * n_docs`, and the
+    # rebuilt 17/36/72 re-measured at 1954/4124/8240 median tokens (ratios 0.954/1.007/1.006). The
+    # shipped `eval_rungs/hotpotqa/rung_{2048,4096,8192,16384}.jsonl` carry exactly 17/36/72/144
+    # documents. 32k is the same fit extrapolated one rung past the shipped ladder.
+    "hotpotqa": {"2k": 17, "4k": 36, "8k": 72, "16k": 144, "32k": 288},
     "outlier": {"2k": 14, "4k": 28, "8k": 57, "16k": 115, "32k": 220},  # ~140 tok/passage
     # ~100-160 tok/passage, the widest uncertainty band here: BUILD_MATRIX gives a range per rung
     # (13-18 / 25-38 / 50-78 / 100-158 / 200-315) and these are its midpoints. Re-measure before
@@ -57,6 +80,49 @@ LADDERS: Dict[str, Dict[str, int]] = {
     "rerank": {"2k": 15, "4k": 30, "8k": 62, "16k": 125, "32k": 250},
     # TOKEN budgets, not document counts. The generator draws items until the budget is met.
     "oolong": {"2k": 2048, "4k": 4096, "8k": 8192, "16k": 16384, "32k": 32768},
+    # ── the absence family ──
+    # ~76 tok/sentence, tokenizer-MEASURED. NOT BUILD_MATRIX row 18's ~20/sentence ->
+    # {90,180,360,720,1440}: that estimate charges each sentence once, and an absence prompt
+    # carries the whole corpus TWICE -- numbered as Version A, then again inside the second
+    # version. The shipped `absence_eval_gutenberg_n{10,50,200}_k3.jsonl` measure 548/3117/14790
+    # median Qwen3 tokens, giving `tokens ~= -412 + 75.7 * n_docs`, so the estimated ladder
+    # overshoots by ~3.4x and the staged `n1440` file is a ~109k-token file labelled 32k.
+    "absence": {"2k": 32, "4k": 60, "8k": 114, "16k": 222, "32k": 438},
+    # ~33 tok/claim, tokenizer-MEASURED, and ODD on purpose: an example is 2P+k documents, so an
+    # even rung with the default k=3 would round down to one document under its label. NOT
+    # BUILD_MATRIX row 22's P18/P39/P81/P165/P333 (39/81/165/333/669 documents at an estimated ~95
+    # tok/pair); the shipped `xabsence_eval_pubmed_p{8,18,48}_k3.jsonl` measure 772/1394/3424
+    # median tokens at 19/39/99 documents, giving `tokens ~= 120 + 33.3 * n_docs`.
+    "xabsence": {"2k": 59, "4k": 119, "8k": 243, "16k": 489, "32k": 981},
+    # ── the ladders whose rungs are drawn independently (gold covers every document) ──
+    # ~141 tok/passage, tokenizer-MEASURED over the shipped
+    # `reorder_gutenberg100w_n{5,20,50}_eval_500.jsonl` with each passage's whitespace collapsed --
+    # which is what the ported generator emits, since it builds passages out of
+    # `ctc.data.sources.gutenberg`'s normalised prose runs while the shipped files kept Gutenberg's
+    # own hard line wraps. Measured 804/2862/7118 median prompt tokens at n=5/20/50, giving
+    # `tokens ~= 81 + 140.5 * n_docs`; the same files unnormalised fit 147.4/passage, so the wraps
+    # were ~5% of the context. Effectively confirms BUILD_MATRIX row 24 (12/27/57/116/234).
+    # NOTE the answer, not the prompt, is what binds at 32k: the target is a permutation of n ids
+    # at ~3.8 tokens each, so n=233 needs ~890 of the spec's 1024 max_new_tokens.
+    "reorder": {"2k": 14, "4k": 29, "8k": 58, "16k": 116, "32k": 233},
+    # ~187 tok/abstract (title + a 120-word abstract), tokenizer-MEASURED over the shipped
+    # `openalex_grouping_n{20,100}_levels_eval_*.jsonl`: 3780/18743 median prompt tokens, giving
+    # `tokens ~= 39 + 187.0 * n_docs`. BUILD_MATRIX row 14 estimated ~180 tok/doc and subtracted a
+    # ~300-token overhead allowance, landing on 9/20/42/85/170 -- the same ladder to within one
+    # rung step.
+    "grouping_labeled": {"2k": 11, "4k": 22, "8k": 44, "16k": 87, "32k": 175},
+    # ITEMS (M queries + N documents), NOT the `q` of BUILD_MATRIX rows 21a/21b -- an example
+    # renders 2q items and both the ladder and `ctc.data.build.shrink` measure `len(documents)`.
+    # ~87 tok/item, tokenizer-MEASURED over the shipped
+    # `qdmatch_eval_nq_q{20,50,100,250}_n*_k3_separate.jsonl`: 3710/8888/17613/43738 median prompt
+    # tokens at 40/100/200/500 items, giving `tokens ~= 205 + 87.06 * n_docs`. That is exactly
+    # BUILD_MATRIX's "~175 per (query+doc) unit"; its q9/q20/q42/q87/q178 (= 18/40/84/174/356
+    # items) sit ~5% low because that row also charged a ~300-token query/answer overhead.
+    "qdmatch_nq": {"2k": 21, "4k": 45, "8k": 92, "16k": 186, "32k": 374},
+    # HotpotQA paragraphs run a little longer than NQ's 100-word DPR chunks, but the shipped hpqa
+    # files were built at the same item counts as the NQ ones and no separate fit exists; measure
+    # before quoting a hpqa context length.
+    "qdmatch_hpqa": {"2k": 21, "4k": 45, "8k": 92, "16k": 186, "32k": 374},
     # ── the four held-out (OOD) ladders ──
     "fiqa": {"2k": 4, "4k": 9, "8k": 19, "16k": 40, "32k": 80},  # ~400 tok/post
     "scifact": {"2k": 5, "4k": 10, "8k": 21, "16k": 43, "32k": 88},  # ~365 tok/abstract
@@ -73,12 +139,48 @@ CALIBRATION: Dict[str, str] = {
     "cycle": "estimated",
     "groups4": "estimated",
     "mathmatch": "estimated",
+    "strmatch": (
+        "measured (Qwen3 tokenizer, frozen wordlist); REPLACES BUILD_MATRIX row 20, whose "
+        "38/82/170/350/700 renders to ~0.56x of every rung label"
+    ),
     "textgroups": "estimated",
     "contradiction": "measured (Qwen3 tokenizer, PubMed-only filler pool)",
+    "redundancy": (
+        "measured (Qwen3 tokenizer, PubMed pool); no pre-migration row -- the task was "
+        "dropped from the suite before its ladder was fit"
+    ),
     "nq": "estimated (BUILD_MATRIX row 1)",
+    "hotpotqa": (
+        "measured 2k/4k/8k (FIX2 recalibration, 1954/4124/8240 median tokens); 16k/32k from the "
+        "same fitted 66.6 + 113.36*n, 16k built and shipped, 32k extrapolated"
+    ),
     "outlier": "estimated (BUILD_MATRIX row 11; matches the shipped n14-220 files)",
     "rerank": "estimated, wide (BUILD_MATRIX rows 9/10 give a range; these are its midpoints)",
     "oolong": "exact (the value IS the token budget the generator fills)",
+    "absence": (
+        "measured (Qwen3 tokenizer over the shipped gutenberg n10/n50/n200 files, fitted "
+        "-412.3 + 75.74*n); replaces BUILD_MATRIX row 18's ~3.4x-overshooting estimate"
+    ),
+    "xabsence": (
+        "measured (Qwen3 tokenizer over the shipped pubmed p8/p18/p48 files, fitted "
+        "120.1 + 33.31*n); replaces BUILD_MATRIX row 22's ~1.4x-overshooting estimate"
+    ),
+    "reorder": (
+        "measured (Qwen3 tokenizer over the shipped gutenberg100w n5/n20/n50 files with passage "
+        "whitespace collapsed, fitted 81.4 + 140.54*n); confirms BUILD_MATRIX row 24"
+    ),
+    "grouping_labeled": (
+        "measured (Qwen3 tokenizer over the shipped openalex n20/n100 files, fitted "
+        "39.2 + 187.04*n); one rung step above BUILD_MATRIX row 14's overhead-adjusted estimate"
+    ),
+    "qdmatch_nq": (
+        "measured (Qwen3 tokenizer over the shipped nq q20/q50/q100/q250 files, fitted "
+        "205.4 + 87.06*n ITEMS); BUILD_MATRIX rows 21a/21b quote the same ~175/(query+doc) unit"
+    ),
+    "qdmatch_hpqa": (
+        "estimated: the qdmatch_nq fit, reused. The shipped hpqa files were built at the same item "
+        "counts but were never separately measured -- HotpotQA paragraphs are not DPR chunks"
+    ),
     "fiqa": "estimated (BUILD_MATRIX row 8)",
     "scifact": "estimated (BUILD_MATRIX row 7)",
     "outlier_review": "estimated (BUILD_MATRIX row 12)",

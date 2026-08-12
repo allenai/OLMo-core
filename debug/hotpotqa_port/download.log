@@ -1,0 +1,6 @@
+OK len 90447
+{'id': 'str', 'question': 'str', 'answer': 'str', 'type': 'str', 'level': 'str', 'supporting_facts': 'dict', 'context': 'dict'}
+type comparison level medium
+sf {'title': ["Arthur's Magazine", 'First for Women'], 'sent_id': [0, 0]}
+ctx titles ['Radio City (Indian radio station)', 'History of Albanian football', 'Echosmith', "Women's colleges in the Southern United States", 'First Arthur County Courthouse and Jail', "Arthur's Magazine", '2014–15 Ukrainian Hockey Championship', 'First for Women', 'Freeway Complex Fire', 'William Rast']
+n ctx 10

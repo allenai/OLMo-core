@@ -179,9 +179,18 @@ def shrink(example: Mapping[str, Any], n_docs: int, spec: TaskSpec, rng: random.
     out = dict(example)
     out["documents"] = [docs[i] for i in kept]
     if gold:
-        out[field_name] = sorted(
-            sorted(old_to_new[p - spec.gold_index_base] for p in _flatten([g])) for g in gold
-        )
+        # Preserve the gold structure's SHAPE, not just its values. Wrapping a flat multi-gold list
+        # into singleton groups is not cosmetic: `ctc.tasks._retrieval.flatten_gold` reads a nested
+        # gold as one group per query and returns only the first, so a shrunk `hotpotqa` or `fiqa`
+        # rung would be graded on one of its gold documents and marked wrong for the rest -- while
+        # the longest rung, which never passes through here, was graded on all of them. The rungs
+        # would then disagree for a reason that has nothing to do with context length.
+        if any(isinstance(g, (list, tuple)) for g in gold):
+            out[field_name] = sorted(
+                sorted(old_to_new[p - spec.gold_index_base] for p in _flatten([g])) for g in gold
+            )
+        else:
+            out[field_name] = sorted(old_to_new[p - spec.gold_index_base] for p in gold)
     if "hard_neg_indices" in out:
         out["hard_neg_indices"] = sorted(
             old_to_new[p - spec.gold_index_base]

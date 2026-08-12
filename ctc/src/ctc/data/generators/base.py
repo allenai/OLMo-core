@@ -41,13 +41,26 @@ GENERATORS: Dict[str, str] = {
     "cycle": "ctc.tasks.cycle.generate",
     "groups4": "ctc.tasks.groups4.generate",
     "mathmatch": "ctc.tasks.mathmatch.generate",
+    "strmatch": "ctc.tasks.strmatch.generate",
     "textgroups": "ctc.tasks.textgroups.generate",
     # ── the five in-distribution CTC-suite ladders ──
     "contradiction": "ctc.tasks.contradiction.sources.pubmed",
+    "redundancy": "ctc.tasks.redundancy.generate",
     "nq": "ctc.tasks.retrieval.sources.nq",
     "outlier": "ctc.tasks.outlier.sources.wiki100w",
     "rerank": "ctc.tasks.rerank.generate",
     "oolong": "ctc.tasks.oolong.generate",
+    # ── further in-distribution corpora graded by an existing spec ──
+    "hotpotqa": "ctc.tasks.retrieval.sources.hotpotqa",
+    # ── the absence family: what is NOT here rather than what is ──
+    "absence": "ctc.tasks.absence.sources.gutenberg",
+    "xabsence": "ctc.tasks.xabsence.sources.pubmed",
+    # ── ladders whose gold covers every document, so their rungs cannot nest ──
+    "reorder": "ctc.tasks.reorder.sources.gutenberg",
+    "grouping_labeled": "ctc.tasks.grouping_labeled.sources.openalex",
+    # ── qdmatch: one spec, two corpora, two suite rows (BUILD_MATRIX.md 21a/21b) ──
+    "qdmatch_nq": "ctc.tasks.qdmatch.generate:NQ",
+    "qdmatch_hpqa": "ctc.tasks.qdmatch.generate:HOTPOTQA",
     # ── the four held-out (OOD) ladders: same contracts, different corpora ──
     "fiqa": "ctc.tasks.retrieval.sources.beir:FIQA",
     "scifact": "ctc.tasks.retrieval.sources.beir:SCIFACT",
