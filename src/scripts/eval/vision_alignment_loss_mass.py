@@ -174,6 +174,25 @@ def _write_json_once(path: Path, payload: Mapping[str, Any]) -> None:
             temporary.unlink()
 
 
+def _decode_checkpoint_config(recipe: Any, raw_config: Mapping[str, Any]) -> Any:
+    """Decode a saved config, narrowly migrating the pre-perception bridge schema."""
+    migrated = dict(raw_config)
+    if "perception_trainability_arm" not in migrated:
+        metadata = migrated.get("vision_alignment")
+        if (
+            migrated.get("phase") != "bridge"
+            or not isinstance(metadata, Mapping)
+            or metadata.get("phase") != "bridge"
+        ):
+            raise PromotionValidationError(
+                "Only a historical bridge config may omit perception_trainability_arm"
+            )
+        # The field did not exist when the pinned bridge checkpoint was written. Bridge has
+        # no trainability arm, and ``treatment`` is the current neutral/default enum value.
+        migrated["perception_trainability_arm"] = "treatment"
+    return recipe.ExperimentConfig.from_dict(migrated)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Replay every rank and write one immutable cumulative loss-mass receipt."""
     args = _parse_args(argv)
@@ -195,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     raw_config = load_json(checkpoint / "config.json")
     if not isinstance(raw_config, Mapping):
         raise PromotionValidationError("Candidate config must be an object")
-    config = recipe.ExperimentConfig.from_dict(raw_config)
+    config = _decode_checkpoint_config(recipe, raw_config)
     if str(config.phase) != "bridge" or config.global_batch_size <= 0:
         raise PromotionValidationError("Loss-mass replay requires the bridge configuration")
     if config.vision_alignment.data_contract_sha256 != candidate["data_contract_sha256"]:

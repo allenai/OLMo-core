@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -65,3 +66,29 @@ def test_jsonable_normalizes_tuple_and_scalar_tensor(loss_mass_module) -> None:
         "ref": [1, 2, 3],
         "count": 4,
     }
+
+
+def test_decode_checkpoint_config_migrates_only_historical_bridge(loss_mass_module) -> None:
+    decoded = []
+    recipe = SimpleNamespace(
+        ExperimentConfig=SimpleNamespace(from_dict=lambda value: decoded.append(value) or value)
+    )
+    raw = {
+        "phase": "bridge",
+        "vision_alignment": {"phase": "bridge", "recipe_version": 1},
+    }
+
+    result = loss_mass_module._decode_checkpoint_config(recipe, raw)
+
+    assert "perception_trainability_arm" not in raw
+    assert result["perception_trainability_arm"] == "treatment"
+    assert decoded == [result]
+
+    with pytest.raises(
+        loss_mass_module.PromotionValidationError,
+        match="Only a historical bridge config",
+    ):
+        loss_mass_module._decode_checkpoint_config(
+            recipe,
+            {"phase": "perception", "vision_alignment": {"phase": "perception"}},
+        )
