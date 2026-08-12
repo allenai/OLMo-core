@@ -184,6 +184,12 @@ LLM_WARMUP = 2000
 TRAIN_VIT = True
 VIT_LR = 6e-6
 VIT_WARMUP = 2000
+# Hold the pretrained token embeddings fixed, matching mm_olmo's `ft_embedding="lm_head"`
+# default: only the 128 image-special rows (`embeddings.extra_weight`) are learned. Because
+# the table is split, this is a plain whole-tensor freeze. For a *tied* backbone (Molmo2-4B)
+# the base block is also the LM head, so both roles are frozen; for an untied one
+# (Molmo2-8B) only the input table is, and the head keeps training — exactly mm_olmo.
+FREEZE_BASE_EMBEDDINGS = True
 ALPHA_F = 0.1
 
 # Data: the canonical PixMoCap "cap" dataset (HF DatasetDict, load_from_disk). Override as needed.
@@ -236,6 +242,10 @@ class ExperimentConfig(Config):
     train_vit: bool = TRAIN_VIT
     """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
     the encoder is frozen and kept in eval mode."""
+
+    freeze_base_embeddings: bool = FREEZE_BASE_EMBEDDINGS
+    """Freeze the pretrained token-embedding block, training only the extra image-token rows
+    (mm_olmo ``ft_embedding="lm_head"``)."""
 
     pack_sequences: bool = PACK_SEQUENCES
     """Pack several short examples per sequence (mm_olmo dynamic packer)."""
@@ -306,6 +316,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # Resolved pre-merge because it shapes `freeze_params`, the optimizer groups and the
     # per-group scheduler, all of which are built before `Config.merge` runs.
     train_vit = _read_bool_override(overrides, "train_vit", TRAIN_VIT)
+    freeze_base_embeddings = _read_bool_override(
+        overrides, "freeze_base_embeddings", FREEZE_BASE_EMBEDDINGS
+    )
     model_config = _build_model_config(model_size, init_from)
 
     dataset_config = PixMoCapDatasetConfig(
@@ -353,7 +366,12 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ),
         # An empty list keeps the encoder trainable *and* in train mode — the train module
         # only forces `vision.eval()` when `vision.*` is frozen.
-        freeze_params=[] if train_vit else ["vision.*"],
+        freeze_params=(
+            ([] if train_vit else ["vision.*"])
+            # The extra image-token rows live in `embeddings.extra_weight`, so freezing
+            # `embeddings.weight` leaves them trainable.
+            + (["lm.embeddings.weight"] if freeze_base_embeddings else [])
+        ),
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=COMPILE_MODEL,
@@ -448,11 +466,17 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # `_resolve_model_spec` already validated the pre-merge values; re-check the merged
     # config so a stray `--model_size`/`--init_from`/`--train_vit` cannot slip through, and
     # fail here rather than after a Beaker job has queued, started and downloaded weights.
-    resolved = (model_size, init_from, train_vit)
-    merged = (config.model_size, config.init_from, config.train_vit)
+    resolved = (model_size, init_from, train_vit, freeze_base_embeddings)
+    merged = (
+        config.model_size,
+        config.init_from,
+        config.train_vit,
+        config.freeze_base_embeddings,
+    )
     if merged != resolved:
         raise OLMoConfigurationError(
-            f"model_size / init_from / train_vit changed during merge: " f"{resolved} -> {merged}"
+            f"model_size / init_from / train_vit / freeze_base_embeddings changed during merge: "
+            f"{resolved} -> {merged}"
         )
 
     return config
@@ -538,34 +562,25 @@ def _init_weights_from_scratch(
     lm_state = convert_state_from_hf(hf_lm.config, hf_lm.state_dict(), model_type="qwen3")
     del hf_lm
 
+    # The base checkpoint's vocab must match our base block exactly; the extra image-token
+    # rows are a separate parameter, initialised here from mm_olmo's `new_embedding_init_range`.
     emb = lm_state["embeddings.weight"]
-    extra = model_cfg.lm.vocab_size - emb.shape[0]
-    if extra < 0:
-        raise RuntimeError(f"Base LM vocab {emb.shape[0]} exceeds target {model_cfg.lm.vocab_size}")
+    if emb.shape[0] != model_cfg.lm.vocab_size:
+        raise RuntimeError(
+            f"Base LM vocab {emb.shape[0]} != target base vocab {model_cfg.lm.vocab_size}"
+        )
+    n_extra = model_cfg.lm.n_extra_vocab
     gen = torch.Generator().manual_seed(0)  # same rows on every rank
-    new_rows = torch.empty(extra, emb.shape[1], dtype=emb.dtype)
-    new_rows.normal_(std=NEW_EMBEDDING_INIT_STD, generator=gen)
-    full_emb = torch.cat([emb, new_rows], dim=0)
+    extra_rows = torch.empty(n_extra, emb.shape[1], dtype=emb.dtype)
+    extra_rows.normal_(std=NEW_EMBEDDING_INIT_STD, generator=gen)
 
     converted = {f"lm.{k}": v for k, v in lm_state.items()}
-    converted["lm.embeddings.weight"] = full_emb
-    # The LM head has to span our full input vocab, but the base checkpoint only covers the
-    # base one, so it needs the same `extra` rows appended. How depends on tying:
+    converted["lm.embeddings.extra_weight"] = extra_rows
+    # Both our LM head and the base checkpoint's span the base vocab, so it maps straight
+    # across: no padding, and for a tied config the head simply *is* the base block
+    # (`retie_word_embeddings` below restores the share that `to_empty` broke).
     if model_cfg.lm.tie_word_embeddings:
-        # Tied (Molmo2-4B / Qwen3-4B, mm_olmo `weight_tying=True`): head *is* the embedding
-        # table. Identical values make the load order-independent; `retie_word_embeddings`
-        # below restores the share that `to_empty` broke.
-        converted["lm.lm_head.w_out.weight"] = full_emb.clone()
-    else:
-        # Untied (Molmo2-8B / Qwen3-8B): the base checkpoint carries a *distinct trained*
-        # output head — keep it rather than overwriting it with the embedding table. The
-        # appended rows are zeros because `output_vocab_size` masks logit columns >= the base
-        # vocab: they never enter the softmax and receive exactly zero gradient, matching
-        # mm_olmo, whose untied `ff_out` spans only the base vocab.
-        base_head = lm_state["lm_head.w_out.weight"]
-        converted["lm.lm_head.w_out.weight"] = torch.cat(
-            [base_head, base_head.new_zeros(extra, base_head.shape[1])], dim=0
-        )
+        converted["lm.lm_head.w_out.weight"] = emb
     del lm_state
 
     log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")

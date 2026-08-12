@@ -12,6 +12,7 @@ A separate ``@pytest.mark.slow`` numerical-parity test that requires a real
 HF Molmo2 checkpoint can be added later (task follow-up).
 """
 
+import dataclasses
 from typing import Dict
 
 import pytest
@@ -59,7 +60,8 @@ def _tiny_cfg(tie_word_embeddings: bool = False) -> MultimodalLMConfig:
     # fused ff_proj + qk_norm), just with d_model=12. Force the `torch`
     # SDPA backend so the tiny test config builds without a CUDA flash-attn.
     lm_cfg = TransformerConfig.olmo3_1M(
-        vocab_size=_FULL_VOCAB,
+        vocab_size=_BASE_VOCAB,
+        n_extra_vocab=_EXTRA_VOCAB,
         attn_backend=AttentionBackendName.torch,
         tie_word_embeddings=tie_word_embeddings,
     )
@@ -87,7 +89,8 @@ def _tiny_cfg(tie_word_embeddings: bool = False) -> MultimodalLMConfig:
         vision=vis_cfg,
         connector=conn_cfg,
         image_patch_token_id=_IMAGE_PATCH_ID,
-        output_vocab_size=_BASE_VOCAB,
+        # The head spans the base vocab structurally, so no logit masking.
+        output_vocab_size=None,
     )
 
 
@@ -135,14 +138,12 @@ def _synthetic_hf_state_dict(cfg: MultimodalLMConfig) -> Dict[str, torch.Tensor]
 
     has_qk_norm = _has_qk_norm(lm_cfg)
 
-    # Vocab: HF Molmo2 keeps base + extra vocab in separate buffers, and its
-    # lm_head predicts only the *base* vocab (the extras are input-only).
-    # Our config has lm.vocab_size == base + extra (already padded). Split
-    # at the same boundary that the converter uses. Tied configs export
-    # lm_head.weight as a copy of wte.embedding, so mirror that.
-    full_vocab = lm_cfg.vocab_size
-    new_vocab = _EXTRA_VOCAB
-    base_vocab = full_vocab - new_vocab
+    # Vocab: HF Molmo2 keeps base + extra vocab in separate buffers, and its lm_head
+    # predicts only the *base* vocab (the extras are input-only). Our config mirrors that
+    # split, so `lm.vocab_size` is the base and `lm.n_extra_vocab` the extra block. Tied
+    # configs export lm_head.weight as a copy of wte.embedding, so mirror that.
+    base_vocab = lm_cfg.vocab_size
+    new_vocab = lm_cfg.n_extra_vocab
     sd["model.transformer.wte.embedding"] = torch.randn(base_vocab, d_model)
     sd["model.transformer.wte.new_embedding"] = torch.randn(new_vocab, d_model)
     sd["model.transformer.ln_f.weight"] = torch.randn(d_model)
@@ -342,11 +343,10 @@ def test_forward_runs_with_converted_weights():
     model.eval()
     # Text-only forward.
     out = model(input_ids=torch.randint(0, 100, (1, 8)))
-    assert out.shape == (1, 8, cfg.lm.vocab_size)
-    # Base-vocab logits are real; extra-vocab columns are masked to the dtype
-    # minimum so they carry zero softmax mass and can never be sampled.
-    assert torch.isfinite(out[..., :_BASE_VOCAB]).all()
-    assert (out[..., _BASE_VOCAB:] == torch.finfo(out.dtype).min).all()
+    # The LM head spans the base vocab only — the extra image-special tokens are inputs and
+    # are structurally unpredictable, so there are no masked columns to check.
+    assert out.shape == (1, 8, _BASE_VOCAB)
+    assert torch.isfinite(out).all()
 
 
 # ---------------------------------------------------------------------------
@@ -355,29 +355,29 @@ def test_forward_runs_with_converted_weights():
 
 
 def test_tied_lm_head_shares_embedding_table_and_preserves_new_embedding():
-    """For a tied LM the converter must emit one consistent table for both keys.
+    """For a tied LM the head shares the *base* block, and the extra rows are untouched.
 
-    Regression test: zero-padding the lm_head of a *tied* model used to clobber
-    the ``new_embedding`` input rows on ``load_state_dict`` (both state-dict keys
-    copy into the same shared tensor, last write wins)."""
+    The base block and the extra image-token rows are separate parameters, so the tied head
+    (which is the base block) can no longer clobber the extra rows on ``load_state_dict`` —
+    the failure mode this test was originally written for is now structurally impossible."""
     cfg = _tiny_cfg(tie_word_embeddings=True)
     hf_sd = _synthetic_hf_state_dict(cfg)
     converted = molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
 
-    # Both keys hold the same concatenated table.
+    # The tied head is the base block itself, and it spans the base vocab only.
     assert converted["lm.lm_head.w_out.weight"] is converted["lm.embeddings.weight"]
+    assert converted["lm.embeddings.weight"].shape[0] == _BASE_VOCAB
+    assert converted["lm.embeddings.extra_weight"].shape[0] == _EXTRA_VOCAB
 
-    # Loading into a truly tied model (built on CPU, tie intact) must keep the
-    # new_embedding rows in the shared table.
     model = MultimodalLM(cfg, init_device="cpu")
     assert model.lm.lm_head.w_out.weight is model.lm.embeddings.weight
     model.load_state_dict(converted, strict=False)
     torch.testing.assert_close(
-        model.lm.embeddings.weight[_BASE_VOCAB:],
+        model.lm.embeddings.extra_weight,
         hf_sd["model.transformer.wte.new_embedding"],
     )
     torch.testing.assert_close(
-        model.lm.embeddings.weight[:_BASE_VOCAB],
+        model.lm.embeddings.weight,
         hf_sd["model.transformer.wte.embedding"],
     )
 
@@ -406,16 +406,23 @@ def test_retie_word_embeddings_after_to_empty():
     retie_word_embeddings(model)
     assert model.lm.lm_head.w_out.weight is model.lm.embeddings.weight
     torch.testing.assert_close(
-        model.lm.embeddings.weight[_BASE_VOCAB:],
+        model.lm.embeddings.extra_weight,
         hf_sd["model.transformer.wte.new_embedding"],
+    )
+    torch.testing.assert_close(
+        model.lm.embeddings.weight,
+        hf_sd["model.transformer.wte.embedding"],
     )
 
 
 def test_labels_path_guarded_when_output_vocab_masked():
-    """Passing ``labels`` through MultimodalLM would compute the loss over the
-    full padded vocab, bypassing the output-vocab masking — must raise."""
+    """Passing ``labels`` through MultimodalLM bypasses output-vocab masking — must raise.
+
+    Molmo2 no longer needs the masking (its head spans the base vocab structurally), so this
+    exercises the feature on a config that opts into it explicitly."""
     cfg = _tiny_cfg()
+    cfg = dataclasses.replace(cfg, output_vocab_size=_BASE_VOCAB - 4)
     model = MultimodalLM(cfg, init_device="cpu")
-    input_ids = torch.randint(0, _BASE_VOCAB, (1, 8))
+    input_ids = torch.randint(0, _BASE_VOCAB - 4, (1, 8))
     with pytest.raises(Exception, match="output_vocab_size"):
         model(input_ids=input_ids, labels=input_ids.clone())

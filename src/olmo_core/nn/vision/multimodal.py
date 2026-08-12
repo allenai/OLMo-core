@@ -11,6 +11,7 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import Config, DType
 from olmo_core.distributed.utils import barrier, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.embedding import SplitVocabEmbedding
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
@@ -23,6 +24,7 @@ from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
 
 __all__ = [
     "MOLMO2_BASE_VOCAB_SIZE",
+    "MOLMO2_N_EXTRA_TOKENS",
     "MOLMO2_VOCAB_SIZE",
     "MultimodalLMConfig",
     "MultimodalLM",
@@ -31,8 +33,11 @@ __all__ = [
 MOLMO2_BASE_VOCAB_SIZE = 151_936
 """Molmo2's base text vocab (Qwen3's) — the number of IDs the model may *predict*."""
 
-MOLMO2_VOCAB_SIZE = MOLMO2_BASE_VOCAB_SIZE + 128
-"""Molmo2's *input* vocab: the base text vocab plus 128 inputs-only image-special tokens."""
+MOLMO2_N_EXTRA_TOKENS = 128
+"""Molmo2's inputs-only image-special tokens, held in a separate embedding block."""
+
+MOLMO2_VOCAB_SIZE = MOLMO2_BASE_VOCAB_SIZE + MOLMO2_N_EXTRA_TOKENS
+"""Molmo2's total *input* vocab (base + extra); the LM head spans only the base."""
 
 
 def _molmo2_attn_backend():
@@ -158,7 +163,8 @@ class MultimodalLMConfig(Config):
             ),
             image_patch_token_id=IM_PATCH_ID,
             vit_layers=(24, 18),
-            output_vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+            # The head spans the base vocab structurally, so no logit masking is required.
+            output_vocab_size=None,
             **kwargs,
         )
 
@@ -181,7 +187,8 @@ class MultimodalLMConfig(Config):
         """
         return cls._molmo2_like(
             TransformerConfig.qwen3_4B(
-                vocab_size=MOLMO2_VOCAB_SIZE,
+                vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+                n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
                 rope_theta=rope_theta,
                 attn_backend=_molmo2_attn_backend(),
                 dtype=DType.float32,
@@ -205,7 +212,8 @@ class MultimodalLMConfig(Config):
         """
         return cls._molmo2_like(
             TransformerConfig.qwen3_8B(
-                vocab_size=MOLMO2_VOCAB_SIZE,
+                vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+                n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
                 rope_theta=rope_theta,
                 attn_backend=_molmo2_attn_backend(),
                 dtype=DType.float32,
@@ -482,9 +490,17 @@ class MultimodalLM(nn.Module):
         # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
         # DDP / single-GPU where the weight is already a plain tensor).
         emb = self.lm.embeddings
-        emb_weight = emb.weight
-        if isinstance(emb_weight, DTensor):
-            emb_weight = emb_weight.full_tensor()
+
+        def _full(weight: torch.Tensor) -> torch.Tensor:
+            return weight.full_tensor() if isinstance(weight, DTensor) else weight
+
+        if isinstance(emb, SplitVocabEmbedding):
+            # The image-special token IDs live in the *extra* block, so the lookup must span
+            # both parameters — `emb.weight` alone covers only the base vocab. Gradients still
+            # reach both blocks through the concatenation.
+            emb_weight = torch.cat([_full(emb.weight), _full(emb.extra_weight)], dim=0)
+        else:
+            emb_weight = _full(emb.weight)
         h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
         if self.lm.embed_scale is not None:
             h = h * self.lm.embed_scale
