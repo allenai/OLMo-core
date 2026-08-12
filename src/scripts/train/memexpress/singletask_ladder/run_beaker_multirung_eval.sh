@@ -204,7 +204,15 @@ if [ "$LADDER_XLONG" = "1" ]; then
     *) echo "    [xlong] supports contra|nq|outlier only; TASK=$TASK unchanged." ;;
   esac
 fi
-OUT="$EVAL_OUT_DIR/${TASK}_multirung.json"
+# The result filename must encode the LADDER, because the ladder decides what was measured. It used
+# to be ${TASK}_multirung.json regardless, so a v3 contra run overwrote the v2 contra result in
+# place -- same run dir, same task, silently different eval set, and the two are NOT comparable
+# (contra changes perturbation mode; outlier changes K scaling). v2 keeps the bare name so every
+# existing path and downstream consumer is untouched; anything else gets a suffix.
+case "$LADDER_VERSION" in
+  v2) OUT="$EVAL_OUT_DIR/${TASK}_multirung.json" ;;
+  *)  OUT="$EVAL_OUT_DIR/${TASK}_multirung_${LADDER_VERSION}.json" ;;
+esac
 echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION variant=$VARIANT -> $OUT ($(date -u '+%T')Z) ==="
 if [ "$VARIANT" = "docchunk" ]; then
   # box-marker chunked prefill + bs=1 KV-cached decode; same ladder keys ($LTASK/$RUNGS) as the

@@ -191,6 +191,40 @@ were rescued from mooney's local disk to `/scratch`. Length-gen evals were pinne
 the HF exports and had to be re-homed — note cubbins' and horton's contradiction exports are
 **different checkpoints** (different byte sizes) and only cubbins' backs the published table.
 
+## 7d. Train-step audit (steps must be the comparison's constant, not a free variable)
+
+Every run is `epochs=1`, `global_batch=8`, so **steps = instances / 8**. Two places this could have
+drifted, both checked rather than assumed:
+
+- **`beaker_ctc_suite.py` defaults to `--num-nodes 2`**, and it derives
+  `global_batch = opts.global_batch or world_size` — so a 2-node launch silently doubles the batch
+  and *halves* the step count. Every launch here passes `--num-nodes 1`; the dry run confirms
+  `nodes=1 world_size=8 global_batch=8`.
+- **The published 4B rows had to match.** `ctc-4b-hotpotqa-full` (July) ends at **step 2500**,
+  identical to the new `ctcms-hotpotqa-full-4b`, and `ctc-4b-oolong-full` at 2625 = 21,000/8 —
+  confirming the published runs were `global_batch=8` too.
+
+| shard | instances | steps |
+|---|---|---|
+| contradiction_train | 19,366 | 2,420 |
+| reorder_train | 19,944 | 2,493 |
+| hotpotqa_train | 20,000 | 2,500 |
+| qdmatch_nq_train_fixed | 20,000 | 2,500 |
+| outlier_train (scale-K, published) | 19,986 | 2,498 |
+| outlier_fixedM_train | 20,000 | 2,500 |
+
+**Within a task, steps are identical across scale and arm** — which is the constant the model-scale
+and dense-vs-chunked comparisons actually require. Across tasks they differ by <4%, which is fine
+because tasks are never compared to each other directly. The fixed-M outlier control lands within
+2 steps (0.08%) of the scale-K row it is the control for.
+
+**The one outlier was oolong.** Its first build came out at 14,463 instances = **1,807 steps, 28%
+short**, because the even-split combine floors every band at the smallest band and band 2 was
+missing a shard (admin-held during the cubbins/mooney drain). Regenerating that shard restores
+4,000/band → 20,000 → ~2,410 steps after the decontamination drop, in line with contradiction's
+2,420. Worth noting the decontamination is not cosmetic: it removed 537 examples (3.58%) that
+collided with the CTC oolong eval rungs.
+
 ## 8. Live state
 
 Launch ledger: `debug/ctc_modelscale/LAUNCH_LEDGER.tsv` (one row per submitted job).

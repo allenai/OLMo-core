@@ -15,3 +15,4 @@ root; the root keeps only README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.
 | `landmark-packing-cp-task.md` | GPU-agent task brief: landmark attention + sequence packing + context parallelism (done). |
 | `landmark-sparse-decode-task.md` | GPU-agent task brief: make landmark top-k decode O(k·block) (open). |
 | `weka-checkpoint-cleanup.md` | The 2026-07-28 weka audit + cleanup (21.37 TB → 7.2 TB). Why `stepN/` dirs are redundant against the model-only `model_and_optim/` that eval reads, what was deleted, and the paths that must never be. Tooling in `debug/weka_cleanup/`. |
+| `v3-eval-howto.md` | **How to run the v2 and v3 eval ladders** (for collaborators). v3 = v2_clean with contra rebuilt `realistic`-mode and outlier's xlong rungs rebuilt scale-K; nq/rerank/oolong are symlinks to v2 and must NOT be re-run. Exact launcher commands, the `--query-position` / `--tokenizer` traps that silently zero a run, and the v2/v3 result-filename split. |

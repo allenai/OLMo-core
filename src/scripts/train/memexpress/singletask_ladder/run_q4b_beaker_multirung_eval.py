@@ -82,7 +82,9 @@ def build_eval_launch_config(
     )
     cmd = ["bash", "-lc", inner]
 
-    name = f"ev-{task}-{run_name}"
+    # Ladder in the job name for anything but v2, so a v2 and a v3 submission for the same
+    # (task, run) are distinguishable in the Beaker UI instead of two identically-named jobs.
+    name = f"ev-{task}-{run_name}" + (f"-{ladder_version}" if ladder_version != "v2" else "")
     launch_config = build_launch_config(
         name=name,
         cmd=cmd,
