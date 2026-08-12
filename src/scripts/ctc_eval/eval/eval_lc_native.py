@@ -527,6 +527,20 @@ def main():
 
     if is_main:
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+        # Provenance, so a number can say which eval SET produced it without anyone remembering.
+        # The fast (shared-corpus) bundle is a DIFFERENT measurement from v2, and this file used to
+        # carry nothing but `<task>_<rung>: float` -- so `eval_version` was whatever the person
+        # ingesting it typed, and the standing instructions say to type "v2". A fast number then
+        # lands indistinguishable from a reliable one and quietly contaminates the comparison it
+        # exists to support.
+        #
+        # Strings only, and read by results-hub's ingester as metadata rather than metrics: a dict
+        # of numbers here would be picked up as another task's scores.
+        summary["_meta"] = {
+            "ladder_version": args.ladder_version,
+            "eval_bundle": E5 if args.ladder else "",
+            "query_position": args.query_position,
+        }
         json.dump(summary, open(args.out, "w"), indent=2)
         if args.save_generations and gen_dump:
             gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
