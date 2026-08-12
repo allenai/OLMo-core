@@ -25,6 +25,11 @@ from ctc.tasks import load_all
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+#: The generators with a captured pre-migration fixture -- the four pure-synthetic ones. Read
+#: off the fixture directory rather than off the registry: the corpus-backed generators cannot
+#: be byte-compared without their corpora, and listing them here would only mean skipping them.
+GOLDEN_TASKS = sorted(p.name.removesuffix("_golden.json") for p in FIXTURES.glob("*_golden.json"))
+
 #: Fixture config keys named for the old positional signatures, mapped onto the ported keyword ones.
 RENAMES = {
     "n_docs": "num_docs",
@@ -42,7 +47,7 @@ def _ids(task):
     return [c["name"] for c in _cases(task)[1]]
 
 
-@pytest.mark.parametrize("task", base.names())
+@pytest.mark.parametrize("task", GOLDEN_TASKS)
 def test_examples_match_the_pre_migration_generator(task):
     seed, cases = _cases(task)
     build = base.get(task).build_example
@@ -53,7 +58,7 @@ def test_examples_match_the_pre_migration_generator(task):
             assert build(rng, **config) == expected, f"{task}/{case['name']} example {i}"
 
 
-@pytest.mark.parametrize("task", base.names())
+@pytest.mark.parametrize("task", GOLDEN_TASKS)
 def test_the_rng_stream_is_not_merely_per_example_correct(task):
     """
     A generator can produce the right first example and still consume the RNG differently, which
@@ -64,7 +69,7 @@ def test_the_rng_stream_is_not_merely_per_example_correct(task):
     assert all(len(c["examples"]) >= 2 for c in cases)
 
 
-@pytest.mark.parametrize("task", base.names())
+@pytest.mark.parametrize("task", GOLDEN_TASKS)
 def test_gold_agrees_with_the_spec_declared_index_base(task):
     """
     The generator and the grader must agree on the base. They are declared in different files, and
@@ -84,7 +89,7 @@ def test_gold_agrees_with_the_spec_declared_index_base(task):
         assert spec.gold_index_base == 1, f"{task} is documented as 1-based in the port plan"
 
 
-@pytest.mark.parametrize("task", base.names())
+@pytest.mark.parametrize("task", GOLDEN_TASKS)
 def test_generated_examples_validate_against_the_schema(task):
     from ctc.data.schema import validate
 

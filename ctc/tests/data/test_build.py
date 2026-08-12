@@ -12,10 +12,15 @@ import random
 import pytest
 
 from ctc.data import build, ladders
+from ctc.data.generators import base as _generators
 from ctc.format import registry
 from ctc.tasks import load_all
 
 TASK = "cycle"
+
+#: Ladders a test can build with no corpus. The corpus-backed ones get the same coverage in
+#: ``test_corpus_generators.py``, against fixture pools.
+CORPUS_FREE = sorted(set(ladders.LADDERS) & set(_generators.corpus_free_names()))
 
 
 @pytest.fixture(scope="module")
@@ -207,6 +212,7 @@ def test_a_parameter_space_too_small_fails_loudly(spec):
         "source": "stub",
     }
     stub = Generator(
+        name=TASK,
         task=TASK,
         source="stub",
         build_example=lambda rng, **kw: dict(one_example),
@@ -229,7 +235,7 @@ def test_a_parameter_space_too_small_fails_loudly(spec):
     assert report.duplicates >= build.MAX_REJECTS_PER_EXAMPLE
 
 
-@pytest.mark.parametrize("task", sorted(ladders.LADDERS))
+@pytest.mark.parametrize("task", CORPUS_FREE)
 def test_every_task_builds_at_every_rung_of_its_own_ladder(task):
     """
     The check that the pre-migration build spec never got. BUILD_MATRIX.md recorded a concrete
@@ -237,6 +243,10 @@ def test_every_task_builds_at_every_rung_of_its_own_ladder(task):
     documents, mathmatch was infeasible at all five rungs and groups4 at the top three, because a
     fixed answer range cannot hold a ladder's worth of mutually-distant values. A ladder entry that
     no generator can satisfy is a rung that silently never gets built.
+
+
+    Corpus-backed ladders get the same check in ``test_corpus_generators.py``, against fixture
+    pools -- the property is identical, only the substrate has to be supplied.
     """
     from ctc.data.generators import base as generators
 

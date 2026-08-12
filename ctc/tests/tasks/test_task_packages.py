@@ -328,11 +328,18 @@ def test_unknown_query_position_raises():
         )
 
 
-def test_generate_reports_what_is_missing_rather_than_returning_nothing():
+def test_every_declared_contradiction_source_resolves_to_a_generator():
+    """
+    ``SOURCES`` is documentation until something dereferences it. A source listed there with no
+    generator behind it reads as "this corpus is buildable" and is not.
+    """
+    from ctc.data.generators import base as generators
     from ctc.tasks.contradiction import generate
 
-    with pytest.raises(NotImplementedError, match="generate_pubmed_contradiction_data"):
-        list(generate.build("pubmed", rung="2k"))
+    for source, ladder in generate.SOURCES.items():
+        assert (
+            generators.get(ladder).task == "contradiction"
+        ), f"{source} is not graded by the contradiction spec"
 
 
 # ── an inert knob must actually be inert ────────────────────────────────────────────────────────

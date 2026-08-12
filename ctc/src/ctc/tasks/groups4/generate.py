@@ -180,6 +180,7 @@ def build_example(
 
 
 GENERATOR = Generator(
+    name="groups4",
     task="groups4",
     source="groups4",
     build_example=build_example,

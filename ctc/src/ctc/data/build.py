@@ -53,6 +53,14 @@ class BuildReport:
         not an error -- it is the guard working -- but a large fraction means the gold space is too
         small for the requested sizes, and the remaining train set is more correlated with eval
         than the count suggests.
+    :param skipped: Draws the generator declined -- a degenerate item set, a query with no
+        answer-bearing passage, a pool too thin for the requested size. Reported because it is the
+        difference between "the corpus is fine" and "the corpus ran out", which the row count alone
+        cannot tell you.
+    :param reused_pool: Times a corpus-backed generator wrapped back to the start of its pool.
+        Non-zero means the same question appears in several examples with different distractors,
+        so the split has fewer distinct questions than rows.
+    :param notes: Anything a reader of the resulting files must know.
     """
 
     task: str
@@ -60,6 +68,9 @@ class BuildReport:
     counts: Dict[str, int] = field(default_factory=dict)
     duplicates: int = 0
     contaminated: int = 0
+    skipped: int = 0
+    reused_pool: int = 0
+    notes: List[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -67,13 +78,18 @@ class BuildReport:
         return sum(self.counts.values())
 
     def summary(self) -> str:
-        """:returns: One line for a build log."""
-        rejected = (
-            f", {self.duplicates} dup, {self.contaminated} contaminated"
-            if (self.duplicates or self.contaminated)
-            else ""
-        )
-        return f"{self.task}/{self.split}: {self.total} examples{rejected}"
+        """:returns: One line for a build log, plus any notes."""
+        parts = [
+            f"{self.duplicates} dup" if self.duplicates else "",
+            f"{self.contaminated} contaminated" if self.contaminated else "",
+            f"{self.skipped} skipped" if self.skipped else "",
+            f"{self.reused_pool} pool wraps" if self.reused_pool else "",
+        ]
+        rejected = ", ".join(p for p in parts if p)
+        line = f"{self.task}/{self.split}: {self.total} examples"
+        if rejected:
+            line += f" ({rejected})"
+        return "\n".join([line, *(f"  ! {note}" for note in self.notes)])
 
 
 def _digest(*parts: str) -> str:
@@ -183,6 +199,59 @@ def shrink(example: Mapping[str, Any], n_docs: int, spec: TaskSpec, rng: random.
     return out
 
 
+class _Cursor:
+    """
+    A split's running example counter, shared across its rungs.
+
+    Corpus-backed generators take one question (or claim pair) per example, identified by this
+    index rather than sampled from the RNG -- sampling would reuse some questions while leaving
+    others untouched, inside a split that is supposed to cover its pool. Sharing one cursor across
+    the rungs of a *train* build is what keeps the 20k examples 20k distinct questions rather than
+    the same 4k asked at five lengths.
+
+    :param size: Pool size, or ``None`` when the generator needs no index.
+    :param report: Where a wrap-around is recorded.
+    """
+
+    def __init__(self, size: Optional[int], report: BuildReport) -> None:
+        self.value = 0
+        self.size = size
+        self.report = report
+
+    def take(self) -> int:
+        """:returns: The next index, wrapping at the pool size and counting the wrap."""
+        index = self.value
+        self.value += 1
+        if self.size:
+            if index and index % self.size == 0:
+                self.report.reused_pool += 1
+            return index % self.size
+        return index
+
+
+def _cursor_for(
+    generator: generators.Generator, resolved: Mapping[str, Any], report: BuildReport
+) -> _Cursor:
+    """
+    :param generator: The generator.
+    :param resolved: Its resolved config, possibly carrying a corpus.
+    :param report: Where wrap-arounds are recorded.
+
+    :returns: A cursor that wraps at the pool size only for generators that **consume** the pool
+        one item per example. ``outlier``, ``outlier_review`` and ``oolong`` sample from theirs
+        instead -- an article or a log item can back many examples -- so wrapping their counter
+        would mean rebuilding the same rows every ``len(pool)`` examples.
+    """
+    if not generator.indexed:
+        return _Cursor(None, report)
+    corpus = resolved.get("corpus")
+    try:
+        size = len(corpus) or None
+    except TypeError:
+        size = None
+    return _Cursor(size, report)
+
+
 def _draw(
     generator: generators.Generator,
     config: Mapping[str, Any],
@@ -193,13 +262,20 @@ def _draw(
     forbidden_gold: Set[str],
     spec: TaskSpec,
     report: BuildReport,
+    cursor: Optional[_Cursor] = None,
 ) -> Iterator[Dict]:
-    """Yield ``count`` fresh examples, rejecting duplicates and eval-gold reuse."""
+    """Yield ``count`` fresh examples, rejecting duplicates, eval-gold reuse and dead draws."""
     produced = 0
     rejects = 0
     while produced < count:
-        example = generator.build_example(rng, **config)
-        if fingerprint(example) in seen:
+        kwargs = dict(config)
+        if generator.indexed:
+            kwargs["index"] = (cursor or _Cursor(None, report)).take()
+        example = generator.build_example(rng, **kwargs)
+        if example is None:
+            report.skipped += 1
+            rejects += 1
+        elif fingerprint(example) in seen:
             report.duplicates += 1
             rejects += 1
         elif gold_fingerprint(example, spec) in forbidden_gold:
@@ -212,10 +288,47 @@ def _draw(
             continue
         if rejects >= MAX_REJECTS_PER_EXAMPLE:
             raise RuntimeError(
-                f"{generator.task}: {MAX_REJECTS_PER_EXAMPLE} consecutive rejections at "
-                f"{config}. The parameter space is too small for {count} distinct examples; "
-                "widen it rather than accepting near-duplicate training data."
+                f"{generator.name}: {MAX_REJECTS_PER_EXAMPLE} consecutive rejections at "
+                f"{_describe(config)}. The parameter space or the corpus pool is too small for "
+                f"{count} distinct examples; widen it rather than accepting near-duplicate data."
             )
+
+
+def _describe(config: Mapping[str, Any]) -> str:
+    """:param config: A resolved build config. :returns: It, minus the (huge) corpus pool."""
+    return str({k: v for k, v in config.items() if k != "corpus"})
+
+
+def _resolve(
+    generator: generators.Generator,
+    config: Optional[Mapping[str, Any]],
+    corpus: Any,
+    split: str,
+) -> Dict[str, Any]:
+    """
+    Merge the per-example config with this split's slice of the corpus.
+
+    :param generator: The generator.
+    :param config: Caller overrides.
+    :param corpus: A loaded pool, or ``None``.
+    :param split: ``"train"`` or ``"eval"``.
+
+    :returns: The resolved kwargs for ``build_example``.
+
+    :raises ValueError: If the generator needs a corpus and none was supplied.
+    """
+    resolved = generator.config(**dict(config or {}))
+    if generator.corpus is None:
+        return resolved
+    if corpus is None:
+        raise ValueError(
+            f"{generator.name} needs a corpus; call generator.load_corpus() and pass it in, or "
+            "let ctc.data.cli do it"
+        )
+    # Train/eval separation is a property of the POOL, not of the loop over it: a pool that knows
+    # how to split itself cannot be split two different ways by two callers.
+    resolved["corpus"] = corpus.for_split(split) if hasattr(corpus, "for_split") else corpus
+    return resolved
 
 
 def build_eval(
@@ -226,31 +339,40 @@ def build_eval(
     seed: int = 7,
     rungs: Optional[Sequence[str]] = None,
     config: Optional[Mapping[str, Any]] = None,
+    corpus: Any = None,
 ) -> Tuple[Dict[str, List[Dict]], BuildReport]:
     """
-    Build a nested eval ladder: one canonical set at the longest rung, shrunk down.
+    Build an eval ladder, nested wherever the task allows it.
 
-    :param task: Task name.
-    :param spec: Its spec.
+    Three constructions, and which one a task gets is declared on its generator, never guessed:
+
+    * **shrink** (the default) -- one canonical set at the longest rung, shorter rungs derived by
+      dropping distractors in place;
+    * **a task's own ladder** (:attr:`~ctc.data.generators.base.Generator.build_ladder`) -- for
+      ``outlier``, where dropping random distractors can destroy the "outlier is the rarest topic"
+      invariant, so the majority is grown instead;
+    * **independent rungs** -- for ``oolong``, whose gold is recomputed over the drawn items and so
+      cannot survive any resize. The report says so, because the resulting ladder's rung-to-rung
+      deltas carry eval-set resampling noise the others do not.
+
+    :param task: Ladder name.
+    :param spec: Its grading spec.
     :param size: Examples per rung. 500 is the suite floor; anything smaller must be flagged
         inline wherever its numbers are quoted, with an error bar.
     :param seed: Eval seed. Kept distinct from the train seed by default so the two never share a
         stream even if someone passes the same number.
     :param rungs: Rungs to emit; defaults to the task's full ladder.
     :param config: Generator parameter overrides.
+    :param corpus: A loaded pool for corpus-backed generators. Defaults to loading one, which is
+        the only step that touches the network.
 
     :returns: ``({rung label: examples}, report)``. The report carries the rejection counts,
         which are the guard's output -- a build that discards a third of its draws to contamination
         is not the same build as one that discards none, even though the files look identical.
 
-    :raises ValueError: If ``size`` is below 500, or the generator is not shrink-safe.
+    :raises ValueError: If ``size`` is below 500.
     """
     generator = generators.get(task)
-    if not generator.shrink_safe:
-        raise ValueError(
-            f"{task} is not shrink-safe, so a nested ladder would change its gold. Generate each "
-            "rung independently and accept the loss of row alignment."
-        )
     if size < 500:
         raise ValueError(
             f"eval_size={size} is below the suite floor of 500. A smaller eval inflates noise into "
@@ -259,32 +381,118 @@ def build_eval(
         )
     labels = list(rungs) if rungs else ladders.rungs_for(task)
     longest = labels[-1]
-    resolved = generator.config(**dict(config or {}))
-    resolved[generator.scaling_param] = ladders.docs_for_rung(task, longest)
-
     report = BuildReport(task=task, split="eval")
-    rng = random.Random(f"{seed}:eval:{longest}")
-    canonical = list(
-        _draw(
-            generator,
-            resolved,
-            rng,
-            count=size,
-            seen=set(),
-            forbidden_gold=set(),
-            spec=spec,
-            report=report,
-        )
-    )
+    if corpus is None:
+        corpus = generator.load_corpus()
+    resolved = _resolve(generator, config, corpus, "eval")
+    cursor = _cursor_for(generator, resolved, report)
 
-    out = {longest: canonical}
-    for label in labels[:-1]:
-        n_docs = ladders.docs_for_rung(task, label)
-        # One stream per rung, keyed by the rung, so adding a rung never perturbs the others.
-        shrink_rng = random.Random(f"{seed}:eval:shrink:{label}")
-        out[label] = [shrink(ex, n_docs, spec, shrink_rng) for ex in canonical]
+    if generator.build_ladder is not None:
+        out = _draw_ladder(generator, resolved, labels, task, size, seed, spec, report, cursor)
+    elif not generator.shrink_safe:
+        out = _draw_independent(generator, resolved, labels, task, size, seed, spec, report, cursor)
+        report.notes.append(
+            f"{task} rungs are generated independently: its gold is recomputed per draw, so no "
+            "two rungs grade the same question and rung-to-rung deltas include eval-set noise"
+        )
+    else:
+        resolved[generator.scaling_param] = ladders.docs_for_rung(task, longest)
+        rng = random.Random(f"{seed}:eval:{longest}")
+        canonical = list(
+            _draw(
+                generator,
+                resolved,
+                rng,
+                count=size,
+                seen=set(),
+                forbidden_gold=set(),
+                spec=spec,
+                report=report,
+                cursor=cursor,
+            )
+        )
+        out = {longest: canonical}
+        for label in labels[:-1]:
+            n_docs = ladders.docs_for_rung(task, label)
+            # One stream per rung, keyed by the rung, so adding a rung never perturbs the others.
+            shrink_rng = random.Random(f"{seed}:eval:shrink:{label}")
+            out[label] = [shrink(ex, n_docs, spec, shrink_rng) for ex in canonical]
+
     report.counts = {label: len(out[label]) for label in labels}
     return {label: out[label] for label in labels}, report
+
+
+def _draw_independent(
+    generator: generators.Generator,
+    resolved: Dict[str, Any],
+    labels: Sequence[str],
+    task: str,
+    size: int,
+    seed: int,
+    spec: TaskSpec,
+    report: BuildReport,
+    cursor: _Cursor,
+) -> Dict[str, List[Dict]]:
+    """Generate each rung on its own stream, for a generator that cannot resize an example."""
+    out: Dict[str, List[Dict]] = {}
+    for label in labels:
+        rung_config = dict(resolved)
+        rung_config[generator.scaling_param] = ladders.docs_for_rung(task, label)
+        out[label] = list(
+            _draw(
+                generator,
+                rung_config,
+                random.Random(f"{seed}:eval:{label}"),
+                count=size,
+                seen=set(),
+                forbidden_gold=set(),
+                spec=spec,
+                report=report,
+                cursor=cursor,
+            )
+        )
+    return out
+
+
+def _draw_ladder(
+    generator: generators.Generator,
+    resolved: Dict[str, Any],
+    labels: Sequence[str],
+    task: str,
+    size: int,
+    seed: int,
+    spec: TaskSpec,
+    report: BuildReport,
+    cursor: _Cursor,
+) -> Dict[str, List[Dict]]:
+    """Build every rung of a row at once, through the generator's own ladder builder."""
+    sizes = {label: ladders.docs_for_rung(task, label) for label in labels}
+    longest = max(sizes, key=lambda label: sizes[label])
+    out: Dict[str, List[Dict]] = {label: [] for label in labels}
+    seen: Set[str] = set()
+    rejects = 0
+    while len(out[longest]) < size:
+        index = cursor.take()
+        row = generator.build_ladder(
+            random.Random(f"{seed}:eval:{index}"), index=index, rungs=sizes, **resolved
+        )
+        if row is None or fingerprint(row[longest]) in seen:
+            if row is None:
+                report.skipped += 1
+            else:
+                report.duplicates += 1
+            rejects += 1
+            if rejects >= MAX_REJECTS_PER_EXAMPLE:
+                raise RuntimeError(
+                    f"{generator.name}: {MAX_REJECTS_PER_EXAMPLE} consecutive rejections building "
+                    f"the ladder at {_describe(resolved)}; the corpus pool is too small."
+                )
+            continue
+        seen.add(fingerprint(row[longest]))
+        rejects = 0
+        for label in labels:
+            out[label].append(row[label])
+    return out
 
 
 def build_train(
@@ -296,6 +504,7 @@ def build_train(
     rungs: Optional[Sequence[str]] = None,
     config: Optional[Mapping[str, Any]] = None,
     eval_examples: Sequence[Mapping[str, Any]] = (),
+    corpus: Any = None,
 ) -> Tuple[List[Dict], BuildReport]:
     """
     Build a training set spread uniformly over the rung ladder's document counts.
@@ -304,27 +513,46 @@ def build_train(
     never seen the long-context regime it is then measured in, and the ladder is the axis of the
     experiment.
 
-    :param task: Task name.
-    :param spec: Its spec.
+    :param task: Ladder name.
+    :param spec: Its grading spec.
     :param total: Total examples, split equally across rungs.
     :param seed: Train seed.
     :param rungs: Rungs to cover; defaults to the task's full ladder.
     :param config: Generator parameter overrides.
     :param eval_examples: The eval set, if built. Any train example reusing an eval example's gold
         is rejected -- pass this, or the guard cannot run.
+    :param corpus: A loaded pool for corpus-backed generators; defaults to loading one.
 
     :returns: ``(examples, report)``, the examples in rung order.
+
+    :raises ValueError: If the ladder is held out. Training on ``fiqa``, ``scifact``,
+        ``outlier_review`` or ``contra_fever`` destroys the one property they exist for, so this is
+        an error rather than a warning -- by the time a warning is noticed the checkpoint is
+        trained and the OOD column is meaningless.
     """
     generator = generators.get(task)
+    if generator.eval_only:
+        raise ValueError(
+            f"{task} is a held-out ladder: it exists to measure generalisation to an unseen "
+            "corpus, and training on it makes every number from it in-distribution. Build train "
+            f"data from the matching in-distribution ladder instead ({generator.task})."
+        )
     labels = list(rungs) if rungs else ladders.rungs_for(task)
     per_rung = total // len(labels)
     forbidden = {gold_fingerprint(ex, spec) for ex in eval_examples}
 
     report = BuildReport(task=task, split="train")
+    if corpus is None:
+        corpus = generator.load_corpus()
+    base = _resolve(generator, config, corpus, "train")
+    # One cursor for the whole split, not one per rung: restarting it per rung would ask the same
+    # questions five times at five lengths instead of covering the pool.
+    cursor = _cursor_for(generator, base, report)
+
     seen: Set[str] = set()
     examples: List[Dict] = []
     for label in labels:
-        resolved = generator.config(**dict(config or {}))
+        resolved = dict(base)
         resolved[generator.scaling_param] = ladders.docs_for_rung(task, label)
         rng = random.Random(f"{seed}:train:{label}")
         drawn = list(
@@ -337,6 +565,7 @@ def build_train(
                 forbidden_gold=forbidden,
                 spec=spec,
                 report=report,
+                cursor=cursor,
             )
         )
         report.counts[label] = len(drawn)

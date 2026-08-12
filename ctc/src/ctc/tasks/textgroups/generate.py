@@ -402,6 +402,7 @@ def build_example(
 
 
 GENERATOR = Generator(
+    name="textgroups",
     task="textgroups",
     source="textgroups",
     build_example=build_example,

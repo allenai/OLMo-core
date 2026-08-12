@@ -176,6 +176,7 @@ def build_example(
 
 
 GENERATOR = Generator(
+    name="cycle",
     task="cycle",
     source="cycle",
     build_example=build_example,

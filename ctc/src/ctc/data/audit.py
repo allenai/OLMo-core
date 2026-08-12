@@ -28,9 +28,10 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence
 
 from ..format.registry import TaskSpec
 from .build import fingerprint, gold_fingerprint
+from .generators import base as generators
 from .schema import validate_all
 
-__all__ = ["AuditResult", "ProbeResult", "audit", "run_probes"]
+__all__ = ["AuditResult", "ProbeResult", "audit", "run_probes", "check_rung_sizes"]
 
 
 @dataclass
@@ -335,6 +336,25 @@ def check_split_separation(
     return result
 
 
+def check_rung_sizes(rungs: Mapping[str, Sequence[Mapping]]) -> AuditResult:
+    """
+    The size floor, for ladders that cannot be checked for nesting.
+
+    :param rungs: rung label -> examples.
+
+    :returns: The audit result. Only the eval_size warning, which applies to every ladder however
+        it was constructed.
+    """
+    result = AuditResult()
+    for label, rows in rungs.items():
+        if len(rows) < 500:
+            result.warnings.append(
+                f"rung {label} has eval_size={len(rows)}, below the suite floor of 500: quote the "
+                "size and its error bar inline next to every number"
+            )
+    return result
+
+
 def check_ladder_nesting(rungs: Mapping[str, Sequence[Mapping]], spec: TaskSpec) -> AuditResult:
     """
     Every rung must grade the same questions over nested corpora.
@@ -394,21 +414,31 @@ def audit(
     train: Sequence[Mapping] = (),
     rungs: Optional[Mapping[str, Sequence[Mapping]]] = None,
     probe_sample: int = 200,
+    nested: Optional[bool] = None,
 ) -> AuditResult:
     """
     Run every applicable check over one task's built data.
 
-    :param task: Task name.
-    :param spec: Its spec.
+    :param task: Ladder name.
+    :param spec: Its grading spec.
     :param train: Training examples, if built.
     :param rungs: rung label -> eval examples, if built.
     :param probe_sample: Eval examples to run the shortcut probes over; capped because the pair
         probes are O(N^2) in documents.
+    :param nested: Whether this ladder's rungs are supposed to grade the same questions. Defaults
+        to asking the generator. ``oolong`` recomputes its gold per draw and so cannot be nested;
+        reporting that as a defect on every build would train everyone to ignore the finding, and
+        an ignored audit is the same as no audit.
 
     :returns: The combined result.
     """
     rungs = dict(rungs or {})
     result = AuditResult()
+    if nested is None:
+        try:
+            nested = generators.get(task).nested_ladder
+        except (KeyError, AttributeError, ValueError):
+            nested = True
 
     for label, rows in (("train", list(train)), *rungs.items()):
         if not rows:
@@ -417,8 +447,14 @@ def audit(
         result.checks[f"schema/{label}"] = f"{len(rows)} row(s), {len(problems)} invalid"
         result.problems.extend(f"{label}: {p}" for p in problems[:5])
 
-    if rungs:
+    if rungs and nested:
         result.absorb(check_ladder_nesting(rungs, spec))
+    elif rungs:
+        result.absorb(check_rung_sizes(rungs))
+        result.checks["ladder"] = (
+            "rungs built independently by design: they do NOT grade the same questions, so "
+            "rung-to-rung deltas include eval-set resampling noise"
+        )
 
     flat_eval = [ex for rows in rungs.values() for ex in rows]
     if train and flat_eval:

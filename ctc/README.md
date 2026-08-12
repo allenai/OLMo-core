@@ -16,10 +16,14 @@ ctc-eval --ckpt CKPT --task contradiction --rungs 2k --backend vllm
 
 ctc-data list
 ctc-data build --task contradiction --rungs 2k,4k,8k --out /data/ctc/v3
+ctc-data build --task fiqa --split eval --out /data/ctc/v3    # held-out ladders are eval-only
 
 ctc-fingerprint show CKPT           # what format was this checkpoint trained on?
 ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
 ```
+
+`--task` means the same thing to both `ctc-data` and `ctc-eval`. The per-task command table, and
+what each task's corpus needs, is in `src/ctc/data/README.md`.
 
 From inside the repo, `run/eval.sh` and `run/data.sh` wrap these and resolve the cluster
 environment first (node-local interpreter and caches; see `run/_env.sh`).

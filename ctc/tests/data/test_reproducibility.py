@@ -43,10 +43,34 @@ GLOBAL_RANDOM_CALLS = {
     "betavariate",
 }
 
-GENERATOR_FILES = [
-    Path(__file__).parents[2] / "src" / "ctc" / "tasks" / task / "generate.py"
-    for task in generators.names()
-] + [Path(__file__).parents[2] / "src" / "ctc" / "data" / "synthetic.py"]
+_SRC = Path(__file__).parents[2] / "src"
+
+
+def _module_file(target: str) -> Path:
+    """
+    :param target: A :data:`ctc.data.generators.base.GENERATORS` value.
+
+    :returns: The file it names. Derived from the registry rather than from a task-name convention,
+        so a generator that moves under ``sources/`` cannot silently drop out of these checks.
+    """
+    return _SRC / (target.partition(":")[0].replace(".", "/") + ".py")
+
+
+#: Every module that constructs an example, plus the shared synthetic helpers and the assembly
+#: modules the source generators delegate to -- all of them must be RNG-clean, not just the ones
+#: named after a task.
+GENERATOR_FILES = sorted(
+    {_module_file(target) for target in generators.GENERATORS.values()}
+    | {
+        _SRC / "ctc" / "data" / "synthetic.py",
+        _SRC / "ctc" / "tasks" / "contradiction" / "generate.py",
+        _SRC / "ctc" / "tasks" / "retrieval" / "generate.py",
+        _SRC / "ctc" / "tasks" / "outlier" / "generate.py",
+    }
+)
+
+#: Tasks a test can build end to end with no network, cache or HF download.
+OFFLINE_TASKS = generators.corpus_free_names()
 
 
 @pytest.mark.parametrize("path", GENERATOR_FILES, ids=lambda p: f"{p.parent.name}/{p.name}")
@@ -76,7 +100,7 @@ def test_generators_do_not_import_numpy(path):
     assert "import numpy" not in source and "from numpy" not in source
 
 
-@pytest.mark.parametrize("task", generators.names())
+@pytest.mark.parametrize("task", OFFLINE_TASKS)
 def test_the_same_seed_gives_the_same_bytes(task, tmp_path):
     """End to end, through the real writer, comparing files rather than objects."""
     from ctc.data.io import save_jsonl
@@ -97,7 +121,7 @@ def test_the_same_seed_gives_the_same_bytes(task, tmp_path):
         ladders.LADDERS[task] = original
 
 
-@pytest.mark.parametrize("task", generators.names())
+@pytest.mark.parametrize("task", OFFLINE_TASKS)
 def test_a_different_seed_gives_different_data(task):
     """The seed has to actually reach the construction -- a generator that ignored it would pass
     every determinism check above while producing one dataset forever."""
@@ -113,7 +137,7 @@ def test_a_different_seed_gives_different_data(task):
         ladders.LADDERS[task] = original
 
 
-@pytest.mark.parametrize("task", generators.names())
+@pytest.mark.parametrize("task", OFFLINE_TASKS)
 def test_an_example_does_not_depend_on_how_many_came_before_it(task):
     """
     Each example must be a pure function of its RNG state, so a build can be resumed, sharded or

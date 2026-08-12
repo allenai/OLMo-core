@@ -142,6 +142,7 @@ def build_example(
 
 
 GENERATOR = Generator(
+    name="mathmatch",
     task="mathmatch",
     source="synth_mathmatch",
     build_example=build_example,
