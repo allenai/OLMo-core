@@ -266,3 +266,25 @@ def test_identical_text_from_two_backends_scores_identically(tmp_path):
     b = run_task(_cfg(tmp_path, data, backend="vllm"), lambda ps, ex=None: texts)
     assert a.metrics == b.metrics
     assert a.backend != b.backend
+
+
+def test_a_set_valued_answer_survives_the_result_write():
+    """`parse_id_set` backs the whole retrieval/absence family, and json cannot serialise a set.
+    The write happens AFTER grading, so this used to let a task generate every example, score it,
+    and then throw the run away at the write step."""
+    import json
+
+    from ctc.eval.runner import _jsonable
+
+    payload = {
+        "parsed": {3, 1, 2},
+        "gold": frozenset({7, 5}),
+        "nested": [{"ids": {9, 8}}],
+        "plain": 0.5,
+    }
+    out = _jsonable(payload)
+    assert out["parsed"] == [1, 2, 3], "sorted, so two dumps of one run can be diffed"
+    assert out["gold"] == [5, 7]
+    assert out["nested"] == [{"ids": [8, 9]}]
+    assert out["plain"] == 0.5
+    json.dumps(out)  # the assertion that actually matters

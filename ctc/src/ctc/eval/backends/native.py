@@ -22,7 +22,7 @@ Requires ``pip install 'ctc[native]'`` -- torch, transformers and olmo-core itse
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ..prefill import Prefill, build_prefills, plain_prefill, structural_prefill
 from ..prefix_cache import generate_group_with_shared_prefix, group_by_corpus, measure_reuse
@@ -138,6 +138,10 @@ class NativeBackend:
 
         self._check_tokenizer_matches_model()
         self._configure_attention()
+        if self.share_prefix:
+            # At load time, not at first generate: refusing after a rung has already been graded
+            # wastes the run, and the answer depends only on the checkpoint.
+            self._check_share_prefix_supported()
 
     def _check_tokenizer_matches_model(self) -> None:
         """
@@ -178,6 +182,81 @@ class NativeBackend:
                 f"(one tokenizer across all Qwen3.5 sizes)"
             )
 
+    def _recurrent_layers(self) -> int:
+        """
+        :returns: How many of this checkpoint's layers carry recurrent (GatedDeltaNet) state.
+        """
+        try:
+            from olmo_core.nn.attention.recurrent import GatedDeltaNet
+        except ImportError:  # a build without the recurrent mixer cannot have any
+            return 0
+        return sum(1 for m in self.gm.model.modules() if isinstance(m, GatedDeltaNet))
+
+    def _check_share_prefix_supported(self) -> None:
+        """
+        Refuse ``--share-prefix`` on a checkpoint whose state a reused prefix cannot carry.
+
+        Prefix reuse assumes a layer's whole history lives in a KV cache that can be snapshotted
+        and restored. That is true of attention and false of GatedDeltaNet, whose history is a
+        recurrent state plus a causal-conv window. :mod:`ctc.eval.prefix_cache` does snapshot and
+        restore both, but ``GatedDeltaNet.forward`` only READS them on a single-token call
+        (``use_precomputed = ... and T_og == 1``, ``recurrent.py``). A reused suffix is multi-token,
+        so it takes the other branch, which overwrites the conv window from the suffix's own inputs
+        and calls the chunk kernel with no ``initial_state`` -- the restored state is discarded
+        before it is ever read, and those layers silently resume from zero.
+
+        Measured on Qwen3.5-4B (24 of 32 layers GatedDeltaNet), contradiction 2k, 500 rows:
+        **132 generations (26.4%) changed** and 69 got a different per-example f1. The aggregate
+        barely moved (0.8085 -> 0.8034, paired SE 0.0054), which is exactly what makes this
+        dangerous -- a quarter of the answers are resampled while the headline number looks fine.
+
+        :raises SystemExit: If the checkpoint has recurrent layers.
+        """
+        n = self._recurrent_layers()
+        if not n:
+            return
+        raise SystemExit(
+            f"--share-prefix is not sound on this checkpoint: {n} of its layers are GatedDeltaNet, "
+            "whose recurrent and conv state a reused prefix does not carry into a multi-token "
+            "suffix (they resume from zero). Measured cost on a 24/32-GDN model: 26.4% of "
+            "generations changed while the aggregate f1 moved only -0.005, so the damage does not "
+            "show up in the headline number. Re-run without --share-prefix. Lifting this needs "
+            "GatedDeltaNet.forward to honour a restored state on a multi-token call -- "
+            "`initial_state` is already a supported argument of dispatch_chunk_gated_delta_rule, "
+            "but CausalConv1d also needs a multi-token forward seeded from the cached window."
+        )
+
+    def _marker_family(self) -> str:
+        """
+        :returns: ``"qwen3"`` or ``"qwen3_5"``, decided by the checkpoint's embedding height.
+
+        Read off the embedding rather than the config or the tokenizer argument, for the same
+        reason :meth:`_check_tokenizer_matches_model` does: the embedding is what the ids actually
+        index, and a checkpoint's ``config.json`` does not reliably carry
+        ``document_chunk_attention`` (verified absent on the shipped 4B checkpoints).
+        """
+        embeddings = getattr(self.gm.model, "embeddings", None)
+        weight = getattr(embeddings, "weight", None)
+        rows = int(weight.shape[0]) if weight is not None else 0
+        return "qwen3" if rows and rows <= 200_000 else "qwen3_5"
+
+    def _document_chunk_ids(self) -> Dict[str, int]:
+        """
+        :returns: The ``doc_start_id`` / ``doc_end_id`` / ``eos_id`` the chunked mask needs.
+
+        Explicit constructor arguments win; otherwise they come from the family's reserved set.
+        The mask derives every token's chunk role from these three ids, so a wrong one does not
+        raise -- it yields a mask that silently degrades toward plain causal.
+        """
+        from olmo_core.data.document_chunk_landmark import reserved_ids
+
+        ids = reserved_ids(self._marker_family())
+        return {
+            "doc_start_id": self.doc_start_id if self.doc_start_id is not None else ids.doc_start,
+            "doc_end_id": self.doc_end_id if self.doc_end_id is not None else ids.doc_end,
+            "eos_id": ids.eos,
+        }
+
     def _configure_attention(self) -> None:
         """
         Put the model into the requested attention mode.
@@ -192,7 +271,10 @@ class NativeBackend:
                     "this checkpoint's model has no enable_document_chunk_attention; it cannot be "
                     "graded with --attn chunked"
                 )
-            model.enable_document_chunk_attention()
+            # The three ids are REQUIRED positional arguments. Calling this bare raised TypeError
+            # at model load, which made `--attn chunked --backend native` -- the suite's primary
+            # arm -- unreachable: every such run died before its first prompt.
+            model.enable_document_chunk_attention(**self._document_chunk_ids())
         elif self.attn == "full":
             # A checkpoint trained with the mask still carries it in config.json. Forcing plain
             # causal here is what makes the "full" arm mean full.

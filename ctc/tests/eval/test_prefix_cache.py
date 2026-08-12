@@ -326,3 +326,21 @@ def test_sharing_is_off_by_default():
     from ctc.eval.backends.native import NativeBackend
 
     assert inspect.signature(NativeBackend.__init__).parameters["share_prefix"].default is False
+
+
+def test_share_prefix_is_refused_on_a_recurrent_checkpoint():
+    """A GatedDeltaNet layer's history is a recurrent state plus a conv window, not a KV cache.
+    `prefix_cache` snapshots and restores both, but `GatedDeltaNet.forward` only reads them when
+    `T_og == 1`; a reused suffix is multi-token, so it overwrites the conv window from its own
+    inputs and calls the chunk kernel with no `initial_state`. Measured on a 24/32-GDN model:
+    26.4% of generations changed while aggregate f1 moved only -0.005 -- invisible in the headline
+    number, which is why this refuses rather than warns."""
+    from ctc.eval.backends.native import NativeBackend
+
+    backend = NativeBackend.__new__(NativeBackend)
+    backend._recurrent_layers = lambda: 24  # type: ignore[method-assign]
+    with pytest.raises(SystemExit, match="not sound"):
+        NativeBackend._check_share_prefix_supported(backend)
+
+    backend._recurrent_layers = lambda: 0  # type: ignore[method-assign]
+    NativeBackend._check_share_prefix_supported(backend)  # pure attention: allowed

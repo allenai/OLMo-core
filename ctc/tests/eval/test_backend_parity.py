@@ -259,3 +259,48 @@ def test_non_numeric_request_ids_are_left_alone():
     vllm = importlib.import_module("ctc.eval.backends.vllm")
     outs = [FakeOutput("req-x", "a"), FakeOutput("req-y", "b")]
     assert [o.outputs[0].text for o in vllm._in_submission_order(outs)] == ["a", "b"]
+
+
+def test_chunked_attention_is_enabled_with_the_ids_it_requires():
+    """`enable_document_chunk_attention(doc_start_id, doc_end_id, eos_id)` takes three REQUIRED
+    positional arguments. Calling it bare raised TypeError at model load, which made
+    `--attn chunked --backend native` -- the suite's primary arm -- unreachable: every such run
+    died before its first prompt. The ids come from the embedding height, not from config.json,
+    which does not reliably carry document_chunk_attention on the shipped checkpoints."""
+    from ctc.eval.backends.native import NativeBackend
+
+    class _W:
+        def __init__(self, rows):
+            self.shape = (rows,)
+
+    class _Emb:
+        def __init__(self, rows):
+            self.weight = _W(rows)
+
+    class _Model:
+        def __init__(self, rows):
+            self.embeddings = _Emb(rows)
+
+    class _GM:
+        def __init__(self, rows):
+            self.model = _Model(rows)
+
+    for rows, family in ((151936, "qwen3"), (248320, "qwen3_5")):
+        be = NativeBackend.__new__(NativeBackend)
+        be.gm = _GM(rows)
+        be.doc_start_id = None
+        be.doc_end_id = None
+        assert NativeBackend._marker_family(be) == family
+
+        ids = NativeBackend._document_chunk_ids(be)
+        assert set(ids) == {"doc_start_id", "doc_end_id", "eos_id"}
+        assert all(isinstance(v, int) for v in ids.values())
+        # The two markers must be DISTINCT or the mask cannot tell an open document from a close.
+        assert ids["doc_start_id"] != ids["doc_end_id"]
+
+    # An explicit override wins over the derived default.
+    be = NativeBackend.__new__(NativeBackend)
+    be.gm = _GM(248320)
+    be.doc_start_id, be.doc_end_id = 11, 22
+    got = NativeBackend._document_chunk_ids(be)
+    assert (got["doc_start_id"], got["doc_end_id"]) == (11, 22)

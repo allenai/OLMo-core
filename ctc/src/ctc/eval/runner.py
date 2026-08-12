@@ -194,6 +194,32 @@ class EvalOutcome:
         return path
 
 
+def _jsonable(value: Any) -> Any:
+    """
+    Make a parsed answer safe to ``json.dumps``.
+
+    Half the suite parses to a ``set`` -- ``parse_id_set`` backs the whole retrieval/absence family
+    -- and ``json`` cannot serialise one. Because the result file is written *after* the rung is
+    graded, an unserialisable answer meant a task generated all its examples, scored them, and then
+    threw the entire run away at the write step. Sorted rather than listed in iteration order so a
+    dumped generation is stable run to run and two dumps can be diffed.
+
+    :param value: A parsed answer, gold value, or any nesting of them.
+
+    :returns: The same value with sets replaced by sorted lists.
+    """
+    if isinstance(value, (set, frozenset)):
+        try:
+            return sorted(value)
+        except TypeError:  # mixed types: order is arbitrary, but it must still serialise
+            return sorted(value, key=repr)
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
 def _git_commit() -> Optional[str]:
     """:returns: The current commit, so a result can be traced to the code that produced it."""
     try:
@@ -310,8 +336,8 @@ def run_task(
                 {
                     "raw": text,
                     "cleaned": cleaned,
-                    "parsed": parsed,
-                    "gold": ex["gold_doc_indices"],
+                    "parsed": _jsonable(parsed),
+                    "gold": _jsonable(ex["gold_doc_indices"]),
                     "prompt_chars": len(prompt),
                     **{k: v for k, v in scored.items() if k != "parsed"},
                 }
