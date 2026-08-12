@@ -53,9 +53,16 @@ def _step0(candidate: dict) -> dict:
 
 
 def _state_text_evaluator(tmp_path: Path) -> dict[str, str]:
-    path = tmp_path / "vision_alignment_state_text.py"
-    path.write_text("# pinned state/text evaluator\n")
-    return promotion.artifact_reference(path)
+    live_path = (
+        Path(promotion.__file__).resolve().parents[2]
+        / "scripts"
+        / "eval"
+        / "vision_alignment_state_text.py"
+    )
+    return {
+        "path": str(tmp_path / "gantry-runtime" / live_path.name),
+        "sha256": promotion.sha256_file(live_path),
+    }
 
 
 def test_frozen_state_receipt_requires_complete_bitwise_equality(tmp_path: Path):
@@ -203,10 +210,9 @@ def test_text_retention_receipt_requires_image_free_exact_sentinel(tmp_path: Pat
 
 def test_cumulative_loss_mass_requires_all_batches_and_two_point_tolerance(tmp_path: Path):
     candidate = _candidate(tmp_path)
-    recipe = tmp_path / "Vision-Alignment.py"
-    producer = tmp_path / "vision_alignment_loss_mass.py"
-    recipe.write_text("# pinned recipe\n")
-    producer.write_text("# pinned producer\n")
+    source_root = Path(promotion.__file__).resolve().parents[2]
+    recipe = source_root / "scripts" / "train" / "Vision-Alignment.py"
+    producer = source_root / "scripts" / "eval" / "vision_alignment_loss_mass.py"
     dataset_fingerprints = [{"type": "test", "version": "v1", "value": "stable"}]
     loader_state = {
         "batches_processed": 500,
@@ -274,8 +280,14 @@ def test_cumulative_loss_mass_requires_all_batches_and_two_point_tolerance(tmp_p
             "total_data_errors": 0,
         },
         "evidence": {
-            "recipe": promotion.artifact_reference(recipe),
-            "producer": promotion.artifact_reference(producer),
+            "recipe": {
+                "path": str(tmp_path / "gantry-runtime" / recipe.name),
+                "sha256": promotion.sha256_file(recipe),
+            },
+            "producer": {
+                "path": str(tmp_path / "gantry-runtime" / producer.name),
+                "sha256": promotion.sha256_file(producer),
+            },
             "rank_state_inventory": rank_inventory,
         },
         "sources": {
@@ -593,20 +605,35 @@ def test_live_checkpoint_identity_hashes_every_dcp_file(tmp_path: Path):
 
 
 def test_independent_matched_evaluator_requires_live_pinned_implementations(tmp_path: Path):
-    evaluator = tmp_path / "vision_alignment_matched_wrong.py"
-    pairing = tmp_path / "matched_wrong_image.py"
-    evaluator.write_text("# evaluator v1\n")
-    pairing.write_text("# pairing v2\n")
+    evaluator = (
+        Path(promotion.__file__).resolve().parents[2]
+        / "scripts"
+        / "eval"
+        / "vision_alignment_matched_wrong.py"
+    )
+    pairing = Path(promotion.__file__).resolve().with_name("matched_wrong_image.py")
     reference = {
-        "path": str(evaluator),
+        "path": str(tmp_path / "missing-container" / evaluator.name),
         "sha256": promotion.sha256_file(evaluator),
-        "pairing_implementation_path": str(pairing),
+        "pairing_implementation_path": str(tmp_path / "missing-container" / pairing.name),
         "pairing_implementation_sha256": promotion.sha256_file(pairing),
     }
     assert promotion._validate_matched_evaluator(
         reference, name="independent step0", verify_live=True
     )["sha256"] == promotion.sha256_file(evaluator)
 
-    evaluator.write_text("# evaluator mutated\n")
-    with pytest.raises(promotion.PromotionValidationError, match="differs from its pin"):
-        promotion._validate_matched_evaluator(reference, name="independent step0", verify_live=True)
+    for field in ("sha256", "pairing_implementation_sha256"):
+        wrong_sha = deepcopy(reference)
+        wrong_sha[field] = "0" * 64
+        with pytest.raises(promotion.PromotionValidationError, match="differs from its pin"):
+            promotion._validate_matched_evaluator(
+                wrong_sha, name="independent step0", verify_live=True
+            )
+
+    for field in ("path", "pairing_implementation_path"):
+        wrong_name = deepcopy(reference)
+        wrong_name[field] = str(tmp_path / "missing-container" / "wrong.py")
+        with pytest.raises(promotion.PromotionValidationError, match="incompatible implementation"):
+            promotion._validate_matched_evaluator(
+                wrong_name, name="independent step0", verify_live=True
+            )

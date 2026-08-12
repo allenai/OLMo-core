@@ -48,6 +48,12 @@ IMAGE_TOKEN_ROWS = (100278, 100279, 100280, 100281, 100282, 100283)
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 _ARTIFACT_REF_FIELDS = frozenset({"path", "sha256"})
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+_STATE_TEXT_EVALUATOR_PATH = _SOURCE_ROOT / "scripts" / "eval" / "vision_alignment_state_text.py"
+_MATCHED_EVALUATOR_PATH = _SOURCE_ROOT / "scripts" / "eval" / "vision_alignment_matched_wrong.py"
+_MATCHED_PAIRING_PATH = Path(__file__).resolve().with_name("matched_wrong_image.py")
+_LOSS_MASS_RECIPE_PATH = _SOURCE_ROOT / "scripts" / "train" / "Vision-Alignment.py"
+_LOSS_MASS_PRODUCER_PATH = _SOURCE_ROOT / "scripts" / "eval" / "vision_alignment_loss_mass.py"
 _CANDIDATE_FIELDS = frozenset(
     {
         "checkpoint",
@@ -242,6 +248,28 @@ def _validate_raw_reference(reference: Any, *, name: str) -> Path:
     return path
 
 
+def _validate_implementation_reference(
+    reference: Any,
+    *,
+    name: str,
+    expected_basename: str,
+    canonical_path: Path,
+    verify_live: bool = True,
+) -> Path:
+    ref = _exact_fields(reference, _ARTIFACT_REF_FIELDS, name=f"{name} reference")
+    expected_sha = _sha256(ref["sha256"], name=f"{name} reference SHA-256")
+    recorded_path = _resolved_path(ref["path"], name=f"{name} reference path", must_exist=False)
+    if recorded_path.name != expected_basename:
+        raise PromotionValidationError(f"{name} names an incompatible implementation")
+    if verify_live:
+        live_path = canonical_path.resolve()
+        if live_path.name != expected_basename or not live_path.is_file():
+            raise PromotionValidationError(f"{name} canonical implementation is unavailable")
+        if sha256_file(live_path) != expected_sha:
+            raise PromotionValidationError(f"{name} implementation differs from its pin")
+    return recorded_path
+
+
 def _validate_receipt_header(
     receipt: Mapping[str, Any],
     *,
@@ -333,9 +361,12 @@ def validate_frozen_state_receipt(
         expected_fields=_FROZEN_FIELDS,
         name="frozen-state receipt",
     )
-    evaluator_path = _validate_raw_reference(receipt["evaluator"], name="frozen-state evaluator")
-    if evaluator_path.name != "vision_alignment_state_text.py":
-        raise PromotionValidationError("Frozen-state receipt names an incompatible evaluator")
+    _validate_implementation_reference(
+        receipt["evaluator"],
+        name="frozen-state evaluator",
+        expected_basename="vision_alignment_state_text.py",
+        canonical_path=_STATE_TEXT_EVALUATOR_PATH,
+    )
     _validate_receipt_candidate(
         receipt["candidate"], expected=candidate, name="frozen-state candidate"
     )
@@ -680,9 +711,12 @@ def validate_text_retention_receipt(
         expected_fields=_TEXT_FIELDS,
         name="text-retention receipt",
     )
-    evaluator_path = _validate_raw_reference(receipt["evaluator"], name="text-retention evaluator")
-    if evaluator_path.name != "vision_alignment_state_text.py":
-        raise PromotionValidationError("Text-retention receipt names an incompatible evaluator")
+    _validate_implementation_reference(
+        receipt["evaluator"],
+        name="text-retention evaluator",
+        expected_basename="vision_alignment_state_text.py",
+        canonical_path=_STATE_TEXT_EVALUATOR_PATH,
+    )
     _validate_receipt_candidate(
         receipt["candidate"], expected=candidate, name="text-retention candidate"
     )
@@ -890,12 +924,18 @@ def validate_loss_mass_receipt(
         raise PromotionValidationError("Loss-mass replay is incomplete or contains data errors")
 
     evidence = _exact_fields(receipt["evidence"], _LOSS_EVIDENCE_FIELDS, name="loss-mass evidence")
-    recipe_path = _validate_raw_reference(evidence["recipe"], name="loss-mass recipe")
-    producer_path = _validate_raw_reference(evidence["producer"], name="loss-mass producer")
-    if recipe_path.name != "Vision-Alignment.py" or producer_path.name != (
-        "vision_alignment_loss_mass.py"
-    ):
-        raise PromotionValidationError("Loss-mass evidence names incompatible implementations")
+    _validate_implementation_reference(
+        evidence["recipe"],
+        name="loss-mass recipe",
+        expected_basename="Vision-Alignment.py",
+        canonical_path=_LOSS_MASS_RECIPE_PATH,
+    )
+    _validate_implementation_reference(
+        evidence["producer"],
+        name="loss-mass producer",
+        expected_basename="vision_alignment_loss_mass.py",
+        canonical_path=_LOSS_MASS_PRODUCER_PATH,
+    )
     rank_inventory = evidence["rank_state_inventory"]
     if (
         not isinstance(rank_inventory, list)
@@ -1495,28 +1535,28 @@ def _validate_matched_evaluator(value: Any, *, name: str, verify_live: bool) -> 
         ),
         name=f"{name} evaluator",
     )
-    evaluator_path = _resolved_path(
-        evaluator["path"], name=f"{name} evaluator path", must_exist=verify_live
+    evaluator_path = _validate_implementation_reference(
+        {"path": evaluator["path"], "sha256": evaluator["sha256"]},
+        name=f"{name} evaluator",
+        expected_basename="vision_alignment_matched_wrong.py",
+        canonical_path=_MATCHED_EVALUATOR_PATH,
+        verify_live=verify_live,
     )
-    pairing_path = _resolved_path(
-        evaluator["pairing_implementation_path"],
-        name=f"{name} pairing implementation path",
-        must_exist=verify_live,
+    pairing_path = _validate_implementation_reference(
+        {
+            "path": evaluator["pairing_implementation_path"],
+            "sha256": evaluator["pairing_implementation_sha256"],
+        },
+        name=f"{name} pairing implementation",
+        expected_basename="matched_wrong_image.py",
+        canonical_path=_MATCHED_PAIRING_PATH,
+        verify_live=verify_live,
     )
     evaluator_sha = _sha256(evaluator["sha256"], name=f"{name} evaluator SHA-256")
     pairing_sha = _sha256(
         evaluator["pairing_implementation_sha256"],
         name=f"{name} pairing implementation SHA-256",
     )
-    if (
-        evaluator_path.name != "vision_alignment_matched_wrong.py"
-        or pairing_path.name != "matched_wrong_image.py"
-    ):
-        raise PromotionValidationError(f"{name} names incompatible evaluator implementations")
-    if verify_live and (
-        sha256_file(evaluator_path) != evaluator_sha or sha256_file(pairing_path) != pairing_sha
-    ):
-        raise PromotionValidationError(f"{name} evaluator implementation differs from its pin")
     return {
         "path": str(evaluator_path),
         "sha256": evaluator_sha,
