@@ -6,6 +6,8 @@ from olmo_core.nn.hf.convert import convert_state_from_hf
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing.utils import requires_fla, requires_gpu
 
+QWEN3_5_MODEL_ID = "Qwen/Qwen3.5-0.8B"
+
 
 def _has_qwen3_5_transformers() -> bool:
     try:
@@ -41,6 +43,19 @@ def _get_qwen3_5_config(hf_config) -> TransformerConfig:
     )
 
 
+def _load_pretrained(model_cls, **kwargs):
+    """Load the official Qwen3.5 checkpoint, skipping the test if it can't be obtained.
+
+    CI serves the checkpoint from an ``HF_HOME`` cache on Weka, so this loads from
+    the local mount rather than downloading (a download here can blow past the GPU
+    job's task timeout). Local runs fall back to a normal download.
+    """
+    try:
+        return model_cls.from_pretrained(QWEN3_5_MODEL_ID, **kwargs)
+    except Exception as e:  # noqa: BLE001
+        pytest.skip(f"could not load {QWEN3_5_MODEL_ID}: {e}")
+
+
 @pytest.mark.skipif(not _has_qwen3_5_transformers(), reason="transformers lacks Qwen3.5 support")
 @requires_gpu
 @requires_fla
@@ -50,24 +65,13 @@ def test_qwen3_5_matches_huggingface():
     torch.manual_seed(0)
     device = torch.device("cuda")
 
-    hf_config = transformers.Qwen3_5TextConfig(
-        vocab_size=64,
-        hidden_size=16,
-        intermediate_size=32,
-        num_hidden_layers=4,
-        num_attention_heads=2,
-        num_key_value_heads=1,
-        head_dim=8,
-        linear_num_key_heads=2,
-        linear_key_head_dim=4,
-        linear_num_value_heads=2,
-        linear_value_head_dim=4,
-        linear_conv_kernel_dim=4,
-        layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
-        tie_word_embeddings=True,
+    hf_model = _load_pretrained(
+        transformers.Qwen3_5ForCausalLM,
+        torch_dtype=torch.float32,
+        attn_implementation="eager",
     )
-    hf_model = transformers.Qwen3_5ForCausalLM(hf_config)
     hf_model.eval().to(device)
+    tokenizer = _load_pretrained(transformers.AutoTokenizer)
 
     olmo_config = _get_qwen3_5_config(hf_model.config)
     olmo_model = olmo_config.build(init_device="cpu").eval().to(device)
@@ -78,7 +82,8 @@ def test_qwen3_5_matches_huggingface():
     )
     olmo_model.load_state_dict(converted_state, strict=True)
 
-    input_ids = torch.randint(0, hf_config.vocab_size, (2, 8), device=device)
+    prompt = "Hello! I am a test prompt."
+    input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
 
     with torch.no_grad():
         hf_logits = hf_model(input_ids=input_ids).logits
