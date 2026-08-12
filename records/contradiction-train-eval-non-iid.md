@@ -194,19 +194,69 @@ eval_size 500, parse_rate 1.00, SE ≈ ±0.010.
   (realistic→realistic here, both→both in the paper) land at ~0.98, produced by different recipes;
   only the crossed pairing is low. The untested cell is a both-trained model on a realistic eval.
 
-## 5. Chunked — IN PROGRESS, and it does not follow dense
+## 4b. The v3 bundle at the RESULTS-HUB rungs — built and verified
 
-n=56: **f1 0.8613 / EM 0.624** (both-mode at n=44: 0.402). Higher, but the paper reported chunked
-EM 0.908 at N=20 and 0.838 at N=100 — this is 0.624 at n=56, well below.
+`--ladder-version v3` (pushed 2026-08-11, commit 79b969c01) = v2 with contradiction's rungs swapped
+to `realistic`. It overrides ONLY the contradiction root (`EVAL500_CONTRA_ROOT`); nq/outlier/oolong/
+rerank keep reading the v2 bundle, since §2b found all four already in-distribution. Pointing the
+whole root at v3 would orphan them (every rung MISSING) and would mean duplicating multi-GB xlong
+files for nothing.
 
-Dense reproduces the paper once the eval is iid; chunked does not. That asymmetry is what you would
-expect if the paper's chunked arm was **under-masked**: its runs used `backend: chunked-sdpa` on a
-75%-GDN hybrid, where the 4D mask does not reach the GDN layers — forbidden for hybrids per
-CLAUDE.md. Independent evidence, not proof. Re-scoring the paper's chunked checkpoint through the
-in-tree hybrid-aware vLLM patch would settle it.
+Rungs at the hub's n, 500 rows each, Jaccard 0.324 with 0.000 above the 0.5 cap, same 500 examples
+at every rung. Scored end-to-end on `ctc-4b-contradiction-full`:
 
-Remaining rungs are running (`eval_iid_ladder.sbatch`, MODE=chunked); the dense–chunked gap is the
-actual O(N²) claim and is **not yet answerable**.
+| n | v3 (iid) | hub both-mode (results.csv) | delta |
+|---|---|---|---|
+| 100 | **0.9864** | 0.829 | +0.157 |
+| 190 | **0.9801** | 0.769 | +0.211 |
+| 385 | **0.9625** | 0.684 | +0.279 |
+| 765 | **0.9449** | 0.611 | +0.334 |
+
+It reproduces the CTC iid ladder at matched n (0.9843/0.9760/0.9652/0.9463 at n=92/187/379/762) —
+two independently generated realistic ladders on different n grids tracing the same curve, which is
+what confirms the build rather than a lucky one-off.
+
+**The delta GROWS with corpus size (+0.157 → +0.334).** So the "decline with context" in the
+published contradiction ladder is mostly the eval mismatch widening, not the model degrading: across
+a 7.65x corpus increase the iid curve loses 0.042 f1.
+
+⚠ The v3 column is the CTC **Qwen3.5-4B** checkpoint; the hub column is **Qwen3-4B**. Two Beaker jobs
+put a single checkpoint on both eval sets to remove that confound
+(`contra-v3-2k-qwen35` on ctc-s5-contra-full-4b; `contra-v3-2k-hub` on q4b-dense-5task-32k-nocpt-fixdata).
+
+## 5. Chunked — COMPLETE. The gap GROWS on the iid ladder (it narrowed on the old one)
+
+`ctc-4b-contradiction-cmix` (curriculum mask-mixing = best-case chunked), same rungs as dense:
+
+| n | dense | chunked | gap | ratio |
+|---|---|---|---|---|
+| 56 | 0.9895 | 0.8613 | 0.128 | 1.15× |
+| 92 | 0.9843 | 0.8337 | 0.151 | 1.18× |
+| 187 | 0.9760 | 0.8039 | 0.172 | 1.21× |
+| 379 | 0.9652 | 0.7586 | 0.207 | 1.27× |
+| 762 | 0.9463 | 0.6991 | **0.247** | 1.35× |
+
+eval_size 500, parse_rate 1.00 throughout.
+
+**T1 verdict — right on the line, and the qualitative behaviour flips.** The plan's O(N²) criterion
+is "gap grows ≥2× smallest→largest". Here it grows **0.128 → 0.247 = 1.93×**: just under. But
+`paper-v2-todo-status.md` currently records contradiction as FAILING T1 because on the both-mode
+ladder the gap *narrowed* (0.441 → 0.369 = 0.84×) with both arms decaying proportionally. On the iid
+ladder the gap grows monotonically at every rung and chunked degrades ~3.8× faster than dense in
+absolute terms (−0.162 vs −0.043 over a 13.6× corpus increase). Different conclusion from the
+recorded one, even though it stops short of the formal threshold.
+
+⚠ **Do not quote 1.93× as a pass/fail.** The gap is 0.128 ± 0.016 at n=56 and 0.247 ± 0.023 at
+n=762, so the GROWTH is solidly real but "is it ≥2.0" sits inside the error bars at eval_size 500.
+
+**Chunked does NOT reproduce the paper the way dense does.** Paper chunked: EM 0.908 at N=20, 0.838
+at N=100 (f1 0.9447); here EM 0.624 at n=56 and f1 0.8337 at n=92 — ~0.11 f1 below at matched n,
+while dense matches the paper exactly. That asymmetry is what you would expect if the paper's
+chunked arm was **under-masked**: its runs used `backend: chunked-sdpa` on a 75%-GDN hybrid, where
+the 4D mask does not reach the GDN layers (forbidden for hybrids per CLAUDE.md). Independent
+evidence, not proof — and it can no longer be settled by re-scoring, because
+`corpus-reasoning/outputs/checkpoints/` is empty (0 entries); the paper's LoRA adapters are gone.
+Settling it now requires retraining a both-mode LoRA.
 
 ## 6. What this does not fix
 

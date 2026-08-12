@@ -131,7 +131,14 @@ def build_eval_launch_config(
     # ``eval_tag`` keeps parallel configs on the same checkpoint (e.g. the two decode-gate modes) from
     # colliding: it both suffixes the on-weka result files/dirs (via EVAL_TAG in the runner) AND
     # disambiguates the Beaker job name here.
-    name = f"ev-{task}-{run_name}" + (f"-{eval_tag}" if eval_tag else "")
+    #
+    # Ladder in the job name for anything but v2, so a v2 and a v3 submission for the same
+    # (task, run) are distinguishable in the Beaker UI instead of two identically-named jobs.
+    name = (
+        f"ev-{task}-{run_name}"
+        + (f"-{eval_tag}" if eval_tag else "")
+        + (f"-{ladder_version}" if ladder_version != "v2" else "")
+    )
     launch_config = build_launch_config(
         name=name,
         cmd=cmd,
