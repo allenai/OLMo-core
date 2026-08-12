@@ -82,9 +82,19 @@ overwrote the v2 result in place — same run dir, same task, silently different
 results from before this change, check the `ladder_version` field inside the JSON rather than
 trusting the filename.
 
-**Outlier needs `max_new_tokens` ≥ 512** once you are scoring checkpoints trained on the rebuilt
-scale-K data (default is 200). With more topics to enumerate, a 200-token budget truncates the
-answer and scores a capable model as wrong.
+**Outlier does NOT need a raised `max_new_tokens`** — an earlier version of this doc said to raise it
+to 512, which was wrong. The outlier answer is one sentence plus three IDs:
+
+```
+Most documents are about various topics and the outliers are about Lucy Diakovska.
+Outliers: [111], [158], [296]
+```
+
+That is ~112 characters (~30 tokens) on the n=451 rung, and only the ID digits grow with n — about
+35 tokens at n=7209. The 200-token default is ~6× the requirement. Scale-K raises the number of
+*majority* topics, but the model never enumerates them; it names the outlier topic and lists three
+IDs. (The ≥512 budget is a **contradiction**-with-CoT concern — enumerate-CoT there needs ~2200 at
+large n — and it does not transfer to outlier.)
 
 **Cluster choice is about scheduling, not just GPUs.** jupiter is strict-priority with
 unallocated-only backfill, so it can sit pending when full; saturn/neptune/ceres backfill eagerly.
