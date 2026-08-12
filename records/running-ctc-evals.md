@@ -187,11 +187,12 @@ Many queries share one corpus, so the shared part is prefilled once and its KV r
 cost. The reuse is measured and printed per rung rather than assumed, and falls back to plain
 prefills when there is nothing to share.
 
-**Coverage is 8k–1M, over four tasks:**
+**Coverage is 8k–1M, over all five in-distribution tasks:**
 
 | task | construction | shared | eval_size |
 |---|---|---|---|
 | contradiction | prefix + per-query tail, 10% tail | 90% of the prefill | 500 |
+| outlier | candidates planted in the prefix, decoys eliminated by the tail | 90% of the prefill | 500 |
 | nq | query-multiplexed | 100% of the documents | 500 |
 | rerank | query-multiplexed | 100% of the documents | 500 |
 | oolong | already 25 questions per context | 100% of the documents | **100 ⚠** |
@@ -223,10 +224,41 @@ context. The data is already correct for that; nothing needs rebuilding when tho
 arrive. Grading a checkpoint trained with `both` under `after` still collapses it (nq 0.860 →
 0.074), so `--query-position` must match training, as always.
 
-**`outlier` is the one task absent.** Its construction needs per-document topic labels that the
-eval files strip; the clustering that recovers them has to reproduce the corpus's whole topic-size
-multiset exactly, and it passes that gate **2/25 of the time at 32k and 0/25 below** — so it gets
-harder, not easier, at 1M. Unblocking it means emitting topic labels from the generator.
+### outlier is planted, not tailed — and it is the one task generated rather than transformed
+
+The obvious shared build for outlier puts the answer's trio in the per-query tail, and that is
+exactly where its measured **+0.215** came from: a scatter control held corpus contents fixed and
+moved only the golds, and the rebuilt corpus was faithful (0.330 vs 0.320) while the placement was
+the whole effect.
+
+So it is built the other way round. K candidate topics are planted in the **shared prefix** with 3
+documents each; each query's tail tops up every candidate *except its own* to 5, leaving exactly one
+topic at 3. The answer therefore lives in the body of the context and never in the tail.
+
+Two properties worth knowing:
+
+- **Topping decoys to 5 rather than 4 is deliberate.** The real rungs' smallest majority topic is 4
+  in 484/500 rows, so a decoy at 4 would sit exactly on the discrimination boundary and put ~28
+  topics one document from the answer where the source has ~6. At 5 the decoys hide in the modal
+  majority size and the natural size-4 topics remain the only competitors. The corpus gap stays 1,
+  matching the reliable rung.
+- **Absence from the tail is only a shortcut at the short rungs**, and it is measured per rung
+  rather than argued. The answer's topic is the one candidate the tail does not top up, but every
+  majority topic that donated no camouflage is also absent, so absence is diluted — by how much
+  depends on how many topics the corpus holds:
+
+  | rung | 8k | 16k | 32k | 64k | 256k | 512k | 1M |
+  |---|---|---|---|---|---|---|---|
+  | guess-among-absent | **0.203 ⚠** | 0.090 | 0.048 | 0.024 | 0.006 | 0.003 | 0.0015 |
+
+  **Use 32k and above.** At 8k there are only ~11 topics, so absence narrows the field to a handful
+  and the heuristic scores 0.203 against ~0.09 chance — close enough to a real score to contaminate
+  it. Never quote an 8k outlier number from this bundle without that control beside it.
+
+Because the construction needs to know each document's topic — and the eval files strip that — the
+rungs are generated from the wiki100w article pool. They match the reliable rungs in corpus size but
+**share no documents with them**. Every other fast task is a transform of existing v2 data; this one
+is not, and that is worth stating on a results row.
 
 ### A fast number is a different measurement
 

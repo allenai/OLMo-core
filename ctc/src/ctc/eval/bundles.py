@@ -342,6 +342,12 @@ _FAST_LADDERS: Dict[str, Dict[str, str]] = {
     # Generated from the wiki100w article pool, not transformed from a reliable rung: the planted
     # construction has to know each document's topic, and the eval files strip that. The rungs
     # match the reliable ones in corpus size but share no documents with them.
+    #
+    # ⚠ The 8k rung leaks. The answer's topic is the one candidate the tail does not top up, and a
+    # short corpus has too few topics for that absence to hide in: guessing among the topics missing
+    # from the tail scores 0.203 there, against ~0.09 chance. It falls off fast with length --
+    # 0.090 at 16k, 0.048 at 32k, 0.024 at 64k, 0.006 at 256k, 0.0015 at 1M -- so **use 32k and
+    # above**, and never quote an 8k number from this bundle without the control beside it.
     "outlier": {
         "8k": "outlier/rung_8192_planted.jsonl",
         "16k": "outlier/rung_16384_planted.jsonl",
