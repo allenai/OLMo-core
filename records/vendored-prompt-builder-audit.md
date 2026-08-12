@@ -1,17 +1,29 @@
 # Duplication audit: `ctc.format` (A) vs the vendored `corpus_reasoning_prompts` (B)
 
 Repo `/accounts/projects/berkeleynlp/prasann/projects/newolmocore/OLMo-core`, branch
-`prasann/ctc`, HEAD `3d8a1baaf`. Analysis only — nothing outside this file was changed.
+`prasann/ctc`, measured at HEAD `3d8a1baaf`. Analysis only — nothing outside this file was changed.
 
-**Headline.** On the canonical surface the two implementations are byte-identical:
-**232 / 240** of the full `(task × query_position × use_alpaca × use_titles)` matrix match
-exactly, and **18 / 18** answer targets match. All 8 prompt mismatches are the *same one bug*,
+> **Update, 2026-08-11 — the `grouping_labeled` bug this audit found has been FIXED**, in
+> `26bab71c1`, and exactly as §4 recommended: `opts.pop("query_position", None)` at
+> `ctc/src/ctc/tasks/_grouping.py:145` with `query_position="after"` pinned at `:154`, plus a
+> regression test asserting the property for every `honors_query_position=False` task
+> (`ctc/tests/tasks/test_task_packages.py:354`). Every mismatch count below (232/240, 52/54, and
+> "the mismatch, in full") is therefore a **pre-fix** measurement, kept as the evidence for why
+> the fix was needed. The four off-canonical divergences in §3 were re-checked and still hold.
+>
+> The eval-side call site also moved: (B) is now reached from `ctc/src/ctc/eval/prefill.py:161`
+> (`StructuralPrefill`), not from the native backend directly. See §2.
+
+**Headline (pre-fix).** On the canonical surface the two implementations were byte-identical:
+**232 / 240** of the full `(task × query_position × use_alpaca × use_titles)` matrix matched
+exactly, and **18 / 18** answer targets matched. All 8 prompt mismatches were the *same one bug*,
 in **(A)**, on **`grouping_labeled` at `query_position` `before`/`both`**. Four further
 divergences exist off the canonical surface (absence-textdiff, empty-`documents`,
 `before_dummy`/`after_dummy`, and four tasks (B) supports that (A) does not register).
 
 (B) is **not** dead code: it is on the live eval path through
-`ctc/src/ctc/eval/backends/native.py:181`.
+`ctc/src/ctc/eval/prefill.py:161`, which every backend — native, hf and vllm — routes through
+(`backends/native.py:225`, `backends/hf.py:164`, `backends/vllm.py:223`).
 
 ---
 
@@ -104,24 +116,30 @@ helpers `format_doc`/`format_doc_dict` that exist in (B) and are unused there.
   from the caller. **Both** tuple elements are used: `prompt` is wrapped with document
   markers and `answer` is appended when `include_answer=True`.
 
-`segment_prompt_to_chunks` has exactly one *external* caller:
+`segment_prompt_to_chunks` has two *external* callers:
 
-* `ctc/src/ctc/eval/backends/native.py:177` (import) / `:181` (call), inside
-  `NativeBackend.build_prefill`. Passes `cot_mode="none"`, `chunk_by="document"`,
-  `include_answer=False`, `query_position=self.query_position`, and leaves
-  `use_titles` at the `segment_prompt_to_chunks` default of `False`.
+* `ctc/src/ctc/eval/prefill.py:118` (import) / `:161` (call), inside `StructuralPrefill.__call__`.
+  Passes `cot_mode="none"`, `include_answer=False`, `query_position=self.query_position`, and
+  leaves `use_titles` at the `segment_prompt_to_chunks` default of `False`. `chunk_by` is **not**
+  hardcoded: it is a constructor argument defaulting to `"document"` (`prefill.py:106`) and set to
+  `"line"` for oolong from the spec's `extra["chunk_by"]` (`ctc/src/ctc/tasks/oolong/spec.py:174`).
+  All three backends reach it — `backends/native.py:225`, `backends/hf.py:164`,
+  `backends/vllm.py:223`.
+* `src/scripts/ctc/convert_to_shards.py:290` (import) / `:293` (call) — the ported data converter,
+  i.e. the training side.
 
-Nothing else — no training script, no data converter, no `src/scripts/**` file — references
-either. `build_prompt_parts`, `build_helmet_rerank`, and `unified_prompt` have zero callers.
-`before_dummy`/`after_dummy` have zero callers (grep across the repo: only definitions).
+Nothing else references either. `build_prompt_parts`, `build_helmet_rerank`, and `unified_prompt`
+have zero callers. `before_dummy`/`after_dummy` have zero callers (grep across the repo: only
+definitions).
 
 **The live consequence.** `ctc/src/ctc/eval/runner.py:257` builds the prompt list with
 **(A)** (`spec.build_prompt(ex, query_position=cfg.query_position)`) and records the
-fingerprint from (A) at `runner.py:248`. The native backend then **discards those strings**
-and re-derives the prefill from **(B)** at `native.py:181`. So on the native arm the
-fingerprint, the token-length audit and the actually-tokenized text come from two different
-builders. Today that is harmless for 17 of 18 tasks; for `grouping_labeled` at
-`query_position != "after"` it is not (§3).
+fingerprint from (A) at `runner.py:248`. The structural prefill then **discards those strings**
+(`prefill.py:155`, `del prompt`) and re-derives the prefill from **(B)** at `prefill.py:161`. So on
+any structural-prefill arm the fingerprint, the token-length audit and the actually-tokenized text
+come from two different builders. That is now harmless for all 18 tasks — the one task it was not
+harmless for, `grouping_labeled` at `query_position != "after"`, was fixed (see the update at the
+top) — but it remains a standing hazard rather than a settled one.
 
 ---
 
@@ -158,8 +176,10 @@ all four option corners.
 
 ### 3c. Native-eval settings exactly
 
-`use_alpaca=False`, `use_titles=False`, `cot_mode="none"` (what `native.py:181` produces),
-18 tasks × 3 positions: **52 match, 2 mismatch** — same two.
+`use_alpaca=False`, `use_titles=False`, `cot_mode="none"` (what the structural prefill produces at
+`prefill.py:161-172`; `use_alpaca=False` is hardcoded in `document_chunk_landmark.py:503` and
+`use_titles` is left at the segmenter default), 18 tasks × 3 positions: **52 match, 2 mismatch** —
+same two.
 
 ### 3d. Targets
 
@@ -190,9 +210,10 @@ B: ...appear in exactly one group.\n\n### Input:\nDocument [1](Title: Attention)
    architecture.\n\nDocument [2](Title: Optics) On lenses.\n\nGroup into 2 categories.
 ```
 
-(A) honours `query_position` and moves the raw query string in front of the documents;
-(B) always emits `f"{context}\n\n{queries[0]}"`. At `both`, (A) additionally repeats the
-query after the documents, which is the 26-character length difference.
+(A) honoured `query_position` and moved the raw query string in front of the documents;
+(B) always emits `f"{context}\n\n{queries[0]}"`. At `both`, (A) additionally repeated the
+query after the documents, which is the 26-character length difference. (A) now pins `after` for
+this task, so both cells emit (B)'s layout.
 
 ### Divergences outside the requested matrix
 
@@ -240,28 +261,29 @@ These were not in the brief but are real and are why "(A) supersedes (B)" is not
 
 ## 4. Verdict
 
-**The single mismatch on the canonical surface is a bug in (A), and (A) contradicts itself.**
-Not a judgement call:
+**The single mismatch on the canonical surface was a bug in (A), and (A) contradicted itself.**
+Not a judgement call — and since fixed in `26bab71c1`; this section records the diagnosis:
 
 * `ctc/src/ctc/format/registry.py:59-63` states that `honors_query_position=False` marks tasks
   that "take a legacy path that hardcodes documents-then-query and never consults the knob",
   naming `grouping`, `grouping_labeled` and `outlier`.
 * `ctc/src/ctc/tasks/_grouping.py:145` duly sets `honors_query_position=False`, with the
   comment "legacy path hardcodes documents-then-query".
-* But `make_grouping_spec`'s `build_prompt` (`ctc/src/ctc/tasks/_grouping.py:128-136`) passes
-  `**opts` straight through to `assemble`, so the knob *is* consulted.
+* But `make_grouping_spec`'s `build_prompt` passed `**opts` straight through to `assemble`, so the
+  knob *was* consulted.
 * The sibling tasks that got this right do `opts.pop("query_position", None)` and pin the
   value: `ctc/src/ctc/tasks/outlier/spec.py:51-58` and
-  `ctc/src/ctc/tasks/qdmatch/spec.py:52-59`. `_grouping.py` is missing exactly that.
+  `ctc/src/ctc/tasks/qdmatch/spec.py:52-59`. `_grouping.py` was missing exactly that, and now does
+  it too (`:145` pop, `:154` pin).
 
 The consequence is worse than a prompt diff. Because
 `TaskSpec.fingerprint` pins `query_position="after"` whenever `honors_query_position` is False
-(`registry.py:152-155`), a `grouping_labeled` run at `--query-position before` writes a
+(`registry.py:152-155`), a `grouping_labeled` run at `--query-position before` wrote a
 fingerprint claiming `after` while emitting a `before` prompt — the fingerprint guard would
 report *compatible* on a genuinely incompatible pair. That is precisely the failure class the
 fingerprint exists to catch.
 
-**Fix (A), one line, before anything else:**
+**Fix (A), one line, before anything else — APPLIED in `26bab71c1`:**
 
 ```python
 # ctc/src/ctc/tasks/_grouping.py, in make_grouping_spec.build_prompt
@@ -271,15 +293,19 @@ def build_prompt(example: Dict, **opts) -> str:
 ```
 
 and add a regression case pinning `grouping_labeled|before` and `|both` to the same bytes as
-`grouping_labeled|after`. With that, (A) and (B) agree on **54/54** and **240/240**.
+`grouping_labeled|after`. Both were done; the test at `ctc/tests/tasks/test_task_packages.py:354`
+asserts the property for **every** `honors_query_position=False` task rather than only this one.
 
 ### Can (B) be deleted?
 
 **Yes on correctness, but not by a straight repoint — the dependency runs the wrong way.**
 
 `ctc/pyproject.toml` declares `dependencies = []` with `ai2-olmo-core` only as the optional
-`native` extra, and `ctc/src/ctc/eval/backends/base.py:89-90` states that olmo_core imports
-are confined to `ctc.eval.backends.native` / `ctc.eval.masking.native`. Direction today is
+`native` extra, and `ctc/src/ctc/eval/backends/base.py:122-125` states that olmo_core imports
+are confined to `ctc.eval.backends.native` / `ctc.eval.masking.native` — a rule the tree no longer
+honours: `ctc/src/ctc/eval/prefill.py:111`, `ctc/src/ctc/eval/prefix_cache.py:175` and
+`ctc/src/ctc/train/fingerprint.py:35-37` all import olmo_core (lazily, inside functions). The
+conclusion survives: direction today is
 **ctc → olmo_core**, one-way; grep confirms no `import ctc` anywhere under `src/olmo_core`.
 Making `document_chunk_landmark.py:485` import `ctc.format` would invert that and create a
 cycle, breaking olmo_core's standalone install.
@@ -291,7 +317,7 @@ repoint must either add `build_target` to `TaskSpec` or import per-task modules 
 
 Recommended sequence:
 
-1. Fix `_grouping.py` as above (independent of everything else; do it regardless).
+1. ~~Fix `_grouping.py` as above~~ — done in `26bab71c1`.
 2. Add `build_target: Callable[[Dict], str]` to `TaskSpec` (`registry.py`) and wire each
    `spec.py`'s existing `build_target` into it. Purely additive; 18/18 already agree with (B).
 3. Make `segment_prompt_to_chunks` **prompt-agnostic**: replace the `task`-and-`example`
@@ -300,8 +326,8 @@ Recommended sequence:
    document bodies). This removes the last reason olmo_core knows anything about task
    prompts, and drops the `cot_mode`, `query_position` and `use_titles` parameters from
    `document_chunk_landmark.py:441-447` entirely.
-4. Update the one caller, `ctc/src/ctc/eval/backends/native.py:181`, to build the strings
-   from (A) first:
+4. Update both callers — `ctc/src/ctc/eval/prefill.py:161` and
+   `src/scripts/ctc/convert_to_shards.py:293` — to build the strings from (A) first:
    ```python
    spec = registry.get(task)
    prompt = spec.build_prompt(example, query_position=self.query_position,

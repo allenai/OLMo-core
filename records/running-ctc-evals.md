@@ -100,8 +100,10 @@ skipped prompt scores a clean 0.0, which is indistinguishable from a wrong answe
 mode once silently dropped 354 of 500 examples in both arms at once. Pass `--allow-truncated` only
 if you want them counted and reported instead.
 
-**`rerank` has no 32k rung** (its CE-filtered hard-negative pool caps at 100 documents) and `fiqa`
-stops at 16k. `--rungs all` handles this; an explicit `--rungs 32k` skips those tasks with a note.
+**`rerank`'s reliable ladder has no 32k rung** (its CE-filtered hard-negative pool caps at 100
+documents per query) and `fiqa` stops at 16k. `--rungs all` handles this; an explicit `--rungs 32k`
+skips those tasks with a note. The *fast* bundle does reach 32k on rerank — pooling makes the corpus
+size a free parameter (`ctc/src/ctc/eval/bundles.py:373-385`).
 
 ## Bundles: which eval data, and why the name matters
 
@@ -112,7 +114,7 @@ works too, for a staged local copy.
 |---|---|---|
 | `v2_clean` | reliable | **default.** The v2 ladder with contradiction rebuilt against a PubMed-only filler pool and its rungs recalibrated. |
 | `v2` | reliable | The original v2 ladder. Kept because existing results — including the 256k runs — were produced against it. |
-| `fast` | fast | Shared-corpus rungs, 8k–1M, for contradiction / nq / rerank / oolong. Cheaper on contradiction; **not comparable to a reliable number.** See below. |
+| `fast` | fast | Shared-corpus rungs, 8k–1M, over all five in-distribution tasks (contradiction / nq / outlier / rerank / oolong). Cheaper on contradiction; **not comparable to a reliable number.** See below. |
 
 **Bundles are not interchangeable, and this is the one thing to get right.** The same rung label
 maps to *different files with different corpus sizes*: contradiction's 64k rung is `n=1602` in `v2`

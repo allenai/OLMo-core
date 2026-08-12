@@ -203,7 +203,7 @@ def get(task: str) -> Generator:
     if task not in GENERATORS:
         raise KeyError(
             f"no generator ported for {task!r}; have {', '.join(GENERATORS)}. "
-            "See records/data-generator-port-plan.md for the remaining batches."
+            "See records/data-generator-port.md for what remains un-ported."
         )
     target = GENERATORS[task]
     module_path, _, attribute = target.partition(":")

@@ -119,11 +119,17 @@ the arithmetic, and this is recorded rather than treated as a defect.)
 
 ## 6. Status
 
-Ported into the current pipeline with parity tests against the pre-migration generators: mathmatch,
-cycle, groups4, textgroups. The remaining tasks are still built by the pre-migration scripts
-(`src/corpus_reasoning/data/`, indexed in `src/scripts/data/ctc_suite/BUILD_MATRIX.md`); the
-constructions described above are theirs and are unchanged by the port.
+Ported into the current pipeline: **13 ladders**, the names `ctc-data list` prints — the four
+synthetic tasks (mathmatch, cycle, groups4, textgroups), the five in-distribution ones
+(contradiction, nq, outlier, rerank, oolong) and the four held-out ones (fiqa, scifact,
+outlier_review, contra_fever). Only the four synthetic ones have byte-level parity fixtures against
+the pre-migration generators; the corpus-backed ones are validated structurally, because they cannot
+run without their corpora. The other tasks in the table above have **no generator in this tree** —
+their constructions are described from the pre-migration scripts and are unchanged by the port. See
+`records/data-generator-port.md`.
 
-Rung→document-count figures for the four ported tasks come from offline per-document token estimates
-and should be re-measured against the tokenizer before being quoted as context lengths. The
-contradiction row is tokenizer-calibrated (measured medians 1925 / 3933 / 8052 / 16074 / 32397).
+Whether a rung→document-count row is an offline per-document estimate or a tokenizer measurement is
+recorded per task in `CALIBRATION` (`ctc/src/ctc/data/ladders.py:71`): contradiction and
+contra_fever are `measured`, oolong is `exact` (its rung value *is* the token budget), and the other
+ten are `estimated` and should be re-measured before being quoted as context lengths. The
+contradiction row's measured medians are 1925 / 3933 / 8052 / 16074 / 32397.

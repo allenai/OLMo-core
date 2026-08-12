@@ -24,10 +24,15 @@ no NTK theta bump.
 The suspicion was well-founded and still worth recording, because the asymmetry is real *elsewhere*
 in this codebase and would produce exactly this symptom if it applied:
 
-- The `sft_longctx` launcher family applies `with_rope_scaling(YaRN factor=2)` to the dense arm and
-  carries an explicit "No YaRN" comment on both landmark arms.
-- `train_ctc_suite.py` **silently ignores** `--rope-yarn-factor` for `qwen3_5`, warning that
-  `with_rope_scaling` refuses hybrid named-block models.
+- The ported CTC train recipe applies `YaRNRoPEScalingConfig(factor=2)` above a 32k sequence length
+  to the dense/chunked arms only, skipping it for landmark because "the landmark kernel carries its
+  own positional handling" (`src/scripts/ctc/train/recipe.py:79-83`). The pre-migration
+  `sft_longctx` launcher family did the same thing with `with_rope_scaling` and an explicit
+  "No YaRN" comment on both landmark arms; neither that family nor `train_ctc_suite.py` (which
+  silently ignored `--rope-yarn-factor` for `qwen3_5`) exists in this repo.
+- The recipe has **no YaRN knob**: the factor is hardcoded and the condition is
+  `seq_len > 32768 and arch != "landmark"`, so the asymmetry is structural rather than a flag
+  someone can forget.
 - YaRN's attention rescale is `0.1·ln(factor) + 1`, a **constant** applied at every sequence length:
   1.069 at factor 2, 1.208 at factor 8. It does not know the sequence is short, so a
   long-context-extended dense arm would attend more sharply than its base was trained for *at 2k*,

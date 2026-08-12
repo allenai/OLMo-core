@@ -2,7 +2,12 @@
 
 **VERDICT: ALREADY FIXED in code. Trap 3 is the `--item-regex '||'` bug, misfiled as a separate
 live mismatch. The still-real part is on DISK: the CTC oolong shard predates the 2026-07-26 fix
-and must be rebuilt — the converter itself needs no change before the port.**
+and must be rebuilt.**
+
+**Update (2026-08-11): the converter has since been ported** as
+`src/scripts/ctc/convert_to_shards.py`, carrying the empty-string guard forward as
+`check_item_regex` (`:73`, called at `:519`) and closing both §4 gotchas — see §6. Only the on-disk
+shard problem remains.
 
 Investigated read-only in the pre-migration repo (`prasann/landmark`). Paths below are relative to
 `/accounts/projects/berkeleynlp/prasann/projects/OLMo-core` unless stated.
@@ -82,14 +87,18 @@ document tasks measured 0 in both audits.
 1. **`metadata.json` does not record `item_regex` (or `query_position`).** The written dict is
    `convert_unified_to_document_landmark.py:506-530`; `item_regex` is threaded into `tok_kwargs`
    (`:457`) but dropped from the metadata. You therefore **cannot tell a good oolong shard from a
-   bad one by reading its metadata** — you must scan the token stream. Adding `item_regex` and
-   `query_position` to that dict during the port is a cheap, worthwhile change.
+   bad one by reading its metadata** — you must scan the token stream. **Fixed in the ported
+   converter**, which records both (`src/scripts/ctc/convert_to_shards.py:621,627`); still true of
+   any shard written by the pre-migration one.
 2. **`TASK_CFG["oolong"]["cot"] = "plan"`** in `src/corpus_reasoning/eval/eval_lc_native_docchunk.py:73`
    while every converter builds oolong with `--cot-mode none`. The CTC ladder / rung drivers hardcode
    `none` so the CTC numbers are unaffected, but anyone running that standalone driver on an oolong
    checkpoint **without** `--cot-mode none` evaluates a different preamble than the model trained on.
    This is a live train/eval *prompt-text* difference (not a wrapping one) and is a plausible second
-   contributor to oolong's odd numbers. Consider making the default `none` in the ported copy.
+   contributor to oolong's odd numbers. **Closed harder than proposed in the ported tree**: the
+   converter *raises* on any `cot_mode` but `none` (`convert_to_shards.py:100-117`, citing this exact
+   pair), the eval prefill hardcodes `cot_mode="none"` (`ctc/src/ctc/eval/prefill.py:166`), and
+   `eval_lc_native_docchunk.py` was not ported at all.
 
 ## 5. The empirical check to re-run (if you want it independently)
 
@@ -118,11 +127,12 @@ python debug/ctc_vllm_validation/validate_chunk_leak.py \
 
 ## 6. Bottom line for the port
 
-- Port `convert_unified_to_document_landmark.py` **as-is** — the guard at `:365-382` and the escaped
-  default at `:248` are the fix, and they are already in the file you are porting.
+- ~~Port `convert_unified_to_document_landmark.py`~~ — **done**. It is
+  `src/scripts/ctc/convert_to_shards.py`; the `:365-382` guard is `check_item_regex` (`:73`, called
+  at `:519`) and the escaped default survives.
 - Do **not** carry over the CTC `oolong_train` shard from `ctc_suite/shards` (2026-07-19). Rebuild
   oolong, or reuse the already-clean `xlong5/shards_chunked/oolong_train` build recipe.
 - Any oolong result computed from a pre-2026-07-26 shard (including every CTC oolong `-cmix` number
   in `paper-v2-todo-status.md`) is measured on a defective shard and needs a retrain, not a re-eval.
-- Optional, cheap: record `item_regex`/`query_position` in `metadata.json`, and flip the standalone
-  evaluator's oolong `cot` default to `none` (§4).
+- ~~Optional, cheap: record `item_regex`/`query_position` in `metadata.json`, and flip the standalone
+  evaluator's oolong `cot` default to `none`~~ — **both done** (§4).
