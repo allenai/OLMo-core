@@ -32,9 +32,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "ctc" / "src"))
 
-from ctc.eval import bundles  # noqa: E402
-
 from _launch import pushed_head  # noqa: E402
+
+from ctc.eval import bundles  # noqa: E402
 
 #: Where the fast bundle is written. A sibling of the reliable bundles, not a subdirectory of one:
 #: a fast file must never be reachable by a ``--bundle v2_clean`` run.
@@ -176,8 +176,6 @@ def plan(args: argparse.Namespace):
 
     :returns: A list of ``(task, rung_label, source_path)``.
     """
-    bundle = bundles.get_bundle(args.from_bundle)
-    root = Path(bundle.root)
     ceiling = RUNG_TOKENS.get(args.max_rung, RUNG_TOKENS["1M"])
     floor = RUNG_TOKENS.get(args.min_rung, RUNG_TOKENS["8k"])
 

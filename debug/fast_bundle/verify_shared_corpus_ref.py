@@ -24,6 +24,7 @@ Usage::
 
     python -m corpus_reasoning.data.verify_shared_corpus <file.jsonl> [--task contradiction]
 """
+
 import argparse
 import collections
 import hashlib
@@ -68,7 +69,7 @@ def main():
     if index_base is None:
         index_base = 1 if args.task == "contradiction" else 0
 
-    rows = [json.loads(l) for l in open(args.path) if l.strip()]
+    rows = [json.loads(line) for line in open(args.path) if line.strip()]
     if not rows:
         sys.exit(f"FAIL: {args.path} is empty")
 
