@@ -680,12 +680,332 @@ def build_outlier_shared(
     }
 
 
+# ── Family C: planted candidates, eliminated by the tail ─────────────────────
+
+#: Majority topic sizes in the real outlier rungs, counted over all 500 rows of the staged 32k
+#: rung. Sampling the rebuilt corpus from this rather than from a flat distribution keeps the
+#: topic-size histogram -- and therefore the difficulty -- in line with the reliable rung. Size 4
+#: is the floor and the nearest competitor to the 3-document answer; size 5 is the modal size,
+#: which is why a decoy topped up to 5 is camouflaged rather than conspicuous.
+MAJORITY_SIZE_WEIGHTS = {
+    4: 3095,
+    5: 4448,
+    6: 2776,
+    7: 1689,
+    8: 1084,
+    9: 760,
+    10: 557,
+    11: 379,
+    12: 304,
+    13: 203,
+    14: 173,
+    15: 150,
+    16: 86,
+    17: 81,
+    18: 55,
+    19: 51,
+    20: 40,
+    21: 37,
+    22: 23,
+    23: 17,
+    24: 10,
+    25: 12,
+    26: 9,
+    27: 6,
+    28: 4,
+    29: 6,
+    30: 6,
+}
+
+
+def _take_article(pool, min_chunks, rng, used, prefer=None):
+    """
+    :param pool: An :class:`~ctc.data.sources.wiki100w.ArticlePool`.
+    :param min_chunks: Fewest chunks the article must have.
+    :param rng: Seeded RNG.
+    :param used: Titles already spent in this corpus; one topic must not appear twice.
+    :param prefer: Try for this many chunks first, then settle for ``min_chunks``. Slack above the
+        planted size is what a topic can donate as tail camouflage without moving the floor.
+
+    :returns: ``(title, bodies)``.
+
+    :raises SystemExit: If the pool cannot supply one.
+    """
+    for want, tries in ((prefer or min_chunks, 200), (min_chunks, 4000)):
+        for _ in range(tries):
+            title, bodies = pool.articles[rng.randrange(len(pool.articles))]
+            if title not in used and len(bodies) >= want:
+                used.add(title)
+                return title, bodies
+    raise SystemExit(f"pool exhausted looking for an unused article with >={min_chunks} chunks")
+
+
+def build_outlier_planted(
+    task,
+    rung,
+    out_root,
+    *,
+    ndocs,
+    pool_path,
+    n_rows=500,
+    tail_frac=0.1,
+    n_outliers=3,
+    decoy_size=5,
+    floor=4,
+    camouflage_frac=0.25,
+    seed=SEED,
+    split="eval",
+    **_,
+):
+    """
+    outlier, shared: plant every candidate in the prefix, eliminate all but one from the tail.
+
+    :func:`build_outlier_shared` puts the answer's trio in the per-query tail, which is exactly
+    where its **+0.215** came from -- a scatter control showed the rebuilt corpus was faithful
+    (0.330 vs 0.320) and the *placement* was the whole effect. It also needs per-document topic
+    labels the eval files strip, and the clustering that recovers them clears its exactness gate
+    2/25 of the time at 32k and 0/25 below.
+
+    This inverts it. ``K`` candidate topics are planted in the **shared prefix**, each with
+    ``n_outliers`` documents. Each query's tail then tops up every candidate *except its own* to
+    ``decoy_size``, leaving exactly one topic at 3 -- in the prefix, not at the end of the context.
+
+    - **No recency shortcut.** The answer is never in the tail. A model reading only the last 10%
+      learns what the answer is *not*; naming it still means counting over the whole corpus.
+    - **No label recovery.** A topic is an article from the pool, so every document's topic is
+      known by construction and nothing has to be clustered.
+
+    ``decoy_size`` is 5, not 4, and that is the load-bearing choice. Topping a decoy to 4 would
+    park it on the discrimination boundary -- the real rungs' smallest majority topic is 4 in
+    484/500 rows -- making every decoy a near-miss and putting ~28 topics one document from the
+    answer where the source has ~6. Topping to 5 leaves the natural size-4 topics as the only
+    competitors, exactly as in the reliable rung, and hides the decoys in the modal size class.
+    The *corpus* gap stays 1; only the decoys' distance from the answer grows.
+
+    :param ndocs: Corpus size, taken from the reliable rung so lengths match.
+    :param pool_path: Pickled :class:`ArticlePool`.
+    :param n_rows: Queries to emit; the eval size.
+    :param tail_frac: Per-query tail as a fraction of the corpus.
+    :param n_outliers: Documents in the answer's topic.
+    :param decoy_size: What a decoy is topped up to.
+    :param floor: Smallest majority topic, i.e. the nearest competitor.
+    :param camouflage_frac: Share of the tail that is ordinary documents rather than top-ups, so a
+        tail is not visibly one pair per decoy.
+    :param split: Article split; ``eval`` keeps the generators' train/eval article separation.
+
+    :returns: ``(path, manifest)``.
+    """
+    from ctc.data.sources.wiki100w import ArticlePool
+
+    pool = ArticlePool.from_cache(pool_path).for_split(split)
+    rng = random.Random(seed)
+
+    tail_len = max(2 * (n_outliers + 1), int(round(ndocs * tail_frac)))
+    prefix_len = ndocs - tail_len
+    per_decoy = decoy_size - n_outliers
+    queries_per_corpus = max(2, int(tail_len * (1 - camouflage_frac)) // per_decoy + 1)
+
+    sizes = sorted(MAJORITY_SIZE_WEIGHTS)
+    weights = [MAJORITY_SIZE_WEIGHTS[s] for s in sizes]
+
+    out, cid, row_i = [], 0, 0
+    observed_min_majority, observed_answer, absent = [], set(), []
+    while row_i < n_rows:
+        group_n = min(queries_per_corpus, n_rows - row_i)
+        used: set = set()
+
+        # Candidates: n_outliers documents each in the shared prefix, per_decoy held back to
+        # eliminate this candidate from every other query's answer.
+        candidates = []
+        for _ in range(group_n):
+            title, bodies = _take_article(pool, decoy_size, rng, used, prefer=decoy_size + 4)
+            candidates.append(
+                {
+                    "title": title,
+                    "planted": list(bodies[:n_outliers]),
+                    "topup": list(bodies[n_outliers:decoy_size]),
+                    # Spare chunks. Used only to pad a tail that majority camouflage cannot fill:
+                    # they push a decoy further above the boundary, which is harmless, whereas a
+                    # fresh article would open a topic below the floor and create a second answer.
+                    "extra": list(bodies[decoy_size:]),
+                }
+            )
+
+        # Majority topics, sized from the real distribution, with one pinned to the floor: that is
+        # the gap-of-1 structure the task's difficulty rests on.
+        majority, camouflage = [], []
+        remaining = prefix_len - n_outliers * group_n
+        if remaining < floor:
+            raise SystemExit(
+                f"ndocs={ndocs} leaves {remaining} prefix slots for majority topics after "
+                f"{group_n} candidates; raise --ndocs or lower --tail-frac"
+            )
+        pinned_floor = False
+        while remaining >= floor:
+            # Clamp to what the pool can actually supply: the size distribution is measured
+            # from the real rungs and reaches 30, while a pool of short articles cannot.
+            drawn = rng.choices(sizes, weights)[0] if pinned_floor else floor
+            size = min(drawn, remaining, pool.max_chunks)
+            pinned_floor = True
+            if size < floor:
+                break
+            title, bodies = _take_article(pool, size, rng, used, prefer=size + 3)
+            majority.append([title, list(bodies[:size]), list(bodies[size:])])
+            remaining -= size
+
+        # The last few slots cannot open a new topic -- a topic below the floor would be a second
+        # answer. Grow topics that are already above it instead, which cannot move the floor. Only
+        # if no topic has slack does this fall back to a bigger article, so a pool whose articles
+        # are all short still builds.
+        for entry in majority:
+            if not remaining:
+                break
+            if len(entry[1]) > floor and entry[2]:
+                take = min(remaining, len(entry[2]))
+                entry[1].extend(entry[2][:take])
+                entry[2] = entry[2][take:]
+                remaining -= take
+        if remaining:
+            title, bodies = _take_article(pool, floor + remaining, rng, used)
+            majority.append([title, list(bodies[: floor + remaining]), []])
+
+        # Camouflage: spare chunks of topics already above the floor. One more document leaves such
+        # a topic at >= floor + 1, so the nearest competitor stays where it is.
+        for title, group, spare in majority:
+            if len(group) > floor:
+                camouflage.extend((title, b) for b in spare)
+
+        # Every document that can reach a corpus is registered, top-ups and camouflage included.
+        # Missing one makes it invisible to the count, which is how a "topped-up" decoy silently
+        # stays at n_outliers and the answer stops being unique.
+        prefix_docs, topic_of = [], {}
+        for cand in candidates:
+            for body in cand["planted"] + cand["topup"]:
+                topic_of[body] = cand["title"]
+            prefix_docs.extend(cand["planted"])
+        for title, group, _spare in majority:
+            for body in group:
+                topic_of[body] = title
+            prefix_docs.extend(group)
+        for title, body in camouflage:
+            topic_of[body] = title
+        rng.shuffle(prefix_docs)
+        pos_of = {body: i for i, body in enumerate(prefix_docs)}
+
+        if not camouflage:
+            raise SystemExit("no camouflage documents available; lower --camouflage-frac")
+
+        for cand in candidates:
+            tail = []
+            for other in candidates:
+                if other["title"] != cand["title"]:
+                    tail.extend(other["topup"])
+            # Without replacement: the same passage appearing twice in one corpus is a duplicate a
+            # reader would notice, and it would double-count its topic. Majority spare first, since
+            # it makes the tail read as ordinary corpus content; decoy spare only as a fallback.
+            need = tail_len - len(tail)
+            take = min(need, len(camouflage))
+            tail.extend(body for _, body in rng.sample(camouflage, take))
+            need -= take
+            if need:
+                spare = [
+                    b
+                    for other in candidates
+                    if other["title"] != cand["title"]
+                    for b in other["extra"]
+                ]
+                if need > len(spare):
+                    raise SystemExit(
+                        f"tail is {need} documents short after camouflage and decoy spare; "
+                        "lower --tail-frac or use a pool with longer articles"
+                    )
+                tail.extend(rng.sample(spare, need))
+            rng.shuffle(tail)
+
+            documents = prefix_docs + tail
+            gold = sorted(pos_of[b] for b in cand["planted"])
+
+            # Deduplicate first: a camouflage document drawn twice is one document, not two, and
+            # counting it twice would overstate its topic.
+            counts = collections.Counter(topic_of[b] for b in dict.fromkeys(documents))
+            observed_min_majority.append(min(c for t, c in counts.items() if t != cand["title"]))
+            observed_answer.add(counts[cand["title"]])
+
+            # Shortcut control. The answer's topic is the one candidate the tail does not top up,
+            # so "absent from the tail" is worth measuring: if only one topic were absent, reading
+            # the last 10% would hand over the answer. Every majority topic that donated no
+            # camouflage is also absent, so absence alone is uninformative -- this records by how
+            # much. Guessing uniformly among the absent topics scores 1/len(absent).
+            in_tail = {topic_of[b] for b in tail}
+            absent.append(len(set(counts) - in_tail))
+
+            out.append(
+                annotate(
+                    {
+                        "documents": [{"title": None, "text": b} for b in documents],
+                        "queries": [
+                            "Can you find passages that are about a different topic than the "
+                            "rest of these passages?"
+                        ],
+                        "answers": ["; ".join(str(i + 1) for i in gold)],
+                        "gold_doc_indices": gold,
+                        "source": "wiki_outlier_topic",
+                        "split": split,
+                        "meta": {
+                            "minority_label": cand["title"],
+                            "majority_label": None,
+                            "num_outliers": len(gold),
+                            "num_categories": len(counts),
+                            "category_distribution": sorted(counts.items()),
+                            "shared_corpus_note": (
+                                "candidates planted in the shared prefix; each query's tail tops "
+                                "every other candidate up to decoy_size, leaving exactly one at "
+                                "n_outliers. The answer is never in the tail."
+                            ),
+                        },
+                    },
+                    f"{task}-{rung}-c{cid}",
+                    len(prefix_docs),
+                )
+            )
+        row_i += group_n
+        cid += 1
+
+    path = f"{out_root}/{task}/rung_{rung}_planted.jsonl"
+    save_jsonl(path, out)
+    return path, {
+        "source": pool_path,
+        "construction": "planted candidates, eliminated by the per-query tail",
+        "rows": len(out),
+        "corpora": cid,
+        "queries_per_corpus": queries_per_corpus,
+        "ndocs": ndocs,
+        "shared_prefix_len": prefix_len,
+        "tail_len": tail_len,
+        "shared_token_fraction": round(prefix_len / ndocs, 4),
+        "n_outliers": n_outliers,
+        "decoy_size": decoy_size,
+        "min_majority_topic_observed": min(observed_min_majority),
+        "gap_above_answer": min(observed_min_majority) - n_outliers,
+        "answer_size_observed": sorted(observed_answer),
+        "gold_placement": "shared prefix -- never the tail",
+        # The tail-absence shortcut, measured rather than argued: guessing uniformly among the
+        # topics missing from the tail scores this. Near chance (1/num_categories) means absence
+        # carries no usable signal.
+        "topics_absent_from_tail_mean": round(sum(absent) / len(absent), 1),
+        "shortcut_absent_from_tail_acc": round(sum(1 / a for a in absent) / len(absent), 4),
+    }
+
+
 TASK_BUILDERS = {
     "oolong": build_oolong_shared,
     "nq": build_multiplexed,
     "rerank": build_multiplexed,
     "contradiction": build_contradiction_shared,
-    "outlier": build_outlier_shared,
+    "outlier": build_outlier_planted,
+    # The pre-migration prefix+tail construction, kept only to reproduce the numbers it produced.
+    # It puts the answer in the tail (+0.215) and needs topic labels it cannot reliably recover.
+    "outlier_tail": build_outlier_shared,
 }
 
 
@@ -714,6 +1034,15 @@ def main():
     )
     p.add_argument(
         "--cr-data", default=CR_DATA, help="root holding the oolong source split (oolong only)"
+    )
+    p.add_argument(
+        "--pool",
+        default="",
+        help="wiki100w article pool pickle (outlier only). The planted build draws topics from "
+        "articles, so every document's topic is known and nothing is recovered by clustering.",
+    )
+    p.add_argument(
+        "--n-rows", type=int, default=500, help="queries to emit (outlier only); the eval size"
     )
     p.add_argument(
         "--queries-per-corpus",
@@ -760,10 +1089,21 @@ def main():
     args = p.parse_args()
 
     EVAL_RUNGS, CR_DATA = args.eval_rungs, args.cr_data
-    if not args.source and not EVAL_RUNGS:
+    # The planted outlier build reads the article pool, not a rung file: no source needed, but a
+    # corpus size and a pool are.
+    if args.task == "outlier":
+        if not args.pool:
+            raise SystemExit("--task outlier needs --pool (the wiki100w article pool pickle)")
+        if not args.ndocs:
+            raise SystemExit(
+                "--task outlier needs --ndocs, the corpus size to match in the reliable rung"
+            )
+    elif not args.source and not EVAL_RUNGS:
         raise SystemExit("pass --source, or --eval-rungs (or set $CTC_EVAL_RUNGS)")
 
-    tail_fracs = args.tail_frac if args.task in ("contradiction", "outlier") else [None]
+    tail_fracs = (
+        args.tail_frac if args.task in ("contradiction", "outlier", "outlier_tail") else [None]
+    )
     for tf in tail_fracs:
         kwargs = dict(
             task=args.task,
@@ -776,6 +1116,8 @@ def main():
             variant_tag=args.variant_tag,
             scatter_gold=args.scatter_gold,
         )
+        if args.task == "outlier":
+            kwargs.update(ndocs=args.ndocs, pool_path=args.pool, n_rows=args.n_rows)
         if tf is not None:
             kwargs["tail_frac"] = tf
         path, manifest = TASK_BUILDERS[args.task](**kwargs)
