@@ -421,6 +421,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         # score-preserving, which is only checkable after the fact if the results say which path
         # produced them.
         payload["share_prefix"] = bool(args.share_prefix)
+        # What results-hub reads to tag the row without anyone typing it. `ladder_version` is the
+        # coarse eval_version facet (v2 vs fast); the exact bundle goes in the pointer, because
+        # v2 and v2_clean are different data under one facet value.
+        payload["_meta"] = {
+            "ladder_version": "fast" if bundle.kind == "fast" else "v2",
+            "eval_bundle": str(root),
+            "query_position": args.query_position,
+        }
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
