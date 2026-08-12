@@ -304,6 +304,7 @@ class Trainer:
     _bookkeeping_queue: Dict[str, Dict[str, Future]] = field(
         default_factory=lambda: defaultdict(OrderedDict)
     )
+    _checkpoint_independent_bookkeeping_ops: Set[Future] = field(repr=False, default_factory=set)
     _bookkeeping_pg: Optional[dist.ProcessGroup] = None
     _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
     """Callbacks that are blocking ephemeral checkpoints."""
@@ -972,7 +973,7 @@ class Trainer:
         # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
         # operation to be finished first.
         self._log_metrics()
-        self._join_bookkeeping_ops()
+        self._join_bookkeeping_ops(checkpoint_dependent_only=True)
 
         self.checkpointer.save(
             path,
@@ -1010,7 +1011,7 @@ class Trainer:
         # Some state (e.g. in a callback) might be tied to metrics, or depend on another bookkeeping
         # operation to be finished first.
         self._log_metrics()
-        self._join_bookkeeping_ops()
+        self._join_bookkeeping_ops(checkpoint_dependent_only=True)
 
         fut = self.checkpointer.save_async(
             path,
@@ -1259,6 +1260,7 @@ class Trainer:
         allow_multiple: bool = True,
         soft_timeout: Optional[int] = None,
         distributed: bool = True,
+        checkpoint_dependent: bool = True,
         **kwargs,
     ):
         """
@@ -1277,6 +1279,10 @@ class Trainer:
             takes longer than this a warning will be issued.
         :param distributed: This should only be set to ``False`` if the op doesn't use distributed
             communication, in which case it will be allowed to run concurrently with other ops.
+        :param checkpoint_dependent: Whether a checkpoint save must wait for this operation to
+            finish. Set this to ``False`` for operations such as removing an old checkpoint that
+            can safely continue while a new checkpoint is saved. All operations are still awaited
+            during graceful shutdown.
         """
         if cancel_in_progress is not None:
             warnings.warn(
@@ -1336,6 +1342,8 @@ class Trainer:
 
             op_id = uuid.uuid4().hex
             self._bookkeeping_queue[op_name][op_id] = future
+            if not checkpoint_dependent:
+                self._checkpoint_independent_bookkeeping_ops.add(future)
 
             def callback(fut: Future[T]):
                 try:
@@ -1346,25 +1354,40 @@ class Trainer:
                 finally:
                     # Remove the completed op from the queue.
                     assert op_name is not None  # for mypy
+                    self._checkpoint_independent_bookkeeping_ops.discard(fut)
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
             future.add_done_callback(callback)
         else:
             wrapped_op(*args, **kwargs)
 
-    def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
+    def _join_bookkeeping_ops(
+        self, timeout: Optional[float] = None, checkpoint_dependent_only: bool = False
+    ):
         """
         Block until all queued bookkeeping operations are done.
+
+        :param checkpoint_dependent_only: Only wait for operations that must finish before saving
+            a checkpoint.
         """
         futures: List[Future] = []
         for op_name, futures_dict in self._bookkeeping_queue.items():
-            if futures_dict:
+            op_futures = [
+                future
+                for future in futures_dict.values()
+                if not checkpoint_dependent_only
+                or future not in self._checkpoint_independent_bookkeeping_ops
+            ]
+            if op_futures:
                 log.info(
-                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
+                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(op_futures)} ops)..."
                 )
-                futures.extend(futures_dict.values())
+                futures.extend(op_futures)
         concurrent.futures.wait(futures, timeout=timeout)
-        log.info("All bookkeeping ops complete")
+        if checkpoint_dependent_only:
+            log.info("All checkpoint-dependent bookkeeping ops complete")
+        else:
+            log.info("All bookkeeping ops complete")
 
     def _check_if_canceled(self):
         if self._canceled:
