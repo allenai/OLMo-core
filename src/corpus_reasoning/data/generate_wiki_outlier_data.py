@@ -33,6 +33,7 @@ Usage:
 
 import argparse
 import json
+import math
 import random
 from pathlib import Path
 
@@ -177,6 +178,89 @@ def build_mixed_example(pool: ArticlePool, num_docs: int, num_outliers: int,
     }
 
 
+def build_articles_example(pool: ArticlePool, num_docs: int, num_outliers: int,
+                           min_run: int, max_run: int, rng: random.Random,
+                           max_tries: int = 400) -> dict | None:
+    """Mirror of `build_v2_outlier_ladder.build_example`'s majority construction.
+
+    WHY THIS EXISTS. The v2 EVAL ladder does NOT sample a category count. It fills
+    the corpus with WHOLE articles of U[min_run, max_run] chunks (mean 9) until the
+    rung is full, so K is *emergent* and lands in a tight band: measured K = 3/7/13/25
+    at n = 22/55/110/220. `build_mixed_example` instead samples K ~ U[min_k, max_k]
+    and then partitions, which at chunks-per-article=25 gave K ~ U[2,10] with ~40 docs
+    per topic. Training on that and scoring on the eval is the M-axis mismatch in
+    `records/contradiction-train-eval-non-iid.md` §2 — at n=220 the eval asks for 25
+    categories where training's cap could not exceed 16 and its observed max was 10.
+
+    Matching by re-deriving the eval's K through a different mechanism (fitting
+    --chunks-per-article) is exactly how that bug arose. This shares the construction
+    instead: same fill rule, same backoff, same parameters.
+    """
+    n_maj = num_docs - num_outliers
+    outlier = pool.sample_run(num_outliers, rng=rng, single_only=True)
+    if outlier is None:
+        return None
+    used = _run_titles(outlier)
+
+    runs: list[list[dict]] = []
+    cum = 0
+    for _ in range(max_tries):
+        if cum >= n_maj:
+            break
+        size = rng.randint(min_run, max_run)
+        run = pool.sample_run(size, rng=rng, exclude_titles=used, single_only=True)
+        if run is None:
+            continue
+        used |= _run_titles(run)
+        runs.append(run)
+        cum += len(run)
+    if cum < n_maj:
+        return None
+
+    # Exact-length prefix, backing off so the trailing article never contributes
+    # fewer than num_outliers+1 chunks (every majority topic stays strictly larger
+    # than the outlier) -- identical to the eval builder's prefix_chunks().
+    flat, art_of = [], []
+    for ai, run in enumerate(runs):
+        for c in run:
+            flat.append(c)
+            art_of.append(ai)
+    m = min(n_maj, len(flat))
+    min_maj = num_outliers + 1
+    if m > 0:
+        last_ai = art_of[m - 1]
+        art_start = art_of.index(last_ai)
+        partial = m - art_start
+        if 0 < partial < min_maj:
+            m = art_start
+    maj = flat[:m]
+    if not maj:
+        return None
+
+    docs, gold_idx = _docs_and_gold(maj, outlier, rng)
+    maj_titles = sorted({c["title"] for c in maj})
+    distribution: dict[str, int] = {}
+    for c in maj:
+        distribution[c["title"]] = distribution.get(c["title"], 0) + 1
+    distribution[outlier[0]["title"]] = num_outliers
+    return {
+        "documents": docs,
+        "queries": [TOPIC_QUERY],
+        "answers": [_answers_from_gold(gold_idx)],
+        "gold_doc_indices": gold_idx,
+        "source": "wiki_outlier_topic",
+        "meta": {
+            "majority_label": None,
+            "minority_label": outlier[0]["title"],
+            "num_outliers": num_outliers,
+            "num_categories": len(maj_titles) + 1,
+            "category_distribution": distribution,
+            "num_docs": len(docs),
+            "mode": "articles",
+        },
+    }
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--num-examples", type=int, default=200)
@@ -192,6 +276,25 @@ def main():
                    help="Min number of majority articles in mixed v2 "
                         "(K = majority articles + 1 outlier).")
     p.add_argument("--mixed-max-k", type=int, default=5)
+    p.add_argument("--majority-mode", choices=["partition", "articles"],
+                   default="partition",
+                   help="'partition' (default, historical): sample K then split n_maj "
+                        "into K-1 imbalanced runs. 'articles': fill the corpus with "
+                        "WHOLE articles of U[--min-run,--max-run] chunks until full and "
+                        "let K emerge -- the construction build_v2_outlier_ladder.py "
+                        "uses, so training matches the scale-K eval by sharing the rule "
+                        "rather than by fitting --chunks-per-article to it.")
+    p.add_argument("--min-run", type=int, default=4,
+                   help="articles mode: min chunks per majority article "
+                        "(must exceed num_outliers)")
+    p.add_argument("--max-run", type=int, default=14,
+                   help="articles mode: max chunks per majority article")
+    p.add_argument("--mixed-min-k-frac", type=float, default=0.0,
+                   help="If >0, floor the sampled K at ceil(frac*max_k) so the "
+                        "category count lands in a tight band near max_k instead "
+                        "of U[min_k, max_k]. Needed to match the v2 EVAL ladder, "
+                        "which fills rungs with whole articles (n=220 -> K 23-28). "
+                        "0.0 = historical uniform behaviour.")
     p.add_argument("--mixed-max-k-cap", type=int, default=16,
                    help="Hard cap on the per-example mixed K for long examples. "
                         "For large num_docs, K is auto-grown so each majority "
@@ -256,6 +359,25 @@ def main():
         grown = 1 + -(-n_maj // max(args.chunks_per_article, 1))  # ceil div
         return max(args.mixed_max_k, min(grown, args.mixed_max_k_cap))
 
+    def _per_example_min_k(max_k: int) -> int:
+        """Floor for the sampled K, optionally tied to max_k.
+
+        K is drawn uniformly from [min_k, max_k]. With a constant min_k that
+        makes the category count roughly U[2, max_k] — but the v2 EVAL ladder
+        (`build_v2_outlier_ladder.py`) fills each rung with whole articles, so
+        its K lands in a TIGHT band near the top (measured: n=220 -> 23-28 with
+        max_k=26, not 2-26). Training on the uniform version and scoring on the
+        eval is the M-axis train/eval mismatch documented in
+        `records/contradiction-train-eval-non-iid.md` §2.
+
+        --mixed-min-k-frac ties the floor to max_k so the band matches. It
+        defaults to 0.0, which reproduces the historical uniform behaviour
+        exactly, so no existing build changes.
+        """
+        if args.mixed_min_k_frac <= 0:
+            return args.mixed_min_k
+        return max(args.mixed_min_k, math.ceil(args.mixed_min_k_frac * max_k))
+
     examples: list[dict] = []
     n_simple = 0
     n_mixed = 0
@@ -270,6 +392,22 @@ def main():
         max_k = _per_example_max_k(num_docs)
         ex = None
         actually_simple = use_simple
+        if args.majority_mode == "articles":
+            # Shares build_v2_outlier_ladder's fill rule; K is emergent, so the
+            # simple/mixed split and the K-sampling knobs do not apply.
+            for _ in range(args.max_build_retries):
+                ex = build_articles_example(
+                    pool, num_docs, args.num_outliers,
+                    max(args.min_run, args.num_outliers + 1), args.max_run, rng)
+                if ex is not None:
+                    break
+            if ex is None:
+                print(f"  warning: gave up on an articles example "
+                      f"(num_docs={num_docs}) after {args.max_build_retries} retries")
+                continue
+            examples.append(ex)
+            n_mixed += 1
+            continue
         for _ in range(args.max_build_retries):
             if use_simple:
                 ex = build_simple_example(
@@ -279,12 +417,12 @@ def main():
                     actually_simple = False
                     ex = build_mixed_example(
                         pool, num_docs, args.num_outliers,
-                        args.mixed_min_k, max_k, rng,
+                        _per_example_min_k(max_k), max_k, rng,
                         maj_outlier_gap=args.maj_outlier_gap)
             else:
                 ex = build_mixed_example(
                     pool, num_docs, args.num_outliers,
-                    args.mixed_min_k, max_k, rng,
+                    _per_example_min_k(max_k), max_k, rng,
                     maj_outlier_gap=args.maj_outlier_gap)
             if ex is not None:
                 break

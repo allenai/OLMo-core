@@ -57,9 +57,15 @@ BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
 # the shared part need only be prefilled once. It is a DIFFERENT MEASUREMENT, not a cheaper route
 # to a v2 number -- report it in its own column and never beside a v2 one. Covers the five
 # in-distribution tasks at 8k-32k, plus 64k-1M with LADDER_XLONG=1.
+# LADDER_VERSION=v3 is v2 with ONE change: contradiction's rungs are `realistic`-mode, matching the
+# perturbation generator the training data actually used. v2 scores a realistic-trained model on
+# `both`-mode gold (38% of its pairs are near-duplicates) -- worth 0.559 -> 0.946 f1 at n=762 on the
+# CTC checkpoint. nq/outlier/oolong/rerank rungs are IDENTICAL to v2 (all four audited in-distribution
+# 2026-08-11), so v3 only redirects the contradiction root. See
+# records/contradiction-train-eval-non-iid.md. v3 contradiction numbers are NOT comparable to v2 ones.
 LADDER_VERSION="${LADDER_VERSION:-v2}"
-if [ "$LADDER_VERSION" != "v2" ] && [ "$LADDER_VERSION" != "fast" ]; then
-  echo "ERROR: LADDER_VERSION=$LADDER_VERSION is not supported -- v2 and fast are the ladders." >&2
+if [ "$LADDER_VERSION" != "v2" ] && [ "$LADDER_VERSION" != "v3" ] && [ "$LADDER_VERSION" != "fast" ]; then
+  echo "ERROR: LADDER_VERSION=$LADDER_VERSION is not supported -- v2, v3 and fast are the ladders." >&2
   echo "       v1 resampled questions per rung; rebuild as v2 (build_v2_eval_ladders.py for" >&2
   echo "       2k-32k, build_xlong_rungs.py for 64k-2M) and point EVAL500 at a v2 bundle." >&2
   exit 2
@@ -79,6 +85,12 @@ if [ "$LADDER_VERSION" = "fast" ]; then
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_fast}"
 else
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
+fi
+# v3: contradiction only. eval_lc_native.py reads EVAL500_CONTRA_ROOT for that one task and keeps
+# every other task on EVAL500, so the v3 bundle need not (and does not) duplicate the rest.
+if [ "$LADDER_VERSION" = "v3" ]; then
+  export EVAL500_CONTRA_ROOT="${EVAL500_CONTRA_ROOT:-$PRASANNS/_eval_bundle_eval500_v3}"
+  echo "    EVAL500_CONTRA_ROOT=$EVAL500_CONTRA_ROOT (v3: contradiction only)"
 fi
 VFLAG="--ladder-version $LADDER_VERSION"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
