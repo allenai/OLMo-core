@@ -1,1 +1,1 @@
-{"format":"vision_alignment_perception_profile_allowlist","profiles":{},"version":1}
+{"format":"vision_alignment_perception_profile_allowlist","profiles":{"configs/vision_moe/vision_alignment/perception/frozen_vision_control_v1.yaml":"0c304f74c5565edfe8675ee97b940bb7b60a175946d22ef43ce877b5b5721601","configs/vision_moe/vision_alignment/perception/treatment_v1.yaml":"9a813d50fd1f5cf3d4bb4fee49ca694f60d89fd872e7d71751169f1dd334807f"},"version":1}
