@@ -40,7 +40,9 @@ __all__ = [
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
     "build_is_anchor",
+    "MASK_MIX_SCHEDULES",
     "mask_mix_standard_prob",
+    "causal_example_flags",
     "collapse_roles_to_causal",
 ]
 
@@ -304,6 +306,12 @@ def build_chunk_ids_from_tokens(
 # leaves ``chunk_ids`` untouched, so pure-chunked training is bit-identical.
 
 
+#: Schedules available for the mask-mix curriculum. ``"linear"`` anneals ``mix_start_p ->
+#: mix_end_p`` smoothly; ``"step"`` holds ``mix_start_p`` until ``mix_step_frac`` of the way through
+#: and then switches to ``mix_end_p`` -- a hard phase change rather than a blend.
+MASK_MIX_SCHEDULES = ("linear", "step")
+
+
 def mask_mix_standard_prob(
     forward_idx: int,
     *,
@@ -311,6 +319,8 @@ def mask_mix_standard_prob(
     mix_start_p: float = 0.0,
     mix_end_p: float = 0.0,
     mix_total_forwards: int = 0,
+    mix_schedule: str = "linear",
+    mix_step_frac: float = 0.5,
 ) -> float:
     """
     Per-example probability of collapsing an example to plain causal on this forward.
@@ -322,15 +332,56 @@ def mask_mix_standard_prob(
     :param mix_end_p: Curriculum end probability (at ``forward_idx >= mix_total_forwards``).
     :param mix_total_forwards: Number of forwards over which the curriculum anneals linearly. ``0``
         disables the curriculum.
+    :param mix_schedule: One of :data:`MASK_MIX_SCHEDULES`. ``"linear"`` (the default, and the
+        historical behavior) interpolates between the endpoints; ``"step"`` switches once.
+    :param mix_step_frac: ``"step"`` only -- the fraction of ``mix_total_forwards`` at which ``p``
+        jumps from ``mix_start_p`` to ``mix_end_p``.
 
     :returns: The collapse probability ``p`` for this forward (``0.0`` when no mixing is configured).
+
+    :raises ValueError: If ``mix_schedule`` is not one of :data:`MASK_MIX_SCHEDULES`.
     """
+    if mix_schedule not in MASK_MIX_SCHEDULES:
+        raise ValueError(f"Unknown mix_schedule {mix_schedule!r}; expected {MASK_MIX_SCHEDULES}")
     if standard_mix_prob > 0.0:
         return standard_mix_prob
     if mix_total_forwards > 0:
+        if mix_schedule == "step":
+            return mix_start_p if forward_idx < mix_step_frac * mix_total_forwards else mix_end_p
         prog = min(1.0, forward_idx / mix_total_forwards)
         return mix_start_p + (mix_end_p - mix_start_p) * prog
     return 0.0
+
+
+def causal_example_flags(
+    batch_size: int,
+    p: float,
+    *,
+    forward_idx: int,
+    mix_seed: int = 0,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    """
+    Which examples in this microbatch are in the **causal arm**, as an explicit ``(B,)`` bool.
+
+    The summary-token path's equivalent of :func:`collapse_roles_to_causal`, using the **identical**
+    per-``(forward_idx, example)`` seed so the two make the same choices for the same schedule and
+    seed. Only the expression differs: the chunked path neutralizes an example's roles to all-FREE so
+    that every pattern degenerates to causal -- which works, but is opaque and requires the mask to be
+    self-neutralizing -- whereas here the arm is a first-class input to the mask.
+
+    :param batch_size: Number of examples in this microbatch.
+    :param p: The probability from :func:`mask_mix_standard_prob`.
+    :param forward_idx: The forward index used in the per-example seed.
+    :param mix_seed: Base seed for the deterministic per-example coin.
+    :param device: Device for the returned tensor.
+
+    :returns: A bool tensor of shape ``(batch_size,)``.
+    """
+    if p <= 0.0:
+        return torch.zeros(batch_size, dtype=torch.bool, device=device)
+    flags = [random.Random(f"{mix_seed}:{forward_idx}:{b}").random() < p for b in range(batch_size)]
+    return torch.tensor(flags, dtype=torch.bool, device=device)
 
 
 def collapse_roles_to_causal(

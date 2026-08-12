@@ -11,6 +11,7 @@ locally; CLAUDE.md covers Beaker.
 | `sft_5task/` | The canonical 5task 32k SFT family: dense/compressive/fast-landmark × nocpt/fixnq/cptmix, 64k variants | Beaker |
 | `sft_docchunk/` | Document-chunked 5task SFT: dense/compressive/landmark/hier/hierK25/randomdoc (+ `_docchunk_5task_32k_nocpt_common.py` shared config) | Beaker (+ one local) |
 | `sft_longctx/` | Earlier Beaker SFT generations: longctx/unified/noruler/10task1k/packed, sparse-landmark — kept for parallel Beaker use | Beaker |
+| `sft_summtoken/` | **SummTokenSFT**: per-document summary tokens with a causal/summary-only mask mixture — 5 arms (only/p25/step50/anneal/causal) on Qwen3.5-4B (`_qwen35_summtoken_common.py`). ⚠ only 8/32 layers are masked on the hybrid, and the base must be summary-repaired first — see its README | Beaker (4 nodes) |
 | `sft_xlong256k/` | 256k-window SFT on the xlong5 2k→256k ladder + Dolci 25%: the qboth-vs-qafter query-position pair (Qwen3.5 dense, `_qwen35_xlong5_dolci25_256k_common.py`) | Beaker (2 nodes) |
 | `attn_explore/` | 0.6B (+Qwen3.5-0.8B, +4B eval) contradiction-n20 mask-design experiments: dense/dilated/compressive/docchunk-mask-mix/fast-landmark, train+eval | Local (mooney/cubbins) |
 | `goldgrad/` | Gold-gradient O(1)-backward probe: train/eval/bench/reap | Local |

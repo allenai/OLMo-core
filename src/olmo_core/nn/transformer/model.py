@@ -44,10 +44,14 @@ from ..attention import (
     SequenceMixer,
 )
 from ..attention.chunked_mask import (
+    MASK_MIX_SCHEDULES,
     build_chunk_ids_from_tokens,
+    causal_example_flags,
     collapse_roles_to_causal,
     mask_mix_standard_prob,
 )
+from ..attention.summary_mask import build_summary_roles
+from ..attention.summary_token import SummaryTokenAttention
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -136,6 +140,11 @@ class Transformer(nn.Module):
         # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
         # forwards them to every block (for :class:`DocumentLandmarkAttention`).
         self._document_chunk_attention: Optional[Dict[str, Any]] = None
+        # Optional summary-token-attention config (see ``enable_summary_token_attention``). When set,
+        # ``_prepare_inputs`` derives per-token ``summary_roles`` and the per-example
+        # ``causal_example`` arm and forwards both to every block (for
+        # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`).
+        self._summary_token_attention: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -273,6 +282,137 @@ class Transformer(nn.Module):
             "eos_id": int(eos_id),
             "mode": mode,
             "pad_id": None if pad_id is None else int(pad_id),
+            "mix": mix,
+        }
+
+    def enable_summary_token_attention(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        summary_token_id: int,
+        eos_id: int,
+        pad_id: Optional[int] = None,
+        standard_mix_prob: float = 0.0,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_forwards: int = 0,
+        mix_schedule: str = "linear",
+        mix_step_frac: float = 0.5,
+        mix_seed: int = 42,
+        mix_log_interval: int = 500,
+    ) -> None:
+        """
+        Enable per-token ``summary_roles`` construction for
+        :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`.
+
+        When enabled, :meth:`forward` derives the roles from the token stream on every step (see
+        :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles`) and forwards them, plus the
+        per-example mask-mixture arm, to every block.
+
+        .. note::
+            Every sequence mixer must *tolerate* the ``summary_roles`` / ``causal_example`` keywords,
+            but they need not consume them. On a hybrid such as Qwen3.5
+            (``block_pattern=["gdn","gdn","gdn","attn"]``) only the 8 attention layers of 32 are
+            masked; the 24 :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet` layers absorb the
+            keyword via ``**kwargs`` and are an **unrestricted cross-document channel**. That is a
+            deliberate scoping choice for the SummTokenSFT experiment, not an oversight -- but it
+            means results describe what the *attention* layers route, not the whole model. The
+            realized split is logged at :meth:`enable_summary_token_attention` time so it lands in the
+            saved config rather than having to be rediscovered.
+
+        **Mask mixing** (optional): during *training*, each example is independently assigned to the
+        causal arm with probability ``p`` from
+        :func:`~olmo_core.nn.attention.chunked_mask.mask_mix_standard_prob` -- either static
+        (``standard_mix_prob``) or a curriculum (``mix_start_p -> mix_end_p`` over
+        ``mix_total_forwards``, ``"linear"`` or ``"step"``). ``p == 0`` (all defaults) means every
+        example is masked.
+
+        :param doc_start_id: The ``<|box_start|>`` token id.
+        :param doc_end_id: The ``<|box_end|>`` token id.
+        :param summary_token_id: The ``<|summ|>`` token id appended after each context document.
+        :param eos_id: The EOS / example terminator.
+        :param pad_id: Optional dedicated padding id. Needed whenever the tokenizer ties ``pad`` to
+            ``eos`` (Qwen3.5 does), or tail padding cannot be told from content.
+        :param standard_mix_prob: Static per-example causal-arm probability.
+        :param mix_start_p: Curriculum start probability (at forward 0).
+        :param mix_end_p: Curriculum end probability (at ``mix_total_forwards``).
+        :param mix_total_forwards: Forwards over which the curriculum runs. **This must be the number
+            of forwards a single rank performs**, i.e.
+            ``(n_instances * epochs) // (world_size * micro_batch_instances)`` -- getting it wrong
+            leaves ``p`` short of ``mix_end_p`` and has silently voided prior arms.
+        :param mix_schedule: ``"linear"`` or ``"step"``; see
+            :data:`~olmo_core.nn.attention.chunked_mask.MASK_MIX_SCHEDULES`.
+        :param mix_step_frac: ``"step"`` only -- where in training the switch happens.
+        :param mix_seed: Base seed for the deterministic per-(forward, example) coin.
+        :param mix_log_interval: Log a ``[curriculum]`` line every this many training forwards.
+
+        :raises OLMoConfigurationError: If static and curriculum mixing are both requested, or a
+            curriculum is requested without ``mix_total_forwards > 0``.
+        """
+        curriculum = mix_start_p > 0.0 or mix_end_p > 0.0
+        if standard_mix_prob > 0.0 and curriculum:
+            raise OLMoConfigurationError(
+                "Mask mixing: 'standard_mix_prob' (static) is mutually exclusive with the curriculum "
+                "('mix_start_p' / 'mix_end_p'); set only one."
+            )
+        if curriculum and mix_total_forwards <= 0:
+            raise OLMoConfigurationError(
+                "Mask-mix curriculum ('mix_start_p' / 'mix_end_p') requires 'mix_total_forwards' > 0 "
+                "(the number of forwards ONE RANK performs)."
+            )
+        if mix_schedule not in MASK_MIX_SCHEDULES:
+            raise OLMoConfigurationError(
+                f"Unknown mix_schedule {mix_schedule!r}; expected {MASK_MIX_SCHEDULES}"
+            )
+
+        # Record how much of the model the mask actually covers. On a hybrid this is a minority of
+        # layers, and that fact belongs in the saved config rather than in someone's memory.
+        n_mixers = 0
+        n_summary_layers = 0
+        for block in self.blocks.values():
+            mixer = getattr(block, "attention", None)
+            if mixer is None:
+                continue
+            n_mixers += 1
+            if isinstance(mixer, SummaryTokenAttention):
+                n_summary_layers += 1
+        if n_summary_layers == 0:
+            raise OLMoConfigurationError(
+                "enable_summary_token_attention() was called but no layer uses "
+                "AttentionType.summary_token, so the mask would be a silent no-op."
+            )
+        unmasked = n_mixers - n_summary_layers
+        log.info(
+            f"[summary-token] masking {n_summary_layers} of {n_mixers} sequence mixers"
+            + (
+                f"; the other {unmasked} ignore the roles and are an UNRESTRICTED cross-document "
+                "channel. Results describe what the attention layers route, not the whole model."
+                if unmasked
+                else " (every layer is masked)."
+            )
+        )
+
+        mix: Optional[Dict[str, Any]] = None
+        if standard_mix_prob > 0.0 or curriculum:
+            mix = {
+                "standard_mix_prob": float(standard_mix_prob),
+                "mix_start_p": float(mix_start_p),
+                "mix_end_p": float(mix_end_p),
+                "mix_total_forwards": int(mix_total_forwards),
+                "mix_schedule": str(mix_schedule),
+                "mix_step_frac": float(mix_step_frac),
+                "mix_seed": int(mix_seed),
+                "log_interval": max(1, int(mix_log_interval)),
+                "forward_idx": 0,
+            }
+        self._summary_token_attention = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "summary_token_id": int(summary_token_id),
+            "eos_id": int(eos_id),
+            "pad_id": None if pad_id is None else int(pad_id),
+            "n_summary_layers": n_summary_layers,
+            "n_sequence_mixers": n_mixers,
             "mix": mix,
         }
 
@@ -517,6 +657,53 @@ class Transformer(nn.Module):
                 "supported together with context parallelism (chunk_ids are not sequence-sharded)."
             )
 
+        # Summary-token attention: derive the per-token roles and the per-example mixture arm from the
+        # FULL, unsharded token stream, before the context-parallel sharding below. Under Ulysses the
+        # roles deliberately stay full-length: the all-to-all inside
+        # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention` restores the whole
+        # sequence (with partitioned heads) before the mask is applied, so a sharded roles tensor
+        # would be the wrong object.
+        summary_roles: Optional[torch.Tensor] = None
+        causal_example: Optional[torch.Tensor] = None
+        if self._summary_token_attention is not None:
+            st_cfg = self._summary_token_attention
+            summary_roles = build_summary_roles(
+                input_ids,
+                doc_start_id=st_cfg["doc_start_id"],
+                doc_end_id=st_cfg["doc_end_id"],
+                summary_token_id=st_cfg["summary_token_id"],
+                eos_id=st_cfg["eos_id"],
+                pad_id=st_cfg.get("pad_id"),
+            )
+            # Mask mixing (training only): assign each example to the causal or the masked arm with a
+            # scheduled, seeded probability. Unlike the chunked path this does not rewrite the roles;
+            # the arm is passed to the mask as its own input. Kept eager (python-seeded coin plus a
+            # counter) -- exclude from torch.compile.
+            mix = st_cfg.get("mix")
+            if mix is not None and self.training:
+                idx = mix["forward_idx"]
+                p = mask_mix_standard_prob(
+                    idx,
+                    standard_mix_prob=mix["standard_mix_prob"],
+                    mix_start_p=mix["mix_start_p"],
+                    mix_end_p=mix["mix_end_p"],
+                    mix_total_forwards=mix["mix_total_forwards"],
+                    mix_schedule=mix["mix_schedule"],
+                    mix_step_frac=mix["mix_step_frac"],
+                )
+                mix["forward_idx"] = idx + 1
+                causal_example = causal_example_flags(
+                    input_ids.shape[0],
+                    p,
+                    forward_idx=mix["forward_idx"],
+                    mix_seed=mix["mix_seed"],
+                )
+                if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
+                    log.info(
+                        f"[curriculum] forward={mix['forward_idx']} p_causal={p:.3f} "
+                        f"causal_this_batch={int(causal_example.sum())}/{input_ids.shape[0]}"
+                    )
+
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
             inputs = [input_ids]
@@ -635,7 +822,9 @@ class Transformer(nn.Module):
                     new_chunk_ids = collapse_roles_to_causal(
                         chunk_ids, p, forward_idx=mix["forward_idx"], mix_seed=mix["mix_seed"]
                     )
-                    if new_chunk_ids is not chunk_ids:  # at least one example collapsed this forward
+                    if (
+                        new_chunk_ids is not chunk_ids
+                    ):  # at least one example collapsed this forward
                         mix["n_collapsed"] += 1
                     chunk_ids = new_chunk_ids
                     if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
@@ -644,6 +833,13 @@ class Transformer(nn.Module):
                             f"collapsed_forwards={mix['n_collapsed']}"
                         )
                 all_block_kwargs["chunk_ids"] = move_to_device(chunk_ids, self.device)
+
+        # Threaded to every block in both the CP and non-CP paths, and deliberately NOT sequence-
+        # sharded (see the construction above).
+        if summary_roles is not None:
+            all_block_kwargs["summary_roles"] = move_to_device(summary_roles, self.device)
+            if causal_example is not None:
+                all_block_kwargs["causal_example"] = move_to_device(causal_example, self.device)
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]

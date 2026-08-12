@@ -280,6 +280,14 @@ class AttentionType(StrEnum):
     stack of layers grows geometrically)
     """
 
+    summary_token = "summary_token"
+    """
+    ➡️ :class:`SummaryTokenAttention` (per-document **summary-token** masking: each context document
+    is followed by a short run of summary tokens, and a document may read only itself plus the summary
+    runs of earlier documents, while the trailing query reads the summary runs but no raw document
+    content -- see :mod:`olmo_core.nn.attention.summary_mask` for the rule and its levers)
+    """
+
 
 @dataclass
 class AttentionTypePatternConfig(Config):
@@ -549,6 +557,39 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     :func:`~olmo_core.nn.attention.gold_hop_mask.install_gold_hop_mask`, which refuses to install if the
     two disagree.
     """
+    n_summary_tokens: Optional[int] = None
+    """
+    For :class:`SummaryTokenAttention` (``name="summary_token"``) only: how many summary tokens follow
+    each context document. **Must match the tokenized data** -- the launcher cross-checks it against
+    the shard metadata rather than trusting it.
+    """
+    summary_visible_tokens: Optional[int] = None
+    """
+    For :class:`SummaryTokenAttention` only: how many *leading* tokens of each summary run a later
+    document may read. ``None`` (default) means all of them. Lowering it is the compression-dose
+    ladder -- the tokenized data is unchanged across rungs, only visibility varies -- and ``0`` removes
+    the relay entirely, which is the floor control and is reachable only by asking for it explicitly.
+    """
+    summaries_read_own_document: Optional[bool] = None
+    """
+    For :class:`SummaryTokenAttention` only: whether a document's summary run may read that document's
+    content. ``True`` (default) is the treatment. ``False`` is the **placebo** -- the run keeps its
+    position, its tokens and every edge into it, but reads nothing, so it provably carries zero
+    document content.
+    """
+    summaries_read_earlier_summaries: Optional[bool] = None
+    """
+    For :class:`SummaryTokenAttention` only: whether a summary run may read earlier summary runs.
+    ``True`` (default) gives a relay chain, so information can propagate transitively past its
+    immediate neighbour.
+    """
+    query_reads_documents: Optional[bool] = None
+    """
+    For :class:`SummaryTokenAttention` only: whether the trailing query/answer is an unrestricted
+    reader. ``False`` (default) is the treatment -- the query sees the instruction, its own span and
+    the summary runs, but no raw document content. ``True`` restricts only document-to-document
+    attention.
+    """
     flex_block_size: Optional[int] = None
     """
     For :class:`DocumentChunkedAttention` only: the FlexAttention ``create_block_mask`` block size (the
@@ -730,6 +771,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         summary_every_k = kwargs.pop("summary_every_k", None)
         summary_bandwidth = kwargs.pop("summary_bandwidth", None)
         summary_relay = kwargs.pop("summary_relay", None)
+        n_summary_tokens = kwargs.pop("n_summary_tokens", None)
+        summary_visible_tokens = kwargs.pop("summary_visible_tokens", None)
+        summaries_read_own_document = kwargs.pop("summaries_read_own_document", None)
+        summaries_read_earlier_summaries = kwargs.pop("summaries_read_earlier_summaries", None)
+        query_reads_documents = kwargs.pop("query_reads_documents", None)
         gold_hops = kwargs.pop("gold_hops", None)
         gold_decoys = kwargs.pop("gold_decoys", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
@@ -864,6 +910,20 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' are only supported with "
                 "document_chunked, document_landmark, or document_compressive_landmark attention "
                 f"(got name='{self.name}')"
+            )
+        if (
+            n_summary_tokens is not None
+            or summary_visible_tokens is not None
+            or summaries_read_own_document is not None
+            or summaries_read_earlier_summaries is not None
+            or query_reads_documents is not None
+        ) and AttentionType.summary_token not in possible_types:
+            raise OLMoConfigurationError(
+                "'n_summary_tokens' / 'summary_visible_tokens' / 'summaries_read_own_document' / "
+                "'summaries_read_earlier_summaries' / 'query_reads_documents' are only supported "
+                f"with summary_token attention (got name='{self.name}'). Note these are NOT the "
+                "'summary_every_k' / 'summary_bandwidth' / 'summary_relay' knobs of the "
+                "document_chunked 'summary_attention' pattern, which is a different mask."
             )
         if (
             gold_hops is not None or gold_decoys is not None
@@ -1078,6 +1138,22 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
                 return DilatedSlidingWindowAttention(**kwargs)
+            elif effective_name == "summary_token":
+                # Per-document summary-token masking. The levers are named for what they control;
+                # every default is the treatment, so no arm is silently the floor control.
+                if n_summary_tokens is not None:
+                    kwargs["n_summary_tokens"] = n_summary_tokens
+                if summary_visible_tokens is not None:
+                    kwargs["summary_visible_tokens"] = summary_visible_tokens
+                if summaries_read_own_document is not None:
+                    kwargs["summaries_read_own_document"] = summaries_read_own_document
+                if summaries_read_earlier_summaries is not None:
+                    kwargs["summaries_read_earlier_summaries"] = summaries_read_earlier_summaries
+                if query_reads_documents is not None:
+                    kwargs["query_reads_documents"] = query_reads_documents
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
+                return SummaryTokenAttention(**kwargs)
             else:
                 raise NotImplementedError(effective_name)
         except TypeError as e:
@@ -1430,6 +1506,8 @@ class Attention(SequenceMixer):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         chunk_ids: Optional[torch.Tensor] = None,
+        summary_roles: Optional[torch.Tensor] = None,
+        causal_example: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1449,10 +1527,17 @@ class Attention(SequenceMixer):
             for the Qwen3.5 hybrid. Plain attention has no chunked mask, so the roles carry no
             meaning here. This is what lets Olmo 3's sliding-window layers stay untouched while its
             full-attention layers carry the document-chunk mask.
+        :param summary_roles: **Accepted and ignored**, for the same reason as ``chunk_ids``: when a
+            model enables summary-token attention the per-token roles are threaded to every block, and
+            on a hybrid such as Qwen3.5 only a quarter of the layers are attention at all. See
+            :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`, which consumes them.
+        :param causal_example: **Accepted and ignored**; the per-example mask-mixture arm, threaded
+            alongside ``summary_roles``.
 
         :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
         """
-        del chunk_ids  # not applicable to plain attention; see the parameter docs above
+        # Not applicable to plain attention; see the parameter docs above.
+        del chunk_ids, summary_roles, causal_example
         B, T, _ = x.shape
 
         # shape: (batch_size, seq_len, n_heads (local), head_dim),
@@ -2483,3 +2568,4 @@ from .landmark_multi import (  # noqa: E402
 from .landmark_multi_compressive import MultiCompressiveLandmarkAttention  # noqa: E402
 from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
+from .summary_token import SummaryTokenAttention  # noqa: E402

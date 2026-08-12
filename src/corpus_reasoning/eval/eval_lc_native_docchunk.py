@@ -112,9 +112,7 @@ TASK_CFG = {
         chunk_by="document", max_new=200, stop="newline", scorer="cycle", cot="none"
     ),
     "reorder": dict(chunk_by="document", max_new=1024, stop="eos", scorer="reorder", cot="none"),
-    "grouping": dict(
-        chunk_by="document", max_new=2048, stop="eos", scorer="grouping", cot="none"
-    ),
+    "grouping": dict(chunk_by="document", max_new=2048, stop="eos", scorer="grouping", cot="none"),
     "grouping_labeled": dict(
         chunk_by="document", max_new=2048, stop="eos", scorer="grouping", cot="none"
     ),
@@ -140,6 +138,8 @@ def build_eval_prefill(
     doc_start_id=DOC_START_ID,
     doc_end_id=DOC_END_ID,
     mem_freq=63,
+    summary_token_id=None,
+    n_summary_tokens=5,
 ):
     """
     Render one eval example's **prompt-only prefill** token ids for any ``TASK_CFG`` task.
@@ -154,15 +154,22 @@ def build_eval_prefill(
 
     :param task: ``TASK_CFG`` key (already resolved through ``TASK_ALIASES`` if needed).
     :param variant: ``"dense"`` / ``"full"`` use the dense (box-marker) emitter; ``"landmark"`` packs
-        into landmark windows.
+        into landmark windows; ``"summary"`` appends ``n_summary_tokens`` ``<|summ|>`` tokens after
+        each context document.
     :param cot_mode: overrides ``TASK_CFG[task]["cot"]`` when given.
     :param mem_freq: landmark variant only -- window size passed to ``emit_document_chunk_landmark``.
+    :param summary_token_id: ``"summary"`` variant only -- the ``<|summ|>`` id. Required for that
+        variant, and it MUST match the id the training shards were built with.
+    :param n_summary_tokens: ``"summary"`` variant only -- tokens per document. MUST equal the
+        converter's ``--num-summary-tokens`` and the model's ``n_summary_tokens``: roles are derived
+        by counting summary runs, so a mismatch silently rebinds every document index.
 
     :returns: The prefill token ids (a list). No answer, no EOS and no padding.
     """
     from olmo_core.data.document_chunk_landmark import (
         emit_document_chunk_dense,
         emit_document_chunk_landmark,
+        emit_document_chunk_summary,
         segment_prompt_to_chunks,
     )
 
@@ -183,6 +190,15 @@ def build_eval_prefill(
     )
     if variant in ("dense", "full"):
         out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
+    elif variant == "summary":
+        if summary_token_id is None:
+            raise ValueError(
+                "variant='summary' requires summary_token_id (the <|summ|> id the training shards "
+                "were built with); guessing it would silently rebind every document role."
+            )
+        out, _ = emit_document_chunk_summary(
+            segs, summary_token_id=summary_token_id, n_summary_tokens=n_summary_tokens
+        )
     else:
         out, _ = emit_document_chunk_landmark(
             segs, mem_freq=mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID

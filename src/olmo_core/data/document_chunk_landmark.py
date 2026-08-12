@@ -48,6 +48,7 @@ __all__ = [
     "summary_span_text",
     "emit_document_chunk_dense",
     "emit_document_chunk_landmark",
+    "emit_document_chunk_summary",
 ]
 
 # ---------------------------------------------------------------------------------------------
@@ -103,6 +104,10 @@ class ReservedIds(NamedTuple):
     :param landmark: The landmark / "memory" token placed at each landmark-window boundary.
     :param pad: Padding inside a short landmark window.
     :param real_vocab_size: Rows at or beyond this index are untrained embedding padding.
+    :param summary: The ``<|summ|>`` token appended after each context document by
+        :func:`emit_document_chunk_summary`. Like ``landmark`` and ``pad`` this lives past
+        ``real_vocab_size``, so it is an **untrained** row and the base checkpoint must be repaired
+        with ``src/scripts/data/fix_marker_embeddings.py`` before training on summary-token shards.
     """
 
     doc_start: int
@@ -111,6 +116,7 @@ class ReservedIds(NamedTuple):
     landmark: int
     pad: int
     real_vocab_size: int
+    summary: int = -1
 
 
 #: Reserved-id sets by model family. ``qwen3`` mirrors the module-level constants above.
@@ -122,6 +128,7 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         landmark=151860,
         pad=151863,
         real_vocab_size=151669,
+        summary=151866,
     ),
     # Verified against the Qwen3.5-0.8B-Base tokenizer files: base vocab ids 0..248043 plus 33
     # added specials 248044..248076 (``<|endoftext|>``=248044, ``<|box_start|>``=248049,
@@ -134,6 +141,7 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         landmark=248200,
         pad=248203,
         real_vocab_size=248077,
+        summary=248210,
     ),
     # Verified against the Gemma-3 tokenizer (``google/gemma-3-4b-pt``, 262144 real ids + 64 rows of
     # embedding padding = ``vocab_size`` 262208). Gemma reserves ``<unused0>``..``<unused6241>``
@@ -148,6 +156,7 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         landmark=262150,
         pad=262153,
         real_vocab_size=262145,
+        summary=262156,
     ),
     # Llama 3 family (Llama-3.2-3B / Llama-3.1-*). Its tokenizer has 256 added specials at
     # 128000..128255, ~250 of them UNTRAINED ``<|reserved_special_token_N|>`` slots -- exactly what
@@ -171,6 +180,7 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         landmark=128011,
         pad=128012,
         real_vocab_size=128000,
+        summary=128013,
     ),
     # OLMo 3 (``allenai/Olmo-3-1025-7B``, dolma2 tokenizer). The real vocab is 0..100277 (100278
     # ids); olmo-core pads the embedding matrix to 100352, so landmark/pad can sit in the untrained
@@ -192,6 +202,7 @@ RESERVED_IDS: Dict[str, ReservedIds] = {
         landmark=100300,
         pad=100303,
         real_vocab_size=100278,
+        summary=100306,
     ),
 }
 
@@ -584,6 +595,54 @@ def emit_document_chunk_dense(segments: List[ChunkSegment]) -> Tuple[List[int], 
             raise ValueError("segment tokens and label_mask must have equal length")
         out_ids.extend(seg.tokens)
         out_mask.extend(seg.label_mask)
+    return out_ids, out_mask
+
+
+def emit_document_chunk_summary(
+    segments: List[ChunkSegment],
+    *,
+    summary_token_id: int,
+    n_summary_tokens: int,
+) -> Tuple[List[int], List[bool]]:
+    """
+    Emit the **summary-token** layout: the dense layout with a run of ``n_summary_tokens`` copies of
+    ``summary_token_id`` appended after every context document.
+
+    The run is emitted **inline**, immediately after the document's closing ``<|box_end|>``, and is
+    deliberately *not* given boundary markers of its own:
+    :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles` identifies summary tokens by id
+    rather than by span, so extra markers would only add tokens that carry no information.
+
+    The trailing query/answer needs no special treatment either. Roles are derived from *completed
+    summary runs*, so everything after the last run is the query region by construction -- there is no
+    "wrap the query" step and no way for the query to be mistaken for a document.
+
+    Summary positions are excluded from the loss: they are structural, and nothing should be trained
+    to emit them.
+
+    :param segments: The example's ordered :class:`ChunkSegment` list (from
+        :func:`segment_prompt_to_chunks`).
+    :param summary_token_id: The ``<|summ|>`` token id.
+    :param n_summary_tokens: How many summary tokens to append per context document. Must match the
+        model's :class:`~olmo_core.nn.attention.summary_mask.SummaryMaskSpec`.
+
+    :returns: ``(input_ids, label_mask)``.
+
+    :raises ValueError: If ``n_summary_tokens < 1``, or a segment's tokens and mask disagree.
+    """
+    if n_summary_tokens < 1:
+        raise ValueError(f"n_summary_tokens must be >= 1 (got {n_summary_tokens})")
+
+    out_ids: List[int] = []
+    out_mask: List[bool] = []
+    for seg in segments:
+        if len(seg.tokens) != len(seg.label_mask):
+            raise ValueError("segment tokens and label_mask must have equal length")
+        out_ids.extend(seg.tokens)
+        out_mask.extend(seg.label_mask)
+        if seg.is_context_chunk:
+            out_ids.extend([summary_token_id] * n_summary_tokens)
+            out_mask.extend([False] * n_summary_tokens)
     return out_ids, out_mask
 
 

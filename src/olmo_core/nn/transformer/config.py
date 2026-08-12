@@ -338,6 +338,18 @@ class TransformerConfig(ModelConfig):
     :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention` after the model is
     built. Requires the model be uniformly a document-chunked variant and rules out context parallelism.
     """
+    summary_token_attention: Optional[Dict[str, Any]] = None
+    """
+    Enable runtime ``summary_roles`` construction for
+    :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`. A dict of
+    ``{"doc_start_id", "doc_end_id", "summary_token_id", "eos_id", "pad_id"?, mixture params...}``
+    passed to :meth:`~olmo_core.nn.transformer.Transformer.enable_summary_token_attention` after the
+    model is built.
+
+    Unlike :attr:`document_chunk_attention` this does **not** require the model be uniformly a
+    summary-token variant -- on a hybrid only the attention layers are masked, which is a deliberate
+    scoping choice and is logged when enabled.
+    """
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
 
@@ -442,6 +454,9 @@ class TransformerConfig(ModelConfig):
 
         if self.document_chunk_attention is not None:
             model.enable_document_chunk_attention(**self.document_chunk_attention)
+
+        if self.summary_token_attention is not None:
+            model.enable_summary_token_attention(**self.summary_token_attention)
 
         log.info("%s", model)
         log.info(
@@ -1612,9 +1627,7 @@ class TransformerConfig(ModelConfig):
             doc_keep_prob is not None
             or random_doc_seed is not None
             or random_doc_per_example is not None
-        ) and not (
-            uses_document_chunked and _rand
-        ):
+        ) and not (uses_document_chunked and _rand):
             raise OLMoConfigurationError(
                 "'doc_keep_prob' / 'random_doc_seed' / 'random_doc_per_example' are only valid "
                 "with document_chunked=True and "

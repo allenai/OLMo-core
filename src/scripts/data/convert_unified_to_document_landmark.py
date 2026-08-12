@@ -64,6 +64,7 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
     ReservedIds,
     emit_document_chunk_dense,
     emit_document_chunk_landmark,
+    emit_document_chunk_summary,
     reserved_ids,
     segment_prompt_to_chunks,
 )
@@ -115,6 +116,7 @@ def tokenize_example(
     free_pad_repeat: int = 0,
     repeat_doc_text: int = 1,
     summary_every_k: int = 0,
+    n_summary_tokens: int = 5,
     ids_set: ReservedIds = RESERVED_IDS["qwen3"],
     doc_markers: bool = True,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
@@ -147,11 +149,19 @@ def tokenize_example(
         summary_every_k=summary_every_k,
     )
     # Ids the converter inserts; if any already occur in a rendered prompt, the example is ambiguous.
-    if any(t in (ids_set.landmark, ids_set.pad) for t in ids):
+    # The summary id matters more than most: roles are derived by counting summary RUNS, so a stray
+    # one inside a document would renumber every document after it.
+    if any(t in (ids_set.landmark, ids_set.pad, ids_set.summary) for t in ids):
         return None  # the rendered prompt already contains a reserved inserted id -> ambiguous
 
     if emit == "dense":
         out_ids, out_mask = emit_document_chunk_dense(segments)
+    elif emit == "summary":
+        out_ids, out_mask = emit_document_chunk_summary(
+            segments,
+            summary_token_id=ids_set.summary,
+            n_summary_tokens=n_summary_tokens,
+        )
     else:  # landmark
         out_ids, out_mask = emit_document_chunk_landmark(
             segments, mem_freq=mem_freq, mem_id=ids_set.landmark, pad_id=ids_set.pad
@@ -223,9 +233,18 @@ def main() -> None:
     p.add_argument(
         "--emit",
         default="landmark",
-        choices=["landmark", "dense"],
+        choices=["landmark", "dense", "summary"],
         help="'landmark': pack into landmark windows (DocumentLandmarkAttention). 'dense': wrapped "
-        "tokens only, no landmarks (DocumentChunkedAttention).",
+        "tokens only, no landmarks (DocumentChunkedAttention). 'summary': dense plus a run of "
+        "--num-summary-tokens <|summ|> tokens after each context document (SummaryTokenAttention).",
+    )
+    p.add_argument(
+        "--num-summary-tokens",
+        type=int,
+        default=5,
+        help="'--emit summary' only: how many <|summ|> tokens follow each context document. MUST "
+        "equal the model's n_summary_tokens and the eval's --num-summary-tokens; the mask counts "
+        "summary RUNS to number documents, so a mismatch silently rebinds every role.",
     )
     p.add_argument(
         "--seq-len", type=int, default=4096, help="Max instance length; longer is dropped."
@@ -449,6 +468,7 @@ def main() -> None:
     tok_kwargs: Dict[str, Any] = dict(
         task=args.task,
         emit=args.emit,
+        n_summary_tokens=args.num_summary_tokens,
         query_position=args.query_position,
         cot_mode=args.cot_mode,
         mem_freq=args.mem_freq,
@@ -466,8 +486,9 @@ def main() -> None:
     if n_proc > 1:
         # imap (NOT imap_unordered) so results stay in input order -- shard content, the gold
         # sidecar and the length stats must not depend on scheduling.
-        pool = mp.Pool(n_proc, initializer=_worker_init,
-                       initargs=(args.tokenizer, tok_kwargs, ids_set))
+        pool = mp.Pool(
+            n_proc, initializer=_worker_init, initargs=(args.tokenizer, tok_kwargs, ids_set)
+        )
         results = pool.imap(_worker_tokenize, examples, chunksize=8)
         log.info(f"tokenizing with {n_proc} worker processes")
     else:
@@ -506,6 +527,8 @@ def main() -> None:
     meta = {
         "task": args.task,
         "emit": args.emit,
+        "num_summary_tokens": args.num_summary_tokens if args.emit == "summary" else None,
+        "summary_token_id": ids_set.summary if args.emit == "summary" else None,
         "cot_mode": args.cot_mode,
         "chunk_by": args.chunk_by,
         "wrap_docs": not args.no_doc_markers,
