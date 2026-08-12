@@ -339,6 +339,18 @@ _FAST_LADDERS: Dict[str, Dict[str, str]] = {
         "512k": "nq/rung_524288_mux.jsonl",
         "1M": "nq/rung_1048576_mux.jsonl",
     },
+    # 100 rows at every rung -- a fifth of the 500 floor. Quote the size and its error bar
+    # (about +/-0.046 at 0.7) inline next to any oolong number from this bundle.
+    "oolong": {
+        "8k": "oolong/rung_8192_mux.jsonl",
+        "16k": "oolong/rung_16384_mux.jsonl",
+        "32k": "oolong/rung_32768_mux.jsonl",
+        "64k": "oolong/rung_65536_mux.jsonl",
+        "128k": "oolong/rung_131072_mux.jsonl",
+        "256k": "oolong/rung_262144_mux.jsonl",
+        "512k": "oolong/rung_524288_mux.jsonl",
+        "1M": "oolong/rung_1048576_mux.jsonl",
+    },
     "rerank": {
         "8k": "rerank/rung_8192_mux.jsonl",
         "16k": "rerank/rung_16384_mux.jsonl",

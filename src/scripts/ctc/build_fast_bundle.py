@@ -58,15 +58,29 @@ RUNG_TOKENS = {
     "2M": 2097152,
 }
 
-#: Which construction each task gets, and therefore which flags. ``oolong`` is absent on purpose:
-#: its shared file comes from the source split that already stores 25 questions per context, not
-#: from a rung file, and that split has no ultra-long member.
+#: Which construction each task gets, and therefore which flags.
 FAMILY = {
     "contradiction": "prefix_tail",
     "outlier": "prefix_tail",
     "nq": "multiplexed",
     "rerank": "multiplexed",
+    "oolong": "oolong",
 }
+
+#: oolong does not come from a rung file. Its rung files are 500 genuinely distinct contexts with
+#: one question each -- nothing to share -- while this split stores **25 questions per context**
+#: over 4 contexts, which is already the shared-corpus structure. The build is then a regrouping,
+#: so the file's *content* is identical to the independent one and only the row order changes.
+#: That makes oolong the correctness gate for KV reuse: a content-identical variant whose score
+#: moves means the cache path is wrong.
+#:
+#: The cost is eval_size. This split holds 100 rows at every rung -- a fifth of the 500 floor, so
+#: every oolong number off the fast bundle needs its size and error bar quoted inline (SE about
+#: +/-0.046 at 0.7).
+OOLONG_SOURCE = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cr_suite_data/"
+    "oolong_validation_synth_ctx{tokens}.jsonl"
+)
 
 DEFAULT_TASKS = "contradiction,nq,rerank"
 DEFAULT_RUNGS = "all,xlong"
@@ -136,6 +150,15 @@ def plan(args: argparse.Namespace):
     for task in [t.strip() for t in args.tasks.split(",") if t.strip()]:
         if task not in FAMILY:
             raise SystemExit(f"no shared-corpus construction for {task!r}; have {sorted(FAMILY)}")
+
+        if task == "oolong":
+            # Not from the bundle: see OOLONG_SOURCE. Every rung comes from one generation, so a
+            # rung-to-rung difference stays a length effect.
+            for label, tokens in sorted(RUNG_TOKENS.items(), key=lambda kv: kv[1]):
+                if floor <= tokens <= ceiling:
+                    out.append((task, label, Path(OOLONG_SOURCE.format(tokens=tokens))))
+            continue
+
         for group in [g.strip() for g in args.rungs.split(",") if g.strip()]:
             try:
                 resolved = bundles.resolve(task, group, root=args.from_bundle)

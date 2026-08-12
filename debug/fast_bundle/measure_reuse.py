@@ -21,14 +21,15 @@ import sys
 from pathlib import Path
 from typing import Dict, List
 
-TASK_OF = {"contradiction": "contradiction", "nq": "nq", "rerank": "rerank", "oolong": "oolong"}
+LADDERS = ("contradiction", "nq", "rerank", "oolong", "outlier")
 
 
-def task_from(path: Path) -> str:
+def ladder_from(path: Path) -> str:
+    """:returns: The ladder a built file belongs to, from its directory."""
     for part in path.parts:
-        if part in TASK_OF:
-            return TASK_OF[part]
-    raise SystemExit(f"cannot tell which task {path} belongs to")
+        if part in LADDERS:
+            return part
+    raise SystemExit(f"cannot tell which ladder {path} belongs to")
 
 
 def main() -> int:
@@ -39,6 +40,7 @@ def main() -> int:
     args = ap.parse_args()
 
     import ctc.tasks
+    from ctc.eval import bundles
     from ctc.eval.prefix_cache import group_by_corpus, longest_common_token_prefix
     from ctc.format import registry
     from transformers import AutoTokenizer
@@ -49,7 +51,8 @@ def main() -> int:
     print(f"{'file':<34} {'position':<8} {'groups':>6} {'shared tok':>11} {'of prompt':>10} "
           f"{'prefill left':>13}")
     for path in [Path(p) for p in args.files]:
-        spec = registry.get(task_from(path))
+        # The ladder name is not the grading spec: nq is graded by 'retrieval'.
+        spec = registry.get(bundles.get(ladder_from(path)).spec)
         rows: List[dict] = []
         with open(path) as f:
             for line in f:
