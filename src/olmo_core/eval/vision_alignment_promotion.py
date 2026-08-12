@@ -263,9 +263,17 @@ def _validate_implementation_reference(
         raise PromotionValidationError(f"{name} names an incompatible implementation")
     if verify_live:
         live_path = canonical_path.resolve()
-        if live_path.name != expected_basename or not live_path.is_file():
+        if live_path.name != expected_basename:
             raise PromotionValidationError(f"{name} canonical implementation is unavailable")
-        if sha256_file(live_path) != expected_sha:
+        # Gantry may import olmo_core from site-packages while running the evaluator from its
+        # repository checkout. The canonical source remains authoritative whenever available.
+        if live_path.is_file():
+            implementation_path = live_path
+        elif recorded_path.is_file():
+            implementation_path = recorded_path
+        else:
+            raise PromotionValidationError(f"{name} canonical implementation is unavailable")
+        if sha256_file(implementation_path) != expected_sha:
             raise PromotionValidationError(f"{name} implementation differs from its pin")
     return recorded_path
 

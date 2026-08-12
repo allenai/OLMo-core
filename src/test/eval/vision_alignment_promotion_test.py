@@ -560,6 +560,55 @@ def test_artifact_reference_hashes_raw_bytes(tmp_path: Path):
         promotion._load_reference(reference, name="test")
 
 
+def test_implementation_reference_uses_recorded_path_when_canonical_is_unavailable(
+    tmp_path: Path,
+):
+    recorded_path = tmp_path / "gantry-runtime" / "vision_alignment_state_text.py"
+    recorded_path.parent.mkdir()
+    recorded_path.write_text("# evaluator from the checked-out repository\n")
+    reference = promotion.artifact_reference(recorded_path)
+    unavailable_canonical = (
+        tmp_path / "site-packages" / "scripts" / "eval" / "vision_alignment_state_text.py"
+    )
+
+    assert (
+        promotion._validate_implementation_reference(
+            reference,
+            name="frozen-state evaluator",
+            expected_basename="vision_alignment_state_text.py",
+            canonical_path=unavailable_canonical,
+        )
+        == recorded_path.resolve()
+    )
+
+    recorded_path.write_text("# mutated evaluator\n")
+    with pytest.raises(promotion.PromotionValidationError, match="differs from its pin"):
+        promotion._validate_implementation_reference(
+            reference,
+            name="frozen-state evaluator",
+            expected_basename="vision_alignment_state_text.py",
+            canonical_path=unavailable_canonical,
+        )
+
+
+def test_implementation_reference_does_not_bypass_mismatched_canonical(tmp_path: Path):
+    canonical_path = tmp_path / "installed" / "vision_alignment_state_text.py"
+    canonical_path.parent.mkdir()
+    canonical_path.write_text("# different installed evaluator\n")
+    recorded_path = tmp_path / "gantry-runtime" / "vision_alignment_state_text.py"
+    recorded_path.parent.mkdir()
+    recorded_path.write_text("# evaluator matching the receipt\n")
+    reference = promotion.artifact_reference(recorded_path)
+
+    with pytest.raises(promotion.PromotionValidationError, match="differs from its pin"):
+        promotion._validate_implementation_reference(
+            reference,
+            name="frozen-state evaluator",
+            expected_basename="vision_alignment_state_text.py",
+            canonical_path=canonical_path,
+        )
+
+
 def test_live_checkpoint_identity_hashes_every_dcp_file(tmp_path: Path):
     root = tmp_path / "step500"
     state = root / "model_and_optim"
