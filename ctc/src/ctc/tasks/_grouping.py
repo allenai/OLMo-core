@@ -168,7 +168,14 @@ def make_grouping_spec(
         primary_metric="pairwise_f1",
         # A full partition of a large corpus is long, and EOS is genuinely emitted here, so any
         # text stop would cut a valid multi-line answer short.
-        max_new_tokens=2048,
+        #
+        # 4096, not the pre-migration 2048. This answer grows with BOTH the rung and the concept
+        # level: at the 32k rung an L3 example asks for near-singleton clusters, so the target is
+        # roughly one labelled group per document. Measured over a build at n=175, the target's
+        # median is 1392 Qwen3 tokens but its **maximum is 2597** -- so at 2048 the finest examples
+        # of the longest rung are cut off, `parse_partition` returns a partition missing its tail,
+        # and coverage (with it pairwise F1) collapses for a reason that is not the model's.
+        max_new_tokens=4096,
         stop="eos",
         answer_is_set=False,
         sources=sources,

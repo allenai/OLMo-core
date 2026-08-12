@@ -63,3 +63,9 @@ core
 
 # Built eval data: large JSONL, rebuildable from the reliable bundle.
 debug/fast_bundle/out/
+
+# Scratch from data-generation calibration: a copied tokenizer and generated
+# JSONL. Both are reproducible from the scripts beside them and neither belongs
+# in history (14 MB swept in once already).
+debug/*/tok_*/
+debug/*/calib/

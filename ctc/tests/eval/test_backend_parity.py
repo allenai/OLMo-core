@@ -304,3 +304,48 @@ def test_chunked_attention_is_enabled_with_the_ids_it_requires():
     be.doc_start_id, be.doc_end_id = 11, 22
     got = NativeBackend._document_chunk_ids(be)
     assert (got["doc_start_id"], got["doc_end_id"]) == (11, 22)
+
+
+def test_the_full_arm_actually_turns_the_chunked_mask_off():
+    """`--attn full` looked up `disable_document_chunk_attention` with getattr and skipped silently
+    when it was absent -- and `Transformer` had no such method, so the "full" arm graded the CHUNKED
+    mask on any checkpoint whose config carries it. Measured on a 0.6B: 500/500 byte-identical
+    generations between the two arms. A missing disable is now an error, never a silent pass."""
+    from ctc.eval.backends.native import NativeBackend
+
+    class _Model:
+        def __init__(self):
+            self._document_chunk_attention = {"doc_start_id": 1, "doc_end_id": 2, "eos_id": 3}
+
+        def disable_document_chunk_attention(self):
+            was = self._document_chunk_attention is not None
+            self._document_chunk_attention = None
+            return was
+
+    class _GM:
+        def __init__(self, model):
+            self.model = model
+
+    be = NativeBackend.__new__(NativeBackend)
+    be.attn = "full"
+    be.gm = _GM(_Model())
+    NativeBackend._configure_attention(be)
+    assert be.gm.model._document_chunk_attention is None
+
+    # A model that carries the mask but cannot turn it off must stop the run, not grade it.
+    class _Undisableable:
+        _document_chunk_attention = {"doc_start_id": 1, "doc_end_id": 2, "eos_id": 3}
+
+    be = NativeBackend.__new__(NativeBackend)
+    be.attn = "full"
+    be.gm = _GM(_Undisableable())
+    with pytest.raises(RuntimeError, match="--attn full cannot be honoured"):
+        NativeBackend._configure_attention(be)
+
+
+def test_the_transformer_can_actually_disable_the_chunked_mask():
+    """The method the arm above depends on. It lives on the model, not on the eval backend, and its
+    absence is what made the silent skip possible."""
+    from olmo_core.nn.transformer.model import Transformer
+
+    assert callable(getattr(Transformer, "disable_document_chunk_attention", None))

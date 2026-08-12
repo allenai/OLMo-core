@@ -40,6 +40,7 @@ __all__ = [
     "oolong_pool",
     "book_pool",
     "paraphrase_pool",
+    "reorder_pool",
     "unit_pool",
     "openalex_pool",
 ]
@@ -481,4 +482,24 @@ def openalex_pool(
         papers=tuple(built),
         eval_year_min=eval_year_min,
         provenance={"corpus": "fixture", "papers": papers},
+    )
+
+
+def reorder_pool(books: int = 10, runs_per_book: int = 3, sentences_per_run: int = 850):
+    """
+    :param books: Distinct books. ``PassagePool.for_split`` cuts by book at a tenth, so this must
+        be at least 10 for the eval split to hold more than one.
+    :param runs_per_book: Prose runs per book. More than one on purpose: an example's block may
+        cross a run seam, and a single-run fixture would never exercise that path.
+    :param sentences_per_run: Sentences per run. The whole book has to supply the largest rung
+        under test -- 233 passages of ~100 words at 32k -- or the long rungs come out unbuildable
+        rather than smaller.
+
+    :returns: A reorder passage pool, built from :func:`book_pool` through the same pure reduction
+        a real build uses, so the fixture cannot drift from the production path.
+    """
+    from ctc.tasks.reorder.sources.gutenberg import passages_from_books
+
+    return passages_from_books(
+        book_pool(books=books, runs_per_book=runs_per_book, sentences_per_run=sentences_per_run)
     )

@@ -110,6 +110,11 @@ SPEC = TaskSpec(
     max_new_tokens=200,
     stop="pairs",
     answer_is_set=True,
-    sources=("nq", "hotpotqa", "obliq"),
+    # ObliQ is NOT a qdmatch corpus. It was dropped from this task's roster on 2026-07-19
+    # (``BUILD_MATRIX.md`` rows 21a/21c) and re-entered the suite as a standalone in-context
+    # *retrieval* row built by a different generator, with the shipped `qdmatch_*obliq*` pilot
+    # JSONL explicitly marked do-not-use. Listing it here was the only in-repo statement of which
+    # corpora this task builds from, and it said the opposite of the roster.
+    sources=("nq", "hotpotqa"),
     extra={"gold_field": "gold_pairs"},
 )

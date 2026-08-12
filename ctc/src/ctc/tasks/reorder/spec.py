@@ -120,8 +120,20 @@ SPEC = TaskSpec(
     parse=parse,
     score=score,
     primary_metric="kendall_tau",
-    max_new_tokens=1024,
+    # 2048, not the pre-migration 1024. Reorder is the one task whose ANSWER grows with the rung:
+    # the target is a permutation of n ids, measured at ~4.5 Qwen3 tokens each, so the 32k rung's
+    # target has a median length of 1057 tokens and does not fit in 1024. `parse_permutation`
+    # requires an EXACT permutation of 1..n, so a truncated answer parses as None and scores
+    # kendall_tau 0.0 -- for every example at that rung, reading as a long-context collapse rather
+    # than as a decode budget. Sized against the measured 32k target; `grouping_labeled`, the other
+    # task whose answer is a long list, already sets 2048 for the same reason.
+    max_new_tokens=2048,
     stop="eos",
     answer_is_set=False,
     sources=("gutenberg",),
+    # Declared, not defaulted. Without this the shared build/audit layer reads
+    # `gold_doc_indices` -- which a reorder example does not have at all -- so `validate` rejects
+    # every row for a missing gold field, and `gold_fingerprint` collapses every example onto one
+    # digest, which would make the train/eval contamination guard report leakage everywhere.
+    extra={"gold_field": "gold_order"},
 )

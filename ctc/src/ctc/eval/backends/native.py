@@ -335,11 +335,24 @@ class NativeBackend:
             # arm -- unreachable: every such run died before its first prompt.
             model.enable_document_chunk_attention(**self._document_chunk_ids())
         elif self.attn == "full":
-            # A checkpoint trained with the mask still carries it in config.json. Forcing plain
-            # causal here is what makes the "full" arm mean full.
+            # A checkpoint trained with the mask still carries it in config.json, and building it
+            # from that config leaves the mask ON. Turning it off here is what makes the "full" arm
+            # mean full.
+            #
+            # This used to be `getattr(model, "disable_...", None)` and a silent skip when absent --
+            # and it WAS absent: `Transformer` had no such method. So `--attn full` graded the
+            # chunked mask, and a full-vs-chunked comparison on a mask-carrying checkpoint compared
+            # a run with itself (measured: 500/500 byte-identical generations). Missing means
+            # broken here, so it raises.
             disable = getattr(model, "disable_document_chunk_attention", None)
             if disable is not None:
                 disable()
+            elif getattr(model, "_document_chunk_attention", None) is not None:
+                raise RuntimeError(
+                    "this checkpoint's config enables the document-chunked mask and its model has "
+                    "no disable_document_chunk_attention, so --attn full cannot be honoured. "
+                    "Grading anyway would report a 'full' number produced under the chunked mask."
+                )
 
     def prefill_for(self, task: str) -> Prefill:
         """

@@ -26,6 +26,9 @@ ctc-data audit --task <task> --dir DIR                     # re-check data alrea
 | `hotpotqa` | retrieval | HotpotQA `distractor` (bridge) — 2 gold/question, the benchmark's own distractors as hard negatives, CE-ranked | `ctc-data build --task hotpotqa --out DIR` |
 | `absence` | absence | Project Gutenberg (`sedthh/gutenberg_english`) — a window of N sentences, K deleted in a second copy. Needs the punkt model; **rungs are built independently**, see below | `ctc-data build --task absence --out DIR` |
 | `xabsence` | xabsence | PubMed claim/paraphrase twins — mine a pool once (`-C base_url=...`), then reuse it with `-C pool_path=...` | `ctc-data build --task xabsence -C pool_path=POOL.jsonl --out DIR` |
+| `reorder` | reorder | Project Gutenberg — N consecutive ~100-word passages of one book, shuffled. Same corpus as `absence`; **rungs are built independently**, see below | `ctc-data build --task reorder --out DIR` |
+| `qdmatch_nq` / `qdmatch_hpqa` | qdmatch | A *transform*, not a corpus: it pools prepared retrieval queries, so `-C path=RETRIEVAL.jsonl` reads a built unified-retrieval file and needs no network at all | `ctc-data build --task qdmatch_nq -C path=nq_train_*.jsonl --out DIR` |
+| `grouping_labeled` | grouping_labeled | OpenAlex **compact** JSONL (the ~300 GB works snapshot is not fetched here); pass a second, year-restricted file as `eval_path` or the temporal split is too thin at coarse levels | `ctc-data build --task grouping_labeled -C path=COMPACT.jsonl -C eval_path=EVAL.jsonl --out DIR` |
 | **the four held-out (OOD) ladders** — eval only | | | |
 | `fiqa` | retrieval | BEIR FiQA + BM25 + CE | `ctc-data build --task fiqa --split eval --out DIR` |
 | `scifact` | retrieval | BEIR SciFact + BM25 | `ctc-data build --task scifact --split eval --out DIR` |
@@ -94,7 +97,12 @@ label does not list — so it drops whole *pairs* instead, which is safe. `oolon
 all, because its gold is recomputed over whichever items were drawn; its rungs are built
 independently and both the build report and the audit say so. **`absence` is the same case**: its
 second version is rendered text inside `queries[0]`, so it is a function of the whole corpus and no
-resize survives it — its rung-to-rung deltas carry eval-set resampling noise.
+resize survives it — its rung-to-rung deltas carry eval-set resampling noise. So are `reorder` and
+`grouping_labeled`, for one shared reason: **their gold covers every document**, a permutation in
+one case and a partition in the other, so there is no distractor for the shrink to drop and a
+shorter rung is a different answer, not a smaller one. `qdmatch` *does* nest — but only in the
+`separate` layout, which is what keeps every gold pair's query id below its document id, and hence
+what makes the shrink's within-group sort a no-op instead of a pair-swapper.
 
 **The held-out ladders refuse to produce training data.** Not a warning: by the time a warning is
 noticed the checkpoint is trained and the whole OOD column means nothing.
@@ -107,6 +115,13 @@ retired 98 %-hard pipeline; every current NQ number was measured on the 10 % + C
 sentence that contradicts it)`. Mine them once with `-C base_url=...`, keep the resulting JSONL, and
 pass `-C pairs_path=...` on every later build — the pairs are data in their own right and the
 build is then exactly reproducible.
+
+**Two tasks' answers grow with the rung, and both budgets are sized against a measurement.**
+`reorder`'s target is a permutation of *n* ids (~4.5 Qwen3 tokens each) and `grouping_labeled`'s is
+one labelled group per cluster, which at the finest concept level is nearly one per document. Both
+overran the pre-migration `max_new_tokens` at their 32k rung, and the resulting truncation parses as
+*no answer at all* — a uniform zero at the longest rung, which reads exactly like a long-context
+collapse. If either ladder is lengthened, re-measure the target, not just the prompt.
 
 **Eval sets are 500 examples.** `build_eval` refuses smaller. SciFact's real ladder is 299 (the
 entire test split with qrels), which is below the floor and must be quoted with its size and error

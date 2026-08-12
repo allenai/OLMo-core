@@ -174,7 +174,9 @@ def _paper(row: Dict) -> Optional[Paper]:
         value = row.get(f"concept_L{level}")
         if value:
             concepts[level] = value
-    return Paper(id=str(row.get("id") or title), title=title, abstract=abstract, year=year, concepts=concepts)
+    return Paper(
+        id=str(row.get("id") or title), title=title, abstract=abstract, year=year, concepts=concepts
+    )
 
 
 def load_pool(

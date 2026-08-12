@@ -49,10 +49,10 @@ POOLS = {
     "oolong": pools.oolong_pool,
     "absence": pools.book_pool,
     "xabsence": pools.paraphrase_pool,
-    # reorder shares absence's Gutenberg pool -- one corpus, one loader, one split-by-book -- but
-    # needs LONGER runs: an example asks for num_docs * sentences_per_passage consecutive sentences
-    # from ONE run, so the 32k rung wants ~2800 of them.
-    "reorder": lambda: pools.book_pool(books=10, runs_per_book=1, sentences_per_run=3000),
+    # reorder shares absence's Gutenberg books -- one corpus, one loader, one split-by-book -- and
+    # reduces them to per-book passage streams. The books must be long: the 32k rung is 233
+    # passages of ~100 words each.
+    "reorder": pools.reorder_pool,
     "qdmatch_nq": pools.unit_pool,
     # Two gold per question, so k relevant queries give 2k pairs -- the multi-gold path.
     "qdmatch_hpqa": lambda: pools.unit_pool(gold=2, source="hotpotqa"),

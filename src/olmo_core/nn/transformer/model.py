@@ -290,6 +290,26 @@ class Transformer(nn.Module):
             "mix": mix,
         }
 
+    def disable_document_chunk_attention(self) -> bool:
+        """
+        Turn runtime ``chunk_ids`` reconstruction back off, so attention is plain causal again.
+
+        The counterpart of :meth:`enable_document_chunk_attention`, and the only way to grade a
+        checkpoint whose *config* carries the mask under full attention: with the roles absent,
+        every attention layer sees no ``chunk_ids`` and falls back to plain causal.
+
+        Its absence was not a missing convenience. ``ctc-eval --attn full`` looked the method up
+        with ``getattr(model, "disable_document_chunk_attention", None)`` and silently did nothing
+        when it was not there, so the ``full`` arm of a full-vs-chunked comparison ran the
+        **chunked** mask -- measured as 500/500 byte-identical generations between the two arms on
+        a checkpoint whose config carries it.
+
+        :returns: Whether the mask was enabled before this call.
+        """
+        was_enabled = self._document_chunk_attention is not None
+        self._document_chunk_attention = None
+        return was_enabled
+
     def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
         """
         Enable inference-only hard top-k landmark retrieval on every eager landmark attention layer

@@ -24,4 +24,4 @@ cd "$REPO"
 exec "$PY" -m ctc.data.cli build \
   --task reorder --split "${SPLIT:-train}" --train "${TRAIN:-64}" --rungs "${RUNGS:-2k}" \
   --out "${OUT:-$REPO/debug/ctc_three_task_port/build}" \
-  -C max_books="${MAX_BOOKS:-400}"
+  -C max_books="${MAX_BOOKS:-2000}"

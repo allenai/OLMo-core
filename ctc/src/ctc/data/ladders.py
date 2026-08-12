@@ -95,34 +95,38 @@ LADDERS: Dict[str, Dict[str, int]] = {
     # median tokens at 19/39/99 documents, giving `tokens ~= 120 + 33.3 * n_docs`.
     "xabsence": {"2k": 59, "4k": 119, "8k": 243, "16k": 489, "32k": 981},
     # ── the ladders whose rungs are drawn independently (gold covers every document) ──
-    # ~141 tok/passage, tokenizer-MEASURED over the shipped
-    # `reorder_gutenberg100w_n{5,20,50}_eval_500.jsonl` with each passage's whitespace collapsed --
-    # which is what the ported generator emits, since it builds passages out of
-    # `ctc.data.sources.gutenberg`'s normalised prose runs while the shipped files kept Gutenberg's
-    # own hard line wraps. Measured 804/2862/7118 median prompt tokens at n=5/20/50, giving
-    # `tokens ~= 81 + 140.5 * n_docs`; the same files unnormalised fit 147.4/passage, so the wraps
-    # were ~5% of the context. Effectively confirms BUILD_MATRIX row 24 (12/27/57/116/234).
-    # NOTE the answer, not the prompt, is what binds at 32k: the target is a permutation of n ids
-    # at ~3.8 tokens each, so n=233 needs ~890 of the spec's 1024 max_new_tokens.
-    "reorder": {"2k": 14, "4k": 29, "8k": 58, "16k": 116, "32k": 233},
-    # ~187 tok/abstract (title + a 120-word abstract), tokenizer-MEASURED over the shipped
-    # `openalex_grouping_n{20,100}_levels_eval_*.jsonl`: 3780/18743 median prompt tokens, giving
-    # `tokens ~= 39 + 187.0 * n_docs`. BUILD_MATRIX row 14 estimated ~180 tok/doc and subtracted a
-    # ~300-token overhead allowance, landing on 9/20/42/85/170 -- the same ladder to within one
-    # rung step.
-    "grouping_labeled": {"2k": 11, "4k": 22, "8k": 44, "16k": 87, "32k": 175},
+    # ~151 tok/passage, tokenizer-MEASURED over THIS generator's own output rather than over the
+    # shipped files: a 96-example build at n=14/58/233 measures 2178/8890/35333 median prompt
+    # tokens, giving `tokens ~= 84 + 151.3 * n_docs`. The shipped
+    # `reorder_gutenberg100w_n{5,20,50}_eval_500.jsonl` fit 140.5/passage with their whitespace
+    # collapsed, i.e. ~7% lower -- the ported chunker closes a passage on whole SENTENCES once it
+    # reaches 100 words, so it overshoots the target by the length of the closing sentence
+    # (measured median 112 words, p95 143). Both fits bracket BUILD_MATRIX row 24
+    # (12/27/57/116/234).
+    # NOTE the ANSWER is what binds at the top of this ladder, not the prompt: the target is a
+    # permutation of n ids at ~4.5 tokens each, so 32k needs ~980 decode tokens. That is why the
+    # spec raises max_new_tokens to 2048; at the pre-migration 1024 the 32k target does not fit and
+    # every example at that rung parses as None.
+    "reorder": {"2k": 13, "4k": 27, "8k": 54, "16k": 108, "32k": 216},
+    # ~183 tok/abstract (title + a 120-word abstract), tokenizer-MEASURED over this generator's own
+    # output: 2210/8215/32184 median prompt tokens at n=11/44/175, giving
+    # `tokens ~= 187 + 182.8 * n_docs`. The shipped `openalex_grouping_n{20,100}_levels_eval_*`
+    # files fit 187.0/abstract, i.e. the same corpus measured the same way. BUILD_MATRIX row 14
+    # estimated ~180 tok/doc net of a ~300-token overhead allowance, landing on 9/20/42/85/170.
+    "grouping_labeled": {"2k": 10, "4k": 21, "8k": 44, "16k": 89, "32k": 178},
     # ITEMS (M queries + N documents), NOT the `q` of BUILD_MATRIX rows 21a/21b -- an example
     # renders 2q items and both the ladder and `ctc.data.build.shrink` measure `len(documents)`.
-    # ~87 tok/item, tokenizer-MEASURED over the shipped
-    # `qdmatch_eval_nq_q{20,50,100,250}_n*_k3_separate.jsonl`: 3710/8888/17613/43738 median prompt
-    # tokens at 40/100/200/500 items, giving `tokens ~= 205 + 87.06 * n_docs`. That is exactly
-    # BUILD_MATRIX's "~175 per (query+doc) unit"; its q9/q20/q42/q87/q178 (= 18/40/84/174/356
-    # items) sit ~5% low because that row also charged a ~300-token query/answer overhead.
-    "qdmatch_nq": {"2k": 21, "4k": 45, "8k": 92, "16k": 186, "32k": 374},
+    # ~88 tok/item, tokenizer-MEASURED over this generator's own output: 2135/8206/33002 median
+    # prompt tokens at n=21/92/374, giving `tokens ~= 231 + 87.58 * n_docs`. The shipped
+    # `qdmatch_eval_nq_q{20,50,100,250}_*_separate.jsonl` files fit 87.06/item -- the same number,
+    # which is expected since both draw NQ gold passages -- and that is also BUILD_MATRIX's
+    # "~175 per (query+doc) unit". Its q9/q20/q42/q87/q178 (= 18/40/84/174/356 items) sit ~5% low
+    # because that row also charged a ~300-token query/answer overhead.
+    "qdmatch_nq": {"2k": 21, "4k": 44, "8k": 91, "16k": 184, "32k": 372},
     # HotpotQA paragraphs run a little longer than NQ's 100-word DPR chunks, but the shipped hpqa
     # files were built at the same item counts as the NQ ones and no separate fit exists; measure
     # before quoting a hpqa context length.
-    "qdmatch_hpqa": {"2k": 21, "4k": 45, "8k": 92, "16k": 186, "32k": 374},
+    "qdmatch_hpqa": {"2k": 21, "4k": 44, "8k": 91, "16k": 184, "32k": 372},
     # ── the four held-out (OOD) ladders ──
     "fiqa": {"2k": 4, "4k": 9, "8k": 19, "16k": 40, "32k": 80},  # ~400 tok/post
     "scifact": {"2k": 5, "4k": 10, "8k": 21, "16k": 43, "32k": 88},  # ~365 tok/abstract
@@ -166,16 +170,16 @@ CALIBRATION: Dict[str, str] = {
         "120.1 + 33.31*n); replaces BUILD_MATRIX row 22's ~1.4x-overshooting estimate"
     ),
     "reorder": (
-        "measured (Qwen3 tokenizer over the shipped gutenberg100w n5/n20/n50 files with passage "
-        "whitespace collapsed, fitted 81.4 + 140.54*n); confirms BUILD_MATRIX row 24"
+        "measured (Qwen3 tokenizer over a 96-example build of THIS generator at n=14/58/233, "
+        "fitted 83.8 + 151.31*n); brackets BUILD_MATRIX row 24 with the shipped-file fit"
     ),
     "grouping_labeled": (
-        "measured (Qwen3 tokenizer over the shipped openalex n20/n100 files, fitted "
-        "39.2 + 187.04*n); one rung step above BUILD_MATRIX row 14's overhead-adjusted estimate"
+        "measured (Qwen3 tokenizer over a 96-example build of THIS generator at n=11/44/175, "
+        "fitted 186.8 + 182.82*n); agrees with the shipped openalex n20/n100 files at 187.0/doc"
     ),
     "qdmatch_nq": (
-        "measured (Qwen3 tokenizer over the shipped nq q20/q50/q100/q250 files, fitted "
-        "205.4 + 87.06*n ITEMS); BUILD_MATRIX rows 21a/21b quote the same ~175/(query+doc) unit"
+        "measured (Qwen3 tokenizer over a 96-example build of THIS generator at n=21/92/374 "
+        "ITEMS, fitted 230.6 + 87.58*n); agrees with the shipped nq q20-q250 files at 87.06/item"
     ),
     "qdmatch_hpqa": (
         "estimated: the qdmatch_nq fit, reused. The shipped hpqa files were built at the same item "

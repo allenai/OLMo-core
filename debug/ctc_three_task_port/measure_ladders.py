@@ -127,7 +127,9 @@ def main() -> int:
             lengths = [len(tok.encode(spec.build_prompt(row))) for row in rows]
             median = statistics.median(lengths)
             points.append((n_docs, median))
-            print(f"{task:17s} n={n_docs:<4d} median={median:8.0f} tokens  ({median / n_docs:.1f}/doc)")
+            print(
+                f"{task:17s} n={n_docs:<4d} median={median:8.0f} tokens  ({median / n_docs:.1f}/doc)"
+            )
         if len(points) < 2:
             continue
         xs = [p[0] for p in points]
