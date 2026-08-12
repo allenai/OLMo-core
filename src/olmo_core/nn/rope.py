@@ -1,7 +1,7 @@
 import math
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar, Optional, Tuple
+from typing import ClassVar, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -48,6 +48,63 @@ class RoPEType(StrEnum):
 def compute_inv_freqs(theta: int, dim: int, device: torch.device) -> "torch.Tensor":
     inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device, dtype=torch.float) / dim))
     return inv_freq
+
+
+def _apply_interleaved_mrope(freqs: torch.Tensor, mrope_section: List[int]) -> torch.Tensor:
+    """Interleave per-axis frequency chunks ``[AAA..BBB..CCC]`` → ``[ABCABC..]``.
+
+    Axis 0 is the base; for each later axis ``a`` the components at
+    ``a, a + n_axes, a + 2*n_axes, …`` (up to ``mrope_section[a] * n_axes``) are
+    taken from that axis, preserving frequency continuity across axes.
+
+    :param freqs: ``(n_axes, ..., rotary_dim // 2)``.
+    :param mrope_section: Per-axis frequency-component counts.
+    """
+    n = len(mrope_section)
+    out = freqs[0].clone()
+    for axis in range(1, n):
+        idx = slice(axis, mrope_section[axis] * n, n)
+        out[..., idx] = freqs[axis, ..., idx]
+    return out
+
+
+def build_mrope_sin_cos(
+    position_ids: torch.Tensor,
+    *,
+    head_dim: int,
+    partial_rotary_factor: float,
+    theta: int,
+    mrope_section: List[int],
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Build interleaved multimodal RoPE (M-RoPE) ``(pos_sin, pos_cos)`` buffers.
+
+    M-RoPE gives each token separate position indices along several axes (e.g.
+    temporal / height / width for image tokens) and interleaves their
+    frequencies per ``mrope_section`` so one rotary table mixes the axes. The
+    returned buffers use the same ``cat(freqs, freqs)`` layout as
+    :class:`RotaryEmbedding`, so they can be passed straight to attention as
+    ``pos_sin`` / ``pos_cos``. Supports a single sequence (``B == 1``).
+
+    :param position_ids: ``(n_axes, 1, seq)`` per-axis position indices, where
+        ``n_axes == len(mrope_section)``.
+    :param head_dim: Attention head dimension.
+    :param partial_rotary_factor: Fraction of ``head_dim`` that is rotated.
+    :param theta: RoPE base frequency.
+    :param mrope_section: Number of frequency components taken from each axis.
+    :returns: ``(pos_sin, pos_cos)``, each of shape ``(seq, rotary_dim)``.
+    """
+    rotary_dim = int(head_dim * partial_rotary_factor)
+    inv_freq = compute_inv_freqs(theta, rotary_dim, device)  # (rotary_dim // 2,)
+    n_axes = position_ids.shape[0]
+    pos = position_ids.to(device=device, dtype=torch.float)  # (n_axes, 1, seq)
+    inv = inv_freq[None, None, :, None].expand(n_axes, pos.shape[1], -1, 1)
+    freqs = (inv @ pos[:, :, None, :]).transpose(2, 3)  # (n_axes, 1, seq, rotary_dim // 2)
+    freqs = _apply_interleaved_mrope(freqs, mrope_section)  # (1, seq, rotary_dim // 2)
+    emb = torch.cat((freqs, freqs), dim=-1)  # (1, seq, rotary_dim)
+    return emb.sin()[0].to(dtype), emb.cos()[0].to(dtype)
 
 
 @dataclass
@@ -493,6 +550,7 @@ class RotaryEmbedding(RotaryEmbeddingBase):
         pos_cos: Optional[torch.Tensor] = None,
         freqs_cis: Optional[torch.Tensor] = None,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Apply RoPE to query (``q``) and key (``k``) matrices.
@@ -516,6 +574,12 @@ class RotaryEmbedding(RotaryEmbeddingBase):
 
         if cu_doc_lens is not None and start_pos is not None:
             raise RuntimeError("'cu_doc_lens' and 'start_pos' are mutually exclusive")
+
+        if position_ids is not None:
+            if cu_doc_lens is not None:
+                raise RuntimeError("'position_ids' and 'cu_doc_lens' are mutually exclusive")
+            if start_pos is not None:
+                raise RuntimeError("'position_ids' and 'start_pos' are mutually exclusive")
 
         if head_first:
             q_len = q.size(2)
@@ -555,6 +619,24 @@ class RotaryEmbedding(RotaryEmbeddingBase):
                 pos_idx = (flat_idx - cu_doc_lens[doc_id]).view(B, k_len)
                 sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
                 cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(B, k_len, -1)
+                if head_first:
+                    sin_qk = sin_sel.unsqueeze(1)
+                    cos_qk = cos_sel.unsqueeze(1)
+                else:
+                    sin_qk = sin_sel.unsqueeze(2)
+                    cos_qk = cos_sel.unsqueeze(2)
+                q_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, q_)
+                k_ = self._apply_rotary_pos_emb(sin_qk, cos_qk, k_)
+            elif position_ids is not None:
+                # Explicit per-token positions (e.g. subsegment / branch packing where
+                # parallel branches share an overlapping position range). Gather the
+                # precomputed sin/cos for each token's position. ``position_ids`` has
+                # shape ``(B, k_len)`` and every entry must be < ``seq_len_needed``.
+                if q_len != k_len:
+                    raise RuntimeError("'position_ids' requires q_len == k_len")
+                pos_idx = position_ids.to(torch.long)
+                sin_sel = pos_sin.index_select(0, pos_idx.reshape(-1)).view(*pos_idx.shape, -1)
+                cos_sel = pos_cos.index_select(0, pos_idx.reshape(-1)).view(*pos_idx.shape, -1)
                 if head_first:
                     sin_qk = sin_sel.unsqueeze(1)
                     cos_qk = cos_sel.unsqueeze(1)
