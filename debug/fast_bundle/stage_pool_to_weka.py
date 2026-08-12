@@ -42,21 +42,25 @@ def main() -> int:
     dataset = beaker.dataset.get(args.dataset)
     print(f"dataset {dataset.id}")
 
-    staging = dest.parent / "_pool_staging"
-    staging.mkdir(parents=True, exist_ok=True)
-    beaker.dataset.fetch(dataset, target=staging, force=True)
-
-    files = sorted(p for p in staging.rglob("*.pkl") if p.is_file())
-    if not files:
-        files = sorted(p for p in staging.rglob("*") if p.is_file())
+    # beaker-py 2.x has no `fetch`; files are listed and streamed one at a time.
+    files = list(beaker.dataset.list_files(dataset))
+    print(f"{len(files)} file(s): {[getattr(f, 'path', f) for f in files]}")
     if len(files) != 1:
-        print(f"expected one file in the dataset, found {len(files)}: {files}", file=sys.stderr)
+        print("expected exactly one file in the dataset", file=sys.stderr)
         return 1
 
-    # Move into place only once the bytes are down, so a killed job never leaves a truncated pickle
-    # that every later build would load and fail on in a confusing way.
-    shutil.move(str(files[0]), str(dest))
-    shutil.rmtree(staging, ignore_errors=True)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_suffix(dest.suffix + ".partial")
+    written = 0
+    with open(partial, "wb") as handle:
+        for chunk in beaker.dataset.stream_file(dataset, files[0]):
+            handle.write(chunk)
+            written += len(chunk)
+    print(f"downloaded {written:,} bytes")
+
+    # Rename into place only once the bytes are down: a killed job must never leave a truncated
+    # pickle behind, which every later build would load and fail on in a confusing way.
+    shutil.move(str(partial), str(dest))
     print(f"staged {dest} ({dest.stat().st_size:,} bytes)")
     return 0
 
