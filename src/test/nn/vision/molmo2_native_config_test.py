@@ -13,7 +13,10 @@ from ._molmo2_common import _hf_cache_has
 
 transformers = pytest.importorskip("transformers")
 
-MODEL_ID = "allenai/Molmo2-4B"
+VARIANTS = [
+    ("allenai/Molmo2-4B", "molmo2_4B"),
+    ("allenai/Molmo2-8B", "molmo2_8B"),
+]
 
 
 def _flatten(d, prefix=""):
@@ -26,8 +29,11 @@ def _flatten(d, prefix=""):
     return out
 
 
-@pytest.mark.skipif(not _hf_cache_has(MODEL_ID), reason=f"{MODEL_ID} not in local HF cache")
-def test_molmo2_4b_native_config_matches_hf_derived():
+@pytest.mark.parametrize("model_id, factory_name", VARIANTS)
+def test_native_config_matches_hf_derived(model_id: str, factory_name: str):
+    if not _hf_cache_has(model_id):
+        pytest.skip(f"{model_id} not in local HF cache")
+
     from transformers import AutoConfig
 
     from olmo_core.nn.vision.molmo2_loader import (
@@ -37,9 +43,9 @@ def test_molmo2_4b_native_config_matches_hf_derived():
 
     ensure_default_rope_registered()
     hf_derived = molmo2_config_from_hf_config(
-        AutoConfig.from_pretrained(MODEL_ID, trust_remote_code=True)
+        AutoConfig.from_pretrained(model_id, trust_remote_code=True)
     )
-    native = MultimodalLMConfig.molmo2_4B()
+    native = getattr(MultimodalLMConfig, factory_name)()
 
     expected, actual = _flatten(hf_derived.as_config_dict()), _flatten(native.as_config_dict())
     differences = {
@@ -47,26 +53,35 @@ def test_molmo2_4b_native_config_matches_hf_derived():
         for key in expected.keys() | actual.keys()
         if expected.get(key) != actual.get(key)
     }
-    assert not differences, f"native config diverged from the HF-derived one: {differences}"
+    assert not differences, f"{factory_name} diverged from the HF-derived config: {differences}"
 
 
-def test_molmo2_4b_rope_theta_is_selectable():
-    """Base Qwen3-4B was trained at 1e6; the released Molmo2-4B checkpoint uses 5e6."""
+def test_rope_theta_defaults_match_the_released_checkpoints():
+    """Molmo2-4B is the only released variant whose base differs from its Qwen3 backbone's."""
     assert MultimodalLMConfig.molmo2_4B().lm.block.sequence_mixer.rope.theta == 5_000_000
-    scratch = MultimodalLMConfig.molmo2_4B(rope_theta=1_000_000)
-    assert scratch.lm.block.sequence_mixer.rope.theta == 1_000_000
+    assert MultimodalLMConfig.molmo2_8B().lm.block.sequence_mixer.rope.theta == 1_000_000
+    # Both must accept the base-Qwen3 value used when initialising from scratch.
+    for factory in (MultimodalLMConfig.molmo2_4B, MultimodalLMConfig.molmo2_8B):
+        assert factory(rope_theta=1_000_000).lm.block.sequence_mixer.rope.theta == 1_000_000
 
 
-def test_molmo2_4b_native_config_shape():
+@pytest.mark.parametrize(
+    "factory_name, d_model, ffn_hidden_size, tied",
+    [("molmo2_4B", 2560, 9728, True), ("molmo2_8B", 4096, 12288, False)],
+)
+def test_native_config_shape(factory_name: str, d_model: int, ffn_hidden_size: int, tied: bool):
     """Layout invariants that do not need the HF checkpoint cached."""
-    cfg = MultimodalLMConfig.molmo2_4B()
-    assert cfg.lm.d_model == 2560
+    cfg = getattr(MultimodalLMConfig, factory_name)()
+    assert cfg.lm.d_model == d_model
     assert cfg.lm.n_layers == 36
+    assert cfg.lm.block.feed_forward.hidden_size == ffn_hidden_size
     assert cfg.lm.vocab_size == 152_064  # 151,936 base + 128 image-special tokens
-    assert cfg.lm.tie_word_embeddings is True
+    assert cfg.lm.tie_word_embeddings is tied
     assert cfg.output_vocab_size == 151_936
+    # The vision stack is shared across variants.
     assert cfg.vision.image_num_layers == 25  # SigLIP2 blocks 0..24 of 27
     assert cfg.vit_layers == (24, 18)
+    assert max(cfg.vit_layers) == cfg.vision.image_num_layers - 1
     assert cfg.connector.num_input_layers == len(cfg.vit_layers)
     assert cfg.connector.output_dim == cfg.lm.d_model
-    assert max(cfg.vit_layers) == cfg.vision.image_num_layers - 1
+    assert cfg.connector.mlp_hidden_size == ffn_hidden_size

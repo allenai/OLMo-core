@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 
-from olmo_core.config import Config
+from olmo_core.config import Config, DType
 from olmo_core.distributed.utils import barrier, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.lm_head import LMOutputWithLoss
@@ -22,9 +22,33 @@ from olmo_core.nn.vision.connector import (
 from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
 
 __all__ = [
+    "MOLMO2_BASE_VOCAB_SIZE",
+    "MOLMO2_VOCAB_SIZE",
     "MultimodalLMConfig",
     "MultimodalLM",
 ]
+
+MOLMO2_BASE_VOCAB_SIZE = 151_936
+"""Molmo2's base text vocab (Qwen3's) — the number of IDs the model may *predict*."""
+
+MOLMO2_VOCAB_SIZE = MOLMO2_BASE_VOCAB_SIZE + 128
+"""Molmo2's *input* vocab: the base text vocab plus 128 inputs-only image-special tokens."""
+
+
+def _molmo2_attn_backend():
+    """Attention backend for the Molmo2 LM, matching the HF loader's rule.
+
+    The multimodal masks (bidirectional image tokens + subsegment branch isolation) only run
+    on the dense ``torch`` backend or the fused ``flex`` one; ``OLMO2_FLEX_ATTN=1`` selects
+    FlexAttention (much faster for these masks, needs a GPU + ``torch.compile``).
+    """
+    from olmo_core.nn.attention import AttentionBackendName
+
+    return (
+        AttentionBackendName.flex
+        if os.environ.get("OLMO2_FLEX_ATTN") == "1"
+        else AttentionBackendName.torch
+    )
 
 
 @dataclass
@@ -89,37 +113,25 @@ class MultimodalLMConfig(Config):
     """
 
     @classmethod
-    def molmo2_4B(cls, *, rope_theta: int = 5_000_000, **kwargs) -> "MultimodalLMConfig":
+    def _molmo2_like(
+        cls,
+        lm: TransformerConfig,
+        *,
+        connector_mlp_hidden_size: int,
+        **kwargs,
+    ) -> "MultimodalLMConfig":
         """
-        Molmo2-4B architecture: a Qwen3-4B LM, a SigLIP2-SO400M/14-378 ViT truncated to
-        25 of its 27 blocks, and a two-layer attention-pooling connector.
+        Shared Molmo2 body: a SigLIP2-SO400M/14-378 ViT truncated to 25 of its 27 blocks
+        and a two-layer attention-pooling connector. Identical across the released
+        variants; only the LM and the connector's MLP width differ.
 
-        Equivalent to
-        :func:`~olmo_core.nn.vision.molmo2_loader.molmo2_config_from_hf_config` applied to
-        ``allenai/Molmo2-4B``, but without reading anything from the Hugging Face Hub — so
-        training from base checkpoints has no dependency on the released Molmo2 repo (whose
-        remote code also needs ``trust_remote_code=True``).
-
-        :param rope_theta: RoPE base. Defaults to ``5_000_000``, matching the *released*
-            Molmo2-4B weights. When initialising the LM from **base** Qwen3-4B, pass
-            ``1_000_000`` instead — that is what those weights were trained with (and what
-            mm_olmo's stage-1 ``QWEN3_4B`` config uses).
+        :param lm: The already-built language-model config.
+        :param connector_mlp_hidden_size: HF ``adapter_config.intermediate_size``. Equal to
+            the LM's feed-forward hidden size in every released variant, but a distinct
+            field, so it is passed explicitly rather than derived from ``lm``.
         """
-        import os
-
-        from olmo_core.config import DType
-        from olmo_core.nn.attention import AttentionBackendName
         from olmo_core.nn.vision.config import VisionEncoderType
 
-        base_vocab = 151_936
-        n_extra_tokens = 128
-        # Same backend rule as the HF loader: the multimodal masks (bidirectional image
-        # tokens + subsegment branch isolation) only run on dense ``torch`` or fused ``flex``.
-        attn_backend = (
-            AttentionBackendName.flex
-            if os.environ.get("OLMO2_FLEX_ATTN") == "1"
-            else AttentionBackendName.torch
-        )
         # Molmo2 keeps only blocks 0..24 of SigLIP2's 27 — everything past the deepest
         # feature layer (``vit_layers`` max 24) is dropped. ``name`` is a label only (the
         # SigLIP variant is selected by use_cls_token / patch_embedding_bias / use_pre_ln);
@@ -130,28 +142,75 @@ class MultimodalLMConfig(Config):
             image_num_layers=25,
         )
         return cls(
-            lm=TransformerConfig.qwen3_4B(
-                vocab_size=base_vocab + n_extra_tokens,
-                rope_theta=rope_theta,
-                attn_backend=attn_backend,
-                dtype=DType.float32,
-            ),
+            lm=lm,
             vision=vision,
             connector=VisionConnectorConfig(
                 image_emb_dim=vision.image_emb_dim,
                 image_num_heads=vision.image_num_heads,
                 image_num_key_value_heads=vision.image_num_key_value_heads,
                 image_head_dim=vision.image_head_dim,
-                output_dim=2560,
+                output_dim=lm.d_model,
                 num_input_layers=2,
                 pooling_type=ImagePoolingType.attention_meanq,
                 pooling_attention_mask=True,
                 projector_type=ImageProjectorType.mlp,
-                mlp_hidden_size=9728,
+                mlp_hidden_size=connector_mlp_hidden_size,
             ),
             image_patch_token_id=IM_PATCH_ID,
             vit_layers=(24, 18),
-            output_vocab_size=base_vocab,
+            output_vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+            **kwargs,
+        )
+
+    @classmethod
+    def molmo2_4B(cls, *, rope_theta: int = 5_000_000, **kwargs) -> "MultimodalLMConfig":
+        """
+        Molmo2-4B architecture: a Qwen3-4B LM plus the shared Molmo2 vision stack.
+
+        Equivalent to
+        :func:`~olmo_core.nn.vision.molmo2_loader.molmo2_config_from_hf_config` applied to
+        ``allenai/Molmo2-4B``, but without reading anything from the Hugging Face Hub — so
+        training from base checkpoints has no dependency on the released Molmo2 repo (whose
+        remote code also needs ``trust_remote_code=True``).
+
+        :param rope_theta: RoPE base. Defaults to ``5_000_000``, matching the *released*
+            Molmo2-4B weights. When initialising the LM from **base** Qwen3-4B, pass
+            ``1_000_000`` instead — that is what those weights were trained with (and what
+            mm_olmo's stage-1 ``QWEN3_4B`` config uses). Note Molmo2-4B is the only released
+            variant whose base differs from its Qwen3 backbone's.
+        """
+        return cls._molmo2_like(
+            TransformerConfig.qwen3_4B(
+                vocab_size=MOLMO2_VOCAB_SIZE,
+                rope_theta=rope_theta,
+                attn_backend=_molmo2_attn_backend(),
+                dtype=DType.float32,
+            ),
+            connector_mlp_hidden_size=9728,
+            **kwargs,
+        )
+
+    @classmethod
+    def molmo2_8B(cls, *, rope_theta: int = 1_000_000, **kwargs) -> "MultimodalLMConfig":
+        """
+        Molmo2-8B architecture: a Qwen3-8B LM plus the shared Molmo2 vision stack.
+
+        Equivalent to
+        :func:`~olmo_core.nn.vision.molmo2_loader.molmo2_config_from_hf_config` applied to
+        ``allenai/Molmo2-8B``, without reading from the Hugging Face Hub.
+
+        :param rope_theta: RoPE base. ``1_000_000`` for both the released Molmo2-8B weights
+            and base Qwen3-8B, so unlike :meth:`molmo2_4B` the default is correct for either
+            weight source. Note this variant is **not** weight-tied (neither is Qwen3-8B).
+        """
+        return cls._molmo2_like(
+            TransformerConfig.qwen3_8B(
+                vocab_size=MOLMO2_VOCAB_SIZE,
+                rope_theta=rope_theta,
+                attn_backend=_molmo2_attn_backend(),
+                dtype=DType.float32,
+            ),
+            connector_mlp_hidden_size=12288,
             **kwargs,
         )
 

@@ -6,11 +6,13 @@ Trains the connector + LM on PixMoCap captions/transcripts with the vision encod
 learning rates / warmups. In-loop evaluation is intentionally omitted.
 
 Weights start from **base** checkpoints, matching mm_olmo's ``reset_with_pretrained_weights``:
-the LM from ``Qwen/Qwen3-4B``, the ViT from ``google/siglip2-so400m-patch14-384``, and the
-connector / extra-token embeddings randomly initialised (``INIT_FROM = "scratch"``). This is
-stage-1 *pretraining*. Passing ``--init_from=molmo2`` instead continues the released,
-already-post-trained ``allenai/Molmo2-4B`` on the stage-1 objective, which is a fine-tune —
+the LM from the base Qwen3 backbone, the ViT from ``google/siglip2-so400m-patch14-384``, and
+the connector / extra-token embeddings randomly initialised (``INIT_FROM = "scratch"``). This
+is stage-1 *pretraining*. Passing ``--init_from=molmo2`` instead continues the released,
+already-post-trained Molmo2 checkpoint on the stage-1 objective, which is a fine-tune —
 useful for parity tests and continuation experiments, but not a stage-1 reproduction.
+
+``--model_size`` selects the variant: ``4b`` (Qwen3-4B, the default) or ``8b`` (Qwen3-8B).
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -25,9 +27,10 @@ Run without arguments for usage. Quick local smoke test on synthetic data::
 
 import logging
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Optional, cast
+from typing import List, Optional, Tuple, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import (
@@ -84,24 +87,64 @@ log = logging.getLogger(__name__)
 #### CONFIGURATION ####
 #######################
 
-# Architecture + tokenizer source. Only the HF *config* and tokenizer are read from this
-# repo id; stage-1 weights come from the base checkpoints below (see INIT_FROM).
-MODEL_ID = "allenai/Molmo2-4B"
+# Model size. Selects the architecture factory, the base LM to initialise from, and the
+# released checkpoint used by `--init_from=molmo2`. Override with `--model_size=8b`.
+MODEL_SIZE = "4b"
 
-# Weight init. "scratch" is mm_olmo's true stage-1 start and the default: base Qwen3-4B LM
+
+@dataclass(frozen=True)
+class ModelSizeSpec:
+    """Weight sources and RoPE bases for one Molmo2 variant."""
+
+    factory: Callable[..., MultimodalLMConfig]
+    """Native architecture factory, e.g. :meth:`MultimodalLMConfig.molmo2_4B`."""
+
+    molmo2_id: str
+    """Released checkpoint, used by ``--init_from=molmo2``."""
+
+    scratch_lm_id: str
+    """Base Qwen3 backbone, used by ``--init_from=scratch``."""
+
+    scratch_rope_theta: int
+    """RoPE base of ``scratch_lm_id``'s weights."""
+
+    molmo2_rope_theta: int
+    """RoPE base of ``molmo2_id``'s weights."""
+
+    def rope_theta(self, init_from: str) -> int:
+        return self.scratch_rope_theta if init_from == "scratch" else self.molmo2_rope_theta
+
+
+# `rope_theta` follows the *weight source*: every base Qwen3 backbone uses 1e6, and so does
+# the released Molmo2-8B — the released Molmo2-4B is the sole variant that differs (5e6).
+# Deriving the architecture from a released config while loading base weights therefore puts
+# 4B weights on the wrong rotary base.
+MODEL_SIZES = {
+    "4b": ModelSizeSpec(
+        factory=MultimodalLMConfig.molmo2_4B,
+        molmo2_id="allenai/Molmo2-4B",
+        scratch_lm_id="Qwen/Qwen3-4B",
+        scratch_rope_theta=1_000_000,
+        molmo2_rope_theta=5_000_000,
+    ),
+    "8b": ModelSizeSpec(
+        factory=MultimodalLMConfig.molmo2_8B,
+        molmo2_id="allenai/Molmo2-8B",
+        scratch_lm_id="Qwen/Qwen3-8B",
+        scratch_rope_theta=1_000_000,
+        molmo2_rope_theta=1_000_000,
+    ),
+}
+
+# Weight init. "scratch" is mm_olmo's true stage-1 start and the default: base Qwen3 LM
 # + base SigLIP2 ViT + randomly-initialised connector / new-token embeddings. "molmo2"
-# instead *continues* the released (already post-trained) Molmo2-4B on the stage-1
+# instead *continues* the released (already post-trained) Molmo2 checkpoint on the stage-1
 # objective — that is a fine-tune, not stage-1 pretraining, so it is opt-in only
 # (`--init_from=molmo2`), kept for parity tests and continuation experiments.
 INIT_FROM = "scratch"
 INIT_FROM_CHOICES = ("scratch", "molmo2")
-SCRATCH_LM_ID = "Qwen/Qwen3-4B"
-SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"
+SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 variant
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
-# RoPE base per weight source: base Qwen3-4B was trained with 1e6 (as is mm_olmo's
-# stage-1 QWEN3_4B); the released Molmo2-4B checkpoint uses 5e6.
-SCRATCH_ROPE_THETA = 1_000_000
-MOLMO2_ROPE_THETA = 5_000_000
 SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
@@ -167,7 +210,9 @@ class ExperimentConfig(Config):
     collator: MultimodalCollatorConfig
     train_module: MultimodalTransformerTrainModuleConfig
     trainer: TrainerConfig
-    model_id: str = MODEL_ID
+    model_size: str = MODEL_SIZE
+    """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
+    the released checkpoint used by ``--init_from=molmo2``."""
     data_seed: int = 34521
     init_seed: int = 12536
     global_batch_size: int = GLOBAL_BATCH_SIZE
@@ -185,7 +230,7 @@ class ExperimentConfig(Config):
     base Qwen3-4B + base SigLIP2 + random connector/new embeddings)."""
 
 
-def _build_model_config(init_from: str) -> MultimodalLMConfig:
+def _build_model_config(model_size: str, init_from: str) -> MultimodalLMConfig:
     """Build the Molmo2-4B :class:`MultimodalLMConfig` natively (no weights, no HF read).
 
     ``MultimodalLMConfig.molmo2_4B`` is byte-identical to
@@ -197,25 +242,36 @@ def _build_model_config(init_from: str) -> MultimodalLMConfig:
     — was trained with ``1e6`` (mm_olmo's stage-1 ``QWEN3_4B`` also uses ``1e6``). Using
     the released value with base weights would put them on the wrong rotary base.
     """
-    rope_theta = SCRATCH_ROPE_THETA if init_from == "scratch" else MOLMO2_ROPE_THETA
-    return MultimodalLMConfig.molmo2_4B(rope_theta=rope_theta)
+    spec = MODEL_SIZES[model_size]
+    return spec.factory(rope_theta=spec.rope_theta(init_from))
 
 
-def _resolve_init_from(overrides: List[str]) -> str:
-    """Read ``init_from`` out of the raw overrides.
+def _read_override(overrides: List[str], key: str, default: str) -> str:
+    """Read a top-level scalar out of the raw overrides.
 
-    The model config depends on it (RoPE base), and it has to be built before
-    :meth:`Config.merge` runs, so the override cannot be read off the merged config.
-    Later occurrences win, matching ``merge``.
+    The model config depends on ``model_size`` and ``init_from`` (architecture and RoPE
+    base), and it is built before :meth:`Config.merge` runs, so those overrides cannot be
+    read off the merged config. Later occurrences win, matching ``merge``.
     """
-    init_from = INIT_FROM
+    value = default
     for override in overrides:
-        key, _, value = override.lstrip("-").partition("=")
-        if key == "init_from" and value:
-            init_from = value
+        name, _, raw = override.lstrip("-").partition("=")
+        if name == key and raw:
+            value = raw
+    return value
+
+
+def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
+    """Resolve ``(model_size, init_from)`` from the raw overrides, validating both."""
+    model_size = _read_override(overrides, "model_size", MODEL_SIZE).lower()
+    init_from = _read_override(overrides, "init_from", INIT_FROM)
+    if model_size not in MODEL_SIZES:
+        raise OLMoConfigurationError(
+            f"model_size={model_size!r} is not one of {tuple(MODEL_SIZES)}"
+        )
     if init_from not in INIT_FROM_CHOICES:
         raise OLMoConfigurationError(f"init_from={init_from!r} is not one of {INIT_FROM_CHOICES}")
-    return init_from
+    return model_size, init_from
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
@@ -223,7 +279,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     beaker_user = get_beaker_username()
     assert beaker_user is not None
 
-    model_config = _build_model_config(_resolve_init_from(overrides))
+    model_size, init_from = _resolve_model_spec(overrides)
+    model_config = _build_model_config(model_size, init_from)
 
     dataset_config = PixMoCapDatasetConfig(
         dataset_path=DATASET_PATH,
@@ -342,16 +399,19 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         launch=launch_config,
     ).merge(overrides)
 
-    # Fail here rather than after a Beaker job has queued, started and downloaded weights.
-    if config.init_from not in INIT_FROM_CHOICES:
+    # `_resolve_model_spec` already validated the pre-merge values; re-check the merged
+    # config so a stray `--model_size`/`--init_from` cannot slip through, and fail here
+    # rather than after a Beaker job has queued, started and downloaded weights.
+    if (config.model_size, config.init_from) != (model_size, init_from):
         raise OLMoConfigurationError(
-            f"init_from={config.init_from!r} is not one of {INIT_FROM_CHOICES}"
+            f"model_size / init_from changed during merge: "
+            f"({model_size!r}, {init_from!r}) -> ({config.model_size!r}, {config.init_from!r})"
         )
 
     return config
 
 
-def _load_tokenizer(init_from: str):
+def _load_tokenizer(model_size: str, init_from: str):
     """Load the tokenizer for this init mode.
 
     A ``"scratch"`` run uses base ``Qwen/Qwen3-4B``'s tokenizer — what mm_olmo's stage 1
@@ -366,13 +426,19 @@ def _load_tokenizer(init_from: str):
     """
     from transformers import AutoTokenizer
 
+    spec = MODEL_SIZES[model_size]
     if init_from == "scratch":
-        return AutoTokenizer.from_pretrained(SCRATCH_LM_ID)
-    return AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+        return AutoTokenizer.from_pretrained(spec.scratch_lm_id)
+    return AutoTokenizer.from_pretrained(spec.molmo2_id, trust_remote_code=True)
 
 
-def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) -> None:
-    """Load converted HF Molmo2 weights into the (meta-initialised) model."""
+def _init_weights_from_hf(
+    model: MultimodalLM, model_cfg: MultimodalLMConfig, molmo2_id: str
+) -> None:
+    """Load converted HF Molmo2 weights into the (meta-initialised) model.
+
+    :param molmo2_id: The released checkpoint to continue from, e.g. ``allenai/Molmo2-4B``.
+    """
     from transformers import AutoModelForImageTextToText
 
     from olmo_core.nn.vision.molmo2_loader import (
@@ -383,28 +449,35 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
     )
 
     ensure_default_rope_registered()
-    log.info(f"Loading HF weights from {MODEL_ID} ...")
-    hf = AutoModelForImageTextToText.from_pretrained(MODEL_ID, trust_remote_code=True)
+    log.info(f"Loading HF weights from {molmo2_id} ...")
+    hf = AutoModelForImageTextToText.from_pretrained(molmo2_id, trust_remote_code=True)
     reinit_rope_buffers(hf)
     converted = molmo2_hf_state_dict_to_multimodal_lm(hf.state_dict(), model_cfg)
     del hf
     model.to_empty(device=get_default_device())
     model.load_state_dict(converted, strict=False)
-    # `to_empty` silently un-ties tied word embeddings (Molmo2-4B); restore the share so
-    # training updates the head and the embedding table as one parameter, like mm_olmo.
+    # `to_empty` silently un-ties tied word embeddings (Molmo2-4B is tied; the 8B is not);
+    # restore the share so training updates the head and the embedding table as one
+    # parameter, like mm_olmo. A no-op for untied configs.
     retie_word_embeddings(model)
     del converted
 
 
-def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfig) -> None:
+def _init_weights_from_scratch(
+    model: MultimodalLM, model_cfg: MultimodalLMConfig, scratch_lm_id: str
+) -> None:
     """mm_olmo's true stage-1 init (``reset_with_pretrained_weights``):
 
-    * LM  <- base ``Qwen/Qwen3-4B`` (weight-tied), via the generic HF->olmo-core converter;
+    * LM  <- the base Qwen3 backbone, via the generic HF->olmo-core converter;
       the 128 extra-token embedding rows are ``N(0, 0.02)`` (mm_olmo
-      ``new_embedding_init_range``) and the LM head is tied to the embeddings.
-    * vision <- base ``google/siglip2-so400m-patch14-384`` (blocks 0..24).
+      ``new_embedding_init_range``) and the LM head is tied to the embeddings when the
+      config is tied (Molmo2-4B; the 8B and Qwen3-8B are untied).
+    * vision <- base ``google/siglip2-so400m-patch14-384`` (blocks 0..24), shared by every
+      released Molmo2 variant.
     * connector <- random (``reset_parameters``: ``N(0, 0.02)`` weights, zero biases —
       matches mm_olmo's pooling + projector init).
+
+    :param scratch_lm_id: The base LM to initialise from, e.g. ``Qwen/Qwen3-4B``.
     """
     import torch
     from transformers import AutoModelForCausalLM, SiglipVisionModel
@@ -413,8 +486,8 @@ def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfi
     from olmo_core.nn.vision import siglip_state_dict_to_vision_encoder
     from olmo_core.nn.vision.molmo2_loader import retie_word_embeddings
 
-    log.info(f"[scratch init] Loading base LM weights from {SCRATCH_LM_ID} ...")
-    hf_lm = AutoModelForCausalLM.from_pretrained(SCRATCH_LM_ID, dtype=torch.float32)
+    log.info(f"[scratch init] Loading base LM weights from {scratch_lm_id} ...")
+    hf_lm = AutoModelForCausalLM.from_pretrained(scratch_lm_id, dtype=torch.float32)
     lm_state = convert_state_from_hf(hf_lm.config, hf_lm.state_dict(), model_type="qwen3")
     del hf_lm
 
@@ -429,9 +502,23 @@ def _init_weights_from_scratch(model: MultimodalLM, model_cfg: MultimodalLMConfi
 
     converted = {f"lm.{k}": v for k, v in lm_state.items()}
     converted["lm.embeddings.weight"] = full_emb
-    # Tied head (mm_olmo `weight_tying=True`): identical values regardless of whether the
-    # target params share storage.
-    converted["lm.lm_head.w_out.weight"] = full_emb.clone()
+    # The LM head has to span our full input vocab, but the base checkpoint only covers the
+    # base one, so it needs the same `extra` rows appended. How depends on tying:
+    if model_cfg.lm.tie_word_embeddings:
+        # Tied (Molmo2-4B / Qwen3-4B, mm_olmo `weight_tying=True`): head *is* the embedding
+        # table. Identical values make the load order-independent; `retie_word_embeddings`
+        # below restores the share that `to_empty` broke.
+        converted["lm.lm_head.w_out.weight"] = full_emb.clone()
+    else:
+        # Untied (Molmo2-8B / Qwen3-8B): the base checkpoint carries a *distinct trained*
+        # output head — keep it rather than overwriting it with the embedding table. The
+        # appended rows are zeros because `output_vocab_size` masks logit columns >= the base
+        # vocab: they never enter the softmax and receive exactly zero gradient, matching
+        # mm_olmo, whose untied `ff_out` spans only the base vocab.
+        base_head = lm_state["lm_head.w_out.weight"]
+        converted["lm.lm_head.w_out.weight"] = torch.cat(
+            [base_head, base_head.new_zeros(extra, base_head.shape[1])], dim=0
+        )
     del lm_state
 
     log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")
@@ -497,13 +584,14 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 def train(config: ExperimentConfig):
     seed_all(config.init_seed)
 
-    tokenizer = _load_tokenizer(config.init_from)
+    tokenizer = _load_tokenizer(config.model_size, config.init_from)
 
     model = config.model.build(init_device="meta")
+    spec = MODEL_SIZES[config.model_size]
     if config.init_from == "scratch":
-        _init_weights_from_scratch(model, config.model)
+        _init_weights_from_scratch(model, config.model, spec.scratch_lm_id)
     elif config.init_from == "molmo2":
-        _init_weights_from_hf(model, config.model)
+        _init_weights_from_hf(model, config.model, spec.molmo2_id)
     else:  # unreachable via build_config, which validates; guards direct train() calls
         raise OLMoConfigurationError(
             f"init_from={config.init_from!r} is not one of {INIT_FROM_CHOICES}"
@@ -570,6 +658,9 @@ Examples
 
 Print the config:
 › python {sys.argv[0]} dry_run molmo2-stage1
+
+8B from-scratch run:
+› python {sys.argv[0]} launch molmo2-stage1-8b --model_size=8b
 
 Local synthetic smoke test:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke \\
