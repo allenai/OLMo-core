@@ -146,6 +146,11 @@ def load_head(path: str, limit: int) -> list:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, choices=sorted(TRAIN_TASKS))
+    ap.add_argument("--src", default="",
+                    help="Override TRAIN_TASKS[task]['src']. Needed to band a REBUILT pool: the "
+                         "outlier entry points at outlier_wiki100w_contin_n14-220_k3_20000.jsonl, "
+                         "whose K is 2-10, while the eval's xlong rungs sit at K=25 for every n. "
+                         "The iid rebuild reaches K=24 at n=220 and is the correct seed.")
     ap.add_argument("--out", required=True)
     ap.add_argument("--pool-src", type=int, default=3000,
                     help="source examples loaded to harvest the distractor pool / cycle bases")
@@ -154,7 +159,10 @@ def main() -> None:
     ap.add_argument("--shard-index", type=int, default=0)
     args = ap.parse_args()
 
-    cfg = TRAIN_TASKS[args.task]
+    cfg = dict(TRAIN_TASKS[args.task])
+    if args.src:
+        cfg["src"] = args.src
+        print(f"[{args.task}] src OVERRIDE -> {args.src}", flush=True)
     plan = draw_plan(args.seed)
     mine = [(i, t) for i, t in enumerate(plan) if i % args.num_shards == args.shard_index]
     print(f"[{args.task}] shard {args.shard_index}/{args.num_shards}: "

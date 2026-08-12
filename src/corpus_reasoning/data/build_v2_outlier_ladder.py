@@ -47,12 +47,12 @@ def _titles(run):
 
 
 def build_majority_pool(pool, need_chunks, num_outliers, exclude, rng,
-                        min_run, max_run, max_tries=400):
+                        min_run, max_run, max_tries=400, gap=1):
     """Ordered list of single-article majority runs whose total chunk count is
     >= need_chunks. Each run is one article of >= num_outliers+1 chunks (so it
     can never be the rarest topic). Returns (runs, chunk_article_ids) or None."""
     runs, used, cum, tries = [], set(exclude), 0, 0
-    min_run = max(min_run, num_outliers + 1)   # every majority topic > outlier
+    min_run = max(min_run, num_outliers + gap)  # every majority topic exceeds the outlier by >= gap
     while cum < need_chunks and tries < max_tries:
         tries += 1
         size = rng.randint(min_run, max_run)
@@ -90,7 +90,7 @@ def prefix_chunks(runs, target_maj, min_maj):
     return flat[:m]
 
 
-def build_example(pool, ei, num_outliers, min_run, max_run):
+def build_example(pool, ei, num_outliers, min_run, max_run, gap=1):
     rng = random.Random(SEED * 1_000_003 + ei)
     max_n = max(RUNGS)
     # Fixed outlier article (one coherent topic), shared by every rung.
@@ -98,10 +98,12 @@ def build_example(pool, ei, num_outliers, min_run, max_run):
     if outlier is None:
         return None
     runs = build_majority_pool(pool, max_n - num_outliers, num_outliers,
-                               _titles(outlier), rng, min_run, max_run)
+                               _titles(outlier), rng, min_run, max_run, gap=gap)
     if runs is None:
         return None
-    min_maj = num_outliers + 1
+    # Smallest majority topic must exceed the outlier by at least `gap`. gap=1 (4 vs 3) leaves the
+    # "outlier is the rarest topic" invariant one document from breaking; gap=2 gives real margin.
+    min_maj = num_outliers + gap
     per_rung = {}
     for n, lab in RUNGS.items():
         maj = prefix_chunks(runs, n - num_outliers, min_maj)
@@ -139,6 +141,11 @@ def main():
                     help="min chunks per majority article (must be > num_outliers)")
     ap.add_argument("--max-run", type=int, default=14,
                     help="max chunks per majority article")
+    ap.add_argument("--maj-outlier-gap", type=int, default=1,
+                    help="Every majority topic must have at least num_outliers+GAP documents, so "
+                         "the outlier is the rarest by at least GAP. Default 1 reproduces the "
+                         "historical ladder (majority>=4 vs outlier 3 -- one doc from breaking the "
+                         "invariant). Use 2 for real margin.")
     ap.add_argument("--pool-cache",
                     default="data/wiki100w_article_pool_smoke.pkl")
     ap.add_argument("--out-root",
@@ -172,7 +179,8 @@ def main():
     ei = 0
     built = 0
     while built < args.num_examples:
-        per = build_example(pool, ei, args.num_outliers, args.min_run, args.max_run)
+        per = build_example(pool, ei, args.num_outliers, args.min_run, args.max_run,
+                            gap=args.maj_outlier_gap)
         ei += 1
         if per is None:
             continue

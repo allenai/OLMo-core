@@ -36,6 +36,11 @@ BATCH_SIZE="${BATCH_SIZE:-2}"
 
 read -r -d '' JOB <<'EOS' || true
 set -uo pipefail
+# `eval_lc_native.py` does `from ctc_eval.eval.evaluate import ...`; the package lives at
+# src/scripts/ctc_eval, so it must be on PYTHONPATH. run_beaker_multirung_eval.sh:109 does exactly
+# this -- omitting it is why the first run died with ModuleNotFoundError AFTER gantry reported success.
+export PYTHONPATH="$PWD/src/scripts:$PWD/src:${PYTHONPATH:-}"
+FAILED=0
 P=/weka/oe-training-default/ai2-llm/checkpoints/prasanns
 V3="$P/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl"
 V2="$P/_eval_bundle_eval500_v2_clean/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"
@@ -63,6 +68,7 @@ run_one () {   # label file
     --max-length "$MAX_LENGTH" \
     --batch-size "$BATCH_SIZE" \
     --out "/results/contra_${1}_2k.json" 2>&1 | tail -25
+  [ "${PIPESTATUS[0]}" = "0" ] || { echo "!!! eval $1 FAILED"; FAILED=1; }
   python - <<PY
 import json
 try:
@@ -90,6 +96,7 @@ except Exception as e:
     print(f"  {'$l':<14} MISSING ({e})")
 PY
 done
+exit $FAILED
 EOS
 
 echo "=== launching $NAME on $CLUSTER (run=$RUN) ==="
