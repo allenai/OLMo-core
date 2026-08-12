@@ -61,7 +61,7 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, query_position, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode
+    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, query_position, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, tokenizer=""
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -76,7 +76,9 @@ def build_eval_launch_config(
         f"QUERY_POSITION='{query_position}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
-        f"LADDER_VERSION={ladder_version} WEKA_LLM={root_dir} bash {runner}"
+        f"LADDER_VERSION={ladder_version} "
+        + (f"TOKENIZER={tokenizer} " if tokenizer else "")
+        + f"WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
 
@@ -130,6 +132,12 @@ def main():
     ap.add_argument("--ngpu", type=int, default=2,
                     help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
                          "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
+    ap.add_argument("--tokenizer", default="",
+                    help="HF tokenizer id, forwarded to the on-node runner as TOKENIZER. "
+                         "MUST match the model family: the runner defaults to Qwen/Qwen3-4B "
+                         "(vocab 151936), so a Qwen3.5 checkpoint (vocab 248320) evaluated "
+                         "without this scores ~0 on EVERY task while the job reports success -- "
+                         "wrong token ids, not a broken model. Qwen3.5 -> Qwen/Qwen3.5-4B-Base.")
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
     ap.add_argument("--ladder-version", choices=["v2", "v3"], default="v2",
                     help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
@@ -172,6 +180,7 @@ def main():
             ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
             batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
             xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
+            tokenizer=args.tokenizer,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
