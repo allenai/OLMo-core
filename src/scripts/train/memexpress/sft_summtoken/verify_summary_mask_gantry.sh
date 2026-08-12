@@ -105,5 +105,7 @@ gantry run \
   --no-nfs \
   --weka "${WEKA}:/weka/${WEKA}" \
   --install "pip install -e . && pip install dataclass-extensions" \
+  --allow-dirty \
   --yes \
+  --show-logs \
   -- bash -c "${REMOTE}"
