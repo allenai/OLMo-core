@@ -79,7 +79,7 @@ SEED = 1234
 
 def load_jsonl(path):
     with open(path) as f:
-        return [json.loads(l) for l in f if l.strip()]
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def save_jsonl(path, rows):
@@ -112,6 +112,7 @@ def annotate(row, corpus_id, shared_prefix_len):
 
 
 # ── Family A: query-multiplexed ──────────────────────────────────────────────
+
 
 def build_oolong_shared(rung, out_root, source=None, **_):
     """OOLONG needs no new data: its SOURCE split already stores 25 questions per context, each row
@@ -151,8 +152,9 @@ def build_oolong_shared(rung, out_root, source=None, **_):
     }
 
 
-def build_multiplexed(task, rung, out_root, queries_per_corpus=None, seed=SEED,
-                      target_ndocs=None, source=None, **_):
+def build_multiplexed(
+    task, rung, out_root, queries_per_corpus=None, seed=SEED, target_ndocs=None, source=None, **_
+):
     """nq / rerank: pool each query's own gold + hard negatives into one shared corpus.
 
     Every query keeps ITS OWN CE-filtered hard negatives — that is the difficulty that matters. The
@@ -240,15 +242,17 @@ def build_multiplexed(task, rung, out_root, queries_per_corpus=None, seed=SEED,
         corpus = [corpus[p] for p in perm]
         pos_of = {doc_key(d): i for i, d in enumerate(corpus)}
 
-        sha = prefix_sha1(corpus)
         for ri in grp_idx:
             r = dict(rows[ri])
             src_docs = rows[ri]["documents"]
             r["documents"] = corpus
             for field in ("gold_doc_indices", "hard_neg_indices"):
                 if field in r:
-                    r[field] = [pos_of[doc_key(src_docs[i])] for i in r[field]
-                                if doc_key(src_docs[i]) in pos_of]
+                    r[field] = [
+                        pos_of[doc_key(src_docs[i])]
+                        for i in r[field]
+                        if doc_key(src_docs[i]) in pos_of
+                    ]
             if "ce_scores" in r:
                 # CE scores are per-document AND query-specific, so a pooled corpus has no score
                 # for another query's documents. Rebuild the array aligned to the new corpus,
@@ -283,12 +287,20 @@ def build_multiplexed(task, rung, out_root, queries_per_corpus=None, seed=SEED,
 
 # ── Family B: prefix + per-query tail ────────────────────────────────────────
 
-DEFAULT_Q_PER_CORPUS = 125   # 500 queries / 125 = 4 corpora, inside the 1-10 target
+DEFAULT_Q_PER_CORPUS = 125  # 500 queries / 125 = 4 corpora, inside the 1-10 target
 
 
-def build_contradiction_shared(task, rung, out_root, tail_frac=0.05,
-                               queries_per_corpus=None, seed=SEED, source=None,
-                               variant_tag="", **_):
+def build_contradiction_shared(
+    task,
+    rung,
+    out_root,
+    tail_frac=0.05,
+    queries_per_corpus=None,
+    seed=SEED,
+    source=None,
+    variant_tag="",
+    **_,
+):
     """contradiction: **one member of each gold pair in the shared prefix, its partner in the tail.**
 
     contradiction's ``queries`` field is empty -- the task is "find the contradicting pairs in this
@@ -360,8 +372,10 @@ def build_contradiction_shared(task, rung, out_root, tail_frac=0.05,
             probes[ri] = my_probes
 
         if len(halves) > prefix_len:
-            raise SystemExit(f"{len(halves)} prefix halves exceed prefix_len {prefix_len}; "
-                             f"lower --queries-per-corpus")
+            raise SystemExit(
+                f"{len(halves)} prefix halves exceed prefix_len {prefix_len}; "
+                f"lower --queries-per-corpus"
+            )
 
         prefix, seen_p = [], set()
         for d in halves:
@@ -372,7 +386,8 @@ def build_contradiction_shared(task, rung, out_root, tail_frac=0.05,
             prefix.append(d)
         fi = 0
         while len(prefix) < prefix_len and fi < len(filler_pool):
-            d = filler_pool[fi]; fi += 1
+            d = filler_pool[fi]
+            fi += 1
             k = doc_key(d)
             if k in seen_p:
                 continue
@@ -399,11 +414,15 @@ def build_contradiction_shared(task, rung, out_root, tail_frac=0.05,
             new_pairs = []
             for j, pair in enumerate(rows[ri]["gold_doc_indices"]):
                 probe = probes[ri][j]
-                half = [d for d in (rows[ri]["documents"][i - 1] for i in pair)
-                        if doc_key(d) != doc_key(probe)][0]
+                half = [
+                    d
+                    for d in (rows[ri]["documents"][i - 1] for i in pair)
+                    if doc_key(d) != doc_key(probe)
+                ][0]
                 # write back 1-INDEXED, as this task's readers expect
-                new_pairs.append([pos_in_prefix[doc_key(half)] + 1,
-                                  pos_in_tail[doc_key(probe)] + 1])
+                new_pairs.append(
+                    [pos_in_prefix[doc_key(half)] + 1, pos_in_tail[doc_key(probe)] + 1]
+                )
             r["gold_doc_indices"] = new_pairs
             out.append(annotate(r, f"{task}-{rung}-c{cid}", prefix_len))
 
@@ -451,10 +470,12 @@ def _recover_topics(row, verbose=False):
     expected, k = sorted(cd.values()), len(cd)
     if k < 2 or len(maj) < k:
         return None
-    X = TfidfVectorizer(sublinear_tf=True, stop_words="english").fit_transform([d["text"] for d in maj])
-    labels = AgglomerativeClustering(
-        n_clusters=k, metric="cosine", linkage="average"
-    ).fit_predict(X.toarray())
+    X = TfidfVectorizer(sublinear_tf=True, stop_words="english").fit_transform(
+        [d["text"] for d in maj]
+    )
+    labels = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average").fit_predict(
+        X.toarray()
+    )
     groups = collections.defaultdict(list)
     for d, lab in zip(maj, labels):
         groups[lab].append(d)
@@ -463,9 +484,17 @@ def _recover_topics(row, verbose=False):
     return list(groups.values())
 
 
-def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
-                         queries_per_corpus=None, seed=SEED, scatter_gold=False,
-                         source=None, **_):
+def build_outlier_shared(
+    task,
+    rung,
+    out_root,
+    tail_frac=0.05,
+    queries_per_corpus=None,
+    seed=SEED,
+    scatter_gold=False,
+    source=None,
+    **_,
+):
     """outlier: shared majority corpus + a per-query tail holding that query's outlier trio.
 
     Unlike contradiction, **no gold can live in the shared prefix**: an outlier trio in the prefix
@@ -508,8 +537,10 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
     # from 0.320 to 0.887. Order randomly here and re-impose the gap exactly below.
     rng.shuffle(flat_topics)
     if sum(len(t) for t in flat_topics) < need_per_group * n_groups:
-        raise SystemExit(f"outlier: only recovered {sum(len(t) for t in flat_topics)} banked docs "
-                         f"but need {need_per_group * n_groups}; scanned {scanned} examples")
+        raise SystemExit(
+            f"outlier: only recovered {sum(len(t) for t in flat_topics)} banked docs "
+            f"but need {need_per_group * n_groups}; scanned {scanned} examples"
+        )
 
     # Query rows = every row (each contributes its own outlier trio), including the base rows --
     # a base row's own trio was excluded from its majority docs, so it is still a valid query.
@@ -521,7 +552,8 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
         while len(pinned) + len(surplus) < prefix_len + reservoir_target:
             if ti >= len(flat_topics):
                 raise SystemExit("outlier: topic bank exhausted")
-            t = flat_topics[ti]; ti += 1
+            t = flat_topics[ti]
+            ti += 1
             taken_topics.append(t)
             pinned += t[:4]
             surplus += t[4:]
@@ -529,7 +561,7 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
             raise SystemExit("outlier: pinned minimum exceeds prefix_len; raise --tail-frac")
         rng.shuffle(surplus)
         prefix = pinned + surplus[: prefix_len - len(pinned)]
-        reservoir = surplus[prefix_len - len(pinned):]
+        reservoir = surplus[prefix_len - len(pinned) :]
 
         # Re-impose the source data's defining structure: the smallest majority topic must hold
         # EXACTLY n_outliers + 1 documents, so the outlier trio wins by one document and not more.
@@ -543,8 +575,7 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
         target_min = n_outliers + 1
         while counts and min(counts.values()) > target_min:
             smallest = min(counts, key=lambda k: counts[k])
-            movable = [d for d in prefix
-                       if topic_of[doc_key(d)] == smallest][target_min:]
+            movable = [d for d in prefix if topic_of[doc_key(d)] == smallest][target_min:]
             if not movable:
                 break
             drop = movable[0]
@@ -575,9 +606,9 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
         # being an outlier. Colliding queries are skipped and backfilled from later rows.
         grp = []
         while len(grp) < queries_per_corpus and next_q < len(rows):
-            ri = next_q; next_q += 1
-            trio_keys = {doc_key(rows[ri]["documents"][i])
-                         for i in rows[ri]["gold_doc_indices"]}
+            ri = next_q
+            next_q += 1
+            trio_keys = {doc_key(rows[ri]["documents"][i]) for i in rows[ri]["gold_doc_indices"]}
             if trio_keys & seen_p:
                 skipped_collide += 1
                 continue
@@ -606,19 +637,23 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
                 gold = sorted(i for i, d in enumerate(docs) if doc_key(d) in trio_keys)
             else:
                 r["documents"] = prefix + tail
-                gold = sorted(prefix_len + i for i, d in enumerate(tail)
-                              if doc_key(d) in {doc_key(x) for x in trio})
+                gold = sorted(
+                    prefix_len + i
+                    for i, d in enumerate(tail)
+                    if doc_key(d) in {doc_key(x) for x in trio}
+                )
             r["gold_doc_indices"] = gold
             # answers are position-derived (1-indexed) for this task -- recompute, never inherit.
             r["answers"] = ["; ".join(str(i + 1) for i in gold)]
             meta = dict(src.get("meta") or {})
             meta["num_outliers"] = len(gold)
-            meta["shared_corpus_note"] = ("majority corpus shared; outlier trio in the per-query "
-                                          "tail; tail filler drawn from topics keeping >=4 in the "
-                                          "shared prefix")
+            meta["shared_corpus_note"] = (
+                "majority corpus shared; outlier trio in the per-query "
+                "tail; tail filler drawn from topics keeping >=4 in the "
+                "shared prefix"
+            )
             r["meta"] = meta
-            out.append(annotate(r, f"{task}-{rung}-c{cid}",
-                                0 if scatter_gold else prefix_len))
+            out.append(annotate(r, f"{task}-{rung}-c{cid}", 0 if scatter_gold else prefix_len))
 
     tag = "scatter" if scatter_gold else f"tail{int(tail_frac*100):02d}"
     path = f"{out_root}/{task}/rung_{rung}_{tag}.jsonl"
@@ -632,8 +667,11 @@ def build_outlier_shared(task, rung, out_root, tail_frac=0.05,
         "shared_prefix_len": prefix_len,
         "tail_len": tail_len,
         "shared_token_fraction": round(prefix_len / ndocs, 4),
-        "topic_recovery": {"scanned": scanned, "verified_base_examples": len(used_as_base),
-                           "topics_banked": len(flat_topics)},
+        "topic_recovery": {
+            "scanned": scanned,
+            "verified_base_examples": len(used_as_base),
+            "topics_banked": len(flat_topics),
+        },
         "queries_skipped_trio_in_prefix": skipped_collide,
         "gold_placement": "ALL golds in the per-query tail (structurally unavoidable for outlier)",
         "min_majority_topic_size": min_topic_size,
@@ -657,37 +695,68 @@ def main():
     # a rewrite, and a fast rung built here has to match one built there.
     global EVAL_RUNGS, CR_DATA
 
-    p = argparse.ArgumentParser(description=__doc__,
-                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--task", required=True, choices=sorted(TASK_BUILDERS))
-    p.add_argument("--rung", type=int, required=True,
-                   help="rung size in tokens; names the output file. With --source this is a "
-                        "label only -- the bundle's xlong filenames encode a corpus size instead.")
+    p.add_argument(
+        "--rung",
+        type=int,
+        required=True,
+        help="rung size in tokens; names the output file. With --source this is a "
+        "label only -- the bundle's xlong filenames encode a corpus size instead.",
+    )
     p.add_argument("--out-root", default=OUT_ROOT_DEFAULT, required=not OUT_ROOT_DEFAULT)
-    p.add_argument("--eval-rungs", default=EVAL_RUNGS,
-                   help="root holding <task>/rung_<n>.jsonl. Ignored when --source is given.")
-    p.add_argument("--cr-data", default=CR_DATA,
-                   help="root holding the oolong source split (oolong only)")
-    p.add_argument("--queries-per-corpus", type=int, default=None,
-                   help="fixed group size; default packs greedily to fill --ndocs")
-    p.add_argument("--ndocs", type=int, default=None,
-                   help="override the corpus size. Multiplexing makes this a FREE parameter, which "
-                        "is how nq/rerank get a 32k rung at all -- their canonical CE-filtered "
-                        "pools cap at 48/100 docs per query, but a pooled corpus has no such cap.")
+    p.add_argument(
+        "--eval-rungs",
+        default=EVAL_RUNGS,
+        help="root holding <task>/rung_<n>.jsonl. Ignored when --source is given.",
+    )
+    p.add_argument(
+        "--cr-data", default=CR_DATA, help="root holding the oolong source split (oolong only)"
+    )
+    p.add_argument(
+        "--queries-per-corpus",
+        type=int,
+        default=None,
+        help="fixed group size; default packs greedily to fill --ndocs",
+    )
+    p.add_argument(
+        "--ndocs",
+        type=int,
+        default=None,
+        help="override the corpus size. Multiplexing makes this a FREE parameter, which "
+        "is how nq/rerank get a 32k rung at all -- their canonical CE-filtered "
+        "pools cap at 48/100 docs per query, but a pooled corpus has no such cap.",
+    )
     p.add_argument("--seed", type=int, default=SEED)
-    p.add_argument("--source", default=None,
-                   help="explicit source JSONL (default: the staged rung file). Used to build from "
-                        "the RECALIBRATED PubMed-only contradiction ladder, whose staged 32k rung "
-                        "is mislabeled -- it renders to ~64k tokens, see the plan doc.")
-    p.add_argument("--variant-tag", default="",
-                   help="extra tag in the output filename, e.g. '_ctc' for the recalibrated source")
-    p.add_argument("--scatter-gold", action="store_true",
-                   help="outlier POSITION CONTROL: same corpus, trio scattered uniformly instead "
-                        "of in the tail. Destroys the shared prefix on purpose -- isolates whether "
-                        "the tail placement or the rebuilt corpus drives the score difference.")
-    p.add_argument("--tail-frac", type=float, nargs="+", default=[0.05],
-                   help="Family B only: per-query tail as a fraction of the corpus. The sweep is "
-                        "0.05 (aggressive, ~20x prefill saving) and 0.25 (conservative, ~4x).")
+    p.add_argument(
+        "--source",
+        default=None,
+        help="explicit source JSONL (default: the staged rung file). Used to build from "
+        "the RECALIBRATED PubMed-only contradiction ladder, whose staged 32k rung "
+        "is mislabeled -- it renders to ~64k tokens, see the plan doc.",
+    )
+    p.add_argument(
+        "--variant-tag",
+        default="",
+        help="extra tag in the output filename, e.g. '_ctc' for the recalibrated source",
+    )
+    p.add_argument(
+        "--scatter-gold",
+        action="store_true",
+        help="outlier POSITION CONTROL: same corpus, trio scattered uniformly instead "
+        "of in the tail. Destroys the shared prefix on purpose -- isolates whether "
+        "the tail placement or the rebuilt corpus drives the score difference.",
+    )
+    p.add_argument(
+        "--tail-frac",
+        type=float,
+        nargs="+",
+        default=[0.05],
+        help="Family B only: per-query tail as a fraction of the corpus. The sweep is "
+        "0.05 (aggressive, ~20x prefill saving) and 0.25 (conservative, ~4x).",
+    )
     args = p.parse_args()
 
     EVAL_RUNGS, CR_DATA = args.eval_rungs, args.cr_data
@@ -696,10 +765,17 @@ def main():
 
     tail_fracs = args.tail_frac if args.task in ("contradiction", "outlier") else [None]
     for tf in tail_fracs:
-        kwargs = dict(task=args.task, rung=args.rung, out_root=args.out_root,
-                      queries_per_corpus=args.queries_per_corpus, seed=args.seed,
-                      target_ndocs=args.ndocs, source=args.source,
-                      variant_tag=args.variant_tag, scatter_gold=args.scatter_gold)
+        kwargs = dict(
+            task=args.task,
+            rung=args.rung,
+            out_root=args.out_root,
+            queries_per_corpus=args.queries_per_corpus,
+            seed=args.seed,
+            target_ndocs=args.ndocs,
+            source=args.source,
+            variant_tag=args.variant_tag,
+            scatter_gold=args.scatter_gold,
+        )
         if tf is not None:
             kwargs["tail_frac"] = tf
         path, manifest = TASK_BUILDERS[args.task](**kwargs)
