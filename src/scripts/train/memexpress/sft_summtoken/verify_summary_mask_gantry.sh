@@ -102,7 +102,6 @@ gantry run \
   --priority "${PRIORITY}" \
   --beaker-image "${IMAGE}" \
   --cpus "${CPUS}" \
-  --no-nfs \
   --weka "${WEKA}:/weka/${WEKA}" \
   --install "pip install -e . && pip install dataclass-extensions" \
   --allow-dirty \

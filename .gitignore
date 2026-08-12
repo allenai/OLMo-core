@@ -1,3 +1,10 @@
+debug/
+analysis/
+build/
+deprecated/
+.claude/
+records/
+
 # build artifacts
 
 .eggs/
@@ -73,6 +80,11 @@ core
 # local-only artifacts (never commit): preserved eval-score dumps + scratch configs
 /eval_results_kept/
 /configfile.txt
+
+# eval launch ledger (run-evals / pull-evals skills): a local working record of what was
+# launched and what has been pulled. The shared view of any eval is its row in ../results-hub;
+# this is the bookkeeping behind it and doesn't belong in the history.
+/records/eval_launches/
 
 # Claude Code session/memory dir
 .claude/
