@@ -20,7 +20,7 @@ from typing import Any
 import torch
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from safetensors import safe_open
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoTokenizer
 
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -48,20 +48,27 @@ def _resolve_revision(model_name_or_path: str, revision: str) -> str | None:
     return HfApi().model_info(model_name_or_path, revision=revision).sha
 
 
-def _tokenizer_config_from_qwen_hf(hf_model: str, hf_config: Mapping[str, Any]) -> TokenizerConfig:
+def _tokenizer_config_from_qwen_hf(
+    hf_model: str,
+    hf_config: Mapping[str, Any],
+    *,
+    tokenizer_name: str | None = None,
+) -> TokenizerConfig:
     text_config = hf_config.get("text_config", hf_config)
-    eos_token_id = text_config.get("eos_token_id")
+    tokenizer_name = tokenizer_name or hf_model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=False)
+    eos_token_id = tokenizer.eos_token_id
     if eos_token_id is None:
-        raise ValueError("Qwen text config is missing eos_token_id")
-    pad_token_id = text_config.get("pad_token_id")
+        raise ValueError(f"Qwen tokenizer {tokenizer_name!r} is missing eos_token_id")
+    pad_token_id = tokenizer.pad_token_id
     if pad_token_id is None:
         pad_token_id = eos_token_id
     return TokenizerConfig(
         vocab_size=int(text_config["vocab_size"]),
         eos_token_id=int(eos_token_id),
         pad_token_id=int(pad_token_id),
-        bos_token_id=text_config.get("bos_token_id"),
-        identifier=hf_model,
+        bos_token_id=tokenizer.bos_token_id,
+        identifier=tokenizer_name,
     )
 
 
@@ -455,6 +462,7 @@ def _assign_qwen_weights(
 def convert_qwen3_moe_hf_to_olmo(
     *,
     hf_model: str,
+    tokenizer_name: str | None = None,
     output_path: str | Path,
     revision: str = "main",
     cache_dir: str | None = "/workspace/checkpoint",
@@ -537,7 +545,11 @@ def convert_qwen3_moe_hf_to_olmo(
     log.info("Saving converted OLMo-core checkpoint to %s", model_and_optim_dir)
     save_model_and_optim_state(model_and_optim_dir, model, save_overwrite=save_overwrite)
 
-    tokenizer_config = _tokenizer_config_from_qwen_hf(hf_model, hf_config)
+    tokenizer_config = _tokenizer_config_from_qwen_hf(
+        hf_model,
+        hf_config,
+        tokenizer_name=tokenizer_name,
+    )
     converted = (
         "model.language_model text tower + lm_head"
         if _is_qwen35_text_config(text_config)
@@ -551,6 +563,7 @@ def convert_qwen3_moe_hf_to_olmo(
         },
         "conversion": {
             "source": hf_model,
+            "tokenizer_source": tokenizer_config.identifier,
             "requested_revision": revision,
             "resolved_revision": resolved_revision,
             "converted": converted,
@@ -575,6 +588,11 @@ def convert_qwen3_moe_hf_to_olmo(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", default="Qwen/Qwen3.6-35B-A3B")
+    parser.add_argument(
+        "--tokenizer-name",
+        default=None,
+        help="Tokenizer metadata to record; defaults to --hf-model.",
+    )
     parser.add_argument("--revision", default="main")
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--cache-dir", default="/workspace/checkpoint")
@@ -598,6 +616,7 @@ def main() -> None:
     prepare_cli_environment()
     convert_qwen3_moe_hf_to_olmo(
         hf_model=args.hf_model,
+        tokenizer_name=args.tokenizer_name,
         output_path=args.output_path,
         revision=args.revision,
         cache_dir=args.cache_dir,

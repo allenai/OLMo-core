@@ -1,4 +1,4 @@
-"""Verify logits from a converted Qwen3 MoE checkpoint against Hugging Face."""
+"""Verify logits from a converted Qwen3 or Qwen3.5 MoE checkpoint against Hugging Face."""
 
 from __future__ import annotations
 
@@ -75,6 +75,15 @@ def _capture_router_output(
     indices.append(output[1 if len(output) == 4 else 2].detach().cpu())
 
 
+def _hf_attention_module(layer: torch.nn.Module) -> torch.nn.Module:
+    """Return either a full-attention or GDN token mixer from a Qwen layer."""
+    if hasattr(layer, "self_attn"):
+        return layer.self_attn
+    if hasattr(layer, "linear_attn"):
+        return layer.linear_attn
+    raise TypeError(f"Unsupported Qwen layer type: {type(layer).__name__}")
+
+
 @torch.no_grad()
 def _load_olmo_checkpoint(checkpoint_dir: Path, model: torch.nn.Module) -> None:
     metadata = FileSystemReader(checkpoint_dir).read_metadata().state_dict_metadata
@@ -113,6 +122,7 @@ def _load_olmo_checkpoint(checkpoint_dir: Path, model: torch.nn.Module) -> None:
 def verify_logits(
     *,
     hf_model: str,
+    tokenizer_name: str | None,
     checkpoint_path: Path,
     revision: str,
     prompt: str,
@@ -128,7 +138,8 @@ def verify_logits(
     layerwise: bool = False,
     output_json: Path | None = None,
 ) -> dict[str, Any]:
-    tokenizer = AutoTokenizer.from_pretrained(hf_model, revision=revision, trust_remote_code=False)
+    tokenizer_name = tokenizer_name or hf_model
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=False)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
 
     log.info("Loading Hugging Face reference model %s", hf_model)
@@ -156,7 +167,7 @@ def verify_logits(
                 )
             )
             handles.append(
-                layer.self_attn.register_forward_hook(
+                _hf_attention_module(layer).register_forward_hook(
                     lambda _module, _args, output: hf_attention_outputs.append(
                         _first_tensor(output).detach().float().cpu()
                     )
@@ -242,6 +253,7 @@ def verify_logits(
     top1_agreement = (hf_logits.argmax(-1) == olmo_logits.argmax(-1)).float().mean().item()
     metrics: dict[str, Any] = {
         "hf_model": hf_model,
+        "tokenizer": tokenizer_name,
         "revision": revision,
         "hf_device": str(hf_device),
         "olmo_device": str(device),
@@ -329,6 +341,10 @@ def verify_logits(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", default="Qwen/Qwen3-30B-A3B-Base")
+    parser.add_argument(
+        "--tokenizer-name",
+        help="Tokenizer for the verification prompt; defaults to --hf-model.",
+    )
     parser.add_argument("--revision", default="main")
     parser.add_argument("--checkpoint-path", type=Path, required=True)
     parser.add_argument(
@@ -355,6 +371,7 @@ def main() -> None:
     prepare_cli_environment()
     verify_logits(
         hf_model=args.hf_model,
+        tokenizer_name=args.tokenizer_name,
         checkpoint_path=args.checkpoint_path,
         revision=args.revision,
         prompt=args.prompt,
