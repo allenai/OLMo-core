@@ -49,7 +49,7 @@ def main():
                     help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
     ap.add_argument("--ladder-rungs", default=None,
                     help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2", "fast"], default="v2",
                     help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
                          "500 questions/answers and only the distractor documents vary, read "
                          "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
@@ -298,7 +298,43 @@ def main():
         if not E5:
             E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
             print(f"[ladder] EVAL500_ROOT unset -> {E5} (ladder_version=v2)", flush=True)
-        if args.ladder_version == "v2":
+        # ---- FAST (shared-corpus) bundle -------------------------------------------------
+        # Many queries share one corpus, so the shared part is prefilled once. NOT comparable to a
+        # v2 number: rebuilding an eval set this way moves scores on its own (outlier +0.215/+0.261
+        # and contradiction -0.102..-0.175 for the ORIGINAL prefix+tail build; the outlier rungs
+        # here use a different construction that puts the answer back in the shared prefix). Report
+        # fast numbers in their own column, never beside a v2 one.
+        _FAST_BUNDLE = ("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
+                        "_eval_bundle_eval500_v2_fast")
+        if args.ladder_version == "fast" and not os.environ.get("EVAL500_ROOT"):
+            E5 = _FAST_BUNDLE
+            print(f"[ladder] ladder_version=fast -> {E5}", flush=True)
+
+        if args.ladder_version == "fast":
+            # Filenames encode the construction, not the corpus size: contradiction is prefix+tail
+            # with a 10% tail, outlier plants its candidates in the shared prefix and eliminates
+            # them from the tail, and nq/rerank/oolong are query-multiplexed.
+            _FAST_SUFFIX = {"contradiction": "tail10", "outlier": "planted",
+                            "nq": "mux", "rerank": "mux", "oolong": "mux"}
+            _FAST_BASE = [("8k", 8192), ("16k", 16384), ("32k", 32768)]
+            _FAST_XL = [("64k", 65536), ("128k", 131072), ("256k", 262144),
+                        ("512k", 524288), ("1M", 1048576)]
+            _rungs = _FAST_BASE + (_FAST_XL if args.xlong else [])
+            LADDERS = {}
+            for _t, _sfx in _FAST_SUFFIX.items():
+                LADDERS[_t] = [
+                    (_lab, os.path.join(E5, _t, f"rung_{_tok}_{_sfx}.jsonl"))
+                    for _lab, _tok in _rungs
+                    # rerank has no 32k rung: its CE-filtered hard-negative pool caps at k100.
+                    if not (_t == "rerank" and _lab == "32k")
+                ]
+            # ⚠ outlier's 8k rung leaks. The answer's topic is the one candidate the per-query tail
+            # does not top up, and an 8k corpus holds too few topics for that absence to hide in:
+            # guessing among the topics missing from the tail scores 0.203 there, against ~0.09
+            # chance. It decays with length (0.090 at 16k, 0.048 at 32k, 0.0015 at 1M).
+            # ⚠ oolong is eval_size=100 at every rung, a fifth of the 500 floor -- quote the size
+            # and its error bar (~±0.046 at 0.7) inline next to any oolong number from this bundle.
+        elif args.ladder_version == "v2":
             # v2: every rung of a task shares the SAME >=500 questions/answers; only the
             # distractor documents differ (built by build_v2_eval_ladders.py). ALL rungs live
             # under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle). oolong rungs are
@@ -363,7 +399,7 @@ def main():
         # The v2 oolong ladder starts at 8k because no shorter synthesized rungs existed. Added
         # conditionally so an EVAL500_ROOT without them still works. Prepended, not appended, so
         # the rungs stay in ascending length order.
-        if "oolong" in LADDERS:
+        if args.ladder_version == "v2" and "oolong" in LADDERS:
             _short = []
             for _lab, _ctx in (("2k", 2048), ("4k", 4096)):
                 _p = os.path.join(E5, "oolong", f"oolong_test_synth_ctx{_ctx}_spliteval.jsonl")
@@ -375,7 +411,7 @@ def main():
         # ---- OPT-IN ultra-long rungs (64k..2M), OFF by default ----
         # Resolved by size-labelled glob so the calibrated doc-count in the filename can drift
         # (rebuild with a different --count/tokenizer) without editing this file.
-        if args.xlong:
+        if args.xlong and args.ladder_version == "v2":
             import glob as _glob
             # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
             # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),

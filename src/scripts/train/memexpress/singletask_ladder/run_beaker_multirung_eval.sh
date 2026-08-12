@@ -52,9 +52,14 @@ BUNDLE="${BUNDLE:-$PRASANNS/_eval_bundle}"
 # v2 bundle. v1 is DISABLED (2026-07-29): its rungs each drew their own questions, so every
 # rung-to-rung delta carried eval-set resampling noise on top of the length effect. Fail loudly
 # rather than silently resolving v2 rung names against a v1 tree.
+#
+# LADDER_VERSION=fast selects the SHARED-CORPUS bundle instead: many queries share one corpus, so
+# the shared part need only be prefilled once. It is a DIFFERENT MEASUREMENT, not a cheaper route
+# to a v2 number -- report it in its own column and never beside a v2 one. Covers the five
+# in-distribution tasks at 8k-32k, plus 64k-1M with LADDER_XLONG=1.
 LADDER_VERSION="${LADDER_VERSION:-v2}"
-if [ "$LADDER_VERSION" != "v2" ]; then
-  echo "ERROR: LADDER_VERSION=$LADDER_VERSION is not supported -- v2 is the only ladder." >&2
+if [ "$LADDER_VERSION" != "v2" ] && [ "$LADDER_VERSION" != "fast" ]; then
+  echo "ERROR: LADDER_VERSION=$LADDER_VERSION is not supported -- v2 and fast are the ladders." >&2
   echo "       v1 resampled questions per rung; rebuild as v2 (build_v2_eval_ladders.py for" >&2
   echo "       2k-32k, build_xlong_rungs.py for 64k-2M) and point EVAL500 at a v2 bundle." >&2
   exit 2
@@ -70,8 +75,12 @@ fi
 # (harder, domain-homogeneous) task -- clean 256k is n6102 vs the old n6408 -- so contra numbers must
 # NOT be compared across this switch without re-running the earlier points. Set
 # EVAL500=$PRASANNS/_eval_bundle_eval500_v2 to reproduce a pre-switch run.
-EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
-VFLAG="--ladder-version v2"
+if [ "$LADDER_VERSION" = "fast" ]; then
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_fast}"
+else
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
+fi
+VFLAG="--ladder-version $LADDER_VERSION"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends 64k/128k/256k for the
 # doc-pool tasks (contra|nq|outlier), forces bs=1, and raises MAX_LENGTH so prompts aren't truncated.
 LADDER_XLONG="${LADDER_XLONG:-0}"
