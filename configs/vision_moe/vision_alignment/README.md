@@ -1,5 +1,11 @@
 # Vision alignment continued pretraining
 
+Every Beaker submission for this project, including manual CPU, GPU, training, and evaluation
+jobs, must target workspace `ai2/molmofication`. Direct YAML/spec submissions must use
+`python src/scripts/beaker_submit_vision_moe.py SPEC.yaml`; direct use of
+`beaker experiment create` is prohibited for this tree. The supported Python training launchers
+independently fail closed unless their final workspace is exactly `ai2/molmofication`.
+
 This directory owns the new vision-alignment recipe implemented by
 `src/scripts/train/Vision-Alignment.py`. It is separate from the historical
 `Molmo2-Stage1.py` and does not reuse that run's save folders, optimizer state, Tulu replay,

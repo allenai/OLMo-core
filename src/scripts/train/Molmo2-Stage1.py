@@ -605,9 +605,15 @@ def _apply_beaker_test_config(
     if unknown:
         raise ValueError(f"Unknown Beaker test launch keys: {sorted(unknown)}")
 
+    workspace = launch.get("workspace")
+    if workspace != BEAKER_WORKSPACE:
+        raise ValueError(
+            f"Beaker test launch workspace must be {BEAKER_WORKSPACE!r}, got {workspace!r}"
+        )
+
     config.launch.num_nodes = int(launch.get("num_nodes", config.launch.num_nodes))
     config.launch.num_gpus = int(launch.get("num_gpus", config.launch.num_gpus))
-    config.launch.workspace = launch.get("workspace")
+    config.launch.workspace = workspace
     hostnames = launch.get("hostnames")
     if hostnames is not None:
         if (
@@ -1087,10 +1093,15 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
-    if not config.launch.workspace or not (config.launch.clusters or config.launch.hostnames):
+    if config.launch.workspace != BEAKER_WORKSPACE:
         raise RuntimeError(
-            "Beaker workspace and placement constraints are unset. Fill the approved target in "
-            "the test config before launching; no experiment was submitted."
+            f"Beaker workspace must be {BEAKER_WORKSPACE!r}; got "
+            f"{config.launch.workspace!r}. No experiment was submitted."
+        )
+    if not (config.launch.clusters or config.launch.hostnames):
+        raise RuntimeError(
+            "Beaker placement constraints are unset. Fill the approved target in the test "
+            "config before launching; no experiment was submitted."
         )
     config.launch.launch(follow=True)
 

@@ -1,5 +1,11 @@
 # Stage 2 step-200 evaluation
 
+Every Beaker submission for this project, including CPU, GPU, training, and evaluation jobs, must
+use workspace `ai2/molmofication` through
+`python src/scripts/beaker_submit_vision_moe.py SPEC.yaml`. Direct use of
+`beaker experiment create` is prohibited; the wrapper intentionally provides no workspace
+override.
+
 These are standalone, single-node EP8 Beaker specifications for the permanent Stage-2
 step-200 checkpoint and its matched checkpoint comparisons. They target `ai2/holmes`,
 which supplies B300 GPUs, with
@@ -7,21 +13,21 @@ which supplies B300 GPUs, with
 W&B secrets.
 
 The existing specs are pinned to the immutable `vision-moe` commit that contains their
-evaluator fixes. Submit each spec to the requested workspace:
+evaluator fixes. Submit each spec through the project-scoped wrapper:
 
 ```bash
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-step200-olmes-fast \
-  configs/vision_moe/eval/stage2_step200_olmes_fast.yaml
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-step200-mmmu-pro-standard \
-  configs/vision_moe/eval/stage2_step200_mmmu_pro_standard.yaml
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-step200-mmmu-pro-vision \
-  configs/vision_moe/eval/stage2_step200_mmmu_pro_vision.yaml
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-fast-vision-checkpoint-comparison \
-  configs/vision_moe/eval/stage2_fast_vision_checkpoint_comparison.yaml
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_step200_olmes_fast.yaml \
+  --name s002-stage2-step200-olmes-fast
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_step200_mmmu_pro_standard.yaml \
+  --name s002-stage2-step200-mmmu-pro-standard
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_step200_mmmu_pro_vision.yaml \
+  --name s002-stage2-step200-mmmu-pro-vision
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_fast_vision_checkpoint_comparison.yaml \
+  --name s002-stage2-fast-vision-checkpoint-comparison
 ```
 
 The count discriminator compares candidate-normalized first-token NLL/top-1 over answers 2-10
@@ -30,12 +36,12 @@ training format on the exact same source indices as basic pointing. The spec is 
 immutable evaluator commit `771c954772413c378e36fc01dc57a3409529eafe`:
 
 ```bash
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-count-discriminator-checkpoint-comparison \
-  configs/vision_moe/eval/stage2_count_discriminator_checkpoint_comparison.yaml
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage1-parent-count-discriminator-retry \
-  configs/vision_moe/eval/stage1_parent_count_discriminator_retry.yaml
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_count_discriminator_checkpoint_comparison.yaml \
+  --name s002-stage2-count-discriminator-checkpoint-comparison
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage1_parent_count_discriminator_retry.yaml \
+  --name s002-stage1-parent-count-discriminator-retry
 ```
 
 Both specs use job-local `/results` for `TMPDIR`, avoiding shared-Weka temporary-file
@@ -49,9 +55,9 @@ The grounded final-count discriminator isolates `point_count` and compares the e
 to immutable `vision-moe` evaluator commit `717f211714cd40939598a570413d9872b6cc713b`:
 
 ```bash
-beaker experiment create -w ai2/molmofication \
-  -n s002-stage2-grounded-final-count-discriminator-checkpoint-comparison \
-  configs/vision_moe/eval/stage2_grounded_final_count_discriminator_checkpoint_comparison.yaml
+python src/scripts/beaker_submit_vision_moe.py \
+  configs/vision_moe/eval/stage2_grounded_final_count_discriminator_checkpoint_comparison.yaml \
+  --name s002-stage2-grounded-final-count-discriminator-checkpoint-comparison
 ```
 
 The predeclared GO decision requires all four gates: Stage-2 step 200 grounded

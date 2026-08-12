@@ -1,5 +1,11 @@
 # Bridge step500 promotion evidence
 
+Every Beaker submission for this project, including CPU, GPU, training, and evaluation evidence,
+must use workspace `ai2/molmofication`. Put the command in an experiment spec and submit it only
+through `python src/scripts/beaker_submit_vision_moe.py SPEC.yaml --name NAME`. Direct use of
+`beaker experiment create` is prohibited; the wrapper intentionally provides no workspace
+override.
+
 This directory documents the fail-closed promotion boundary for
 `vision-alignment-bridge-real-v1/step500`. Do not launch perception until all receipts below
 exist, the promotion bundle audits successfully, and a human has explicitly approved both

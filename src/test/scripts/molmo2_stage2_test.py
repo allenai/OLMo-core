@@ -618,12 +618,46 @@ def test_stage2_beaker_profile_rejects_invalid_hostnames(hostnames):
         stage2._apply_beaker_test_config(config, profile)
 
 
-def test_stage2_beaker_gate_refuses_an_unset_submission_target():
+@pytest.mark.parametrize("workspace", [None, "", "ai2/OLMo-core", "ai2/other"])
+def test_stage2_beaker_gate_refuses_a_noncanonical_workspace(workspace):
     stage2 = _load_stage2_module()
-    config = SimpleNamespace(launch=SimpleNamespace(workspace=None, clusters=[], hostnames=None))
+    config = SimpleNamespace(
+        launch=SimpleNamespace(workspace=workspace, clusters=["ai2/holmes"], hostnames=None)
+    )
 
-    with pytest.raises(RuntimeError, match="workspace and placement constraints are unset"):
+    with pytest.raises(RuntimeError, match="workspace must be 'ai2/molmofication'"):
         stage2.launch(config)
+
+
+def test_stage2_beaker_gate_refuses_unset_placement():
+    stage2 = _load_stage2_module()
+    config = SimpleNamespace(
+        launch=SimpleNamespace(workspace="ai2/molmofication", clusters=[], hostnames=None)
+    )
+
+    with pytest.raises(RuntimeError, match="placement constraints are unset"):
+        stage2.launch(config)
+
+
+@pytest.mark.parametrize("workspace", [None, "", "ai2/OLMo-core", "ai2/other"])
+def test_stage2_beaker_profile_refuses_a_noncanonical_workspace(workspace):
+    stage2 = _load_stage2_module()
+    config = SimpleNamespace(
+        launch=SimpleNamespace(
+            num_nodes=1,
+            num_gpus=1,
+            workspace=None,
+            clusters=[],
+            hostnames=None,
+            budget=None,
+            priority="normal",
+            min_runtime=None,
+            description=None,
+        )
+    )
+
+    with pytest.raises(ValueError, match="workspace must be 'ai2/molmofication'"):
+        stage2._apply_beaker_test_config(config, {"launch": {"workspace": workspace}})
 
 
 @pytest.mark.parametrize(

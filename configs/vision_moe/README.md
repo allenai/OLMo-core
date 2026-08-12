@@ -1,5 +1,11 @@
 # Vision-MoE launch profiles
 
+Every Beaker submission for this project, including manual CPU, GPU, training, and evaluation
+jobs, must target workspace `ai2/molmofication`. Direct YAML/spec submissions must use
+`python src/scripts/beaker_submit_vision_moe.py SPEC.yaml`; direct use of
+`beaker experiment create` is prohibited for this tree. The supported Python training launchers
+independently fail closed unless their final workspace is exactly `ai2/molmofication`.
+
 ## Vision alignment (new continued-pretraining recipe)
 
 The new [`vision_alignment/`](vision_alignment/README.md) tree is independent from the
