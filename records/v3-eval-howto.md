@@ -71,10 +71,24 @@ Add `--ladder-version v3` to any of these for the v3 ladder. 256k+ needs an 80GB
 query-after model with `both` hands it a second copy of the ask it never saw, which reads as a
 capability gap rather than a prompt mismatch.
 
-**`--tokenizer` is not optional for Qwen3.5.** It defaults to `Qwen/Qwen3-4B`, and the wrong
-tokenizer produces an all-zeros result while the job reports success — this cost a full overnight
-sweep of 27 jobs. Use `Qwen/Qwen3.5-0.8B`, **not** `Qwen3.5-4B-Base`, whose pad and eos are the same
-id.
+**Use `Qwen/Qwen3.5-0.8B` for Qwen3.5 models.** The runner now infers the family from the
+checkpoint's `config.json`, but passing it explicitly always wins and costs nothing.
+
+Two separate things here, which an earlier version of this doc ran together:
+
+- **Family must match.** A Qwen3 tokenizer on a Qwen3.5 model produces an all-zeros result *while
+  the job reports success* — this cost an overnight sweep of 27 jobs. This is the dangerous one.
+- **Base vs Instruct, not 0.8B vs 4B.** Any `-Base` repo sets `eos == pad == <|endoftext|>`
+  (248044), which trips olmo_core's `pad_token_id and eos_token_id must be different` check and
+  **crashes at startup** — loud, harmless, before any GPU work. Instruct repos keep them distinct.
+  The whole family shares one vocab, so borrowing the 0.8B tokenizer for a 4B model is safe: every
+  id is identical.
+
+Known wart, not worth blocking on: training terminates instances with `<|endoftext|>` (248044) per
+the `qwen3_5` marker set, while the instruct tokenizer's `eos` is `<|im_end|>` (248046). Decoded
+output is still trimmed correctly (the trim loop breaks on `pad_token_id`, which *is* 248044), so
+scores are unaffected — but generation does not early-terminate, and only contradiction sets
+`stop_strings`. Outlier/nq/rerank/oolong therefore run their full token budget every row.
 
 **Result files no longer collide, as of this commit.** v2 writes `<task>_multirung.json` and v3
 writes `<task>_multirung_v3.json`. Before the fix both wrote the same filename, so a v3 run
