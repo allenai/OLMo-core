@@ -70,11 +70,19 @@ def run(options: TrainOptions, argv: List[str]) -> int:
     seed_all(options.seed)
     from olmo_core.distributed.utils import init_distributed
 
-    init_distributed()
+    # GLOO alongside NCCL, matching olmo-core's own `prepare_training_environment` default. The
+    # checkpointer runs async saves and bookkeeping collectives on a CPU-capable backend so they do
+    # not block training; with NCCL alone the run dies in the checkpointer's `pre_train` with
+    # "a CPU-capable backend is required for async checkpointing" -- after the model is built.
+    init_distributed(backend="cpu:gloo,cuda:nccl")
 
     model_instance = model.build()
     train_module_instance = train_module.build(model_instance)
-    loader = data_loader.build(dataset)
+    # `ComposableDataLoaderConfig.build` takes built InstanceSources, not their configs. Handing it
+    # the config fails late and obscurely -- `TypeError: object of type
+    # 'PadToLengthInstanceSourceConfig' has no len()` from inside the loader, after the model is
+    # already on the GPU -- because a Config has no __len__ for the instance-count check.
+    loader = data_loader.build(dataset.build(work_dir))
     trainer = trainer_cfg.build(train_module_instance, loader)
     trainer.fit()
     return 0

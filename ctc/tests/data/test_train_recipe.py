@@ -50,6 +50,55 @@ def test_every_architecture_and_mode_assembles(tmp_path, arch, mode):
     assert type(dataset).__name__.startswith(expected)
 
 
+def _tiny_shards(directory: Path, *, mode: str, instances: int = 4, length: int = 64) -> str:
+    """Write the smallest shard pair the loader will accept.
+
+    :param directory: Where to write them.
+    :param mode: ``"sft"`` writes a label mask; ``"cpt"`` does not read one.
+    :param instances: How many EOS-terminated instances.
+    :param length: Tokens per instance.
+
+    :returns: The directory, as a string.
+    """
+    import numpy as np
+
+    directory.mkdir(parents=True, exist_ok=True)
+    ids = np.arange(instances * length, dtype=np.uint32) % 1000
+    ids[length - 1 :: length] = 151643  # EOS terminates every instance
+    ids.tofile(directory / "token_ids_part_000000.npy")
+    if mode == "sft":
+        mask = np.zeros(instances * length, dtype=np.bool_)
+        mask[length // 2 :: length] = True  # some answer tokens, or there is no loss
+        mask.tofile(directory / "labels_mask_part_000000.npy")
+    return str(directory)
+
+
+@pytest.mark.parametrize("mode", ["sft", "cpt"])
+def test_the_instance_source_actually_builds_from_shards(tmp_path, mode):
+    """`build_experiment` returns a source CONFIG, and the loader's `build` takes a built
+    InstanceSource. Asserting only on the config's type -- as the test above does -- let a wiring
+    bug through: `run.py` handed the config straight to the loader and died on a GPU with
+    `TypeError: object of type 'PadToLengthInstanceSourceConfig' has no len()`. Build it here, on
+    CPU, where the mistake is free to find."""
+    shards = _tiny_shards(tmp_path / "shards", mode=mode)
+    opts = options.TrainOptions(
+        run_name="t",
+        data=[options.DataSpec(shards)],
+        base="/base",
+        arch="full",
+        seq_len=64,
+        mode=mode,
+        **({"max_steps": 2} if mode == "sft" else {"max_tokens": 256}),
+    )
+    work = tmp_path / "work"
+    _, _, dataset, loader, _ = recipe.build_experiment(
+        opts, save_folder=str(tmp_path / "run"), work_dir=str(work)
+    )
+    source = dataset.build(str(work))
+    assert len(source) > 0, "a built source must report its instance count"
+    assert source.sequence_length == 64
+
+
 @pytest.mark.parametrize("arch", [a for a in ARCHES if a != "full"])
 def test_the_document_masks_get_their_marker_ids(arch):
     """Without these the mask cannot derive chunk roles and silently degrades to plain causal."""

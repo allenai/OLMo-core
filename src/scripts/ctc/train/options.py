@@ -139,6 +139,16 @@ class TrainOptions:
                 f"--seq-len {self.seq_len} must be a multiple of the landmark block size "
                 f"(mem-freq+1 = {self.mem_freq + 1})"
             )
+        # olmo-core rejects this too, but only once the trainer config is assembled -- which is
+        # after the model is built on a GPU. Lowering --save-interval for a short run and leaving
+        # the ephemeral default at 500 is the natural way to hit it, so it is checked here, for
+        # free, before anything is scheduled.
+        if self.ephemeral_save_interval >= self.save_interval:
+            raise ValueError(
+                f"--ephemeral-save-interval {self.ephemeral_save_interval} must be less than "
+                f"--save-interval {self.save_interval}; the rolling checkpoint is meant to be the "
+                f"more frequent of the two"
+            )
 
     @property
     def world_size(self) -> int:

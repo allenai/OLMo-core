@@ -90,6 +90,25 @@ def test_a_landmark_seq_len_must_fit_whole_blocks():
     )
 
 
+def test_the_ephemeral_checkpoint_must_be_the_more_frequent_one():
+    """olmo-core rejects this as well, but only after the model is built on a GPU. Lowering
+    --save-interval for a short run and leaving the ephemeral default is how you hit it."""
+    with pytest.raises(ValueError, match="must be less than"):
+        options.TrainOptions(
+            run_name="r",
+            data=[options.DataSpec("/a")],
+            max_steps=20,
+            save_interval=20,  # the ephemeral default is 500
+        )
+    options.TrainOptions(
+        run_name="r",
+        data=[options.DataSpec("/a")],
+        max_steps=20,
+        save_interval=20,
+        ephemeral_save_interval=10,
+    )
+
+
 def test_an_unknown_architecture_is_rejected():
     with pytest.raises(ValueError, match="--arch must be one of"):
         options.TrainOptions(run_name="r", data=[options.DataSpec("/a")], max_steps=1, arch="nope")
