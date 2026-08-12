@@ -60,10 +60,53 @@ line" symptom). Corollaries:
 
 ## Environment
 
-One conda env everywhere: `corpus-reasoning-olmo` (torch 2.9.1+cu128, **flash-attn 2.8.2 pinned** —
-2.8.3 has a varlen-backward SIGSEGV regression). Master copy on NFS at
-`/scratch/users/prasann/conda/envs/corpus-reasoning-olmo`; fast clones on `/data` of
-horton/mooney/cubbins/sneetches (`import transformers` 2 s vs 60 s).
+`corpus-reasoning-olmo` is the DEFAULT env (torch 2.9.1+cu128, **flash-attn 2.8.2 pinned** —
+2.8.3 has a varlen-backward SIGSEGV regression).
+
+🚨 **EVERY env exists twice: a slow NFS master and fast node-local clones. In a job, ALWAYS use the
+node-local path.** This is the single most expensive mistake on this cluster, because the slow copy
+does not fail — it *works*, just after a long stall that is indistinguishable from a hung job.
+
+| | path | `import transformers` |
+|---|---|---|
+| NFS master | `/scratch/users/prasann/conda/envs/<env>/bin/python` | ~60 s … **18 min** for an olmo_core import |
+| node-local clone | `/data/prasann/conda/envs/<env>/bin/python` | **3 s** |
+
+Clones exist on horton, mooney, cubbins, sneetches. Measured 2026-08-12 on mooney: the *same* env,
+same Python 3.12, importing `cached_path`+`transformers`+`datasets`+`olmo_core` — **3.3 s
+node-local vs ~18 min over NFS**. Two consecutive tokenize jobs were killed as "hung" before the
+interpreter path was the thing checked; diagnose with `ps -o stat,wchan,%cpu` — `Dl` +
+`rpc_wait_bit_killable` + ~1 % CPU is this and nothing else.
+
+Put a guard in the launcher rather than trusting yourself to notice:
+
+```bash
+PY=/data/prasann/conda/envs/corpus-reasoning-olmo/bin/python
+case "$PY" in /data/*) ;; *) echo "!!! interpreter not node-local"; exit 1;; esac
+```
+
+⚠ **Check for the node-local clone with a single glob.** `ls -d /net/mooney/data/*/conda/envs/*
+/net/mooney/data/*venv*` in zsh aborts the WHOLE command when *any* one pattern matches nothing —
+so an env that is present reports as absent. Glob one pattern per command, or use `setopt
+nonomatch`.
+
+⚠ **It is NOT one env for everything.** Three exist and they are not interchangeable — picking wrong
+fails 15+ minutes in, after the work is done, with a bare `ModuleNotFoundError`. Pick by what the
+script imports:
+
+| env | python | has | use for |
+|---|---|---|---|
+| `corpus-reasoning-olmo` | 3.12 | `cached_path`, transformers, numpy, **gantry** | anything importing **olmo_core** (all `convert_*` shard converters, since olmo_core pulls `cached_path`), and every gantry/beaker launch |
+| `corpus-reasoning-eval` | 3.11 | transformers, **datasets**, **openai**, **google-genai**, `corpus_reasoning` (editable) | data **generation** (`generate_*_data.py`, `build_v2_*_ladder.py`) — needs datasets/LLM clients, does NOT need olmo_core. **Lacks `cached_path`, so it cannot run the converters.** |
+| `/data/prasann/ctc_vllm_venv` | 3.11 | vllm 0.25.1, openai, transformers 5.14 | vLLM serving/eval on a node. **No `datasets`.** Needs `CUDA_HOME=/usr/local/cuda-12.8` + `PATH=$CUDA_HOME/bin:$PATH` or the flashinfer/GDN JIT kills the engine. |
+
+Rule of thumb: **generate → `-eval`; tokenize/convert/launch → `-olmo`; serve → `ctc_vllm_venv`.**
+`gantry` exists ONLY in `-olmo`; it is not on the login-node PATH by default.
+
+⚠ **The node-local repo copies are PARTIAL.** `/data/<user>/repo/OLMo-core` on mooney has only some
+of `src/scripts/` (it had `eval/` but no `data/` at all), so a job referencing a script that exists
+in the real checkout dies with `No such file or directory` after the queue wait. Sync the whole
+subtree you need before submitting, don't copy files one at a time.
 
 **All the shell-level conventions live in one master file — source it, don't copy-paste:**
 

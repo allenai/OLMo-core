@@ -125,14 +125,16 @@ fi
 # EVAL500=$PRASANNS/_eval_bundle_eval500_v2 to reproduce a pre-switch run.
 if [ "$LADDER_VERSION" = "fast" ]; then
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_fast}"
-else
-  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
-fi
-# v3: contradiction only. eval_lc_native.py reads EVAL500_CONTRA_ROOT for that one task and keeps
-# every other task on EVAL500, so the v3 bundle need not (and does not) duplicate the rest.
-if [ "$LADDER_VERSION" = "v3" ]; then
-  export EVAL500_CONTRA_ROOT="${EVAL500_CONTRA_ROOT:-$PRASANNS/_eval_bundle_eval500_v3}"
-  echo "    EVAL500_CONTRA_ROOT=$EVAL500_CONTRA_ROOT (v3: contradiction only)"
+elif [ "$LADDER_VERSION" = "v3" ]; then
+  # v3 is a SELF-CONTAINED bundle -- contra and outlier are rebuilt real directories, nq/rerank/
+  # oolong are directory symlinks to v2_clean -- so the WHOLE root moves, exactly like `fast`.
+  #
+  # This previously set only EVAL500_CONTRA_ROOT and left EVAL500 on v2_clean, back when contra was
+  # the only rebuilt task. Outlier's xlong rungs were rebuilt too (the shipped ones pinned K at 25
+  # while n grew 32x), and since line ~110 exports EVAL500_ROOT unconditionally, that stale default
+  # would have won: every task except contra would have been served v2 files under a v3 tag.
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v3}"
+  echo "    v3 bundle: contra + outlier rebuilt, nq/rerank/oolong symlinked to v2_clean"
 fi
 VFLAG="--ladder-version $LADDER_VERSION"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends the requested XLONG_RUNGS

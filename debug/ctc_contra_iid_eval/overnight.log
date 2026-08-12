@@ -1,0 +1,1310 @@
+[2026-08-12 01:39:48] === orchestrator start (waiting on slurm 3438651) ===
+[2026-08-12 01:39:48] rung build left the queue
+[2026-08-12 01:39:51]   64k n=1525 rows=500
+[2026-08-12 01:39:54]   128k n=3051 rows=500
+[2026-08-12 01:40:01]   256k n=6102 rows=500
+[2026-08-12 01:40:15]   512k n=12204 rows=500
+[2026-08-12 01:40:15] === s3 sync ===
+2026-08-11 22:50:50    8205090 contradiction_eval_pubmed_realistic_n100_k3.jsonl
+2026-08-12 01:40:20  991159407 contradiction_eval_pubmed_realistic_n12204_k3_xlong_512k.jsonl
+2026-08-12 01:40:20  123796301 contradiction_eval_pubmed_realistic_n1525_k3_xlong_64k.jsonl
+2026-08-11 22:50:50   15503726 contradiction_eval_pubmed_realistic_n190_k3.jsonl
+2026-08-12 01:40:23  247711492 contradiction_eval_pubmed_realistic_n3051_k3_xlong_128k.jsonl
+2026-08-11 22:50:50   31343255 contradiction_eval_pubmed_realistic_n385_k3.jsonl
+2026-08-12 01:40:20  495386994 contradiction_eval_pubmed_realistic_n6102_k3_xlong_256k.jsonl
+2026-08-11 22:50:50   62180349 contradiction_eval_pubmed_realistic_n765_k3.jsonl
+2026-08-11 22:50:55        413 disjointness_report.json
+2026-08-11 22:50:57       1893 iid_rung_audit.json
+[2026-08-12 01:41:02] === gantry s3 -> weka ===
+
+                                             o=======[]   
+   __ _                    _               _ |_      []   
+  / _` |  __ _    _ _     | |_      _ _   | || |     []   
+  \__, | / _` |  | ' \    |  _|    | '_|   \_, |   _/ ]_  
+  |___/  \__,_|  |_||_|   _\__|   _|_|_   _|__/   |_____| 
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_| """"| 
+ `---------------------------------------------' 
+
+Attempted to use the GitHub CLI to validate that the commit exists on the 
+remote, however it appears that it's not installed. Please ensure the GitHub CLI
+is installed to avoid this warning message.
+Experiment: prasanns/stage-v3-xlong-weka → 
+https://beaker.org/ex/01KZTJ3RN4F31Y5G019929C522
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → 
+https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+Launched stage-v3-xlong-weka: syncing s3://ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v3 -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v3
+[2026-08-12 01:41:06] weka sync submitted; waiting 10 min for it to land
+[2026-08-12 01:51:06] === yarn2 copies for 256k/512k ===
+
+                                             o=======[]   
+   __ _                    _               _ |_      []   
+  / _` |  __ _    _ _     | |_      _ _   | || |     []   
+  \__, | / _` |  | ' \    |  _|    | '_|   \_, |   _/ ]_  
+  |___/  \__,_|  |_||_|   _\__|   _|_|_   _|__/   |_____| 
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_| """"| 
+ `---------------------------------------------' 
+
+Attempted to use the GitHub CLI to validate that the commit exists on the 
+remote, however it appears that it's not installed. Please ensure the GitHub CLI
+is installed to avoid this warning message.
+Experiment: prasanns/build-yarn2-copies → 
+https://beaker.org/ex/01KZTJP82RPE4BGH4JBG0YY787
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → 
+https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+[2026-08-12 01:51:12] yarn2 copy job submitted; waiting 8 min
+[2026-08-12 01:59:12] === Pass B launches ===
+[2026-08-12 01:59:12]   Pass B v3_q35_dense_xlong_native rungs=64k,128k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 01:59:54.895	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 01:59:54.895	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-dense-xlong5-dolci25-256k variant=dense tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 01:59:55.390	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-dense-xlong5-dolci25-256k-113f578a ---
+    cmd: RUN=q35-4b-dense-xlong5-dolci25-256k TASK=contra VARIANT=dense STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-dense-xlong5-dolci25-256k/step560' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_dense_xlong_native' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='64k,128k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 01:59:56.316	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-dense-xlong5-dolci25-256k-113f578a → https://beaker.org/ex/01KZTK6B394CDTZGQ479B1GQZS
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTK6B394CDTZGQ479B1GQZS"
+  name: "ev-contra-q35-4b-dense-xlong5-dolci25-256k-113f578a"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTK6B3N412YKZJ9ZD0C3VKG"
+    experiment_id: "01KZTK6B394CDTZGQ479B1GQZS"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525199
+      nanos: 464966000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-dense-xlong5-dolci25-256k TASK=contra VARIANT=dense STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-dense-xlong5-dolci25-256k/step560\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_dense_xlong_native\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'64k,128k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525199
+    nanos: 464966000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:00:02]   Pass B v3_q35_dense_xlong_yarn2 rungs=256k,512k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 02:00:29.694	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 02:00:29.694	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-dense-xlong5-dolci25-256k variant=dense tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 02:00:30.174	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-dense-xlong5-dolci25-256k-be8723a0 ---
+    cmd: RUN=q35-4b-dense-xlong5-dolci25-256k TASK=contra VARIANT=dense STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-dense-xlong5-dolci25-256k/step560_yarn2' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_dense_xlong_yarn2' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='256k,512k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 02:00:30.837	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-dense-xlong5-dolci25-256k-be8723a0 → https://beaker.org/ex/01KZTK7CC2W49KF52GZ7QRRGBX
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTK7CC2W49KF52GZ7QRRGBX"
+  name: "ev-contra-q35-4b-dense-xlong5-dolci25-256k-be8723a0"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTK7CCB4PKRZG4Q915N0ZR1"
+    experiment_id: "01KZTK7CC2W49KF52GZ7QRRGBX"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525233
+      nanos: 537874000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-dense-xlong5-dolci25-256k TASK=contra VARIANT=dense STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-dense-xlong5-dolci25-256k/step560_yarn2\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_dense_xlong_yarn2\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'256k,512k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525233
+    nanos: 537874000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:00:36]   Pass B v3_q35_fcl_xlong_native rungs=64k,128k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 02:01:04.951	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 02:01:04.951	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-fastcomplm-xlong5-dolci25-256k variant=compressive tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 02:01:05.446	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-de28cb42 ---
+    cmd: RUN=q35-4b-fastcomplm-xlong5-dolci25-256k TASK=contra VARIANT=compressive STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k/step560' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fcl_xlong_native' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='64k,128k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 02:01:06.317	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-de28cb42 → https://beaker.org/ex/01KZTK8FG08QFWQ1PQ0QS8Y5AT
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTK8FG08QFWQ1PQ0QS8Y5AT"
+  name: "ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-de28cb42"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTK8FG5H5AEQPZ7GV1E4EAF"
+    experiment_id: "01KZTK8FG08QFWQ1PQ0QS8Y5AT"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525269
+      nanos: 503931000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-fastcomplm-xlong5-dolci25-256k TASK=contra VARIANT=compressive STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k/step560\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fcl_xlong_native\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'64k,128k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525269
+    nanos: 503931000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:01:12]   Pass B v3_q35_fcl_xlong_yarn2 rungs=256k,512k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 02:01:39.751	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 02:01:39.751	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-fastcomplm-xlong5-dolci25-256k variant=compressive tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 02:01:40.235	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-cc5720a9 ---
+    cmd: RUN=q35-4b-fastcomplm-xlong5-dolci25-256k TASK=contra VARIANT=compressive STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k/step560_yarn2' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fcl_xlong_yarn2' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='256k,512k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 02:01:40.901	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-cc5720a9 → https://beaker.org/ex/01KZTK9H6JEWENFHKXKZXE4G3B
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTK9H6JEWENFHKXKZXE4G3B"
+  name: "ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-cc5720a9"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTK9H6X6F2FRK9YPCZYS45B"
+    experiment_id: "01KZTK9H6JEWENFHKXKZXE4G3B"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525304
+      nanos: 18335000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-fastcomplm-xlong5-dolci25-256k TASK=contra VARIANT=compressive STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k/step560_yarn2\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fcl_xlong_yarn2\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'256k,512k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525304
+    nanos: 18335000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:01:46]   Pass B v3_q35_fclep1_xlong_native rungs=64k,128k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 02:02:12.833	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 02:02:12.833	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 variant=compressive tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 02:02:13.280	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-bf137e10 ---
+    cmd: RUN=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 TASK=contra VARIANT=compressive STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k-ep1/step634' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_native' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='64k,128k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 02:02:14.063	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-bf137e10 → https://beaker.org/ex/01KZTKAGXN7PESMN9A7ZJQAARP
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTKAGXN7PESMN9A7ZJQAARP"
+  name: "ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-bf137e10"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTKAGXT3CJNCBFJBECA8A1H"
+    experiment_id: "01KZTKAGXN7PESMN9A7ZJQAARP"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525336
+      nanos: 501588000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 TASK=contra VARIANT=compressive STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k-ep1/step634\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_native\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'64k,128k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525336
+    nanos: 501588000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:02:18]   Pass B v3_q35_fclep1_xlong_yarn2 rungs=256k,512k
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-12 02:02:37.230	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-12 02:02:37.231	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 variant=compressive tasks=['contra'] cluster=ai2/saturn dry_run=False ===
+2026-08-12 02:02:37.645	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [contra] ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-70411a32 ---
+    cmd: RUN=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 TASK=contra VARIANT=compressive STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k-ep1/step634_yarn2' EVAL_OUT_DIR='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_yarn2' PROMPT_FORMAT='chat' QUERY_POSITION='both' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS='256k,512k' COT_MODE='none' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-08-12 02:02:38.237	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-70411a32 → https://beaker.org/ex/01KZTKB8MPAABFB2GQ1D841MG1
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 79b969c eval: v3 ladder (contradiction train/eval IID) + … → https://github.com/allenai/OLMo-core/commit/79b969c
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01KZTKB8MPAABFB2GQ1D841MG1"
+  name: "ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-70411a32"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01KZTKB8MV2299FWR0GCK182CM"
+    experiment_id: "01KZTKB8MPAABFB2GQ1D841MG1"
+    name: "eval"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1786525360
+      nanos: 789937000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 2
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "RUN=q35-4b-fastcomplm-xlong5-dolci25-256k-ep1 TASK=contra VARIANT=compressive STEP=\'\' CKPT=\'/weka/oe-training-default/ai2-llm/checkpoints/amandab/q35-4b-fastcomplm-xlong5-dolci25-256k-ep1/step634_yarn2\' EVAL_OUT_DIR=\'/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_yarn2\' PROMPT_FORMAT=\'chat\' QUERY_POSITION=\'both\' MAX_TEST=600 MAX_LENGTH=40960 BATCH_SIZE=2 NGPU=2 LADDER_XLONG=1 XLONG_RUNGS=\'256k,512k\' COT_MODE=\'none\' LADDER_VERSION=v3 WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "79b969c01c910fef7188b04f26e933f77c5c7796"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "eval"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1786525360
+    nanos: 789937000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+
+=== done ===
+[2026-08-12 02:02:43] === orchestrator done: Pass B submitted for all 3 checkpoints ===
