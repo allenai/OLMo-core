@@ -32,7 +32,9 @@ MAX_TEST="${MAX_TEST:-600}"
 MAX_LENGTH="${MAX_LENGTH:-40960}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
-TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
+# TOKENIZER is resolved AFTER the checkpoint is known (see "infer from the checkpoint" below) --
+# deliberately NOT defaulted here. The old `${TOKENIZER:-Qwen/Qwen3-4B}` silently mis-tokenized
+# every Qwen3.5 eval, scoring 0.000 while reporting success.
 PROMPT_FORMAT="${PROMPT_FORMAT:-chat}"   # chat=SFT (apply_chat_template) | raw=BASE/CPT | alpaca=legacy
 # QUERY_POSITION must match the SFT shards the model was trained on, for the v2 ladder AND the OOD
 # probes (both render from raw unified JSONL at eval time, so this is a prompt flag, not a data one):
@@ -137,6 +139,48 @@ if [ -z "$CKPT" ] || [ ! -f "$CKPT/model_and_optim/.metadata" ]; then
   exit 2
 fi
 echo "    CKPT=$CKPT"
+
+# ---- TOKENIZER: infer from the checkpoint, don't guess a family ----------------------------
+# A wrong tokenizer does not crash. It produces valid-looking ids that decode to garbage, so every
+# rung scores ~0.000 while the job exits 0 -- one overnight sweep of 27 jobs was lost to exactly
+# this. The family is knowable from the checkpoint, so ask it instead of defaulting.
+#
+# Why not just default to Qwen3.5: 97 of the runs under prasanns/ are Qwen3 (vocab 151936,
+# tokenizer identifier "qwen3"). A bare default flip would break those the same way, in the other
+# direction. Inference is what removes the footgun; the default only covers the unknown case.
+#
+# Qwen3 vocab 151936 / eos 151643.  Qwen3.5 vocab ~248k / eos 248044.
+# NOTE Qwen3.5: use Qwen3.5-0.8B, NOT Qwen3.5-4B-Base -- the latter has pad == eos == 248044, which
+# makes generation unstoppable.
+if [ -n "${TOKENIZER:-}" ]; then
+  echo "    TOKENIZER=$TOKENIZER (explicit, overrides inference)"
+else
+  _TOK_INFER=""
+  if [ -f "$CKPT/config.json" ]; then
+    _TOK_INFER=$(python - "$CKPT/config.json" <<'PYEOF' 2>/dev/null
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+vs = (d.get("model") or {}).get("vocab_size")
+ident = (((d.get("data_loader") or {}).get("tokenizer")) or {}).get("identifier") or ""
+if "qwen3_5" in str(ident) or "qwen3.5" in str(ident).lower() or (vs and vs > 200000):
+    print("Qwen/Qwen3.5-0.8B")
+elif "qwen3" in str(ident).lower() or vs == 151936:
+    print("Qwen/Qwen3-4B")
+PYEOF
+)
+  fi
+  if [ -n "$_TOK_INFER" ]; then
+    TOKENIZER="$_TOK_INFER"
+    echo "    TOKENIZER=$TOKENIZER (inferred from $CKPT/config.json)"
+  else
+    TOKENIZER="Qwen/Qwen3.5-0.8B"
+    echo "    TOKENIZER=$TOKENIZER (DEFAULT -- could not infer from the checkpoint;"
+    echo "      pass TOKENIZER=... explicitly if this model is not Qwen3.5)"
+  fi
+fi
 
 # ---- make sure the rerank/outlier metric deps are importable (lazy scipy/sklearn) ----
 python -c "import scipy, sklearn" 2>/dev/null || pip install --quiet scipy scikit-learn || true
