@@ -15,6 +15,7 @@ __all__ = [
     "ViTMLP",
     "ViTBlock",
     "VisionTransformer",
+    "siglip_state_dict_to_vision_encoder",
 ]
 
 
@@ -325,3 +326,66 @@ class VisionTransformer(nn.Module):
                 x = block(x)
             hidden_states.append(x)
         return hidden_states
+
+
+def siglip_state_dict_to_vision_encoder(
+    hf_state: Dict[str, torch.Tensor],
+    *,
+    n_blocks: Optional[int] = None,
+    prefix: str = "",
+) -> Dict[str, torch.Tensor]:
+    """
+    Map a HuggingFace SigLIP / SigLIP2 vision-tower state dict onto
+    :class:`VisionTransformer` parameter names.
+
+    Accepts either a ``SiglipVisionTransformer`` state dict or a ``SiglipVisionModel``
+    one (whose keys carry a ``vision_model.`` prefix, stripped automatically).
+    ``post_layernorm`` and ``head.*`` are skipped: our encoder returns per-block hidden
+    states and does not model SigLIP's attention-pooling head.
+
+    :param hf_state: The HF vision-tower state dict.
+    :param n_blocks: Number of transformer blocks to emit. Defaults to every block found
+        in ``hf_state``. Pass a smaller value to load into a truncated encoder — e.g.
+        Molmo2 keeps blocks ``0..24`` of SigLIP2-SO400M's 27.
+    :param prefix: Prepended to every output key, e.g. ``"vision."`` when loading into a
+        :class:`~olmo_core.nn.vision.MultimodalLM` rather than a bare encoder.
+
+    :returns: A state dict suitable for ``load_state_dict``.
+
+    :raises KeyError: If an expected SigLIP key is absent.
+    """
+    hf_state = {k.removeprefix("vision_model."): v for k, v in hf_state.items()}
+
+    available = (
+        max((int(k.split(".")[2]) for k in hf_state if k.startswith("encoder.layers.")), default=-1)
+        + 1
+    )
+    if n_blocks is None:
+        n_blocks = available
+    elif n_blocks > available:
+        raise KeyError(f"requested {n_blocks} blocks but the state dict only has {available}")
+
+    patch_w = hf_state["embeddings.patch_embedding.weight"]
+    out: Dict[str, torch.Tensor] = {
+        # Conv2d (D, 3, p, p) -> our linear projection (D, 3 * p * p), C-first flatten.
+        f"{prefix}patch_embedding.weight": patch_w.reshape(patch_w.shape[0], -1),
+        f"{prefix}patch_embedding.bias": hf_state["embeddings.patch_embedding.bias"],
+        f"{prefix}positional_embedding": hf_state["embeddings.position_embedding.weight"],
+    }
+    for i in range(n_blocks):
+        src, dst = f"encoder.layers.{i}", f"{prefix}blocks.{i}"
+        for hf_name, ours in (("layer_norm1", "attn_norm"), ("layer_norm2", "ffn_norm")):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.{ours}.{suffix}"] = hf_state[f"{src}.{hf_name}.{suffix}"]
+        for hf_name, ours in (
+            ("q_proj", "wq"),
+            ("k_proj", "wk"),
+            ("v_proj", "wv"),
+            ("out_proj", "wo"),
+        ):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.attn.{ours}.{suffix}"] = hf_state[f"{src}.self_attn.{hf_name}.{suffix}"]
+        for hf_name, ours in (("fc1", "w1"), ("fc2", "w2")):
+            for suffix in ("weight", "bias"):
+                out[f"{dst}.ffn.{ours}.{suffix}"] = hf_state[f"{src}.mlp.{hf_name}.{suffix}"]
+    return out
