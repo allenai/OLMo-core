@@ -339,6 +339,19 @@ _FAST_LADDERS: Dict[str, Dict[str, str]] = {
         "512k": "nq/rung_524288_mux.jsonl",
         "1M": "nq/rung_1048576_mux.jsonl",
     },
+    # Generated from the wiki100w article pool, not transformed from a reliable rung: the planted
+    # construction has to know each document's topic, and the eval files strip that. The rungs
+    # match the reliable ones in corpus size but share no documents with them.
+    "outlier": {
+        "8k": "outlier/rung_8192_planted.jsonl",
+        "16k": "outlier/rung_16384_planted.jsonl",
+        "32k": "outlier/rung_32768_planted.jsonl",
+        "64k": "outlier/rung_65536_planted.jsonl",
+        "128k": "outlier/rung_131072_planted.jsonl",
+        "256k": "outlier/rung_262144_planted.jsonl",
+        "512k": "outlier/rung_524288_planted.jsonl",
+        "1M": "outlier/rung_1048576_planted.jsonl",
+    },
     # 100 rows at every rung -- a fifth of the 500 floor. Quote the size and its error bar
     # (about +/-0.046 at 0.7) inline next to any oolong number from this bundle.
     "oolong": {

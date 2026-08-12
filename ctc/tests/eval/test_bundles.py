@@ -174,10 +174,19 @@ def test_fast_reaches_1m_but_not_2m():
 
 
 def test_a_task_the_fast_bundle_cannot_construct_says_so():
-    """outlier's construction needs per-document topic labels the eval files strip. Failing with
-    the reason beats resolving to a filename nobody ever wrote."""
-    with pytest.raises(KeyError, match="no outlier"):
-        bundles.resolve("outlier", "all", root="fast")
+    """The fast bundle covers the five in-distribution ladders; the held-out four have no
+    shared-corpus construction. Failing with the reason beats resolving to a filename nobody ever
+    wrote."""
+    with pytest.raises(KeyError, match="no fiqa"):
+        bundles.resolve("fiqa", "all", root="fast")
+
+
+def test_the_fast_bundle_covers_every_in_distribution_ladder():
+    """outlier included: the planted construction replaced the prefix+tail one that could not be
+    built above the small rungs."""
+    fast = bundles.get_bundle("fast")
+    assert set(fast.ladders) == set(bundles.GROUPS["main"])
+    assert "planted" in fast.rungs_for("outlier")["1M"]
 
 
 def _args(**kwargs) -> argparse.Namespace:

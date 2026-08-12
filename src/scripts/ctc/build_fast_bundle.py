@@ -61,11 +61,34 @@ RUNG_TOKENS = {
 #: Which construction each task gets, and therefore which flags.
 FAMILY = {
     "contradiction": "prefix_tail",
-    "outlier": "prefix_tail",
+    "outlier": "planted",
     "nq": "multiplexed",
     "rerank": "multiplexed",
     "oolong": "oolong",
 }
+
+#: outlier is generated from the article pool rather than transformed from a reliable rung -- its
+#: construction needs to know each document's topic, which the eval files strip. So the rung file
+#: supplies nothing but its *size*, taken from the reliable filenames (``..._n448_..._64k``) so the
+#: fast and reliable rungs are the same length. This is the one fast task whose documents are not
+#: the reliable bundle's documents; say so on any results row.
+OUTLIER_NDOCS = {
+    "3k": 22,
+    "8k": 55,
+    "16k": 110,
+    "32k": 220,
+    "64k": 448,
+    "128k": 897,
+    "256k": 1793,
+    "512k": 3605,
+    "1M": 7209,
+}
+
+#: Staged by ``debug/fast_bundle/stage_pool_to_weka.py``; 92,268 articles, 62,187 with >=5 chunks.
+POOL_PATH = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/cr_suite_data/"
+    "wiki100w_article_pool.pkl"
+)
 
 #: oolong does not come from a rung file. Its rung files are 500 genuinely distinct contexts with
 #: one question each -- nothing to share -- while this split stores **25 questions per context**
@@ -151,6 +174,13 @@ def plan(args: argparse.Namespace):
         if task not in FAMILY:
             raise SystemExit(f"no shared-corpus construction for {task!r}; have {sorted(FAMILY)}")
 
+        if task == "outlier":
+            # Generated from the pool, so there is no source rung to resolve -- only a size.
+            for label, tokens in sorted(RUNG_TOKENS.items(), key=lambda kv: kv[1]):
+                if floor <= tokens <= ceiling and label in OUTLIER_NDOCS:
+                    out.append((task, label, Path(POOL_PATH)))
+            continue
+
         if task == "oolong":
             # Not from the bundle: see OOLONG_SOURCE. Every rung comes from one generation, so a
             # rung-to-rung difference stays a length effect.
@@ -188,10 +218,14 @@ def remote_command(args: argparse.Namespace, task: str, label: str, source: Path
     flags = [
         f"--task {task}",
         f"--rung {RUNG_TOKENS[label]}",
-        f'--source "{source}"',
         f'--out-root "{args.out_root}"',
     ]
-    if FAMILY[task] == "prefix_tail":
+    if FAMILY[task] == "planted":
+        # The pool is the source, and the rung contributes only its document count.
+        flags += [f'--pool "{source}"', f"--ndocs {OUTLIER_NDOCS[label]}"]
+    else:
+        flags.append(f'--source "{source}"')
+    if FAMILY[task] in ("prefix_tail", "planted"):
         flags.append(f"--tail-frac {args.tail_frac}")
 
     return f"""set -uo pipefail
