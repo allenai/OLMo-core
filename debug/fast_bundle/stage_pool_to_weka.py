@@ -53,7 +53,8 @@ def main() -> int:
     partial = dest.with_suffix(dest.suffix + ".partial")
     written = 0
     with open(partial, "wb") as handle:
-        for chunk in beaker.dataset.stream_file(dataset, files[0]):
+        # stream_file takes the file's PATH, not the DatasetFile object it was listed as.
+        for chunk in beaker.dataset.stream_file(dataset, files[0].path):
             handle.write(chunk)
             written += len(chunk)
     print(f"downloaded {written:,} bytes")
