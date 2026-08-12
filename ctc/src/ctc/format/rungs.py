@@ -3,7 +3,7 @@ Rung labels: the shared vocabulary for context-length ladder steps.
 
 A *rung* is a context-size budget (``"32k"`` = 32768 tokens), realised per task as however many
 documents fit that budget -- so the same rung means a different document count for every task, and
-that mapping lives in ``configs/tasks/<task>.yaml``, not here.
+that mapping lives in :data:`ctc.data.ladders.LADDERS`, not here.
 
 This module is deliberately tiny and deliberately shared. Data generation writes ``rung_<tokens>.jsonl``
 and evaluation selects it, so if the two disagreed about what ``"32k"`` means, eval would silently

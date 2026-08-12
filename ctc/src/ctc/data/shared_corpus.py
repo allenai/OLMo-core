@@ -58,6 +58,7 @@ Usage::
 Paths are arguments, not constants: the sources live on weka on Beaker and under a staged copy
 locally, and a builder that hardcodes one of those silently writes to the wrong filesystem.
 """
+
 import argparse
 import collections
 import hashlib

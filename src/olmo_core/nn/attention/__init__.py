@@ -746,7 +746,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
                 f"supported with dilated_sliding_window attention (got name='{self.name}')"
             )
-        if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
+        if (
+            full_attention_layers is not None
+            and AttentionType.document_chunked not in possible_types
+        ):
             raise OLMoConfigurationError(
                 "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
                 f"document_chunked attention (got name='{self.name}')"

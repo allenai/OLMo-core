@@ -41,9 +41,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 from olmo_core.distributed.utils import get_rank
 from olmo_core.exceptions import OLMoConfigurationError
 
-from . import (
-    Attention,  # base mixer (defined before the end-of-module import in __init__)
-)
+from . import Attention  # base mixer (defined before the end-of-module import in __init__)
 from .kv_cache import KVCacheManager
 from .landmark import (
     build_block_doc_id,

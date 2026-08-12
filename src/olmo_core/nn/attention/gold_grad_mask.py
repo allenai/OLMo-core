@@ -54,7 +54,7 @@ import hashlib
 import random
 import types
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Union
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 import torch
 

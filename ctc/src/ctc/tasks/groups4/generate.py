@@ -18,7 +18,7 @@ merge or touch, and each gold group is G distinct values inside a span of X arou
    That stays exact: for a 1-D set "all pairwise distances <= X" is equivalent to "fits in one span
    of width X", so capping each point's within-X neighbour count at G-2 before insertion caps every
    span at G-1 after it, and no accidental G-clique can form.
-   :func:`ctc.data.audit.shortcuts.closest_pair_is_gold` guards this on every build.
+   :func:`ctc.data.audit.closest_pair_is_gold` guards this on every build.
 """
 
 from __future__ import annotations

@@ -36,8 +36,6 @@ from typing import Optional, Tuple
 
 import torch
 
-from .landmark_prefill_topk import landmark_topk_thresholds
-
 __all__ = [
     "landmark_topk_prefill_sparse",
     "selection_stats",

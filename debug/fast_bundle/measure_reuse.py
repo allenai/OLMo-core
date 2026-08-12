@@ -39,17 +39,20 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=60, help="rows per file (tokenizing is the cost)")
     args = ap.parse_args()
 
+    from transformers import AutoTokenizer
+
     import ctc.tasks
     from ctc.eval import bundles
     from ctc.eval.prefix_cache import group_by_corpus, longest_common_token_prefix
     from ctc.format import registry
-    from transformers import AutoTokenizer
 
     ctc.tasks.load_all()
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
 
-    print(f"{'file':<34} {'position':<8} {'groups':>6} {'shared tok':>11} {'of prompt':>10} "
-          f"{'prefill left':>13}")
+    print(
+        f"{'file':<34} {'position':<8} {'groups':>6} {'shared tok':>11} {'of prompt':>10} "
+        f"{'prefill left':>13}"
+    )
     for path in [Path(p) for p in args.files]:
         # The ladder name is not the grading spec: nq is graded by 'retrieval'.
         spec = registry.get(bundles.get(ladder_from(path)).spec)
@@ -77,8 +80,10 @@ def main() -> int:
                 fed += common + sum(len(s) - common for s in seqs)
             mean_common = shared_tokens / max(1, len(groups))
             mean_len = total / max(1, len(ids))
-            print(f"{path.name:<34} {position:<8} {len(groups):>6} {mean_common:>11,.0f} "
-                  f"{mean_common / mean_len:>9.1%} {fed / max(1, total):>12.1%}")
+            print(
+                f"{path.name:<34} {position:<8} {len(groups):>6} {mean_common:>11,.0f} "
+                f"{mean_common / mean_len:>9.1%} {fed / max(1, total):>12.1%}"
+            )
     return 0
 
 

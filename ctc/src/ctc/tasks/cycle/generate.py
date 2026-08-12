@@ -22,7 +22,7 @@ endpoints), so the planted chain is the unique completion of each closing edge.
    (``records/ctc-setting-verification-2026-07-23.md``). The fix is the ``in_same_block`` exclusion
    below, which is the *only* restriction on background edges. A rewrite that reintroduces a
    separate distractor pool silently restores the shortcut, which is why
-   :func:`ctc.data.audit.shortcuts.cycle_frequency_gap` runs on every build.
+   :func:`ctc.data.audit.cycle_frequency_gap` runs on every build.
 """
 
 from __future__ import annotations
@@ -38,9 +38,7 @@ __all__ = ["build_example", "GENERATOR"]
 
 #: Distinct first names. Examples needing more draw readable ``Name_<k>`` fallbacks. Names must be
 #: unique: two entities sharing one would merge in the graph and break the exactly-K invariant.
-NAMES: Tuple[str, ...] = tuple(
-    dict.fromkeys(
-        """
+NAMES: Tuple[str, ...] = tuple(dict.fromkeys("""
 Bob Jane Dan Alice Carlos Mei Omar Priya Liam Nina Hugo Sara Kofi Yuki Ivan Lena
 Pablo Aisha Tom Greta Raj Elsa Noah Fatima Erik Zoe Sven Maya Paolo Rosa Ahmed
 Clara Diego Hana Felix Ingrid Jamal Kira Luca Mira Nadia Oscar Petra Quinn Rosa
@@ -48,9 +46,7 @@ Theo Uma Viktor Wen Xena Yara Zane Anya Bruno Cleo Dora Enzo Faye Gus Halle Igor
 Jada Kai Lara Milo Nora Otto Pia Remy Suki Tariq Vera Will Xavi Yusuf Zara Aldo
 Bea Cyrus Dina Esme Finn Gita Hiro Iris Juno Kane Lily Marco Nia Olen Posy Rune
 Said Tess Ugo Val Wade Xia Yael Zeb
-""".split()
-    )
-)
+""".split()))
 
 PREDICATES: Tuple[str, ...] = (
     "{a} eats more chicken than {b}",

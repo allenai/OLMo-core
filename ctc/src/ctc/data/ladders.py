@@ -15,8 +15,9 @@ that axis was plotted against the wrong x.
 So each row records how it was calibrated, and ``estimated`` rows are exactly the ones to re-measure
 before quoting a length. The authority for un-ported tasks remains
 ``src/scripts/data/ctc_suite/BUILD_MATRIX.md`` in the pre-migration tree; rows land here as their
-generators do. Contradiction's corrected row currently lives in its spec's
-``extra["claims_per_rung"]`` and should move here when that generator is ported.
+generators do. This module is the single source: contradiction's spec derives its
+``CLAIMS_PER_RUNG`` -- and hence its ``extra["claims_per_rung"]`` -- from the row below rather than
+declaring a copy. That ladder has already been wrong once, and two copies of it drift.
 """
 
 from __future__ import annotations

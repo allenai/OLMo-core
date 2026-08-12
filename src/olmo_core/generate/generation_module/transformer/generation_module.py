@@ -585,9 +585,7 @@ class TransformerGenerationModule(GenerationModule):
         """True if every landmark layer supports the right-padded cross-length batched decode
         (:meth:`generate_landmark_batch`)."""
         layers = self._landmark_attention_layers()
-        return bool(layers) and all(
-            getattr(a, "_supports_ragged_decode", False) for a in layers
-        )
+        return bool(layers) and all(getattr(a, "_supports_ragged_decode", False) for a in layers)
 
     @torch.inference_mode()
     def generate_landmark_batch(
@@ -639,7 +637,9 @@ class TransformerGenerationModule(GenerationModule):
         mem_freq = mem_freqs.pop()
         block_size = mem_freq + 1
         mem_id = gen_cfg.landmark_mem_id
-        pad_id = gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        pad_id = (
+            gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        )
         eos = gen_cfg.eos_token_id
         dev = self.device
         B = len(prompts)

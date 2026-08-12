@@ -14,7 +14,7 @@ Note this is the *strict* construction that :mod:`ctc.tasks.groups4` deliberatel
 distractors here really are isolated, so "the two closest values" is a reliable gold detector for
 K=1. That is acceptable because mathmatch's difficulty is meant to come from N and from evaluating
 the arithmetic, not from decoy density -- but it means the closest-pair shortcut probe is expected
-to fire on this task, and :mod:`ctc.data.audit.shortcuts` records it as a known property rather
+to fire on this task, and :mod:`ctc.data.audit` records it as a known property rather
 than a finding.
 """
 

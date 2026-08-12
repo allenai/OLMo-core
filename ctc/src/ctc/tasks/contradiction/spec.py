@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Optional, Sequence
 
+from ...data.ladders import LADDERS
 from ...format import assemble, metrics, parsing
 from ...format.prompts import CONTRADICTION_INSTRUCTION, GENERIC_INSTRUCTION
 from ...format.registry import TaskSpec
@@ -52,7 +53,12 @@ from ...format.registry import TaskSpec
 #: The refit lands within a few documents of the ORIGINAL ladder (40/88/190/385/765), which was
 #: calibrated on real PubMed and was right all along -- the intermediate "fix" only looked
 #: necessary because the pool was contaminated.
-CLAIMS_PER_RUNG = {"2k": 44, "4k": 92, "8k": 187, "16k": 379, "32k": 762}
+#:
+#: **Derived, not declared.** :data:`ctc.data.ladders.LADDERS` is what the builder actually reads,
+#: so a literal here would be a second copy of a number that has already been wrong once -- and the
+#: copy the tests pin, while the build used the other. Deriving makes drift impossible rather than
+#: merely detectable.
+CLAIMS_PER_RUNG: Dict[str, int] = dict(LADDERS["contradiction"])
 
 
 def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[List[int]]]:

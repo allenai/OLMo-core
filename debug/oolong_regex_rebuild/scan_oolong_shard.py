@@ -91,9 +91,7 @@ def main() -> None:
         examples = examples[: args.max_examples]
 
     per = [scan_example(e) for e in examples]
-    total = {
-        k: sum(d[k] for d in per) for k in ("chunks", "leak_gaps", "leak_tokens")
-    }
+    total = {k: sum(d[k] for d in per) for k in ("chunks", "leak_gaps", "leak_tokens")}
     n_ex = len(examples)
     summary: Dict[str, object] = {
         "shard": args.shard,
