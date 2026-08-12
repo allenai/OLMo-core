@@ -112,7 +112,7 @@ works too, for a staged local copy.
 |---|---|---|
 | `v2_clean` | reliable | **default.** The v2 ladder with contradiction rebuilt against a PubMed-only filler pool and its rungs recalibrated. |
 | `v2` | reliable | The original v2 ladder. Kept because existing results — including the 256k runs — were produced against it. |
-| `fast` | fast | Shared-corpus rungs, 8k–1M, for contradiction / nq / rerank. Cheaper on contradiction; **not comparable to a reliable number.** See below. |
+| `fast` | fast | Shared-corpus rungs, 8k–1M, for contradiction / nq / rerank / oolong. Cheaper on contradiction; **not comparable to a reliable number.** See below. |
 
 **Bundles are not interchangeable, and this is the one thing to get right.** The same rung label
 maps to *different files with different corpus sizes*: contradiction's 64k rung is `n=1602` in `v2`
@@ -187,26 +187,46 @@ Many queries share one corpus, so the shared part is prefilled once and its KV r
 cost. The reuse is measured and printed per rung rather than assumed, and falls back to plain
 prefills when there is nothing to share.
 
-**Coverage is 8k–1M, and only three tasks:**
+**Coverage is 8k–1M, over four tasks:**
 
-| task | construction | shared | what you get |
+| task | construction | shared | eval_size |
 |---|---|---|---|
-| contradiction | prefix + per-query tail, 10% tail | 90% of the prefill | genuinely ~10× cheaper |
-| nq | query-multiplexed | 100% of the *documents* | corpus count drops ~30×, compute does not |
-| rerank | query-multiplexed | 100% of the *documents* | same |
+| contradiction | prefix + per-query tail, 10% tail | 90% of the prefill | 500 |
+| nq | query-multiplexed | 100% of the documents | 500 |
+| rerank | query-multiplexed | 100% of the documents | 500 |
+| oolong | already 25 questions per context | 100% of the documents | **100 ⚠** |
 
-The multiplexed pair is the disappointing case and it is worth knowing why before you reach for
-it. These checkpoints train with `query_position="both"`, which renders
-`{questions}\n\n{documents}\n\n{questions}` — the per-query question comes *before* the corpus, so
-a byte-identical document block is not a *token* prefix and there is nothing to reuse. Measured
-reusable prefix: nq 0.5%, rerank 0.9%. The obvious fix is not available: `query_position="after"`
-makes the corpus a true prefix and collapses the model (nq 0.860 → 0.074).
+**oolong's 100 rows are a fifth of the 500 floor** — quote the size and its error bar (SE ≈ ±0.046
+at 0.7) inline next to any oolong number from this bundle. It earns its place anyway: the build is
+a pure regrouping of a split that already stores 25 questions per context, so the file's *content*
+is identical to the independent one and only the row order changes. That makes it the correctness
+gate for KV reuse — a content-identical variant whose score moves means the cache path is wrong.
 
-**`outlier` and `oolong` are absent.** outlier's construction needs per-document topic labels that
-the eval files strip; the clustering that recovers them has to reproduce the corpus's whole topic
-size multiset exactly, and it passes that gate **2/25 of the time at 32k and 0/25 below** — so it
-gets harder, not easier, at 1M. Unblocking it means emitting labels from the generator. oolong's
-shared file comes from a source split with no ultra-long member.
+### How much prefill you actually save depends on `query_position`
+
+Shared documents are not shared tokens. Measured on the built files with the Qwen3 tokenizer
+(`debug/fast_bundle/measure_reuse.py`, no GPU needed):
+
+| rung | `both` shared prefix | `after` shared prefix | prefill left, `both` → `after` |
+|---|---|---|---|
+| nq @8k | 66 tok (0.9%) | 7,298 tok (99.6%) | 99.2% → **13.5%** |
+| rerank @16k | 85 tok (1.0%) | 8,809 tok (99.5%) | 99.2% → **11.7%** |
+| contradiction @8k | 14,514 tok (90.6%) | 14,432 tok (90.5%) | 11.0% → 11.0% |
+
+`both` renders `{questions}\n\n{documents}\n\n{questions}`, so the per-query question sits ahead of
+the corpus and the identical document block is not a token *prefix*. Under `after` the corpus is
+the prefix and the multiplexed tasks go from **no saving at all to ~7–8×**. contradiction is
+unaffected either way — its question block is empty, so it already had ~90%.
+
+So the multiplexed half of this bundle is built for models trained with the question after the
+context. The data is already correct for that; nothing needs rebuilding when those checkpoints
+arrive. Grading a checkpoint trained with `both` under `after` still collapses it (nq 0.860 →
+0.074), so `--query-position` must match training, as always.
+
+**`outlier` is the one task absent.** Its construction needs per-document topic labels that the
+eval files strip; the clustering that recovers them has to reproduce the corpus's whole topic-size
+multiset exactly, and it passes that gate **2/25 of the time at 32k and 0/25 below** — so it gets
+harder, not easier, at 1M. Unblocking it means emitting topic labels from the generator.
 
 ### A fast number is a different measurement
 
