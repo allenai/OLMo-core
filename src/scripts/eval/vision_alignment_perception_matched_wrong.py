@@ -65,6 +65,17 @@ EXPECTED_FREEZE = ("lm.embedding_norm.*", "lm.blocks.*", "lm.lm_head.*")
 EXPECTED_PROFILE_PAIR_RECEIPT_SHA256 = (
     "5c7d9f3b2a882ed3147ca239eaaf00e9089d8e47c552a5cd19c351fdd806ea04"
 )
+_PAIRING_REQUIRED_MODEL_FIELDS = (
+    "input_ids",
+    "labels",
+    "loss_masks",
+    "position_ids",
+    "token_type_ids",
+    "images",
+    "pooled_patches_idx",
+)
+_PAIRING_OPTIONAL_MODEL_FIELDS = ("subsegment_ids",)
+_PAIRING_IGNORED_FIELDS = frozenset({"metadata"})
 
 
 def _load_bridge_helpers() -> ModuleType:
@@ -78,6 +89,62 @@ def _load_bridge_helpers() -> ModuleType:
 
 
 bridge = _load_bridge_helpers()
+
+
+def _project_model_input_example(example: Any, *, index: int) -> dict[str, Any]:
+    """Drop only diagnostic metadata while validating the canonical model-input schema."""
+    if not isinstance(example, Mapping):
+        raise TypeError(f"Perception validation row {index} is not a mapping")
+    fields = set(example)
+    missing = sorted(set(_PAIRING_REQUIRED_MODEL_FIELDS) - fields)
+    if missing:
+        raise ValueError(f"Perception validation row {index} is missing model fields {missing}")
+    supported = (
+        set(_PAIRING_REQUIRED_MODEL_FIELDS)
+        | set(_PAIRING_OPTIONAL_MODEL_FIELDS)
+        | _PAIRING_IGNORED_FIELDS
+    )
+    unknown = fields - supported
+    if unknown:
+        raise ValueError(
+            f"Perception validation row {index} has unsupported non-model fields "
+            f"{sorted(unknown, key=str)}"
+        )
+    model_fields = list(_PAIRING_REQUIRED_MODEL_FIELDS)
+    model_fields.extend(field for field in _PAIRING_OPTIONAL_MODEL_FIELDS if field in example)
+    return {field: example[field] for field in model_fields}
+
+
+class _PairingModelInputDataset:
+    """Expose exactly the fields consumed by the canonical multimodal collator.
+
+    Perception adapters attach a diagnostic ``metadata`` mapping. The immutable bridge pairing
+    format describes array/tensor fields only, so that mapping cannot be serialized as an array.
+    Projecting through the canonical serialized-example contract keeps every model-consumed field
+    byte-bound by bridge pairing construction and replay, rejects any unknown field, and drops only
+    metadata that :class:`MultimodalCollator` does not consume.
+    """
+
+    def __init__(self, dataset: Any):
+        self.dataset = dataset
+
+    def __len__(self) -> int:
+        return len(self.dataset)
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        return self.get(index, 0)
+
+    def get(self, index: int, epoch: int = 0) -> dict[str, Any]:
+        get = getattr(self.dataset, "get", None)
+        example = get(index, epoch) if callable(get) else self.dataset[index]
+        return _project_model_input_example(example, index=index)
+
+    def validate_image_content(self, indices: Sequence[int] | None = None) -> str:
+        """Delegate raw image-byte validation to the provenance-selected dataset."""
+        validate = getattr(self.dataset, "validate_image_content", None)
+        if not callable(validate):
+            raise ValueError("Perception validation dataset lacks live image-content validation")
+        return str(validate(indices))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1289,14 +1356,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         ):
             raise ValueError("Perception provenance PixMoCap path differs from checkpoint")
         datasets = {
-            source: build_selected_perception_dataset(
-                manifest,
-                tokenizer,
-                token_ids,
-                source,
-                logical_split="validation",
-                validate_required_annotations=True,
-                verify_finevision_materialization=False,
+            source: _PairingModelInputDataset(
+                build_selected_perception_dataset(
+                    manifest,
+                    tokenizer,
+                    token_ids,
+                    source,
+                    logical_split="validation",
+                    validate_required_annotations=True,
+                    verify_finevision_materialization=False,
+                )
             )
             for source in PERCEPTION_SOURCE_NAMES
         }

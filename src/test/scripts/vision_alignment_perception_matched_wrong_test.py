@@ -7,7 +7,9 @@ import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
+import torch
 
 
 def _load_module():
@@ -89,6 +91,114 @@ def test_json_loader_hashes_the_same_strict_byte_snapshot(tmp_path):
     artifact.write_bytes(b'{"value":1,"value":2}\n')
     with pytest.raises(ValueError, match="repeats key"):
         module._load_json_bytes(artifact, name="artifact")
+
+
+def _model_example(*, image_value: float, metadata):
+    return {
+        "input_ids": np.asarray([1, 2, 3], dtype=np.int64),
+        "labels": np.asarray([2, 3, -100], dtype=np.int64),
+        "loss_masks": np.asarray([1.0, 1.0, 0.0], dtype=np.float32),
+        "position_ids": np.asarray([0, 1, 2], dtype=np.int64),
+        "token_type_ids": np.asarray([0, 0, 0], dtype=np.int64),
+        "images": np.full((1, 2, 3), image_value, dtype=np.float32),
+        "pooled_patches_idx": np.asarray([[0, 1]], dtype=np.int64),
+        "metadata": metadata,
+    }
+
+
+class _MetadataDataset:
+    def __init__(self, examples):
+        self.examples = examples
+        self.validated_indices = []
+
+    def __len__(self):
+        return len(self.examples)
+
+    def get(self, index, epoch=0):
+        assert epoch == 0
+        return self.examples[index]
+
+    def validate_image_content(self, indices=None):
+        self.validated_indices.append(indices)
+        return "a" * 64
+
+
+def test_pairing_projection_drops_only_metadata_and_delegates_image_validation():
+    module = _load_module()
+    raw = _model_example(
+        image_value=1.0,
+        metadata={"original_length": 1268, "truncated": False},
+    )
+    base = _MetadataDataset([raw])
+    dataset = module._PairingModelInputDataset(base)
+
+    projected = dataset.get(0)
+    assert set(projected) == set(raw) - {"metadata"}
+    assert all(projected[field] is raw[field] for field in projected)
+    assert dataset.validate_image_content() == "a" * 64
+    assert base.validated_indices == [None]
+
+
+def test_pairing_projection_rejects_unknown_fields():
+    module = _load_module()
+    raw = _model_example(image_value=1.0, metadata={})
+    raw["unversioned_control"] = np.asarray([1], dtype=np.int64)
+
+    with pytest.raises(ValueError, match="unsupported non-model fields.*unversioned_control"):
+        module._PairingModelInputDataset(_MetadataDataset([raw])).get(0)
+
+
+def test_metadata_mutation_cannot_change_projected_collated_batch():
+    module = _load_module()
+    raw = _model_example(image_value=1.0, metadata={"original_length": 3})
+    dataset = module._PairingModelInputDataset(_MetadataDataset([raw]))
+    collator = module.MultimodalCollator(pad_token_id=0, pad_sequence_length=3)
+    before = collator([dataset.get(0)])
+
+    raw["metadata"] = {"original_length": 999999, "nested": {"arbitrary": object()}}
+    after = collator([dataset.get(0)])
+
+    assert set(before) == set(after)
+    assert all(torch.equal(before[field], after[field]) for field in before)
+
+
+def test_projected_dataset_builds_and_replays_pairing_after_metadata_drift():
+    module = _load_module()
+    examples = [
+        _model_example(image_value=1.0, metadata={"row": 0}),
+        _model_example(image_value=2.0, metadata={"row": 1}),
+    ]
+    dataset = module._PairingModelInputDataset(_MetadataDataset(examples))
+    payload = module.build_matched_wrong_image_pairing(
+        dataset,
+        recipient_count=2,
+        seed=6198,
+        content_ids=("1" * 64, "2" * 64),
+        epoch=0,
+    )
+    digest = module.matched_wrong_image_pairing_sha256(payload)
+
+    examples[0]["metadata"] = {"row": "mutated", "arbitrary": object()}
+    examples[1]["metadata"] = None
+    correct = module.bridge.MultimodalFixedValidationDataset(
+        dataset, pairing=payload, pairing_sha256=digest
+    )
+    wrong = module.bridge.MultimodalMatchedWrongImageDataset(
+        dataset, pairing=payload, pairing_sha256=digest
+    )
+
+    for index, pair in enumerate(payload["pairs"]):
+        correct_example = correct[index]
+        wrong_example = wrong[index]
+        donor = dataset.get(pair["donor"])
+        assert "metadata" not in correct_example
+        assert "metadata" not in wrong_example
+        assert np.array_equal(wrong_example["images"], donor["images"])
+        assert all(
+            np.array_equal(correct_example[field], wrong_example[field])
+            for field in correct_example
+            if field != "images"
+        )
 
 
 def test_pairing_preparation_selects_largest_common_batch_multiple(tmp_path, monkeypatch):
