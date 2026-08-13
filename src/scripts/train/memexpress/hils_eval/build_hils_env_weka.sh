@@ -176,8 +176,12 @@ if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ] || [ ! -f "$CUDA12_PREFIX/include/cuda_run
 import json, sys
 d = json.load(open(sys.argv[1]))
 base = "https://developer.download.nvidia.com/compute/cuda/redist/"
-# cuda_cudart is not optional: nvcc alone cannot compile a kernel that includes cuda_runtime.h.
-for comp in ("cuda_nvcc", "cuda_cudart"):
+# The minimal set to compile a cutlass/tilelang kernel, each added because its absence was an
+# actual compile failure here:
+#   cuda_nvcc   -- the compiler
+#   cuda_cudart -- cuda_runtime.h / cuda_fp16.h  ("fatal error: cuda_runtime.h")
+#   cuda_cccl   -- libcu++: nv/target, cuda/std/* ("fatal error: nv/target")
+for comp in ("cuda_nvcc", "cuda_cudart", "cuda_cccl"):
     print(base + d[comp]["linux-x86_64"]["relative_path"])
 PY
 ) || { echo "    FATAL: could not parse $MANIFEST"; exit 1; }
@@ -192,7 +196,7 @@ PY
   for d in /tmp/cuda_redist/*-archive; do cp -a "$d"/. "$CUDA12_PREFIX"/; done
   rm -rf /tmp/cuda_redist
 fi
-for f in bin/nvcc include/cuda_runtime.h; do
+for f in bin/nvcc include/cuda_runtime.h include/nv/target; do
   [ -e "$CUDA12_PREFIX/$f" ] || { echo "[build-env] FATAL: $CUDA12_PREFIX/$f missing after install"; exit 1; }
 done
 
