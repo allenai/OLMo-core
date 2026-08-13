@@ -159,7 +159,13 @@ export CUDA12_PREFIX
 # cuda_cudart leaves a prefix that HAS bin/nvcc and passes a nvcc-only guard, while every kernel
 # compile then dies on `fatal error: cuda_runtime.h: No such file or directory`. That exact
 # sequence produced four bogus "tilelang rejected" verdicts (jobs ...gpu5 / ...gpu6).
-if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ] || [ ! -f "$CUDA12_PREFIX/include/cuda_runtime.h" ]; then
+# ONE list, used both to decide whether to (re)install and to verify afterwards. When these two
+# checks disagreed, a prefix missing only the newly-required header passed the trigger (so no
+# reinstall) and then failed the verification -- an unfixable-looking FATAL on every rerun.
+CUDA_REQUIRED_FILES="bin/nvcc include/cuda_runtime.h include/nv/target"
+_cuda_ok=1
+for f in $CUDA_REQUIRED_FILES; do [ -e "$CUDA12_PREFIX/$f" ] || _cuda_ok=0; done
+if [ "$_cuda_ok" != "1" ]; then
   rm -rf "$CUDA12_PREFIX"
   echo "[build-env] installing the CUDA $CUDA_REDIST_MANIFEST toolchain -> $CUDA12_PREFIX"
   mkdir -p "$CUDA12_PREFIX" /tmp/cuda_redist
@@ -196,7 +202,7 @@ PY
   for d in /tmp/cuda_redist/*-archive; do cp -a "$d"/. "$CUDA12_PREFIX"/; done
   rm -rf /tmp/cuda_redist
 fi
-for f in bin/nvcc include/cuda_runtime.h include/nv/target; do
+for f in $CUDA_REQUIRED_FILES; do
   [ -e "$CUDA12_PREFIX/$f" ] || { echo "[build-env] FATAL: $CUDA12_PREFIX/$f missing after install"; exit 1; }
 done
 
