@@ -147,7 +147,9 @@ def main():
     ap.add_argument("--ngpu", type=int, default=8)
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
-    ap.add_argument("--batch-size", type=int, default=8)
+    # 4, not 8: the hf backend has no chunked prefill, and a 7B at the 32k rung with batch 8 sits
+    # close enough to 80 GB that the control OOM'd there. Batch size changes speed, not scores.
+    ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--priority", default="urgent")
     ap.add_argument("--ladder-version", default="v2", choices=["v2", "v3", "fast"])
     ap.add_argument("--xlong", action="store_true", help="add the ultra-long rungs.")

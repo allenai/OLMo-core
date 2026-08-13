@@ -28,6 +28,7 @@ TORCH_VERSION="${TORCH_VERSION:-2.8.0}"          # the HiLS pin
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
 TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-4.57.3}"   # the HiLS pin
 VEOMNI_REF="${VEOMNI_REF:-441e1b2483921e9cfe56c8d97541a23cb4b290a8}"
+FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.8.3}"   # the HiLS pin
 # Newest first; the first one that COMPILES A REAL KERNEL wins. The HiLS requirements.txt pins a
 # git sha instead, which is a 20-40 min source build needing LLVM -- not worth it if a wheel works.
 # NOTE the ordering trap: sorted() on PyPI's version strings puts "0.1.13" BEFORE "0.1.6"
@@ -78,10 +79,12 @@ echo "[build-env] torch $TORCH_VERSION from $TORCH_INDEX"
 uv pip install "torch==$TORCH_VERSION" --index-url "$TORCH_INDEX"
 
 echo "[build-env] transformers + our eval deps"
-# flash-attn is deliberately NOT installed: there is no wheel for this torch/python pair, so pip
-# would compile it for 30+ minutes, and nothing here needs it. The HiLS sparse path is tilelang;
-# flash-attn would only serve the interleaved DENSE layers, which run fine on sdpa. That is a
-# speed choice, not a semantic one.
+# flash-attn IS needed after all, and not for speed. Without it the dense layers fall back to sdpa,
+# and transformers then materializes a (B, 1, T, T) attention mask because our prompts are padded:
+# at the 32k rung with batch 8 that is ~17 GB per attention call, and the control OOM'd on 80 GB
+# H100s within two minutes (job 01KZY8Q1C6CW8N5SGRQCAMMA20). FA2 takes the varlen path and never
+# builds the mask. Use the PREBUILT wheel for this exact torch/python/ABI -- building from source
+# takes 30+ minutes per attempt.
 # nvidia-cuda-nvrtc-cu12 only (torch vendors it already; belt and braces). The nvcc COMPILER does
 # not come from pip -- see the CUDA 12 redist block below for why.
 uv pip install \
@@ -89,6 +92,13 @@ uv pip install \
   einops accelerate safetensors huggingface_hub \
   numpy tqdm scipy scikit-learn \
   nvidia-cuda-nvrtc-cu12
+
+# The ABI suffix must match how torch itself was built, or the extension fails to load with an
+# undefined-symbol error at import rather than at install.
+FA_ABI=$(python -c "import torch; print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
+FA_WHEEL="https://github.com/Dao-AILab/flash-attention/releases/download/v$FLASH_ATTN_VERSION/flash_attn-$FLASH_ATTN_VERSION+cu12torch2.8cxx11abi$FA_ABI-cp311-cp311-linux_x86_64.whl"
+echo "[build-env] flash-attn $FLASH_ATTN_VERSION (cxx11abi$FA_ABI)"
+uv pip install "$FA_WHEEL" || echo "[build-env] WARNING: flash-attn install failed; the eval will fall back to sdpa and may OOM at long rungs"
 
 # ---- veomni ------------------------------------------------------------------------------------
 # --no-deps: its full dependency set pins torch/transformers and would rebuild what we just
@@ -247,6 +257,43 @@ if [ -z "$TILELANG_CHOSEN" ]; then
 fi
 echo "[build-env] tilelang==$TILELANG_CHOSEN (apache-tvm-ffi: $TVM_FFI_CHOSEN)"
 [ "$HAVE_GPU" = "1" ] || echo "[build-env] ⚠ no GPU here: tilelang was import-checked only, NOT kernel-checked."
+
+# ---- the real import: HiLS's modeling module -----------------------------------------------------
+# `import veomni` above is a much weaker check than it looks. The HiLS modeling code imports veomni
+# SUBMODULES, which pull in packages the top-level package does not (diffusers, found this way after
+# a "successful" build produced a smoke test that could not load the model at all --
+# job 01KZY8WDNY195H9BG3YH32AADR). Exercise the actual chain instead, and resolve what it asks for.
+echo "[build-env] importing the HiLS modeling code"
+HILS_EXTRA=""
+for _ in $(seq 1 15); do
+  missing=$(python - <<'PY' | sed -n 's/^__MISSINGMOD__://p' | tail -1
+import os, sys
+sys.path.insert(0, os.environ["HILS_REPO"])
+try:
+    import models.FlashHiLS.modeling_olmo_hils  # noqa: F401
+except ModuleNotFoundError as e:
+    print("__MISSINGMOD__:" + (e.name or ""))
+except Exception:
+    pass  # not an import problem; let the smoke test surface it
+PY
+)
+  [ -z "$missing" ] && break
+  case "$missing" in
+    models|ops|utils|data|tasks)
+      echo "[build-env] FATAL: '$missing' is a HiLS-repo module, not a package -- \$HILS_REPO is wrong"; exit 1 ;;
+  esac
+  echo "[build-env]   HiLS modeling needs '$missing' -- installing"
+  uv pip install "$missing" || { echo "[build-env]   FATAL: cannot install '$missing'"; exit 1; }
+  HILS_EXTRA="$HILS_EXTRA $missing"
+done
+python - <<'PY' || { echo "[build-env] FATAL: HiLS modeling code still not importable"; exit 1; }
+import os, sys
+sys.path.insert(0, os.environ["HILS_REPO"])
+from models.FlashHiLS.modeling_olmo_hils import HiLSForCausalLM  # noqa: F401
+from models.FlashHiLS.configuration_hils import HiLSConfig  # noqa: F401
+print("    HiLSForCausalLM importable")
+PY
+echo "[build-env] HiLS modeling OK (extra deps added:${HILS_EXTRA:- none})"
 
 # ---- record what was built ---------------------------------------------------------------------
 # The modeling code and its kernels are part of the measurement, so the env has to be able to say
