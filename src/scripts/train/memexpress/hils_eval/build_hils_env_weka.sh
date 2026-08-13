@@ -80,11 +80,14 @@ echo "[build-env] veomni (--no-deps) @ $VEOMNI_REF"
 uv pip install --no-deps "git+https://github.com/ByteDance-Seed/VeOmni.git@$VEOMNI_REF"
 VEOMNI_EXTRA=""
 for _ in $(seq 1 15); do
-  missing=$(python - <<'PY'
+  # The marker is not decoration: veomni prints an INFO banner ("VeOmni ops patch applied") to
+  # STDOUT on a SUCCESSFUL import, so a probe that just reads stdout treats that banner as the
+  # name of a missing module and tries to pip-install it.
+  missing=$(python - <<'PY' | sed -n 's/^__MISSINGMOD__://p' | tail -1
 try:
     import veomni  # noqa: F401
 except ModuleNotFoundError as e:
-    print(e.name or "")
+    print("__MISSINGMOD__:" + (e.name or ""))
 except Exception:
     pass  # a non-import error means the module tree is present; stop resolving
 PY
