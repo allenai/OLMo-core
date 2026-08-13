@@ -15,10 +15,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_hp2cp,
 )
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
-from olmo_core.nn.attention.flash_linear_attn_api import (
-    dispatch_chunk_gated_delta_rule,
-    has_fla,
-)
+from olmo_core.nn.attention.flash_linear_attn_api import has_fla
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
@@ -26,6 +23,7 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.ops.gdn import GDNBackend, chunk_gated_delta_rule
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
@@ -54,6 +52,8 @@ class GatedDeltaNet(SequenceMixer):
     :param norm_eps: The epsilon value for the normalization layer. Default: 1e-5.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
+    :param kernel_backend: Which gated delta rule kernel backend to use. See
+        :func:`olmo_core.ops.gdn.chunk_gated_delta_rule`.
     """
 
     def __init__(
@@ -70,11 +70,13 @@ class GatedDeltaNet(SequenceMixer):
         norm_eps: float = 1e-5,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        kernel_backend: GDNBackend = GDNBackend.auto,
     ):
         super().__init__()
         assert has_fla()
         from fla.modules import FusedRMSNormGated
 
+        self.kernel_backend = kernel_backend
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_v_heads = n_v_heads if n_v_heads is not None else n_heads
@@ -182,8 +184,15 @@ class GatedDeltaNet(SequenceMixer):
             q = q.repeat_interleave(repeat_factor, dim=-2)
             k = k.repeat_interleave(repeat_factor, dim=-2)
 
-        o, _ = dispatch_chunk_gated_delta_rule(
-            q=q, k=k, v=v, g=g, beta=beta, cu_seqlens=cu_doc_lens, use_qk_l2norm_in_kernel=True
+        o, _ = chunk_gated_delta_rule(
+            q=q,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            cu_seqlens=cu_doc_lens,
+            use_qk_l2norm_in_kernel=True,
+            backend=self.kernel_backend,
         )
 
         if self.cp_enabled and self.uly is not None:
@@ -375,6 +384,13 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     """
     The default data type to use for parameters.
     """
+    kernel_backend: GDNBackend = GDNBackend.auto
+    """
+    Which gated delta rule kernel backend to use. ``auto`` prefers the CuTe DSL kernels in
+    :mod:`olmo_core.kernels.gdn_cute` and falls back to fla's Triton kernels where they can't
+    run; ``cute`` and ``fla`` force one or the other. See
+    :func:`olmo_core.ops.gdn.chunk_gated_delta_rule`.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -450,4 +466,5 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
             norm_eps=self.norm_eps,
             dtype=self.dtype.as_pt(),
             init_device=init_device,
+            kernel_backend=self.kernel_backend,
         )

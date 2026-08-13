@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
 - Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
+- Added CuTe DSL kernels for the gated delta rule (`olmo_core.kernels.gdn_cute`), vendored from [kernel-fun-2](https://github.com/allenai/kernel-fun-2), plus `olmo_core.ops.gdn.chunk_gated_delta_rule` to dispatch between them and fla's Triton kernels. `GatedDeltaNetConfig.kernel_backend` selects the backend and defaults to `"auto"`, which uses the CuTe kernels on Blackwell (`sm_100+`) with `head_k_dim=128` and falls back to fla everywhere else. Measured 1.62x forward / 1.27x forward+backward over fla on a B300 at `B=16, T=8192, H=16, head_v_dim=256` in bf16. Requires the new `gdn-cute` extra.
 
 
 ### Fixed

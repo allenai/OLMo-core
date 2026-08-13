@@ -24,7 +24,8 @@ def dispatch_chunk_gated_delta_rule(
     output_final_state: bool = False,
     use_qk_l2norm_in_kernel: bool = False,
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
-) -> torch.Tensor:
+    chunk_size: int = 64,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     assert has_fla()
     from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 
@@ -39,6 +40,7 @@ def dispatch_chunk_gated_delta_rule(
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
         cu_seqlens=cu_seqlens,
+        chunk_size=chunk_size,
     )
 
 

@@ -14,8 +14,9 @@ from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_siz
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
+from olmo_core.ops.gdn import GDNBackend
 from olmo_core.testing import requires_gpu, run_distributed_test
-from olmo_core.testing.utils import requires_fla, requires_multi_gpu
+from olmo_core.testing.utils import requires_fla, requires_gdn_cute, requires_multi_gpu
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -62,6 +63,35 @@ def test_gated_delta_net_fwd_bwd():
         loss = y.sum()
         loss.backward()
     assert x.grad is not None
+
+
+@requires_gdn_cute
+def test_gated_delta_net_cute_matches_fla():
+    """The CuTe kernels and fla should agree end-to-end through the whole layer."""
+    device = "cuda"
+    dtype = torch.bfloat16
+
+    # head_dim=128 with expand_v=2.0 gives the head_k_dim=128 / head_v_dim=256 the CuTe kernels
+    # implement, and seq_len is a multiple of the chunk size.
+    d_model, seq_len, batch_size = 256, 256, 2
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
+
+    outputs, grads = [], []
+    for backend in (GDNBackend.cute, GDNBackend.fla):
+        seed_all(0)
+        config = GatedDeltaNetConfig(n_heads=2, head_dim=128, kernel_backend=backend)
+        module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+        x_in = x.clone().requires_grad_()
+        with torch.autocast(device_type=device, dtype=dtype):
+            y = module(x_in)
+            y.float().sum().backward()
+        assert x_in.grad is not None
+        outputs.append(y.detach())
+        grads.append(x_in.grad.detach())
+
+    tol_scale = 4  # two chunked kernels in bf16, not one kernel against itself
+    for a, b in (outputs, grads):
+        torch.testing.assert_close(a, b, rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale)
 
 
 @requires_fla

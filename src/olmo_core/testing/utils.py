@@ -4,6 +4,7 @@ import os
 import pytest
 import torch
 
+import olmo_core.kernels.gdn_cute as gdn_cute
 import olmo_core.nn.attention.flash_attn_api as flash_attn_api
 import olmo_core.nn.attention.flash_linear_attn_api as flash_linear_attn_api
 
@@ -19,6 +20,7 @@ has_flash_attn_2 = flash_attn_api.has_flash_attn_2()
 has_flash_attn_3 = flash_attn_api.has_flash_attn_3()
 has_flash_attn_4 = flash_attn_api.has_flash_attn_4()
 has_fla = flash_linear_attn_api.has_fla()
+has_gdn_cute = gdn_cute.has_gdn_cute()
 has_torchao = False
 has_grouped_gemm = False
 has_te = False
@@ -142,6 +144,22 @@ FLA_MARKS = (
 
 def requires_fla(func):
     for mark in FLA_MARKS:
+        func = mark(func)
+    return func
+
+
+GDN_CUTE_MARKS = (
+    pytest.mark.gpu,
+    pytest.mark.skipif(
+        not has_gdn_cute,
+        reason="Requires nvidia-cutlass-dsl and a Blackwell (sm_100+) GPU",
+    ),
+    pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention (fla)"),
+)
+
+
+def requires_gdn_cute(func):
+    for mark in GDN_CUTE_MARKS:
         func = mark(func)
     return func
 
