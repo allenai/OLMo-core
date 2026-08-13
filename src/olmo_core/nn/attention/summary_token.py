@@ -42,11 +42,14 @@ from olmo_core.exceptions import OLMoConfigurationError
 from . import Attention
 from .backend import _repeat_kv
 from .summary_mask import (
+    N_ROLE_FIELDS,
     ROLE_DOC_ID,
+    ROLE_EXAMPLE_ID,
     ROLE_KIND,
     SummaryMaskSpec,
     TokenKind,
     build_summary_mask_mod,
+    causal_example_row,
     summary_mask_allowed,
 )
 
@@ -87,21 +90,24 @@ def build_summary_block_mask(
     Build a :class:`BlockMask` for the summary-token mask **without** evaluating the predicate
     pointwise.
 
-    Each ``block_size``-token block is reduced to the document range it spans, the earliest document
-    any of its summary tokens belongs to, and whether it holds instruction / query / padding tokens.
-    A query block may reach a key block iff their document ranges overlap, or the key block holds a
-    summary token of a document strictly earlier than some document in the query block, or it holds
-    instruction text -- each a **conservative over-approximation** of the token-level rule, which is
-    exactly what ``from_kv_blocks`` permits since it re-applies ``mask_mod`` within every partial
-    block.
+    Each ``block_size``-token block is reduced to the document range it spans, the **example** range
+    it spans, the earliest document any of its summary tokens belongs to, and whether it holds
+    instruction / query / padding tokens. A query block may reach a key block iff their example ranges
+    overlap **and** (their document ranges overlap, or the key block holds a summary token of a
+    document strictly earlier than some document in the query block, or it holds instruction text) --
+    each a **conservative over-approximation** of the token-level rule, which is exactly what
+    ``from_kv_blocks`` permits since it re-applies ``mask_mod`` within every partial block.
 
     Blocks are marked *full* (predicate skipped entirely) only when both are wholly document content
-    of the same document, entirely free of padding, and the key block is strictly earlier -- under
-    which every pair in the block is allowed regardless of the spec's flags.
+    of the same document **of the same example**, entirely free of padding, and the key block is
+    strictly earlier -- under which every pair in the block is allowed regardless of the spec's flags.
+    The example condition is not redundant: ``doc_id`` restarts at 0 in each packed example, so
+    without it two blocks sitting in different examples' document 2 would be declared full and the
+    predicate that would have separated them never runs.
 
-    :param roles: ``(B, 3, T)`` from :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles`.
+    :param roles: ``(B, 4, T)`` from :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles`.
     :param spec: The :class:`~olmo_core.nn.attention.summary_mask.SummaryMaskSpec`.
-    :param causal_example: Optional ``(B,)`` bool marking examples in the causal arm.
+    :param causal_example: Optional ``(B,)`` or ``(B, T)`` bool marking the causal arm.
     :param block_size: Query/key block size.
     :param mask_mod: The ``mask_mod`` to attach; built from ``roles``/``spec`` when omitted.
 
@@ -118,11 +124,16 @@ def build_summary_block_mask(
 
     d = doc_id.view(B, nb, block_size).to(torch.int64)
     k = kind.view(B, nb, block_size)
+    e = roles[:, ROLE_EXAMPLE_ID].view(B, nb, block_size).to(torch.int64)
 
     big = torch.iinfo(torch.int32).max
     belongs = d >= 0
     min_doc = torch.where(belongs, d, torch.full_like(d, big)).amin(-1)  # (B, nb)
     max_doc = torch.where(belongs, d, torch.full_like(d, -1)).amax(-1)
+
+    in_example = e >= 0
+    min_ex = torch.where(in_example, e, torch.full_like(e, big)).amin(-1)  # (B, nb)
+    max_ex = torch.where(in_example, e, torch.full_like(e, -1)).amax(-1)
 
     is_summary = k == int(TokenKind.SUMMARY)
     min_summary_doc = torch.where(is_summary, d, torch.full_like(d, big)).amin(-1)
@@ -143,27 +154,38 @@ def build_summary_block_mask(
     holds_earlier_summary = min_summary_doc.unsqueeze(1) < q_max
     holds_instruction = has_instruction.unsqueeze(1)
 
+    qe_min, qe_max = min_ex.unsqueeze(2), max_ex.unsqueeze(2)
+    ke_min, ke_max = min_ex.unsqueeze(1), max_ex.unsqueeze(1)
+    shares_example = (qe_min <= ke_max) & (ke_min <= qe_max) & (qe_max >= 0) & (ke_max >= 0)
+
     reachable = shares_document | holds_earlier_summary | holds_instruction
     if spec.query_reads_documents:
         reachable = reachable | has_query.unsqueeze(2)
 
-    if causal_example is None:
-        ce = torch.zeros(B, 1, 1, dtype=torch.bool, device=device)
-    else:
-        ce = causal_example.to(device=device, dtype=torch.bool).reshape(B, 1, 1)
+    # Per-query-block causal arm: a block counts as causal if *any* of its queries is, which only
+    # ever adds blocks, and ``mask_mod`` re-tests each pair inside them.
+    ce = causal_example_row(causal_example, B, T, device).view(B, nb, block_size).any(-1)
 
-    allowed = causal_blk & has_content.unsqueeze(2) & has_content.unsqueeze(1) & (ce | reachable)
+    allowed = (
+        causal_blk
+        & has_content.unsqueeze(2)
+        & has_content.unsqueeze(1)
+        & shares_example
+        & (ce.unsqueeze(2) | reachable)
+    )
     # The self-diagonal NaN guard lives inside the diagonal block, so it must never be dropped.
     allowed = allowed | torch.eye(nb, dtype=torch.bool, device=device).unsqueeze(0)
 
     strictly_earlier = (blk.view(-1, 1) > blk.view(1, -1)).unsqueeze(0)
     single_doc = (min_doc == max_doc) & (max_doc >= 0)
-    whole_doc_block = all_content & single_doc & not_pad.all(-1)
+    single_example = (min_ex == max_ex) & (max_ex >= 0)
+    whole_doc_block = all_content & single_doc & single_example & not_pad.all(-1)
     full = (
         strictly_earlier
         & whole_doc_block.unsqueeze(2)
         & whole_doc_block.unsqueeze(1)
         & (max_doc.unsqueeze(2) == max_doc.unsqueeze(1))
+        & (max_ex.unsqueeze(2) == max_ex.unsqueeze(1))
     )
     partial = allowed & ~full
 
@@ -257,9 +279,11 @@ class SummaryTokenAttention(Attention):
         Apply summary-token-masked attention.
 
         :param x: The input, ``(B, T, d_model)``.
-        :param summary_roles: ``(B, 3, T)`` per-token roles; see
+        :param summary_roles: ``(B, 4, T)`` per-token roles; see
             :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles`.
-        :param causal_example: ``(B,)`` bool marking examples in the causal arm of the mixture.
+        :param causal_example: ``(B,)`` or ``(B, T)`` bool marking the causal arm of the mixture. The
+            per-token form is what a packed instance needs, since each packed example draws its own
+            arm.
         """
         self._summary_roles = summary_roles
         self._causal_example = causal_example
@@ -328,6 +352,12 @@ class SummaryTokenAttention(Attention):
             raise OLMoConfigurationError(
                 f"summary_roles last dim ({roles.shape[-1]}) must equal the sequence length ({T}). "
                 "Under context parallelism the roles must stay unsharded and full-length."
+            )
+        if roles.shape[1] != N_ROLE_FIELDS:
+            raise OLMoConfigurationError(
+                f"summary_roles must have {N_ROLE_FIELDS} fields on dim 1, got {roles.shape[1]}. A "
+                "3-field tensor is the pre-packing layout, which has no example_id and therefore "
+                "cannot keep packed examples apart; rebuild it with build_summary_roles()."
             )
         if roles.shape[0] == 1 and batch_size > 1:
             roles = roles.expand(batch_size, -1, -1)

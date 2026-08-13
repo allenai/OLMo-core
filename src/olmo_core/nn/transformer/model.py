@@ -50,7 +50,7 @@ from ..attention.chunked_mask import (
     collapse_roles_to_causal,
     mask_mix_standard_prob,
 )
-from ..attention.summary_mask import build_summary_roles
+from ..attention.summary_mask import ROLE_EXAMPLE_ID, build_summary_roles
 from ..attention.summary_token import SummaryTokenAttention
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
@@ -692,16 +692,27 @@ class Transformer(nn.Module):
                     mix_step_frac=mix["mix_step_frac"],
                 )
                 mix["forward_idx"] = idx + 1
-                causal_example = causal_example_flags(
-                    input_ids.shape[0],
+                # One coin per packed EXAMPLE, not per instance: an instance may hold several
+                # examples, and drawing once for the row would make the realized causal fraction
+                # depend on how the packer happened to bin them. The flags are then scattered to
+                # tokens by example_id, which is the form the mask consumes.
+                example_id = summary_roles[:, ROLE_EXAMPLE_ID]
+                n_examples = int(example_id.max().item()) + 1  # -1 everywhere (all pad) -> 0
+                n_examples = max(1, n_examples)
+                flags = causal_example_flags(
+                    input_ids.shape[0] * n_examples,
                     p,
                     forward_idx=mix["forward_idx"],
                     mix_seed=mix["mix_seed"],
+                ).view(input_ids.shape[0], n_examples)
+                causal_example = torch.gather(
+                    flags.to(example_id.device), 1, example_id.clamp_min(0).long()
                 )
                 if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
                     log.info(
                         f"[curriculum] forward={mix['forward_idx']} p_causal={p:.3f} "
-                        f"causal_this_batch={int(causal_example.sum())}/{input_ids.shape[0]}"
+                        f"causal_this_batch={int(flags.sum())}/{flags.numel()} examples "
+                        f"({input_ids.shape[0]} instances x {n_examples})"
                     )
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.

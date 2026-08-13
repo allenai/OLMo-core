@@ -121,6 +121,14 @@ elif [ "$LADDER_VERSION" = "v3" ]; then
   # would have won: every task except contra would have been served v2 files under a v3 tag.
   EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v3}"
   echo "    v3 bundle: contra + outlier rebuilt, nq/rerank/oolong symlinked to v2_clean"
+else
+  # v2 -- the DEFAULT ladder, and the one this whole file is written around. This else branch is
+  # load-bearing: when the fast/v3 cases were added, the plain assignment that used to sit here
+  # became the `if` of a chain that has no v2 arm, so under `set -u` every v2 job died at the
+  # `export EVAL500_ROOT="$EVAL500"` below with "EVAL500: unbound variable" -- before any GPU work,
+  # after the full gantry setup. v3 jobs were unaffected, so a mixed sweep looks like "the v2 half
+  # is broken" rather than a one-line shell bug.
+  EVAL500="${EVAL500:-$PRASANNS/_eval_bundle_eval500_v2_clean}"
 fi
 VFLAG="--ladder-version $LADDER_VERSION"
 # ---- OPT-IN ultra-long rungs (OFF by default). LADDER_XLONG=1 appends the requested XLONG_RUNGS
