@@ -12,7 +12,8 @@ produced by the same measurement as the numbers it will sit beside.
 
 | File | What |
 |---|---|
-| `hils_env_setup.sh` | Installs the HiLS runtime (tilelang + veomni + the HiLS repo). `source` it — it exports `$HILS_REPO`. |
+| `build_hils_env_weka.sh` | Builds the HiLS runtime once, as a py3.11 venv on weka. Run before anything else. |
+| `hils_env_setup.sh` | Activates that venv + checks out the HiLS repo. `source` it — it exports `$HILS_REPO`. |
 | `smoke_test_hils.py` | GPU smoke test: imports, load, short generate, long-prefill probe with timing + peak memory. |
 | `run_beaker_hf_eval.sh` | On-node runner (the hf twin of `singletask_ladder/run_beaker_multirung_eval.sh`). |
 | `run_hf_beaker_eval.py` | Beaker launcher: one job per `(model, task)`. |
@@ -37,6 +38,34 @@ one place that knows this.
 torch/transformers and would rebuild the environment underneath us.
 
 ## Prerequisites
+
+### 1. Build the runtime (once)
+
+The OLMo-core image's python is **3.12**, on which the HiLS stack does not run at all — `veomni`
+declares `requires-python <3.12`, and `tilelang` 0.1.9 raises on import
+(`AttributeError: attribute '__dict__' of 'type' objects is not writable`). HiLS pins python 3.11 +
+torch 2.8.0, so we reproduce that in a venv on weka instead of fighting it:
+
+```bash
+gantry run --name build-hils-env -w ai2/flex2 -b ai2/oe-other \
+  --cluster ai2/neptune-cirrascale --cluster ai2/ceres-cirrascale \
+  --cluster ai2/saturn-cirrascale --cluster ai2/jupiter-cirrascale-2 \
+  --gpus 0 --priority urgent \
+  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
+  --weka oe-training-default:/weka/oe-training-default \
+  --no-python --allow-dirty --timeout 0 --yes -- \
+  bash src/scripts/train/memexpress/hils_eval/build_hils_env_weka.sh
+```
+
+Lands at `/weka/oe-training-default/amandab/envs/hils-py311`, with the managed CPython alongside it
+at `envs/pythons` — that placement matters, since a container-local interpreter would leave the
+venv dangling in the next job. `REBUILD=1` forces a rebuild.
+
+`flash-attn` is intentionally absent (no wheel for this torch/python pair; pip would compile for
+30+ minutes). Nothing needs it: the HiLS sparse path is tilelang, and the interleaved dense layers
+run on `sdpa`.
+
+### 2. Stage the weights
 
 Stage the weights to weka first — never pass a Hub id, or every job depends on huggingface.co being
 reachable at startup:

@@ -34,6 +34,13 @@ source "$HILS_ENV/bin/activate"
 echo "[hils-env] activated $HILS_ENV -- python=$(python -V 2>&1) at $(which python)"
 
 # ---- repo ---------------------------------------------------------------------------------
+# HILS_NEED_REPO=0 for a non-HiLS model (the Olmo-3 base control). Those still activate the venv
+# above -- running the control in the image's env and the treatment in this one would make the
+# comparison span two torch versions for no reason -- but they have no use for the modeling code.
+if [ "${HILS_NEED_REPO:-1}" != "1" ]; then
+  echo "[hils-env] HILS_NEED_REPO=0 -- runtime only, skipping the HiLS repo checkout."
+  return 0 2>/dev/null || exit 0
+fi
 if [ ! -d "$HILS_REPO/models/FlashHiLS" ]; then
   echo "[hils-env] cloning $HILS_GIT -> $HILS_REPO"
   rm -rf "$HILS_REPO"

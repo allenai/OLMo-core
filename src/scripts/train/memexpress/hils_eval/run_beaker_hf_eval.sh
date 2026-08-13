@@ -52,10 +52,14 @@ import json, sys
 print("1" if "hils" in str(json.load(open(sys.argv[1])).get("model_type", "")) else "0")
 PYEOF
 )
+# EVERY hf-backend model runs in the weka py3.11 runtime, not just HiLS. The control (Olmo-3 base)
+# could run in the image's env, but then the comparison would span two torch versions for no
+# reason; HILS_NEED_REPO=0 just skips the HiLS repo checkout it has no use for.
+echo "=== activating the HiLS runtime (IS_HILS=$IS_HILS) ==="
+export HILS_NEED_REPO="$IS_HILS"
+# shellcheck disable=SC1091
+source "$HFDIR/hils_env_setup.sh" || { echo "ERROR: HiLS env setup failed"; exit 2; }
 if [ "$IS_HILS" = "1" ]; then
-  echo "=== HiLS checkpoint detected -- installing the HiLS runtime ==="
-  # shellcheck disable=SC1091
-  source "$HFDIR/hils_env_setup.sh" || { echo "ERROR: HiLS env setup failed"; exit 2; }
   # HiLS ties its chunk grid and sliding window to ABSOLUTE position, exactly like our landmark and
   # compressive variants: left-padding a batch shifts every chunk boundary, so batched generation
   # does not merely slow down, it changes the mask. bs=1, unconditionally.
