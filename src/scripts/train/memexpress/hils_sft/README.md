@@ -68,8 +68,24 @@ plus 25% Dolci-Instruct-SFT — **re-tokenized to the OLMo-3 vocabulary**. Sourc
   trees are the wrong vocabulary. Note Dolci ships in this same shard format, so the adapter reads
   it unchanged.
 
-Conversion command shape (the `--chat-template` flag was added for exactly this — base-model
-tokenizers ship none):
+It is a **two-step**, both on a weka-mounted CPU gantry node (`--priority urgent`):
+
+**1. Combine the 5 tasks into one multitask JSONL.** `cr_suite_data/` carries a
+`suite_manifest.tsv` (`file <TAB> task <TAB> cot_mode <TAB> split <TAB> bytes`); this reads it,
+attaches `_task` / `_cot_mode` per row so the converter dispatches per row, asserts the held-out
+tasks (redundancy, beir_scifact, beir_fiqa) never leak, and samples to a budget:
+
+```bash
+python src/scripts/data/build_combined_suite_jsonl.py \
+    --data-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/cr_suite_data \
+    --out <weka>/olmo3_5task_combined.jsonl   # + --tasks / budget flags
+```
+
+Do not hand-roll the per-task globs instead — the manifest is what carries each task's `cot_mode`,
+and the held-out assertion is what keeps scifact/fiqa out of training while they are scored as OOD
+ladders.
+
+**2. Tokenize to OLMo-3 vocabulary.** `--task` is omitted deliberately: every row carries `_task`.
 
 ```bash
 python src/scripts/data/convert_unified_to_sft.py \
@@ -77,8 +93,16 @@ python src/scripts/data/convert_unified_to_sft.py \
     --eos-token-id 100257 \
     --landmark-token-id -1 \
     --chat-template src/scripts/ctc_eval/lib/chat_templates/olmo3_chatml.jinja \
-    --input <cr_suite_data/...jsonl> --out-dir <weka out> --task <task>
+    --input-jsonl <weka>/olmo3_5task_combined.jsonl \
+    --out-dir /weka/oe-training-default/amandab/sft_olmo3/5task
 ```
+
+`--landmark-token-id -1` because OLMo-3 has no landmark id; leaving the Qwen default (151860) is
+harmless only by accident (it is outside a 100278 vocab) and would silently become a real-token
+drop filter on any vocabulary that does reach it.
+
+Dolci is a separate run of `convert_dolci_instruct_sft_gantry.sh` with the same tokenizer / eos /
+chat-template flags, writing to `.../sft_olmo3/dolci`.
 
 **Pass the same template file the eval attaches.** A training-time template that differs from the
 eval-time one reintroduces the mismatch silently — nothing errors, the numbers are just wrong.
