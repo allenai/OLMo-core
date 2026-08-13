@@ -66,6 +66,9 @@ dion = ["dion ; sys_platform == 'linux'"]
 eval = ["ai2-olmo-eval==0.9.0"]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention==0.5.2"]
+# The CuTe DSL gated RMS norm kernels (olmo_core.kernels.gnorm_cute) need both fla and
+# nvidia-cutlass-dsl. Blackwell (sm_100+) only; olmo_core.ops.gnorm falls back to fla elsewhere.
+gnorm-cute = ["flash-linear-attention==0.5.2", "nvidia-cutlass-dsl>=4.5.2 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
 wandb = ["wandb"]
@@ -108,15 +111,21 @@ exclude = '''
     | \bdist\b
     | \bdoc\b
     | scratch/
+    | src/olmo_core/kernels/gnorm_cute/
 )
 '''
 
 [tool.isort]
 profile = "black"
 multi_line_output = 3
+# Vendored verbatim from allenai/kernel-fun-2 (see the package docstring); re-copied wholesale
+# when those kernels improve, so reformatting them here would only create drift to re-resolve.
+extend_skip_glob = ["src/olmo_core/kernels/gnorm_cute/*"]
 
 [tool.ruff]
 line-length = 100
+# Vendored verbatim from allenai/kernel-fun-2; see [tool.isort] above.
+extend-exclude = ["src/olmo_core/kernels/gnorm_cute"]
 
 [tool.ruff.lint]
 ignore = ["F403", "F405", "E501"]
@@ -169,6 +178,15 @@ no_site_packages = true
 check_untyped_defs = true
 namespace_packages = false
 disable_error_code = "has-type"
+
+# Vendored verbatim from allenai/kernel-fun-2; see [tool.isort] above. These are CuTe DSL
+# kernels, whose tensors, layouts and MMA atoms are dynamically typed by construction.
+# `.*` rather than `.kernel_*`: mypy only accepts a wildcard as a whole module component, so
+# the narrower pattern would be silently rejected and never applied.
+[[tool.mypy.overrides]]
+module = ["olmo_core.kernels.gnorm_cute.*"]
+ignore_errors = true
+
 
 [[tool.mypy.overrides]]
 module = "tests.*"
