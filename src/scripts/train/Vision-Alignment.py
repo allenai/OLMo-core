@@ -1157,9 +1157,20 @@ def _validate_parent_gate(
         "approved_at",
         "waivers",
     }
+    version_3_fields = version_2_fields | {
+        "promotion_kind",
+        "promotion_policy",
+    }
+    gate_schemas = {
+        1: version_1_fields,
+        2: version_2_fields,
+        3: version_3_fields,
+    }
     gate_version = gate.get("version")
-    allowed_fields = version_1_fields if gate_version == 1 else version_2_fields
-    if gate_version not in (1, 2) or set(gate) != allowed_fields:
+    allowed_fields = gate_schemas.get(gate_version) if type(gate_version) is int else None
+    if allowed_fields is None:
+        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, or 3")
+    if set(gate) != allowed_fields:
         raise ValueError(
             "Parent-quality gate fields differ from the locked schema: "
             f"missing={sorted(allowed_fields - set(gate))}, "
@@ -1168,11 +1179,23 @@ def _validate_parent_gate(
     parent_meta = parent_config.get("vision_alignment")
     expected_parent_phase = config.initialization.expected_parent_phase
     assert isinstance(parent_meta, Mapping)
+    if gate_version == 3:
+        expected_recipe_version = parent_meta.get("recipe_version")
+        expected_formatter_version = parent_meta.get("formatter_version")
+        if type(expected_recipe_version) is not int or not isinstance(
+            expected_formatter_version, str
+        ):
+            raise ValueError(
+                "Perception parent checkpoint recipe and formatter metadata are malformed"
+            )
+    else:
+        expected_recipe_version = RECIPE_VERSION
+        expected_formatter_version = FORMATTER_VERSION
     if (
         gate["format"] != "vision_alignment_parent_gate"
         or gate["status"] != "approved"
-        or gate["recipe_version"] != RECIPE_VERSION
-        or gate["formatter_version"] != FORMATTER_VERSION
+        or gate["recipe_version"] != expected_recipe_version
+        or gate["formatter_version"] != expected_formatter_version
         or expected_parent_phase is None
         or gate["phase"] != expected_parent_phase.value
         or Path(str(gate["checkpoint"])).expanduser().resolve() != Path(parent).resolve()
@@ -1194,9 +1217,20 @@ def _validate_parent_gate(
     ) is VisionAlignmentPhase.perception and not bool(
         getattr(getattr(config, "data", None), "allow_unpinned_synthetic_smoke", False)
     )
+    production_joint = getattr(config, "phase", None) is VisionAlignmentPhase.joint and not bool(
+        getattr(getattr(config, "data", None), "allow_unpinned_synthetic_smoke", False)
+    )
     if production_perception and gate_version != 2:
         raise ValueError(
             "Production perception requires a v2 parent gate with an audited promotion bundle"
+        )
+    if gate_version == 3 and getattr(config, "phase", None) is not VisionAlignmentPhase.joint:
+        raise ValueError("A v3 perception parent gate may only authorize the joint phase")
+    if production_joint and (
+        gate_version != 3 or expected_parent_phase is not VisionAlignmentPhase.perception
+    ):
+        raise ValueError(
+            "Production joint requires a v3 perception parent gate and perception parent phase"
         )
     if gate_version == 2:
         from olmo_core.eval import vision_alignment_promotion as promotion
@@ -1291,6 +1325,56 @@ def _validate_parent_gate(
             raise ValueError(
                 "Parent-quality gate must explicitly approve exactly the two locked deviations"
             )
+    elif gate_version == 3:
+        from olmo_core.eval import (
+            vision_alignment_perception_promotion as perception_promotion,
+        )
+
+        if actual_gate_sha != (
+            perception_promotion.EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256
+        ):
+            raise ValueError("Parent-quality gate is not the exact approved perception gate")
+        bundle_path = Path(str(gate["promotion_bundle_path"])).expanduser().resolve()
+        expected_bundle_sha = gate["promotion_bundle_sha256"]
+        if (
+            not isinstance(expected_bundle_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_bundle_sha) is None
+        ):
+            raise ValueError("Perception parent gate promotion bundle SHA-256 is invalid")
+        if gate["metrics_artifact_sha256"] != expected_bundle_sha:
+            raise ValueError(
+                "Perception parent gate metrics artifact must be the pinned promotion bundle"
+            )
+        try:
+            bundle_raw = bundle_path.read_bytes()
+            actual_bundle_sha = hashlib.sha256(bundle_raw).hexdigest()
+            bundle = json.loads(bundle_raw, object_pairs_hook=_strict_json_object)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            raise ValueError(
+                f"Invalid perception parent promotion bundle {bundle_path}: {error}"
+            ) from error
+        if actual_bundle_sha != expected_bundle_sha:
+            raise ValueError(
+                f"Perception parent promotion bundle SHA mismatch: configured "
+                f"{expected_bundle_sha}, actual {actual_bundle_sha}"
+            )
+        if actual_bundle_sha != (
+            perception_promotion.EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256
+        ):
+            raise ValueError("Perception parent promotion bundle is not the exact approved bundle")
+        if not isinstance(bundle, Mapping):
+            raise ValueError("Perception parent promotion bundle must be a JSON object")
+        try:
+            perception_promotion.validate_approved_perception_parent_gate_bundle(
+                bundle,
+                gate=gate,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+            )
+        except perception_promotion.PromotionValidationError as error:
+            raise ValueError(
+                f"Perception parent promotion bundle failed validation: {error}"
+            ) from error
     marker_path = Path(parent) / ".metadata.json"
     try:
         marker = json.loads(marker_path.read_bytes(), object_pairs_hook=_strict_json_object)
@@ -2482,7 +2566,10 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
             f"Parent {parent} phase is {parent_meta.get('phase')!r}; "
             f"expected {expected_phase.value if expected_phase is not None else None!r}"
         )
-    if parent_meta.get("recipe_version") != RECIPE_VERSION:
+    if (
+        config.phase is not VisionAlignmentPhase.joint
+        and parent_meta.get("recipe_version") != RECIPE_VERSION
+    ):
         raise ValueError(f"Parent {parent} has an incompatible recipe version")
     configured_sha = config.initialization.parent_config_sha256
     if configured_sha is not None and configured_sha != parent_sha:

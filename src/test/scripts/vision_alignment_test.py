@@ -824,6 +824,428 @@ def test_production_perception_rejects_legacy_v1_parent_gate(tmp_path):
         )
 
 
+def _joint_v3_parent_gate_case(tmp_path, vision_alignment):
+    from olmo_core.eval import vision_alignment_perception_promotion as promotion
+
+    parent = tmp_path / "step4000"
+    parent.mkdir()
+    marker_path = parent / ".metadata.json"
+    marker_path.write_text(json.dumps({"ephemeral": False, "version": "2.5.0"}))
+    parent_config_sha = "c" * 64
+    parent_meta = {
+        "phase": "perception",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+    }
+    parent_config = {"vision_alignment": parent_meta}
+    bundle_path = tmp_path / "perception-promotion-bundle.json"
+    bundle = {"format": "test-perception-promotion-bundle", "created_at": "2026-08-13T00:00:00Z"}
+    bundle_path.write_text(json.dumps(bundle) + "\n")
+    bundle_sha = vision_alignment._sha256_file(bundle_path)
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 3,
+        "status": "approved",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "phase": "perception",
+        "checkpoint": str(parent),
+        "checkpoint_config_sha256": parent_config_sha,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "global_step": 4000,
+        "metrics_artifact_sha256": bundle_sha,
+        "promotion_bundle_path": str(bundle_path),
+        "promotion_bundle_sha256": bundle_sha,
+        "checkpoint_identity_sha256": "f" * 64,
+        "approved_by": "rustins",
+        "approved_at": "2026-08-13T21:47:16Z",
+        "waivers": [
+            {
+                "id": promotion.TREATMENT_GUARD_WAIVER_ID,
+                "decision": "approved",
+                "deviation_sha256": "d" * 64,
+            }
+        ],
+        "promotion_kind": "perception",
+        "promotion_policy": promotion.PERCEPTION_PROMOTION_POLICY,
+    }
+    gate_path = tmp_path / "perception-parent-gate-v3.json"
+    gate_path.write_text(json.dumps(gate) + "\n")
+    gate_sha = vision_alignment._sha256_file(gate_path)
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        initialization=SimpleNamespace(
+            parent_gate_path=str(gate_path),
+            parent_gate_sha256=gate_sha,
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.perception,
+        ),
+    )
+    return SimpleNamespace(
+        bundle=bundle,
+        bundle_path=bundle_path,
+        config=config,
+        gate=gate,
+        gate_path=gate_path,
+        gate_sha=gate_sha,
+        marker_path=marker_path,
+        parent=parent,
+        parent_config=parent_config,
+        parent_config_sha=parent_config_sha,
+        promotion=promotion,
+    )
+
+
+def _allow_test_joint_v3_gate(monkeypatch, case):
+    monkeypatch.setattr(
+        case.promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256",
+        case.gate_sha,
+    )
+    monkeypatch.setattr(
+        case.promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256",
+        case.gate["promotion_bundle_sha256"],
+    )
+
+
+def test_production_joint_routes_exact_v3_gate_to_approved_perception_adapter(
+    tmp_path, monkeypatch
+):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+    observed: Dict[str, Any] = {}
+
+    def validate(bundle, **kwargs):
+        observed["bundle"] = bundle
+        observed.update(kwargs)
+
+    monkeypatch.setattr(
+        case.promotion,
+        "validate_approved_perception_parent_gate_bundle",
+        validate,
+    )
+
+    assert vision_alignment._validate_parent_gate(
+        case.config,
+        str(case.parent),
+        case.parent_config,
+        case.parent_config_sha,
+    ) == vision_alignment._sha256_file(case.gate_path)
+    assert observed == {
+        "bundle": case.bundle,
+        "gate": case.gate,
+        "expected_checkpoint": case.parent.resolve(),
+        "expected_checkpoint_config_sha256": case.parent_config_sha,
+    }
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_production_joint_rejects_legacy_parent_gate_versions(tmp_path, version):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    case.gate["version"] = version
+    if version == 2:
+        case.gate.pop("promotion_kind")
+        case.gate.pop("promotion_policy")
+    else:
+        for field in (
+            "promotion_bundle_path",
+            "promotion_bundle_sha256",
+            "checkpoint_identity_sha256",
+            "approved_by",
+            "approved_at",
+            "waivers",
+            "promotion_kind",
+            "promotion_policy",
+        ):
+            case.gate.pop(field)
+    case.gate_path.write_text(json.dumps(case.gate) + "\n")
+    case.config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(case.gate_path)
+
+    with pytest.raises(ValueError, match="Production joint requires a v3 perception parent gate"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_perception_phase_rejects_v3_parent_gate(tmp_path):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    case.config.phase = vision_alignment.VisionAlignmentPhase.perception
+
+    with pytest.raises(ValueError, match="Production perception requires a v2 parent gate"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_must_be_exactly_allowlisted(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    monkeypatch.setattr(
+        case.promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256",
+        "0" * 64,
+    )
+
+    with pytest.raises(ValueError, match="not the exact approved perception gate"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_rejects_bundle_raw_sha_mismatch(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+    case.bundle_path.write_text(json.dumps({"changed": True}) + "\n")
+
+    with pytest.raises(ValueError, match="promotion bundle SHA mismatch"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_requires_exactly_allowlisted_bundle(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+    monkeypatch.setattr(
+        case.promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256",
+        "0" * 64,
+    )
+
+    with pytest.raises(ValueError, match="not the exact approved bundle"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_propagates_approved_adapter_error(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+
+    def reject(*args, **kwargs):
+        raise case.promotion.PromotionValidationError("candidate identity differs")
+
+    monkeypatch.setattr(
+        case.promotion,
+        "validate_approved_perception_parent_gate_bundle",
+        reject,
+    )
+
+    with pytest.raises(ValueError, match="candidate identity differs"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_recipe_and_formatter_bind_to_parent_not_current_launcher(
+    tmp_path, monkeypatch
+):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+    monkeypatch.setattr(vision_alignment, "RECIPE_VERSION", case.gate["recipe_version"] + 1)
+    monkeypatch.setattr(vision_alignment, "FORMATTER_VERSION", "future-document-formatter")
+    monkeypatch.setattr(
+        case.promotion,
+        "validate_approved_perception_parent_gate_bundle",
+        lambda *args, **kwargs: None,
+    )
+
+    assert (
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+        == case.gate_sha
+    )
+
+
+def test_joint_v3_gate_rejects_invalid_approval_time_through_adapter(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    case.gate["approved_at"] = "not-a-time"
+    case.gate_path.write_text(json.dumps(case.gate) + "\n")
+    case.gate_sha = vision_alignment._sha256_file(case.gate_path)
+    case.config.initialization.parent_gate_sha256 = case.gate_sha
+    _allow_test_joint_v3_gate(monkeypatch, case)
+
+    def reject(bundle, *, gate, **kwargs):
+        assert gate["approved_at"] == "not-a-time"
+        raise case.promotion.PromotionValidationError("approval timestamp is invalid")
+
+    monkeypatch.setattr(
+        case.promotion,
+        "validate_approved_perception_parent_gate_bundle",
+        reject,
+    )
+
+    with pytest.raises(ValueError, match="approval timestamp is invalid"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_v3_gate_still_requires_permanent_checkpoint(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    _allow_test_joint_v3_gate(monkeypatch, case)
+    monkeypatch.setattr(
+        case.promotion,
+        "validate_approved_perception_parent_gate_bundle",
+        lambda *args, **kwargs: None,
+    )
+    case.marker_path.write_text(json.dumps({"ephemeral": True, "version": "2.5.0"}))
+
+    with pytest.raises(ValueError, match="permanent parent checkpoint"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda gate: gate.update(version=True), "version must be exactly integer"),
+        (lambda gate: gate.update(version=3.0), "version must be exactly integer"),
+        (lambda gate: gate.update(version="3"), "version must be exactly integer"),
+        (lambda gate: gate.pop("promotion_kind"), "fields differ from the locked schema"),
+        (lambda gate: gate.update(unexpected=True), "fields differ from the locked schema"),
+    ],
+)
+def test_joint_v3_gate_rejects_schema_and_version_type_confusion(tmp_path, mutation, message):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    mutation(case.gate)
+    case.gate_path.write_text(json.dumps(case.gate) + "\n")
+    case.config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(case.gate_path)
+
+    with pytest.raises(ValueError, match=message):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(
+    monkeypatch,
+):
+    vision_alignment = _load_module()
+    parent = "/checkpoints/perception/step4000"
+    parent_config_sha = "a" * 64
+    parent_config = {
+        "vision_alignment": {
+            "phase": "perception",
+            "recipe_version": 1,
+            "formatter_version": "vision-alignment-document-v1",
+        }
+    }
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        initialization=SimpleNamespace(
+            checkpoint=parent,
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.perception,
+            parent_config_sha256=None,
+            parent_gate_sha256=None,
+        ),
+        vision_alignment=SimpleNamespace(
+            parent_config_sha256=None,
+            parent_gate_sha256=None,
+        ),
+    )
+    observed: Dict[str, Any] = {}
+    monkeypatch.setattr(vision_alignment, "RECIPE_VERSION", 2)
+    monkeypatch.setattr(vision_alignment, "_latest_output_checkpoint", lambda config: None)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_checkpoint_config",
+        lambda checkpoint: (parent_config, parent_config_sha),
+    )
+
+    def validate_gate(config, selected_parent, selected_config, selected_config_sha):
+        observed.update(
+            parent=selected_parent,
+            config=selected_config,
+            config_sha=selected_config_sha,
+        )
+        return "b" * 64
+
+    monkeypatch.setattr(vision_alignment, "_validate_parent_gate", validate_gate)
+
+    vision_alignment._validate_parent_or_resume(config)
+
+    assert observed == {
+        "parent": parent,
+        "config": parent_config,
+        "config_sha": parent_config_sha,
+    }
+    assert config.initialization.parent_config_sha256 == parent_config_sha
+    assert config.initialization.parent_gate_sha256 == "b" * 64
+
+
+def test_non_joint_parent_still_rejects_recipe_version_mismatch(monkeypatch):
+    vision_alignment = _load_module()
+    parent_config = {
+        "vision_alignment": {
+            "phase": "bridge",
+            "recipe_version": vision_alignment.RECIPE_VERSION + 1,
+        }
+    }
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        initialization=SimpleNamespace(
+            checkpoint="/checkpoints/bridge/step500",
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.bridge,
+        ),
+    )
+    monkeypatch.setattr(vision_alignment, "_latest_output_checkpoint", lambda config: None)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_checkpoint_config",
+        lambda checkpoint: (parent_config, "a" * 64),
+    )
+
+    with pytest.raises(ValueError, match="incompatible recipe version"):
+        vision_alignment._validate_parent_or_resume(config)
+
+
 def test_runtime_trainability_rejects_stale_freeze_patterns():
     vision_alignment = _load_module()
     model = nn.Module()

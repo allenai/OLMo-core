@@ -19,6 +19,7 @@ import io
 import json
 import math
 import os
+import re
 import stat
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -153,6 +154,42 @@ CORRECT_CE_MAX_RELATIVE_INCREASE = 0.02
 LATE_GAP_RETENTION_FRACTION = 0.8
 LOSS_MASS_ABSOLUTE_TOLERANCE = 0.02
 
+EXPECTED_PERCEPTION_LOSS_RECIPE_GIT_COMMIT = "bfaa560362854b2b4518641b327df5f7eacfddd7"
+EXPECTED_PERCEPTION_LOSS_RECIPE_REPOSITORY_PATH = "src/scripts/train/Vision-Alignment.py"
+EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH = (
+    "/weka/oe-training-default/rustin/OLMo-core/src/scripts/train/Vision-Alignment.py"
+)
+EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256 = (
+    "b8a96d946224e42cd0cb6422d27081da09265ea4d0e963f8e7509ac6f39267a5"
+)
+EXPECTED_PERCEPTION_LOSS_RECIPE_MANIFEST_RAW_SHA256 = (
+    "f9fee688f10aac1b71948a74c820f7cc5cf09f6f8bc0384e208737635e93b708"
+)
+EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256 = (
+    "6f110f00becd2f6360fcb0dd8f85fd78e4bcba787087ef44f3159c5f8d486316"
+)
+EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_PATH = (
+    "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/"
+    "perception-v1-promotion-v1/promotion-bundle-bfaa56036.json"
+)
+EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256 = (
+    "6d06a99fb9cbe5e6941689d413c8f832d8c222b28063551a2923000950cadfff"
+)
+EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_CONTENT_SHA256 = (
+    "776cb9a4577c385a60c02f6596a39872763bbe6a8064c8a08f894bc79e38e22d"
+)
+EXPECTED_APPROVED_PERCEPTION_PROMOTION_POLICY_SHA256 = (
+    "39a3905e89926e42f7bc10ce2b9f16ef335d28a168b9612347b3e14b67ad52ff"
+)
+EXPECTED_APPROVED_PERCEPTION_OUTCOME_RAW_SHA256 = (
+    "b62ebe1e90a12d5204972e5697cebd65a6484a52e7a806d3d2a0be742d92a6a8"
+)
+EXPECTED_APPROVED_PERCEPTION_DEVIATION_SHA256 = (
+    "19170e165b2407b2c3533ef5240db5e88fea7104319c36112b056eb549e90afc"
+)
+EXPECTED_APPROVED_PERCEPTION_APPROVED_BY = "rustins"
+EXPECTED_APPROVED_PERCEPTION_APPROVED_AT = "2026-08-13T21:47:16Z"
+
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 _OUTCOME_EVALUATOR_PATH = (
     _SOURCE_ROOT / "scripts" / "eval" / ("vision_alignment_perception_outcome.py")
@@ -169,7 +206,27 @@ _RUN_HEALTH_PRODUCER_PATH = (
 _LOSS_MASS_PRODUCER_PATH = (
     _SOURCE_ROOT / "scripts" / "eval" / "vision_alignment_perception_loss_mass.py"
 )
-_PERCEPTION_RECIPE_PATH = _SOURCE_ROOT / "scripts" / "train" / "Vision-Alignment.py"
+_PERCEPTION_LOSS_RECIPE_MANIFEST_PATH = (
+    _SOURCE_ROOT
+    / ".."
+    / "configs"
+    / "vision_moe"
+    / "vision_alignment"
+    / "promotion"
+    / "perception_loss_mass_historical_recipe_v1.json"
+).resolve()
+_HISTORICAL_RECIPE_MANIFEST_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "purpose",
+        "repository_commit",
+        "repository_path",
+        "recorded_path",
+        "sha256",
+        "content_sha256",
+    }
+)
 _SHA_FIELDS = (
     "checkpoint_config_sha256",
     "checkpoint_identity_sha256",
@@ -220,6 +277,78 @@ _BUNDLE_RECEIPT_FIELDS = frozenset(
         "loss_mass_pair",
     }
 )
+_APPROVED_PARENT_GATE_V3_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "status",
+        "promotion_kind",
+        "promotion_policy",
+        "recipe_version",
+        "formatter_version",
+        "phase",
+        "checkpoint",
+        "checkpoint_config_sha256",
+        "data_contract_sha256",
+        "trainable_contract_sha256",
+        "global_step",
+        "metrics_artifact_sha256",
+        "promotion_bundle_path",
+        "promotion_bundle_sha256",
+        "checkpoint_identity_sha256",
+        "approved_by",
+        "approved_at",
+        "waivers",
+    }
+)
+_APPROVED_WAIVER_FIELDS = frozenset({"id", "decision", "deviation_sha256"})
+_APPROVED_DEVIATION_FIELDS = frozenset(
+    {
+        "id",
+        "arm",
+        "criterion",
+        "waiver_required",
+        "reason_code",
+        "steps",
+        "count",
+        "rate",
+        "minimum_spacing",
+        "clean_final_steps",
+        "rolling_interval_length",
+        "run_id",
+        "evidence_receipt_sha256",
+        "sha256",
+    }
+)
+_APPROVED_OUTCOME_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "status",
+        "created_at",
+        "producer",
+        "inputs",
+        "protocol",
+        "checkpoints",
+        "sources",
+        "summary",
+        "content_sha256",
+    }
+)
+_APPROVED_OUTCOME_CHECKPOINT_FIELDS = frozenset(
+    {
+        "root",
+        "state_dir",
+        "config_sha256",
+        "checkpoint_marker_sha256",
+        "dcp_metadata_sha256",
+        "state_file_hash_algorithm",
+        "state_file_inventory_sha256",
+        "state_file_inventory",
+        "identity_sha256",
+    }
+)
+_APPROVED_OUTCOME_INVENTORY_FIELDS = frozenset({"path", "size", "sha256"})
 
 
 def _exact_fields(value: Any, expected: frozenset[str], *, name: str) -> Mapping[str, Any]:
@@ -509,6 +638,49 @@ def _validate_implementation_reference(
         expected_basename=basename,
         canonical_path=canonical_path,
     )
+
+
+def _validate_historical_loss_recipe_reference(reference: Any, *, name: str) -> Path:
+    """Validate the one reviewed recipe snapshot without re-hashing the evolving launcher.
+
+    The loss-mass receipt records the exact recipe that constructed the saved loader states. The
+    training launcher is expected to evolve after promotion, so re-hashing its live canonical path
+    would make approved evidence self-invalidating. This exception is deliberately limited to the
+    exact path and SHA recorded in a raw-SHA-pinned reviewed manifest; all executable evidence
+    producers continue to use :func:`_validate_implementation_reference` and live validation.
+    """
+    manifest = load_json_pinned(
+        _PERCEPTION_LOSS_RECIPE_MANIFEST_PATH,
+        EXPECTED_PERCEPTION_LOSS_RECIPE_MANIFEST_RAW_SHA256,
+        name="reviewed historical perception loss recipe manifest",
+    )
+    manifest = _exact_fields(
+        manifest,
+        _HISTORICAL_RECIPE_MANIFEST_FIELDS,
+        name="reviewed historical perception loss recipe manifest",
+    )
+    _validate_content_sha(manifest, name="reviewed historical perception loss recipe manifest")
+    if (
+        manifest["format"] != "vision_alignment_reviewed_historical_recipe"
+        or type(manifest["version"]) is not int
+        or manifest["version"] != 1
+        or manifest["purpose"] != "perception_loss_mass_evidence"
+        or manifest["repository_commit"] != EXPECTED_PERCEPTION_LOSS_RECIPE_GIT_COMMIT
+        or manifest["repository_path"] != EXPECTED_PERCEPTION_LOSS_RECIPE_REPOSITORY_PATH
+        or manifest["recorded_path"] != EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH
+        or manifest["sha256"] != EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256
+    ):
+        raise PromotionValidationError(
+            "Reviewed historical perception loss recipe manifest differs from its allowlist"
+        )
+
+    ref = _exact_fields(reference, _ARTIFACT_REF_FIELDS, name=f"{name} reference")
+    if ref["path"] != manifest["recorded_path"]:
+        raise PromotionValidationError(f"{name} names an incompatible historical path")
+    expected_sha = _sha256(ref["sha256"], name=f"{name} reference SHA-256")
+    if expected_sha != manifest["sha256"]:
+        raise PromotionValidationError(f"{name} differs from the reviewed historical pin")
+    return Path(str(ref["path"]))
 
 
 def _validate_receipt_header(
@@ -2164,11 +2336,9 @@ def _validate_loss_evidence(
     expected_dataset_fingerprints_sha256: str,
 ) -> dict[str, list[dict[str, Any]]]:
     evidence = _exact_fields(value, _LOSS_EVIDENCE_FIELDS, name="loss evidence")
-    _validate_implementation_reference(
+    _validate_historical_loss_recipe_reference(
         evidence["recipe"],
         name="loss recipe",
-        basename="Vision-Alignment.py",
-        canonical_path=_PERCEPTION_RECIPE_PATH,
     )
     _validate_implementation_reference(
         evidence["producer"],
@@ -2700,6 +2870,398 @@ def validate_perception_promotion_bundle(
     }
 
 
+def validate_approved_perception_parent_gate_bundle(
+    bundle: Mapping[str, Any],
+    *,
+    gate: Mapping[str, Any],
+    expected_checkpoint: Path,
+    expected_checkpoint_config_sha256: str,
+) -> dict[str, Any]:
+    """Authenticate the immutable, human-approved perception parent evidence.
+
+    The caller must first raw-SHA authenticate the v3 gate against
+    :data:`EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256`. The adapter deliberately does not
+    re-run historical semantic evaluators: it authenticates the one approved bundle and every
+    transitive receipt by raw SHA, extracts the full treatment identity from the strict outcome
+    JSON, and re-hashes the complete live treatment checkpoint. The comparator checkpoint is not
+    required to remain live after approval.
+    """
+    gate = _exact_fields(gate, _APPROVED_PARENT_GATE_V3_FIELDS, name="approved perception gate")
+    selected_checkpoint = expected_checkpoint.expanduser().resolve()
+    selected_config_sha = _sha256(
+        expected_checkpoint_config_sha256, name="selected perception parent config SHA-256"
+    )
+    approved_at = _timestamp(gate["approved_at"], name="approved perception gate approved_at")
+    approved_by = gate["approved_by"]
+    if (
+        gate["format"] != "vision_alignment_parent_gate"
+        or type(gate["version"]) is not int
+        or gate["version"] != 3
+        or gate["status"] != "approved"
+        or gate["promotion_kind"] != "perception"
+        or gate["promotion_policy"] != PERCEPTION_PROMOTION_POLICY
+        or type(gate["recipe_version"]) is not int
+        or gate["recipe_version"] != 1
+        or gate["formatter_version"] != "vision-alignment-document-v1"
+        or gate["phase"] != "perception"
+        or Path(str(gate["checkpoint"])).expanduser().resolve() != selected_checkpoint
+        or gate["checkpoint_config_sha256"] != selected_config_sha
+        or _int(gate["global_step"], name="approved perception gate global step") != PRIMARY_STEP
+        or gate["metrics_artifact_sha256"]
+        != EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256
+        or gate["promotion_bundle_path"] != EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_PATH
+        or gate["promotion_bundle_sha256"]
+        != EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256
+        or approved_by != EXPECTED_APPROVED_PERCEPTION_APPROVED_BY
+        or gate["approved_at"] != EXPECTED_APPROVED_PERCEPTION_APPROVED_AT
+        or approved_at.isoformat()
+        != _timestamp(
+            EXPECTED_APPROVED_PERCEPTION_APPROVED_AT,
+            name="allowlisted perception approval timestamp",
+        ).isoformat()
+        or not isinstance(approved_by, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@:/+\-]{2,127}", approved_by) is None
+    ):
+        raise PromotionValidationError("Approved perception gate differs from its allowlist")
+    for field in (
+        "checkpoint_config_sha256",
+        "checkpoint_identity_sha256",
+        "data_contract_sha256",
+        "trainable_contract_sha256",
+        "metrics_artifact_sha256",
+        "promotion_bundle_sha256",
+    ):
+        _sha256(gate[field], name=f"approved perception gate {field}")
+
+    bundle_path, bundle_raw = _load_raw_reference(
+        {
+            "path": gate["promotion_bundle_path"],
+            "sha256": EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256,
+        },
+        name="approved perception promotion bundle",
+    )
+    pinned_bundle = _strict_json_bytes(bundle_raw, name="approved perception promotion bundle")
+    if not isinstance(pinned_bundle, Mapping) or pinned_bundle != bundle:
+        raise PromotionValidationError(
+            "Supplied perception promotion bundle differs from the approved raw artifact"
+        )
+    bundle = _exact_fields(bundle, _BUNDLE_FIELDS, name="approved perception promotion bundle")
+    if (
+        bundle_path != Path(EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_PATH)
+        or bundle["format"] != PERCEPTION_PROMOTION_BUNDLE_FORMAT
+        or type(bundle["version"]) is not int
+        or bundle["version"] != PERCEPTION_PROMOTION_BUNDLE_VERSION
+        or bundle["status"] != "ready_for_human_approval"
+        or bundle["content_sha256"] != EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_CONTENT_SHA256
+        or not isinstance(bundle["policy"], Mapping)
+        or canonical_sha256(bundle["policy"])
+        != EXPECTED_APPROVED_PERCEPTION_PROMOTION_POLICY_SHA256
+        or bundle["policy"].get("name") != PERCEPTION_PROMOTION_POLICY
+    ):
+        raise PromotionValidationError("Approved perception promotion bundle differs")
+    bundle_created_at = _timestamp(
+        bundle["created_at"], name="approved perception bundle created_at"
+    )
+    if approved_at < bundle_created_at:
+        raise PromotionValidationError("Perception approval predates its promotion bundle")
+    _validate_content_sha(bundle, name="approved perception promotion bundle")
+
+    candidate = _validate_approved_bundle_candidate(
+        bundle["candidate"], arm=TREATMENT_ARM, name="approved perception candidate"
+    )
+    comparator = _validate_approved_bundle_candidate(
+        bundle["comparator"], arm=CONTROL_ARM, name="approved perception comparator"
+    )
+    if (
+        Path(str(candidate["checkpoint"])).expanduser().resolve() != selected_checkpoint
+        or candidate["checkpoint_config_sha256"] != selected_config_sha
+        or candidate["checkpoint"] != gate["checkpoint"]
+        or candidate["checkpoint_config_sha256"] != gate["checkpoint_config_sha256"]
+        or candidate["checkpoint_identity_sha256"] != gate["checkpoint_identity_sha256"]
+        or candidate["data_contract_sha256"] != gate["data_contract_sha256"]
+        or candidate["trainable_contract_sha256"] != gate["trainable_contract_sha256"]
+        or candidate["global_step"] != gate["global_step"]
+        or candidate["phase"] != gate["phase"]
+        or candidate["data_contract_sha256"] != comparator["data_contract_sha256"]
+    ):
+        raise PromotionValidationError(
+            "Approved perception candidate, comparator, gate, or selected parent differs"
+        )
+
+    outcome = _validate_approved_perception_receipt_references(bundle["receipts"])
+    identity = _approved_treatment_identity_from_outcome(
+        outcome, expected_checkpoint=selected_checkpoint
+    )
+    if (
+        identity["config_sha256"] != candidate["checkpoint_config_sha256"]
+        or identity["identity_sha256"] != candidate["checkpoint_identity_sha256"]
+        or identity["checkpoint_marker_sha256"] != candidate["checkpoint_marker_sha256"]
+        or identity["dcp_metadata_sha256"] != candidate["dcp_metadata_sha256"]
+        or identity["state_file_inventory_sha256"] != candidate["state_file_inventory_sha256"]
+    ):
+        raise PromotionValidationError(
+            "Approved outcome treatment identity differs from the bundle candidate"
+        )
+
+    deviation = _validate_approved_perception_deviation(
+        bundle["deviations"], receipt_references=bundle["receipts"]
+    )
+    waivers = gate["waivers"]
+    if not isinstance(waivers, list) or len(waivers) != 1:
+        raise PromotionValidationError("Approved perception gate must contain exactly one waiver")
+    waiver = _exact_fields(
+        waivers[0], _APPROVED_WAIVER_FIELDS, name="approved perception gate waiver"
+    )
+    if (
+        waiver["id"] != TREATMENT_GUARD_WAIVER_ID
+        or waiver["decision"] != "approved"
+        or waiver["deviation_sha256"] != deviation["sha256"]
+    ):
+        raise PromotionValidationError(
+            "Approved perception waiver differs from the exact seven-skip deviation"
+        )
+
+    _validate_live_checkpoint_identity_stable(identity, name="approved perception parent")
+    marker = load_json_pinned(
+        selected_checkpoint / ".metadata.json",
+        identity["checkpoint_marker_sha256"],
+        name="approved perception parent checkpoint marker",
+    )
+    if not isinstance(marker, Mapping) or marker.get("ephemeral") is not False:
+        raise PromotionValidationError("Approved perception parent must be a permanent checkpoint")
+    return {
+        "status": "approved",
+        "candidate": dict(candidate),
+        "comparator": dict(comparator),
+        "deviation_sha256": {TREATMENT_GUARD_WAIVER_ID: deviation["sha256"]},
+        "approved_by": approved_by,
+        "approved_at": gate["approved_at"],
+        "bundle_raw_sha256": EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256,
+        "bundle_content_sha256": bundle["content_sha256"],
+    }
+
+
+def _validate_approved_bundle_candidate(value: Any, *, arm: str, name: str) -> Mapping[str, Any]:
+    candidate = _exact_fields(value, _CANDIDATE_FIELDS, name=name)
+    checkpoint_value = candidate["checkpoint"]
+    if not isinstance(checkpoint_value, str) or not checkpoint_value:
+        raise PromotionValidationError(f"{name} checkpoint must be a non-empty path")
+    checkpoint = Path(checkpoint_value).expanduser()
+    expected_contract = EXPECTED_PROFILE_CONTRACTS[arm]
+    if (
+        checkpoint.name != f"step{PRIMARY_STEP}"
+        or _int(candidate["global_step"], name=f"{name} global step") != PRIMARY_STEP
+        or candidate["phase"] != "perception"
+        or candidate["lineage_id"] != expected_contract["name"]
+        or candidate["trainable_contract_sha256"] != expected_contract["trainable_contract_sha256"]
+    ):
+        raise PromotionValidationError(f"{name} identity differs")
+    for field in _SHA_FIELDS:
+        _sha256(candidate[field], name=f"{name} {field}")
+    vocab_size = _int(candidate["vocab_size"], name=f"{name} vocab size", minimum=1)
+    rows = candidate["image_embedding_rows"]
+    if (
+        not isinstance(rows, list)
+        or any(type(row) is not int for row in rows)
+        or rows != list(IMAGE_TOKEN_ROWS)
+        or any(row >= vocab_size for row in rows)
+    ):
+        raise PromotionValidationError(f"{name} image embedding rows differ")
+    return candidate
+
+
+def _validate_approved_perception_receipt_references(value: Any) -> Mapping[str, Any]:
+    references = _exact_fields(
+        value, _BUNDLE_RECEIPT_FIELDS, name="approved perception receipt references"
+    )
+    raw_by_name: dict[str, bytes] = {}
+    for name in ("pair_contract", "counterfactual_outcome", "loss_mass_pair"):
+        _, raw_by_name[name] = _load_raw_reference(
+            references[name], name=f"approved perception {name} receipt"
+        )
+    for category in ("initialization_parity", "frozen_state", "text_retention", "run_health"):
+        arm_references = _exact_fields(
+            references[category], _ARM_MAP_FIELDS, name=f"approved perception {category} references"
+        )
+        for arm in ARMS:
+            _load_raw_reference(
+                arm_references[arm], name=f"approved perception {category} {arm} receipt"
+            )
+    outcome_reference = _exact_fields(
+        references["counterfactual_outcome"],
+        _ARTIFACT_REF_FIELDS,
+        name="approved perception outcome reference",
+    )
+    if outcome_reference["sha256"] != EXPECTED_APPROVED_PERCEPTION_OUTCOME_RAW_SHA256:
+        raise PromotionValidationError("Approved perception outcome differs from its allowlist")
+    outcome = _strict_json_bytes(
+        raw_by_name["counterfactual_outcome"], name="approved perception outcome"
+    )
+    if not isinstance(outcome, Mapping):
+        raise PromotionValidationError("Approved perception outcome must be an object")
+    outcome = _exact_fields(outcome, _APPROVED_OUTCOME_FIELDS, name="approved perception outcome")
+    if (
+        outcome["format"] != OUTCOME_RECEIPT_FORMAT
+        or type(outcome["version"]) is not int
+        or outcome["version"] != RECEIPT_VERSION
+        or outcome["status"] != "passed"
+    ):
+        raise PromotionValidationError("Approved perception outcome identity differs")
+    _timestamp(outcome["created_at"], name="approved perception outcome created_at")
+    _validate_content_sha(outcome, name="approved perception outcome")
+    return outcome
+
+
+def _approved_treatment_identity_from_outcome(
+    outcome: Mapping[str, Any], *, expected_checkpoint: Path
+) -> Mapping[str, Any]:
+    checkpoints = _exact_fields(
+        outcome["checkpoints"], _ARM_MAP_FIELDS, name="approved outcome checkpoints"
+    )
+    for arm in ARMS:
+        _exact_fields(
+            checkpoints[arm],
+            frozenset({f"step{DURABILITY_STEP}", f"step{PRIMARY_STEP}"}),
+            name=f"approved outcome {arm} checkpoints",
+        )
+    identity = _exact_fields(
+        checkpoints[TREATMENT_ARM][f"step{PRIMARY_STEP}"],
+        _APPROVED_OUTCOME_CHECKPOINT_FIELDS,
+        name="approved outcome treatment step4000 identity",
+    )
+    root_value = identity["root"]
+    state_dir_value = identity["state_dir"]
+    if (
+        not isinstance(root_value, str)
+        or not root_value
+        or not isinstance(state_dir_value, str)
+        or not state_dir_value
+    ):
+        raise PromotionValidationError("Approved outcome treatment checkpoint paths are malformed")
+    root = Path(root_value).expanduser().resolve()
+    state_dir = Path(state_dir_value).expanduser().resolve()
+    if root != expected_checkpoint or state_dir != root / "model_and_optim":
+        raise PromotionValidationError("Approved outcome treatment checkpoint path differs")
+    if identity["state_file_hash_algorithm"] != "sha256":
+        raise PromotionValidationError("Approved outcome treatment hash algorithm differs")
+    for field in (
+        "config_sha256",
+        "checkpoint_marker_sha256",
+        "dcp_metadata_sha256",
+        "state_file_inventory_sha256",
+        "identity_sha256",
+    ):
+        _sha256(identity[field], name=f"approved outcome treatment {field}")
+    inventory = identity["state_file_inventory"]
+    if not isinstance(inventory, list) or not inventory:
+        raise PromotionValidationError("Approved outcome treatment inventory is empty")
+    normalized_paths: list[str] = []
+    for index, raw in enumerate(inventory):
+        item = _exact_fields(
+            raw,
+            _APPROVED_OUTCOME_INVENTORY_FIELDS,
+            name=f"approved outcome treatment inventory item {index}",
+        )
+        relative_value = item["path"]
+        if not isinstance(relative_value, str) or not relative_value:
+            raise PromotionValidationError(
+                f"Approved outcome treatment inventory item {index} path is malformed"
+            )
+        relative = Path(relative_value)
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or relative.parts[:1] != ("model_and_optim",)
+            or relative.as_posix() != relative_value
+        ):
+            raise PromotionValidationError(
+                f"Approved outcome treatment inventory item {index} path differs"
+            )
+        _int(
+            item["size"],
+            name=f"approved outcome treatment inventory item {index} size",
+            minimum=1,
+        )
+        _sha256(
+            item["sha256"],
+            name=f"approved outcome treatment inventory item {index} SHA-256",
+        )
+        normalized_paths.append(relative_value)
+    if (
+        normalized_paths != sorted(normalized_paths)
+        or len(set(normalized_paths)) != len(normalized_paths)
+        or "model_and_optim/.metadata" not in normalized_paths
+        or canonical_sha256(inventory) != identity["state_file_inventory_sha256"]
+        or canonical_sha256(
+            {key: value for key, value in identity.items() if key != "identity_sha256"}
+        )
+        != identity["identity_sha256"]
+    ):
+        raise PromotionValidationError("Approved outcome treatment inventory identity differs")
+    return identity
+
+
+def _validate_approved_perception_deviation(
+    value: Any, *, receipt_references: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if not isinstance(value, list) or len(value) != 1:
+        raise PromotionValidationError(
+            "Approved perception bundle must contain exactly one deviation"
+        )
+    deviation = _exact_fields(
+        value[0], _APPROVED_DEVIATION_FIELDS, name="approved perception deviation"
+    )
+    treatment_run_health = _exact_fields(
+        _exact_fields(
+            receipt_references["run_health"],
+            _ARM_MAP_FIELDS,
+            name="approved perception run-health references",
+        )[TREATMENT_ARM],
+        _ARTIFACT_REF_FIELDS,
+        name="approved perception treatment run-health reference",
+    )
+    unsigned = {key: item for key, item in deviation.items() if key != "sha256"}
+    steps = list(EXPECTED_TREATMENT_SKIP_STEPS)
+    if (
+        deviation["sha256"] != EXPECTED_APPROVED_PERCEPTION_DEVIATION_SHA256
+        or canonical_sha256(unsigned) != EXPECTED_APPROVED_PERCEPTION_DEVIATION_SHA256
+        or deviation["id"] != TREATMENT_GUARD_WAIVER_ID
+        or deviation["arm"] != TREATMENT_ARM
+        or deviation["criterion"] != "no_guarded_optimizer_skip"
+        or deviation["waiver_required"] is not True
+        or deviation["reason_code"] != "optimizer_safety_guard"
+        or deviation["steps"] != steps
+        or _int(deviation["count"], name="approved perception deviation count") != len(steps)
+        or not math.isclose(
+            _finite(deviation["rate"], name="approved perception deviation rate"),
+            len(steps) / PRIMARY_STEP,
+            rel_tol=0,
+            abs_tol=0,
+        )
+        or _int(
+            deviation["minimum_spacing"],
+            name="approved perception deviation minimum spacing",
+        )
+        != min(right - left for left, right in pairwise(steps))
+        or _int(
+            deviation["clean_final_steps"],
+            name="approved perception deviation clean final steps",
+        )
+        != PRIMARY_STEP - steps[-1]
+        or _int(
+            deviation["rolling_interval_length"],
+            name="approved perception deviation rolling interval",
+        )
+        != ROLLING_INTERVAL_LENGTH
+        or deviation["run_id"] != "4eggnrzc"
+        or deviation["evidence_receipt_sha256"] != treatment_run_health["sha256"]
+    ):
+        raise PromotionValidationError(
+            "Approved perception deviation differs from the exact seven-skip evidence"
+        )
+    return deviation
+
+
 def _validate_bundle_candidate(value: Any, *, name: str) -> Mapping[str, Any]:
     candidate = _exact_fields(value, _CANDIDATE_FIELDS, name=name)
     checkpoint = _resolved_path(candidate["checkpoint"], name=f"{name} checkpoint")
@@ -2743,6 +3305,10 @@ __all__ = [
     "CORRECT_CE_MAX_RELATIVE_INCREASE",
     "COUNTERFACTUAL_OUTCOME_RECEIPT_FORMAT",
     "DURABILITY_STEP",
+    "EXPECTED_APPROVED_PERCEPTION_PARENT_GATE_RAW_SHA256",
+    "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_CONTENT_SHA256",
+    "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_PATH",
+    "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256",
     "EXPECTED_EXPERIMENT_IDS",
     "EXPECTED_FROZEN_TENSOR_COUNTS",
     "EXPECTED_PAIR_CONTRACT_CONTENT_SHA256",
@@ -2776,6 +3342,7 @@ __all__ = [
     "load_trainer_state",
     "sha256_file",
     "validate_counterfactual_outcome_receipt",
+    "validate_approved_perception_parent_gate_bundle",
     "validate_initialization_parity_receipt",
     "validate_loss_mass_pair_receipt",
     "validate_pair_contract_receipt",

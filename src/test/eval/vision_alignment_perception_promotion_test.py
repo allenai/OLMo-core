@@ -188,6 +188,191 @@ def _loss_sources(shares: dict[str, float]) -> tuple[dict, dict]:
     }
 
 
+def _canonical_json_bytes(value) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _approved_gate_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict]:
+    checkpoint, identity = _write_checkpoint(tmp_path, promotion.TREATMENT_ARM)
+    receipt_dir = tmp_path / "receipts"
+    receipt_dir.mkdir()
+
+    def receipt_reference(name: str) -> dict[str, str]:
+        path = receipt_dir / f"{name}.json"
+        path.write_text("{}\n")
+        return {"path": str(path), "sha256": promotion.sha256_file(path)}
+
+    references = {
+        "pair_contract": receipt_reference("pair-contract"),
+        "initialization_parity": {
+            arm: receipt_reference(f"initialization-{arm}") for arm in promotion.ARMS
+        },
+        "counterfactual_outcome": {},
+        "frozen_state": {arm: receipt_reference(f"frozen-{arm}") for arm in promotion.ARMS},
+        "text_retention": {arm: receipt_reference(f"text-{arm}") for arm in promotion.ARMS},
+        "run_health": {arm: receipt_reference(f"health-{arm}") for arm in promotion.ARMS},
+        "loss_mass_pair": receipt_reference("loss-mass"),
+    }
+    outcome = {
+        "format": promotion.OUTCOME_RECEIPT_FORMAT,
+        "version": 1,
+        "status": "passed",
+        "created_at": "2026-08-13T00:00:00+00:00",
+        "producer": {},
+        "inputs": {},
+        "protocol": {},
+        "checkpoints": {
+            arm: {"step3000": deepcopy(identity), "step4000": deepcopy(identity)}
+            for arm in promotion.ARMS
+        },
+        "sources": {},
+        "summary": {},
+        "content_sha256": "",
+    }
+    outcome["content_sha256"] = promotion.canonical_sha256(
+        {key: value for key, value in outcome.items() if key != "content_sha256"}
+    )
+    outcome_path = receipt_dir / "outcome.json"
+    outcome_path.write_bytes(_canonical_json_bytes(outcome))
+    outcome_raw_sha = promotion.sha256_file(outcome_path)
+    references["counterfactual_outcome"] = {
+        "path": str(outcome_path),
+        "sha256": outcome_raw_sha,
+    }
+
+    candidate = {
+        "checkpoint": str(checkpoint),
+        "global_step": 4000,
+        "phase": "perception",
+        "lineage_id": promotion.EXPECTED_PROFILE_CONTRACTS[promotion.TREATMENT_ARM]["name"],
+        "checkpoint_config_sha256": identity["config_sha256"],
+        "checkpoint_identity_sha256": identity["identity_sha256"],
+        "checkpoint_marker_sha256": identity["checkpoint_marker_sha256"],
+        "dcp_metadata_sha256": identity["dcp_metadata_sha256"],
+        "state_file_inventory_sha256": identity["state_file_inventory_sha256"],
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": promotion.EXPECTED_PROFILE_CONTRACTS[promotion.TREATMENT_ARM][
+            "trainable_contract_sha256"
+        ],
+        "vocab_size": 100_352,
+        "image_embedding_rows": list(promotion.IMAGE_TOKEN_ROWS),
+    }
+    comparator = deepcopy(candidate)
+    comparator.update(
+        checkpoint=str(tmp_path / "absent-control" / "step4000"),
+        lineage_id=promotion.EXPECTED_PROFILE_CONTRACTS[promotion.CONTROL_ARM]["name"],
+        trainable_contract_sha256=promotion.EXPECTED_PROFILE_CONTRACTS[promotion.CONTROL_ARM][
+            "trainable_contract_sha256"
+        ],
+    )
+    treatment_health_sha = references["run_health"][promotion.TREATMENT_ARM]["sha256"]
+    steps = list(promotion.EXPECTED_TREATMENT_SKIP_STEPS)
+    deviation = {
+        "id": promotion.TREATMENT_GUARD_WAIVER_ID,
+        "arm": promotion.TREATMENT_ARM,
+        "criterion": "no_guarded_optimizer_skip",
+        "waiver_required": True,
+        "reason_code": "optimizer_safety_guard",
+        "steps": steps,
+        "count": len(steps),
+        "rate": len(steps) / promotion.PRIMARY_STEP,
+        "minimum_spacing": min(right - left for left, right in pairwise(steps)),
+        "clean_final_steps": promotion.PRIMARY_STEP - steps[-1],
+        "rolling_interval_length": promotion.ROLLING_INTERVAL_LENGTH,
+        "run_id": "4eggnrzc",
+        "evidence_receipt_sha256": treatment_health_sha,
+        "sha256": "",
+    }
+    deviation["sha256"] = promotion.canonical_sha256(
+        {key: value for key, value in deviation.items() if key != "sha256"}
+    )
+    policy = promotion._promotion_policy()
+    bundle = {
+        "format": promotion.PERCEPTION_PROMOTION_BUNDLE_FORMAT,
+        "version": promotion.PERCEPTION_PROMOTION_BUNDLE_VERSION,
+        "status": "ready_for_human_approval",
+        "created_at": "2026-08-13T20:55:40.337092+00:00",
+        "policy": policy,
+        "candidate": candidate,
+        "comparator": comparator,
+        "receipts": references,
+        "deviations": [deviation],
+        "content_sha256": "",
+    }
+    bundle["content_sha256"] = promotion.canonical_sha256(
+        {key: value for key, value in bundle.items() if key != "content_sha256"}
+    )
+    bundle_path = tmp_path / "promotion-bundle.json"
+    bundle_path.write_bytes(_canonical_json_bytes(bundle))
+    bundle_raw_sha = promotion.sha256_file(bundle_path)
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 3,
+        "status": "approved",
+        "promotion_kind": "perception",
+        "promotion_policy": promotion.PERCEPTION_PROMOTION_POLICY,
+        "recipe_version": 1,
+        "formatter_version": "vision-alignment-document-v1",
+        "phase": "perception",
+        "checkpoint": candidate["checkpoint"],
+        "checkpoint_config_sha256": candidate["checkpoint_config_sha256"],
+        "data_contract_sha256": candidate["data_contract_sha256"],
+        "trainable_contract_sha256": candidate["trainable_contract_sha256"],
+        "global_step": candidate["global_step"],
+        "metrics_artifact_sha256": bundle_raw_sha,
+        "promotion_bundle_path": str(bundle_path),
+        "promotion_bundle_sha256": bundle_raw_sha,
+        "checkpoint_identity_sha256": candidate["checkpoint_identity_sha256"],
+        "approved_by": promotion.EXPECTED_APPROVED_PERCEPTION_APPROVED_BY,
+        "approved_at": promotion.EXPECTED_APPROVED_PERCEPTION_APPROVED_AT,
+        "waivers": [
+            {
+                "id": promotion.TREATMENT_GUARD_WAIVER_ID,
+                "decision": "approved",
+                "deviation_sha256": deviation["sha256"],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        promotion, "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_PATH", str(bundle_path)
+    )
+    monkeypatch.setattr(
+        promotion, "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_RAW_SHA256", bundle_raw_sha
+    )
+    monkeypatch.setattr(
+        promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PROMOTION_BUNDLE_CONTENT_SHA256",
+        bundle["content_sha256"],
+    )
+    monkeypatch.setattr(
+        promotion,
+        "EXPECTED_APPROVED_PERCEPTION_PROMOTION_POLICY_SHA256",
+        promotion.canonical_sha256(policy),
+    )
+    monkeypatch.setattr(
+        promotion, "EXPECTED_APPROVED_PERCEPTION_OUTCOME_RAW_SHA256", outcome_raw_sha
+    )
+    monkeypatch.setattr(
+        promotion, "EXPECTED_APPROVED_PERCEPTION_DEVIATION_SHA256", deviation["sha256"]
+    )
+    return gate, bundle
+
+
+def _call_approved_adapter(bundle: dict, gate: dict) -> dict:
+    return promotion.validate_approved_perception_parent_gate_bundle(
+        bundle,
+        gate=gate,
+        expected_checkpoint=Path(gate["checkpoint"]),
+        expected_checkpoint_config_sha256=gate["checkpoint_config_sha256"],
+    )
+
+
 def test_candidate_from_outcome_rehashes_full_step4000_identity(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -219,7 +404,7 @@ def test_candidate_from_outcome_rehashes_full_step4000_identity(
         promotion.candidate_from_outcome_receipt(treatment_path, receipt)
 
 
-def test_stable_checkpoint_rejects_extra_entries_and_symlinked_support_file(
+def test_stable_checkpoint_rejects_mutated_extra_and_symlinked_shards(
     tmp_path: Path,
 ) -> None:
     checkpoint, identity = _write_checkpoint(tmp_path, promotion.TREATMENT_ARM)
@@ -231,11 +416,16 @@ def test_stable_checkpoint_rejects_extra_entries_and_symlinked_support_file(
         promotion._validate_live_checkpoint_identity_stable(identity, name="test checkpoint")
     extra.unlink()
 
-    config = checkpoint / "config.json"
-    target = checkpoint / "config-copy.json"
-    target.write_bytes(config.read_bytes())
-    config.unlink()
-    config.symlink_to(target.name)
+    shard = checkpoint / "model_and_optim" / "__0_0.distcp"
+    original = shard.read_bytes()
+    shard.write_bytes(b"mutated shard")
+    with pytest.raises(promotion.PromotionValidationError, match="inventory differs"):
+        promotion._validate_live_checkpoint_identity_stable(identity, name="test checkpoint")
+    shard.write_bytes(original)
+
+    target = checkpoint / "shard-copy.distcp"
+    shard.rename(target)
+    shard.symlink_to(target)
     with pytest.raises(promotion.PromotionValidationError, match="symlink/non-file"):
         promotion._validate_live_checkpoint_identity_stable(identity, name="test checkpoint")
 
@@ -393,6 +583,211 @@ def test_published_bridge_adapter_never_invokes_unsafe_legacy_pickle_validation(
         lambda *args, **kwargs: pytest.fail("unsafe historical validator was invoked"),
     )
     assert promotion._validate_published_bridge_bundle(bundle, gate=gate) == parent_identity
+
+
+def test_approved_perception_adapter_uses_only_pinned_json_and_stable_live_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("historical semantic validator was invoked")
+
+    for name in (
+        "validate_perception_promotion_bundle",
+        "validate_counterfactual_outcome_receipt",
+        "validate_pair_contract_receipt",
+        "validate_initialization_parity_receipt",
+        "validate_perception_frozen_state_receipt",
+        "validate_perception_text_retention_receipt",
+        "validate_perception_run_health_receipt",
+        "validate_loss_mass_pair_receipt",
+        "load_trainer_state",
+        "_load_outcome_module",
+        "_load_run_health_module",
+        "_load_loss_mass_module",
+    ):
+        monkeypatch.setattr(promotion, name, forbidden)
+    stable_identities = []
+    monkeypatch.setattr(
+        promotion,
+        "_validate_live_checkpoint_identity_stable",
+        lambda identity, **kwargs: stable_identities.append(identity),
+    )
+
+    summary = _call_approved_adapter(bundle, gate)
+
+    assert summary["status"] == "approved"
+    assert summary["approved_by"] == promotion.EXPECTED_APPROVED_PERCEPTION_APPROVED_BY
+    assert summary["candidate"] == bundle["candidate"]
+    assert summary["comparator"] == bundle["comparator"]
+    assert stable_identities[0]["identity_sha256"] == gate["checkpoint_identity_sha256"]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (lambda gate: gate.update(approved_by="someone-else"), "allowlist"),
+        (lambda gate: gate.update(approved_at="2026-08-13T21:47:17Z"), "allowlist"),
+        (lambda gate: gate.update(promotion_kind="bridge"), "allowlist"),
+        (lambda gate: gate.update(promotion_policy="other"), "allowlist"),
+        (lambda gate: gate.update(version=2), "allowlist"),
+        (lambda gate: gate["waivers"].clear(), "exactly one waiver"),
+        (
+            lambda gate: gate["waivers"][0].update(deviation_sha256="0" * 64),
+            "exact seven-skip deviation",
+        ),
+        (lambda gate: gate.update(extra=True), "locked schema"),
+        (lambda gate: gate.update(approved_at="2026-08-13T21:47:16"), "timezone"),
+    ],
+)
+def test_approved_perception_adapter_rejects_resigned_or_malformed_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation, error: str
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    mutation(gate)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    with pytest.raises(promotion.PromotionValidationError, match=error):
+        _call_approved_adapter(bundle, gate)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (lambda bundle: bundle.update(extra=True), "raw artifact"),
+        (lambda bundle: bundle.update(status="approved"), "raw artifact"),
+        (lambda bundle: bundle["candidate"].update(global_step=3999), "raw artifact"),
+        (lambda bundle: bundle["deviations"].clear(), "raw artifact"),
+    ],
+)
+def test_approved_perception_adapter_rejects_bundle_schema_and_semantic_tamper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mutation, error: str
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    mutation(bundle)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    with pytest.raises(promotion.PromotionValidationError, match=error):
+        _call_approved_adapter(bundle, gate)
+
+
+def test_approved_perception_adapter_raw_verifies_every_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    original = promotion._load_raw_reference
+    observed = []
+
+    def record(reference, *, name):
+        observed.append(name)
+        return original(reference, name=name)
+
+    monkeypatch.setattr(promotion, "_load_raw_reference", record)
+    _call_approved_adapter(bundle, gate)
+    assert len(observed) == 12  # Bundle, three singleton receipts, and eight arm receipts.
+
+    receipt = bundle["receipts"]["text_retention"][promotion.CONTROL_ARM]
+    receipt_path = Path(receipt["path"])
+    mutated_receipt = tmp_path / receipt_path.name
+    mutated_receipt.write_bytes(b"mutated receipt")
+    original_direct_existing_path = promotion._direct_existing_path
+
+    def substitute_path(path: Path, *, name: str) -> Path:
+        if Path(path) == receipt_path:
+            return mutated_receipt
+        return original_direct_existing_path(path, name=name)
+
+    monkeypatch.setattr(promotion, "_load_raw_reference", original)
+    monkeypatch.setattr(
+        promotion,
+        "_direct_existing_path",
+        substitute_path,
+    )
+    with pytest.raises(promotion.PromotionValidationError, match="raw SHA-256 differs"):
+        _call_approved_adapter(bundle, gate)
+
+
+def test_approved_perception_adapter_rejects_outcome_identity_and_inventory_drift(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    outcome_path = Path(bundle["receipts"]["counterfactual_outcome"]["path"])
+    outcome = promotion.load_json_pinned(
+        outcome_path,
+        promotion.EXPECTED_APPROVED_PERCEPTION_OUTCOME_RAW_SHA256,
+        name="test approved outcome",
+    )
+    assert isinstance(outcome, dict)
+    identity = outcome["checkpoints"][promotion.TREATMENT_ARM]["step4000"]
+    identity["state_file_inventory"][0]["sha256"] = "0" * 64
+    identity["state_file_inventory_sha256"] = promotion.canonical_sha256(
+        identity["state_file_inventory"]
+    )
+    identity["identity_sha256"] = promotion.canonical_sha256(
+        {key: value for key, value in identity.items() if key != "identity_sha256"}
+    )
+    outcome["content_sha256"] = promotion.canonical_sha256(
+        {key: value for key, value in outcome.items() if key != "content_sha256"}
+    )
+    outcome_raw = _canonical_json_bytes(outcome)
+    original = promotion._load_raw_reference
+
+    def substitute(reference, *, name):
+        if name == "approved perception counterfactual_outcome receipt":
+            return outcome_path, outcome_raw
+        return original(reference, name=name)
+
+    monkeypatch.setattr(promotion, "_load_raw_reference", substitute)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    with pytest.raises(promotion.PromotionValidationError, match="bundle candidate"):
+        _call_approved_adapter(bundle, gate)
+
+
+def test_approved_perception_adapter_does_not_require_live_comparator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    comparator_path = Path(bundle["comparator"]["checkpoint"])
+    original_direct_path = promotion._direct_existing_path
+
+    def reject_comparator(path: Path, *, name: str) -> Path:
+        if Path(path) == comparator_path:
+            pytest.fail("approved adapter accessed the live comparator")
+        return original_direct_path(path, name=name)
+
+    monkeypatch.setattr(promotion, "_direct_existing_path", reject_comparator)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    assert _call_approved_adapter(bundle, gate)["status"] == "approved"
+
+
+@pytest.mark.parametrize("marker", ({"ephemeral": True}, [], {"ephemeral": "false"}))
+def test_approved_perception_adapter_requires_permanent_pinned_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, marker
+) -> None:
+    gate, bundle = _approved_gate_bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        promotion, "_validate_live_checkpoint_identity_stable", lambda *a, **k: None
+    )
+    original = promotion.load_json_pinned
+
+    def ephemeral_marker(path: Path, expected_sha256: str, *, name: str):
+        if name == "approved perception parent checkpoint marker":
+            return marker
+        return original(path, expected_sha256, name=name)
+
+    monkeypatch.setattr(promotion, "load_json_pinned", ephemeral_marker)
+    with pytest.raises(promotion.PromotionValidationError, match="permanent checkpoint"):
+        _call_approved_adapter(bundle, gate)
 
 
 def test_initialization_parity_requires_the_full_818_parameter_inventory(
@@ -712,6 +1107,63 @@ def test_loss_mass_requires_each_predeclared_source_within_two_points() -> None:
         promotion._validate_loss_sources(sources, summary)
 
 
+def test_historical_loss_recipe_reference_does_not_rehash_live_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = {
+        "path": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH,
+        "sha256": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256,
+    }
+    original_sha256_file = promotion.sha256_file
+
+    def reject_launcher_hash(path: Path) -> str:
+        if Path(path) == Path(promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH):
+            raise AssertionError("the evolving live launcher must not be re-hashed")
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(promotion, "sha256_file", reject_launcher_hash)
+    assert promotion._validate_historical_loss_recipe_reference(
+        reference, name="loss recipe"
+    ) == Path(promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH)
+
+
+@pytest.mark.parametrize(
+    ("reference", "error"),
+    [
+        (
+            {
+                "path": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH,
+                "sha256": "0" * 64,
+            },
+            "reviewed historical pin",
+        ),
+        (
+            {
+                "path": "/tmp/other/src/scripts/train/Vision-Alignment.py",
+                "sha256": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256,
+            },
+            "historical path",
+        ),
+        (
+            {
+                "path": str(
+                    Path(promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH).with_name(
+                        "Vision-Alignment-copy.py"
+                    )
+                ),
+                "sha256": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256,
+            },
+            "historical path",
+        ),
+    ],
+)
+def test_historical_loss_recipe_reference_rejects_any_other_pin(
+    reference: dict[str, str], error: str
+) -> None:
+    with pytest.raises(promotion.PromotionValidationError, match=error):
+        promotion._validate_historical_loss_recipe_reference(reference, name="loss recipe")
+
+
 def test_loss_evidence_rederives_saved_dataset_fingerprint_identity(tmp_path: Path) -> None:
     loss_module = promotion._load_loss_mass_module()
     fingerprints = [{"source": "pinned", "sha256": "1" * 64}]
@@ -760,8 +1212,8 @@ def test_loss_evidence_rederives_saved_dataset_fingerprint_identity(tmp_path: Pa
     final_cursor_sha = promotion.canonical_sha256(cursor_inventories[promotion.CONTROL_ARM])
     evidence = {
         "recipe": {
-            "path": str(promotion._PERCEPTION_RECIPE_PATH),
-            "sha256": promotion.sha256_file(promotion._PERCEPTION_RECIPE_PATH),
+            "path": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_RECORDED_PATH,
+            "sha256": promotion.EXPECTED_PERCEPTION_LOSS_RECIPE_SHA256,
         },
         "producer": {
             "path": str(promotion._LOSS_MASS_PRODUCER_PATH),
@@ -776,6 +1228,18 @@ def test_loss_evidence_rederives_saved_dataset_fingerprint_identity(tmp_path: Pa
         expected_final_cursor_sha256=final_cursor_sha,
         expected_dataset_fingerprints_sha256=promotion.canonical_sha256(fingerprints),
     )
+    wrong_producer = deepcopy(evidence)
+    wrong_producer["producer"]["sha256"] = "0" * 64
+    with pytest.raises(
+        promotion.PromotionValidationError, match="producer evidence implementation"
+    ):
+        promotion._validate_loss_evidence(
+            wrong_producer,
+            arms=arms,
+            candidates=candidates,
+            expected_final_cursor_sha256=final_cursor_sha,
+            expected_dataset_fingerprints_sha256=promotion.canonical_sha256(fingerprints),
+        )
     with pytest.raises(promotion.PromotionValidationError, match="dataset fingerprint"):
         promotion._validate_loss_evidence(
             evidence,

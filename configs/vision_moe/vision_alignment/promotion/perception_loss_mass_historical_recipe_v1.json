@@ -1,0 +1,10 @@
+{
+  "format": "vision_alignment_reviewed_historical_recipe",
+  "version": 1,
+  "purpose": "perception_loss_mass_evidence",
+  "repository_commit": "bfaa560362854b2b4518641b327df5f7eacfddd7",
+  "repository_path": "src/scripts/train/Vision-Alignment.py",
+  "recorded_path": "/weka/oe-training-default/rustin/OLMo-core/src/scripts/train/Vision-Alignment.py",
+  "sha256": "b8a96d946224e42cd0cb6422d27081da09265ea4d0e963f8e7509ac6f39267a5",
+  "content_sha256": "8001ae0ec6bee9304e49544d4d17c4c7db99384a0c97f67b26bb29a7203a0246"
+}
