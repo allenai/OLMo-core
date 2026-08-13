@@ -207,6 +207,35 @@ PYEOF
   fi
 fi
 
+# Resolve a Hub repo id to its weka-staged copy so the job never touches huggingface.co at startup.
+# AutoTokenizer.from_pretrained(<repo id>) is a live network call, and a brief Hub outage or a cold
+# node cache kills the job instantly ("We couldn't connect to 'https://huggingface.co'"). On
+# 2026-08-10 that took out 20 of 30 eval jobs, some after hours of GPU work. Stage with
+# src/scripts/data/stage_tokenizers_weka.py; the '/' -> '__' mapping must match that script.
+# If the staged copy is missing we fall back to the Hub id (same tokenizer, just fragile) and say so
+# loudly, rather than hard-failing a sweep over a path typo.
+#
+# This runs AFTER the inference above so an inferred id gets staged too -- the inference emits Hub
+# ids ("Qwen/Qwen3.5-0.8B"), which would otherwise reintroduce the network dependency the staging
+# was added to remove.
+TOKENIZER_ROOT="${TOKENIZER_ROOT:-/weka/oe-training-default/amandab/tokenizers}"
+case "$TOKENIZER" in
+  /*)
+    # An absolute path is an explicit local tokenizer -- never rewrite it, even if it is missing
+    # (mangling a typo'd path into a "staged" name would only obscure the real error).
+    : ;;
+  */*)
+    _staged="$TOKENIZER_ROOT/${TOKENIZER//\//__}"
+    if [ -d "$_staged" ]; then
+      echo "    [tokenizer] using weka-staged copy: $TOKENIZER -> $_staged"
+      TOKENIZER="$_staged"
+    else
+      echo "    [tokenizer] WARNING: no staged copy at $_staged -- falling back to the Hub id" \
+           "'$TOKENIZER'. This job now depends on huggingface.co being reachable; stage it with" \
+           "src/scripts/data/stage_tokenizers_weka.py to make that impossible." >&2
+    fi ;;
+esac
+
 # ---- make sure the rerank/outlier metric deps are importable (lazy scipy/sklearn) ----
 python -c "import scipy, sklearn" 2>/dev/null || pip install --quiet scipy scikit-learn || true
 
