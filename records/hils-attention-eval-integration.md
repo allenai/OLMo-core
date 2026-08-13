@@ -119,6 +119,31 @@ A contra column that is 0 in both arms measures instruction-following, not long-
 Do not report it as "HiLS scores 0 on contradiction". Few-shot demonstrations of the answer format
 would be the way to make that column measurable for base models.
 
+### nq: a rung curve that is two artifacts, not a capability
+
+HiLS raw scored `nq` **0.058 / 0.014 / 0.002 / 0.000** at 3k/8k/16k/32k. That looks exactly like a
+long-context decay curve. It is not one. From the generation dumps:
+
+| | 3k | 32k |
+|---|---|---|
+| degenerate enumerations (`Relevant Document: [1] [2] … [9]`) | 415/500 | 74/500 |
+| rows with **zero** parseable ids | 72 | **424** |
+| rows scoring f1 > 0 | 30 | 0 |
+| rows where `gold == predicted` | 29 | 0 |
+| mean f1 | 0.0582 | 0.0000 |
+
+`nq` here is gold-document-**id** retrieval, not short-answer QA. The model enumerates every document
+instead of selecting one; the parser takes a single id (usually `9`, the last one before the 64-token
+budget truncates), so `0.058 = 29/500` is precisely **how often the gold document happened to be #9
+or #1**. A coincidence rate, not an accuracy. By 32k the model no longer produces the format at all
+and 85% of rows parse to nothing.
+
+So the "decay" is a coincidence rate collapsing into a parse-failure rate — two unrelated artifacts.
+**Never ingest that series as a HiLS long-context curve.** More generally: on this suite, a low
+non-zero score from a base model needs its generations read before it is treated as signal at all,
+because the floor is not zero — it is `1/n_docs`, and `n_docs` grows with the rung, which manufactures
+a downward slope out of nothing.
+
 ## Sizing Pass B: 64k is fine, 128k does not fit
 
 From the smoke test (bs=1, 7969 tokens, peak 18.4 GiB, weights 13.6 GiB): the non-weight footprint
