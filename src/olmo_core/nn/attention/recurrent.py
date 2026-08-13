@@ -26,9 +26,82 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.ops.gnorm import GNormBackend, rms_norm_gated
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+
+
+class GatedRMSNorm(nn.Module):
+    """
+    RMS norm with a multiplicative gate::
+
+        y = x * rsqrt(mean(x^2) + eps) * weight * act(g)
+
+    where ``act`` is ``swish`` (``g * sigmoid(g)``) or ``sigmoid``. This is the ``o_norm`` of a
+    :class:`GatedDeltaNet`, applied to the delta-rule output with the gate projection.
+
+    A drop-in replacement for fla's ``FusedRMSNormGated`` at the settings that path uses — an
+    elementwise weight, no bias, no residual, no ``prenorm`` — dispatching to
+    :func:`olmo_core.ops.gnorm.rms_norm_gated`. The parameter has the same name, shape and
+    initialization as the fla module's, so checkpoints are interchangeable between them.
+
+    :param size: The size of the input along the dimension to be normalized.
+    :param eps: The epsilon value inside the ``rsqrt``.
+    :param activation: The gate activation, ``"swish"`` (a.k.a. ``"silu"``) or ``"sigmoid"``.
+    :param kernel_backend: Which kernel backend to use. See
+        :func:`olmo_core.ops.gnorm.rms_norm_gated`.
+    :param init_device: The device to initialize the weight on, e.g. "cpu", "meta".
+    :param dtype: The data type of the weight. Defaults to torch's default dtype, which under
+        mixed-precision training is the fp32 the kernels want.
+    """
+
+    def __init__(
+        self,
+        size: int,
+        *,
+        eps: float = 1e-5,
+        activation: str = "swish",
+        kernel_backend: GNormBackend = GNormBackend.auto,
+        init_device: str = "cpu",
+        dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        if activation not in ("swish", "silu", "sigmoid"):
+            raise ValueError(f"unsupported activation '{activation}' for {self.__class__.__name__}")
+        self.size = size
+        self.eps = eps
+        self.activation = activation
+        self.kernel_backend = kernel_backend
+        self.weight = nn.Parameter(torch.empty(size, device=init_device, dtype=dtype))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        """
+        Reset the weight to ones, as fla's ``FusedRMSNormGated`` does.
+        """
+        nn.init.ones_(self.weight)
+
+    def extra_repr(self) -> str:
+        return f"{self.size}, eps={self.eps}, activation={self.activation}"
+
+    def forward(self, x: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
+        """
+        Normalize and gate.
+
+        :param x: The input of shape ``(..., size)``.
+        :param g: The gate, same shape as ``x``.
+
+        :returns: The output, same shape and dtype as ``x``.
+        """
+        return rms_norm_gated(
+            x,
+            g,
+            self.weight,
+            eps=self.eps,
+            activation=self.activation,
+            backend=self.kernel_backend,
+        )
 
 
 class GatedDeltaNet(SequenceMixer):
@@ -54,6 +127,8 @@ class GatedDeltaNet(SequenceMixer):
     :param norm_eps: The epsilon value for the normalization layer. Default: 1e-5.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
+    :param kernel_backend: Which kernel backend to use for the output norm. See
+        :func:`olmo_core.ops.gnorm.rms_norm_gated`.
     """
 
     def __init__(
@@ -70,11 +145,12 @@ class GatedDeltaNet(SequenceMixer):
         norm_eps: float = 1e-5,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        kernel_backend: GNormBackend = GNormBackend.auto,
     ):
         super().__init__()
         assert has_fla()
-        from fla.modules import FusedRMSNormGated
 
+        self.kernel_backend = kernel_backend
         self.d_model = d_model
         self.n_heads = n_heads
         self.n_v_heads = n_v_heads if n_v_heads is not None else n_heads
@@ -127,7 +203,12 @@ class GatedDeltaNet(SequenceMixer):
             init_device=init_device,
         )
         self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
-        self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps, device=init_device)  # type: ignore
+        self.o_norm = GatedRMSNorm(
+            self.head_v_dim,
+            eps=norm_eps,
+            kernel_backend=kernel_backend,
+            init_device=init_device,
+        )
         self.w_out = nn.Linear(self.value_dim, d_model, bias=False, dtype=dtype, device=init_device)
 
         self.cp_enabled = False
@@ -375,6 +456,13 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     """
     The default data type to use for parameters.
     """
+    kernel_backend: GNormBackend = GNormBackend.auto
+    """
+    Which kernel backend to use for the output norm. ``auto`` prefers the CuTe DSL kernels in
+    :mod:`olmo_core.kernels.gnorm_cute` and falls back to fla's Triton kernels where they can't
+    run; ``cute`` and ``fla`` force one or the other. See
+    :func:`olmo_core.ops.gnorm.rms_norm_gated`.
+    """
 
     def num_params(self, d_model: int) -> int:
         """
@@ -413,7 +501,7 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
             params += key_dim  # k_conv1d bias
             params += value_dim  # v_conv1d bias
 
-        # FusedRMSNormGated (weight only, no bias)
+        # GatedRMSNorm (weight only, no bias)
         params += head_v_dim  # o_norm
 
         return params
@@ -450,4 +538,5 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
             norm_eps=self.norm_eps,
             dtype=self.dtype.as_pt(),
             init_device=init_device,
+            kernel_backend=self.kernel_backend,
         )

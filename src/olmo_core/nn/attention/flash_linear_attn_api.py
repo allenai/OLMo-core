@@ -42,6 +42,30 @@ def dispatch_chunk_gated_delta_rule(
     )
 
 
+def dispatch_rms_norm_gated(
+    x: torch.Tensor,
+    g: torch.Tensor,
+    weight: torch.Tensor,
+    activation: str = "swish",
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    """The RMS-norm, no-bias, no-residual, no-prenorm case of fla's ``fused_norm_gate``."""
+    assert has_fla()
+    from fla.modules.fused_norm_gate import rms_norm_gated
+
+    return rms_norm_gated(
+        x=x,
+        g=g,
+        weight=weight,
+        bias=None,  # type: ignore[arg-type]
+        activation=activation,
+        residual=None,
+        prenorm=False,
+        residual_in_fp32=False,
+        eps=eps,
+    )
+
+
 def dispatch_causal_conv1d(
     x: torch.Tensor,
     weight: torch.Tensor,

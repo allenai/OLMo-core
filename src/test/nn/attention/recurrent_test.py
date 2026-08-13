@@ -12,10 +12,15 @@ from olmo_core.distributed.checkpoint import (
 )
 from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_size
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
-from olmo_core.nn.attention.recurrent import GatedDeltaNet
+from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedRMSNorm
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
+from olmo_core.ops.gnorm import GNormBackend
 from olmo_core.testing import requires_gpu, run_distributed_test
-from olmo_core.testing.utils import requires_fla, requires_multi_gpu
+from olmo_core.testing.utils import (
+    requires_fla,
+    requires_gnorm_cute,
+    requires_multi_gpu,
+)
 from olmo_core.utils import get_default_device, seed_all
 
 
@@ -62,6 +67,59 @@ def test_gated_delta_net_fwd_bwd():
         loss = y.sum()
         loss.backward()
     assert x.grad is not None
+
+
+@requires_fla
+def test_gated_delta_net_o_norm_matches_flas_parameter():
+    """
+    ``o_norm`` is olmo_core's own module now, not fla's ``FusedRMSNormGated``.
+
+    Its parameter has to stay identical to fla's — same name, shape, dtype and initialization —
+    or checkpoints written before the swap stop loading, and the HF conversion in
+    :mod:`olmo_core.nn.hf.convert`, which keys on ``attention.o_norm.weight``, breaks with them.
+    """
+    config = GatedDeltaNetConfig(n_heads=2, head_dim=128)
+    module = config.build(256, layer_idx=0, n_layers=12, init_device="cpu")
+
+    assert isinstance(module.o_norm, GatedRMSNorm)
+    weight = dict(module.named_parameters())["o_norm.weight"]
+    assert weight.shape == (module.head_v_dim,)
+    assert weight.dtype == torch.float32
+    torch.testing.assert_close(weight, torch.ones_like(weight))
+
+
+@requires_gnorm_cute
+def test_gated_delta_net_cute_matches_fla():
+    """
+    The CuTe gated RMS norm and fla's should agree end-to-end through the whole layer.
+
+    Because ``cute`` raises rather than falling back, the norm quietly dropping to fla would
+    fail here rather than pass on the wrong kernels.
+    """
+    device = "cuda"
+    dtype = torch.bfloat16
+
+    # head_dim=128 with expand_v=2.0 gives the head_v_dim=256 the CuTe kernels implement, and
+    # the row count (batch_size * seq_len * n_v_heads) clears their minimum.
+    d_model, seq_len, batch_size = 256, 256, 2
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
+
+    outputs, grads = [], []
+    for backend in (GNormBackend.cute, GNormBackend.fla):
+        seed_all(0)
+        config = GatedDeltaNetConfig(n_heads=2, head_dim=128, kernel_backend=backend)
+        module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+        x_in = x.clone().requires_grad_()
+        with torch.autocast(device_type=device, dtype=dtype):
+            y = module(x_in)
+            y.float().sum().backward()
+        assert x_in.grad is not None
+        outputs.append(y.detach())
+        grads.append(x_in.grad.detach())
+
+    tol_scale = 4  # two kernels in bf16, not one kernel against itself
+    for a, b in (outputs, grads):
+        torch.testing.assert_close(a, b, rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale)
 
 
 @requires_fla
