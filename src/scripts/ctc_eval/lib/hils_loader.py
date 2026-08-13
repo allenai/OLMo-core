@@ -82,6 +82,19 @@ def register_hils(path: str, repo: Optional[str] = None) -> Any:
     from transformers import AutoConfig, AutoModelForCausalLM
 
     repo = hils_repo_path(repo)
+
+    # tilelang JIT-compiles its kernels on first use and caches them under
+    # $TILELANG_CACHE_DIR (default ~/.tilelang/cache). Under an 8-way `torchrun` every rank
+    # imports the same kernels at the same moment against the same $HOME, so they race to write
+    # the same cache entries. Give each local rank its own cache: the duplicated compile is a
+    # one-off cost per job, while a corrupted shared cache is a mid-sweep failure that looks like
+    # a model bug. MUST be set before the HiLS modules import tilelang, which is why it lives
+    # here rather than in the caller.
+    local_rank = os.environ.get("LOCAL_RANK")
+    if local_rank is not None and "TILELANG_CACHE_DIR" not in os.environ:
+        os.environ["TILELANG_CACHE_DIR"] = f"/tmp/tilelang_cache_rank{local_rank}"
+        print(f"[hils] TILELANG_CACHE_DIR={os.environ['TILELANG_CACHE_DIR']}", flush=True)
+
     # The HiLS modules import each other as top-level packages (``from ops...``, ``from utils...``),
     # so the repo ROOT has to be importable, not just models/.
     if repo not in sys.path:
