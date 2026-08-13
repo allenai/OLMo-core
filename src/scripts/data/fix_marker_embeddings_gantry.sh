@@ -26,6 +26,13 @@ BUDGET="${BUDGET:-ai2/oe-other}"
 WEKA="${WEKA:-oe-training-default}"
 PRIORITY="${PRIORITY:-urgent}"
 # One GPU: not for compute, but so triton imports cleanly for the hybrid's GDN blocks.
+#
+# ⚠ The install below MUST carry the `fla` extra. flash-linear-attention is optional in
+# pyproject.toml, and building the Qwen3.5 hybrid asserts has_fla() in GatedDeltaNet.__init__. A
+# plain `pip install -e .` passes the AUDIT (which reads the embedding straight out of the distcp
+# and builds no model) and then dies in the REPAIR -- so the job looks half-healthy and no repaired
+# checkpoint is written. Every training arm then fails with FileNotFoundError on the load path,
+# which reads as a launcher bug rather than a missing dependency here.
 GPUS="${GPUS:-1}"
 NAME="${NAME:-summtoken-repair-base}"
 IMAGE="${IMAGE:-tylerr/olmo-core-tch291cu128-2025-11-25}"
@@ -108,7 +115,7 @@ gantry run \
   --weka "${WEKA}:/weka/${WEKA}" \
   --python-manager conda \
   --system-python \
-  --install "pip install -e . && pip install dataclass-extensions" \
+  --install "pip install -e '.[fla]' && pip install dataclass-extensions" \
   --allow-dirty \
   --yes \
   -- bash -c "${REMOTE}"
