@@ -30,7 +30,10 @@ TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-4.57.3}"   # the HiLS pin
 VEOMNI_REF="${VEOMNI_REF:-441e1b2483921e9cfe56c8d97541a23cb4b290a8}"
 # Newest first; the first one that COMPILES A REAL KERNEL wins. The HiLS requirements.txt pins a
 # git sha instead, which is a 20-40 min source build needing LLVM -- not worth it if a wheel works.
-TILELANG_CANDIDATES="${TILELANG_CANDIDATES:-0.1.9 0.1.8 0.1.7.post3 0.1.6.post2}"
+# NOTE the ordering trap: sorted() on PyPI's version strings puts "0.1.13" BEFORE "0.1.6"
+# lexicographically, so an earlier version of this list silently omitted the four NEWEST releases
+# and bisected only the old ones. These are in real version order.
+TILELANG_CANDIDATES="${TILELANG_CANDIDATES:-0.1.13 0.1.12 0.1.11 0.1.10 0.1.9 0.1.8 0.1.6.post2}"
 # tilelang declares apache-tvm-ffi>=0.1.11,<0.1.13 -- a range PyPI DOES NOT CONTAIN (it jumps
 # 0.1.9 -> 0.1.13.post3). Whatever the resolver picks is therefore untested by tilelang's author,
 # and 0.1.13.post3 collides with the tvm bundled in the wheel:
@@ -52,17 +55,25 @@ command -v uv >/dev/null 2>&1 || {
 }
 echo "[build-env] uv=$(uv --version)"
 
-if [ "${REBUILD:-0}" = "1" ]; then
-  echo "[build-env] REBUILD=1 -- removing $HILS_ENV"
-  rm -rf "$HILS_ENV"
+# TILELANG_ONLY=1 re-runs ONLY the tilelang bisect against an existing env. Without it, a bisect
+# rerun deletes and rebuilds the venv -- which would pull the interpreter out from under any eval
+# job currently running against it.
+if [ "${TILELANG_ONLY:-0}" = "1" ]; then
+  [ -f "$HILS_ENV/bin/activate" ] || { echo "[build-env] FATAL: TILELANG_ONLY=1 but no env at $HILS_ENV"; exit 1; }
+  echo "[build-env] TILELANG_ONLY=1 -- reusing $HILS_ENV, bisecting tilelang only"
+else
+  if [ "${REBUILD:-0}" = "1" ]; then
+    echo "[build-env] REBUILD=1 -- removing $HILS_ENV"
+    rm -rf "$HILS_ENV"
+  fi
+  echo "[build-env] creating $HILS_ENV (python 3.11)"
+  uv venv --python 3.11 "$HILS_ENV"
 fi
-
-echo "[build-env] creating $HILS_ENV (python 3.11)"
-uv venv --python 3.11 "$HILS_ENV"
 # shellcheck disable=SC1091
 source "$HILS_ENV/bin/activate"
 echo "[build-env] python=$(python -V) at $(which python)"
 
+if [ "${TILELANG_ONLY:-0}" != "1" ]; then
 echo "[build-env] torch $TORCH_VERSION from $TORCH_INDEX"
 uv pip install "torch==$TORCH_VERSION" --index-url "$TORCH_INDEX"
 
@@ -108,6 +119,7 @@ PY
 done
 python -c "import veomni" || { echo "[build-env] FATAL: veomni still not importable"; exit 1; }
 echo "[build-env] veomni OK (extra deps added:${VEOMNI_EXTRA:- none})"
+fi  # TILELANG_ONLY
 
 # ---- tilelang: pick the first version whose kernels actually compile ----------------------------
 [ -d "$HILS_REPO/models/FlashHiLS" ] || git clone --quiet "$HILS_GIT" "$HILS_REPO"
@@ -175,24 +187,42 @@ fi
 . "$(dirname "${BASH_SOURCE[0]}")/hils_cuda_paths.sh"
 HAVE_GPU=$(python -c "import torch;print(1 if torch.cuda.is_available() else 0)")
 TILELANG_CHOSEN=""
+TVM_FFI_CHOSEN=""
 for v in $TILELANG_CANDIDATES; do
-  echo "[build-env] trying tilelang==$v"
-  uv pip uninstall tilelang apache-tvm-ffi >/dev/null 2>&1 || true
-  uv pip install "tilelang==$v" >/dev/null 2>&1 || { echo "    install failed"; continue; }
-  # Undo whatever tilelang's (unsatisfiable) range resolved to -- see TVM_FFI_VERSION above.
-  uv pip install "apache-tvm-ffi==$TVM_FFI_VERSION" >/dev/null 2>&1 || true
-  if [ "$HAVE_GPU" = "1" ]; then
-    if python /tmp/tl_probe.py; then TILELANG_CHOSEN="$v"; break; fi
-  else
-    # CPU node: the best we can do is prove it imports. The kernel gate then falls to the smoke
-    # test -- run this script on a GPU node to close that gap here instead.
-    if python -c "import tilelang; print('    imports OK', tilelang.__version__)"; then
-      TILELANG_CHOSEN="$v"; break
+  # Two attempts per version: whatever the resolver picks, then with the tvm-ffi pin. Which is
+  # right is version-dependent -- 0.1.9's declared apache-tvm-ffi range does not exist on PyPI, so
+  # it needs the pin, while a release whose range IS satisfiable is better left alone.
+  for ffi in resolved "$TVM_FFI_VERSION"; do
+    echo "[build-env] trying tilelang==$v (apache-tvm-ffi: $ffi)"
+    uv pip uninstall tilelang apache-tvm-ffi >/dev/null 2>&1 || true
+    if ! uv pip install "tilelang==$v" >/dev/null 2>&1; then echo "    install failed"; continue; fi
+    if [ "$ffi" != "resolved" ]; then uv pip install "apache-tvm-ffi==$ffi" >/dev/null 2>&1 || true; fi
+    if [ "$HAVE_GPU" = "1" ]; then
+      # Output to a file, not a pipe: `python probe | tail` would report TAIL's exit status, so
+      # every candidate would look like it passed.
+      if python /tmp/tl_probe.py >/tmp/tl_probe.log 2>&1; then
+        cat /tmp/tl_probe.log
+        TILELANG_CHOSEN="$v"; TVM_FFI_CHOSEN="$ffi"
+        break
+      fi
+      echo "    rejected. Last 12 lines:"; tail -12 /tmp/tl_probe.log | sed 's/^/      /'
+    else
+      # CPU node: the best we can do is prove it imports. The kernel gate then falls to the smoke
+      # test -- run this script on a GPU node to close that gap here instead.
+      if python -c "import tilelang; print('    imports OK', tilelang.__version__)"; then
+        TILELANG_CHOSEN="$v"; TVM_FFI_CHOSEN="$ffi"
+        break
+      fi
+      echo "    rejected (import)"
     fi
-  fi
-  echo "    tilelang==$v rejected"
+  done
+  [ -n "$TILELANG_CHOSEN" ] && break
 done
-[ -n "$TILELANG_CHOSEN" ] || { echo "[build-env] FATAL: no tilelang candidate worked ($TILELANG_CANDIDATES)"; exit 1; }
+if [ -z "$TILELANG_CHOSEN" ]; then
+  echo "[build-env] FATAL: no tilelang candidate worked ($TILELANG_CANDIDATES)"
+  exit 1
+fi
+echo "[build-env] tilelang==$TILELANG_CHOSEN (apache-tvm-ffi: $TVM_FFI_CHOSEN)"
 [ "$HAVE_GPU" = "1" ] || echo "[build-env] ⚠ no GPU here: tilelang was import-checked only, NOT kernel-checked."
 
 # ---- record what was built ---------------------------------------------------------------------
