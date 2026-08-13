@@ -184,6 +184,9 @@ _PERCEPTION_PROVENANCE_RUNTIME_CACHE: Dict[Tuple[str, str], PerceptionProvenance
 PERCEPTION_PROFILE_ROOT = "configs/vision_moe/vision_alignment/perception"
 PERCEPTION_PROFILE_ALLOWLIST = f"{PERCEPTION_PROFILE_ROOT}/approved_profiles.json"
 PERCEPTION_PROFILE_ALLOWLIST_FORMAT = "vision_alignment_perception_profile_allowlist"
+JOINT_PROFILE_ROOT = "configs/vision_moe/vision_alignment/joint"
+JOINT_PROFILE_ALLOWLIST = f"{JOINT_PROFILE_ROOT}/approved_profiles.json"
+JOINT_PROFILE_ALLOWLIST_FORMAT = "vision_alignment_joint_profile_allowlist"
 
 _SOURCE_AUDIT_FIELDS = frozenset(
     {
@@ -881,25 +884,41 @@ def _load_profile_yaml(raw: bytes, *, path: Path) -> Mapping[str, Any]:
     return profile
 
 
-def _load_approved_perception_profiles(repository_root: Path) -> Tuple[Mapping[str, str], str]:
-    """Load the exact code-reviewed perception-profile SHA allowlist."""
-    allowlist_path = (repository_root / PERCEPTION_PROFILE_ALLOWLIST).resolve()
+def _reviewed_profile_policy(phase: VisionAlignmentPhase) -> Tuple[str, str, str]:
+    if phase is VisionAlignmentPhase.perception:
+        return (
+            PERCEPTION_PROFILE_ROOT,
+            PERCEPTION_PROFILE_ALLOWLIST,
+            PERCEPTION_PROFILE_ALLOWLIST_FORMAT,
+        )
+    if phase is VisionAlignmentPhase.joint:
+        return JOINT_PROFILE_ROOT, JOINT_PROFILE_ALLOWLIST, JOINT_PROFILE_ALLOWLIST_FORMAT
+    raise ValueError(f"Phase {phase.value!r} does not use a reviewed profile allowlist")
+
+
+def _load_approved_profiles(
+    repository_root: Path, phase: VisionAlignmentPhase
+) -> Tuple[Mapping[str, str], str]:
+    """Load one exact code-reviewed production-profile SHA allowlist."""
+    profile_root, allowlist_name, allowlist_format = _reviewed_profile_policy(phase)
+    allowlist_path = (repository_root / allowlist_name).resolve()
     try:
         raw = allowlist_path.read_bytes()
         value = json.loads(raw, object_pairs_hook=_strict_json_object)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ValueError(
-            f"Invalid perception profile allowlist {allowlist_path}: {error}"
+            f"Invalid {phase.value} profile allowlist {allowlist_path}: {error}"
         ) from error
     if not isinstance(value, Mapping) or set(value) != {"format", "version", "profiles"}:
-        raise ValueError("Perception profile allowlist schema differs")
+        raise ValueError(f"{phase.value.capitalize()} profile allowlist schema differs")
     if (
-        value["format"] != PERCEPTION_PROFILE_ALLOWLIST_FORMAT
+        value["format"] != allowlist_format
         or isinstance(value["version"], bool)
+        or not isinstance(value["version"], int)
         or value["version"] != 1
         or not isinstance(value["profiles"], Mapping)
     ):
-        raise ValueError("Perception profile allowlist identity differs")
+        raise ValueError(f"{phase.value.capitalize()} profile allowlist identity differs")
     expected_raw = (
         json.dumps(
             value,
@@ -911,21 +930,30 @@ def _load_approved_perception_profiles(repository_root: Path) -> Tuple[Mapping[s
         + b"\n"
     )
     if raw != expected_raw:
-        raise ValueError("Perception profile allowlist must use canonical JSON bytes")
+        raise ValueError(
+            f"{phase.value.capitalize()} profile allowlist must use canonical JSON bytes"
+        )
     profiles: Dict[str, str] = {}
     for profile_path, profile_sha256 in value["profiles"].items():
         if (
             not isinstance(profile_path, str)
-            or not profile_path.startswith(f"{PERCEPTION_PROFILE_ROOT}/")
-            or Path(profile_path).parent.as_posix() != PERCEPTION_PROFILE_ROOT
+            or not profile_path.startswith(f"{profile_root}/")
+            or Path(profile_path).parent.as_posix() != profile_root
             or Path(profile_path).suffix != ".yaml"
             or Path(profile_path).name.endswith(".yaml.template")
             or not isinstance(profile_sha256, str)
             or re.fullmatch(r"[0-9a-f]{64}", profile_sha256) is None
         ):
-            raise ValueError("Perception profile allowlist contains an invalid path or SHA-256")
+            raise ValueError(
+                f"{phase.value.capitalize()} profile allowlist contains an invalid path or SHA-256"
+            )
         profiles[profile_path] = profile_sha256
     return profiles, hashlib.sha256(raw).hexdigest()
+
+
+def _load_approved_perception_profiles(repository_root: Path) -> Tuple[Mapping[str, str], str]:
+    """Load the exact code-reviewed perception-profile SHA allowlist."""
+    return _load_approved_profiles(repository_root, VisionAlignmentPhase.perception)
 
 
 def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
@@ -972,39 +1000,51 @@ def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[
     cli = [value for value in overrides if not value.startswith(prefix)]
     if any(value.startswith("--phase=") for value in [*profile_overrides, *cli]):
         raise ValueError("Set phase in the profile or on the CLI, not both")
-    if phase == VisionAlignmentPhase.perception.value:
-        approved_root = (
-            repository_root / "configs" / "vision_moe" / "vision_alignment" / "perception"
-        ).resolve()
+    reviewed_phase = (
+        VisionAlignmentPhase(phase)
+        if phase in (VisionAlignmentPhase.perception.value, VisionAlignmentPhase.joint.value)
+        else None
+    )
+    if reviewed_phase is not None:
+        profile_root, _, _ = _reviewed_profile_policy(reviewed_phase)
+        approved_root = (repository_root / profile_root).resolve()
         if (
             profile_path.parent != approved_root
             or profile_path.suffix != ".yaml"
             or profile_path.name.endswith(".yaml.template")
         ):
             raise ValueError(
-                "Production perception requires a checked-in .yaml profile directly under "
+                f"Production {reviewed_phase.value} requires a checked-in .yaml profile directly "
+                "under "
                 f"{approved_root}"
             )
         if cli:
             raise ValueError(
-                "Production perception profiles own the complete configuration; additional "
+                f"Production {reviewed_phase.value} profiles own the complete configuration; "
+                "additional "
                 "CLI overrides are forbidden"
             )
     try:
         relative_profile_path = profile_path.relative_to(repository_root).as_posix()
     except ValueError:
-        if phase == VisionAlignmentPhase.perception.value:
-            raise ValueError("Production perception profiles must live inside the repository")
+        if reviewed_phase is not None:
+            raise ValueError(
+                f"Production {reviewed_phase.value} profiles must live inside the repository"
+            )
         relative_profile_path = str(profile_path)
     raw_profile_sha256 = hashlib.sha256(raw_profile).hexdigest()
-    if phase == VisionAlignmentPhase.perception.value:
-        approved_profiles, allowlist_sha256 = _load_approved_perception_profiles(repository_root)
+    if reviewed_phase is not None:
+        _, allowlist_path, _ = _reviewed_profile_policy(reviewed_phase)
+        approved_profiles, allowlist_sha256 = _load_approved_profiles(
+            repository_root, reviewed_phase
+        )
         approved_sha256 = approved_profiles.get(relative_profile_path)
         if approved_sha256 != raw_profile_sha256:
             raise ValueError(
-                "Production perception profile bytes are not in the reviewed SHA-256 allowlist"
+                f"Production {reviewed_phase.value} profile bytes are not in the reviewed "
+                "SHA-256 allowlist"
             )
-        profile["__reviewed_allowlist_path__"] = PERCEPTION_PROFILE_ALLOWLIST
+        profile["__reviewed_allowlist_path__"] = allowlist_path
         profile["__reviewed_allowlist_sha256__"] = allowlist_sha256
     profile["__reviewed_path__"] = relative_profile_path
     profile["__reviewed_sha256__"] = raw_profile_sha256
@@ -1064,15 +1104,18 @@ def _apply_profile_launch(
             raise ValueError("Vision-alignment profile review identity is malformed")
         config.reviewed_profile_path = reviewed_path
         config.reviewed_profile_sha256 = reviewed_sha256
-        if config.phase is VisionAlignmentPhase.perception:
+        if config.phase in (VisionAlignmentPhase.perception, VisionAlignmentPhase.joint):
+            _, expected_allowlist_path, _ = _reviewed_profile_policy(config.phase)
             allowlist_path = profile.get("__reviewed_allowlist_path__")
             allowlist_sha256 = profile.get("__reviewed_allowlist_sha256__")
             if (
-                allowlist_path != PERCEPTION_PROFILE_ALLOWLIST
+                allowlist_path != expected_allowlist_path
                 or not isinstance(allowlist_sha256, str)
                 or re.fullmatch(r"[0-9a-f]{64}", allowlist_sha256) is None
             ):
-                raise ValueError("Perception profile allowlist identity is malformed")
+                raise ValueError(
+                    f"{config.phase.value.capitalize()} profile allowlist identity is malformed"
+                )
             config.reviewed_profile_allowlist_path = allowlist_path
             config.reviewed_profile_allowlist_sha256 = allowlist_sha256
             profile_command = [
@@ -2751,10 +2794,11 @@ def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None
         raise ValueError("Vision alignment runtime checkout reports an unexpected active branch")
 
 
-def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
-    """Bind production perception to one exact checked-in, override-free profile."""
-    if config.phase is not VisionAlignmentPhase.perception:
+def _validate_reviewed_profile(config: ExperimentConfig) -> None:
+    """Bind each production trainable phase to a checked-in, override-free profile."""
+    if config.phase is VisionAlignmentPhase.bridge:
         return
+    profile_root, allowlist_name, _ = _reviewed_profile_policy(config.phase)
     path_value = config.reviewed_profile_path
     expected_sha256 = config.reviewed_profile_sha256
     allowlist_path_value = config.reviewed_profile_allowlist_path
@@ -2767,20 +2811,26 @@ def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
         or not isinstance(expected_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
     ):
-        raise ValueError("Production perception requires an exact reviewed profile identity")
+        raise ValueError(
+            f"Production {config.phase.value} requires an exact reviewed profile identity"
+        )
     repository_root = Path(__file__).resolve().parents[3]
     if (
-        allowlist_path_value != PERCEPTION_PROFILE_ALLOWLIST
+        allowlist_path_value != allowlist_name
         or not isinstance(expected_allowlist_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", expected_allowlist_sha256) is None
     ):
-        raise ValueError("Production perception requires an exact profile-allowlist identity")
-    approved_profiles, actual_allowlist_sha256 = _load_approved_perception_profiles(repository_root)
+        raise ValueError(
+            f"Production {config.phase.value} requires an exact profile-allowlist identity"
+        )
+    approved_profiles, actual_allowlist_sha256 = _load_approved_profiles(
+        repository_root, config.phase
+    )
     if actual_allowlist_sha256 != expected_allowlist_sha256:
-        raise ValueError("Production perception profile allowlist bytes differ from their pin")
-    approved_root = (
-        repository_root / "configs" / "vision_moe" / "vision_alignment" / "perception"
-    ).resolve()
+        raise ValueError(
+            f"Production {config.phase.value} profile allowlist bytes differ from their pin"
+        )
+    approved_root = (repository_root / profile_root).resolve()
     profile_path = (repository_root / path_value).resolve()
     if (
         profile_path.parent != approved_root
@@ -2788,16 +2838,24 @@ def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
         or profile_path.name.endswith(".yaml.template")
         or not profile_path.is_file()
     ):
-        raise ValueError("Production perception profile path is not a checked-in profile")
+        raise ValueError(
+            f"Production {config.phase.value} profile path is not a checked-in profile"
+        )
     try:
         raw = profile_path.read_bytes()
     except OSError as error:
-        raise ValueError(f"Could not verify perception profile {profile_path}: {error}") from error
+        raise ValueError(
+            f"Could not verify {config.phase.value} profile {profile_path}: {error}"
+        ) from error
     raw_sha256 = hashlib.sha256(raw).hexdigest()
     if raw_sha256 != expected_sha256:
-        raise ValueError("Production perception profile bytes differ from their review pin")
+        raise ValueError(
+            f"Production {config.phase.value} profile bytes differ from their review pin"
+        )
     if approved_profiles.get(path_value) != raw_sha256:
-        raise ValueError("Production perception profile is not in the reviewed SHA-256 allowlist")
+        raise ValueError(
+            f"Production {config.phase.value} profile is not in the reviewed SHA-256 allowlist"
+        )
     profile = _load_profile_yaml(raw, path=profile_path)
     if (
         set(profile) - {"version", "name", "description", "phase", "launch", "overrides"}
@@ -2805,9 +2863,9 @@ def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
         or not isinstance(profile.get("version"), int)
         or profile.get("version") != 1
         or profile.get("name") != config.required_run_name
-        or profile.get("phase") != VisionAlignmentPhase.perception.value
+        or profile.get("phase") != config.phase.value
     ):
-        raise ValueError("Production perception profile identity or schema differs")
+        raise ValueError(f"Production {config.phase.value} profile identity or schema differs")
     profile_launch = profile.get("launch")
     required_launch = {
         "num_nodes": 2,
@@ -2824,7 +2882,8 @@ def _validate_reviewed_perception_profile(config: ExperimentConfig) -> None:
         for field_name, expected_value in required_launch.items()
     ):
         raise ValueError(
-            "Production perception requires the reviewed 2x8 Holmes urgent/eight-hour launch"
+            f"Production {config.phase.value} requires the reviewed 2x8 Holmes "
+            "urgent/eight-hour launch"
         )
 
 
@@ -2838,7 +2897,7 @@ def _validate_phase_contract(
         raise ValueError(
             "Positional run name, required_run_name, and lineage_id must match exactly"
         )
-    _validate_reviewed_perception_profile(config)
+    _validate_reviewed_profile(config)
     expected_save_folder = f"{VISION_ALIGNMENT_ROOT}/checkpoints/{run_name}"
     if config.trainer.save_folder != expected_save_folder:
         raise ValueError(

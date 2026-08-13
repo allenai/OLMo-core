@@ -552,28 +552,40 @@ def test_profile_rejects_duplicate_yaml_and_override_keys(tmp_path):
         vision_alignment._load_profile([f"--profile={duplicate_override}"])
 
 
-def test_perception_profile_requires_exact_reviewed_allowlist_entry(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("phase", "allowlist_format"),
+    [
+        ("perception", "vision_alignment_perception_profile_allowlist"),
+        ("joint", "vision_alignment_joint_profile_allowlist"),
+    ],
+)
+def test_production_profile_requires_exact_reviewed_allowlist_entry(
+    tmp_path, monkeypatch, phase, allowlist_format
+):
     vision_alignment = _load_module()
     fake_script = tmp_path / "src" / "scripts" / "train" / "Vision-Alignment.py"
-    profile = (
-        tmp_path / "configs" / "vision_moe" / "vision_alignment" / "perception" / "reviewed.yaml"
-    )
+    profile = tmp_path / "configs" / "vision_moe" / "vision_alignment" / phase / "reviewed.yaml"
     profile.parent.mkdir(parents=True)
     profile.write_text(
         "\n".join(
             [
                 "version: 1",
                 "name: reviewed",
-                "phase: perception",
+                f"phase: {phase}",
                 "overrides:",
                 "  - --data.prefetch_workers=0",
             ]
         )
     )
-    relative = "configs/vision_moe/vision_alignment/perception/reviewed.yaml"
+    relative = f"configs/vision_moe/vision_alignment/{phase}/reviewed.yaml"
     allowlist = profile.parent / "approved_profiles.json"
     allowlist.write_text(
-        '{"format":"vision_alignment_perception_profile_allowlist",' '"profiles":{},"version":1}\n'
+        json.dumps(
+            {"format": allowlist_format, "profiles": {}, "version": 1},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
     )
     monkeypatch.setattr(vision_alignment, "__file__", str(fake_script))
 
@@ -583,7 +595,7 @@ def test_perception_profile_requires_exact_reviewed_allowlist_entry(tmp_path, mo
     allowlist.write_text(
         json.dumps(
             {
-                "format": "vision_alignment_perception_profile_allowlist",
+                "format": allowlist_format,
                 "profiles": {relative: hashlib.sha256(profile.read_bytes()).hexdigest()},
                 "version": 1,
             },
@@ -595,7 +607,19 @@ def test_perception_profile_requires_exact_reviewed_allowlist_entry(tmp_path, mo
     loaded, overrides = vision_alignment._load_profile([f"--profile={profile}"])
     assert loaded is not None
     assert loaded["__reviewed_path__"] == relative
-    assert overrides == ["--phase=perception", "--data.prefetch_workers=0"]
+    assert overrides == [f"--phase={phase}", "--data.prefetch_workers=0"]
+
+
+def test_checked_in_joint_profile_allowlist_is_empty_and_canonical():
+    vision_alignment = _load_module()
+    repository_root = Path(vision_alignment.__file__).resolve().parents[3]
+
+    profiles, raw_sha256 = vision_alignment._load_approved_profiles(
+        repository_root, vision_alignment.VisionAlignmentPhase.joint
+    )
+
+    assert profiles == {}
+    assert len(raw_sha256) == 64
 
 
 def test_profile_launch_schema_has_no_hostname_escape_hatch():
