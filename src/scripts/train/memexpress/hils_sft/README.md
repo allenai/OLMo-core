@@ -104,6 +104,42 @@ drop filter on any vocabulary that does reach it.
 Dolci is a separate run of `convert_dolci_instruct_sft_gantry.sh` with the same tokenizer / eos /
 chat-template flags, writing to `.../sft_olmo3/dolci`.
 
+**Tokenize each task to its OWN out-dir.** The mixture is applied by `mix_documents()` at dataset
+level (see above); a single pre-combined corpus has no mixing stage, so the sampling weights would
+silently do nothing.
+
+### Task names: the manifest does not use our eval keys
+
+`suite_manifest.tsv` names tasks by the canonical key, which differs from the eval task names
+(`TASK_ALIASES` in `src/scripts/eval/ctc_suite/run_rung_eval.py` is the authority):
+
+| our eval key | manifest task |
+|---|---|
+| `contra` | `contradiction` |
+| `nq` | **`retrieval`** |
+| `rerank` | `rerank` |
+| `outlier` | `outlier` |
+| `oolong` | `oolong` |
+
+⚠ **`retrieval` is overloaded.** hotpotqa, niah_contradiction, msmarco, beir_scifact and beir_fiqa
+all alias to it. scifact/fiqa are held out and the combine script asserts they stay out, but
+hotpotqa and msmarco would be swept in by a bare `--tasks retrieval` — silently widening the NQ
+component into a different task mixture than our Qwen3.5 arms trained on. Filter by *file*, not by
+task, for this one.
+
+### ⚠ OPEN: which NQ JSONL is the p10 build?
+
+**Resolve before converting.** NQ is a standing directive: only the p10 build (10% hard negatives +
+CE filter) is valid, because everything is *evaluated* on the p10 ladder and an arm trained on the
+98%-hard build carries a train/eval mismatch that costs it real NQ points. The p10 data we have on
+weka is `single_task_ladders_p10/nq`, which is **already-tokenized Qwen shards** — the wrong
+vocabulary and the wrong stage. What is needed is the p10 **JSONL** in `cr_suite_data/`.
+
+Until that file is identified by name, do not convert NQ. If no p10 JSONL exists, the options are
+(a) regenerate it with the p10 generator, or (b) drop NQ from the mixture and mark the NQ column
+non-comparable — **not** to quietly substitute a `retrieval` train file whose hard-negative rate is
+unknown.
+
 **Pass the same template file the eval attaches.** A training-time template that differs from the
 eval-time one reintroduces the mismatch silently — nothing errors, the numbers are just wrong.
 
