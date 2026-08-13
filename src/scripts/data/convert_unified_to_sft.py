@@ -208,7 +208,19 @@ def main() -> None:
         type=int,
         default=DEFAULT_LANDMARK_TOKEN_ID,
         help="Reserved id the landmark instance sources insert; instances containing it are "
-        "dropped (Qwen3: 151860, Qwen3.5: 248200).",
+        "dropped (Qwen3: 151860, Qwen3.5: 248200). Pass -1 for a vocabulary that has no "
+        "landmark id (e.g. OLMo-3), so the drop check cannot fire on a real token.",
+    )
+    parser.add_argument(
+        "--chat-template",
+        default=None,
+        help="Jinja chat-template FILE to attach to the tokenizer before rendering. Required for "
+        "BASE models, whose tokenizers ship no template at all (Olmo-3-1025-7B and "
+        "HiLS-Attention-7B both lack one) -- without it apply_chat_template raises deep inside "
+        "rendering. Pass the SAME file the eval harness attaches "
+        "(src/scripts/ctc_eval/lib/chat_templates/olmo3_chatml.jinja); a training-time template "
+        "that differs from the eval-time one silently reintroduces the train/eval prompt "
+        "mismatch this converter exists to avoid.",
     )
     parser.add_argument("--flush-tokens", type=int, default=100_000_000)
     parser.add_argument("--limit", type=int, default=0)
@@ -231,6 +243,16 @@ def main() -> None:
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    if args.chat_template:
+        with open(args.chat_template) as fh:
+            tok.chat_template = fh.read()
+        log.info(f"attached chat template from {args.chat_template}")
+    if not getattr(tok, "chat_template", None):
+        raise SystemExit(
+            f"{args.tokenizer} has no chat_template, so the (user, assistant) rendering this "
+            f"converter is built on cannot run. Pass --chat-template <file.jinja> -- and pass the "
+            f"same file the eval attaches, or training and eval prompts will differ."
+        )
     assert tok.vocab_size <= np.iinfo(TOKEN_DTYPE).max
 
     writer = ShardWriter(args.out_dir, args.flush_tokens)
