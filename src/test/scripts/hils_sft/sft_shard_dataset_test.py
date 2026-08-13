@@ -193,3 +193,58 @@ def test_dataset_multi_source_reports_mixture(tmp_path):
     assert set(ds.mix_report) == {"a", "b"}
     assert ds.mix_report["a"]["target_share"] == pytest.approx(0.75)
     assert abs(ds.mix_report["a"]["realized_share"] - 0.75) < 0.05
+
+
+# --- materialization: the one artifact all three arms read ------------------------------------
+# The arms span two trainers whose data stacks do not agree. "Same data" therefore has to mean one
+# materialized pack, not one recipe run twice -- two mixers and two packers give different windows.
+
+def test_materialize_round_trips_byte_identically(tmp_path):
+    from sft_shard_dataset import materialize
+
+    src, out = tmp_path / "src", tmp_path / "pack"
+    src.mkdir()
+    _write_shard(src, docs=DOCS * 20)
+    built = SFTShardDataset(str(src), 16, EOS, PAD, seed=34521)
+    manifest = materialize(built, str(out), shard_windows=3)
+
+    assert manifest["windows"] == len(built)
+    assert manifest["tokens"] == len(built) * 16
+
+    reread = SFTShardDataset(str(out), 16, EOS, PAD, prepacked=True)
+    assert len(reread) == len(built)
+    for i in range(len(built)):
+        assert (reread[i]["input_ids"] == built[i]["input_ids"]).all(), i
+        assert (reread[i]["labels"] == built[i]["labels"]).all(), i
+
+
+def test_materialized_shards_are_window_aligned(tmp_path):
+    """olmo_core recovers these windows by fixed-length chunking, which requires exact alignment."""
+    from sft_shard_dataset import materialize
+
+    src, out = tmp_path / "src", tmp_path / "pack"
+    src.mkdir()
+    _write_shard(src, docs=DOCS * 20)
+    built = SFTShardDataset(str(src), 16, EOS, PAD, seed=34521)
+    materialize(built, str(out), shard_windows=3)
+
+    import glob
+
+    for p in glob.glob(str(out / "token_ids_part_*.npy")):
+        assert len(np.load(p)) % 16 == 0, p
+    # and chunking the concatenated stream at the window length reproduces the windows in order
+    stream = np.concatenate([np.load(p) for p in sorted(glob.glob(str(out / "token_ids_part_*.npy")))])
+    for i in range(len(built)):
+        assert (stream[i * 16 : (i + 1) * 16] == built[i]["input_ids"].numpy()).all(), i
+
+
+def test_prepacked_rejects_misaligned_window(tmp_path):
+    """Reading a pack at the wrong sequence_length must fail loudly, not silently re-window it."""
+    from sft_shard_dataset import materialize
+
+    src, out = tmp_path / "src", tmp_path / "pack"
+    src.mkdir()
+    _write_shard(src, docs=DOCS * 20)
+    materialize(SFTShardDataset(str(src), 16, EOS, PAD, seed=0), str(out), shard_windows=3)
+    with pytest.raises(ValueError, match="multiple of max_seq_len"):
+        SFTShardDataset(str(out), 15, EOS, PAD, prepacked=True)

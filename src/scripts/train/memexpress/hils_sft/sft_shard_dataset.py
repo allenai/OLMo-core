@@ -82,6 +82,74 @@ def split_documents(
     return docs
 
 
+def materialize(
+    dataset: "SFTShardDataset", out_dir: str, shard_windows: int = 512
+) -> Dict[str, float]:
+    """
+    Write a built dataset's packed windows to disk, so **every arm trains on one artifact**.
+
+    The three arms span two trainers whose data stacks do not agree: veomni reads this module,
+    while olmo_core would re-mix and re-pack through its own composable loader. Two mixers and two
+    packers over the same corpus produce *different windows*, so "same data" has to mean one
+    materialized artifact rather than one recipe run twice.
+
+    The layout is deliberately the same flat ``token_ids_part_*.npy`` / ``labels_mask_*.npy``
+    pairing the converter emits, with the extra property that **every shard length is an exact
+    multiple of ``max_seq_len``**. That makes it readable by both stacks without either re-deriving
+    windows: olmo_core's fixed-sequence-length chunking at the same ``sequence_length`` recovers
+    exactly these windows in this order, and :class:`SFTShardDataset` reads them back in
+    ``prepacked`` mode.
+
+    Padding is written into the stream as ordinary tokens whose mask is False, so it costs a little
+    disk and contributes no loss in either stack.
+
+    :param dataset: A built :class:`SFTShardDataset`.
+    :param out_dir: Destination directory.
+    :param shard_windows: Windows per shard file.
+
+    :returns: A manifest dict (also written as ``pack_manifest.json``) recording what was emitted.
+    """
+    import json
+
+    os.makedirs(out_dir, exist_ok=True)
+    L = dataset.max_seq_len
+    part, written = 0, 0
+    buf_ids: List[np.ndarray] = []
+    buf_mask: List[np.ndarray] = []
+
+    def _flush(part_idx: int) -> None:
+        if not buf_ids:
+            return
+        ids = np.concatenate(buf_ids)
+        mask = np.concatenate(buf_mask)
+        assert len(ids) % L == 0, f"shard length {len(ids)} is not a multiple of {L}"
+        np.save(os.path.join(out_dir, f"token_ids_part_{part_idx:06d}.npy"), ids.astype(np.uint32))
+        np.save(os.path.join(out_dir, f"labels_mask_{part_idx:06d}.npy"), mask.astype(np.bool_))
+
+    for i in range(len(dataset)):
+        ex = dataset[i]
+        buf_ids.append(ex["input_ids"].numpy().astype(np.uint32))
+        buf_mask.append((ex["labels"].numpy() != IGNORE_INDEX).astype(np.bool_))
+        written += 1
+        if len(buf_ids) >= shard_windows:
+            _flush(part)
+            part += 1
+            buf_ids, buf_mask = [], []
+    _flush(part)
+
+    manifest = {
+        "windows": written,
+        "max_seq_len": L,
+        "tokens": written * L,
+        "pad_token_id": dataset.pad_token_id,
+        **{f"stat_{k}": v for k, v in dataset.stats().items()},
+        "mix_report": dataset.mix_report,
+    }
+    with open(os.path.join(out_dir, "pack_manifest.json"), "w") as fh:
+        json.dump(manifest, fh, indent=2)
+    return manifest
+
+
 def mix_documents(
     per_source: Dict[str, List[Tuple[np.ndarray, np.ndarray]]],
     weights: Dict[str, float],
@@ -182,10 +250,39 @@ class SFTShardDataset(Dataset):
         sources: Optional[Dict[str, str]] = None,
         weights: Optional[Dict[str, float]] = None,
         max_repetition_factor: float = 8.0,
+        prepacked: bool = False,
     ) -> None:
         self.max_seq_len = max_seq_len
         self.pad_token_id = pad_token_id
         self.mix_report: Dict[str, Dict[str, float]] = {}
+
+        if prepacked:
+            # Read an artifact written by materialize(): already mixed, shuffled and packed, so do
+            # NOT mix/shuffle/pack again -- that is the whole point. Every arm reads these bytes.
+            self._prepacked_ids: List[np.ndarray] = []
+            self._prepacked_mask: List[np.ndarray] = []
+            for tok_path, mask_path in _shard_pairs(data_dir):
+                ids = np.load(tok_path, mmap_mode="r")
+                mask = np.load(mask_path, mmap_mode="r")
+                if len(ids) % max_seq_len:
+                    raise ValueError(
+                        f"{tok_path} has {len(ids)} tokens, not a multiple of max_seq_len "
+                        f"{max_seq_len} -- this is not a materialized pack, or the window length "
+                        f"disagrees with the one it was packed at."
+                    )
+                self._prepacked_ids.append(ids)
+                self._prepacked_mask.append(mask)
+            self._index: List[Tuple[int, int]] = [
+                (s, w)
+                for s, arr in enumerate(self._prepacked_ids)
+                for w in range(len(arr) // max_seq_len)
+            ]
+            self.prepacked = True
+            self.n_docs_total = 0
+            self.n_docs_dropped = 0
+            self.windows = []
+            return
+        self.prepacked = False
 
         def _load_dir(d: str) -> List[Tuple[np.ndarray, np.ndarray]]:
             out: List[Tuple[np.ndarray, np.ndarray]] = []
@@ -247,9 +344,21 @@ class SFTShardDataset(Dataset):
         }
 
     def __len__(self) -> int:
-        return len(self.windows)
+        return len(self._index) if self.prepacked else len(self.windows)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        if self.prepacked:
+            shard, w = self._index[idx]
+            lo, hi = w * self.max_seq_len, (w + 1) * self.max_seq_len
+            ids = np.asarray(self._prepacked_ids[shard][lo:hi]).astype(np.int64)
+            mask = np.asarray(self._prepacked_mask[shard][lo:hi]).astype(bool)
+            labels = np.where(mask, ids, IGNORE_INDEX).astype(np.int64)
+            attention_mask = (ids != self.pad_token_id).astype(np.int64)
+            return {
+                "input_ids": torch.from_numpy(ids),
+                "labels": torch.from_numpy(labels),
+                "attention_mask": torch.from_numpy(attention_mask),
+            }
         docs = self.windows[idx]
         ids = np.concatenate([d[0] for d in docs]).astype(np.int64)
         mask = np.concatenate([d[1] for d in docs]).astype(bool)
@@ -265,3 +374,60 @@ class SFTShardDataset(Dataset):
             "labels": torch.from_numpy(labels),
             "attention_mask": torch.from_numpy(attention_mask),
         }
+
+
+def _main() -> int:
+    """
+    Build the mixture once and materialize it, so all three arms train on one artifact.
+
+    Example::
+
+        python sft_shard_dataset.py \\
+            --source contra=/weka/.../sft_olmo3/contra \\
+            --source nq=/weka/.../sft_olmo3/nq \\
+            --source dolci=/weka/.../sft_olmo3/dolci \\
+            --weight contra=2.9 --weight nq=1.0 --weight dolci=<25% share> \\
+            --max-seq-len 32768 --out /weka/.../sft_olmo3/packed_32k
+    """
+    import argparse
+    import json
+
+    ap = argparse.ArgumentParser(description=_main.__doc__)
+    ap.add_argument("--source", action="append", required=True, metavar="NAME=DIR")
+    ap.add_argument("--weight", action="append", required=True, metavar="NAME=W")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--max-seq-len", type=int, default=32768)
+    ap.add_argument("--eos-token-id", type=int, default=100257, help="OLMo-3 <|endoftext|>")
+    ap.add_argument("--pad-token-id", type=int, default=100277, help="OLMo-3 <|pad|>")
+    ap.add_argument("--seed", type=int, default=34521)
+    ap.add_argument("--max-repetition-factor", type=float, default=8.0)
+    ap.add_argument("--shard-windows", type=int, default=512)
+    args = ap.parse_args()
+
+    sources = dict(s.split("=", 1) for s in args.source)
+    weights = {k: float(v) for k, v in (w.split("=", 1) for w in args.weight)}
+
+    ds = SFTShardDataset(
+        data_dir=next(iter(sources.values())),
+        max_seq_len=args.max_seq_len,
+        eos_token_id=args.eos_token_id,
+        pad_token_id=args.pad_token_id,
+        seed=args.seed,
+        sources=sources,
+        weights=weights,
+        max_repetition_factor=args.max_repetition_factor,
+    )
+    print(json.dumps(ds.stats(), indent=2))
+    print("\nrealized mixture:")
+    for name, r in sorted(ds.mix_report.items()):
+        print(
+            f"  {name:12s} target {r['target_share']:.3f} -> realized {r['realized_share']:.3f}"
+            f"  (x{r['repetition_factor']:.2f} of {int(r['available_tokens']):,} tokens)"
+        )
+    manifest = materialize(ds, args.out, shard_windows=args.shard_windows)
+    print(f"\nwrote {manifest['windows']:,} windows ({manifest['tokens']:,} tokens) -> {args.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

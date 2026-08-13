@@ -40,6 +40,40 @@ The first two share a trainer, a dataset object, a seed, and therefore byte-iden
 third deliberately changes the trainer while holding the model and data fixed, so a veomni-vs-olmo_core
 gap is measurable rather than assumed away.
 
+### All three arms read ONE materialized pack
+
+**The bridge arm trains on exactly the same data as the veomni arms — not on the same recipe.**
+That distinction is the whole point: olmo_core's composable loader would re-mix and re-pack the
+same corpus with its own mixer and packer, and two mixers over one corpus produce *different
+windows*. Re-running a recipe is not the same experiment.
+
+So the mixture is built and packed **once** and written to disk:
+
+```bash
+python src/scripts/train/memexpress/hils_sft/sft_shard_dataset.py \
+    --source contra=.../sft_olmo3/contra --weight contra=2.9 \
+    --source nq=.../sft_olmo3/nq         --weight nq=1.0 \
+    ... --source dolci=.../sft_olmo3/dolci --weight dolci=<25% share> \
+    --max-seq-len 32768 --out .../sft_olmo3/packed_32k
+```
+
+It prints the realized-vs-target token shares and writes `pack_manifest.json` beside the shards.
+Every shard length is an exact multiple of `max_seq_len`, which is what lets both stacks read it
+without re-deriving windows:
+
+* **veomni arms** — `SFTShardDataset(..., prepacked=True)`, which reads windows back verbatim and
+  refuses to load at a different `max_seq_len` rather than silently re-windowing;
+* **olmo_core bridge** — fixed-sequence-length chunking at `sequence_length=32768` recovers exactly
+  these windows in this order. Do **not** point the composable loader at the per-task dirs; point
+  it at `packed_32k`, and leave its own mixing/packing out of the path.
+
+Round-trip is unit-tested: materialize → re-read reproduces the in-memory windows byte-for-byte,
+and chunking the concatenated stream at the window length reproduces them in order.
+
+Because the pack is fixed, **token-matched and data-matched coincide for all three arms** — a step
+count is a window count is a document multiset. That is what the earlier open question was about,
+and materializing settles it.
+
 ## Files
 
 | File | What | Status |
