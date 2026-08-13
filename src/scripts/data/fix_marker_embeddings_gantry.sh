@@ -49,7 +49,10 @@ export PYTHONPATH="\$(pwd)/src:\${PYTHONPATH:-}"
 F=src/scripts/data/fix_marker_embeddings.py
 
 echo "=== base: ${BASE}"
-ls -la "${BASE}" 2>/dev/null | head -4 || { echo "BASE missing"; exit 2; }
+[ -d "${BASE}" ] || { echo "BASE missing: ${BASE}"; exit 2; }
+# NB: listing is separate from the guard. `ls | head` under `set -o pipefail` exits 141 on
+# SIGPIPE even when the directory is fine, which fails the job on a healthy checkpoint.
+ls -la "${BASE}" 2>/dev/null | head -4 || true
 
 TOK="${TOKENIZER}"
 if [ -z "\$TOK" ]; then

@@ -59,7 +59,8 @@ V=src/scripts/train/memexpress/sft_summtoken/verify_summary_mask_on_real_data.py
 
 echo "=== shards: ${SHARDS}"
 _dir=\$(dirname "${SHARDS}")
-ls -la "\$_dir" 2>/dev/null | head -6 || echo "  (could not list \$_dir)"
+[ -d "\$_dir" ] || echo "  WARNING: \$_dir does not exist"
+ls -la "\$_dir" 2>/dev/null | head -6 || true
 echo "--- parent, in case the glob is one level off ---"
 ls -la "\$(dirname \$_dir)" 2>/dev/null | head -8 || true
 
