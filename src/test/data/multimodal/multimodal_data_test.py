@@ -717,7 +717,7 @@ def test_mixture_data_loader_recognizes_native_text_replay_fingerprint():
 
     assert fingerprint == {
         "type": "olmo_core.data.multimodal.native_text_replay.NativeTextReplayDataset",
-        "version": "native-text-replay-v1",
+        "version": "native-text-replay-v2",
         "value": "a" * 64,
     }
 

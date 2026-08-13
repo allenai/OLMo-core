@@ -133,6 +133,22 @@ def test_builds_exact_deterministic_disjoint_native_manifests(tmp_path: Path, bu
     repeated = builder.build_replay_manifests(catalog, **kwargs)
     assert manifests == repeated
     assert manifests.verification_receipt is not None
+    assert builder.BUILDER_IMPLEMENTATION_REFERENCE == (
+        "src/scripts/data/build_s002_replay_manifest.py"
+    )
+    assert (
+        builder.BUILDER_IMPLEMENTATION_SHA256
+        == hashlib.sha256(Path(builder.__file__).resolve().read_bytes()).hexdigest()
+    )
+    assert manifests.verification_receipt["builder_implementation"] == (
+        builder.BUILDER_IMPLEMENTATION_REFERENCE
+    )
+    assert manifests.verification_receipt["builder_sha256"] == builder.BUILDER_IMPLEMENTATION_SHA256
+    assert manifests.verification_receipt["parent_mix_sha256"] == catalog.parent_mix_sha256
+    assert (
+        manifests.verification_receipt["upstream_provenance_sha256"]
+        == catalog.upstream_provenance_sha256
+    )
     assert manifests.manifest_dir == output_dir.resolve()
     assert manifests.train["num_windows"] == 15
     assert manifests.holdout["num_windows"] == 5
@@ -173,6 +189,8 @@ def test_builds_exact_deterministic_disjoint_native_manifests(tmp_path: Path, bu
     assert train.provenance["parent_paths_sha256"] == catalog.parent_paths_sha256
     assert train.provenance["parent_mix_sha256"] == catalog.parent_mix_sha256
     assert train.provenance["upstream_provenance_sha256"] == catalog.upstream_provenance_sha256
+    assert train.provenance["builder_implementation"] == builder.BUILDER_IMPLEMENTATION_REFERENCE
+    assert train.provenance["builder_sha256"] == builder.BUILDER_IMPLEMENTATION_SHA256
     assert train.provenance["instance_filter"] == builder.S002_INSTANCE_FILTER
     assert train.provenance["materialized_sources_sha256"] == catalog.materialized_sources_sha256
     receipt_path = output_dir / builder.VERIFICATION_RECEIPT_FILENAME
@@ -194,6 +212,15 @@ def test_builds_exact_deterministic_disjoint_native_manifests(tmp_path: Path, bu
             train_path=train_path,
             holdout_path=holdout_path,
         )
+
+    for colliding_output in ("train", "holdout"):
+        collision_paths = {
+            "train_path": output_dir / "alternate-train.json",
+            "holdout_path": output_dir / "alternate-holdout.json",
+        }
+        collision_paths[f"{colliding_output}_path"] = receipt_path
+        with pytest.raises(ValueError, match="distinct from the verification receipt"):
+            builder.write_replay_manifests(manifests, **collision_paths)
 
 
 def test_catalog_validation_rejects_schema_size_hash_and_remote_paths(tmp_path: Path, builder):
@@ -261,6 +288,52 @@ def test_catalog_validation_rejects_schema_size_hash_and_remote_paths(tmp_path: 
     catalog_path.write_text(json.dumps(remote))
     with pytest.raises(ValueError, match="materialized locally"):
         builder.load_source_catalog(catalog_path, verify_source_hashes=False)
+
+
+def test_catalog_and_upstream_provenance_reject_bool_and_unknown_fields(tmp_path: Path, builder):
+    catalog_path, catalog_data, provenance_path, provenance_data = _write_catalog(tmp_path, builder)
+
+    invalid_catalog = deepcopy(catalog_data)
+    invalid_catalog["version"] = True
+    catalog_path.write_text(json.dumps(invalid_catalog))
+    with pytest.raises(ValueError, match="version.*integer"):
+        builder.load_source_catalog(catalog_path, verify_source_hashes=False)
+
+    catalog_path.write_text(json.dumps(catalog_data))
+    for mutate, match in (
+        (lambda value: value.update(unexpected=True), "unknown fields"),
+        (lambda value: value.update(version=True), "version.*integer"),
+        (
+            lambda value: value["sources"][0].update(unexpected=True),
+            "unknown fields",
+        ),
+        (
+            lambda value: value["sources"][0].update(num_tokens=True),
+            "num_tokens.*integer",
+        ),
+    ):
+        invalid_provenance = deepcopy(provenance_data)
+        mutate(invalid_provenance)
+        _pin_provenance(provenance_path, builder, invalid_provenance)
+        with pytest.raises(ValueError, match=match):
+            builder.load_source_catalog(catalog_path, verify_source_hashes=False)
+
+
+def test_builder_refuses_receipts_after_implementation_identity_drift(
+    tmp_path: Path, builder, monkeypatch
+):
+    catalog_path, _, _, _ = _write_catalog(tmp_path, builder)
+    catalog = builder.load_source_catalog(catalog_path)
+    monkeypatch.setattr(builder, "BUILDER_IMPLEMENTATION_SHA256", "0" * 64)
+
+    with pytest.raises(ValueError, match="changed after module load"):
+        builder.build_replay_manifests(
+            catalog,
+            manifest_dir=tmp_path / "output",
+            sequence_length=3,
+            train_usable_tokens=20,
+            holdout_usable_tokens=4,
+        )
 
 
 def test_production_fails_closed_without_code_pinned_upstream_provenance(tmp_path: Path, builder):

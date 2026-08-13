@@ -11,8 +11,8 @@ The manifest is a JSON object with this schema::
 
     {
       "format": "olmo_native_text_replay",
-      "version": 1,
-      "sequence_length": 2560,
+      "version": 2,
+      "sequence_length": 8192,
       "dtype": "uint32",
       "tokenizer": {
         "identifier": "allenai/dolma2-tokenizer",
@@ -24,11 +24,27 @@ The manifest is a JSON object with this schema::
         "parent_checkpoint": "/path/to/s002-step125500",
         "parent_mix": "OLMo-mix-0925",
         "parent_paths_sha256": "...",
+        "parent_mix_sha256": "...",
+        "upstream_provenance_sha256": "...",
+        "builder_implementation": "src/scripts/data/build_s002_replay_manifest.py",
+        "builder_sha256": "...",
         "instance_filter": {
           "repetition_min_period": 1,
           "repetition_max_period": 13,
           "repetition_max_count": 32
-        }
+        },
+        "materialized_sources_sha256": "...",
+        "source_catalog_sha256": "...",
+        "source_catalog_format": "olmo_native_text_replay_source_catalog",
+        "source_catalog_version": 2,
+        "selection_algorithm": "affine-grid-v1",
+        "selection_seed": 6198,
+        "split": "train",
+        "usable_tokens": 16382,
+        "source_usable_tokens": {"web": 16382},
+        "minimum_source_usable_tokens": {},
+        "raw_tokens_per_window": 8192,
+        "loss_tokens_per_window": 8191
       },
       "num_windows": 2,
       "sources": [
@@ -49,7 +65,9 @@ The manifest is a JSON object with this schema::
 Token files are headerless numpy memmaps, matching OLMo's preprocessed ``.npy`` arrays.
 Relative paths are resolved from the manifest directory.  Window starts must be ordered,
 non-overlapping, in bounds, and explicitly enumerated.  These constraints make the replay
-set bounded and deterministic; stochastic ordering belongs in the data loader.
+set bounded and deterministic; stochastic ordering belongs in the data loader. Production
+manifests additionally carry ``provenance.verification_receipt_sha256`` for the separately
+pinned receipt.
 """
 
 from __future__ import annotations
@@ -59,6 +77,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -74,6 +93,7 @@ from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, P
 
 __all__ = [
     "NATIVE_TEXT_REPLAY_FORMAT",
+    "NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE",
     "NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT",
     "NATIVE_TEXT_REPLAY_VERIFICATION_VERSION",
     "NATIVE_TEXT_REPLAY_VERSION",
@@ -85,15 +105,18 @@ __all__ = [
 ]
 
 NATIVE_TEXT_REPLAY_FORMAT = "olmo_native_text_replay"
-NATIVE_TEXT_REPLAY_VERSION = 1
+NATIVE_TEXT_REPLAY_VERSION = 2
 NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT = "olmo_native_text_replay_verification_receipt"
-NATIVE_TEXT_REPLAY_VERIFICATION_VERSION = 1
+NATIVE_TEXT_REPLAY_VERIFICATION_VERSION = 2
+NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE = (
+    "src/scripts/data/build_s002_replay_manifest.py"
+)
 S002_INSTANCE_FILTER = {
     "repetition_min_period": 1,
     "repetition_max_period": 13,
     "repetition_max_count": 32,
 }
-_FINGERPRINT_DOMAIN = b"olmo-native-text-replay-v1\0"
+_FINGERPRINT_DOMAIN = b"olmo-native-text-replay-v2\0"
 _SUPPORTED_DTYPES = {
     "uint8": np.dtype(np.uint8),
     "uint16": np.dtype(np.uint16),
@@ -101,6 +124,50 @@ _SUPPORTED_DTYPES = {
     "uint64": np.dtype(np.uint64),
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_ROOT_FIELDS = {
+    "format",
+    "version",
+    "sequence_length",
+    "dtype",
+    "tokenizer",
+    "provenance",
+    "num_windows",
+    "sources",
+}
+_TOKENIZER_FIELDS = {"identifier", "vocab_size", "eos_token_id", "pad_token_id"}
+_PROVENANCE_FIELDS = {
+    "parent_checkpoint",
+    "parent_mix",
+    "parent_paths_sha256",
+    "parent_mix_sha256",
+    "upstream_provenance_sha256",
+    "builder_implementation",
+    "builder_sha256",
+    "instance_filter",
+    "materialized_sources_sha256",
+    "source_catalog_sha256",
+    "source_catalog_format",
+    "source_catalog_version",
+    "selection_algorithm",
+    "selection_seed",
+    "split",
+    "usable_tokens",
+    "source_usable_tokens",
+    "minimum_source_usable_tokens",
+    "raw_tokens_per_window",
+    "loss_tokens_per_window",
+}
+_SOURCE_FIELDS = {
+    "id",
+    "source",
+    "parent_path_index",
+    "parent_path",
+    "path",
+    "num_tokens",
+    "size_bytes",
+    "sha256",
+    "window_starts",
+}
 
 
 def _require_mapping(value: Any, name: str) -> Mapping[str, Any]:
@@ -153,6 +220,42 @@ def _require_exact_fields(value: Mapping[str, Any], expected: set[str], name: st
         )
     if unknown:
         raise OLMoConfigurationError(f"Native text replay {name} has unknown fields: {unknown}")
+
+
+def _require_sha256(value: Any, name: str) -> str:
+    digest = _require_string(value, name)
+    if _SHA256_RE.fullmatch(digest) is None:
+        raise OLMoConfigurationError(f"Native text replay field {name!r} must be a SHA-256")
+    return digest
+
+
+def _reviewed_builder_sha256() -> str:
+    """Hash the exact reviewed replay builder in this checkout without following a file link."""
+    builder_path = Path(__file__).resolve().parents[
+        3
+    ] / NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE.removeprefix("src/")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(builder_path, flags)
+    except OSError as error:
+        raise OLMoConfigurationError(
+            f"Could not read reviewed native replay builder {builder_path}: {error}"
+        ) from error
+    try:
+        builder_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(builder_stat.st_mode):
+            raise OLMoConfigurationError(
+                f"Reviewed native replay builder is not a regular file: {builder_path}"
+            )
+        with os.fdopen(descriptor, "rb") as file_handle:
+            descriptor = -1
+            raw = file_handle.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return hashlib.sha256(raw).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -215,6 +318,7 @@ class NativeTextReplayManifest:
                 f"Invalid native text replay JSON in {manifest_path}: {error}"
             ) from error
         data = _require_mapping(data, "root")
+        _require_exact_fields(data, _ROOT_FIELDS, "manifest root")
 
         if data.get("format") != NATIVE_TEXT_REPLAY_FORMAT:
             raise OLMoConfigurationError(
@@ -238,6 +342,7 @@ class NativeTextReplayManifest:
         dtype = _SUPPORTED_DTYPES[dtype_name]
 
         tokenizer = dict(_require_mapping(data.get("tokenizer"), "tokenizer"))
+        _require_exact_fields(tokenizer, _TOKENIZER_FIELDS, "tokenizer")
         _require_string(tokenizer.get("identifier"), "tokenizer.identifier")
         vocab_size = _require_int(tokenizer.get("vocab_size"), "tokenizer.vocab_size", minimum=1)
         eos_token_id = _require_int(tokenizer.get("eos_token_id"), "tokenizer.eos_token_id")
@@ -248,16 +353,117 @@ class NativeTextReplayManifest:
             )
 
         provenance = dict(_require_mapping(data.get("provenance"), "provenance"))
+        provenance_fields = set(_PROVENANCE_FIELDS)
+        if "verification_receipt_sha256" in provenance:
+            provenance_fields.add("verification_receipt_sha256")
+        _require_exact_fields(provenance, provenance_fields, "provenance")
         _require_string(provenance.get("parent_checkpoint"), "provenance.parent_checkpoint")
         _require_string(provenance.get("parent_mix"), "provenance.parent_mix")
-        parent_paths_sha256 = _require_string(
-            provenance.get("parent_paths_sha256"), "provenance.parent_paths_sha256"
-        ).lower()
-        if _SHA256_RE.fullmatch(parent_paths_sha256) is None:
-            raise OLMoConfigurationError(
-                "Native text replay provenance.parent_paths_sha256 must be a SHA-256"
+        for field_name in (
+            "parent_paths_sha256",
+            "parent_mix_sha256",
+            "upstream_provenance_sha256",
+            "builder_sha256",
+            "materialized_sources_sha256",
+            "source_catalog_sha256",
+        ):
+            provenance[field_name] = _require_sha256(
+                provenance.get(field_name), f"provenance.{field_name}"
             )
-        provenance["parent_paths_sha256"] = parent_paths_sha256
+        if "verification_receipt_sha256" in provenance:
+            provenance["verification_receipt_sha256"] = _require_sha256(
+                provenance["verification_receipt_sha256"],
+                "provenance.verification_receipt_sha256",
+            )
+        builder_implementation = _require_string(
+            provenance.get("builder_implementation"), "provenance.builder_implementation"
+        )
+        if builder_implementation != NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE:
+            raise OLMoConfigurationError(
+                "Native text replay provenance.builder_implementation must name the reviewed "
+                f"builder {NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE!r}"
+            )
+        source_catalog_format = _require_string(
+            provenance.get("source_catalog_format"), "provenance.source_catalog_format"
+        )
+        if source_catalog_format != "olmo_native_text_replay_source_catalog":
+            raise OLMoConfigurationError(
+                "Native text replay provenance.source_catalog_format has the wrong value"
+            )
+        source_catalog_version = _require_int(
+            provenance.get("source_catalog_version"),
+            "provenance.source_catalog_version",
+            minimum=1,
+        )
+        if source_catalog_version != 2:
+            raise OLMoConfigurationError(
+                "Native text replay provenance.source_catalog_version must be 2"
+            )
+        selection_algorithm = _require_string(
+            provenance.get("selection_algorithm"), "provenance.selection_algorithm"
+        )
+        if selection_algorithm != "affine-grid-v1":
+            raise OLMoConfigurationError(
+                "Native text replay provenance.selection_algorithm must be 'affine-grid-v1'"
+            )
+        _require_int(provenance.get("selection_seed"), "provenance.selection_seed")
+        split = _require_string(provenance.get("split"), "provenance.split")
+        if split not in {"train", "holdout"}:
+            raise OLMoConfigurationError(
+                "Native text replay provenance.split must be 'train' or 'holdout'"
+            )
+        usable_tokens = _require_int(
+            provenance.get("usable_tokens"), "provenance.usable_tokens", minimum=1
+        )
+        raw_tokens_per_window = _require_int(
+            provenance.get("raw_tokens_per_window"),
+            "provenance.raw_tokens_per_window",
+            minimum=2,
+        )
+        loss_tokens_per_window = _require_int(
+            provenance.get("loss_tokens_per_window"),
+            "provenance.loss_tokens_per_window",
+            minimum=1,
+        )
+        if (
+            raw_tokens_per_window != sequence_length
+            or loss_tokens_per_window != sequence_length - 1
+        ):
+            raise OLMoConfigurationError(
+                "Native text replay provenance window-token counts do not match sequence_length"
+            )
+
+        raw_source_usable_tokens = _require_mapping(
+            provenance.get("source_usable_tokens"), "provenance.source_usable_tokens"
+        )
+        if not raw_source_usable_tokens:
+            raise OLMoConfigurationError(
+                "Native text replay provenance.source_usable_tokens must be non-empty"
+            )
+        source_usable_tokens = {
+            _require_string(source_name, "provenance.source_usable_tokens key"): _require_int(
+                tokens,
+                f"provenance.source_usable_tokens.{source_name}",
+                minimum=1,
+            )
+            for source_name, tokens in raw_source_usable_tokens.items()
+        }
+        provenance["source_usable_tokens"] = source_usable_tokens
+        raw_minimum_source_usable_tokens = _require_mapping(
+            provenance.get("minimum_source_usable_tokens"),
+            "provenance.minimum_source_usable_tokens",
+        )
+        minimum_source_usable_tokens = {
+            _require_string(
+                source_name, "provenance.minimum_source_usable_tokens key"
+            ): _require_int(
+                tokens,
+                f"provenance.minimum_source_usable_tokens.{source_name}",
+                minimum=1,
+            )
+            for source_name, tokens in raw_minimum_source_usable_tokens.items()
+        }
+        provenance["minimum_source_usable_tokens"] = minimum_source_usable_tokens
         raw_instance_filter = _require_mapping(
             provenance.get("instance_filter"), "provenance.instance_filter"
         )
@@ -285,7 +491,7 @@ class NativeTextReplayManifest:
                 "Native text replay manifest field 'sources' must be a non-empty list"
             )
 
-        sources = []
+        sources: list[NativeTextReplaySource] = []
         source_ids = set()
         parent_path_indices = set()
         resolved_paths = set()
@@ -293,6 +499,7 @@ class NativeTextReplayManifest:
         for source_index, raw_source in enumerate(raw_sources):
             source = _require_mapping(raw_source, f"sources[{source_index}]")
             prefix = f"sources[{source_index}]"
+            _require_exact_fields(source, _SOURCE_FIELDS, prefix)
             source_id = _require_string(source.get("id"), f"{prefix}.id")
             if source_id in source_ids:
                 raise OLMoConfigurationError(
@@ -335,11 +542,7 @@ class NativeTextReplayManifest:
                     f"Native text replay source {source_id!r} declares size_bytes={size_bytes}, "
                     f"but num_tokens * dtype.itemsize is {expected_size}"
                 )
-            source_sha256 = _require_string(source.get("sha256"), f"{prefix}.sha256").lower()
-            if _SHA256_RE.fullmatch(source_sha256) is None:
-                raise OLMoConfigurationError(
-                    f"Native text replay source {source_id!r} has an invalid SHA-256"
-                )
+            source_sha256 = _require_sha256(source.get("sha256"), f"{prefix}.sha256")
 
             raw_starts = source.get("window_starts")
             if not isinstance(raw_starts, list) or not raw_starts:
@@ -392,6 +595,33 @@ class NativeTextReplayManifest:
                 f"Native text replay manifest declares {declared_num_windows} windows but "
                 f"contains {total_windows}"
             )
+        expected_usable_tokens = total_windows * loss_tokens_per_window
+        if usable_tokens != expected_usable_tokens:
+            raise OLMoConfigurationError(
+                f"Native text replay provenance declares {usable_tokens} usable tokens but "
+                f"contains {expected_usable_tokens}"
+            )
+        computed_source_usable_tokens: Dict[str, int] = {}
+        for manifest_source in sources:
+            computed_source_usable_tokens[manifest_source.source_name] = (
+                computed_source_usable_tokens.get(manifest_source.source_name, 0)
+                + len(manifest_source.window_starts) * loss_tokens_per_window
+            )
+        if source_usable_tokens != computed_source_usable_tokens:
+            raise OLMoConfigurationError(
+                "Native text replay provenance.source_usable_tokens does not match its sources"
+            )
+        for source_name, minimum_tokens in minimum_source_usable_tokens.items():
+            if minimum_tokens % loss_tokens_per_window:
+                raise OLMoConfigurationError(
+                    "Native text replay provenance.minimum_source_usable_tokens must use whole "
+                    f"windows for source {source_name!r}"
+                )
+            if minimum_tokens > source_usable_tokens.get(source_name, 0):
+                raise OLMoConfigurationError(
+                    "Native text replay provenance.minimum_source_usable_tokens exceeds the "
+                    f"selected tokens for source {source_name!r}"
+                )
 
         try:
             canonical = json.dumps(
@@ -426,14 +656,19 @@ class NativeTextReplayVerificationReceipt:
 
     A receipt is emitted only after the replay-manifest builder has streamed and verified
     every materialized source file. Runtime construction verifies the small receipt bytes,
-    exact source metadata, and current file sizes without re-reading the full replay corpus.
-    The receipt's SHA-256 must be pinned by the training configuration.
+    exact builder and parent-lineage identities, exact source metadata, and current file sizes
+    without re-reading the full replay corpus. The receipt's SHA-256 must be pinned by the
+    training configuration.
     """
 
     path: Path
     receipt_sha256: str
+    builder_implementation: str
+    builder_sha256: str
     source_catalog_sha256: str
     parent_paths_sha256: str
+    parent_mix_sha256: str
+    upstream_provenance_sha256: str
     materialized_sources_sha256: str
     sources: Mapping[str, Mapping[str, Any]]
 
@@ -479,8 +714,12 @@ class NativeTextReplayVerificationReceipt:
                 "format",
                 "version",
                 "hash_algorithm",
+                "builder_implementation",
+                "builder_sha256",
                 "source_catalog_sha256",
                 "parent_paths_sha256",
+                "parent_mix_sha256",
+                "upstream_provenance_sha256",
                 "materialized_sources_sha256",
                 "sources",
             },
@@ -497,18 +736,30 @@ class NativeTextReplayVerificationReceipt:
             raise OLMoConfigurationError(
                 "Native replay verification receipt hash_algorithm must be 'sha256'"
             )
+        builder_implementation = _require_string(
+            root["builder_implementation"], "verification_receipt.builder_implementation"
+        )
+        if builder_implementation != NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE:
+            raise OLMoConfigurationError(
+                "Native replay verification receipt names an unreviewed builder implementation"
+            )
         digests = {}
         for field_name in (
+            "builder_sha256",
             "source_catalog_sha256",
             "parent_paths_sha256",
+            "parent_mix_sha256",
+            "upstream_provenance_sha256",
             "materialized_sources_sha256",
         ):
-            digest = _require_string(root[field_name], f"verification_receipt.{field_name}")
-            if _SHA256_RE.fullmatch(digest) is None:
-                raise OLMoConfigurationError(
-                    f"Native replay verification receipt {field_name} must be a SHA-256"
-                )
-            digests[field_name] = digest
+            digests[field_name] = _require_sha256(
+                root[field_name], f"verification_receipt.{field_name}"
+            )
+        if digests["builder_sha256"] != _reviewed_builder_sha256():
+            raise OLMoConfigurationError(
+                "Native replay verification receipt builder SHA-256 differs from the reviewed "
+                "implementation in this checkout"
+            )
 
         raw_sources = root["sources"]
         if not isinstance(raw_sources, list) or not raw_sources:
@@ -580,21 +831,18 @@ class NativeTextReplayVerificationReceipt:
                     f"Native replay verification receipt source {source_id!r} has an "
                     "inconsistent token count and byte size"
                 )
-            source_sha256 = _require_string(
-                source["sha256"], f"verification_receipt.sources[{index}].sha256"
-            )
-            if _SHA256_RE.fullmatch(source_sha256) is None:
-                raise OLMoConfigurationError(
-                    f"Native replay verification receipt source {source_id!r} has an "
-                    "invalid SHA-256"
-                )
+            _require_sha256(source["sha256"], f"verification_receipt.sources[{index}].sha256")
             sources[source_id] = source
 
         return cls(
             path=receipt_path,
             receipt_sha256=receipt_sha256,
+            builder_implementation=builder_implementation,
+            builder_sha256=digests["builder_sha256"],
             source_catalog_sha256=digests["source_catalog_sha256"],
             parent_paths_sha256=digests["parent_paths_sha256"],
+            parent_mix_sha256=digests["parent_mix_sha256"],
+            upstream_provenance_sha256=digests["upstream_provenance_sha256"],
             materialized_sources_sha256=digests["materialized_sources_sha256"],
             sources=sources,
         )
@@ -603,8 +851,12 @@ class NativeTextReplayVerificationReceipt:
         """Require every selected manifest source to match this verified receipt."""
         provenance = manifest.provenance
         expected = {
+            "builder_implementation": self.builder_implementation,
+            "builder_sha256": self.builder_sha256,
             "source_catalog_sha256": self.source_catalog_sha256,
             "parent_paths_sha256": self.parent_paths_sha256,
+            "parent_mix_sha256": self.parent_mix_sha256,
+            "upstream_provenance_sha256": self.upstream_provenance_sha256,
             "materialized_sources_sha256": self.materialized_sources_sha256,
             "verification_receipt_sha256": self.receipt_sha256,
         }

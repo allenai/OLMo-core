@@ -55,7 +55,10 @@ from exact usable window capacity. Repeated ``--*-min-source-tokens SOURCE=TOKEN
 reserve minimum quotas for source labels from the pinned parent mix before the remainder is
 apportioned. A normal build streams every source once and emits a pinned verification receipt
 beside the manifests; training validates that receipt instead of repeatedly hashing the full
-materialized corpus.
+materialized corpus. Receipt version 2 also records the exact bytes of this named builder
+implementation, both pinned parent-manifest digests, and the upstream provenance digest. The
+builder digest is computed from ``__file__`` when Python loads the module, not embedded as a
+fixed value in that same file, so it is reproducible without a self-referential hash.
 """
 
 from __future__ import annotations
@@ -75,14 +78,20 @@ if TYPE_CHECKING:
     from olmo_core.data.multimodal.native_text_replay import NativeTextReplayManifest
 
 NATIVE_TEXT_REPLAY_FORMAT = "olmo_native_text_replay"
-NATIVE_TEXT_REPLAY_VERSION = 1
+NATIVE_TEXT_REPLAY_VERSION = 2
 SOURCE_CATALOG_FORMAT = "olmo_native_text_replay_source_catalog"
 SOURCE_CATALOG_VERSION = 2
 UPSTREAM_PROVENANCE_FORMAT = "olmo_native_text_replay_upstream_provenance"
 UPSTREAM_PROVENANCE_VERSION = 1
 VERIFICATION_RECEIPT_FORMAT = "olmo_native_text_replay_verification_receipt"
-VERIFICATION_RECEIPT_VERSION = 1
+VERIFICATION_RECEIPT_VERSION = 2
 VERIFICATION_RECEIPT_FILENAME = "native-text-replay-verification.json"
+BUILDER_IMPLEMENTATION_REFERENCE = "src/scripts/data/build_s002_replay_manifest.py"
+# This digest is intentionally computed from the module bytes Python loaded, rather than
+# hard-coded into those same bytes. The receipt can therefore bind the exact implementation
+# without creating an impossible self-referential hash. Reviewers pin the resulting receipt
+# bytes and can recover the named implementation from the corresponding repository revision.
+BUILDER_IMPLEMENTATION_SHA256 = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
 S002_PARENT_CHECKPOINT = "/weka/oe-training-default/robertb/s002-step125500"
 S002_PARENT_PATHS_FILE = f"{S002_PARENT_CHECKPOINT}/data_paths.txt"
 S002_PARENT_MIX = "OLMo-mix-0925"
@@ -234,6 +243,16 @@ def _sha256_file(path: Path) -> str:
     except OSError as error:
         raise ValueError(f"Could not read source token file {path}: {error}") from error
     return digest.hexdigest()
+
+
+def _validate_loaded_builder_implementation() -> None:
+    """Fail if the reviewed script bytes changed after this module was loaded."""
+    current_sha256 = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
+    if current_sha256 != BUILDER_IMPLEMENTATION_SHA256:
+        raise ValueError(
+            "Replay builder implementation changed after module load; restart from a stable "
+            "reviewed checkout before emitting evidence"
+        )
 
 
 def _strict_json_object(pairs: Sequence[Tuple[str, Any]]) -> Dict[str, Any]:
@@ -719,8 +738,12 @@ def _build_verification_receipt(catalog: SourceCatalog) -> Optional[Dict[str, An
         "format": VERIFICATION_RECEIPT_FORMAT,
         "version": VERIFICATION_RECEIPT_VERSION,
         "hash_algorithm": "sha256",
+        "builder_implementation": BUILDER_IMPLEMENTATION_REFERENCE,
+        "builder_sha256": BUILDER_IMPLEMENTATION_SHA256,
         "source_catalog_sha256": catalog.catalog_sha256,
         "parent_paths_sha256": catalog.parent_paths_sha256,
+        "parent_mix_sha256": catalog.parent_mix_sha256,
+        "upstream_provenance_sha256": catalog.upstream_provenance_sha256,
         "materialized_sources_sha256": catalog.materialized_sources_sha256,
         "sources": [
             {
@@ -781,6 +804,8 @@ def _make_manifest(
         "parent_paths_sha256": catalog.parent_paths_sha256,
         "parent_mix_sha256": catalog.parent_mix_sha256,
         "upstream_provenance_sha256": catalog.upstream_provenance_sha256,
+        "builder_implementation": BUILDER_IMPLEMENTATION_REFERENCE,
+        "builder_sha256": BUILDER_IMPLEMENTATION_SHA256,
         "instance_filter": dict(S002_INSTANCE_FILTER),
         "materialized_sources_sha256": catalog.materialized_sources_sha256,
         "source_catalog_sha256": catalog.catalog_sha256,
@@ -843,6 +868,7 @@ def build_replay_manifests(
     :returns: In-memory train and holdout manifests with no overlapping raw intervals.
     :raises ValueError: If budgets, quotas, sources, or capacities are inconsistent.
     """
+    _validate_loaded_builder_implementation()
     if isinstance(sequence_length, bool) or not isinstance(sequence_length, int):
         raise ValueError("sequence_length must be a positive integer")
     if sequence_length < 2:
@@ -1016,6 +1042,13 @@ def write_replay_manifests(
     resolved_receipt = manifests.manifest_dir / VERIFICATION_RECEIPT_FILENAME
     if resolved_train == resolved_holdout:
         raise ValueError("Train and holdout manifest paths must be distinct")
+    if manifests.verification_receipt is not None and resolved_receipt in {
+        resolved_train,
+        resolved_holdout,
+    }:
+        raise ValueError(
+            "Train and holdout manifest paths must be distinct from the verification receipt"
+        )
     if resolved_train.parent != resolved_holdout.parent:
         raise ValueError("Train and holdout manifests must be written to the same directory")
     if resolved_train.parent != manifests.manifest_dir:
@@ -1227,6 +1260,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "catalog_sha256": catalog.catalog_sha256,
         "parent_paths_sha256": catalog.parent_paths_sha256,
         "parent_mix_sha256": catalog.parent_mix_sha256,
+        "builder": {
+            "implementation": BUILDER_IMPLEMENTATION_REFERENCE,
+            "sha256": BUILDER_IMPLEMENTATION_SHA256,
+        },
         "upstream_provenance": {
             "path": str(catalog.upstream_provenance_file),
             "sha256": catalog.upstream_provenance_sha256,

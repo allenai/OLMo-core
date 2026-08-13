@@ -10,6 +10,7 @@ import pytest
 
 from olmo_core.data.multimodal.collator import MultimodalCollator
 from olmo_core.data.multimodal.native_text_replay import (
+    NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE,
     NATIVE_TEXT_REPLAY_FORMAT,
     NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT,
     NATIVE_TEXT_REPLAY_VERIFICATION_VERSION,
@@ -18,6 +19,7 @@ from olmo_core.data.multimodal.native_text_replay import (
     NativeTextReplayDatasetConfig,
     NativeTextReplayManifest,
     NativeTextReplayVerificationReceipt,
+    _reviewed_builder_sha256,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -48,11 +50,27 @@ def _manifest_data(token_path: Path, tokens: np.ndarray, *, sequence_length: int
             "parent_checkpoint": "/checkpoints/s002-step125500",
             "parent_mix": "OLMo-mix-0925",
             "parent_paths_sha256": "a" * 64,
+            "parent_mix_sha256": "b" * 64,
+            "upstream_provenance_sha256": "c" * 64,
+            "builder_implementation": NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE,
+            "builder_sha256": _reviewed_builder_sha256(),
             "instance_filter": {
                 "repetition_min_period": 1,
                 "repetition_max_period": 13,
                 "repetition_max_count": 32,
             },
+            "materialized_sources_sha256": "e" * 64,
+            "source_catalog_sha256": "f" * 64,
+            "source_catalog_format": "olmo_native_text_replay_source_catalog",
+            "source_catalog_version": 2,
+            "selection_algorithm": "affine-grid-v1",
+            "selection_seed": 17,
+            "split": "train",
+            "usable_tokens": 2 * (sequence_length - 1),
+            "source_usable_tokens": {"web": 2 * (sequence_length - 1)},
+            "minimum_source_usable_tokens": {},
+            "raw_tokens_per_window": sequence_length,
+            "loss_tokens_per_window": sequence_length - 1,
         },
         "num_windows": 2,
         "sources": [
@@ -82,8 +100,12 @@ def _write_verification_receipt(path: Path, manifest_data, token_path: Path) -> 
         "format": NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT,
         "version": NATIVE_TEXT_REPLAY_VERIFICATION_VERSION,
         "hash_algorithm": "sha256",
+        "builder_implementation": manifest_data["provenance"]["builder_implementation"],
+        "builder_sha256": manifest_data["provenance"]["builder_sha256"],
         "source_catalog_sha256": "b" * 64,
         "parent_paths_sha256": manifest_data["provenance"]["parent_paths_sha256"],
+        "parent_mix_sha256": manifest_data["provenance"]["parent_mix_sha256"],
+        "upstream_provenance_sha256": manifest_data["provenance"]["upstream_provenance_sha256"],
         "materialized_sources_sha256": "c" * 64,
         "sources": [
             {
@@ -108,6 +130,11 @@ def _write_verification_receipt(path: Path, manifest_data, token_path: Path) -> 
         }
     )
     return path, receipt_sha256
+
+
+def _rewrite_json_with_sha256(path: Path, data) -> str:
+    path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+    return _sha256(path)
 
 
 @pytest.fixture
@@ -219,6 +246,9 @@ def test_semantic_fingerprint_is_formatting_invariant_and_tracks_content(replay_
 
     changed_data = deepcopy(data)
     changed_data["sources"][0]["source"] = "code"
+    changed_data["provenance"]["source_usable_tokens"] = {
+        "code": changed_data["provenance"]["usable_tokens"]
+    }
     changed_path = _write_manifest(tmp_path / "changed.json", changed_data)
     assert NativeTextReplayManifest.load(changed_path).content_fingerprint != (
         compact.content_fingerprint
@@ -277,6 +307,51 @@ def test_manifest_rejects_unbounded_or_inconsistent_windows(replay_files, tmp_pa
         NativeTextReplayManifest.load(manifest_path)
 
 
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda data: data.update(unexpected=True), "manifest root has unknown fields"),
+        (
+            lambda data: data["tokenizer"].update(unexpected=True),
+            "tokenizer has unknown fields",
+        ),
+        (
+            lambda data: data["provenance"].update(unexpected=True),
+            "provenance has unknown fields",
+        ),
+        (
+            lambda data: data["sources"][0].update(unexpected=True),
+            r"sources\[0\] has unknown fields",
+        ),
+        (lambda data: data.update(version=True), "version.*integer"),
+        (
+            lambda data: data["provenance"].update(selection_seed=True),
+            "selection_seed.*integer",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_path_index=True),
+            "parent_path_index.*integer",
+        ),
+        (
+            lambda data: data["provenance"].update(builder_sha256=7),
+            "builder_sha256.*non-empty string",
+        ),
+        (
+            lambda data: data["provenance"].update(builder_sha256="D" * 64),
+            "builder_sha256.*SHA-256",
+        ),
+    ],
+)
+def test_manifest_schema_rejects_unknown_fields_bool_int_and_noncanonical_hashes(
+    replay_files, tmp_path, mutate, match
+):
+    _, data, _ = replay_files
+    mutate(data)
+    manifest_path = _write_manifest(tmp_path / "invalid-schema.json", data)
+    with pytest.raises(OLMoConfigurationError, match=match):
+        NativeTextReplayManifest.load(manifest_path)
+
+
 def test_source_size_hash_and_runtime_tokenizer_validation(replay_files, tmp_path):
     manifest_path, data, tokens = replay_files
     dataset = NativeTextReplayDataset(manifest_path, verify_source_hashes=True)
@@ -327,6 +402,7 @@ def test_pinned_offline_verification_receipt_avoids_runtime_rehash(replay_files,
 
     changed = deepcopy(data)
     changed["sources"][0]["source"] = "code"
+    changed["provenance"]["source_usable_tokens"] = {"code": changed["provenance"]["usable_tokens"]}
     changed_path = _write_manifest(tmp_path / "changed-source.json", changed)
     with pytest.raises(OLMoConfigurationError, match="differs from the pinned"):
         NativeTextReplayDataset(
@@ -342,11 +418,81 @@ def test_pinned_offline_verification_receipt_avoids_runtime_rehash(replay_files,
         )
 
 
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda receipt: receipt.update(unexpected=True), "unknown fields"),
+        (lambda receipt: receipt.update(version=True), "version.*integer"),
+        (
+            lambda receipt: receipt.update(builder_implementation="some/other/builder.py"),
+            "unreviewed builder",
+        ),
+        (
+            lambda receipt: receipt.update(parent_mix_sha256=True),
+            "parent_mix_sha256.*non-empty string",
+        ),
+        (
+            lambda receipt: receipt["sources"][0].update(num_tokens=True),
+            "num_tokens.*integer",
+        ),
+        (
+            lambda receipt: receipt["sources"][0].update(unexpected=True),
+            "source 0 has unknown fields",
+        ),
+    ],
+)
+def test_verification_receipt_rejects_unknown_fields_and_type_confusion(
+    replay_files, tmp_path, mutate, match
+):
+    _, data, _ = replay_files
+    token_path = tmp_path / data["sources"][0]["path"]
+    receipt_path, _ = _write_verification_receipt(tmp_path / "receipt.json", data, token_path)
+    receipt = json.loads(receipt_path.read_text())
+    mutate(receipt)
+    receipt_sha256 = _rewrite_json_with_sha256(receipt_path, receipt)
+
+    with pytest.raises(OLMoConfigurationError, match=match):
+        NativeTextReplayVerificationReceipt.load(
+            receipt_path,
+            expected_sha256=receipt_sha256,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "match"),
+    [
+        ("builder_sha256", "differs from the reviewed implementation"),
+        ("parent_mix_sha256", "parent_mix_sha256 does not match"),
+        ("upstream_provenance_sha256", "upstream_provenance_sha256 does not match"),
+    ],
+)
+def test_verification_receipt_cross_binds_builder_and_parent_lineage(
+    replay_files, tmp_path, field_name, match
+):
+    _, data, _ = replay_files
+    token_path = tmp_path / data["sources"][0]["path"]
+    receipt_path, _ = _write_verification_receipt(tmp_path / "receipt.json", data, token_path)
+    receipt = json.loads(receipt_path.read_text())
+    receipt[field_name] = "0" * 64
+    receipt_sha256 = _rewrite_json_with_sha256(receipt_path, receipt)
+    data["provenance"]["verification_receipt_sha256"] = receipt_sha256
+    manifest_path = _write_manifest(tmp_path / "manifest-with-tampered-receipt.json", data)
+
+    with pytest.raises(OLMoConfigurationError, match=match):
+        NativeTextReplayDataset(
+            manifest_path,
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
+
+
 def test_loaded_windows_reject_ids_outside_native_vocabulary(tmp_path: Path):
     tokens = _write_raw_tokens(tmp_path / "tokens.npy", [1, 2, 100_300, 4])
     data = _manifest_data(tmp_path / "tokens.npy", tokens)
     data["num_windows"] = 1
     data["sources"][0]["window_starts"] = [0]
+    data["provenance"]["usable_tokens"] = 2
+    data["provenance"]["source_usable_tokens"] = {"web": 2}
     manifest_path = _write_manifest(tmp_path / "manifest.json", data)
 
     with pytest.raises(RuntimeError, match="outside native vocabulary"):
