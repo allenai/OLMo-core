@@ -220,10 +220,12 @@ def main():
         if args.dry_run:
             continue
         workload = launch_config.launch(follow=False)
-        # launch() returns a BeakerWorkload, which does not always expose `.id`; fall back to the
-        # object itself so the identifier still reaches the launch ledger (it is what pull-evals
-        # queries -- an entry without one is barely better than no entry).
-        print(f"    submitted: {getattr(workload, 'id', workload)}")
+        # BeakerWorkload is a protobuf with fields (experiment, environment, status, budget_id) --
+        # it has no `.id`, and printing the object itself dumps a multi-line repr instead of an
+        # identifier. The experiment id is what `pull-evals` queries, so it has to land in the
+        # ledger cleanly; a ledger entry without one is barely better than no entry.
+        exp_id = getattr(getattr(workload, "experiment", None), "id", None)
+        print(f"    submitted: {exp_id or workload}")
 
 
 if __name__ == "__main__":
