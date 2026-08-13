@@ -19,6 +19,7 @@ locally; CLAUDE.md covers Beaker.
 | `singletask_ladder/` | Per-task (not mixed) ladder SFT + multi-rung evals (see its README + EVAL.md) | Local + Beaker |
 | `evals/` | Standalone eval launchers (dense/landmark native, vllm, 32k ladder). Family-specific evals live with their family. | Local |
 | `probes/` | One-off diagnostics: `sanity_check_packing.py`, `scan_doc_lengths.py` | — |
+| `hils_sft/` | SFT for HiLS-Attention-7B and its Olmo-3-1025-7B control, through the HiLS repo's veomni trainer (neither model can use olmo_core: HiLS's attention is not implemented there and both use the OLMo-3 vocab). Plus an olmo_core bridge arm. |
 
 Related code that stays where it is: `src/corpus_reasoning/train/` (HF-era trainers + the
 `convert_hf_to_olmo.py` base-checkpoint converter — package code), `src/scripts/data/` (shard
