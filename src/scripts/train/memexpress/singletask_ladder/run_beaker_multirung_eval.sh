@@ -274,18 +274,9 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
 # per-task base-data args (--contra-data/--nq-data/--outlier-data/--rerank-data) are unused.
   # v2: all rungs (incl. base + rerank) come from the v2 bundle via --ladder-version v2;
   # the per-task base-data (--contra-data/--nq-data/--outlier-data/--rerank-data) args are unused.
-  case "$TASK" in
-    contra)  RUNGS="2k,8k,16k,32k"; LTASK=contradiction; EXTRA="--contra-max-new-tokens 512" ;;
-    nq)      RUNGS="3k,8k,16k,32k"; LTASK=nq;            EXTRA="" ;;
-    outlier) RUNGS="3k,8k,16k,32k"; LTASK=outlier;       EXTRA="" ;;
-    rerank)  RUNGS="3k,8k,16k";     LTASK=rerank;        EXTRA="" ;;  # CE-graded, no 32k pool
-    oolong)  RUNGS="8k,16k,32k";    LTASK=oolong;        EXTRA="" ;;
-    fiqa)    RUNGS="2k,4k,8k,16k";  LTASK=fiqa;          EXTRA="" ;;  # OOD generalization (BEIR)
-    scifact) RUNGS="4k,8k,16k,32k"; LTASK=scifact;       EXTRA="" ;;  # OOD generalization (BEIR)
-    outlier_review) RUNGS="3k,8k,16k,32k"; LTASK=outlier_review; EXTRA="" ;;  # OOD outlier (Amazon reviews)
-    contra_fever)   RUNGS="2k,8k,16k,32k"; LTASK=contra_fever;   EXTRA="--contra-max-new-tokens 512" ;;  # OOD contradiction (FEVER)
-    *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
-  esac
+  # The table itself lives in ladder_rungs.sh so the hf-backend runner scores external models on
+  # exactly this ladder rather than on a second copy of it.
+  . "$(dirname "${BASH_SOURCE[0]}")/ladder_rungs.sh"
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier|rerank|oolong)

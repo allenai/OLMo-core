@@ -1,5 +1,5 @@
 """
-NATIVE olmo_core eval (no HF export, no vLLM, no oe_eval task registry).
+NATIVE eval (no HF export, no vLLM, no oe_eval task registry).
 
 Loads an olmo-core distcp checkpoint directly via olmo_core.generate and scores RULER + contradiction
 + NQ with the same corpus-reasoning metric functions as eval_lc_fast.py. The point: skip the
@@ -10,6 +10,11 @@ Loads an olmo-core distcp checkpoint directly via olmo_core.generate and scores 
       --model-path <step_dir_with_config.json_and_model_and_optim> \
       --out outputs/eval_results/<name>_native.json [--tokenizer Qwen/Qwen3-4B]
 
+``--backend hf`` instead loads a HuggingFace checkpoint dir through transformers, so third-party
+models that olmo_core cannot express (HiLS-Attention; any HF base model used as a control) go
+through the SAME ladder, prompts and metrics as our own runs. Only the model construction and the
+generate call differ -- see :func:`_build_hf_generator`.
+
 Run on a GPU node, env corpus-reasoning-olmo (has olmo_core + transformers), PYTHONPATH=corpus-reasoning.
 """
 import argparse
@@ -18,6 +23,90 @@ import os
 import time
 
 import torch
+
+_CPU_GROUP = None
+
+
+def _cpu_group():
+    """
+    Lazily create (once) a gloo process group for gathering python objects off the GPU.
+
+    Mirrors ``olmo_core.distributed.utils.all_gather_object_cpu``, which the hf backend cannot
+    import. Under NCCL, ``all_gather_object`` allocates ``max_pickled_size * world_size`` bytes on
+    the GPU; on an ultra-long rung that was a ~79 GiB request with ~58 GiB free, killing the job
+    after all the generation work was done.
+
+    :returns: A gloo process group, or ``None`` if one cannot be created (falls back to default).
+    """
+    global _CPU_GROUP
+    if _CPU_GROUP is None:
+        try:
+            _CPU_GROUP = torch.distributed.new_group(backend="gloo")
+        except Exception:  # noqa: BLE001 -- fall back to the default group rather than fail
+            _CPU_GROUP = torch.distributed.group.WORLD
+    return _CPU_GROUP
+
+
+def _build_hf_generator(args, tok, device):
+    """
+    Build a HuggingFace model and return a ``generate_batch``-compatible callable.
+
+    HiLS checkpoints are detected from ``config.json`` and routed through
+    :mod:`ctc_eval.lib.hils_loader`, which registers the out-of-tree modeling code. Everything
+    else loads with a plain ``AutoModelForCausalLM``.
+
+    :param args: Parsed CLI args (uses ``model_path``, ``attn_impl``, ``hils_repo``, ``max_length``).
+    :param tok: The tokenizer, needed for ``stop_strings`` support in ``model.generate``.
+    :param device: Torch device.
+
+    :returns: ``fn(input_ids, attention_mask, max_new_tokens, stop_strings) -> LongTensor`` of
+        shape ``(B, prompt_len + generated)``, matching what the olmo_core path returns.
+    """
+    from ctc_eval.lib.hils_loader import is_hils_checkpoint, load_hils_model
+
+    # The ladder feeds prompts up to --max-length; a checkpoint whose config caps
+    # max_position_embeddings BELOW that silently mis-positions the tail of every long prompt
+    # instead of erroring, so raise the budget to what we actually intend to feed it.
+    if is_hils_checkpoint(args.model_path):
+        model = load_hils_model(
+            args.model_path,
+            device=device,
+            attn_implementation=args.attn_impl or None,
+            repo=args.hils_repo or None,
+            max_position_embeddings=args.max_length,
+        )
+    else:
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        config = AutoConfig.from_pretrained(args.model_path)
+        if getattr(config, "max_position_embeddings", 0) < args.max_length:
+            print(f"[hf] max_position_embeddings {config.max_position_embeddings} -> "
+                  f"{args.max_length}", flush=True)
+            config.max_position_embeddings = args.max_length
+        kw = {"attn_implementation": args.attn_impl} if args.attn_impl else {}
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_path, config=config, dtype=torch.bfloat16, **kw)
+        model.to(device)
+        model.eval()
+
+    @torch.no_grad()
+    def _generate(input_ids, attention_mask, max_new_tokens, stop_strings=None):
+        kw = {}
+        if stop_strings:
+            # transformers' own early-stop; it needs the tokenizer to decode the tail.
+            kw = {"stop_strings": list(stop_strings), "tokenizer": tok}
+        return model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            use_cache=True,
+            pad_token_id=tok.pad_token_id,
+            eos_token_id=tok.eos_token_id,
+            **kw,
+        )
+
+    return _generate
 
 
 def main():
@@ -111,6 +200,25 @@ def main():
                          "relies on --landmark-group-selection=mean to share only the top-k selection. "
                          "Omit (default) to use the module's baked-in default ('grouped'). Ignored by "
                          "non-grouped models.")
+    # ---- backend: which stack builds the model -------------------------------------------------
+    # 'olmo_core' (default) is everything this file was written for: a distcp step dir loaded
+    # through olmo_core.generate. 'hf' loads a HuggingFace-format checkpoint through transformers,
+    # which is the ONLY way to score third-party models that olmo_core cannot express -- HiLS
+    # (chunk-wise sparse attention, out-of-tree modeling code) is the case this was added for.
+    # Everything downstream of the model -- ladder resolution, prompt construction, scoring -- is
+    # shared, which is the point: an external model gets the identical eval, not a parallel one.
+    ap.add_argument("--backend", choices=["olmo_core", "hf"], default="olmo_core",
+                    help="olmo_core = distcp step dir (default); hf = HuggingFace checkpoint dir.")
+    ap.add_argument("--attn-impl", default="",
+                    help="hf backend: attention implementation for the dense layers "
+                         "(flash_attention_3 | flash_attention_2 | sdpa | eager). Empty = the "
+                         "checkpoint's own config value, falling back if it is unavailable.")
+    ap.add_argument("--hils-repo", default="",
+                    help="hf backend: HiLS repo checkout for HiLS checkpoints (default $HILS_REPO).")
+    ap.add_argument("--chat-template", default="",
+                    help="Path to a Jinja chat template to attach to the tokenizer. Required with "
+                         "--prompt-format chat for BASE models, whose tokenizers ship no template "
+                         "(Olmo-3 base and HiLS-7B both do not). Ignored for other formats.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
@@ -161,14 +269,27 @@ def main():
         os.chdir(args.root)
 
     from transformers import AutoTokenizer
-    from olmo_core.config import DType
-    from olmo_core.distributed.utils import all_gather_object_cpu
-    from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         load_unified_examples, _eval_ruler, _eval_contradiction, _eval_retrieval,
         _eval_oolong, _eval_rerank, _eval_outlier,
     )
+
+    # olmo_core is imported ONLY for its backend. The hf backend runs in an environment rebuilt
+    # around a third-party model's pinned deps (tilelang/veomni for HiLS), where importing
+    # olmo_core is at best unnecessary and at worst a version conflict, so it must not be a
+    # module-level cost. ctc_eval itself has no olmo_core dependency, which is what makes the
+    # split clean.
+    if args.backend == "olmo_core":
+        from olmo_core.distributed.utils import all_gather_object_cpu
+    else:
+        def all_gather_object_cpu(obj):
+            """Gather picklable objects over a CPU (gloo) group -- see the note in generate()."""
+            if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+                return [obj]
+            group = _cpu_group()
+            out = [obj] * torch.distributed.get_world_size(group)
+            torch.distributed.all_gather_object(out, obj, group=group)
+            return out
 
     # ---- data-parallel across N GPUs (torchrun): each rank loads a full model copy + evaluates a
     # SHARD of every example list; rank 0 gathers, scores, writes. world=1 -> single-GPU as before.
@@ -188,21 +309,54 @@ def main():
     tok.padding_side = "left"
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
+    # BASE models ship no chat template (Olmo-3 base and HiLS-7B both do not), so
+    # apply_chat_template would raise at the first rung -- after the model is already loaded.
+    # Attaching one explicitly also makes the "chat" condition IDENTICAL across models being
+    # compared, instead of each model's own template quietly changing the prompt.
+    if args.chat_template:
+        with open(args.chat_template) as fh:
+            tok.chat_template = fh.read()
+        print(f"[tok] attached chat template from {args.chat_template}", flush=True)
+    if args.prompt_format == "chat" and not getattr(tok, "chat_template", None):
+        raise SystemExit(
+            "--prompt-format chat but the tokenizer has no chat_template. Pass --chat-template "
+            "<file.jinja> (BASE models have none; see hils_eval/README.md)."
+        )
     torch.cuda.set_device(local_rank)
     device = torch.device(f"cuda:{local_rank}")
 
     t0 = time.time()
-    gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
-                               max_length=args.max_length, use_cache=True,
-                               prefill_chunk_size=args.prefill_chunk_size,
-                               landmark_top_k_blocks=args.landmark_top_k_blocks,
-                               landmark_nonselected_mass=args.landmark_nonselected_mass,
-                               landmark_group_selection=args.landmark_group_selection,
-                               landmark_decode_gate_mode=args.landmark_decode_gate_mode)
-    gm = TransformerGenerationModuleConfig(
-        gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
-    ).build(checkpoint_dir=args.model_path, device=device)
-    print(f"[native] built generation module from {args.model_path} in {time.time()-t0:.1f}s", flush=True)
+    if args.backend == "hf":
+        _gen_fn = _build_hf_generator(args, tok, device)
+        print(f"[hf] built {args.model_path} in {time.time()-t0:.1f}s", flush=True)
+    else:
+        from olmo_core.config import DType
+        from olmo_core.generate.generation_module.config import GenerationConfig
+        from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
+
+        gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
+                                   max_length=args.max_length, use_cache=True,
+                                   prefill_chunk_size=args.prefill_chunk_size,
+                                   landmark_top_k_blocks=args.landmark_top_k_blocks,
+                                   landmark_nonselected_mass=args.landmark_nonselected_mass,
+                                   landmark_group_selection=args.landmark_group_selection,
+                                   landmark_decode_gate_mode=args.landmark_decode_gate_mode)
+        gm = TransformerGenerationModuleConfig(
+            gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
+        ).build(checkpoint_dir=args.model_path, device=device)
+        print(f"[native] built generation module from {args.model_path} in {time.time()-t0:.1f}s", flush=True)
+
+        def _gen_fn(input_ids, attention_mask, max_new_tokens, stop_strings=None):
+            gen_kw = {}
+            if stop_strings:
+                # Per-row string early-stop (stops near the actual answer length instead of running
+                # to max_new_tokens). Decode-check runs every 16 steps to keep the loop GPU-bound.
+                gen_kw = dict(stop_strings=stop_strings, stop_string_check_interval=16,
+                              stop_string_tokenizer=tok)
+            cont, _, _ = gm.generate_batch(input_ids=input_ids, attention_mask=attention_mask,
+                                           completions_only=False, log_timing=False,
+                                           max_new_tokens=max_new_tokens, **gen_kw)
+            return cont
 
     def strip_think(s):
         return s.split("</think>", 1)[1] if "</think>" in s else s
@@ -234,15 +388,7 @@ def main():
                       max_length=args.max_length - max_new_tokens, add_special_tokens=False)
             ids = enc["input_ids"].to(device)
             mask = enc["attention_mask"].to(device)
-            # Per-row string early-stop (stops near the actual answer length instead of running to
-            # max_new_tokens). Decode-check runs every 16 steps to keep the loop GPU-bound.
-            gen_kw = {}
-            if stop_strings:
-                gen_kw = dict(stop_strings=stop_strings, stop_string_check_interval=16,
-                              stop_string_tokenizer=tok)
-            cont, _, _ = gm.generate_batch(input_ids=ids, attention_mask=mask,
-                                           completions_only=False, log_timing=False,
-                                           max_new_tokens=max_new_tokens, **gen_kw)
+            cont = _gen_fn(ids, mask, max_new_tokens, stop_strings)
             ctx_len = ids.shape[1]
             for row in cont.tolist():
                 gen = row[ctx_len:]
@@ -275,8 +421,13 @@ def main():
                 full[gi] = resp
         return full
 
+    # backend/attn/chat_template are recorded because they are part of WHAT WAS MEASURED for an
+    # hf-backend row: the same checkpoint under a different chat template is a different condition,
+    # and a reader six weeks later cannot recover it from the file path.
     summary = {"model_path": args.model_path, "query_position": args.query_position,
-               "prompt_format": args.prompt_format,
+               "prompt_format": args.prompt_format, "backend": args.backend,
+               "attn_impl": args.attn_impl or None,
+               "chat_template": os.path.basename(args.chat_template) if args.chat_template else None,
                "ruler": {}, "contradiction": {}, "nq": {}}
 
     # Per-example generation dump (for error inspection). Each _eval_* returns (metrics, details);
