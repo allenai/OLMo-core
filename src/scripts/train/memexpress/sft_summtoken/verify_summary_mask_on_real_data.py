@@ -404,12 +404,22 @@ def main() -> None:
     for i, raw in enumerate(windows):
         # Run the PRODUCTION emitter over the real window's segments, so what is verified below is
         # the layout training would actually see -- not a reimplementation of it.
-        segments = segments_from_tokens(raw, ids_set)
-        ids, _ = emit_document_chunk_summary(
-            segments,
-            summary_token_id=ids_set.summary,
-            n_summary_tokens=args.num_summary_tokens,
-        )
+        # A shard that ALREADY carries summary runs (built by build_summary_token_shards.py or the
+        # converter's --emit summary) must be verified as-is. Re-emitting over it would append a
+        # SECOND run after every document and silently verify a layout that will never be trained.
+        if ids_set.summary in raw:
+            if i == 0:
+                print("shards already contain summary runs -- verifying them as-is, no insertion")
+            ids = list(raw)
+        else:
+            if i == 0:
+                print("shards carry no summary runs -- inserting them with the production emitter")
+            segments = segments_from_tokens(raw, ids_set)
+            ids, _ = emit_document_chunk_summary(
+                segments,
+                summary_token_id=ids_set.summary,
+                n_summary_tokens=args.num_summary_tokens,
+            )
         pad_to = args.pad_to
         if pad_to == 0:
             pad_to = ((len(ids) + 127) // 128) * 128

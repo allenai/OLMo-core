@@ -71,6 +71,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerDataParallelWrappingStrategy,
     TransformerTrainModuleConfig,
@@ -84,9 +85,14 @@ IDS = reserved_ids("qwen3_5")
 # rungs almost entirely, and the chunked path cannot use PackingInstanceSource). Decide 256k from the
 # launch_prep numbers -- see the README -- rather than launching blind.
 # ---------------------------------------------------------------------------
-SEQUENCE_LENGTH = int(os.environ.get("SUMMTOK_SEQ_LEN", "32768"))
+SEQUENCE_LENGTH = int(os.environ.get("SUMMTOK_SEQ_LEN", "262144"))
 SUMMARY_TOKENS = int(os.environ.get("SUMMTOK_N_SUMMARY", "5"))
-NUM_NODES = int(os.environ.get("SUMMTOK_NUM_NODES", "4"))
+NUM_NODES = int(os.environ.get("SUMMTOK_NUM_NODES", "2"))
+GPUS_PER_NODE = 8
+CP_DEGREE = int(os.environ.get("SUMMTOK_CP_DEGREE", "4"))
+#: Instances are distributed across DP ranks only -- the CP ranks of one DP group all process the
+#: SAME instance. This distinction is load-bearing for the curriculum; see derive_curriculum.
+DP_DEGREE = NUM_NODES * GPUS_PER_NODE // CP_DEGREE
 
 # Summary-token shards: the dense doc-chunked layout plus a <|summ|> run after each document, built by
 #   convert_unified_to_document_landmark.py --emit summary --num-summary-tokens $SUMMTOK_N_SUMMARY
@@ -94,31 +100,32 @@ NUM_NODES = int(os.environ.get("SUMMTOK_NUM_NODES", "4"))
 # mismatch silently renumbers every document.
 DATA_ROOT = os.environ.get(
     "SUMMTOK_DATA_ROOT",
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/summtoken_5task_32k",
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/summtoken_5task_xlong",
 )
 
 # The Qwen3.5 dense CPT base, AFTER the summary-row repair (see the module docstring).
 BASE_CHECKPOINT = os.environ.get(
     "SUMMTOK_BASE",
-    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
-    "q35-4b-dense-256k-summfix/model_and_optim",
+    # q35-4b-dense-256k-fix/step2385 with the <|summ|> row repaired. NOTE: no user subdirectory.
+    "/weka/oe-training-default/ai2-llm/checkpoints/q35-4b-dense-256k-summfix/model_and_optim",
 )
 
 # Mix weights -- identical to the document-chunked rows so the two families stay comparable.
 _W = {"contra": 2.0, "rerank": 1.5, "outlier": 1.5, "nq": 1.0, "oolong": 1.0}
 _WSUM = sum(_W.values())
 
-LR = 1e-5
-WORLD_SIZE = NUM_NODES * 8
-GLOBAL_BATCH_SIZE = WORLD_SIZE * SEQUENCE_LENGTH
-MAX_STEPS = int(os.environ.get("SUMMTOK_MAX_STEPS", "1100"))
+# LR anchored the same way as the 256k dense family: 1e-5 * sqrt(GLOBAL_BATCH_SIZE / 65_536).
+LR = float(os.environ.get("SUMMTOK_LR", "4e-5"))
+WORLD_SIZE = NUM_NODES * GPUS_PER_NODE
+GLOBAL_BATCH_SIZE = SEQUENCE_LENGTH * DP_DEGREE  # grad-accum 1
+MAX_STEPS = int(os.environ.get("SUMMTOK_MAX_STEPS", "2240"))
 
 #: Instances in one epoch of the realized mixture. Measured by ``launch_prep`` (read the
 #: "MixingInstanceSource: N instances" line) and hardcoded, because the curriculum arms need it to
 #: size their anneal and ``dry_run`` does NOT build the dataset.
 N_INSTANCES = os.environ.get("SUMMTOK_N_INSTANCES")
 
-#: One PadToLength window per GPU per step, grad-accum 1.
+#: One PadToLength window per DP rank per step, grad-accum 1.
 MICRO_BATCH_INSTANCES = 1
 
 
@@ -139,6 +146,12 @@ def _arm_mixture(arm: str) -> dict:
         },
         # Mode 3: the causal fraction rises smoothly through training.
         "summ-anneal": {"mix_start_p": 0.0, "mix_end_p": 0.5},
+        # 50% masked / 50% causal, constant. At exactly 0.5 the two readings of "50% mask mixing"
+        # coincide, so there is no direction to get wrong here.
+        "summ-p50": {"standard_mix_prob": 0.5},
+        # 100% masked -> 0% masked, linear: starts fully summary-only and ends fully causal.
+        # p is P(CAUSAL), so "100% mask mixing decaying to 0%" is p: 0.0 -> 1.0.
+        "summ-decay": {"mix_start_p": 0.0, "mix_end_p": 1.0},
         # THE CONTROL: same data, same summary tokens, same base -- only the mask differs.
         "summ-causal": {"standard_mix_prob": 1.0},
     }[arm]
@@ -147,8 +160,10 @@ def _arm_mixture(arm: str) -> dict:
 ARMS = (
     "summ-only",
     "summ-p25",
+    "summ-p50",
     "summ-step50",
     "summ-anneal",
+    "summ-decay",
     "summ-causal",
 )
 
@@ -161,6 +176,12 @@ def derive_curriculum(mixture: dict) -> dict:
     count: the counter lives on the model and advances once per microbatch forward per rank. Getting
     this wrong leaves ``p`` short of its endpoint -- it has silently voided three prior arms
     (``records/contradiction-data-and-base-hygiene.md``), which is why this raises rather than warns.
+
+    ⚠ Under context parallelism the divisor is **DP_DEGREE, not WORLD_SIZE**. The CP ranks of one DP
+    group all process the *same* instance, so instances are spread over DP ranks only; dividing by
+    the world size would make ``mix_total_forwards`` CP_DEGREE times too small and the anneal would
+    finish a quarter of the way through training, pinned at ``mix_end_p`` for the rest. Every rank
+    still advances its own counter once per forward, so the per-rank count is what this must be.
     """
     from olmo_core.nn.attention.chunked_mask import mask_mix_standard_prob
 
@@ -173,7 +194,7 @@ def derive_curriculum(mixture: dict) -> dict:
             "'MixingInstanceSource: N instances' line, and set SUMMTOK_N_INSTANCES."
         )
     n_instances = int(N_INSTANCES)
-    forwards_per_rank = max(1, n_instances // (WORLD_SIZE * MICRO_BATCH_INSTANCES))
+    forwards_per_rank = max(1, n_instances // (DP_DEGREE * MICRO_BATCH_INSTANCES))
     resolved = dict(mixture, mix_total_forwards=forwards_per_rank)
 
     final_p = mask_mix_standard_prob(forwards_per_rank, **resolved)
@@ -181,7 +202,8 @@ def derive_curriculum(mixture: dict) -> dict:
         raise OLMoConfigurationError(
             f"The mask-mix curriculum would not land: p ends at {final_p} rather than "
             f"{mixture['mix_end_p']} with mix_total_forwards={forwards_per_rank}. Check "
-            f"N_INSTANCES={n_instances}, WORLD_SIZE={WORLD_SIZE}."
+            f"N_INSTANCES={n_instances}, DP_DEGREE={DP_DEGREE} (NOT world size -- CP ranks share "
+            f"an instance)."
         )
     return resolved
 
@@ -235,6 +257,8 @@ def build_summtoken_experiment(cli_context: CliContext, arm: str) -> ExperimentC
             "SUMMTOK_BASE",
             "SUMMTOK_MAX_STEPS",
             "SUMMTOK_N_INSTANCES",
+            "SUMMTOK_CP_DEGREE",
+            "SUMMTOK_LR",
         ):
             if var in os.environ:
                 beaker_launch_config.env_vars.append(BeakerEnvVar(name=var, value=os.environ[var]))
@@ -287,7 +311,11 @@ def build_summtoken_experiment(cli_context: CliContext, arm: str) -> ExperimentC
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            shard_degree=DP_DEGREE,
         ),
+        # Ulysses ONLY. SummaryTokenAttention performs the all-to-all itself (it overrides sdpa and
+        # so bypasses the backend); ring CP cannot express this mask and is rejected at runtime.
+        cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full
         ),
