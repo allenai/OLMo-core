@@ -32,6 +32,10 @@ fi
 # shellcheck disable=SC1091
 source "$HILS_ENV/bin/activate"
 echo "[hils-env] activated $HILS_ENV -- python=$(python -V 2>&1) at $(which python)"
+# tilelang JIT-compiles its kernels at runtime, so nvcc/nvrtc must be reachable in EVERY job, not
+# just at build time. Without this the failure is a misleading "No CUDA available" on a healthy H100.
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/hils_cuda_paths.sh"
 
 # ---- repo ---------------------------------------------------------------------------------
 # HILS_NEED_REPO=0 for a non-HiLS model (the Olmo-3 base control). Those still activate the venv

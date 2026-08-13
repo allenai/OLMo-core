@@ -28,12 +28,16 @@ TORCH_VERSION="${TORCH_VERSION:-2.8.0}"          # the HiLS pin
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"
 TRANSFORMERS_VERSION="${TRANSFORMERS_VERSION:-4.57.3}"   # the HiLS pin
 VEOMNI_REF="${VEOMNI_REF:-441e1b2483921e9cfe56c8d97541a23cb4b290a8}"
-# Newest first. 0.1.9 imports on 3.11 but collides with the separately-installed apache-tvm-ffi
-# ("Type 'ffi.Tensor' already has a registered class") because the wheel also bundles its own tvm.
-# Rather than guess which release predates that split, try them in order and keep the first that
-# COMPILES A REAL KERNEL. The HiLS requirements.txt pins a git sha instead, which is a 20-40 min
-# source build needing LLVM -- not worth it if a wheel works.
+# Newest first; the first one that COMPILES A REAL KERNEL wins. The HiLS requirements.txt pins a
+# git sha instead, which is a 20-40 min source build needing LLVM -- not worth it if a wheel works.
 TILELANG_CANDIDATES="${TILELANG_CANDIDATES:-0.1.9 0.1.8 0.1.7.post3 0.1.6.post2}"
+# tilelang declares apache-tvm-ffi>=0.1.11,<0.1.13 -- a range PyPI DOES NOT CONTAIN (it jumps
+# 0.1.9 -> 0.1.13.post3). Whatever the resolver picks is therefore untested by tilelang's author,
+# and 0.1.13.post3 collides with the tvm bundled in the wheel:
+#   ValueError: Type 'ffi.Tensor' already has a registered class
+# 0.1.9 was verified to import cleanly (diagnostic 01KZY6Q3WN2C8MGT3N378MPXHC, strategy B), so pin
+# it explicitly AFTER tilelang installs its own choice.
+TVM_FFI_VERSION="${TVM_FFI_VERSION:-0.1.9}"
 HILS_REPO="${HILS_REPO:-/tmp/HiLS-Attention}"
 HILS_GIT="${HILS_GIT:-https://github.com/abertsch72/HiLS-Attention.git}"
 
@@ -65,10 +69,14 @@ echo "[build-env] transformers + our eval deps"
 # would compile it for 30+ minutes, and nothing here needs it. The HiLS sparse path is tilelang;
 # flash-attn would only serve the interleaved DENSE layers, which run fine on sdpa. That is a
 # speed choice, not a semantic one.
+# nvidia-cuda-nvcc-cu12: tilelang JIT-compiles every kernel, and this image has no nvcc at all.
+# Must be the -cu12 wheel: tilelang's own [nvcc] extra pulls CUDA 13, while this stack is CUDA 12.8
+# throughout (torch 2.8.0+cu128, driver 570).
 uv pip install \
   "transformers==$TRANSFORMERS_VERSION" \
   einops accelerate safetensors huggingface_hub \
-  numpy tqdm scipy scikit-learn
+  numpy tqdm scipy scikit-learn \
+  nvidia-cuda-nvcc-cu12 nvidia-cuda-nvrtc-cu12
 
 # ---- veomni ------------------------------------------------------------------------------------
 # --no-deps: its full dependency set pins torch/transformers and would rebuild what we just
@@ -121,12 +129,16 @@ print(f"    kernel OK: lmk_k{tuple(lmk_k.shape)} lmk_b{tuple(lmk_b.shape)} tilel
 PY
 
 export HILS_REPO
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/hils_cuda_paths.sh"
 HAVE_GPU=$(python -c "import torch;print(1 if torch.cuda.is_available() else 0)")
 TILELANG_CHOSEN=""
 for v in $TILELANG_CANDIDATES; do
   echo "[build-env] trying tilelang==$v"
   uv pip uninstall tilelang apache-tvm-ffi >/dev/null 2>&1 || true
-  uv pip install "tilelang[nvcc]==$v" >/dev/null 2>&1 || { echo "    install failed"; continue; }
+  uv pip install "tilelang==$v" >/dev/null 2>&1 || { echo "    install failed"; continue; }
+  # Undo whatever tilelang's (unsatisfiable) range resolved to -- see TVM_FFI_VERSION above.
+  uv pip install "apache-tvm-ffi==$TVM_FFI_VERSION" >/dev/null 2>&1 || true
   if [ "$HAVE_GPU" = "1" ]; then
     if python /tmp/tl_probe.py; then TILELANG_CHOSEN="$v"; break; fi
   else
