@@ -106,8 +106,11 @@ DATA_ROOT = os.environ.get(
 # The Qwen3.5 dense CPT base, AFTER the summary-row repair (see the module docstring).
 BASE_CHECKPOINT = os.environ.get(
     "SUMMTOK_BASE",
-    # q35-4b-dense-256k-fix/step2385 with the <|summ|> row repaired. NOTE: no user subdirectory.
-    "/weka/oe-training-default/ai2-llm/checkpoints/q35-4b-dense-256k-summfix/model_and_optim",
+    # q35-4b-dense-256k-fix/step2385 with the <|summ|> row repaired. The SOURCE lives at
+    # checkpoints/q35-4b-dense-256k-fix (no user subdirectory); the repaired copy is written under
+    # checkpoints/amandab/ because that is where this account can write.
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/"
+    "q35-4b-dense-256k-summfix/model_and_optim",
 )
 
 # Mix weights -- identical to the document-chunked rows so the two families stay comparable.
