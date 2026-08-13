@@ -127,18 +127,27 @@ hotpotqa and msmarco would be swept in by a bare `--tasks retrieval` — silentl
 component into a different task mixture than our Qwen3.5 arms trained on. Filter by *file*, not by
 task, for this one.
 
-### ⚠ OPEN: which NQ JSONL is the p10 build?
+### Source files (resolved 2026-08-13)
 
-**Resolve before converting.** NQ is a standing directive: only the p10 build (10% hard negatives +
-CE filter) is valid, because everything is *evaluated* on the p10 ladder and an arm trained on the
-98%-hard build carries a train/eval mismatch that costs it real NQ points. The p10 data we have on
-weka is `single_task_ladders_p10/nq`, which is **already-tokenized Qwen shards** — the wrong
-vocabulary and the wrong stage. What is needed is the p10 **JSONL** in `cr_suite_data/`.
+The `hn<N>` suffix is the **hard-negative count**, and p10 means `hn ≈ 10% of k`. The banned
+98%-hard build is the `hn98` / `hn198` / `hn498` family, which sits in the same directory under
+nearly identical names — this is the trap the NQ directive exists for.
 
-Until that file is identified by name, do not convert NQ. If no p10 JSONL exists, the options are
-(a) regenerate it with the p10 generator, or (b) drop NQ from the mixture and mark the NQ column
-non-comparable — **not** to quietly substitute a `retrieval` train file whose hard-negative rate is
-unknown.
+| task | train JSONL | cot_mode |
+|---|---|---|
+| contra | `contradiction_train_pubmed_both_n*_k3.jsonl` | `template` |
+| **nq** | **`nq_train_k100_hn10_2500.jsonl`** — hn10 of k=100 = p10 ✅ | (from manifest) |
+| rerank | `msmarco_helmet_rerank_train_k*_2000.jsonl` | `template` |
+| outlier | (manifest, task `outlier`) | (from manifest) |
+| oolong | (manifest, task `oolong`) | (from manifest) |
+
+The p10 choice is confirmed by the eval set it is scored against:
+`nq_validation_k20_hn2_600.jsonl` — hn2 of k=20, the same 10%. Never take `nq_*_hn98*` or the
+`hotpotqa_*_hn98*` neighbours.
+
+`beir_scifact_*_splittrain.jsonl` appears in the manifest as `retrieval`/train, but
+`HELD_OUT_GLOBS` excludes it — that assertion is load-bearing here, since scifact and fiqa are
+scored as OOD ladders and must never enter training.
 
 **Pass the same template file the eval attaches.** A training-time template that differs from the
 eval-time one reintroduces the mismatch silently — nothing errors, the numbers are just wrong.
