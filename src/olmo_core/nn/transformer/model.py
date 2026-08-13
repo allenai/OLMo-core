@@ -35,6 +35,7 @@ from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
+from olmo_core.nn.embedding import SplitVocabEmbedding
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
 from ..attention import (
@@ -62,7 +63,7 @@ from .config import (
     TransformerDataParallelWrappingStrategy,
     resolve_block_configs,
 )
-from .init import InitMethod
+from .init import InitMethod, _apply_init
 
 if TYPE_CHECKING:
     from olmo_core.train.common import ReduceType
@@ -118,6 +119,7 @@ class Transformer(nn.Module):
         block_pattern: Optional[List[str]] = None,
         embed_scale: Optional[float] = None,
         tie_word_embeddings: bool = False,
+        n_extra_vocab: int = 0,
     ):
         super().__init__()
 
@@ -129,7 +131,17 @@ class Transformer(nn.Module):
         self.dtype = dtype
         self.embed_scale = embed_scale
 
-        self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
+        # With extra tokens the table is split into two parameters (see
+        # :class:`SplitVocabEmbedding`): ``vocab_size`` is then the *base* vocab, and the
+        # tied LM head spans only that base — the extra tokens are inputs, never targets.
+        self.n_extra_vocab = n_extra_vocab
+        self.embeddings: nn.Module
+        if n_extra_vocab > 0:
+            self.embeddings = SplitVocabEmbedding(
+                vocab_size, n_extra_vocab, d_model, dtype=dtype, device=init_device
+            )
+        else:
+            self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
             None
             if embedding_norm is None
@@ -310,6 +322,19 @@ class Transformer(nn.Module):
                 ),
                 generator=generator,
             )
+            if isinstance(self.embeddings, SplitVocabEmbedding):
+                # mm_olmo initialises the added rows from `new_embedding_init_range`, which
+                # matches our `init_std` default of 0.02.
+                _apply_init(
+                    nn.init.normal_,
+                    self.embeddings.extra_weight,
+                    generator=generator,
+                    std=(
+                        self.embedding_init_std
+                        if self.embedding_init_std is not None
+                        else self.init_std
+                    ),
+                )
 
         # Re-establish weight tying since `to_empty` above allocates fresh storage.
         if self.tie_word_embeddings:
@@ -632,9 +657,7 @@ class Transformer(nn.Module):
             all_block_kwargs["and_mask"] = move_to_device(and_mask, self.device)
 
         if flex_attn_is_image is not None:
-            all_block_kwargs["flex_attn_is_image"] = move_to_device(
-                flex_attn_is_image, self.device
-            )
+            all_block_kwargs["flex_attn_is_image"] = move_to_device(flex_attn_is_image, self.device)
         if flex_attn_subsegment_ids is not None:
             all_block_kwargs["flex_attn_subsegment_ids"] = move_to_device(
                 flex_attn_subsegment_ids, self.device

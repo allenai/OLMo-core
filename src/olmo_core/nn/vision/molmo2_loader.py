@@ -334,36 +334,26 @@ def molmo2_hf_state_dict_to_multimodal_lm(
     has_qk_norm = _has_qk_norm(lm_cfg)
 
     # --- LM: token embeddings -----------------------------------------------
+    # HF Molmo2 keeps the base vocab and the 128 image-special rows as two parameters
+    # (``wte.embedding`` / ``wte.new_embedding``); so do we, via
+    # :class:`~olmo_core.nn.embedding.SplitVocabEmbedding`, which maps 1:1.
     base_emb = _require(hf_state_dict, "model.transformer.wte.embedding")
     new_emb = _require(hf_state_dict, "model.transformer.wte.new_embedding")
-    out["lm.embeddings.weight"] = torch.cat([base_emb, new_emb], dim=0)
+    out["lm.embeddings.weight"] = base_emb
+    out["lm.embeddings.extra_weight"] = new_emb
 
     # --- LM: final norm + lm head ------------------------------------------
     out["lm.lm_head.norm.weight"] = _require(hf_state_dict, "model.transformer.ln_f.weight")
 
-    # HF Molmo2's lm_head is sized to the *base* vocab only — image special
-    # tokens are inputs-only and never predicted (mm_olmo computes logits
-    # against the base embedding table / a base-sized ``ff_out``). Our
-    # OLMo-core LM head spans the full input vocab, so the extra rows must be
-    # filled; :attr:`MultimodalLMConfig.output_vocab_size` masks their logit
-    # columns at forward time, which makes them exactly inert.
-    #
-    # Under ``tie_word_embeddings`` (Molmo2-4B / Qwen3-4B backbone) the head
-    # *shares storage* with the embedding table, so both state-dict keys must
-    # hold identical tensors — zero-padding here would let whichever key loads
-    # last clobber the other (wiping the 128 new-embedding input rows). The HF
-    # checkpoint exports the tied weight as a copy in ``lm_head.weight``; we
-    # verify that and emit the concatenated embedding table for both keys.
+    # Both HF Molmo2's lm_head and ours span the *base* vocab only — the image-special
+    # tokens are inputs, never predicted — so the head maps across directly.
     hf_lm_head = _require(hf_state_dict, "lm_head.weight")
-    extra_rows = lm_cfg.vocab_size - hf_lm_head.shape[0]
-    if extra_rows < 0:
+    if hf_lm_head.shape != base_emb.shape:
         raise Molmo2LoaderError(
-            f"HF lm_head has {hf_lm_head.shape[0]} rows but our LM "
-            f"vocab_size is only {lm_cfg.vocab_size}"
+            f"HF lm_head {tuple(hf_lm_head.shape)} does not match wte.embedding "
+            f"{tuple(base_emb.shape)}"
         )
-    head_matches_embedding = hf_lm_head.shape == base_emb.shape and torch.equal(
-        hf_lm_head, base_emb
-    )
+    head_matches_embedding = torch.equal(hf_lm_head, base_emb)
     if getattr(lm_cfg, "tie_word_embeddings", False):
         if not head_matches_embedding:
             raise Molmo2LoaderError(
@@ -371,19 +361,14 @@ def molmo2_hf_state_dict_to_multimodal_lm(
                 "lm_head.weight differs from wte.embedding — the checkpoint is genuinely "
                 "untied. Build the LM config with tie_word_embeddings=False instead."
             )
-        out["lm.lm_head.w_out.weight"] = out["lm.embeddings.weight"]
-    elif extra_rows > 0:
+        out["lm.lm_head.w_out.weight"] = base_emb
+    else:
         if head_matches_embedding:
             log.info(
                 "HF lm_head.weight equals wte.embedding (the checkpoint was trained "
                 "weight-tied) but the LM config is untied; the head and embedding "
                 "will drift apart if the model is fine-tuned."
             )
-        # new_zeros preserves the source tensor's device and dtype, so this
-        # works when the HF state dict is already on CUDA.
-        pad = hf_lm_head.new_zeros((extra_rows, hf_lm_head.shape[1]))
-        out["lm.lm_head.w_out.weight"] = torch.cat([hf_lm_head, pad], dim=0)
-    else:
         out["lm.lm_head.w_out.weight"] = hf_lm_head
 
     # --- LM: per-block --------------------------------------------------------
@@ -504,6 +489,9 @@ def multimodal_lm_state_dict_to_hf(
     patch_size = cfg.vision.image_patch_size
     vit_layers = cfg.vision.image_num_layers
 
+    # Our embedding table is split exactly like HF's (base + extra), so both map straight
+    # across. Older fused checkpoints (one `embeddings.weight` spanning base + extra) are
+    # still accepted by slicing.
     embeddings = _require(oc_state_dict, "lm.embeddings.weight")
     if embeddings.shape[0] < base_vocab_size:
         raise Molmo2LoaderError(
@@ -511,7 +499,9 @@ def multimodal_lm_state_dict_to_hf(
             f"base_vocab_size={base_vocab_size}"
         )
     out["model.transformer.wte.embedding"] = embeddings[:base_vocab_size].contiguous()
-    if embeddings.shape[0] > base_vocab_size:
+    if (extra := _maybe(oc_state_dict, "lm.embeddings.extra_weight")) is not None:
+        out["model.transformer.wte.new_embedding"] = extra.contiguous()
+    elif embeddings.shape[0] > base_vocab_size:
         out["model.transformer.wte.new_embedding"] = embeddings[base_vocab_size:].contiguous()
 
     out["model.transformer.ln_f.weight"] = _require(oc_state_dict, "lm.lm_head.norm.weight")
@@ -602,7 +592,7 @@ def multimodal_lm_state_dict_to_hf(
 # ---------------------------------------------------------------------------
 
 
-def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
+def _build_lm_config(text_cfg, total_vocab_size: int, n_extra_vocab: int = 0) -> TransformerConfig:
     """Build a :class:`TransformerConfig` matching an HF Molmo2 text_config.
 
     Dispatches to ``qwen3_4B`` / ``qwen3_8B`` (qk_norm_type="qwen3"),
@@ -643,6 +633,7 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
         # shares the head with the base rows of the embedding table.
         return TransformerConfig.qwen3_4B(
             vocab_size=total_vocab_size,
+            n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
             attn_backend=attn_backend,
             dtype=DType.float32,
@@ -650,6 +641,7 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
     if qk_norm_type == "qwen3" and hidden_size == 4096 and n_layers == 36:
         return TransformerConfig.qwen3_8B(
             vocab_size=total_vocab_size,
+            n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
             attn_backend=attn_backend,
             dtype=DType.float32,
@@ -673,6 +665,7 @@ def _build_lm_config(text_cfg, total_vocab_size: int) -> TransformerConfig:
             )
         return TransformerConfig.olmo3_7B(
             vocab_size=total_vocab_size,
+            n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
             attn_backend=attn_backend,
             dtype=DType.float32,
@@ -768,8 +761,11 @@ def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalLMConfig:
     # combined vocab as its *input* vocab. The extra tokens are inputs-only —
     # HF's lm_head covers just ``text_cfg.vocab_size`` — so the base vocab
     # becomes ``output_vocab_size`` (masking the extra logit columns).
-    total_vocab = text_cfg.vocab_size + text_cfg.additional_vocab_size
-    lm_cfg = _build_lm_config(text_cfg, total_vocab_size=total_vocab)
+    lm_cfg = _build_lm_config(
+        text_cfg,
+        total_vocab_size=text_cfg.vocab_size,
+        n_extra_vocab=text_cfg.additional_vocab_size,
+    )
     vis_cfg = _build_vision_config(vit_cfg, adapter_cfg.vit_layers)
     conn_cfg = _build_connector_config(adapter_cfg, vit_hidden_size=vit_cfg.hidden_size)
 
@@ -790,5 +786,7 @@ def molmo2_config_from_hf_config(hf_config: Any) -> MultimodalLMConfig:
         connector=conn_cfg,
         image_patch_token_id=hf_config.image_patch_id,
         vit_layers=resolved_vit_layers,
-        output_vocab_size=text_cfg.vocab_size,
+        # No logit masking needed: the LM head now spans the base vocab only (the extra
+        # image-token rows live in `embeddings.extra_weight` and are never prediction targets).
+        output_vocab_size=None,
     )
