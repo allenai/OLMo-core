@@ -154,7 +154,13 @@ export HILS_REPO
 # cuda_runtime.h.
 CUDA12_PREFIX="${CUDA12_PREFIX:-$ENV_ROOT/cuda12}"
 export CUDA12_PREFIX
-if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ]; then
+# Check the HEADERS too, not just the binary. A partially-installed prefix is the likely state
+# after any failed run -- the components are unpacked one at a time, so an earlier failure on
+# cuda_cudart leaves a prefix that HAS bin/nvcc and passes a nvcc-only guard, while every kernel
+# compile then dies on `fatal error: cuda_runtime.h: No such file or directory`. That exact
+# sequence produced four bogus "tilelang rejected" verdicts (jobs ...gpu5 / ...gpu6).
+if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ] || [ ! -f "$CUDA12_PREFIX/include/cuda_runtime.h" ]; then
+  rm -rf "$CUDA12_PREFIX"
   echo "[build-env] installing the CUDA $CUDA_REDIST_MANIFEST toolchain -> $CUDA12_PREFIX"
   mkdir -p "$CUDA12_PREFIX" /tmp/cuda_redist
   # Read the component paths out of NVIDIA's manifest rather than composing them. Each component
@@ -181,7 +187,9 @@ PY
   for d in /tmp/cuda_redist/*-archive; do cp -a "$d"/. "$CUDA12_PREFIX"/; done
   rm -rf /tmp/cuda_redist
 fi
-[ -x "$CUDA12_PREFIX/bin/nvcc" ] || { echo "[build-env] FATAL: no nvcc at $CUDA12_PREFIX/bin/nvcc"; exit 1; }
+for f in bin/nvcc include/cuda_runtime.h; do
+  [ -e "$CUDA12_PREFIX/$f" ] || { echo "[build-env] FATAL: $CUDA12_PREFIX/$f missing after install"; exit 1; }
+done
 
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/hils_cuda_paths.sh"
