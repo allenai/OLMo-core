@@ -118,3 +118,36 @@ through this same code — so the split is by answer format, not by model:
 A contra column that is 0 in both arms measures instruction-following, not long-context capability.
 Do not report it as "HiLS scores 0 on contradiction". Few-shot demonstrations of the answer format
 would be the way to make that column measurable for base models.
+
+## Sizing Pass B: 64k is fine, 128k does not fit
+
+From the smoke test (bs=1, 7969 tokens, peak 18.4 GiB, weights 13.6 GiB): the non-weight footprint
+is **0.617 MiB/token**. That is consistent with a single MHA KV cache (32 kv heads × 128 dim × 32
+layers × 2 × 2 B = 0.500 MiB/token) plus activations — i.e. HiLS caches its landmark K/V at a
+separate index (`layer_idx + num_hidden_layers`) but does **not** double the footprint.
+
+| rung | estimated peak | verdict on one 80 GB H100 |
+|---|---|---|
+| 32k (base ladder max) | ~33 GiB | fits |
+| 64k | ~53 GiB | fits |
+| 128k | ~93 GiB | **does not fit** |
+
+**The built-in CPU offload does not rescue 128k.** `utils/hils_cache_utils.HiLSDynamicLayer`
+offloads above `_OFFLOAD_SEQ_THRESHOLD = 128*1024` tokens, but the offloaded path ends with:
+
+```python
+keys_gpu = self.keys.to(self.device, non_blocking=True)
+values_gpu = self.values.to(self.device, non_blocking=True)
+return keys_gpu, values_gpu
+```
+
+— it keeps the master copy on CPU but copies **the entire cache back to the GPU on every update**.
+Peak GPU memory is therefore unchanged while adding a full host→device transfer per layer per
+decoded token. Worse, the threshold sits at exactly 131072, and our 128k-rung prompts land ~0.4–3%
+*over* the label (131.6k–135k), so such a run would cross into that path mid-prefill and be both
+OOM-prone and pathologically slow.
+
+So Pass B through this backend should be **64k only**. Reaching 128k needs model parallelism (not
+implemented in this harness), HiLS's own SGLang backend (paged KV — `alexzms/SGLang-HiLS`), or a
+larger GPU. Note the control cannot go past 64k either without RoPE extension (65536 ceiling), so
+64k is the one xlong rung where both arms are simultaneously in-ceiling and affordable.
