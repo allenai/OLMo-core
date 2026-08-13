@@ -39,7 +39,7 @@ TILELANG_CANDIDATES="${TILELANG_CANDIDATES:-0.1.9 0.1.8 0.1.7.post3 0.1.6.post2}
 # it explicitly AFTER tilelang installs its own choice.
 TVM_FFI_VERSION="${TVM_FFI_VERSION:-0.1.9}"
 # Match the stack: torch is cu128 and the driver is 570 (CUDA 12.8).
-CUDA_REDIST_VERSION="${CUDA_REDIST_VERSION:-12.8.93}"
+CUDA_REDIST_MANIFEST="${CUDA_REDIST_MANIFEST:-12.8.1}"
 HILS_REPO="${HILS_REPO:-/tmp/HiLS-Attention}"
 HILS_GIT="${HILS_GIT:-https://github.com/abertsch72/HiLS-Attention.git}"
 
@@ -143,17 +143,30 @@ export HILS_REPO
 CUDA12_PREFIX="${CUDA12_PREFIX:-$ENV_ROOT/cuda12}"
 export CUDA12_PREFIX
 if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ]; then
-  echo "[build-env] installing CUDA $CUDA_REDIST_VERSION toolchain -> $CUDA12_PREFIX"
+  echo "[build-env] installing the CUDA $CUDA_REDIST_MANIFEST toolchain -> $CUDA12_PREFIX"
   mkdir -p "$CUDA12_PREFIX" /tmp/cuda_redist
-  for comp in cuda_nvcc cuda_cudart; do
-    url="https://developer.download.nvidia.com/compute/cuda/redist/$comp/linux-x86_64/$comp-linux-x86_64-$CUDA_REDIST_VERSION-archive.tar.xz"
-    echo "    $comp"
-    curl -sL "$url" -o "/tmp/cuda_redist/$comp.tar.xz" || { echo "    FATAL: download failed: $url"; exit 1; }
-    tar -xf "/tmp/cuda_redist/$comp.tar.xz" -C /tmp/cuda_redist
-    # The archives unpack to <comp>-linux-x86_64-<ver>-archive/{bin,include,lib}; merge them into
-    # one prefix so CUDA_HOME/bin and CUDA_HOME/include are what nvcc expects.
-    cp -a /tmp/cuda_redist/"$comp"-linux-x86_64-"$CUDA_REDIST_VERSION"-archive/. "$CUDA12_PREFIX"/
+  # Read the component paths out of NVIDIA's manifest rather than composing them. Each component
+  # carries its OWN patch version -- in 12.8.1, cuda_nvcc is 12.8.93 while cuda_cudart is 12.8.90 --
+  # so a single hardcoded version 404s for one of them, and `curl -sL` then hands tar an HTML error
+  # page ("tar: Error is not recoverable").
+  MANIFEST="https://developer.download.nvidia.com/compute/cuda/redist/redistrib_$CUDA_REDIST_MANIFEST.json"
+  urls=$(curl -fsSL "$MANIFEST" | python - <<'PY'
+import json, sys
+d = json.load(sys.stdin)
+base = "https://developer.download.nvidia.com/compute/cuda/redist/"
+# cuda_cudart is not optional: nvcc alone cannot compile a kernel that includes cuda_runtime.h.
+for comp in ("cuda_nvcc", "cuda_cudart"):
+    print(base + d[comp]["linux-x86_64"]["relative_path"])
+PY
+) || { echo "    FATAL: could not read $MANIFEST"; exit 1; }
+  for url in $urls; do
+    echo "    $(basename "$url")"
+    curl -fsSL "$url" -o /tmp/cuda_redist/comp.tar.xz || { echo "    FATAL: download failed: $url"; exit 1; }
+    tar -xf /tmp/cuda_redist/comp.tar.xz -C /tmp/cuda_redist
   done
+  # The archives unpack to <comp>-linux-x86_64-<ver>-archive/{bin,include,lib}; merge them into one
+  # prefix so CUDA_HOME/bin and CUDA_HOME/include are what nvcc expects.
+  for d in /tmp/cuda_redist/*-archive; do cp -a "$d"/. "$CUDA12_PREFIX"/; done
   rm -rf /tmp/cuda_redist
 fi
 [ -x "$CUDA12_PREFIX/bin/nvcc" ] || { echo "[build-env] FATAL: no nvcc at $CUDA12_PREFIX/bin/nvcc"; exit 1; }
