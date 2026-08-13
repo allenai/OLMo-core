@@ -217,8 +217,11 @@ def main():
         print(f"    {inner}")
         if args.dry_run:
             continue
-        experiment = launch_config.launch(follow=False)
-        print(f"    submitted: {experiment.id}")
+        workload = launch_config.launch(follow=False)
+        # launch() returns a BeakerWorkload, which does not always expose `.id`; fall back to the
+        # object itself so the identifier still reaches the launch ledger (it is what pull-evals
+        # queries -- an entry without one is barely better than no entry).
+        print(f"    submitted: {getattr(workload, 'id', workload)}")
 
 
 if __name__ == "__main__":
