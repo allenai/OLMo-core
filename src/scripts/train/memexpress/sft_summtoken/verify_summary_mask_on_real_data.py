@@ -46,6 +46,7 @@ from olmo_core.data.document_chunk_landmark import (
 )
 from olmo_core.nn.attention.summary_mask import (
     ROLE_DOC_ID,
+    ROLE_EXAMPLE_ID,
     ROLE_KIND,
     SummaryMaskSpec,
     TokenKind,
@@ -221,20 +222,25 @@ def check_window(
         pad_id=ids_set.pad,
     )
     kind, doc = roles[0, ROLE_KIND], roles[0, ROLE_DOC_ID]
+    example_id = roles[0, ROLE_EXAMPLE_ID]
     seq_len = len(ids)
+    # ``doc_id`` is example-local, so on a packed window this is documents per example, not the
+    # window total. Report both -- a window holding more than one example is a packed window, and
+    # the probes below are all within-example by construction.
     n_docs = (
         int(doc[kind == int(TokenKind.SUMMARY)].max()) + 1
         if (kind == int(TokenKind.SUMMARY)).any()
         else 0
     )
+    n_examples = int(example_id.max()) + 1 if (example_id >= 0).any() else 0
 
     masked_mod = build_summary_mask_mod(roles, spec)
     causal_mod = build_summary_mask_mod(roles, spec, causal_example=torch.tensor([True]))
 
     counts = {k.name: int((kind == int(k)).sum()) for k in TokenKind}
     print(
-        f"\n=== window {index}: T={seq_len:,}  documents={n_docs}  "
-        f"summary_tokens_each={spec.n_summary_tokens} ==="
+        f"\n=== window {index}: T={seq_len:,}  examples={n_examples}  "
+        f"documents/example={n_docs}  summary_tokens_each={spec.n_summary_tokens} ==="
     )
     print("    roles: " + "  ".join(f"{k.lower()}={v:,}" for k, v in counts.items()))
 

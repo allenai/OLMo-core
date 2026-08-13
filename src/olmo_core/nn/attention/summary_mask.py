@@ -478,11 +478,7 @@ def build_summary_mask_mod(
             reachable = reachable | (q_kind == QUERY)
 
         return (
-            (q_idx >= kv_idx)
-            & q_not_pad
-            & k_not_pad
-            & same_example
-            & (ce[b, q_idx] | reachable)
+            (q_idx >= kv_idx) & q_not_pad & k_not_pad & same_example & (ce[b, q_idx] | reachable)
         ) | (q_idx == kv_idx)
 
     return mask_mod

@@ -221,3 +221,94 @@ def test_enabling_without_any_summary_layer_raises():
 def test_enable_validates_the_mixture(kwargs, match):
     with pytest.raises(OLMoConfigurationError, match=match):
         _build_model(**kwargs)
+
+
+# ---------------------------------------------------------------------------------------------
+# Packed instances: the mixture's unit is the EXAMPLE, not the instance
+# ---------------------------------------------------------------------------------------------
+
+
+def _packed_ids(n_examples: int = 3, tail_pad: int = 5):
+    """Several EOS-terminated examples in one instance, then tail padding."""
+    ids = []
+    for i in range(n_examples):
+        ids += _example_ids(n_docs=2 + i)[:-5]  # drop the per-example tail padding
+    return ids + [PAD] * tail_pad
+
+
+def test_one_causal_coin_per_packed_example():
+    """
+    A packed instance must draw an arm per example, not one arm for the whole row.
+
+    With one flag per instance the realized causal fraction would depend on how the packer happened
+    to bin examples, so ``standard_mix_prob=0.5`` would stop meaning "half the examples".
+    """
+    from olmo_core.nn.attention.summary_mask import ROLE_EXAMPLE_ID, build_summary_roles
+
+    model = _build_model(standard_mix_prob=0.5, mix_seed=7)
+    ids = torch.tensor([_packed_ids(n_examples=4)])
+    roles = build_summary_roles(
+        ids,
+        doc_start_id=DOC_START,
+        doc_end_id=DOC_END,
+        summary_token_id=SUMM,
+        eos_id=EOS,
+        pad_id=PAD,
+    )
+    example_id = roles[0, ROLE_EXAMPLE_ID]
+    assert int(example_id.max()) == 3, "fixture must hold 4 packed examples"
+
+    captured = {}
+    layer = next(
+        b.attention for b in model.blocks.values() if isinstance(b.attention, SummaryTokenAttention)
+    )
+    real_forward = layer.forward
+
+    def spy(x, summary_roles=None, causal_example=None, **kw):
+        captured["ce"] = causal_example
+        return real_forward(x, summary_roles=summary_roles, causal_example=causal_example, **kw)
+
+    layer.forward = spy
+    model.train()
+    with torch.no_grad():
+        model(ids)
+
+    ce = captured["ce"]
+    assert ce is not None and ce.shape == ids.shape, f"expected a per-token flag, got {ce.shape}"
+    # Constant within each example, and not constant across all of them (p=0.5, 4 examples).
+    per_example = set()
+    for e in range(4):
+        vals = {bool(v) for v in ce[0][example_id == e]}
+        assert len(vals) == 1, f"example {e} got a mixed arm within itself"
+        per_example.add(vals.pop())
+    assert len(per_example) == 2, "with p=0.5 over 4 examples both arms should appear"
+
+
+def test_unpacked_instances_keep_the_original_coin_stream():
+    """
+    Regression guard: with one example per instance the arms must be exactly what they were before
+    per-example draws existed, or the packing change would silently re-randomize live arms.
+    """
+    model = _build_model(standard_mix_prob=0.5, mix_seed=7)
+    ids = torch.tensor([_example_ids(), _example_ids(), _example_ids(), _example_ids()])
+
+    captured = {}
+    layer = next(
+        b.attention for b in model.blocks.values() if isinstance(b.attention, SummaryTokenAttention)
+    )
+    real_forward = layer.forward
+
+    def spy(x, summary_roles=None, causal_example=None, **kw):
+        captured["ce"] = causal_example
+        return real_forward(x, summary_roles=summary_roles, causal_example=causal_example, **kw)
+
+    layer.forward = spy
+    model.train()
+    with torch.no_grad():
+        model(ids)
+
+    # One example per row -> the per-row arm is the legacy (B,) draw at forward_idx 1.
+    legacy = causal_example_flags(4, 0.5, forward_idx=1, mix_seed=7)
+    got = captured["ce"][:, 0]
+    assert torch.equal(got, legacy), f"coin stream drifted: {got.tolist()} vs {legacy.tolist()}"
+    assert (captured["ce"] == captured["ce"][:, :1]).all(), "an unpacked row must have one arm"

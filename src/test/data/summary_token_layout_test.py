@@ -150,3 +150,101 @@ def test_query_needs_no_wrapping_to_be_recognized():
     kind = roles[0, ROLE_KIND]
     tail = [int(k) for k in kind[-4:]]
     assert tail == [TokenKind.QUERY] * 4, tail
+
+
+# ---------------------------------------------------------------------------------------------
+# Packing: the same round trip through the real PackingInstanceSource
+# ---------------------------------------------------------------------------------------------
+
+
+def test_packed_instances_round_trip_through_the_real_packer(tmp_path):
+    """
+    The round trip, but with several examples packed into one instance by the production packer.
+
+    This is the test that checks the *assumption* the role builder's padding rule rests on -- that
+    packed instances are EOS-separated with padding confined to the tail -- against the real
+    ``PackingInstanceSource`` and the real Qwen3.5 tokenizer config, rather than against a hand-built
+    fixture that could encode the same assumption twice. It matters because Qwen3.5 ties
+    ``pad_token_id == eos_token_id``, so the tail is filled with EOS-valued tokens while the
+    ``pad_id`` the builder is given (the reserved marker id) never appears in the stream at all.
+    """
+    import numpy as np
+    import torch
+
+    from olmo_core.data import TokenizerConfig
+    from olmo_core.data.composable import NumpyDocumentSource, PackingInstanceSource
+
+    shapes = [(2, 4), (3, 3), (2, 5)]
+    examples = [_emit(n_docs=n, doc_len=length)[0] for n, length in shapes]
+
+    dtype = np.uint32
+    path = tmp_path / "summ.npy"
+    flat = [t for ex in examples for t in ex]
+    mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(flat),))
+    mmap[:] = flat
+    mmap.flush()
+
+    seq_len = 256
+    assert len(flat) <= seq_len, "this fixture is meant to land in a single instance"
+    # Exactly the production tie: eos == pad == 248044.
+    tokenizer = TokenizerConfig(
+        vocab_size=248320, eos_token_id=IDS.eos, pad_token_id=IDS.eos, bos_token_id=None
+    )
+    instances = PackingInstanceSource(
+        NumpyDocumentSource(
+            source_paths=[path], dtype=dtype, tokenizer=tokenizer, work_dir=tmp_path
+        ),
+        sequence_length=seq_len,
+        work_dir=tmp_path,
+        tokenizer=tokenizer,
+    )
+    assert len(instances) == 1
+    ids = torch.tensor([list(instances[0]["input_ids"])], dtype=torch.long)
+
+    kw = dict(
+        doc_start_id=IDS.doc_start,
+        doc_end_id=IDS.doc_end,
+        summary_token_id=IDS.summary,
+        eos_id=IDS.eos,
+        pad_id=IDS.pad,  # what the launcher passes; never occurs in the stream
+    )
+    roles = build_summary_roles(ids, **kw)
+    from olmo_core.nn.attention.summary_mask import ROLE_EXAMPLE_ID
+
+    kind, example_id = roles[0, ROLE_KIND], roles[0, ROLE_EXAMPLE_ID]
+
+    # The packer reorders documents (best-fit-decreasing sorts by length), so the layout is
+    # recovered from the stream rather than assumed -- which is also the only information the role
+    # builder itself has.
+    eos_positions = [p for p in range(seq_len) if int(ids[0, p]) == IDS.eos]
+    assert len(eos_positions) >= len(examples)
+    spans, start = [], 0
+    for p in eos_positions[: len(examples)]:
+        spans.append(slice(start, p + 1))
+        start = p + 1
+    body_end = spans[-1].stop
+    by_tokens = {tuple(ex): ex for ex in examples}
+    assert len(by_tokens) == len(examples), "fixture examples must be distinguishable"
+
+    for i, span in enumerate(spans):
+        assert {int(v) for v in example_id[span]} == {i}, f"example {i} was not numbered {i}"
+        live = [p for p in range(span.start, span.stop) if int(kind[p]) != int(TokenKind.PAD)]
+        # Nothing is lost. Note the terminator stays QUERY rather than becoming PAD: the ``pad_id``
+        # the launcher passes is the reserved marker id, which never occurs, so only the positional
+        # tail rule marks padding here.
+        assert len(live) == span.stop - span.start, f"example {i} lost tokens to padding"
+        assert any(int(kind[p]) == int(TokenKind.QUERY) for p in live), f"example {i} has no query"
+        assert any(
+            int(kind[p]) == int(TokenKind.SUMMARY) for p in live
+        ), f"example {i} has no summary run"
+
+        # Roles inside the pack are identical to the roles this example gets on its own.
+        tokens = tuple(int(v) for v in ids[0, span])
+        assert tokens in by_tokens, f"span {i} does not correspond to any emitted example"
+        standalone = build_summary_roles(torch.tensor([list(tokens)], dtype=torch.long), **kw)
+        assert torch.equal(roles[0, ROLE_KIND][span], standalone[0, ROLE_KIND])
+        assert torch.equal(roles[0, ROLE_DOC_ID][span], standalone[0, ROLE_DOC_ID])
+
+    # Everything past the last example is padding, and belongs to no example.
+    assert all(int(kind[p]) == int(TokenKind.PAD) for p in range(body_end, seq_len))
+    assert bool((example_id[body_end:] == -1).all())

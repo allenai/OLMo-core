@@ -30,9 +30,14 @@ restrictive" rather than as an embedding bug. Repair with::
 
 and gate the launch on ``audit_pass``.
 
-Layout is PadToLength (one already-chunked example per window, padded) over a 5-task
-MixingDocumentSource, exactly like the document-chunked family: roles are reconstructed from the
-token stream, which needs one EOS-terminated example per instance, so no packing.
+Layout is PadToLength by default (one already-chunked example per window, padded) over a 5-task
+MixingDocumentSource, exactly like the document-chunked family. Set ``SUMMTOK_PACKING=1`` to pack
+several examples per window instead: the roles builder numbers packed examples
+(:data:`~olmo_core.nn.attention.summary_mask.ROLE_EXAMPLE_ID`) and the mask has ``same example`` as a
+conjunct, so a packed window is exactly the block diagonal of the windows each example would have
+got on its own. That is worth reaching for at 256k, where one example per window pads the short rungs
+of a 2k->256k ladder almost entirely -- but read the caveat on ``SUMMTOK_PACKING`` below before using
+it.
 """
 
 import os
@@ -43,9 +48,12 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
+    InstanceSourceConfig,
+    LongDocStrategy,
     MixingDocumentSourceConfig,
     MixingDocumentSourceSpecConfig,
     NumpyDocumentSourceConfig,
+    PackingInstanceSourceConfig,
     PadToLengthInstanceSourceConfig,
 )
 from olmo_core.data.document_chunk_landmark import reserved_ids  # canonical ids -- never retype
@@ -80,9 +88,8 @@ from olmo_core.train.train_module import (
 IDS = reserved_ids("qwen3_5")
 
 # ---------------------------------------------------------------------------
-# Geometry. Start at 32k: the mask machinery is exercised there by the document-chunked family, and
-# padding waste at 256k is a real cost (one example per window over a 2k->256k ladder pads the short
-# rungs almost entirely, and the chunked path cannot use PackingInstanceSource). Decide 256k from the
+# Geometry. Padding waste at 256k is a real cost: one example per window over a 2k->256k ladder pads
+# the short rungs almost entirely. SUMMTOK_PACKING=1 buys that back (see below). Decide from the
 # launch_prep numbers -- see the README -- rather than launching blind.
 # ---------------------------------------------------------------------------
 SEQUENCE_LENGTH = int(os.environ.get("SUMMTOK_SEQ_LEN", "262144"))
@@ -128,8 +135,28 @@ MAX_STEPS = int(os.environ.get("SUMMTOK_MAX_STEPS", "2240"))
 #: size their anneal and ``dry_run`` does NOT build the dataset.
 N_INSTANCES = os.environ.get("SUMMTOK_N_INSTANCES")
 
-#: One PadToLength window per DP rank per step, grad-accum 1.
+#: One window per DP rank per step, grad-accum 1.
 MICRO_BATCH_INSTANCES = 1
+
+#: Pack several EOS-terminated examples per window instead of padding one example out to the full
+#: window. The mask keeps packed examples fully separated -- a packed window is the block diagonal of
+#: the standalone windows (``src/test/nn/attention/summary_mask_packing_test.py``).
+#:
+#: ⚠ Two things change when this is on, and neither is a bug:
+#:   * **The curriculum's denominator changes.** ``mix_total_forwards`` is derived from the realized
+#:     *instance* count, and packing produces far fewer instances for the same data. Re-measure
+#:     ``SUMMTOK_N_INSTANCES`` with ``launch_prep`` after switching -- reusing the PadToLength number
+#:     would end the anneal early, which is the failure mode ``derive_curriculum`` exists to catch.
+#:   * **Arms are drawn per example, not per instance**, so ``standard_mix_prob`` keeps meaning
+#:     "this fraction of examples" rather than silently becoming "this fraction of packs".
+#: Do not mix packed and unpacked arms in one comparison: the two see different numbers of optimizer
+#: steps for the same data, which is a confound on top of the intended contrast.
+PACKING = os.environ.get("SUMMTOK_PACKING", "0").lower() in ("1", "true", "yes")
+
+#: What to do with an example longer than the window. ``truncate`` would cut an example's query and
+#: terminator off, leaving a fragment whose trailing region is mislabelled; ``exclude`` drops it
+#: whole, which is the honest option and is reported in the packer's log line.
+LONG_DOC_STRATEGY = LongDocStrategy.exclude
 
 
 def _arm_mixture(arm: str) -> dict:
@@ -262,6 +289,7 @@ def build_summtoken_experiment(cli_context: CliContext, arm: str) -> ExperimentC
             "SUMMTOK_N_INSTANCES",
             "SUMMTOK_CP_DEGREE",
             "SUMMTOK_LR",
+            "SUMMTOK_PACKING",
         ):
             if var in os.environ:
                 beaker_launch_config.env_vars.append(BeakerEnvVar(name=var, value=os.environ[var]))
@@ -346,11 +374,22 @@ def build_summtoken_experiment(cli_context: CliContext, arm: str) -> ExperimentC
         )
     ]
 
-    instance_source_config = PadToLengthInstanceSourceConfig(
-        sources=[MixingDocumentSourceConfig(source_specs=specs)],
-        sequence_length=SEQUENCE_LENGTH,
-        tokenizer=doc_tokenizer_config,
-    )
+    mixed_source = MixingDocumentSourceConfig(source_specs=specs)
+    instance_source_config: InstanceSourceConfig
+    if PACKING:
+        instance_source_config = PackingInstanceSourceConfig(
+            sources=[mixed_source],
+            sequence_length=SEQUENCE_LENGTH,
+            max_sequence_length=SEQUENCE_LENGTH,
+            tokenizer=doc_tokenizer_config,
+            long_doc_strategy=LONG_DOC_STRATEGY,
+        )
+    else:
+        instance_source_config = PadToLengthInstanceSourceConfig(
+            sources=[mixed_source],
+            sequence_length=SEQUENCE_LENGTH,
+            tokenizer=doc_tokenizer_config,
+        )
 
     # NOTE: no ``generate_doc_lengths``. Roles come from the token stream, and
     # SummaryTokenAttention REFUSES cu_doc_lens -- turning doc lengths on would raise at the first

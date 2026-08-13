@@ -21,8 +21,8 @@ mask-mixture schedule — that is the only axis the five arms vary.
 `p` throughout is P(**causal**), so "100% mask mixing decaying to 0%" is `mix_start_p=0.0 →
 mix_end_p=1.0`. At `summ-p50` the two readings coincide, so there is no direction to get wrong there.
 
-`summ-causal` is the control, **not** the existing dense run: it holds data, summary tokens, packing
-and base fixed and varies only the mask. `records/POSSIBLE_BUG_SFT_DATA.md` (open) records that dense
+`summ-causal` is the control, **not** the existing dense run: it holds data, summary tokens, layout
+(packed or not) and base fixed and varies only the mask. `records/POSSIBLE_BUG_SFT_DATA.md` (open) records that dense
 and landmark arms have historically differed in both mixture weights *and* packer epochs, which is
 why every arm here comes off one shared builder.
 
@@ -133,6 +133,7 @@ silently falls back to defaults):
 | `SUMMTOK_MAX_STEPS` | `2240` | |
 | `SUMMTOK_LR` | `4e-5` | `1e-5 * sqrt(GBS / 65,536)`, as in `sft_xlong256k` |
 | `SUMMTOK_N_INSTANCES` | (unset) | **required by the curriculum arms** |
+| `SUMMTOK_PACKING` | `0` | `1` packs several examples per window; see below |
 
 ⚠ `SUMMTOK_N_INSTANCES` feeds `mix_total_forwards`, which is divided by **`DP_DEGREE`, not
 `WORLD_SIZE`**: under CP the four ranks of a DP group process the *same* instance. Using the world
@@ -146,11 +147,36 @@ These runs are configured at 256k (2 nodes, Ulysses CP=4, DP=4, GBS 1,048,576, 2
 262,144, against the ~760 GiB and ~17 minutes that `create_block_mask` would need), Ulysses CP is
 wired through `sdpa`, and the flex path is GQA-native.
 
-What is *not* settled is padding waste. This layout puts one example per window, and over a 2k→256k
-ladder that pads the short rungs almost entirely — the chunked path cannot use
-`PackingInstanceSource` because roles need one EOS-terminated example per instance. Decide from the
-`launch_prep` numbers: restrict the mixture to the long rungs, or stay at 32k. **Do not launch 256k
-blind.**
+What is *not* settled is padding waste. The default layout puts one example per window, and over a
+2k→256k ladder that pads the short rungs almost entirely. Decide from the `launch_prep` numbers:
+**turn on packing** (below), restrict the mixture to the long rungs, or stay at 32k. **Do not launch
+256k blind.**
+
+## Packing (`SUMMTOK_PACKING=1`)
+
+`PackingInstanceSource` fits several EOS-terminated examples into one window instead of padding a
+single example out to it. The mask keeps them fully separated: roles carry an `example_id`, `doc_id`
+restarts per example, each example gets its own query region, and `same example` is a conjunct of the
+whole rule — so **a packed window is exactly the block diagonal of the windows each example would
+have got on its own**, which is the property
+`src/test/nn/attention/summary_mask_packing_test.py` asserts directly.
+
+Three things change when you turn it on:
+
+| | unpacked | packed |
+|---|---|---|
+| instances per epoch | one per example | far fewer — **re-measure `SUMMTOK_N_INSTANCES`** |
+| mixture arm | one coin per instance | one coin per **example** |
+| over-long examples | truncated by `PadToLength` | dropped whole (`long_doc_strategy=exclude`) |
+
+⚠ **Re-run `launch_prep` after switching.** `mix_total_forwards` is derived from the realized
+instance count; reusing the unpacked number would end the anneal early — exactly the failure
+`derive_curriculum` raises on. ⚠ **Do not compare a packed arm against an unpacked one**: they take
+different numbers of optimizer steps over the same data, which is a confound stacked on top of the
+intended contrast.
+
+The mask does *not* get denser: block-diagonal structure means a packed window stays well under half
+the density of plain causal attention over the same window.
 
 Ring/zigzag CP is rejected outright: rank-local rows are a non-contiguous permutation and the kernel
 understands only `causal + cu_seqlens`, which cannot express this mask. Ulysses only.
