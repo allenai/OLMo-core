@@ -10,11 +10,20 @@
 # 262,144 ceiling. Over-scaling degrades the shorter rungs, so build one copy per rung GROUP rather
 # than a single high-factor copy for everything.
 #
+# ⚠ OLD_CTX is the trap. make_yarn_copy.py defaults old_context_len to the checkpoint's
+# `train_module.max_sequence_length` -- the SFT WINDOW, not the length the RoPE was pretrained for.
+# For a model SFT'd at 33,344 from a 262,144-context Qwen3.5 base that silently yields
+# factor 2 x 33,344 = 66,688 nominal reach, so a copy built "for the 256k/512k rungs" tops out
+# below 64k and every long rung reads garbage positions -- which looks exactly like a long-context
+# collapse. Fine-tuning at a shorter window does not retrain RoPE to a shorter range; it just stops
+# exercising the longer positions. Pass OLD_CTX=262144 (the base model's native ceiling) whenever
+# the SFT window is shorter than it, so FACTOR means what the run-evals YaRN table says it means.
+#
 # Usage:
-#   CKPTS='/weka/.../run-a/step100 /weka/.../run-b/step200' FACTOR=2 \
+#   CKPTS='/weka/.../run-a/step100 /weka/.../run-b/step200' FACTOR=2 OLD_CTX=262144 \
 #     debug/ctx_ceiling_4b/make_yarn_copies_gantry.sh
 #
-# Overridable env: CLUSTER WORKSPACE BUDGET WEKA PRIORITY CPUS NAME IMAGE CKPTS FACTOR
+# Overridable env: CLUSTER WORKSPACE BUDGET WEKA PRIORITY CPUS NAME IMAGE CKPTS FACTOR OLD_CTX
 set -euo pipefail
 
 CLUSTER="${CLUSTER:-ai2/jupiter-cirrascale-2}"
@@ -25,6 +34,7 @@ WEKA="${WEKA:-oe-training-default}"
 PRIORITY="${PRIORITY:-urgent}"
 CPUS="${CPUS:-2}"
 FACTOR="${FACTOR:-2}"
+OLD_CTX="${OLD_CTX:-}"    # empty -> script default (the SFT window); see the warning above
 NAME="${NAME:-make-yarn${FACTOR}-copies}"
 IMAGE="${IMAGE:-tylerr/olmo-core-tch291cu128-2025-11-25}"
 
@@ -34,16 +44,19 @@ CLUSTER_ARGS=()
 IFS=',' read -ra _CLUSTERS <<< "${CLUSTER}"
 for c in "${_CLUSTERS[@]}"; do CLUSTER_ARGS+=(--cluster "$c"); done
 
+OLD_CTX_ARG=""
+[ -n "${OLD_CTX}" ] && OLD_CTX_ARG="--old-context-len ${OLD_CTX}"
+
 read -r -d '' REMOTE <<REMOTE_EOF || true
 set -uo pipefail
 M=debug/ctx_ceiling_4b/make_yarn_copy.py
 rc=0
 for src in ${CKPTS}; do
-  echo "=== \$src (factor ${FACTOR}) ==="
+  echo "=== \$src (factor ${FACTOR}${OLD_CTX:+, old_context_len=${OLD_CTX}}) ==="
   if [ ! -f "\$src/model_and_optim/.metadata" ]; then
     echo "  !!! MISSING or incomplete source step dir -- no .metadata"; rc=1; continue
   fi
-  python \$M --src "\$src" --factor ${FACTOR} --force || { rc=1; continue; }
+  python \$M --src "\$src" --factor ${FACTOR} ${OLD_CTX_ARG} --force || { rc=1; continue; }
   dest="\${src}_yarn${FACTOR}"
   # A copy that exists is not a copy that works: the eval loads config.json and follows the
   # model_and_optim link, so check BOTH, and confirm the YaRN patch actually landed in the config
