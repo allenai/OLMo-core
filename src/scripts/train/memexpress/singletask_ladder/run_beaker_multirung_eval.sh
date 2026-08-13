@@ -377,12 +377,20 @@ else
       --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA $LANDMARK_FLAGS $GROUP_ARGS $DECODE_GATE_ARGS
   rc=$?
 fi
+# The shared $RESULTS mirror needs the SAME ladder suffix as $OUT above. Splitting only $OUT fixed
+# the per-run dir but left this copy at the bare name, so a v3 run still overwrote the v2 result
+# here -- the exact collision the split was meant to close, one directory over. Keep v2 bare so
+# existing paths and consumers are untouched.
+case "$LADDER_VERSION" in
+  v2) RES_BASE="$RESULTS/${RUN_TAG}_${TASK}_multirung" ;;
+  *)  RES_BASE="$RESULTS/${RUN_TAG}_${TASK}_multirung_${LADDER_VERSION}" ;;
+esac
 if [ -f "$OUT" ]; then
-  cp "$OUT" "$RESULTS/${RUN_TAG}_${TASK}_multirung.json" 2>/dev/null || true
+  cp "$OUT" "${RES_BASE}.json" 2>/dev/null || true
   GEN="${OUT%.json}.generations.jsonl"
-  [ -f "$GEN" ] && cp "$GEN" "$RESULTS/${RUN_TAG}_${TASK}_multirung.generations.jsonl" 2>/dev/null || true
+  [ -f "$GEN" ] && cp "$GEN" "${RES_BASE}.generations.jsonl" 2>/dev/null || true
   echo "--- $OUT ---"; cat "$OUT"
   [ -f "$GEN" ] && python src/scripts/ctc_eval/eval/print_gen_sample.py "$GEN" "${GEN_SAMPLE_N:-6}" || true
 fi
-echo "=== DONE TASK=$TASK rc=$rc result=$RESULTS/${RUN_TAG}_${TASK}_multirung.json $(date -u '+%F %T')Z ==="
+echo "=== DONE TASK=$TASK rc=$rc result=${RES_BASE}.json $(date -u '+%F %T')Z ==="
 exit $rc
