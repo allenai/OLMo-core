@@ -149,7 +149,7 @@ INIT_FROM_CHOICES = ("scratch", "molmo2")
 _BOOLS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
 SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 variant
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
-SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
+SEQUENCE_LENGTH = 2536  # fixed pad length; matches mm_olmo's captioner `--seq_len`
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
@@ -166,8 +166,18 @@ MAX_CROPS = 8
 # reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
 # system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
 
-# Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
-GLOBAL_BATCH_INSTANCES = 8
+# Instance-based batching, expressed in tokens for the token-based Trainer.
+#
+# `GLOBAL_BATCH_INSTANCES` matches mm_olmo's `global_train_batch_size=128` — the
+# optimization-relevant quantity. 128 also divides every DP world size we run (8/16/32),
+# which the previous default of 8 did not: at 16 GPUs it failed the
+# `global % (microbatch x dp_world_size) == 0` check.
+#
+# mm_olmo uses `device_train_microbatch_size=4`; we keep 1. That is purely a
+# memory/throughput knob — gradient accumulation makes the two mathematically identical for
+# the same global batch — and microbatch >1 at this sequence length OOM'd without activation
+# checkpointing (see the `ac_config` follow-up).
+GLOBAL_BATCH_INSTANCES = 128
 RANK_MICROBATCH_INSTANCES = 1
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
@@ -326,7 +336,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         mode="transcript_and_caption",
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
-        loss_token_weighting="root_subsegments",
+        # mm_olmo's captioner leaves `loss_token_weighting` at its "none" default, so every
+        # response token is weighted equally. `root_subsegments` (1/sqrt(n_branches)) does not
+        # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
+        # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
+        loss_token_weighting="none",
         seed=34521,
     )
 
