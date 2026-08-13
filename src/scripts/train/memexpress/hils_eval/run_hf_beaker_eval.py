@@ -147,9 +147,14 @@ def main():
     ap.add_argument("--ngpu", type=int, default=8)
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
-    # 4, not 8: the hf backend has no chunked prefill, and a 7B at the 32k rung with batch 8 sits
-    # close enough to 80 GB that the control OOM'd there. Batch size changes speed, not scores.
-    ap.add_argument("--batch-size", type=int, default=4)
+    # 1, not 8. Two reasons, and neither is speed:
+    #   * memory -- the hf backend has no chunked prefill, and Olmo-3-7B is MHA, so its KV cache is
+    #     ~0.5 MB/token; batch 4 at the 16k rung exhausted an 80 GB H100
+    #     (01KZY9SJ4DX8C0J2M16DQRGJ9K, after producing valid 3k/8k numbers).
+    #   * symmetry -- HiLS is forced to bs=1 anyway (absolute-position-tied chunk grid), so batching
+    #     the control would leave the two arms differing in padding as well as in architecture.
+    # Batch size does not change scores, only wall-clock.
+    ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--priority", default="urgent")
     ap.add_argument("--ladder-version", default="v2", choices=["v2", "v3", "fast"])
     ap.add_argument("--xlong", action="store_true", help="add the ultra-long rungs.")
