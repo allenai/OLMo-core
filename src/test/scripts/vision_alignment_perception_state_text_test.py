@@ -190,6 +190,92 @@ def test_private_checkpoint_loader_uses_and_removes_snapshot(tmp_path, monkeypat
     assert calls[2][2]["process_group"] is group
 
 
+def _native_coverage(**overrides) -> dict:
+    report = {
+        "complete": True,
+        "checkpoint_key_count": 856,
+        "model_parameter_count": 818,
+        "model_parameter_checkpoint_key_count": 818,
+        "model_parameter_checkpoint_keys_sha256": "a" * 64,
+        "model_parameter_assignments_sha256": "b" * 64,
+        "eval_state_key_count": 12,
+        "frozen_state_key_count": 806,
+        "persistent_buffer_count": 0,
+        "persistent_buffer_keys_sha256": "c" * 64,
+        "shadowed_frozen_key_count": 0,
+        "shadowed_frozen_keys_sha256": "d" * 64,
+        "unused_model_bearing_key_count": 0,
+        "prepared_load_key_count": 818,
+    }
+    report.update(overrides)
+    report["sha256"] = promotion.canonical_sha256(report)
+    return report
+
+
+def test_initialization_coverage_allows_cross_phase_storage_and_freeze_surfaces() -> None:
+    module = _load_module()
+    initialization = _native_coverage()
+    step0 = _native_coverage(
+        checkpoint_key_count=2065,
+        model_parameter_checkpoint_keys_sha256="e" * 64,
+        model_parameter_assignments_sha256="f" * 64,
+        eval_state_key_count=415,
+        frozen_state_key_count=403,
+    )
+
+    module._assert_initialization_coverage_compatible(initialization, step0)
+
+
+@pytest.mark.parametrize(
+    ("side", "overrides", "error"),
+    [
+        ("initialization", {"complete": False}, "incomplete"),
+        (
+            "step0",
+            {
+                "model_parameter_count": 817,
+                "model_parameter_checkpoint_key_count": 817,
+                "frozen_state_key_count": 805,
+                "prepared_load_key_count": 817,
+            },
+            "semantic field",
+        ),
+        (
+            "step0",
+            {"persistent_buffer_count": 1, "prepared_load_key_count": 819},
+            "semantic field",
+        ),
+        ("step0", {"prepared_load_key_count": 817}, "prepared surface"),
+        ("step0", {"unused_model_bearing_key_count": 1}, "unused model-bearing"),
+        ("step0", {"eval_state_key_count": 414}, "do not partition"),
+        ("step0", {"model_parameter_checkpoint_key_count": 817}, "exactly once"),
+    ],
+)
+def test_initialization_coverage_rejects_incomplete_or_incompatible_surfaces(
+    side: str, overrides: dict, error: str
+) -> None:
+    module = _load_module()
+    reports = {
+        "initialization": _native_coverage(),
+        "step0": _native_coverage(),
+    }
+    reports[side] = _native_coverage(**overrides)
+
+    with pytest.raises(RuntimeError, match=error):
+        module._assert_initialization_coverage_compatible(
+            reports["initialization"], reports["step0"]
+        )
+
+
+def test_initialization_coverage_rejects_tampered_report() -> None:
+    module = _load_module()
+    step0 = _native_coverage()
+    step0["checkpoint_key_count"] += 1
+
+    with pytest.raises(RuntimeError, match="SHA-256 is invalid"):
+        module._assert_initialization_coverage_compatible(_native_coverage(), step0)
+
+
 def test_evaluate_text_uses_all_supervised_positions(tmp_path: Path, monkeypatch) -> None:
     module = _load_module()
     group = object()

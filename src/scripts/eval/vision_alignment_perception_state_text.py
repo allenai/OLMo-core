@@ -136,6 +136,72 @@ def _load_private_checkpoint(
     return coverage
 
 
+def _assert_initialization_coverage_compatible(
+    initialization: Mapping[str, Any], step0: Mapping[str, Any]
+) -> None:
+    """Require complete native loads of the same logical model-sized surface.
+
+    The bridge and perception phases can store the same parameter under different native
+    checkpoint keys when their freeze surfaces differ. The exact all-model tensor comparison
+    remains authoritative for names, shapes, dtypes, and values after both loads.
+    """
+    integer_fields = (
+        "checkpoint_key_count",
+        "model_parameter_count",
+        "model_parameter_checkpoint_key_count",
+        "eval_state_key_count",
+        "frozen_state_key_count",
+        "persistent_buffer_count",
+        "shadowed_frozen_key_count",
+        "unused_model_bearing_key_count",
+        "prepared_load_key_count",
+    )
+    for label, report in (("initialization", initialization), ("step0", step0)):
+        if report.get("complete") is not True:
+            raise RuntimeError(f"{label} native-load coverage is incomplete")
+        for field in integer_fields:
+            value = report.get(field)
+            if type(value) is not int or value < 0:
+                raise RuntimeError(
+                    f"{label} native-load coverage field {field!r} is not a non-negative integer"
+                )
+        if report["model_parameter_count"] == 0:
+            raise RuntimeError(f"{label} native-load coverage contains no model parameters")
+        if report["model_parameter_checkpoint_key_count"] != report["model_parameter_count"]:
+            raise RuntimeError(
+                f"{label} native-load coverage does not map every model parameter exactly once"
+            )
+        if (
+            report["eval_state_key_count"] + report["frozen_state_key_count"]
+            != report["model_parameter_checkpoint_key_count"]
+        ):
+            raise RuntimeError(
+                f"{label} native-load eval/frozen surfaces do not partition model parameters"
+            )
+        if report["unused_model_bearing_key_count"] != 0:
+            raise RuntimeError(f"{label} native-load coverage has unused model-bearing keys")
+        if report["prepared_load_key_count"] != (
+            report["model_parameter_checkpoint_key_count"] + report["persistent_buffer_count"]
+        ):
+            raise RuntimeError(
+                f"{label} native-load prepared surface is not exactly parameters plus buffers"
+            )
+        if report["checkpoint_key_count"] < report["prepared_load_key_count"]:
+            raise RuntimeError(f"{label} native-load coverage exceeds its checkpoint inventory")
+        expected_sha256 = canonical_sha256(
+            {key: value for key, value in report.items() if key != "sha256"}
+        )
+        if report.get("sha256") != expected_sha256:
+            raise RuntimeError(f"{label} native-load coverage SHA-256 is invalid")
+
+    for field in ("model_parameter_count", "persistent_buffer_count"):
+        if initialization[field] != step0[field]:
+            raise RuntimeError(
+                "Initialization and step0 native-load coverage differ in semantic field "
+                f"{field!r}"
+            )
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-checkpoint", type=Path, required=True)
@@ -661,8 +727,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             snapshot_base=snapshot_base,
             checkpoint_load_threads=args.checkpoint_load_threads,
         )
-        if initialization_coverage is not None and initialization_coverage != reference_coverage:
-            raise RuntimeError("Initialization and step0 native-load coverage differ")
+        if initialization_coverage is not None:
+            _assert_initialization_coverage_compatible(initialization_coverage, reference_coverage)
         freeze_patterns = raw_config["train_module"]["freeze_params"]
         reference_state = _model_state_descriptors(train_module, freeze_patterns)
         reference_text = _evaluate_text(train_module, sentinel, batch_size=args.text_batch_size)
