@@ -1,0 +1,4 @@
+rung	seqs	resident_tok	gen_seconds	speedup	metric	delta	parse_rate	eval_size	verdict
+16384	32	524288	1552	1.32x	0.9803	-0.0010	1.0	500	PASS
+16384	64	1048576	1749	1.18x	0.9803	-0.0010	1.0	500	PASS
+16384	128	2097152	2123	0.97x	0.9803	-0.0010	1.0	500	PASS

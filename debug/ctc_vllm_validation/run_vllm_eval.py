@@ -201,12 +201,74 @@ def main():
         # need enough physical KV pages for several concurrent long sequences, or the fallback
         # BlockMask (O(num_actual_tokens x total_cache_tokens)) either OOMs (too many pages) or
         # rejects prompts (too few). ~10 sequences worth of headroom at max_model_len.
-        n_pages = max(128, (args.max_model_len * 10) // 544 + 1)
+        # COST MODEL (measured 2026-08-11). We are always on the FALLBACK mask path:
+        # `_patch_flex_kernel_options_pow2` forces kv_block_size != block_size, which sets
+        # vLLM's `direct_build = False` (flex_attention.py:882), so every step calls
+        #     create_block_mask_compiled(mask_mod, q_len=num_actual_tokens,
+        #                                kv_len=TOTAL_CACHE_TOKENS, BLOCK_SIZE=(q_blk, kv_blk))
+        # kv_len is the WHOLE allocated cache, not the live sequence lengths. So
+        #     mask cost per call  ~  (num_actual_tokens/q_blk) * (total_cache_tokens/kv_blk)
+        #     work    per call  ~   num_actual_tokens
+        #  => mask cost per unit of work ~ total_cache_tokens / kv_blk, independent of how many
+        #     sequences are actually resident. Over-allocating pages is therefore a pure tax, and
+        #     it grows with the rung because n_pages scales with the (auto-bumped) max_model_len.
+        # CHUNK_SEQ_HEADROOM shrinks that allocation; CHUNK_MAX_NUM_SEQS / CHUNK_MAX_BATCHED_TOKENS
+        # are the matching concurrency knobs. All three default to the historical values.
+        headroom = int(os.environ.get("CHUNK_SEQ_HEADROOM", "10"))
+        n_pages = max(128, (args.max_model_len * headroom) // 544 + 1)
+        # ROUND-2 (2026-08-11): the BlockMask's kv_len (= n_pages * page_size) must be an exact
+        # multiple of kv_block_size, or create_block_mask/flex disagree on the last partial block.
+        # Round n_pages UP so `n_pages * 528 % kv_block_size == 0`. With the historical
+        # kv_block_size=16 this is a no-op (528 = 16*33 is already a multiple of 16), so the
+        # default path is bit-unchanged.
+        _kv_blk = int(os.environ.get("CHUNK_KV_BLOCK", "16"))
+        _page = 528
+        while (n_pages * _page) % _kv_blk != 0:
+            n_pages += 1
         extra = dict(
             num_gpu_blocks_override=n_pages,
-            max_num_batched_tokens=2048,
-            max_num_seqs=8,
+            max_num_batched_tokens=int(os.environ.get("CHUNK_MAX_BATCHED_TOKENS", "2048")),
+            max_num_seqs=int(os.environ.get("CHUNK_MAX_NUM_SEQS", "8")),
         )
+        if os.environ.get("CHUNK_VARLEN_PREFILL") == "1":
+            # ROUND 5: a prefix-cache hit arrives as a PARTIAL prefill (q_len < seq_len
+            # with doc-token queries), which pushes that step off the varlen path onto the
+            # slow flex fallback. Keep every prompt a pure one-shot prefill instead.
+            extra["enable_prefix_caching"] = False
+        print(f"[driver] chunked KV config: n_pages={n_pages} (headroom={headroom} seqs) "
+              f"max_num_batched_tokens={extra['max_num_batched_tokens']} "
+              f"max_num_seqs={extra['max_num_seqs']}", flush=True)
+    # ROUND-2 diagnostic knobs for the chunked FlexAttention tile sizes. Both default to the
+    # historical values, so production behavior is unchanged unless the env var is set.
+    #   CHUNK_KV_BLOCK -> flex_attn_kv_block_size (BlockMask kv granularity AND, via
+    #                     get_kernel_options' fallback branch, the triton kernel's BLOCK_N).
+    #   CHUNK_Q_BLOCK  -> flex_attn_q_block_size (BlockMask q granularity AND BLOCK_M).
+    # On the FALLBACK build path (which chunked mode is always on, see the note below) these are
+    # pure block-sparsity granularity: flex still applies mask_mod elementwise inside every
+    # PARTIAL block, so changing them cannot change the attention result -- only its speed.
+    _flex_kv_block = int(os.environ.get("CHUNK_KV_BLOCK", "16"))
+    _flex_q_block = os.environ.get("CHUNK_Q_BLOCK")
+    _attn_cfg = {"backend": "FLEX_ATTENTION", "flex_attn_kv_block_size": _flex_kv_block}
+    if _flex_q_block:
+        _attn_cfg["flex_attn_q_block_size"] = int(_flex_q_block)
+    # CUDA graphs: historically forced off (enforce_eager=True). vLLM 0.25.1's FlexAttention
+    # backend declares AttentionCGSupport.ALWAYS, so this is worth measuring, not assuming.
+    #
+    # MEASURED 2026-08-11: `enforce_eager=False` with vLLM's default cudagraph mode captures FULL
+    # decode graphs and then dies with `torch.AcceleratorError: CUDA error: device-side assert
+    # triggered` on the first replay. A full graph freezes the BlockMask tensors it captured, but
+    # the chunked patch allocates a BRAND NEW block_mask every step via create_block_mask, so the
+    # replay indexes through stale pointers. vLLM's FlexAttention cudagraph support is built on the
+    # DIRECT-build path's persistent buffers (`persistent_kv_indices`), which chunked mode never
+    # takes. CHUNK_CUDAGRAPH_MODE lets us ask for PIECEWISE instead, which splits the graph at the
+    # attention op and so leaves the block_mask out of any capture.
+    _eager = os.environ.get("CHUNK_ENFORCE_EAGER", "1") == "1"
+    _cg_mode = os.environ.get("CHUNK_CUDAGRAPH_MODE")
+    if _cg_mode and not _eager:
+        extra["compilation_config"] = {"cudagraph_mode": _cg_mode}
+    if args.mode == "chunked":
+        print(f"[driver] chunked flex tiles: kv_block={_flex_kv_block} "
+              f"q_block={_flex_q_block or 'default(16)'} enforce_eager={_eager}", flush=True)
     # The two overrides below exist ONLY to serve the multimodal Qwen3.5 wrapper as text-only.
     # A plain dense Qwen3 export has no VL wrapper and no vision tower, so naming
     # Qwen3_5ForCausalLM would point at an architecture its config does not declare. Drop both
@@ -221,7 +283,7 @@ def main():
         max_model_len=args.max_model_len,
         gpu_memory_utilization=args.gpu_mem_util,
         tensor_parallel_size=args.tensor_parallel_size,
-        enforce_eager=True,
+        enforce_eager=_eager,
         # NOTE: no gdn_prefill_backend override — the forced "triton" path needs fla +
         # causal_conv1d (absent in this venv); vLLM 0.25.1's default GDN backend works.
         # `extra` carries the qwen3_5-only hf_overrides/limit_mm_per_prompt set above (see the
@@ -240,9 +302,7 @@ def main():
         # vllm_chunked_patch builds the BlockMask from the chunked mask_mod explicitly, and
         # its builder asserts block_size % kv_block_size == 0 so any future page-size change
         # fails loudly instead of silently emitting garbage.
-        attention_config=({"backend": "FLEX_ATTENTION",
-                           "flex_attn_kv_block_size": 16}
-                          if args.mode == "chunked" else None),
+        attention_config=(_attn_cfg if args.mode == "chunked" else None),
     )
     load_s = time.time() - t0
     print(f"[driver] LLM up in {load_s:.1f}s", flush=True)
@@ -254,6 +314,30 @@ def main():
     # text-level first-line is still the correctness backstop. (`stop` strings are excluded from
     # the output text by vLLM, which is fine -- we re-derive the answer from token_ids + truncate.)
     stop_token_ids = [eos_id]
+    # EXTRA_STOP_TOKEN_IDS: comma-separated additional stop token ids. OFF by default.
+    #
+    # WHY THIS EXISTS (root-caused 2026-08-13 on the oolong 4B pair). `eos_id` comes from the
+    # prefill pack and is 248044 = `<|endoftext|>`, but our SFT targets end the assistant turn with
+    # `<|im_end|>` = 248046 -- so the model emits its answer, signals end-of-turn, and vLLM keeps
+    # sampling because 248046 is not a stop id. The model then degenerates into repeating the
+    # answer for the full max_new_tokens ("1111...", "positivepositive...").
+    #
+    # Most tasks survive this by accident: their answers contain "]]" or a newline, so
+    # truncate_generic's text-level truncation salvages the first answer. OOLONG does not -- its
+    # answer is a bare number/label with no newline, and the "oolong" stop rule only truncates
+    # after a literal "answer:" that the current prompt format never emits. Result: the grader sees
+    # the whole ramble and scores 0.0055 on a model that had the answer right.
+    #
+    # NOT on by default: it changes generation, so enabling it for an already-validated task needs
+    # the same eval_size=500 re-validation as any other change here -- and other evals may be
+    # running against this file right now.
+    _extra_ids = os.environ.get("EXTRA_STOP_TOKEN_IDS")
+    if _extra_ids:
+        stop_token_ids = stop_token_ids + [
+            int(x) for x in _extra_ids.split(",") if x.strip()
+        ]
+        print(f"[driver] stop_token_ids: {stop_token_ids} (eos={eos_id} + EXTRA_STOP_TOKEN_IDS)",
+              flush=True)
     # NEWLINE_ROBUST=1: drop the vLLM-level newline stop string entirely (EOS-only stop) so the
     # model can generate past a leading blank line / unclosed <think> to reach the real answer;
     # truncate_generic then extracts the first non-empty line post-hoc. Off by default -> the
@@ -262,6 +346,20 @@ def main():
     stop_strings = (
         ["\n"] if (not is_contra and stop_rule == "newline" and not newline_robust) else None
     )
+    # CHUNK_EXTRA_STOP: comma-separated extra vLLM stop strings, OFF by default.
+    #
+    # WHY THIS EXISTS (measured 2026-08-12). contradiction runs with stop_rule="eos", but the model
+    # never emits EOS, so every request generates the full `max_new_tokens` (488 of 512 tokens on
+    # average at the 8k rung) and `truncate_like_native` then discards ~470 of them -- the kept
+    # answer is ~34 characters. ~96% of all decode work in the eval is thrown away. Since
+    # truncate_like_native's completion test for cot_mode="none" is `"]]" in ans`, stopping the
+    # sampler at "]]" cuts generation at the point the answer is already complete.
+    # NOT enabled by default: it changes generation, so it needs the same eval_size=500 gate as any
+    # other change here.
+    _extra_stop = os.environ.get("CHUNK_EXTRA_STOP")
+    if _extra_stop:
+        stop_strings = (stop_strings or []) + [s for s in _extra_stop.split(",") if s]
+        print(f"[driver] extra stop strings: {stop_strings}", flush=True)
     sp = SamplingParams(
         temperature=0.0,
         max_tokens=args.max_new_tokens,
@@ -307,6 +405,11 @@ def main():
             "prefills": args.prefills,
             "task": args.task,
             "canonical_task": canonical_task,
+            # Carried through from the prefill pack so the prompt layout travels with the numbers:
+            # a result scored at the wrong query_position is not comparable to one that wasn't, and
+            # that is unrecoverable after the fact. Older packs predate the field -> None.
+            "query_position": pack.get("query_position"),
+            "cot_mode": pack.get("cot_mode"),
             "stop_rule": "contradiction-ad-hoc" if is_contra else stop_rule,
             "eval_size": len(rows),
             "max_new_tokens": args.max_new_tokens,

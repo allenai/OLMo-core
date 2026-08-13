@@ -1,0 +1,9 @@
+arm	gen_seconds	speedup_vs_2066s	metric	delta_f1	parse_rate	eval_size	freepath	fallback	verdict
+shipped	1222	1.69x	0.7998666666666667	-0.0040	1.0	500	freepath=0	fallback=8355	PASS
+fp_seqs32	1224	1.69x	0.7998666666666667	-0.0040	1.0	500	freepath=0	fallback=8355	PASS
+fp_seqs128	931	2.22x	0.8001333333333334	-0.0038	1.0	500	freepath=0	fallback=2676	PASS
+shipped	814	2.54x	0.8001333333333334	-0.0038	1.0	500	freepath=0	fallback=2676	PASS
+fp_seqs128	812	2.54x	0.8001333333333334	-0.0038	1.0	500	freepath=511	fallback=2165	PASS
+fp_seqs192	998	2.07x	0.8001333333333334	-0.0038	1.0	500	freepath=511	fallback=2165	PASS
+fp_seqs256	1084	1.91x	0.8014666666666667	-0.0024	1.0	500	freepath=511	fallback=2165	PASS
+fp_seqs320	1212	1.70x	0.8001333333333334	-0.0038	1.0	500	freepath=511	fallback=2165	PASS
