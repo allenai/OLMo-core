@@ -130,6 +130,50 @@ def register_hils(path: str, repo: Optional[str] = None) -> Any:
     return hils_cls
 
 
+def init_veomni_parallel_state() -> None:
+    """
+    Initialize veomni's global parallel state to plain replicated data parallelism.
+
+    HiLS's ``hils_model_forward`` calls ``veomni.distributed.parallel_state.get_parallel_state()``
+    on every forward. When nothing has initialized it, that constructs a **default**
+    ``ParallelState``, whose ``__post_init__`` asserts
+    ``pp * dp * cp * ulysses * tp == world_size``. All those default to 1, so the assertion holds
+    at ``world_size == 1`` and fails everywhere else::
+
+        ValueError: The product of parallel sizes should be equal to the world size.
+
+    That is why the single-process smoke test passed while every 8-way ``torchrun`` eval job died
+    on the first generate (jobs 01KZY9N0W1FNMNV0DFZBNMXEE1 et al.).
+
+    We run pure DP -- one full model copy per rank, no sharding of any kind -- so declare exactly
+    that: ``dp_replicate_size = world_size``, everything else 1. The forward only ever reads
+    ``sp_enabled`` (``ulysses_size > 1 or cp_size > 1``), which stays False, so this makes the
+    state consistent without changing what the model computes.
+
+    No-op when torch.distributed is not initialized, or when a state already exists.
+    """
+    import torch
+
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return
+    world = torch.distributed.get_world_size()
+    try:
+        from veomni.distributed.parallel_state import (  # type: ignore[import-not-found]
+            get_parallel_state,
+            init_parallel_state,
+        )
+    except Exception as e:  # noqa: BLE001 -- non-HiLS models never need this
+        print(f"[hils] veomni parallel_state unavailable ({type(e).__name__}); skipping", flush=True)
+        return
+    try:
+        get_parallel_state()
+        return  # already initialized (or trivially valid) -- do not stomp on it
+    except Exception:  # noqa: BLE001 -- the "product != world size" case is exactly why we are here
+        pass
+    init_parallel_state(dp_size=world, dp_replicate_size=world, dp_shard_size=1)
+    print(f"[hils] veomni parallel state initialized: dp_replicate={world} (pure DP)", flush=True)
+
+
 def load_hils_model(
     path: str,
     *,
@@ -160,6 +204,7 @@ def load_hils_model(
     from transformers import AutoConfig, AutoModelForCausalLM
 
     register_hils(path, repo)
+    init_veomni_parallel_state()
 
     config = AutoConfig.from_pretrained(path)
     if max_position_embeddings is not None:
