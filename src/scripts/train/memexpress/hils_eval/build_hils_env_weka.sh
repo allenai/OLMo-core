@@ -38,6 +38,8 @@ TILELANG_CANDIDATES="${TILELANG_CANDIDATES:-0.1.9 0.1.8 0.1.7.post3 0.1.6.post2}
 # 0.1.9 was verified to import cleanly (diagnostic 01KZY6Q3WN2C8MGT3N378MPXHC, strategy B), so pin
 # it explicitly AFTER tilelang installs its own choice.
 TVM_FFI_VERSION="${TVM_FFI_VERSION:-0.1.9}"
+# Match the stack: torch is cu128 and the driver is 570 (CUDA 12.8).
+CUDA_REDIST_VERSION="${CUDA_REDIST_VERSION:-12.8.93}"
 HILS_REPO="${HILS_REPO:-/tmp/HiLS-Attention}"
 HILS_GIT="${HILS_GIT:-https://github.com/abertsch72/HiLS-Attention.git}"
 
@@ -69,14 +71,13 @@ echo "[build-env] transformers + our eval deps"
 # would compile it for 30+ minutes, and nothing here needs it. The HiLS sparse path is tilelang;
 # flash-attn would only serve the interleaved DENSE layers, which run fine on sdpa. That is a
 # speed choice, not a semantic one.
-# nvidia-cuda-nvcc-cu12: tilelang JIT-compiles every kernel, and this image has no nvcc at all.
-# Must be the -cu12 wheel: tilelang's own [nvcc] extra pulls CUDA 13, while this stack is CUDA 12.8
-# throughout (torch 2.8.0+cu128, driver 570).
+# nvidia-cuda-nvrtc-cu12 only (torch vendors it already; belt and braces). The nvcc COMPILER does
+# not come from pip -- see the CUDA 12 redist block below for why.
 uv pip install \
   "transformers==$TRANSFORMERS_VERSION" \
   einops accelerate safetensors huggingface_hub \
   numpy tqdm scipy scikit-learn \
-  nvidia-cuda-nvcc-cu12 nvidia-cuda-nvrtc-cu12
+  nvidia-cuda-nvrtc-cu12
 
 # ---- veomni ------------------------------------------------------------------------------------
 # --no-deps: its full dependency set pins torch/transformers and would rebuild what we just
@@ -129,6 +130,34 @@ print(f"    kernel OK: lmk_k{tuple(lmk_k.shape)} lmk_b{tuple(lmk_b.shape)} tilel
 PY
 
 export HILS_REPO
+
+# ---- CUDA 12 toolchain for tilelang's JIT ------------------------------------------------------
+# There is no nvcc in this image and no pip route to a CUDA 12 one (tilelang's env.py: "only
+# nvidia-cuda-nvcc>=13.0 works. nvidia-cuda-nvcc-cu12, etc. only installs `ptxas`, not `nvcc`", and
+# the 12.9.86 wheel does indeed ship ptxas alone). Taking the >=13 route would put a CUDA 13
+# compiler in front of a CUDA 12.8 stack (torch 2.8.0+cu128, driver 570), so unpack NVIDIA's own
+# CUDA 12.8 redist instead: no solver, no channel, deterministic, and it lands on weka next to the
+# venv so every eval job gets the identical compiler.
+# cuda_cudart comes along for the headers -- nvcc alone cannot compile a kernel that includes
+# cuda_runtime.h.
+CUDA12_PREFIX="${CUDA12_PREFIX:-$ENV_ROOT/cuda12}"
+export CUDA12_PREFIX
+if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ]; then
+  echo "[build-env] installing CUDA $CUDA_REDIST_VERSION toolchain -> $CUDA12_PREFIX"
+  mkdir -p "$CUDA12_PREFIX" /tmp/cuda_redist
+  for comp in cuda_nvcc cuda_cudart; do
+    url="https://developer.download.nvidia.com/compute/cuda/redist/$comp/linux-x86_64/$comp-linux-x86_64-$CUDA_REDIST_VERSION-archive.tar.xz"
+    echo "    $comp"
+    curl -sL "$url" -o "/tmp/cuda_redist/$comp.tar.xz" || { echo "    FATAL: download failed: $url"; exit 1; }
+    tar -xf "/tmp/cuda_redist/$comp.tar.xz" -C /tmp/cuda_redist
+    # The archives unpack to <comp>-linux-x86_64-<ver>-archive/{bin,include,lib}; merge them into
+    # one prefix so CUDA_HOME/bin and CUDA_HOME/include are what nvcc expects.
+    cp -a /tmp/cuda_redist/"$comp"-linux-x86_64-"$CUDA_REDIST_VERSION"-archive/. "$CUDA12_PREFIX"/
+  done
+  rm -rf /tmp/cuda_redist
+fi
+[ -x "$CUDA12_PREFIX/bin/nvcc" ] || { echo "[build-env] FATAL: no nvcc at $CUDA12_PREFIX/bin/nvcc"; exit 1; }
+
 # shellcheck disable=SC1091
 . "$(dirname "${BASH_SOURCE[0]}")/hils_cuda_paths.sh"
 HAVE_GPU=$(python -c "import torch;print(1 if torch.cuda.is_available() else 0)")

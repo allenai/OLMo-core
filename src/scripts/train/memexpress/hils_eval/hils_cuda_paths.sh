@@ -1,31 +1,49 @@
-# Put the CUDA 12 compiler + runtime libraries shipped in pip wheels onto the loader path.
+# Make a CUDA 12 toolchain visible to tilelang's JIT.
 #
 # Sourced by BOTH build_hils_env_weka.sh and hils_env_setup.sh, so the env is built and used with
-# identical paths. In:  an ACTIVE venv. Out: PATH / LD_LIBRARY_PATH / CUDA_HOME.
+# identical paths. In: an ACTIVE venv (+ optionally $CUDA12_PREFIX). Out: CUDA_HOME, PATH,
+# LD_LIBRARY_PATH.
 #
-# tilelang JIT-compiles every kernel at runtime, so it needs nvrtc and nvcc present. In this
-# container neither is reachable by default:
-#   * `nvcc` is not on PATH at all (the beaker image is a runtime image, not a CUDA devel one)
-#   * libnvrtc.so.12 IS installed -- torch's cu128 wheels vendor it under site-packages/nvidia --
-#     but nothing adds that directory to the dynamic loader path
-# Observed as `OSError: libnvrtc.so.12: cannot open shared object file` from tilelang's
-# determine_target(), which surfaces as the far more confusing
-# `ValueError: No CUDA or HIP or MPS available on this system` on a node with a working H100
-# (job 01KZY6Q3WN2C8MGT3N378MPXHC).
+# tilelang JIT-compiles every kernel at runtime, so it needs BOTH:
 #
-# Note the version: tilelang's own `[nvcc]` extra pulls nvidia-cuda-nvcc>=13, i.e. CUDA 13, while
-# this stack is CUDA 12.8 throughout (torch 2.8.0+cu128, driver 570). Install the -cu12 wheels.
+#  1. libnvrtc.so.12 on the loader path. It IS installed -- torch's cu128 wheels vendor it under
+#     site-packages/nvidia -- but nothing adds that directory to LD_LIBRARY_PATH. Missing it
+#     surfaces as `ValueError: No CUDA or HIP or MPS available on this system` on a working H100.
+#
+#  2. A real `nvcc`. This beaker image is a runtime image: no nvcc on PATH, no /usr/local/cuda. And
+#     the obvious pip fix does not work -- tilelang's own env.py says so:
+#         "from pypi package nvidia-cuda-nvcc, only nvidia-cuda-nvcc>=13.0 works.
+#          nvidia-cuda-nvcc-cu12, etc. only installs `ptxas`, not `nvcc`"
+#     Verified: the nvidia-cuda-nvcc-cu12 12.9.86 wheel ships exactly one binary, ptxas. Taking the
+#     >=13.0 route would put a CUDA 13 compiler in front of a CUDA 12.8 stack (torch 2.8.0+cu128,
+#     driver 570), so instead build_hils_env_weka.sh unpacks NVIDIA's CUDA 12.8 redist into
+#     $CUDA12_PREFIX and this resolves to it.
+#
+# Resolution order for CUDA_HOME: an explicit one wins, then a system toolkit, then ours.
 _nvdir=$(python -c "import nvidia, os; print(os.path.dirname(nvidia.__file__))" 2>/dev/null)
 if [ -n "${_nvdir:-}" ] && [ -d "$_nvdir" ]; then
   for _sub in cuda_nvrtc cuda_runtime cublas cuda_cupti nvjitlink; do
     [ -d "$_nvdir/$_sub/lib" ] && export LD_LIBRARY_PATH="$_nvdir/$_sub/lib:${LD_LIBRARY_PATH:-}"
   done
-  if [ -d "$_nvdir/cuda_nvcc/bin" ]; then
-    export PATH="$_nvdir/cuda_nvcc/bin:$PATH"
-    export CUDA_HOME="$_nvdir/cuda_nvcc"
-  fi
-  echo "[cuda-paths] nvidia wheels at $_nvdir; nvcc=$(command -v nvcc || echo MISSING)"
 else
-  echo "[cuda-paths] WARNING: no nvidia/ wheel dir found in site-packages; tilelang JIT will fail."
+  echo "[cuda-paths] WARNING: no nvidia/ wheel dir in site-packages; libnvrtc may be unreachable."
 fi
-unset _nvdir _sub
+
+CUDA12_PREFIX="${CUDA12_PREFIX:-/weka/oe-training-default/amandab/envs/cuda12}"
+_cuda_home=""
+for _cand in "${CUDA_HOME:-}" "/usr/local/cuda" "$CUDA12_PREFIX"; do
+  [ -n "$_cand" ] && [ -x "$_cand/bin/nvcc" ] && { _cuda_home="$_cand"; break; }
+done
+if [ -z "$_cuda_home" ] && command -v nvcc >/dev/null 2>&1; then
+  _cuda_home=$(dirname "$(dirname "$(command -v nvcc)")")
+fi
+if [ -n "$_cuda_home" ]; then
+  export CUDA_HOME="$_cuda_home"
+  export PATH="$CUDA_HOME/bin:$PATH"
+  [ -d "$CUDA_HOME/lib64" ] && export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+  echo "[cuda-paths] CUDA_HOME=$CUDA_HOME nvcc=$(nvcc --version 2>/dev/null | tail -1 | tr -s ' ')"
+else
+  echo "[cuda-paths] WARNING: no nvcc found (looked in \$CUDA_HOME, /usr/local/cuda, $CUDA12_PREFIX," \
+       "and PATH). tilelang JIT will fail -- run build_hils_env_weka.sh to install one."
+fi
+unset _nvdir _sub _cand _cuda_home
