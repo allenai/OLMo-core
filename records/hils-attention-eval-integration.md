@@ -90,3 +90,31 @@ Both models are **BASE** — no instruction tuning, and neither tokenizer ships 
   control — which is exactly HiLS's headline claim, so it has to be labelled, not averaged over.
 * The hf backend has **no chunked prefill** (that is an olmo_core generation-module feature), so
   ≥256k rungs are one-shot prefills and will OOM. 64k/128k is the supported xlong range here.
+
+### contra floors at f1=0.0, and that is a real base-model result
+
+Verified 2026-08-13 by reading the generation dump, because a rung at exactly 0.000 is normally a
+harness bug in this repo. It is not one here. The generations are coherent, correctly tokenized and
+on-topic — the model **continues the prompt instead of answering it**, emitting a fresh
+`Claim 1: … Claim 2: …` list where the JSON answer should go:
+
+```
+prompt tail: "... Given the following corpus of numbered claims, identify all pairs of claims that
+              contradict each other. Output your answer as a JSON list of pairs ..."
+generation:  "Claim 1: After 72 hours of incubation, paclitaxel and SPMs were equally cytotoxic.
+              Claim 2: All blood samples ordered for laboratory glucose measurement were ..."
+```
+
+That is correct base-LM behaviour, and the `query_position=both` layout sharpens it: the trailing
+instruction reads "Given the **following** corpus of numbered claims", which invites a corpus.
+
+The suite is **not** uniformly zero — the Olmo-3 control produced `nq_3k=0.384` / `nq_8k=0.11`
+through this same code — so the split is by answer format, not by model:
+
+* **extraction-style** (nq, rerank, outlier, oolong) → real, parseable numbers from base models;
+* **strict-format** (contra, contra_fever: a JSON list of ID pairs after CoT) → ~0 for base models
+  of either architecture.
+
+A contra column that is 0 in both arms measures instruction-following, not long-context capability.
+Do not report it as "HiLS scores 0 on contradiction". Few-shot demonstrations of the answer format
+would be the way to make that column measurable for base models.
