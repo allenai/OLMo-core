@@ -168,15 +168,20 @@ if [ ! -x "$CUDA12_PREFIX/bin/nvcc" ] || [ ! -f "$CUDA12_PREFIX/include/cuda_run
   # so a single hardcoded version 404s for one of them, and `curl -sL` then hands tar an HTML error
   # page ("tar: Error is not recoverable").
   MANIFEST="https://developer.download.nvidia.com/compute/cuda/redist/redistrib_$CUDA_REDIST_MANIFEST.json"
-  urls=$(curl -fsSL "$MANIFEST" | python - <<'PY'
+  # Download to a FILE rather than piping into `python - <<'PY'`: the heredoc becomes python's
+  # stdin, so json.load(sys.stdin) reads the exhausted heredoc, not the manifest, and every run
+  # fails with "could not read".
+  curl -fsSL "$MANIFEST" -o /tmp/cuda_redist/manifest.json || { echo "    FATAL: could not fetch $MANIFEST"; exit 1; }
+  urls=$(python - /tmp/cuda_redist/manifest.json <<'PY'
 import json, sys
-d = json.load(sys.stdin)
+d = json.load(open(sys.argv[1]))
 base = "https://developer.download.nvidia.com/compute/cuda/redist/"
 # cuda_cudart is not optional: nvcc alone cannot compile a kernel that includes cuda_runtime.h.
 for comp in ("cuda_nvcc", "cuda_cudart"):
     print(base + d[comp]["linux-x86_64"]["relative_path"])
 PY
-) || { echo "    FATAL: could not read $MANIFEST"; exit 1; }
+) || { echo "    FATAL: could not parse $MANIFEST"; exit 1; }
+  [ -n "$urls" ] || { echo "    FATAL: manifest yielded no component URLs"; exit 1; }
   for url in $urls; do
     echo "    $(basename "$url")"
     curl -fsSL "$url" -o /tmp/cuda_redist/comp.tar.xz || { echo "    FATAL: download failed: $url"; exit 1; }
