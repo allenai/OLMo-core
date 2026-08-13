@@ -64,30 +64,53 @@ def _build_hf_generator(args, tok, device):
     """
     from ctc_eval.lib.hils_loader import is_hils_checkpoint, load_hils_model
 
-    # The ladder feeds prompts up to --max-length; a checkpoint whose config caps
-    # max_position_embeddings BELOW that silently mis-positions the tail of every long prompt
-    # instead of erroring, so raise the budget to what we actually intend to feed it.
-    if is_hils_checkpoint(args.model_path):
-        model = load_hils_model(
-            args.model_path,
-            device=device,
-            attn_implementation=args.attn_impl or None,
-            repo=args.hils_repo or None,
-            max_position_embeddings=args.max_length,
-        )
+    # Attention-implementation fallback. HiLS-7B's config.json asks for `flash_attention_3`, which
+    # is a separate build that is usually absent -- and our runtime deliberately ships no flash-attn
+    # at all (no wheel for this torch/python pair; a 30-min source compile per job for kernels the
+    # sparse path does not use). Without a fallback the job dies at model construction AFTER the
+    # node is allocated. This only selects the kernel for the interleaved DENSE layers; the HiLS
+    # sparse path is tilelang regardless, so falling back costs speed, not semantics.
+    if args.attn_impl:
+        candidates = [args.attn_impl]  # explicit request: honour it, and fail loudly if absent
     else:
-        from transformers import AutoConfig, AutoModelForCausalLM
+        candidates = ["flash_attention_3", "flash_attention_2", "sdpa"]
 
-        config = AutoConfig.from_pretrained(args.model_path)
-        if getattr(config, "max_position_embeddings", 0) < args.max_length:
-            print(f"[hf] max_position_embeddings {config.max_position_embeddings} -> "
-                  f"{args.max_length}", flush=True)
-            config.max_position_embeddings = args.max_length
-        kw = {"attn_implementation": args.attn_impl} if args.attn_impl else {}
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_path, config=config, dtype=torch.bfloat16, **kw)
-        model.to(device)
-        model.eval()
+    is_hils = is_hils_checkpoint(args.model_path)
+    model, errors = None, []
+    for attn in candidates:
+        try:
+            # The ladder feeds prompts up to --max-length; a checkpoint whose config caps
+            # max_position_embeddings BELOW that silently mis-positions the tail of every long
+            # prompt instead of erroring, so raise the budget to what we intend to feed it.
+            if is_hils:
+                model = load_hils_model(
+                    args.model_path,
+                    device=device,
+                    attn_implementation=attn,
+                    repo=args.hils_repo or None,
+                    max_position_embeddings=args.max_length,
+                )
+            else:
+                from transformers import AutoConfig, AutoModelForCausalLM
+
+                config = AutoConfig.from_pretrained(args.model_path)
+                if getattr(config, "max_position_embeddings", 0) < args.max_length:
+                    print(f"[hf] max_position_embeddings {config.max_position_embeddings} -> "
+                          f"{args.max_length}", flush=True)
+                    config.max_position_embeddings = args.max_length
+                model = AutoModelForCausalLM.from_pretrained(
+                    args.model_path, config=config, dtype=torch.bfloat16,
+                    attn_implementation=attn)
+                model.to(device)
+                model.eval()
+            print(f"[hf] loaded with attn_implementation={attn}", flush=True)
+            break
+        except Exception as e:  # noqa: BLE001 -- probing which impls this runtime supports
+            errors.append(f"{attn}: {type(e).__name__}: {e}")
+            print(f"[hf] attn_implementation={attn} unavailable ({type(e).__name__})", flush=True)
+    if model is None:
+        raise SystemExit("[hf] could not load the model with any attention implementation:\n  "
+                         + "\n  ".join(errors))
 
     @torch.no_grad()
     def _generate(input_ids, attention_mask, max_new_tokens, stop_strings=None):
@@ -221,8 +244,8 @@ def main():
                          "(Olmo-3 base and HiLS-7B both do not). Ignored for other formats.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
-    # MUST cover the largest selected ultra-long rung, and it feeds the gen budget built below.
+    # xlong opt-in: the runner REJECTS prompts longer than (max_length - max_new_tokens), so
+    # max_length MUST cover the largest selected ultra-long rung, and it feeds the gen budget below.
     if args.xlong:
         _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144,
                    "512k": 524288, "1M": 1048576, "2M": 2097152}
@@ -382,10 +405,29 @@ def main():
         my_gidx = list(range(rank, len(prompts), world))
         lp = [prompts[i] for i in my_gidx]
         lout = []
+        cap = args.max_length - max_new_tokens
         for i in range(0, len(lp), args.batch_size):
             chunk = lp[i:i + args.batch_size]
-            enc = tok(chunk, return_tensors="pt", padding=True, truncation=True,
-                      max_length=args.max_length - max_new_tokens, add_special_tokens=False)
+            # truncation=False is DELIBERATE: a prompt that does not fit is a configuration error,
+            # not something to silently paper over. The cut lands on the prompt TAIL, which is
+            # exactly where the question lives, so a truncated example scores the model on input it
+            # was never shown -- f1 0.000 at parse_rate 1.0, indistinguishable from a real
+            # long-context collapse (the maxlen-truncation trap; see the --xlong budget note above).
+            # Raise instead, and say by how much, so the caller can fix --max-length.
+            enc = tok(chunk, return_tensors="pt", padding=True, truncation=False,
+                      add_special_tokens=False)
+            lens = enc["attention_mask"].sum(dim=1).tolist()
+            if max(lens, default=0) > cap:
+                over = [(my_gidx[i + j], n) for j, n in enumerate(lens) if n > cap]
+                worst = max(n for _, n in over)
+                raise SystemExit(
+                    f"[maxlen] {len(over)}/{len(chunk)} prompts in this batch exceed the "
+                    f"{cap}-token prompt cap (--max-length {args.max_length} minus "
+                    f"max_new_tokens {max_new_tokens}); longest is {worst} tokens "
+                    f"(example indices {[g for g, _ in over][:8]}). Truncating would cut the "
+                    f"prompt tail, where the question lives, and score the model on an example it "
+                    f"never saw. Re-run with --max-length >= {worst + max_new_tokens}."
+                )
             ids = enc["input_ids"].to(device)
             mask = enc["attention_mask"].to(device)
             cont = _gen_fn(ids, mask, max_new_tokens, stop_strings)
