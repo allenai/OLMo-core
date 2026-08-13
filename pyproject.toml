@@ -64,10 +64,13 @@ dion = ["dion @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1
 eval = ["ai2-olmo-eval==0.9.0"]
 fa4 = ["flash-attn-4>=4.0.0b4 ; sys_platform == 'linux'"]
 fla = ["flash-linear-attention==0.5.2"]
+# The CuTe DSL gated delta rule kernels (olmo_core.kernels.gdn_cute) need both fla and
+# nvidia-cutlass-dsl. Blackwell (sm_100+) only; olmo_core.ops.gdn falls back to fla elsewhere.
+gdn-cute = ["flash-linear-attention==0.5.2", "nvidia-cutlass-dsl>=4.5.2 ; sys_platform == 'linux'"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
 wandb = ["wandb"]
-all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,torchao,transformers,wandb]"]
+all = ["ai2-olmo-core[dev,beaker,comet,dion,eval,fa4,fla,gdn-cute,torchao,transformers,wandb]"]
 
 [tool.uv]
 environments = [
@@ -103,15 +106,21 @@ exclude = '''
     | \bdist\b
     | \bdoc\b
     | scratch/
+    | src/olmo_core/kernels/gdn_cute/
 )
 '''
 
 [tool.isort]
 profile = "black"
 multi_line_output = 3
+# Vendored verbatim from allenai/kernel-fun-2 (see the package docstring); re-copied wholesale
+# when those kernels improve, so reformatting them here would only create drift to re-resolve.
+extend_skip_glob = ["src/olmo_core/kernels/gdn_cute/*"]
 
 [tool.ruff]
 line-length = 100
+# Vendored verbatim from allenai/kernel-fun-2; see [tool.isort] above.
+extend-exclude = ["src/olmo_core/kernels/gdn_cute"]
 
 [tool.ruff.lint]
 ignore = ["F403", "F405", "E501"]
@@ -164,6 +173,12 @@ no_site_packages = true
 check_untyped_defs = true
 namespace_packages = false
 disable_error_code = "has-type"
+
+# Vendored verbatim from allenai/kernel-fun-2; see [tool.isort] above. These are CuTe DSL
+# kernels, whose tensors, layouts and MMA atoms are dynamically typed by construction.
+[[tool.mypy.overrides]]
+module = "olmo_core.kernels.gdn_cute.kernel_*"
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
