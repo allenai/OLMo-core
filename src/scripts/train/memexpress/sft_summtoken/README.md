@@ -175,6 +175,36 @@ instance count; reusing the unpacked number would end the anneal early — exact
 different numbers of optimizer steps over the same data, which is a confound stacked on top of the
 intended contrast.
 
+### These runs are single-epoch, and that is what keeps the anneal honest
+
+`derive_curriculum` sets `mix_total_forwards = SUMMTOK_N_INSTANCES // DP_DEGREE` — **one epoch** of
+forwards per rank — and then asserts only that `p` reaches `mix_end_p` there. It does *not* check
+that against `SUMMTOK_MAX_STEPS`, so the two can silently disagree:
+
+```
+mask_mix_standard_prob:  prog = min(1.0, forward_idx / mix_total_forwards)
+```
+
+Past `mix_total_forwards` the schedule pins at `mix_end_p` forever. Unpacked, one epoch happened to
+be ≈ 2240 steps and the two coincided. **Packing collapses the instance count, so they no longer
+do** — a 2240-step packed run would finish annealing in its first fraction and then train at the
+endpoint for the rest. `summ-decay` would spend most of training fully causal while still being
+labelled the decay arm.
+
+The standing policy is therefore **one epoch**:
+
+```bash
+export SUMMTOK_PACKING=1
+export SUMMTOK_N_INSTANCES=<from launch_prep, measured WITH packing on>
+export SUMMTOK_MAX_STEPS=$((SUMMTOK_N_INSTANCES / 4))   # DP_DEGREE = 16 / CP_DEGREE 4
+```
+
+which makes `MAX_STEPS == mix_total_forwards` identically, so the anneal lands on the last step
+rather than early. Nothing else is sized against a step count — `LinearWithWarmup` takes a
+`warmup_fraction` and the checkpoint interval is `MAX_STEPS // 4` — so the shorter run rescales on
+its own. If you ever run multiple epochs, `mix_total_forwards` has to be lifted off the epoch and
+onto the run length, or the curriculum arms are not what their names say.
+
 The mask does *not* get denser: block-diagonal structure means a packed window stays well under half
 the density of plain causal attention over the same window.
 
