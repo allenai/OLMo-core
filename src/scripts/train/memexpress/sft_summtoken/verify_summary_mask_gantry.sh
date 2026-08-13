@@ -38,7 +38,7 @@ IMAGE="${IMAGE:-tylerr/olmo-core-tch291cu128-2025-11-25}"
 # Default to the Qwen3.5 box-marker (document-chunked) shards. These are REAL Qwen3.5-tokenized
 # windows with real document structure -- the summary runs are inserted here by the production
 # emitter, because the summary-token shards themselves do not exist until the converter is run.
-SHARDS="${SHARDS:-/weka/${WEKA}/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/shards_chunked/token_ids_part_*.npy}"
+SHARDS="${SHARDS:-/weka/${WEKA}/ai2-llm/checkpoints/prasanns/xlong5_2k256k_qwen35/shards_chunked/contradiction_train/token_ids_part_*.npy}"
 MARKER_SET="${MARKER_SET:-qwen3_5}"
 N_WINDOWS="${N_WINDOWS:-4}"
 MIN_DOCS="${MIN_DOCS:-6}"
@@ -58,7 +58,10 @@ export PYTHONPATH="\$(pwd)/src:\${PYTHONPATH:-}"
 V=src/scripts/train/memexpress/sft_summtoken/verify_summary_mask_on_real_data.py
 
 echo "=== shards: ${SHARDS}"
-ls -la \$(dirname "${SHARDS}") 2>/dev/null | head -5 || echo "  (could not list the shard directory)"
+_dir=\$(dirname "${SHARDS}")
+ls -la "\$_dir" 2>/dev/null | head -6 || echo "  (could not list \$_dir)"
+echo "--- parent, in case the glob is one level off ---"
+ls -la "\$(dirname \$_dir)" 2>/dev/null | head -8 || true
 
 python \$V \
   --shards "${SHARDS}" \
@@ -88,7 +91,14 @@ if [ \$neg -eq 0 ]; then
   echo "!!! NEGATIVE CONTROL PASSED -- the assertions are not binding. Treat the main run as void."
   exit 3
 fi
-echo "negative control failed as expected (rc=\$neg): the checks have teeth."
+# A non-zero exit is NOT enough: a crash (missing module, bad path) also exits non-zero and would
+# masquerade as "the checks have teeth". Require the EXPECTED failure to actually appear.
+if ! grep -q "cannot see every summary token" /tmp/negctl.log; then
+  echo "!!! NEGATIVE CONTROL failed for the WRONG REASON (no summary-visibility assertion fired)."
+  echo "--- its log ---"; tail -20 /tmp/negctl.log
+  exit 4
+fi
+echo "negative control failed for the right reason: the checks have teeth."
 
 exit \$rc
 REMOTE_EOF
@@ -103,6 +113,8 @@ gantry run \
   --beaker-image "${IMAGE}" \
   --cpus "${CPUS}" \
   --weka "${WEKA}:/weka/${WEKA}" \
+  --python-manager conda \
+  --system-python \
   --install "pip install -e . && pip install dataclass-extensions" \
   --allow-dirty \
   --yes \
