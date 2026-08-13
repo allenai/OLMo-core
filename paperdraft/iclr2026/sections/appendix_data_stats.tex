@@ -1,0 +1,115 @@
+\section{Dataset Statistics}
+\label{app:data-stats}
+
+Table~\ref{tab:data-stats} lists the train and eval sizes for every dataset used in the main paper. All datasets follow the unified structured-JSONL format introduced in \S\ref{sec:tasks}: each example carries \texttt{documents} (a list of \{title, text\}), \texttt{queries}, \texttt{answers}, and \texttt{gold\_doc\_indices} (a flat ID list, a list of ID pairs, or a list of ID groups depending on the task). We report doc length in tokens (Qwen tokenizer, mean over a 200-example sample) and the per-example total context length (sum of doc tokens). Table~\ref{tab:ladders} then gives the corpus-size ladder that exists for every task in the suite, including those not used in the main figures.\autonote{Sentence added, and the \texttt{gold\_doc\_indices} description extended: the field is a flat ID list, a pair list, or a group list depending on task. The pointer was also repointed from \S\ref{sec:definitioncomp} to the new \S\ref{sec:tasks}.}
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l c c c c c}
+\toprule
+\textbf{Task} & \textbf{Source} & $\bm{N}$ (or $k$) & \textbf{Train} & \textbf{Eval} & \textbf{Per-doc tokens} & \textbf{Total tokens} \\
+\midrule
+\multirow{4}{*}{NQ}            & Wikipedia (DPR) & $k{=}20$  & 2{,}500 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $k{=}50$  & 2{,}500 & 500 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $k{=}100$ & 2{,}500 & 500 & $\sim$130 & $\sim$13k  \\
+                               &                 & $k{=}200$ & 2{,}500 & 500 & $\sim$130 & $\sim$26k  \\
+\midrule
+\multirow{4}{*}{HotpotQA}      & Wikipedia (DPR) & $k{=}20$  & 2{,}000 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $k{=}50$  & 2{,}000 & 500 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $k{=}100$ & 2{,}000 & 500 & $\sim$130 & $\sim$13k  \\
+                               &                 & $k{=}200$ & 2{,}000 & 500 & $\sim$130 & $\sim$26k  \\
+\midrule
+\multirow{3}{*}{Outlier (wiki)}& Wikipedia 100w  & $N{=}20$  & 4{,}000 & 400 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $N{=}50$  & 4{,}000 & 400 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $N{=}100$ & 4{,}000 & 400 & $\sim$130 & $\sim$13k  \\
+\midrule
+Outlier (Amazon)               & Reviews 2023    & $N{=}30$  & 5{,}000 & 500 & $\sim$80  & $\sim$2.4k \\
+\midrule
+\multirow{2}{*}{Grouping}      & OpenAlex L0--L3 & $N{=}20$  & 5{,}000 & 500 & $\sim$200 & $\sim$4k   \\
+                               & abstracts       & $N{=}100$ & 1{,}000 & 200 & $\sim$200 & $\sim$20k  \\
+\midrule
+\multirow{4}{*}{Contradiction} & PubMed claims   & $N{=}20$  & 2{,}000 & 488 & $\sim$45  & $\sim$0.9k \\
+                               & ($K{=}3$ pairs) & $N{=}50$  & 2{,}000 & 488 & $\sim$45  & $\sim$2.3k \\
+                               &                 & $N{=}100$ & 2{,}000 & 488 & $\sim$45  & $\sim$4.5k \\
+                               &                 & $N{=}500$ & 2{,}000 & 488 & $\sim$45  & $\sim$23k  \\
+\midrule
+\multirow{3}{*}{Reorder}       & Gutenberg       & $N{=}5$   & 1{,}995 & 500 & $\sim$130 & $\sim$0.7k \\
+                               & 100w segments   & $N{=}20$  & 1{,}995 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $N{=}50$  & 1{,}995 & 500 & $\sim$130 & $\sim$6.5k \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Train/eval sizes for all corpus-reasoning datasets used in this paper.} Per-doc tokens are computed with the Qwen-2.5/3.5 tokenizer; total tokens are the sum of doc tokens (excluding query/CoT/answer overhead, which adds another 100--400 tokens depending on task). For NQ, the standard variant uses $hn_{k-1}$ BM25 hard negatives; HotpotQA uses $hn_{k-2}$ (since two of the $k$ documents are gold). For grouping the eval set at $N{=}50$ is a 500-example subsample of the $N{=}20$ schema applied to 50-doc contexts.}
+\label{tab:data-stats}
+\end{table}
+
+\autonote{NEW: this paragraph and Table~\ref{tab:ladders}; rows for the five cut tasks are gone. Sizes were read off the eval files,
+not copied from the data README --- three of them disagreed with it, and outlier-wiki disagrees with
+Table~\ref{tab:data-stats} above (56--100 examples in the files vs.\ 400 there), which is worth
+resolving.}\paragraph{Corpus-size ladders for the full suite.}
+
+Every task ships a ladder along its own scaling axis --- usually the document count $N$, but the
+number of queries for qdmatch, the number of matched pairs for xabsence, and a native target token
+length for the Oolong/HELMET ports. Table~\ref{tab:ladders} gives the generated inventory: the axis,
+the rungs built, and the eval size per rung. Within a ladder the underlying examples are held fixed
+(same queries, same golds) and only the filler count varies, so a rung-to-rung difference is not
+confounded with eval-set resampling.
+\prasann{These are the rungs \emph{generated} for each task; reconcile against the rungs the final
+runs actually report before submission, and drop rows we do not use.}
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}l l l r@{}}
+\toprule
+\textbf{Task} & \textbf{Scaling axis} & \textbf{Rungs generated} & \textbf{Eval / rung} \\
+\midrule
+NQ                 & $N$ documents      & 20, 50, 100, 200                & 500 \\
+HotpotQA           & $N$ documents      & 20, 50, 100, 200                & 500 \\
+NIAH-contra        & $N$ documents      & 19, 49, 99, 249, 499, 999       & 488 \\
+BEIR SciFact       & $N$ documents      & 11, 22, 44, 88 (also 20/50/100) & 299 \\
+BEIR FiQA          & $N$ documents      & 10, 20, 40, 80                  & 648 \\
+MS MARCO           & $N$ passages       & 20, 50, 100, 500                & 500 \\
+MS MARCO rerank    & $N$ passages       & 20, 50                          & 1000 \\
+OBLIQ              & $N$ documents      & 30, 100, 500 (by subset)        & 114--461 \\
+Oolong             & context tokens     & 1K \dots 64K ($+$ ladder to 4.2M) & 400 (80 at 64K) \\
+NarrativeQA        & context tokens     & 8K, 32K, 131K                   & 300 \\
+GovReport          & context tokens     & 16K, 64K                        & 200 \\
+\midrule
+Outlier (wiki)     & $N$ documents      & 20, 55, 110, 220, 435           & 56--100$^\dagger$ \\
+Grouping (labeled) & $N$ abstracts      & 12, 20, 100                     & 200--500 \\
+\midrule
+Contradiction      & $N$ claims         & 6 \dots 250 ($+$ 8K--64K token rungs) & 488 \\
+Absence            & $N$ elements       & 20, 50, 100, 250, 500, 1000     & 300 \\
+xabsence           & $P$ matched pairs  & 8, 18, 48                       & 300 \\
+strmatch           & $N$ strings        & 20, 50, 100, 250, 500, 1000     & 300 \\
+qdmatch (3 sources)& $M$ queries        & 20, 50, 100 ($+$250 for NQ)     & 300 \\
+Reorder            & $N$ segments       & 5, 20, 40, 50                   & 500 \\
+\midrule
+Cycle              & $N$ claims         & 20, 50, 100, 250, 500, 1000 ($L{=}3,4,5$) & 300 \\
+Groups-of-4        & $N$ expressions    & 20, 100, 250, 500               & 300 \\
+Textgroups         & $N$ passages       & 20, 100, 500                    & 300 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Corpus-size ladders generated for every task in the suite.} The scaling axis is the
+quantity that grows the number of oracle operations for that task. Train pools are 2{,}000 examples
+per rung for the per-$N$ protocol; for the joint protocol a single model per (task, attention) pair
+is trained on examples whose $N$ is drawn uniformly over the ladder. Eval sizes are the sets generated per rung.
+Several fall below our 500-example bar --- contradiction and NIAH-contra 488, Oolong 400, SciFact 299,
+HELMET 200--300, grouping 200 at $N{=}100$, and especially outlier-wiki ($\dagger$, 56--100) --- and
+every number quoted from one of these carries its binomial error bar inline.}
+\label{tab:ladders}
+\end{table}
+
+\paragraph{Notes on data construction.}
+
+\begin{itemize}
+\item \textbf{NQ / HotpotQA:} both use the 100-word DPR Wikipedia corpus \citep{Karpukhin2020DensePR}. Negatives are mined by BM25 with simple text-overlap filters to avoid spurious near-duplicates of the gold passage. HotpotQA uses the bridge subset; the natural-language CoT for HotpotQA is generated with gemini-2.5-flash, grounded in the gold paragraphs and answer.
+\item \textbf{Outlier (wiki):} 100-word Wikipedia chunks. Each context contains $\sim$5 chunks per source article on average; the answer is the IDs of the chunks from the article with the fewest chunks (typically 2 outliers). The \emph{in-distribution-$k$} variant fixes the article count, while the \emph{scale-$k$} variant lets the article count grow with $N$.
+\item \textbf{Outlier (Amazon Reviews):} see Appendix~\ref{app:amazon-reviews}.\autonote{Left as-is: Amazon-review outlier was cut from the task suite, but it is still a row in Table~\ref{tab:data-stats} and still has its own Appendix~\ref{app:amazon-reviews}. Both are yours, so I did not touch them --- tell me if they should go.}
+\item \textbf{Grouping:} each abstract document is $\sim$200 tokens. We pick a level $L\in\{0,1,2,3\}$ in the OpenAlex concept hierarchy per example, which determines the number of groups $k$.
+\item \textbf{Contradiction:} sentences drawn from PubMed abstracts. Each example contains $K{=}3$ contradictory pairs $(d, d')$ where $d'$ is a minimally-perturbed LLM-generated contradiction (gemini-2.5-flash) of $d$. Filler documents come from disjoint abstracts to minimize unintended contradictions.
+\item \textbf{Reorder:} consecutive 100-word segments from a single Project Gutenberg book are presented in a random permutation; the answer recovers the original ordering.
+\end{itemize}

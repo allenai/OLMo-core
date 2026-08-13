@@ -1,0 +1,50 @@
+% The task-suite catalog. \input from 3_corpus_reasoning.tex.
+% One row per task; blocks are the CTC classes. Keep in sync with the per-task
+% construction paragraphs in that section and the examples in appendix_examples.tex.
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{@{}l l p{5.4cm} l@{}}
+\toprule
+\textbf{Task} & \textbf{Substrate} & \textbf{Oracle operation} & \textbf{Metric} \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N}} --- one pass over the corpus} \\
+\midrule
+NQ                  & Wikipedia 100w    & does $d_i$ answer $q$?                              & gold-ID F1 \\
+HotpotQA (bridge)   & Wikipedia 100w    & does $d_i$ support one hop of $q$?                  & gold-ID F1 \\
+NIAH-contra         & PubMed claims     & does $d_i$ contradict the query claim?              & set-F1 \\
+BEIR SciFact        & science abstracts & does $d_i$ bear on claim $q$?                       & set-F1 \\
+BEIR FiQA           & finance posts     & does $d_i$ answer $q$?                              & set-F1 \\
+MS MARCO            & web passages      & does $d_i$ answer $q$?                              & set-F1 \\
+MS MARCO rerank     & web passages      & how relevant is $d_i$ to $q$?                       & MRR@10 \\
+OBLIQ               & posts / abstracts & does $d_i$ match $q$'s subjective criterion?   & set-F1 \\
+Oolong              & labeled items     & what is item $i$'s label? (then aggregate)    & partial credit \\
+Absence             & Gutenberg prose   & is sentence $d_i$ present in version B?             & set-F1 \\
+Outlier (Amazon)    & product reviews   & does $d_i$ carry the majority attribute?            & set-F1 \\
+Outlier (wiki, fixed $M$) & Wikipedia 100w & \dots{}with the article count pinned as $N$ grows & set-F1 \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{NM}} --- categorization, $M$ inferred from the corpus} \\
+\midrule
+Outlier (wiki, scale-$k$) & Wikipedia 100w & which article does $d_i$ belong to?               & set-F1 \\
+Grouping            & OpenAlex abstracts& is $d_i$ in the same subfield as cluster $m$?       & pairwise-F1 / ARI \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N^2}} --- all-pairs search} \\
+\midrule
+Contradiction       & PubMed claims     & do $d_i$ and $d_j$ contradict?                      & pair-F1 / EM \\
+xabsence            & PubMed claims     & does some $d_j \in B$ paraphrase $d_i \in A$?     & set-F1 \\
+strmatch            & word strings      & do $d_i, d_j$ share a $k$-word run?                 & pair-F1 \\
+qdmatch (NQ)        & Wikipedia 100w    & does document $d_j$ answer query $q_i$?             & pair-F1 \\
+qdmatch (HPQA)      & Wikipedia 100w    & \dots{}with two gold documents per query             & pair-F1 \\
+qdmatch (FiQA)      & finance posts     & \dots{}with financial-opinion queries                & pair-F1 \\
+Reorder             & Gutenberg         & does $d_i$ precede $d_j$?                           & Kendall-$\tau$ \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N^3}} and beyond --- groups, not pairs} \\
+\midrule
+Textgroups          & short passages    & do 3 passages' feature counts sum to $T$?           & group-F1 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{The corpus-reasoning task suite (22 tasks).} Each row gives the substrate, the atomic oracle operation the task decomposes into (Section~\ref{sec:definitioncomp}), and the metric. \cname{} is determined by how many such operations are required as $N$ grows: one per document (\ctc{N}), one per document-category pair (\ctc{NM}), one per document pair (\ctc{N^2}), or one per group (\ctc{N^3}). Roughly half are ports of published benchmarks and half are constructed here; per-task construction is described in Section~\ref{sec:tasks} and a real example of every task is in Appendix~\ref{app:examples}.\autonote{Table synced to the frozen 22-task suite as it stands in the CTC-suite grid artifact, which you confirmed is the most final list. \textbf{Cut:} NarrativeQA, GovReport, qdmatch (OBLIQ), cycle, groups-of-4. \textbf{Added:} outlier (Amazon), outlier (wiki, fixed $M$), qdmatch (FiQA); the old single ``Outlier (wiki)'' row is split into its scale-$k$ and fixed-$M$ arms, which the artifact puts in different classes. Count 24 $\to$ 22; blocks are 12 / 2 / 7 / 1. \textbf{Two classes were corrected against the artifact, both at the source so they stop propagating.} (1) Outlier (Amazon) is \ctc{N}, confirmed by prasann 2026-08-13: its attribute set (star rating, product category) is small and fixed, so there is no category discovery --- the same property that makes Oolong \ctc{N}. Only outlier (wiki, scale-$k$) grows $M$ with $N$. \texttt{build\_suite\_table.py} and \texttt{records/ctc-final-suite.md} were fixed to match, so the artifact will show \ctc{N} on its next render. (2) Textgroups stays \ctc{N^3} though the artifact shows \ctc{NM}: \texttt{suite\_table.json} has only three class values --- \texttt{N}, \texttt{NM}, \texttt{N2} --- so textgroups was bucketed by a schema that cannot express \ctc{N^3}, not classified as \ctc{NM}. Its oracle operation is a triple, \ctc{N^3} by this table's own criterion. Widening that schema is the outstanding fix. (3) Absence is \ctc{N}, confirmed by prasann 2026-08-13, and has moved out of the \ctc{N^2} block. That was the last class still disagreeing across sources --- the CTC figure scripts and the exported CSVs already had it as \ctc{N} per the 2026-08-03 correction, while both tables had it as \ctc{N^2}. \texttt{build\_suite\_table.py} was fixed too, so the artifact will agree on its next render and the \texttt{CLASS\_OVERRIDE} that \texttt{export\_ctc\_suite\_data.py} was carrying for it is gone. \textbf{One smaller thing worth a check.} Metrics are left as they were, but the artifact grades contradiction and strmatch with \texttt{set\_f1} where this table says pair-F1 / EM and pair-F1 --- possibly a real mismatch rather than the documented set-F1-vs-gold-ID-F1 naming convention. Still stale elsewhere: \S\ref{sec:tasks} says ``24 tasks'' and describes qdmatch as NQ/HPQA/OBLIQ; NarrativeQA, GovReport, cycle and groups-of-4 remain in the \S\ref{sec:tasks} prose, Appendix~\ref{app:examples} and Appendix~\ref{app:data-stats}.}}
+\label{tab:suite}
+\end{table}

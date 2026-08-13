@@ -1,0 +1,117 @@
+% HELMET-Table-3-style overview of the evaluation datasets.
+% Companion to table_suite.tex, organized by capability category with a prose
+% description, rather than by atomic oracle operation.
+% \input from 3_corpus_reasoning.tex (or the appendix).
+%
+% This is prasann's self-contained version (2026-08-13): fixed-width p-columns
+% sized as fractions of \linewidth rather than hard cm values, \providecommand
+% fallbacks for \ctc/\cname so it compiles in a fresh project, and \ensuremath in
+% \ctc so \ctc{N^2} does not need surrounding $...$. Keep it self-contained --
+% the point of the rewrite was that it can be pasted anywhere.
+%
+% Absence sits in \ctc{N}, per prasann 2026-08-13. That was the last class still
+% disagreeing across sources: the CTC figure scripts and the exported CSVs had it
+% as \ctc{N} while both tables had it as \ctc{N^2}. Fixed here, in
+% table_suite.tex, and at the source in debug/ctc_final_suite/build_suite_table.py.
+% Section~\ref{sec:tasks} prose has NOT been updated and still disagrees.
+% ---------------------------------------------------------------------------
+% Preamble requirements:  \usepackage{booktabs,multirow,array}
+% If your paper is two-column, change table -> table* (both \begin and \end):
+% the table is ~1.2 pages tall inside a single column, and a float that does
+% not fit on a page is silently deferred and never printed.
+% ---------------------------------------------------------------------------
+% Fallbacks in case \ctc / \cname are not already defined in your preamble.
+% No tabularx: column widths are fractions of \linewidth, so it still auto-fits.
+% \ensuremath is what lets you write \ctc{N^2} without a "Missing $ inserted" error.
+\providecommand{\ctc}[1]{\ensuremath{\mathcal{O}_T(#1)}}
+\providecommand{\cname}{CTC}
+\ifdefined\catw\else\newlength{\catw}\newlength{\dsw}\newlength{\metw}\newlength{\descw}\fi
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+% Column widths as fractions of the available width (they always sum to 1).
+\setlength{\catw}{\dimexpr0.15\linewidth-2\tabcolsep\relax}
+\setlength{\dsw}{\dimexpr0.25\linewidth-2\tabcolsep\relax}
+\setlength{\metw}{\dimexpr0.15\linewidth-2\tabcolsep\relax}
+\setlength{\descw}{\dimexpr0.45\linewidth-2\tabcolsep\relax}
+\renewcommand{\arraystretch}{1.05}
+% \catm spans several dataset rows; \cat is a one-row category label.
+\newcommand{\catm}[2]{\multirow{#1}{\catw}{\raggedright\textbf{#2}}}
+\newcommand{\cat}[1]{\textbf{#1}}
+\begin{tabular}{@{}%
+  >{\raggedright\hspace{0pt}\arraybackslash}p{\catw}%
+  >{\raggedright\arraybackslash}p{\dsw}%
+  >{\raggedright\arraybackslash}p{\metw}%
+  >{\raggedright\hspace{0pt}\arraybackslash}p{\descw}@{}}
+\toprule
+\textbf{Category} & \textbf{Dataset} & \textbf{Metrics} & \textbf{Description} \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N}} --- one pass over the corpus} \\
+\midrule
+\catm{6}{Retrieval}
+  & NQ                  & Gold-ID F1     & Factoid QA over 100-word Wikipedia passages \\
+  & HotpotQA (bridge)   & Gold-ID F1     & Two-hop QA; two gold passages per question \\
+  & NIAH-contra         & Set-F1         & Find the one claim contradicting the query claim \\
+  & BEIR SciFact        & Set-F1         & Retrieve the abstract bearing on a science claim \\
+  & BEIR FiQA           & Set-F1         & Financial opinion QA, median two golds per query \\
+  & MS MARCO            & Set-F1         & Web-passage retrieval with mined hard negatives \\
+\midrule
+\cat{Passage re-ranking}
+  & MS MARCO rerank     & MRR@10         & Rank the full passage pool by relevance to a query \\
+\midrule
+\cat{Subjective retrieval}
+  & OBLIQ               & Set-F1         & Long, subjective queries (e.g.\ ``similar in style'') \\
+\midrule
+\cat{Label aggregation}
+  & Oolong              & Partial credit & Classify every item, then answer a distributional query \\
+\midrule
+\cat{Absence detection}
+  & Absence             & Set-F1         & Corpus vs.\ a copy with deletions; name what is missing \\
+\midrule
+\catm{2}{Categori\-zation, closed $M$}
+  & Outlier (Amazon)    & Set-F1         & Name the reviews carrying the minority attribute; the attribute set is small and fixed \\
+  & Outlier (wiki, fixed $M$) & Set-F1   & As below, but the article count stays fixed as $N$ grows \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{NM}} --- each document against each of $M$ categories} \\
+\midrule
+\catm{2}{Categori\-zation}
+  & Outlier (wiki, scale-$k$) & Set-F1   & Name the chunks from the least-represented article \\
+  & Grouping (OpenAlex) & Pairwise-F1    & Partition $N$ abstracts into $k$ groups; axis unstated \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N^2}} --- all-pairs search} \\
+\midrule
+\catm{2}{All-pairs semantic search}
+  & Contradiction       & Pair-F1 / EM   & Find all $K$ contradicting claim pairs among $N$ claims \\
+  & xabsence            & Set-F1         & Two corpora of paraphrase twins; name the orphans \\
+\midrule
+\cat{Lexical matching}
+  & strmatch            & Pair-F1        & Find every string pair sharing a $\geq k$-word run \\
+\midrule
+\catm{3}{Query--document matching}
+  & qdmatch (NQ)        & Pair-F1        & Match $M$ queries to $N$ documents under one numbering \\
+  & qdmatch (HPQA)      & Pair-F1        & \dots{}with two gold documents per query \\
+  & qdmatch (FiQA)      & Pair-F1        & \dots{}with financial-opinion queries \\
+\midrule
+\cat{Ordering}
+  & Reorder             & Kendall-$\tau$ & Recover the original order of shuffled book segments \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{\ctc{N^3}} and beyond --- groups, not pairs} \\
+\midrule
+\cat{Higher-order groups}
+  & Textgroups          & Group-F1       & Find every three passages whose feature counts sum to $T$ \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Overview of evaluation datasets (22 tasks).} We select datasets that span the full
+range of corpus task complexity, from a single pass over the corpus to super-quadratic group search.
+Blocks give the \cname{} class; within a block, the category names the capability being tested.
+Roughly half the suite are ports of published benchmarks (NaturalQuestions, HotpotQA, BEIR,
+MS MARCO, Oolong, OBLIQ-Bench) and half are constructed here, since the high-\cname{} end is
+largely unpopulated by existing work. Set-F1, pair-F1 and group-F1 are computed over document IDs,
+so every metric but partial credit and Kendall-$\tau$ is scored against an exact ID set; grouping is
+additionally scored with ARI. Per-task construction is given in Section~\ref{sec:tasks},
+Table~\ref{tab:suite} gives the atomic oracle operation each task decomposes into, and
+Appendix~\ref{app:examples} shows a real example of every task.}
+\label{tab:eval-datasets}
+\end{table}

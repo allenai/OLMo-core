@@ -1,0 +1,46 @@
+
+\section{Limitations}
+
+While this work shows initial evidence for challenging properties of \cname tasks, there's still room for future work to expand on our analysis. Our paper, while convincingly supporting our hypotheses at small to medium scale, due to compute limitations doesn't examine huge corpus-scale settings (e.g. 1M+ tokens). While we investigate an initial set, other \cname types can exist. For example, if a question doesn't require looking at the corpus (e.g. "What's the capital of India?" is likely common knowledge to a model), this is \ctc{1}. \ctc{N^3} may also be possible. We leave this investigation to future work.
+
+\section{Discussion of Real High CTC Tasks}
+\label{app:realism}
+
+A key message of this work is to encourage more work on \ctc{N^2} and \ctc{NM} tasks, which represent very different architectural challenges at scale. While our investigation focuses largely on the technical and architectural aspects of this problem, we emphasize that while these tasks are under-explored, they \emph{are} realistic, and systems that can do such tasks over large corpora may open up various new valuable applications not previously possible, inspiring our current task suite. We below detail just a few applications and potential ideas for future work to investigate that could benefit from such systems at scale:
+
+\textbf{Contradiction / Redundancy Detection} Motivating example: scientific literature. Given a large and growing body of scientific literature, a key and evolving question in determining new research and experiments is always \emph{what information does the community have?} Often, one will examine a specific research area at a local level, and given specific ideas may, with keyword search and other tools, try to determine what's been explored and not, or what's been verified or not, which is \ctc{N}. To determine the state of an entire field is at a global level (e.g. all claims with the most contradictory evidence, claims with the most redundant evidence), allowing for systematic synthesis and resolution of such evidence, is \ctc{N^2}, and not currently tractable. Better corpus reasoning systems could allow such systematic analysis end-to-end for scientific literature, fact-checking, minimizing / tracking redundancy in long-text like books, and many other applications.
+
+\textbf{Discovering long-tail categories / phenomena} Motivating example: Monitoring LLM Generations. Language models can generate text at rapid scale, and for an LLM provider or other larger-scale user, every day a new corpus may get generated. For such instances, being able to faithfully look for the long tail of the least common events with harmful or other properties may be important to the safe deployment of such systems (e.g. \emph{What are the weirdest questions today?}). Doing so however is \ctc{NM} where $M$ is the set of possible phenomena (which in the long-tail case will be quite large), and so doing such a task at high-fidelity may currently be very challenging. Similar analyses could be applied for finding under-explored research areas / methodologies. 
+
+\textbf{Structured Re-Organization of Large Corpora} Corpora are often unstructured and, aside from some metadata, relatively unorganized. Being able to do analyses like sorting passages in a book by importance, or hierarchically re-organizing and grouping a corpus into a fashion reflecting the overall semantic structure (e.g. to reflect new trends in the corpus) can all be \ctc{NM} or \ctc{N^2}, and potentially provide valuable analyses or new ways of interacting with corpora.
+
+We believe that if systems which can handle such tasks become more scalable, given that the above are often difficult (or intractable) and may rely on a lot of manual work and heuristics with current systems, a large variety of applications may emerge from new methods here.
+
+% \prasannnote{I was talking to some physics / chemistry PhD students and they were pretty excited about my project for the above possible applications. Apparently a lot of people use LLMs to cross-infer between different experimental paradigms and configurations in the literature (just with naive approaches) so a more expressive thing could be quite helpful}
+
+
+
+\section{Mask-Mixing Ratio Ablation}
+\label{app:mask-mix-ablation}
+
+To get a clearer picture of the mask-mixing technique introduced in Table~\ref{tab:mask-mix-suite}, we ablate the mix ratio $p$ -- the fraction of training steps that use the unmasked (full-attention) forward pass, with the remaining $1-p$ steps using the chunked mask -- on the contradiction task at $N{=}50$ with Qwen-3.5-0.8B-Base. Results are in Table~\ref{tab:mask-mix-ablation}. Pure chunked ($p=0$) lands well below full attention as expected, and pure full attention ($p=1$) is the upper bound. $p=0.1$ seems to do the best, likely as a good trade-off between the additional learning signal and avoiding OOD full attention training steps.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+Full-attention step fraction $p$ & F1 & Exact match \\
+\midrule
+0.00 (pure chunked) & 0.756 & 0.381 \\
+0.02 & 0.853 & 0.596 \\
+0.05 & 0.774 & 0.416 \\
+0.10 & \textbf{0.927} & \textbf{0.791} \\
+0.15 & 0.926 & 0.789 \\
+0.20 & 0.887 & 0.689 \\
+1.00 (pure full attention) & 0.957 & 0.873 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Mask-mixing ratio ablation} on contradiction $N{=}50$ (Qwen-3.5-0.8B-Base, 3 epochs, chunked-SDPA eval). $p$ is the fraction of training steps that use the unmasked (full-attention) forward pass; the remaining $1-p$ use the chunked causal mask. A 10--15\% mix recovers most of the full-attention F1 despite the bulk of training being chunked.}
+\label{tab:mask-mix-ablation}
+\end{table}

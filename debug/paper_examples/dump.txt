@@ -1,0 +1,288 @@
+====================================================================================================
+### NQ retrieval   [single-gold, BM25 hard negs]
+    file: nq_validation_k20_hn19_500.jsonl
+    n_documents: 20   keys: ['answers', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: nq
+    queries: ['who sold out jesus for 30 pieces of silver']
+    answers: ['Judas Iscariot']
+    gold_doc_indices: [0]
+      [1] (GOLD) "Thirty pieces of silver" Thirty pieces of silver Thirty pieces of silver was the price for which Judas Iscariot betrayed Jesus, according to an account in the Gospel of Matthew 26:15 in the …
+      [2] "Butuan Silver Paleograph" Butuan Silver Paleograph The Butuan Silver Palaeograph, also known as the ""Butuan Silver Strip"", is a piece of metal with inscriptions found in Butuan province i …
+      [3] "Phantom Stranger" of betraying him. As the Spectre is about to attack the Stranger, a Mysterious Voice sends him off to inflict his wrath on the more deserving. As payment for what occurred …
+
+====================================================================================================
+### HotpotQA bridge   [2 golds + short CoT]
+    file: hotpotqa_eval_k20_bridge_unified_hn18_500_cot.jsonl
+    n_documents: 20   keys: ['answers', 'chain_of_thought', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: hotpotqa_unified_corpus
+    queries: ['What company did Rex Maughan aquire?']
+    answers: ['Aloe Vera of America']
+    gold_doc_indices: [7, 8]
+      [8] (GOLD) [title=] "Forever Living Products" Forever Living Products Forever Living Products International, Inc. (FLPI) is an American privately-held multi-level marketing (MLM) company based in Scottsdale, Ar …
+      [9] (GOLD) [title=] "Rex Maughan" Rex Maughan Rex G. Maughan is an American businessman. He is the founder, president, and chief executive officer of Forever Living Products, a multi-level marketing company tha …
+      [1] [title=] "Alex Maughan" Alex Maughan Alex Maughan (born April 24, 1995) is an American rugby union player who plays in the front row for the United States men's national team. Maughan has also played …
+      [2] [title=] "Rex Maughan" Ruth graduated from BYU with a degree in elementary education, she and Rex moved to Arizona. Ruth taught school while Rex finished his degree at Arizona State University, event …
+
+====================================================================================================
+### NIAH-contradiction   [needle = the contradicting claim]
+    file: niah_contradiction_eval_n99_p1.jsonl
+    n_documents: 99   keys: ['answers', 'documents', 'gold_doc_indices', 'queries', 'source']
+    source: niah_contradiction
+    queries: ['Find the document that directly contradicts the following claim: A hypertonic solution of 14.4% has an irreversible ciliostatic effect.']
+    gold_doc_indices: [19]
+      [20] (GOLD) A hypertonic solution of 14.4% has a reversible ciliostatic effect.
+      [1] The data was retrieved from the Cardiovascular and Metabolic Disease Etiology Research Center - High Risk Cohort (CMERC-HI, NCT02003781).
+      [2] In men, the presence of both reflux symptoms and GER ('presumed' NERD group) was associated with the serum triglyceride levels.
+
+====================================================================================================
+### BEIR SciFact   [claim -> abstract]
+    file: beir_scifact_ladder_k22_299.jsonl
+    n_documents: 22   keys: ['answers', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: beir_scifact
+    queries: ['0-dimensional biomaterials show inductive properties.']
+    answers: ['']
+    gold_doc_indices: [0]
+      [1] (GOLD) New opportunities: the use of nanotechnologies to manipulate and track stem cells.. Nanotechnologies are emerging platforms that could be useful in measuring, understanding, and manipulating …
+      [2] The spectrum of retinopathy in adults with Plasmodium falciparum malaria. A specific retinopathy has been described in African children with cerebral malaria, but in adults this has not been …
+      [3] Inheritance of coronary artery disease in men: an analysis of the role of the Y chromosome. BACKGROUND A sexual dimorphism exists in the incidence and prevalence of coronary artery disease-- …
+
+====================================================================================================
+### BEIR FiQA (CE)   [CE-cleaned negs]
+    file: beir_fiqa_ce_ladder_k20_648.jsonl
+    n_documents: 20   keys: ['answers', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: beir_fiqa_ce
+    queries: ['Where should I park my rainy-day / emergency fund?']
+    answers: ['']
+    gold_doc_indices: [1, 7, 9, 11, 18]
+      [2] (GOLD) I would suggest your local credit union or local bank for security and liquidity. Liquidity is probably the most important issue for a emergency fund.
+      [8] (GOLD) This is probably a good time to note that credit is not a liquid asset, and not an emergency fund. Credit can be revoked or denied at any time, and Murphy's law states that you may have issu …
+      [10] (GOLD) "First off, you generally want to park your emergency fund somewhere that is ""safe"", meaning something that is not subject to market fluctuations. Your emergency fund is something you need …
+
+====================================================================================================
+### MS MARCO retrieval   [10% CE-filtered hard negs]
+    file: msmarco_trainhn_eval_k20_500.jsonl
+    n_documents: 20   keys: ['answers', 'ce_scores', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: msmarco_trainhn
+    queries: ['what is the difference between fables and folktales? for kids']
+    answers: ['']
+    gold_doc_indices: [1]
+      [2] (GOLD) Folktale vs Fable. Folktales and fables can be understood as two different types of stories that show a difference between them. Mostly, folktales and fables are passed on from one generatio …
+      [1] Your job is to make sense of the fact or example in the context of the overall main idea that is being conveyed. Questions about specific details are a matter of reading carefully for meanin …
+      [3] Cascamite is a waterproof glue and is probably the must effective glue of all. It is a white powder and is resin based and should be mixed in a glass or plastic container, two parts water to …
+
+====================================================================================================
+### MS MARCO rerank   [same pool, ranked output]
+    file: msmarco_trainhn_eval_k20_500.jsonl
+    n_documents: 20   keys: ['answers', 'ce_scores', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: msmarco_trainhn
+    queries: ['what is the difference between fables and folktales? for kids']
+    answers: ['']
+    gold_doc_indices: [1]
+      [2] (GOLD) Folktale vs Fable. Folktales and fables can be understood as two different types of stories that show a difference between them. Mostly, folktales and fables are passed on from one generatio …
+      [1] Your job is to make sense of the fact or example in the context of the overall main idea that is being conveyed. Questions about specific details are a matter of reading carefully for meanin …
+      [3] Cascamite is a waterproof glue and is probably the must effective glue of all. It is a white powder and is resin based and should be mixed in a glass or plastic container, two parts water to …
+
+====================================================================================================
+### OBLIQ retrieval   [long-query BEIR-style]
+    file: obliq_writing_test_k30_461.jsonl
+    n_documents: 30   keys: ['answers', 'documents', 'gold_doc_indices', 'hard_neg_indices', 'queries', 'source']
+    source: obliq_writing
+    queries: ['Find a document written in a similar style and voice to the following writing passage: The slowness and calmness of the lodge came with genuine inquisitiveness. I talked to people without subtly judging who they were, whether they were worthy of my attention, or if I needed to leave a certain impression. About 60 guests were staying there at a time, and everyone had a unique story: George gained a cocaine and alcoh …
+    answers: ['']
+    gold_doc_indices: [13, 22, 28]
+      [14] (GOLD) Health is no big deal until it’s the only thing that matters It’s cliché because it’s real. I started feeling really exhausted this March to the point that I took 4 days off from work, slept …
+      [23] (GOLD) Mental health stuff often doesn’t have linear solutions. Getting professional support meant waiting weeks and opening up to therapists who give no shit about you until you’re lucky to find s …
+      [29] (GOLD) Ryan C - You have a charm that makes friends stay in your life. We never had a bad conversation, whether that was after 1 month or 1 year of not seeing each other. It’s a friendship that wil …
+
+====================================================================================================
+### OOLONG   [aggregate over labeled items]
+    file: oolong_test_synth_ctx1024_spliteval.jsonl
+    n_documents: 1   keys: ['_meta', 'answers', 'documents', 'gold_doc_indices', 'queries', 'source']
+    source: oolong_counting
+    queries: ["In the above data, which of the labels is the most common? Give your final answer in the form 'Label: answer' where answer is one of the labels: incorrect, correct."]
+    answers: ['incorrect']
+    _meta: {'answer_type': 'ANSWER_TYPE.LABEL', 'task_group': 'counting', 'gold_list': ['incorrect'], 'context_len': 1024, 'dataset': 'metaphors'}
+      [1] The following lines contain 10 pairs of sentences, one per line. On each line, the first sentence contains a metaphorical statement and the second sentence (separated by " <--> ") contains a …
+
+====================================================================================================
+### Absence (Gutenberg)   [text-diff; answer is sentence prefixes, NOT doc IDs]
+    file: rung_2048.jsonl
+    n_documents: 90   keys: ['answers', 'documents', 'gold_doc_indices', 'meta', 'queries', 'source']
+    source: absence_gutenberg
+    queries: ['How lonely it makes one to stand still and feel that of all the mighty throng which divides itself around him, not a being knows or cares for him! What knows he too of the thousands who pass him by? How many who bear the impress of godlike virtue, or hide beneath a goodly countenance a heart black with crime? How many fiery spirits, all glowing with hope for the yet unclouded future, or brooding over a darkened and …
+    answers: ['The interior is what', 'In opposite chapels are', 'There is an innocence,']
+    gold_doc_indices: [19, 58, 89]
+    meta: {'format': 'textdiff', 'book': 'sedthh/gutenberg_english/7fe22dcdf0ce', 'n': 90, 'k': 3, 'removed_sentences': ['The interior is what one would expect to behold, after viewing the outside.', 'In opposite chapels are the tombs of Mary and Elizabeth, and near the former that of Darnley.', 'There is an innocence, a childish sweetness of expression in the countenance, which makes one love to gaze upon it.']}
+      [20] (GOLD) The interior is what one would expect to behold, after viewing the outside.
+      [59] (GOLD) In opposite chapels are the tombs of Mary and Elizabeth, and near the former that of Darnley.
+      [90] (GOLD) There is an innocence, a childish sweetness of expression in the countenance, which makes one love to gaze upon it.
+      [1] How lonely it makes one to stand still and feel that of all the mighty throng which divides itself around him, not a being knows or cares for him!
+
+====================================================================================================
+### Outlier (Amazon)   [closed M: star rating / product category]
+    file: rung_2048.jsonl
+    n_documents: 20   keys: ['answers', 'documents', 'gold_doc_indices', 'meta', 'queries', 'source']
+    source: review_outlier_rating
+    queries: ['Can you find outliers with the least common rating in this data?']
+    answers: ['Works great, no errors on memtest; Good idea; Great Case at a Fantastic Price; Beyond good, all the way to delightful']
+    gold_doc_indices: [3, 6, 10, 16]
+    meta: {'majority_label': 4, 'minority_label': 5, 'num_outliers': 4, 'category': 'Electronics'}
+      [4] (GOLD) [title=Works great, no errors on memtest] This RAM comes in 2 sticks of 4gb (4gb is the max supported RAM per slot for many motherboards of this generation) and works perfectly in my old PC. Ran memtest with 0 errors. This RAM will  …
+      [7] (GOLD) [title=Good idea] Seems like a nice backup camera<br /><br />I like the design as it comes with the screen you need to use it<br /><br />The overall look is good but I would say this should be professionally  …
+      [11] (GOLD) [title=Great Case at a Fantastic Price] I never realized Amazon had their own line of products, AmazonBasics! Amazon really has something great going here... The case is the perfect size for my new Canon Powershot Camera, It is we …
+      [17] (GOLD) [title=Beyond good, all the way to delightful] Surprisingly good frame rate. Painless operation. Adjustable, built-in illumination with cool white LEDs arranged to cast no shadows. Easy, smooth focusing with crisp images. And really amaz …
+
+====================================================================================================
+### Outlier (wiki fixedM)   [article count pinned as N grows]
+    file: rung_8192.jsonl
+    n_documents: 57   keys: ['answers', 'documents', 'gold_doc_indices', 'meta', 'queries', 'source']
+    source: wiki_outlier_topic
+    queries: ['Can you find passages that are about a different topic than the rest of these passages?']
+    answers: ['5; 17; 54']
+    gold_doc_indices: [4, 16, 53]
+    meta: {'majority_label': None, 'minority_label': 'Onzy Matthews', 'num_outliers': 3, 'num_categories': 3, 'category_distribution': {'Hugo W. Koehler': 43, 'The Lathe of Heaven': 11, 'Onzy Matthews': 3}, 'num_docs': 57, 'mode': 'mixed'}
+      [5] (GOLD) appearance on the KLAC-TV show ""Hollywood On Television"" hosted by Al Jarvis, where he sang in duet with co-host Betty White (her first T.V. work). He also broke into acting around Hollywo …
+      [17] (GOLD) never been issued before the Mosaic set was produced. The Onzy Matthews big band was recorded far more on other artists' releases, primarily backing singers, than under his own name. During  …
+      [54] (GOLD) LPs were quite successful, and charted with ""Billboard"". One last chart completed for Ray Charles was done for the single ""That's All I Am To You"". Matthews arrangement of ""Driftin' Blu …
+      [1] market for Germany to revitalize its industrial capacity and facilitate remittances back to Germany as the new immigrants prospered, Koehler believed. Receiving Koehler's report, Admiral Sim …
+
+====================================================================================================
+### Outlier (wiki scale-k)   [M grows with N]
+    file: outlier_wiki100w_n55_k3_eval_100.jsonl
+    n_documents: 55   keys: ['answers', 'documents', 'gold_doc_indices', 'meta', 'queries', 'source', 'split']
+    source: wiki_outlier_topic
+    queries: ['Can you find passages that are about a different topic than the rest of these passages?']
+    answers: ['26; 41; 42']
+    gold_doc_indices: [25, 40, 41]
+    meta: {'majority_label': None, 'minority_label': 'James Hilton (designer)', 'num_outliers': 3, 'num_categories': 10, 'category_distribution': {'Iraqi insurgency (2003–2006)': 5, 'La Baie, Quebec': 5, 'Terra (mythology)': 5, 'Andy Carvin': 7, 'Devi Ahilya Vishwavidyalaya': 7, 'José Holebas': 9, 'Mane people': 4, 'SMS Blücher': 6, 'Peter Sloterdijk': 4, 'James Hilton (designer)': 3}}
+      [26] (GOLD) inaugural Interactive Agency of the Year award (2006), it gave it to AKQA, recognising the agency's ""global culture, creative hires and technological muscle."" Said the magazine's editor, T …
+      [41] (GOLD) Year for the second year running at the Revolution Awards and Agency of the Year awards from New Media Age and the Interactive Advertising Bureau. In 2009, the company won five separate agen …
+      [42] (GOLD) 2014, AKQA won Queen's Award for Enterprise: Innovation, and was named Most Innovative Agency at 2014 Digiday Awards. In November 2014, after completing the award-winning interior redesign o …
+      [1] teach and children learn. It will offer a continuing look at how new technology such as wikis, blogs, vlogs, RSS, podcasts, social networking sites, and the always-on culture of the Internet …
+
+====================================================================================================
+### Grouping (OpenAlex)   [partition into k groups]
+    file: openalex_grouping_n20_levels_eval_500.jsonl
+    n_documents: 20   keys: ['answers', 'cluster_labels', 'documents', 'gold_doc_indices', 'k', 'level', 'queries', 'source']
+    source: openalex_grouping_eval
+    queries: ['Cluster these 20 papers into 15 groups.']
+    answers: ['{"groups": [{"doc_ids": [4, 5, 12]}, {"doc_ids": [2, 9]}, {"doc_ids": [3, 15]}, {"doc_ids": [14, 20]}, {"doc_ids": [19]}, {"doc_ids": [6]}, {"doc_ids": [10]}, {"doc_ids": [8]}, {"doc_ids": [17]}, {"doc_ids": [16]}, {"doc_ids": [18]}, {"doc_ids": [1]}, {"doc_ids": [11]}, {"doc_ids": [7]}, {"doc_ids": [13]}]}']
+    gold_doc_indices: [[3, 4, 11], [1, 8], [2, 14], [13, 19], [18], [5], [9], [7], [16], [15], [17], [0], [10], [6], [12]]
+    level: 3
+    k: 15
+    cluster_labels: ['Ammonia production', 'Autoencoder', 'Zinc deficiency (plant disorder)', 'Macrophage', 'Elliptic partial differential equation', 'Moxidectin', 'Pancreatic cancer', 'Routing protocol', 'Stock market', 'Environmental management system', 'Formate', 'Fabrication', 'Task analysis', 'Nomological network', 'Object detection']
+      [1] (GOLD) [title=Microneedles’ Device: Design, Fabrication, and Applications] The delivery of therapeutical molecules through the skin, particularly to its deeper layers, is impaired due to the stratum corneum layer, which acts as a barrier to foreign substances. Thus …
+      [2] (GOLD) [title=Identifying Resilient Communities in Road Networks: A Path-Based Embedding Approach] Effective resilience analysis of road networks is fundamental to building sustainable and disaster prepared cities. Identifying which road segments share similar vulnerabilities is important …
+      [3] (GOLD) [title=Role of zinc in health and disease] This review provides a concise overview of the cellular and clinical aspects of the role of zinc, an essential micronutrient, in human physiology and discusses zinc-related pathological stat …
+      [4] (GOLD) [title=Unveiling Cutting‐Edge Developments in Electrocatalytic Nitrate‐to‐Ammonia Conversion] The excessive enrichment of nitrate in the environment can be converted into ammonia (NH<sub>3</sub>) through electrochemical processes, offering significant implications for modern agricult …
+
+====================================================================================================
+### Contradiction   [PubMed perturbation pairs]
+    file: contradiction_eval_pubmed_both_n20_k3.jsonl
+    n_documents: 20   keys: ['answers', 'documents', 'gold_doc_indices', 'queries', 'source']
+    source: pubmed_perturbation
+    gold_doc_indices: [[2, 12], [8, 11], [13, 17]]
+      [2] (GOLD) A hypertonic solution of 14.4% has a reversible ciliostatic effect.
+      [8] (GOLD) ROS production was increased in diabetic rats when compared to that of control rats (P < 0.05), the effect of apocynin was a reduction in the ROS production in diabetic rats (P < 0.05).
+      [11] (GOLD) In diabetic animal models, apocynin exhibited no significant impact on the heightened reactive oxygen species generation observed relative to non-diabetic controls (P > 0.05).
+      [12] (GOLD) A hypertonic solution of 14.4% has an irreversible ciliostatic effect.
+      [13] (GOLD) Modulation of cell viability was assessed exclusively through the application of exogenous IL-12 and IFN-gamma.
+
+====================================================================================================
+### xabsence   [cross-corpus orphans]
+    file: xabsence_eval_pubmed_p8_k3.jsonl
+    n_documents: 19   keys: ['documents', 'gold_doc_indices', 'num_pairs', 'num_unmatched', 'queries', 'source']
+    source: xabsence_pubmed
+    gold_doc_indices: [0, 2, 13]
+    num_pairs: 8
+    num_unmatched: 3
+      [1] (GOLD) [corpus=A] Recently, we found that Kupffer cells isolated from rats treated only once with ethanol were sensitized to endotoxin 24 hr later.
+      [3] (GOLD) [corpus=A] Since all residents promptly passed the ABS examinations, it was not possible to discern factors associated with Board performances other than broad-based training.
+      [14] (GOLD) [corpus=B] RD2 also correlated with neuropsychological outcome 1 year after aSAH.
+      [2] [corpus=A] Clinical and biochemical data and the alterations in livers resected at transplantation (n=7) or at autopsy (n=2) were gathered in five males and four females (ages 15-78 years) without aeti …
+      [4] [corpus=A] Twelve infants less than 3 months of age, with severe respiratory distress.
+
+====================================================================================================
+### strmatch   [shared word runs]
+    file: strmatch_eval_n20_k3_sub3_l10_h3.jsonl
+    n_documents: 20   keys: ['_meta', 'answers', 'documents', 'gold_doc_indices', 'queries', 'source']
+    source: strmatch
+    queries: ['Find all pairs of strings that contain a run of at least 3 consecutive words in common (the same 3 words, in the same order, appearing contiguously in both strings).']
+    gold_doc_indices: [[1, 11], [2, 8], [15, 19]]
+    _meta: {'relation': 'substring', 'span_len': 3, 'str_len': 10, 'num_hardneg': 3}
+      [1] (GOLD) diasporas kossuth westward taco recipes bakr cease panels neotype niddastausee
+      [2] (GOLD) drown traditionalists eateries visconti broadband amberdeep chisago kindergartens taglish portraitist
+      [8] (GOLD) kannada utama likert mollusk budge amberdeep chisago kindergartens modifying martingale
+      [11] (GOLD) hermitage wass kossuth westward taco bolsheviks iryna epiphany allon garabet
+
+====================================================================================================
+### qdmatch (NQ)   [sparse query-doc pairs]
+    file: qdmatch_eval_nq_q20_n20_k3_separate.jsonl
+    n_documents: 40   keys: ['documents', 'gold_pairs', 'layout', 'num_docs', 'num_queries', 'num_relevant', 'queries', 'source']
+    source: qdmatch_nq
+    gold_pairs: [[7, 29], [14, 28], [19, 40]]
+    num_queries: 20
+    num_docs: 20
+    num_relevant: 3
+    layout: separate
+      [7] (GOLD) [type=query] when did 10 shilling note go out of circulation
+      [14] (GOLD) [type=query] who played the original steve mcgarrett on hawaii five-o
+      [19] (GOLD) [type=query] bosnia and herzegovina croatia macedonia and slovenia all used to be parts of
+      [28] (GOLD) [type=document] "Steve McGarrett" Steve McGarrett Steve McGarrett is a fictional character who is the protagonist of CBS' ""Hawaii Five-O"". McGarrett is a former United States Navy officer and the leader o …
+      [29] (GOLD) [type=document] "Banknotes of the pound sterling" 10 shilling note was designed, featuring Sir Walter Raleigh, which would become the 50 pence note upon decimalisation, and intended to be the first of the n …
+
+====================================================================================================
+### qdmatch (HPQA)   [2 golds per query]
+    file: qdmatch_eval_hpqa_q20_n20_k3_separate.jsonl
+    n_documents: 40   keys: ['documents', 'gold_pairs', 'layout', 'num_docs', 'num_queries', 'num_relevant', 'queries', 'source']
+    source: qdmatch_hpqa
+    gold_pairs: [[2, 29], [2, 36], [3, 26], [3, 39], [8, 25], [8, 34]]
+    num_queries: 20
+    num_docs: 20
+    num_relevant: 3
+    layout: separate
+      [2] (GOLD) [type=query] In what English district is the town Digby, Victoria may be named after?
+      [3] (GOLD) [type=query] Which team's 2013-2014 season had players including a Slovenian who plays at both the point guard and shooting guard positions?
+      [8] (GOLD) [type=query] "Lost!" is a song by a British rock band formed in what year?
+      [25] (GOLD) [type=document] "Lost!" is a song by the British rock band Coldplay. The band co-produced it with Brian Eno and Markus Dravs for their fourth album, "Viva la Vida or Death and All His Friends". The song was …
+      [26] (GOLD) [type=document] Goran Dragić (born 6 May 1986) is a Slovenian professional basketball for the Miami Heat of the National Basketball Association (NBA). He plays at both the point guard and shooting guard pos …
+
+====================================================================================================
+### qdmatch (FiQA)   [finance forum answers; matching is not entity overlap]
+    file: rung_8192.jsonl
+    n_documents: 58   keys: ['documents', 'gold_pairs', 'layout', 'num_docs', 'num_queries', 'num_relevant', 'queries', 'source']
+    source: qdmatch_fiqa_r8192
+    gold_pairs: [[19, 47], [22, 56], [25, 55]]
+    num_queries: 29
+    num_docs: 29
+    num_relevant: 3
+    layout: separate
+      [19] (GOLD) [type=query] How to deposit a cheque issued to an associate in my business into my business account?
+      [22] (GOLD) [type=query] Pros/cons of borrowing money using a mortgage loan and investing it in a low-fee index fund?
+      [25] (GOLD) [type=query] Pay off credit card debt or earn employer 401(k) match?
+      [47] (GOLD) [type=document] Just have the associate sign the back and then deposit it. It's called a third party cheque and is perfectly legal. I wouldn't be surprised if it has a longer hold period and, as always, you …
+      [55] (GOLD) [type=document] A matching pension scheme is like free money. No wait, it actually IS free money. You are literally earning 100% interest rate on that money the instant you pay it in to the account. That mo …
+      [56] (GOLD) [type=document] Risk is the problem, as others have pointed out. Your fixed mortgage interest rate is for a set period of time only. Let's say your 3% might be good for five years, because that's typical of …
+
+====================================================================================================
+### Reorder (Gutenberg)   [recover permutation]
+    file: reorder_gutenberg_n50_eval_105.jsonl
+    n_documents: 50   keys: ['answers', 'chunk_start_offset', 'chunk_word_lens', 'documents', 'gold_order', 'n_chunks', 'queries', 'source_id', 'source_type', 'split']
+    answers: ['[31, 19, 12, 22, 37, 21, 32, 14, 33, 48, 41, 46, 4, 25, 36, 20, 42, 18, 15, 23, 1, 40, 6, 7, 35, 16, 50, 28, 27, 39, 9, 30, 43, 3, 34, 2, 24, 47, 49, 45, 13, 29, 44, 10, 26, 5, 38, 11, 8, 17]']
+    gold_order: [31, 19, 12, 22, 37, 21, 32, 14, 33, 48, 41, 46, 4, 25, 36, 20, 42, 18, 15, 23, 1, 40, 6, 7, 35, 16, 50, 28, 27, 39, 9, 30, 43, 3, 34, 2, 24, 47, 49, 45, 13, 29, 44, 10, 26, 5, 38, 11, 8, 17]
+      [1] Polygon of two or three hundred sides sometimes—by no means always, for the process is attended with serious risk—but sometimes overleaps two or three hundred generations, and as it were dou …
+      [2] I had but one voice, and that I had not been aware that his Royal Highness had two. “That confirms my impression,” said the King, “that you are not a Man, but a feminine Monstrosity with a b …
+      [3] Linelander. Only by the sound of the voice could sex or age be distinguished. Moreover, as each individual occupied the whole of the narrow path, so to speak, which constituted his Universe, …
+
+====================================================================================================
+### Textgroups   [feature-count triples]
+    file: textgroups_eval_n20_g3_k2_t70_w0_mixed.jsonl
+    n_documents: 20   keys: ['_meta', 'answers', 'documents', 'gold_doc_indices', 'queries', 'source']
+    source: textgroups
+    queries: ['Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 70 (exactly 70).']
+    gold_doc_indices: [[1, 11, 12], [2, 14, 17]]
+    _meta: {'feature': 'nouns', 'word': None, 'target': 70, 'tolerance': 0, 'group_size': 3, 'num_groups': 2, 'filler_max': 97, 'separation': 5, 'counts': [34, 13, 62, 70, 95, 65, 75, 81, 58, 94, 31, 5, 92, 17, 58, 85, 40, 85, 60, 58]}
+      [1] (GOLD) The castle and the scholar arrived calmly. The river gathered restlessly. The teacher whispered calmly. The saddle whispered calmly. The meadow and the bridge and the garden waited abruptly. …
+      [2] (GOLD) The forest and the tower and the compass circled suddenly. The teacher and the bridge faltered bravely. The weaver collapsed wearily. The island and the telescope waited bravely. The tavern  …
+      [11] (GOLD) The valley explored softly. The beacon watched slowly. The beacon and the harvester and the telescope studied suddenly. The baker guarded wearily. The violin and the glacier and the windmill …
+

@@ -1,0 +1,2044 @@
+[
+ {
+  "row": "fiqa",
+  "task_dir": "fiqa",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.93,
+     "eval_size": 500,
+     "se": 0.0114,
+     "source": "grade-json",
+     "graded": 1786616090.1595778,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8462,
+     "eval_size": 500,
+     "se": 0.0161,
+     "source": "grade-json",
+     "graded": 1786616178.4728642,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.7258,
+     "eval_size": 500,
+     "se": 0.02,
+     "source": "grade-json",
+     "graded": 1786616309.246344,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.621,
+     "eval_size": 500,
+     "se": 0.0217,
+     "source": "grade-json",
+     "graded": 1786616529.851129,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.3103,
+     "eval_size": 500,
+     "se": 0.0207,
+     "source": "grade-json",
+     "graded": 1786616950.5781684,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.916,
+     "eval_size": 500,
+     "se": 0.0124,
+     "source": "grade-json",
+     "graded": 1786616286.1867871,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8226,
+     "eval_size": 500,
+     "se": 0.0171,
+     "source": "grade-json",
+     "graded": 1786616528.649152,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.6969,
+     "eval_size": 500,
+     "se": 0.0206,
+     "source": "grade-json",
+     "graded": 1786617019.9218624,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.5751,
+     "eval_size": 500,
+     "se": 0.0221,
+     "source": "grade-json",
+     "graded": 1786617420.5643356,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.2802,
+     "eval_size": 500,
+     "se": 0.0201,
+     "source": "grade-json",
+     "graded": 1786618386.58477,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "nq",
+  "task_dir": "nq",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.904,
+     "eval_size": 500,
+     "se": 0.0132,
+     "source": "grade-json",
+     "graded": 1784614720.018367,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.93,
+     "eval_size": 500,
+     "se": 0.0114,
+     "source": "grade-json",
+     "graded": 1784614801.9987912,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.864,
+     "eval_size": 500,
+     "se": 0.0153,
+     "source": "grade-json",
+     "graded": 1784614922.1624775,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.856,
+     "eval_size": 500,
+     "se": 0.0157,
+     "source": "grade-json",
+     "graded": 1786576913.9406023,
+     "ladder": "eval_rungs_ext32k"
+    },
+    "32768": {
+     "value": 0.86,
+     "eval_size": 500,
+     "se": 0.0155,
+     "source": "grade-json",
+     "graded": 1786577346.0610437,
+     "ladder": "eval_rungs_ext32k"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.964,
+     "eval_size": 500,
+     "se": 0.0083,
+     "source": "grade-json",
+     "graded": 1784620776.340401,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.942,
+     "eval_size": 500,
+     "se": 0.0105,
+     "source": "grade-json",
+     "graded": 1784620887.9831603,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.896,
+     "eval_size": 500,
+     "se": 0.0137,
+     "source": "grade-json",
+     "graded": 1784621248.354927,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.886,
+     "eval_size": 500,
+     "se": 0.0142,
+     "source": "grade-json",
+     "graded": 1786577913.0508413,
+     "ladder": "eval_rungs_ext32k"
+    },
+    "32768": {
+     "value": 0.882,
+     "eval_size": 500,
+     "se": 0.0144,
+     "source": "grade-json",
+     "graded": 1786578795.9489722,
+     "ladder": "eval_rungs_ext32k"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "hpqa",
+  "task_dir": "hotpotqa",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.998,
+     "eval_size": 500,
+     "se": 0.002,
+     "source": "grade-json",
+     "graded": 1786570176.8591945,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.991,
+     "eval_size": 500,
+     "se": 0.0042,
+     "source": "grade-json",
+     "graded": 1786570260.0223498,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9863,
+     "eval_size": 500,
+     "se": 0.0052,
+     "source": "grade-json",
+     "graded": 1786570384.7835772,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.97,
+     "eval_size": 500,
+     "se": 0.0076,
+     "source": "grade-json",
+     "graded": 1786570603.0107148,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.9433,
+     "eval_size": 500,
+     "se": 0.0103,
+     "source": "grade-json",
+     "graded": 1786577833.2436905,
+     "ladder": "eval_rungs_ext32k"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.995,
+     "eval_size": 500,
+     "se": 0.0032,
+     "source": "grade-json",
+     "graded": 1784624062.2205715,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.987,
+     "eval_size": 500,
+     "se": 0.0051,
+     "source": "grade-json",
+     "graded": 1784624181.5544243,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.983,
+     "eval_size": 500,
+     "se": 0.0058,
+     "source": "grade-json",
+     "graded": 1784624457.981368,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.965,
+     "eval_size": 500,
+     "se": 0.0082,
+     "source": "grade-json",
+     "graded": 1784627572.578741,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.945,
+     "eval_size": 500,
+     "se": 0.0102,
+     "source": "grade-json",
+     "graded": 1786578436.1821795,
+     "ladder": "eval_rungs_ext32k"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "qdmatch_fiqa",
+  "task_dir": "qdmatch_fiqa",
+  "metric": "pair_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.7919,
+     "eval_size": 500,
+     "se": 0.0182,
+     "source": "grade-json",
+     "graded": 1786642893.190227,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.5848,
+     "eval_size": 500,
+     "se": 0.022,
+     "source": "grade-json",
+     "graded": 1786642893.214227,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.3868,
+     "eval_size": 500,
+     "se": 0.0218,
+     "source": "grade-json",
+     "graded": 1786642893.226227,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.2368,
+     "eval_size": 500,
+     "se": 0.019,
+     "source": "grade-json",
+     "graded": 1786642893.1782272,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.1244,
+     "eval_size": 500,
+     "se": 0.0148,
+     "source": "grade-json",
+     "graded": 1786642893.202227,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.6179,
+     "eval_size": 500,
+     "se": 0.0217,
+     "source": "grade-json",
+     "graded": 1786645109.278799,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.3577,
+     "eval_size": 500,
+     "se": 0.0214,
+     "source": "grade-json",
+     "graded": 1786645109.3027992,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.1592,
+     "eval_size": 500,
+     "se": 0.0164,
+     "source": "grade-json",
+     "graded": 1786645109.315799,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0634,
+     "eval_size": 500,
+     "se": 0.0109,
+     "source": "grade-json",
+     "graded": 1786645109.2667992,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.0168,
+     "eval_size": 500,
+     "se": 0.0057,
+     "source": "grade-json",
+     "graded": 1786645109.291799,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "qdmatch_nq",
+  "task_dir": "qdmatch_nq",
+  "metric": "pair_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9969,
+     "eval_size": 500,
+     "se": 0.0025,
+     "source": "grade-json",
+     "graded": 1786607161.514545,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9825,
+     "eval_size": 500,
+     "se": 0.0059,
+     "source": "grade-json",
+     "graded": 1786607161.536545,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9525,
+     "eval_size": 500,
+     "se": 0.0095,
+     "source": "grade-json",
+     "graded": 1786607161.5485451,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.8843,
+     "eval_size": 500,
+     "se": 0.0143,
+     "source": "grade-json",
+     "graded": 1786607161.501545,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.6863,
+     "eval_size": 500,
+     "se": 0.0208,
+     "source": "grade-json",
+     "graded": 1786607161.5255451,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.7925,
+     "eval_size": 500,
+     "se": 0.0181,
+     "source": "grade-json",
+     "graded": 1786609034.0694416,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.6452,
+     "eval_size": 500,
+     "se": 0.0214,
+     "source": "grade-json",
+     "graded": 1786609034.1024413,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.4644,
+     "eval_size": 500,
+     "se": 0.0223,
+     "source": "grade-json",
+     "graded": 1786609034.3314412,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.2717,
+     "eval_size": 500,
+     "se": 0.0199,
+     "source": "grade-json",
+     "graded": 1786609034.0574415,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.1044,
+     "eval_size": 500,
+     "se": 0.0137,
+     "source": "grade-json",
+     "graded": 1786609034.0814414,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "qdmatch_hpqa",
+  "task_dir": "qdmatch_hpqa",
+  "metric": "pair_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.999,
+     "eval_size": 500,
+     "se": 0.0014,
+     "source": "grade-json",
+     "graded": 1784784907.4945958,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9973,
+     "eval_size": 500,
+     "se": 0.0023,
+     "source": "grade-json",
+     "graded": 1784595122.0708249,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9977,
+     "eval_size": 500,
+     "se": 0.0022,
+     "source": "grade-json",
+     "graded": 1784595234.8677313,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.9923,
+     "eval_size": 500,
+     "se": 0.0039,
+     "source": "grade-json",
+     "graded": 1784699068.2881362,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.981,
+     "eval_size": 500,
+     "se": 0.0061,
+     "source": "grade-json",
+     "graded": 1784785276.9248126,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.6501,
+     "eval_size": 500,
+     "se": 0.0213,
+     "source": "grade-json",
+     "graded": 1784617734.341737,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.7601,
+     "eval_size": 500,
+     "se": 0.0191,
+     "source": "grade-json",
+     "graded": 1784620144.3910797,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.6683,
+     "eval_size": 500,
+     "se": 0.0211,
+     "source": "grade-json",
+     "graded": 1784620608.1837754,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.5475,
+     "eval_size": 500,
+     "se": 0.0223,
+     "source": "grade-json",
+     "graded": 1784621489.9188733,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.333,
+     "eval_size": 500,
+     "se": 0.0211,
+     "source": "grade-json",
+     "graded": 1784623115.361082,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "outlier_amazon",
+  "task_dir": "outlier_amzn",
+  "metric": "set_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9209,
+     "eval_size": 500,
+     "se": 0.0121,
+     "source": "grade-json",
+     "graded": 1784595059.8989785,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8914,
+     "eval_size": 500,
+     "se": 0.0139,
+     "source": "grade-json",
+     "graded": 1784595166.1530068,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.8962,
+     "eval_size": 500,
+     "se": 0.0136,
+     "source": "grade-json",
+     "graded": 1784595329.938966,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.8702,
+     "eval_size": 500,
+     "se": 0.015,
+     "source": "grade-json",
+     "graded": 1784698681.4868517,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.8644,
+     "eval_size": 500,
+     "se": 0.0153,
+     "source": "grade-json",
+     "graded": 1784700282.2189736,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9122,
+     "eval_size": 500,
+     "se": 0.0127,
+     "source": "grade-json",
+     "graded": 1784621912.8027153,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8942,
+     "eval_size": 500,
+     "se": 0.0138,
+     "source": "grade-json",
+     "graded": 1784622752.440057,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.8869,
+     "eval_size": 500,
+     "se": 0.0142,
+     "source": "grade-json",
+     "graded": 1784624119.6285417,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.8752,
+     "eval_size": 500,
+     "se": 0.0148,
+     "source": "grade-json",
+     "graded": 1786620756.5813348,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.8584,
+     "eval_size": 500,
+     "se": 0.0156,
+     "source": "grade-json",
+     "graded": 1784709621.2809677,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "outlier_scalek",
+  "task_dir": "outlier",
+  "metric": "set_f1",
+  "class": "NM",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.982,
+     "eval_size": 500,
+     "se": 0.0059,
+     "source": "grade-json",
+     "graded": 1784654501.4511864,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9556,
+     "eval_size": 500,
+     "se": 0.0092,
+     "source": "grade-json",
+     "graded": 1784657237.9291124,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.8765,
+     "eval_size": 500,
+     "se": 0.0147,
+     "source": "grade-json",
+     "graded": 1784657387.2991176,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.6789,
+     "eval_size": 500,
+     "se": 0.0209,
+     "source": "grade-json",
+     "graded": 1784657640.6020894,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.4279,
+     "eval_size": 500,
+     "se": 0.0221,
+     "source": "grade-json",
+     "graded": 1784658116.626741,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9624,
+     "eval_size": 500,
+     "se": 0.0085,
+     "source": "grade-json",
+     "graded": 1784654877.2984757,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8692,
+     "eval_size": 500,
+     "se": 0.0151,
+     "source": "grade-json",
+     "graded": 1784657890.6911666,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.6415,
+     "eval_size": 500,
+     "se": 0.0214,
+     "source": "grade-json",
+     "graded": 1784659003.8158817,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.3432,
+     "eval_size": 500,
+     "se": 0.0212,
+     "source": "grade-json",
+     "graded": 1784659370.0138533,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.1253,
+     "eval_size": 500,
+     "se": 0.0148,
+     "source": "grade-json",
+     "graded": 1784663639.1008835,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "outlier_fixk",
+  "task_dir": "outlier_fixedM",
+  "metric": "set_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.8798,
+     "eval_size": 500,
+     "se": 0.0145,
+     "source": "grade-json",
+     "graded": 1786607424.261961,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "4096": {
+     "value": 0.9312,
+     "eval_size": 500,
+     "se": 0.0113,
+     "source": "grade-json",
+     "graded": 1786607424.291961,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "8192": {
+     "value": 0.9483,
+     "eval_size": 500,
+     "se": 0.0099,
+     "source": "grade-json",
+     "graded": 1786607424.303961,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "16384": {
+     "value": 0.9695,
+     "eval_size": 500,
+     "se": 0.0077,
+     "source": "grade-json",
+     "graded": 1786607424.234961,
+     "ladder": "eval_rungs_fixedM"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.8306,
+     "eval_size": 500,
+     "se": 0.0168,
+     "source": "grade-json",
+     "graded": 1786614163.8414357,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "4096": {
+     "value": 0.9306,
+     "eval_size": 500,
+     "se": 0.0114,
+     "source": "grade-json",
+     "graded": 1786614163.8644357,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "8192": {
+     "value": 0.9672,
+     "eval_size": 500,
+     "se": 0.008,
+     "source": "grade-json",
+     "graded": 1786614163.8764358,
+     "ladder": "eval_rungs_fixedM"
+    },
+    "16384": {
+     "value": 0.9608,
+     "eval_size": 500,
+     "se": 0.0087,
+     "source": "grade-json",
+     "graded": 1786614163.8294356,
+     "ladder": "eval_rungs_fixedM"
+    }
+   }
+  },
+  "n_dense": 4,
+  "n_chunked": 4,
+  "n_void": 0
+ },
+ {
+  "row": "oolong",
+  "task_dir": "oolong",
+  "metric": "partial_credit",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.7095,
+     "eval_size": 500,
+     "se": 0.0203,
+     "source": "grade-json",
+     "graded": 1786614519.6180246,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.6934,
+     "eval_size": 500,
+     "se": 0.0206,
+     "source": "grade-json",
+     "graded": 1786614519.6320245,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.6322,
+     "eval_size": 500,
+     "se": 0.0216,
+     "source": "grade-json",
+     "graded": 1786614519.6450245,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.6008,
+     "eval_size": 500,
+     "se": 0.0219,
+     "source": "grade-json",
+     "graded": 1786614519.6580245,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.5727,
+     "eval_size": 500,
+     "se": 0.0221,
+     "source": "grade-json",
+     "graded": 1786614519.6710246,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.6913,
+     "eval_size": 500,
+     "se": 0.0207,
+     "source": "grade-json",
+     "graded": 1786615584.0962067,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.624,
+     "eval_size": 500,
+     "se": 0.0217,
+     "source": "grade-json",
+     "graded": 1786615584.1092067,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.5951,
+     "eval_size": 500,
+     "se": 0.022,
+     "source": "grade-json",
+     "graded": 1786615584.1222067,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.5818,
+     "eval_size": 500,
+     "se": 0.0221,
+     "source": "grade-json",
+     "graded": 1786615584.1352065,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.5539,
+     "eval_size": 500,
+     "se": 0.0222,
+     "source": "grade-json",
+     "graded": 1786615584.1502066,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "grouping",
+  "task_dir": "grouping",
+  "metric": "pairwise_f1",
+  "class": "NM",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.8419,
+     "eval_size": 500,
+     "se": 0.0163,
+     "source": "grade-json",
+     "graded": 1784779747.3686507,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.705,
+     "eval_size": 500,
+     "se": 0.0204,
+     "source": "grade-json",
+     "graded": 1784779941.5439558,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.5293,
+     "eval_size": 500,
+     "se": 0.0223,
+     "source": "grade-json",
+     "graded": 1784780182.065409,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.2851,
+     "eval_size": 500,
+     "se": 0.0202,
+     "source": "grade-json",
+     "graded": 1784780567.0281723,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.0066,
+     "eval_size": 500,
+     "se": 0.0036,
+     "source": "grade-json",
+     "graded": 1784781292.794033,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.8158,
+     "eval_size": 500,
+     "se": 0.0173,
+     "source": "grade-json",
+     "graded": 1785903147.6468728,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.6535,
+     "eval_size": 500,
+     "se": 0.0213,
+     "source": "grade-json",
+     "graded": 1784786107.2839465,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.4404,
+     "eval_size": 500,
+     "se": 0.0222,
+     "source": "grade-json",
+     "graded": 1784791330.2793334,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0405,
+     "eval_size": 500,
+     "se": 0.0088,
+     "source": "grade-json",
+     "graded": 1784627099.352755,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.0095,
+     "eval_size": 500,
+     "se": 0.0043,
+     "source": "grade-json",
+     "graded": 1784631462.7977567,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "absence",
+  "task_dir": "absence_gutenberg",
+  "metric": "set_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9636,
+     "eval_size": 500,
+     "se": 0.0084,
+     "source": "grade-json",
+     "graded": 1784614785.320112,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.976,
+     "eval_size": 500,
+     "se": 0.0068,
+     "source": "grade-json",
+     "graded": 1784614967.1996093,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9863,
+     "eval_size": 500,
+     "se": 0.0052,
+     "source": "grade-json",
+     "graded": 1784615314.360491,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.9315,
+     "eval_size": 148,
+     "se": 0.0208,
+     "source": "grade-json",
+     "graded": 1786616019.2799616,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9491,
+     "eval_size": 500,
+     "se": 0.0098,
+     "source": "grade-json",
+     "graded": 1784629826.693635,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9609,
+     "eval_size": 500,
+     "se": 0.0087,
+     "source": "grade-json",
+     "graded": 1784630256.046868,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9805,
+     "eval_size": 500,
+     "se": 0.0062,
+     "source": "grade-json",
+     "graded": 1784631377.7032804,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.9446,
+     "eval_size": 148,
+     "se": 0.0188,
+     "source": "grade-json",
+     "graded": 1784632416.0829344,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 4,
+  "n_chunked": 4,
+  "n_void": 0
+ },
+ {
+  "row": "xabsence",
+  "task_dir": "xabsence",
+  "metric": "set_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.609,
+     "eval_size": 520,
+     "se": 0.0214,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "4096": {
+     "value": 0.545,
+     "eval_size": 520,
+     "se": 0.0218,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "8192": {
+     "value": 0.528,
+     "eval_size": 520,
+     "se": 0.0219,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "16384": {
+     "value": 0.505,
+     "eval_size": 520,
+     "se": 0.0219,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "32768": {
+     "value": 0.518,
+     "eval_size": 520,
+     "se": 0.0219,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.135,
+     "eval_size": 520,
+     "se": 0.015,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "4096": {
+     "value": 0.057,
+     "eval_size": 520,
+     "se": 0.0102,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "8192": {
+     "value": 0.037,
+     "eval_size": 520,
+     "se": 0.0083,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "16384": {
+     "value": 0.012,
+     "eval_size": 520,
+     "se": 0.0048,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    },
+    "32768": {
+     "value": 0.008,
+     "eval_size": 520,
+     "se": 0.0039,
+     "source": "superseded",
+     "graded": null,
+     "ladder": null
+    }
+   }
+  },
+  "n_dense": 0,
+  "n_chunked": 0,
+  "n_void": 10
+ },
+ {
+  "row": "rerank",
+  "task_dir": "rerank",
+  "metric": "mrr@10",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9806,
+     "eval_size": 500,
+     "se": 0.0062,
+     "source": "grade-json",
+     "graded": 1786576766.47242,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "4096": {
+     "value": 0.9836,
+     "eval_size": 500,
+     "se": 0.0057,
+     "source": "grade-json",
+     "graded": 1786576859.9756336,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "8192": {
+     "value": 0.9798,
+     "eval_size": 500,
+     "se": 0.0063,
+     "source": "grade-json",
+     "graded": 1786577011.040746,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "16384": {
+     "value": 0.98,
+     "eval_size": 500,
+     "se": 0.0063,
+     "source": "grade-json",
+     "graded": 1786577262.184965,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "32768": {
+     "value": 0.9861,
+     "eval_size": 500,
+     "se": 0.0052,
+     "source": "grade-json",
+     "graded": 1786577743.4163885,
+     "ladder": "eval_rungs_tokenaccurate"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9833,
+     "eval_size": 500,
+     "se": 0.0057,
+     "source": "grade-json",
+     "graded": 1786580380.4677424,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "4096": {
+     "value": 0.9812,
+     "eval_size": 500,
+     "se": 0.0061,
+     "source": "grade-json",
+     "graded": 1786580725.837049,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "8192": {
+     "value": 0.9805,
+     "eval_size": 500,
+     "se": 0.0062,
+     "source": "grade-json",
+     "graded": 1786581486.7085948,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "16384": {
+     "value": 0.9813,
+     "eval_size": 500,
+     "se": 0.0061,
+     "source": "grade-json",
+     "graded": 1786583602.6590328,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "32768": {
+     "value": 0.9765,
+     "eval_size": 500,
+     "se": 0.0068,
+     "source": "grade-json",
+     "graded": 1786587944.0941627,
+     "ladder": "eval_rungs_tokenaccurate"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "msmarco",
+  "task_dir": "msmarco",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9587,
+     "eval_size": 500,
+     "se": 0.0089,
+     "source": "grade-json",
+     "graded": 1786576762.0005054,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "4096": {
+     "value": 0.9597,
+     "eval_size": 500,
+     "se": 0.0088,
+     "source": "grade-json",
+     "graded": 1786576849.4758344,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "8192": {
+     "value": 0.9538,
+     "eval_size": 500,
+     "se": 0.0094,
+     "source": "grade-json",
+     "graded": 1786576982.0303006,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "16384": {
+     "value": 0.9588,
+     "eval_size": 500,
+     "se": 0.0089,
+     "source": "grade-json",
+     "graded": 1786577210.8261638,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "32768": {
+     "value": 0.9541,
+     "eval_size": 500,
+     "se": 0.0094,
+     "source": "grade-json",
+     "graded": 1786577654.1532834,
+     "ladder": "eval_rungs_tokenaccurate"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9091,
+     "eval_size": 500,
+     "se": 0.0129,
+     "source": "grade-json",
+     "graded": 1786577737.2645183,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "4096": {
+     "value": 0.9208,
+     "eval_size": 500,
+     "se": 0.0121,
+     "source": "grade-json",
+     "graded": 1786577984.4923644,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "8192": {
+     "value": 0.9319,
+     "eval_size": 500,
+     "se": 0.0113,
+     "source": "grade-json",
+     "graded": 1786578396.92297,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "16384": {
+     "value": 0.9456,
+     "eval_size": 500,
+     "se": 0.0101,
+     "source": "grade-json",
+     "graded": 1786578836.8951554,
+     "ladder": "eval_rungs_tokenaccurate"
+    },
+    "32768": {
+     "value": 0.9319,
+     "eval_size": 500,
+     "se": 0.0113,
+     "source": "grade-json",
+     "graded": 1786579719.0154426,
+     "ladder": "eval_rungs_tokenaccurate"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "reorder",
+  "task_dir": "reorder",
+  "metric": "kendall_tau",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.7473,
+     "eval_size": 500,
+     "se": 0.0194,
+     "source": "grade-json",
+     "graded": 1784614667.6753721,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.5998,
+     "eval_size": 500,
+     "se": 0.0219,
+     "source": "grade-json",
+     "graded": 1784634997.6634831,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.2618,
+     "eval_size": 500,
+     "se": 0.0197,
+     "source": "grade-json",
+     "graded": 1784635224.1671891,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0473,
+     "eval_size": 500,
+     "se": 0.0095,
+     "source": "grade-json",
+     "graded": 1784635596.360152,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.4706,
+     "eval_size": 500,
+     "se": 0.0223,
+     "source": "grade-json",
+     "graded": 1784623768.677711,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.2142,
+     "eval_size": 500,
+     "se": 0.0183,
+     "source": "grade-json",
+     "graded": 1784644189.4753685,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.0428,
+     "eval_size": 500,
+     "se": 0.0091,
+     "source": "grade-json",
+     "graded": 1784648497.0380971,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0,
+     "eval_size": 500,
+     "se": 0.0,
+     "source": "grade-json",
+     "graded": 1784632009.8518,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 4,
+  "n_chunked": 4,
+  "n_void": 0
+ },
+ {
+  "row": "obliq",
+  "task_dir": "obliq_twitter",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.74,
+     "eval_size": 126,
+     "se": 0.0391,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "4096": {
+     "value": 0.659,
+     "eval_size": 126,
+     "se": 0.0422,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "8192": {
+     "value": 0.608,
+     "eval_size": 126,
+     "se": 0.0435,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "16384": {
+     "value": 0.277,
+     "eval_size": 126,
+     "se": 0.0399,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "32768": {
+     "value": 0.327,
+     "eval_size": 126,
+     "se": 0.0418,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.689,
+     "eval_size": 126,
+     "se": 0.0412,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "4096": {
+     "value": 0.605,
+     "eval_size": 126,
+     "se": 0.0436,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "8192": {
+     "value": 0.563,
+     "eval_size": 126,
+     "se": 0.0442,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "16384": {
+     "value": 0.262,
+     "eval_size": 126,
+     "se": 0.0392,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    },
+    "32768": {
+     "value": 0.293,
+     "eval_size": 126,
+     "se": 0.0405,
+     "source": "table-2026-07-27",
+     "graded": null,
+     "ladder": null
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "niah_contra",
+  "task_dir": "niah",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.164,
+     "eval_size": 500,
+     "se": 0.0166,
+     "source": "grade-json",
+     "graded": 1784595370.0792205,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.988,
+     "eval_size": 500,
+     "se": 0.0049,
+     "source": "grade-json",
+     "graded": 1784634639.235311,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.976,
+     "eval_size": 500,
+     "se": 0.0068,
+     "source": "grade-json",
+     "graded": 1784634326.1643343,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.984,
+     "eval_size": 500,
+     "se": 0.0056,
+     "source": "grade-json",
+     "graded": 1784705215.984156,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.966,
+     "eval_size": 500,
+     "se": 0.0081,
+     "source": "grade-json",
+     "graded": 1784706918.5142775,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.984,
+     "eval_size": 500,
+     "se": 0.0056,
+     "source": "grade-json",
+     "graded": 1784620810.565714,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.994,
+     "eval_size": 500,
+     "se": 0.0035,
+     "source": "grade-json",
+     "graded": 1784621167.8425431,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.976,
+     "eval_size": 500,
+     "se": 0.0068,
+     "source": "grade-json",
+     "graded": 1784621454.7484226,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.978,
+     "eval_size": 500,
+     "se": 0.0066,
+     "source": "grade-json",
+     "graded": 1784624855.7049706,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.97,
+     "eval_size": 500,
+     "se": 0.0076,
+     "source": "grade-json",
+     "graded": 1784626030.8370693,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "contra_real",
+  "task_dir": "contradiction_iid",
+  "metric": "set_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9895,
+     "eval_size": 500,
+     "se": 0.0046,
+     "source": "grade-json",
+     "graded": 1786501691.346434,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9843,
+     "eval_size": 500,
+     "se": 0.0056,
+     "source": "grade-json",
+     "graded": 1786501801.576363,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.976,
+     "eval_size": 500,
+     "se": 0.0068,
+     "source": "grade-json",
+     "graded": 1786501972.5311317,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.9652,
+     "eval_size": 500,
+     "se": 0.0082,
+     "source": "grade-json",
+     "graded": 1786502259.6996672,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.9463,
+     "eval_size": 500,
+     "se": 0.0101,
+     "source": "grade-json",
+     "graded": 1786502808.2331598,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.8613,
+     "eval_size": 500,
+     "se": 0.0155,
+     "source": "grade-json",
+     "graded": 1786502797.0943737,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.8337,
+     "eval_size": 500,
+     "se": 0.0167,
+     "source": "grade-json",
+     "graded": 1786504106.009145,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.8039,
+     "eval_size": 500,
+     "se": 0.0178,
+     "source": "grade-json",
+     "graded": 1786506217.7143722,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.7586,
+     "eval_size": 500,
+     "se": 0.0191,
+     "source": "grade-json",
+     "graded": 1786510198.6263063,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.6991,
+     "eval_size": 500,
+     "se": 0.0205,
+     "source": "grade-json",
+     "graded": 1786518032.7238152,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "strmatch",
+  "task_dir": "strmatch",
+  "metric": "set_f1",
+  "class": "N2",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9989,
+     "eval_size": 500,
+     "se": 0.0015,
+     "source": "grade-json",
+     "graded": 1784614754.162711,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9973,
+     "eval_size": 500,
+     "se": 0.0023,
+     "source": "grade-json",
+     "graded": 1784614826.9083118,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9973,
+     "eval_size": 500,
+     "se": 0.0023,
+     "source": "grade-json",
+     "graded": 1784614923.3384547,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.9953,
+     "eval_size": 500,
+     "se": 0.003,
+     "source": "grade-json",
+     "graded": 1784708711.1796331,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.9944,
+     "eval_size": 500,
+     "se": 0.0033,
+     "source": "grade-json",
+     "graded": 1786618018.7011304,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.0033,
+     "eval_size": 500,
+     "se": 0.0026,
+     "source": "grade-json",
+     "graded": 1784627977.5703824,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.0027,
+     "eval_size": 500,
+     "se": 0.0023,
+     "source": "grade-json",
+     "graded": 1784623781.3564944,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.0,
+     "eval_size": 500,
+     "se": 0.0,
+     "source": "grade-json",
+     "graded": 1784623962.8773367,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0013,
+     "eval_size": 500,
+     "se": 0.0016,
+     "source": "grade-json",
+     "graded": 1784626373.3879664,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.0,
+     "eval_size": 500,
+     "se": 0.0,
+     "source": "grade-json",
+     "graded": 1784627114.966469,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "textgroups",
+  "task_dir": "textgroups",
+  "metric": "textgroups_f1",
+  "class": "NM",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.196,
+     "eval_size": 500,
+     "se": 0.0178,
+     "source": "grade-json",
+     "graded": 1784694188.2945678,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.09,
+     "eval_size": 500,
+     "se": 0.0128,
+     "source": "grade-json",
+     "graded": 1784591771.8332596,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.054,
+     "eval_size": 500,
+     "se": 0.0101,
+     "source": "grade-json",
+     "graded": 1784591930.3001192,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.051,
+     "eval_size": 500,
+     "se": 0.0098,
+     "source": "grade-json",
+     "graded": 1784699464.2837496,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.047,
+     "eval_size": 500,
+     "se": 0.0095,
+     "source": "grade-json",
+     "graded": 1784701188.3508875,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.0867,
+     "eval_size": 500,
+     "se": 0.0126,
+     "source": "grade-json",
+     "graded": 1784621376.6916063,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.0213,
+     "eval_size": 500,
+     "se": 0.0065,
+     "source": "grade-json",
+     "graded": 1784621620.059768,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.0187,
+     "eval_size": 500,
+     "se": 0.0061,
+     "source": "grade-json",
+     "graded": 1784622032.7355564,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.0067,
+     "eval_size": 500,
+     "se": 0.0036,
+     "source": "grade-json",
+     "graded": 1784625032.5036557,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.0013,
+     "eval_size": 500,
+     "se": 0.0016,
+     "source": "grade-json",
+     "graded": 1784627090.4479184,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ },
+ {
+  "row": "scifact",
+  "task_dir": "scifact",
+  "metric": "gold_id_f1",
+  "class": "N",
+  "cells": {
+   "dense": {
+    "2048": {
+     "value": 0.9634,
+     "eval_size": 300,
+     "se": 0.0108,
+     "source": "grade-json",
+     "graded": 1784785049.34794,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9481,
+     "eval_size": 300,
+     "se": 0.0128,
+     "source": "grade-json",
+     "graded": 1784785118.7016425,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9261,
+     "eval_size": 300,
+     "se": 0.0151,
+     "source": "grade-json",
+     "graded": 1784785208.181998,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.8986,
+     "eval_size": 300,
+     "se": 0.0174,
+     "source": "grade-json",
+     "graded": 1784785350.7725272,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.8787,
+     "eval_size": 300,
+     "se": 0.0189,
+     "source": "grade-json",
+     "graded": 1784785614.3608632,
+     "ladder": "eval_rungs"
+    }
+   },
+   "chunked": {
+    "2048": {
+     "value": 0.9758,
+     "eval_size": 300,
+     "se": 0.0089,
+     "source": "grade-json",
+     "graded": 1784620787.4611776,
+     "ladder": "eval_rungs"
+    },
+    "4096": {
+     "value": 0.9562,
+     "eval_size": 300,
+     "se": 0.0118,
+     "source": "grade-json",
+     "graded": 1784620867.9865615,
+     "ladder": "eval_rungs"
+    },
+    "8192": {
+     "value": 0.9334,
+     "eval_size": 300,
+     "se": 0.0144,
+     "source": "grade-json",
+     "graded": 1784621232.0362546,
+     "ladder": "eval_rungs"
+    },
+    "16384": {
+     "value": 0.8864,
+     "eval_size": 300,
+     "se": 0.0183,
+     "source": "grade-json",
+     "graded": 1784624742.0800939,
+     "ladder": "eval_rungs"
+    },
+    "32768": {
+     "value": 0.8402,
+     "eval_size": 300,
+     "se": 0.0212,
+     "source": "grade-json",
+     "graded": 1784625278.4560285,
+     "ladder": "eval_rungs"
+    }
+   }
+  },
+  "n_dense": 5,
+  "n_chunked": 5,
+  "n_void": 0
+ }
+]

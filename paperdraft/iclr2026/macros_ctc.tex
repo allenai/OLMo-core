@@ -1,0 +1,26 @@
+% Macros the CTC tables and section text depend on.
+%
+% These are RECONSTRUCTED. They were originally defined in iclr2026_conference.tex, which is
+% currently 0 bytes (emptied 2026-08-08 15:16) and untracked, so no copy of the originals
+% survives -- \ctc, \cname and \autonote are used across sections/ and defined nowhere in the
+% repo. That is why pasting a table into a fresh Overleaf project fails with "Undefined control
+% sequence" on \ctc before it ever reaches the table body.
+%
+% The definitions below reproduce how the macros are used, not necessarily their original
+% formatting. Check them against the last built PDF (iclr2026_conference.pdf, 2026-08-03) if the
+% exact look matters, and fold them back into the main .tex when it is restored.
+%
+% Requires in the preamble: \usepackage{booktabs}  (\toprule/\midrule/\bottomrule)
+%                           \usepackage{multirow}  (table_eval_datasets.tex only)
+
+% Corpus-traversal complexity class, e.g. \ctc{N}, \ctc{NM}, \ctc{N^2}, \ctc{N^3}.
+\providecommand{\ctc}[1]{$O_T(#1)$}
+
+% The name of the concept, used inline: "the \cname class", "the high-\cname end".
+\providecommand{\cname}{CTC}
+
+% Notes from an assistant to the author. Hidden by default so drafts render clean.
+% To READ them instead, comment this out and uncomment the visible version below.
+\providecommand{\autonote}[1]{}
+% \usepackage{xcolor}  % needed by the visible version
+% \providecommand{\autonote}[1]{\textcolor{blue}{\small\,[AUTO: #1]}}

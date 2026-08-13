@@ -1,0 +1,15 @@
+# LaTeX build artifacts -- regenerated on every compile, never worth a diff.
+*.aux
+*.log
+*.out
+*.blg
+*.bbl
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.toc
+
+# The compiled paper. Rebuild from sources; it is 1.1 MB and changes on every run.
+iclr2026/iclr2026_conference.pdf
+
+__pycache__/

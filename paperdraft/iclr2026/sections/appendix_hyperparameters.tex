@@ -1,0 +1,72 @@
+\section{Training Hyperparameters}
+\label{app:hyperparams}
+
+Following initial experiments where full-finetuning seems to performan similarly or worse on our settings, we train on our settings using LoRA \citep{Hu2021LoRALA} fine-tuning on a frozen base model, AdamW-8bit, cosine LR schedule, and bfloat16. We use Axolotl \citep{axolotl} for our standard training experiments, and custom code based on the Huggingface \cite{wolf-etal-2020-transformers} transformers library.  Defaults shared across all settings following valdation from initial hyperparameter tuning:
+
+% \amandanote{ah, we should discuss whether full finetuning might make chunked attn seem stronger (and maybe consider using LongLoRA in an ablation for the rebuttal? I would ask for that if I reviewed this paper.)} \prasannnote{Hmm yeah I guess FFT I checked a bit earlier into the project and it was not doing so great, but LongLoRA is a really good point...}
+
+\begin{itemize}
+\item \textbf{LoRA:} $r{=}32$, $\alpha{=}64$, dropout 0.05, target modules $\{q,k,v,o,\text{gate},\text{up},\text{down}\}_\text{proj}$.
+\item \textbf{Optimizer:} AdamW-8bit, lr $1\!\times\!10^{-4}$, cosine schedule, weight decay 0, warmup 5--10\%.
+\item \textbf{Precision:} bf16 weights, tf32 matmul, gradient checkpointing on, no flash-attention (since chunked attention paths require a custom mask).
+\item \textbf{Packing:} \texttt{sample\_packing} is \emph{off} for all results in the main paper, so per-example sequence lengths are stable across runs.
+\item \textbf{DeepSpeed:} ZeRO-2 for multi-GPU runs.
+\end{itemize}
+
+Per-task variations are summarized in Table~\ref{tab:hyperparams}. 
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l c c c c c}
+\toprule
+\textbf{Task} & \textbf{Model} & $\bm{N}$ & \textbf{seq\_len} & \textbf{mb} & \textbf{ga} & \textbf{epochs} \\
+\midrule
+NQ            & Qwen-3.5-0.8B & $k{=}20$--200 & 4k--32k & 1 & 4 & 4 \\
+HotpotQA      & Qwen-3.5-0.8B & $k{=}20$--200 & 4k--32k & 1 & 4 & 4 \\
+\midrule
+Outlier (wiki, 0.8B) & Qwen-3.5-0.8B & 20--100 & 4k / 16k / 25.6k & 1 & 4 & 1 \\
+Outlier (wiki, 4B)   & Qwen-3.5-4B   & 20--100 & 8k / 16k / 25.6k & 1 & 2 & 1 \\
+Outlier (Amazon)     & Qwen-3.5-0.8B & 30      & 5k       & 1 & 4 & 1 \\
+\midrule
+Grouping             & Qwen-3.5-4B   & 20--100 & 4k / 16k & 1 & 4 & 1 \\
+\midrule
+\multirow{2}{*}{Contradiction} & Qwen-3.5-\{0.8B, 2B, 4B\} & 20--500 & 4k--16k & 1 & 4 & 3 \\
+                               & Qwen-2.5-3B               & 20--100 & 4k--16k & 1 & 4 & 3 \\
+\midrule
+Reorder       & Qwen-3.5-9B   & 5--50   & 2k / 4k  & 1 & 1 & 3 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Standard training hyperparameters per setting.} mb = micro batch size, ga = gradient accumulation steps. Sequence-length cells listed as \texttt{small / mid / large} correspond to the $N$ values in increasing order.}
+\label{tab:hyperparams}
+\end{table}
+
+\paragraph{Mask mixing.}
+Mask-mixing experiments add two YAML keys to the training config:
+\begin{itemize}
+\item \texttt{attention\_pattern: chunked} (or \texttt{random\_token}, \texttt{bigbird}, etc.)
+\item \texttt{standard\_mix\_prob: $\alpha$} -- the probability that a given training step uses the unmasked (full-attention) forward pass instead of the chunked mask. Default $\alpha{=}0.10$ for Qwen-3.5 and $\alpha{=}0.50$ for the older grouping/outlier-scalek runs.
+\item \texttt{mix\_seed: 42} for reproducibility.
+\end{itemize}
+Eval is always run with the chunked mask (no mixing), so the comparison reflects pure inference under the sparse pattern.
+
+\paragraph{Random-token sparsity.}
+For the sparsity sweep in Figure~\ref{fig:sparsityscale}, the random-sparse settings use \texttt{attention\_pattern: random\_token} with \texttt{keep\_prob} $\in \{0.10, 0.25, 0.50\}$ and \texttt{random\_seed: 42}. The eval call passes the same \texttt{--keep-prob} and \texttt{--pattern-seed} to materialize the identical random pattern.
+
+\paragraph{Eval defaults.}
+\begin{itemize}
+\item \textbf{Backend:} \texttt{vllm} \cite{kwon2023efficient} for full-attention (faster, FlashAttention \cite{dao2023flashattention2}  kernel) and \texttt{chunked-sdpa} for chunked / random-sparse / anchor variants. NQ, HotpotQA, and outlier full-attention reports use vllm; everything sparse uses chunked-sdpa.
+\item \textbf{Generation:} max\_new\_tokens 200 for contradiction / outlier, 256 for reorder, 1024 for QA tasks. Greedy (temperature 0).
+\item \textbf{Eval set size:} 488 for contradiction, 400 for outlier (wiki), 500 for outlier (Amazon) / NQ / HotpotQA / grouping, 105 for reorder.
+\end{itemize}
+
+\section{GPU Resources / Compute}
+\label{app:gpus}
+
+The experiments for our investigation involved roughly 3k A100 hours and 1k H200 hours (32 CPU cores, 300GB RAM). We expect that with 2xH200 GPUs, the results in Figure~\ref{fig:sec5-cross-task} would take under 200 hours to reproduce.
+
+% The experiments for this paper were primarily on clusters with SLURM access to 2xA100 and 2xH200 GPU instances. This paper also used VESSL AI cluster resources, with the experiments including a total of roughly 500\$ of credits. For our longer-context experiments (e.g. HPQA 32k context length, contradiction task 4B k=500), in the slower chunked setting, training runs on the H200 cluster could last up to 12-14 hours, with other runs scaling as a function of model scale and context length. The total GPU hour count including experimentation for this project likely totaled around 4k A100 hours. Typically these jobs would be allocated with 32 CPU cores per job, and around 300GB of RAM.
+
+% \amandanote{This is a somewhat unusual amount of detail imo; maybe reframe as (1) total GPU hours (2) we expect that with this type of hardware, it would take X hours to reproduce Y runs?}
+% \amandanote{Trying to think about why this feels off to me. I think it's that you can kinda guess that this is from an academic group from these details (SLURM, 2xA100s)?} \prasannnote{Note sure if }

@@ -1,0 +1,1035 @@
+[
+ {
+  "task": "hotpotqa",
+  "row": "hpqa",
+  "label": "hpqa",
+  "metric": "gold_id_f1",
+  "scales": {
+   "0.8b": {
+    "dense": {
+     "2048": {
+      "value": 0.995,
+      "eval_size": 500,
+      "se": 0.0032,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.987,
+      "eval_size": 500,
+      "se": 0.0051,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.979,
+      "eval_size": 500,
+      "se": 0.0064,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.969,
+      "eval_size": 500,
+      "se": 0.0078,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.9403,
+      "eval_size": 500,
+      "se": 0.0106,
+      "parse_rate": null
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.995,
+      "eval_size": 500,
+      "se": 0.0032,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.985,
+      "eval_size": 500,
+      "se": 0.0054,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.983,
+      "eval_size": 500,
+      "se": 0.0058,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.965,
+      "eval_size": 500,
+      "se": 0.0082,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.945,
+      "eval_size": 500,
+      "se": 0.0102,
+      "parse_rate": null
+     }
+    }
+   },
+   "2b": {
+    "dense": {
+     "2048": {
+      "value": 0.993,
+      "eval_size": 500,
+      "se": 0.0037,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.991,
+      "eval_size": 500,
+      "se": 0.0042,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.987,
+      "eval_size": 500,
+      "se": 0.0051,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.973,
+      "eval_size": 500,
+      "se": 0.0072,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.94,
+      "eval_size": 500,
+      "se": 0.0106,
+      "parse_rate": null
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.996,
+      "eval_size": 500,
+      "se": 0.0028,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.9803,
+      "eval_size": 500,
+      "se": 0.0062,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.9793,
+      "eval_size": 500,
+      "se": 0.0064,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.959,
+      "eval_size": 500,
+      "se": 0.0089,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.8963,
+      "eval_size": 500,
+      "se": 0.0136,
+      "parse_rate": null
+     }
+    }
+   },
+   "4b": {
+    "dense": {
+     "2048": {
+      "value": 0.998,
+      "eval_size": 500,
+      "se": 0.002,
+      "source": "grade-json",
+      "graded": 1786570176.8591945,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.991,
+      "eval_size": 500,
+      "se": 0.0042,
+      "source": "grade-json",
+      "graded": 1786570260.0223498,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.9863,
+      "eval_size": 500,
+      "se": 0.0052,
+      "source": "grade-json",
+      "graded": 1786570384.7835772,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.97,
+      "eval_size": 500,
+      "se": 0.0076,
+      "source": "grade-json",
+      "graded": 1786570603.0107148,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.9433,
+      "eval_size": 500,
+      "se": 0.0103,
+      "source": "grade-json",
+      "graded": 1786577833.2436905,
+      "ladder": "eval_rungs_ext32k"
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.995,
+      "eval_size": 500,
+      "se": 0.0032,
+      "source": "grade-json",
+      "graded": 1784624062.2205715,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.987,
+      "eval_size": 500,
+      "se": 0.0051,
+      "source": "grade-json",
+      "graded": 1784624181.5544243,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.983,
+      "eval_size": 500,
+      "se": 0.0058,
+      "source": "grade-json",
+      "graded": 1784624457.981368,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.965,
+      "eval_size": 500,
+      "se": 0.0082,
+      "source": "grade-json",
+      "graded": 1784627572.578741,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.945,
+      "eval_size": 500,
+      "se": 0.0102,
+      "source": "grade-json",
+      "graded": 1786578436.1821795,
+      "ladder": "eval_rungs_ext32k"
+     }
+    }
+   }
+  },
+  "gap": {
+   "0.8b": {
+    "rung": 32768,
+    "value": -0.0047
+   },
+   "2b": {
+    "rung": 32768,
+    "value": 0.0437
+   },
+   "4b": {
+    "rung": 32768,
+    "value": -0.0017
+   }
+  }
+ },
+ {
+  "task": "contradiction",
+  "row": "contra_real",
+  "label": "contra (realistic)",
+  "metric": "set_f1",
+  "scales": {
+   "0.8b": {
+    "dense": {
+     "2048": {
+      "value": 0.9623,
+      "eval_size": 500,
+      "se": 0.0085,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.954,
+      "eval_size": 500,
+      "se": 0.0094,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.9451,
+      "eval_size": 500,
+      "se": 0.0102,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.916,
+      "eval_size": 500,
+      "se": 0.0124,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.8612,
+      "eval_size": 500,
+      "se": 0.0155,
+      "parse_rate": 1.0
+     }
+    },
+    "chunked": {}
+   },
+   "2b": {
+    "dense": {
+     "2048": {
+      "value": 0.9757,
+      "eval_size": 500,
+      "se": 0.0069,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.9779,
+      "eval_size": 500,
+      "se": 0.0066,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.9687,
+      "eval_size": 500,
+      "se": 0.0078,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.9487,
+      "eval_size": 500,
+      "se": 0.0099,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.91,
+      "eval_size": 500,
+      "se": 0.0128,
+      "parse_rate": 1.0
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.8365,
+      "eval_size": 500,
+      "se": 0.0165,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.8003,
+      "eval_size": 500,
+      "se": 0.0179,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.7391,
+      "eval_size": 500,
+      "se": 0.0196,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.6673,
+      "eval_size": 500,
+      "se": 0.0211,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.5887,
+      "eval_size": 500,
+      "se": 0.022,
+      "parse_rate": 1.0
+     }
+    }
+   },
+   "4b": {
+    "dense": {
+     "2048": {
+      "value": 0.9895,
+      "eval_size": 500,
+      "se": 0.0046,
+      "source": "grade-json",
+      "graded": 1786501691.346434,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.9843,
+      "eval_size": 500,
+      "se": 0.0056,
+      "source": "grade-json",
+      "graded": 1786501801.576363,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.976,
+      "eval_size": 500,
+      "se": 0.0068,
+      "source": "grade-json",
+      "graded": 1786501972.5311317,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.9652,
+      "eval_size": 500,
+      "se": 0.0082,
+      "source": "grade-json",
+      "graded": 1786502259.6996672,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.9463,
+      "eval_size": 500,
+      "se": 0.0101,
+      "source": "grade-json",
+      "graded": 1786502808.2331598,
+      "ladder": "eval_rungs"
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.8613,
+      "eval_size": 500,
+      "se": 0.0155,
+      "source": "grade-json",
+      "graded": 1786502797.0943737,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.8337,
+      "eval_size": 500,
+      "se": 0.0167,
+      "source": "grade-json",
+      "graded": 1786504106.009145,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.8039,
+      "eval_size": 500,
+      "se": 0.0178,
+      "source": "grade-json",
+      "graded": 1786506217.7143722,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.7586,
+      "eval_size": 500,
+      "se": 0.0191,
+      "source": "grade-json",
+      "graded": 1786510198.6263063,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.6991,
+      "eval_size": 500,
+      "se": 0.0205,
+      "source": "grade-json",
+      "graded": 1786518032.7238152,
+      "ladder": "eval_rungs"
+     }
+    }
+   }
+  },
+  "gap": {
+   "0.8b": null,
+   "2b": {
+    "rung": 32768,
+    "value": 0.3213
+   },
+   "4b": {
+    "rung": 32768,
+    "value": 0.2472
+   }
+  }
+ },
+ {
+  "task": "fiqa",
+  "row": "fiqa",
+  "label": "fiqa",
+  "metric": "gold_id_f1",
+  "scales": {
+   "0.8b": {
+    "dense": {
+     "2048": {
+      "value": 0.8959,
+      "eval_size": 500,
+      "se": 0.0137,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.7755,
+      "eval_size": 500,
+      "se": 0.0187,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.6589,
+      "eval_size": 500,
+      "se": 0.0212,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.5346,
+      "eval_size": 500,
+      "se": 0.0223,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.2869,
+      "eval_size": 500,
+      "se": 0.0202,
+      "parse_rate": null
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.8766,
+      "eval_size": 500,
+      "se": 0.0147,
+      "parse_rate": null
+     },
+     "4096": {
+      "value": 0.7618,
+      "eval_size": 500,
+      "se": 0.0191,
+      "parse_rate": null
+     },
+     "8192": {
+      "value": 0.6261,
+      "eval_size": 500,
+      "se": 0.0216,
+      "parse_rate": null
+     },
+     "16384": {
+      "value": 0.5065,
+      "eval_size": 500,
+      "se": 0.0224,
+      "parse_rate": null
+     },
+     "32768": {
+      "value": 0.2441,
+      "eval_size": 500,
+      "se": 0.0192,
+      "parse_rate": null
+     }
+    }
+   },
+   "2b": {
+    "dense": {},
+    "chunked": {}
+   },
+   "4b": {
+    "dense": {
+     "2048": {
+      "value": 0.93,
+      "eval_size": 500,
+      "se": 0.0114,
+      "source": "grade-json",
+      "graded": 1786616090.1595778,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.8462,
+      "eval_size": 500,
+      "se": 0.0161,
+      "source": "grade-json",
+      "graded": 1786616178.4728642,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.7258,
+      "eval_size": 500,
+      "se": 0.02,
+      "source": "grade-json",
+      "graded": 1786616309.246344,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.621,
+      "eval_size": 500,
+      "se": 0.0217,
+      "source": "grade-json",
+      "graded": 1786616529.851129,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.3103,
+      "eval_size": 500,
+      "se": 0.0207,
+      "source": "grade-json",
+      "graded": 1786616950.5781684,
+      "ladder": "eval_rungs"
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.916,
+      "eval_size": 500,
+      "se": 0.0124,
+      "source": "grade-json",
+      "graded": 1786616286.1867871,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.8226,
+      "eval_size": 500,
+      "se": 0.0171,
+      "source": "grade-json",
+      "graded": 1786616528.649152,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.6969,
+      "eval_size": 500,
+      "se": 0.0206,
+      "source": "grade-json",
+      "graded": 1786617019.9218624,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.5751,
+      "eval_size": 500,
+      "se": 0.0221,
+      "source": "grade-json",
+      "graded": 1786617420.5643356,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.2802,
+      "eval_size": 500,
+      "se": 0.0201,
+      "source": "grade-json",
+      "graded": 1786618386.58477,
+      "ladder": "eval_rungs"
+     }
+    }
+   }
+  },
+  "gap": {
+   "0.8b": {
+    "rung": 32768,
+    "value": 0.0428
+   },
+   "2b": null,
+   "4b": {
+    "rung": 32768,
+    "value": 0.0301
+   }
+  }
+ },
+ {
+  "task": "qdmatch_nq",
+  "row": "qdmatch_nq",
+  "label": "qdmatch nq",
+  "metric": "pair_f1",
+  "scales": {
+   "0.8b": {
+    "dense": {
+     "2048": {
+      "value": 0.0387,
+      "eval_size": 500,
+      "se": 0.0086,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.0073,
+      "eval_size": 500,
+      "se": 0.0038,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.002,
+      "eval_size": 500,
+      "se": 0.002,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.0013,
+      "eval_size": 500,
+      "se": 0.0016,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 1.0
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.0327,
+      "eval_size": 500,
+      "se": 0.0079,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.006,
+      "eval_size": 500,
+      "se": 0.0035,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.0013,
+      "eval_size": 500,
+      "se": 0.0016,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.0007,
+      "eval_size": 500,
+      "se": 0.0012,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 1.0
+     }
+    }
+   },
+   "2b": {
+    "dense": {
+     "2048": {
+      "value": 0.9947,
+      "eval_size": 500,
+      "se": 0.0033,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.9827,
+      "eval_size": 500,
+      "se": 0.0058,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.9405,
+      "eval_size": 500,
+      "se": 0.0106,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.8684,
+      "eval_size": 500,
+      "se": 0.0151,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.6633,
+      "eval_size": 500,
+      "se": 0.0211,
+      "parse_rate": 1.0
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.9787,
+      "eval_size": 500,
+      "se": 0.0065,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.9152,
+      "eval_size": 500,
+      "se": 0.0125,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.7439,
+      "eval_size": 500,
+      "se": 0.0195,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.5296,
+      "eval_size": 500,
+      "se": 0.0223,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.1795,
+      "eval_size": 500,
+      "se": 0.0172,
+      "parse_rate": 1.0
+     }
+    }
+   },
+   "4b": {
+    "dense": {
+     "2048": {
+      "value": 0.9969,
+      "eval_size": 500,
+      "se": 0.0025,
+      "source": "grade-json",
+      "graded": 1786607161.514545,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.9825,
+      "eval_size": 500,
+      "se": 0.0059,
+      "source": "grade-json",
+      "graded": 1786607161.536545,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.9525,
+      "eval_size": 500,
+      "se": 0.0095,
+      "source": "grade-json",
+      "graded": 1786607161.5485451,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.8843,
+      "eval_size": 500,
+      "se": 0.0143,
+      "source": "grade-json",
+      "graded": 1786607161.501545,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.6863,
+      "eval_size": 500,
+      "se": 0.0208,
+      "source": "grade-json",
+      "graded": 1786607161.5255451,
+      "ladder": "eval_rungs"
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.7925,
+      "eval_size": 500,
+      "se": 0.0181,
+      "source": "grade-json",
+      "graded": 1786609034.0694416,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.6452,
+      "eval_size": 500,
+      "se": 0.0214,
+      "source": "grade-json",
+      "graded": 1786609034.1024413,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.4644,
+      "eval_size": 500,
+      "se": 0.0223,
+      "source": "grade-json",
+      "graded": 1786609034.3314412,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.2717,
+      "eval_size": 500,
+      "se": 0.0199,
+      "source": "grade-json",
+      "graded": 1786609034.0574415,
+      "ladder": "eval_rungs"
+     },
+     "32768": {
+      "value": 0.1044,
+      "eval_size": 500,
+      "se": 0.0137,
+      "source": "grade-json",
+      "graded": 1786609034.0814414,
+      "ladder": "eval_rungs"
+     }
+    }
+   }
+  },
+  "gap": {
+   "0.8b": {
+    "rung": 32768,
+    "value": 0.0
+   },
+   "2b": {
+    "rung": 32768,
+    "value": 0.4838
+   },
+   "4b": {
+    "rung": 32768,
+    "value": 0.5819
+   }
+  }
+ },
+ {
+  "task": "reorder",
+  "row": "reorder",
+  "label": "reorder",
+  "metric": "kendall_tau",
+  "scales": {
+   "0.8b": {
+    "dense": {
+     "2048": {
+      "value": 0.005,
+      "eval_size": 500,
+      "se": 0.0032,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": -0.0061,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 0.998
+     },
+     "8192": {
+      "value": 0.0068,
+      "eval_size": 500,
+      "se": 0.0037,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 0.0
+     }
+    },
+    "chunked": {}
+   },
+   "2b": {
+    "dense": {
+     "2048": {
+      "value": 0.0025,
+      "eval_size": 500,
+      "se": 0.0022,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": -0.0068,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.0041,
+      "eval_size": 500,
+      "se": 0.0029,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 0.0
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.0058,
+      "eval_size": 500,
+      "se": 0.0034,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": -0.0046,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.0099,
+      "eval_size": 500,
+      "se": 0.0044,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "parse_rate": 0.0
+     }
+    }
+   },
+   "4b": {
+    "dense": {
+     "2048": {
+      "value": 0.7473,
+      "eval_size": 500,
+      "se": 0.0194,
+      "source": "grade-json",
+      "graded": 1784614667.6753721,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.5998,
+      "eval_size": 500,
+      "se": 0.0219,
+      "source": "grade-json",
+      "graded": 1784634997.6634831,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.2618,
+      "eval_size": 500,
+      "se": 0.0197,
+      "source": "grade-json",
+      "graded": 1784635224.1671891,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.0473,
+      "eval_size": 500,
+      "se": 0.0095,
+      "source": "grade-json",
+      "graded": 1784635596.360152,
+      "ladder": "eval_rungs"
+     }
+    },
+    "chunked": {
+     "2048": {
+      "value": 0.4706,
+      "eval_size": 500,
+      "se": 0.0223,
+      "source": "grade-json",
+      "graded": 1784623768.677711,
+      "ladder": "eval_rungs"
+     },
+     "4096": {
+      "value": 0.2142,
+      "eval_size": 500,
+      "se": 0.0183,
+      "source": "grade-json",
+      "graded": 1784644189.4753685,
+      "ladder": "eval_rungs"
+     },
+     "8192": {
+      "value": 0.0428,
+      "eval_size": 500,
+      "se": 0.0091,
+      "source": "grade-json",
+      "graded": 1784648497.0380971,
+      "ladder": "eval_rungs"
+     },
+     "16384": {
+      "value": 0.0,
+      "eval_size": 500,
+      "se": 0.0,
+      "source": "grade-json",
+      "graded": 1784632009.8518,
+      "ladder": "eval_rungs"
+     }
+    }
+   }
+  },
+  "gap": {
+   "0.8b": null,
+   "2b": {
+    "rung": 16384,
+    "value": 0.0
+   },
+   "4b": {
+    "rung": 16384,
+    "value": 0.0473
+   }
+  }
+ }
+]

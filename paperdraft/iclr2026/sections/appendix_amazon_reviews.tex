@@ -1,0 +1,17 @@
+\section{Amazon Reviews Outlier Dataset}
+\label{app:amazon-reviews}
+
+The CoT ablation in Table~\ref{tab:cot-ablation} uses a smaller-scale variant of the outlier task built from the Amazon Reviews 2023 corpus \citep{Hou2024BridgingLA}, distinct from the wiki-100w outlier data used for the cross-task scaling figure (Figure~\ref{fig:sec5-cross-task}).
+
+\paragraph{Construction.} Each example contains $N{=}30$ short review documents (review title + body, no rating or category metadata visible to the model). Examples are one of two types, mixed 50/50 in the dataset via the \texttt{--rating-ratio} flag of \texttt{generate\_review\_outlier\_data.py}:
+
+\begin{itemize}
+\item \textbf{Rating outlier:} a majority of reviews share one star rating (1--5) and 3 outlier reviews carry a different rating. Query: \emph{``Can you find outliers with the least common rating in this data?''}
+\item \textbf{Category outlier:} a majority of reviews come from one product category and 3 outliers come from a different category. Categories are drawn from the HF config names of the Amazon-Reviews-2023 dump (e.g.\ \texttt{Books}, \texttt{Electronics}, \texttt{Beauty\_and\_Personal\_Care}, \texttt{Home\_and\_Kitchen}). Query: \emph{``Can you find outliers from the least common category?''}
+\end{itemize}
+
+Ground truth is derived from the structured metadata (star rating field, HF config name) and \emph{not} from any LLM labeling---the model must read the review content to identify outliers because the visible text strips both fields.
+
+\paragraph{Splits used in Table~\ref{tab:cot-ablation}.} 5{,}000 train examples, 500 eval examples, all with $N{=}30$, 3 outliers each. CoT targets are computed deterministically from the same metadata: the \emph{faithful} target names the majority and minority labels (e.g.\ ``Most reviews are 4-star ratings and the outliers are 5-star reviews.''); \emph{repeat-IDs} emits the gold outlier doc IDs before the answer; \emph{mislabeled} uses a randomly-permuted (wrong) majority/minority pair while keeping the template; \emph{dummy} is a content-less template phrase; \emph{random words} samples 50 content words from the input documents. All targets share the same answer format (a comma-separated list of outlier doc IDs).
+
+\paragraph{Why a separate dataset.} The wiki-100w outlier task involves grouping 100-word Wikipedia chunks by their source article, which gives the model a strong topical-similarity prior. The Amazon Reviews variant intentionally weakens that prior---ratings and categories often produce reviews of similar surface style---which makes the task harder to learn without natural-language guidance, and making the CoT ablation more informative.
