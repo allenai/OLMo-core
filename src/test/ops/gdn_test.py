@@ -110,6 +110,35 @@ def test_chunk_gated_delta_rule_cute_does_not_alias_outputs():
 
 
 @requires_gdn_cute
+def test_chunk_gated_delta_rule_cute_matches_fla_with_many_chunks_per_cta(monkeypatch):
+    """
+    ``dg`` must survive a CTA owning more than one chunk.
+
+    ``prepare_wy_repr_bwd``'s CTA count is chosen for occupancy — it targets ~1024 CTAs, so at
+    any shape a test can afford each CTA gets exactly one chunk, while at a production shape
+    (B=16, T=8192) it gets 32. Only in the multi-chunk case can chunk c+1's ``dA_m`` store land
+    on the ``sP`` staging that chunk c's ``dg`` half is still reading, and the resulting ``dg``
+    is both wrong and nondeterministic. Forcing the CTA target down reproduces that at a shape
+    small enough for CI: with the bug present ``dg`` misses its budget by orders of magnitude.
+    """
+    from olmo_core.kernels.gdn_cute import kernel_wy_bwd
+
+    # nseg is baked into the marshaling cache entry when it is built, so the override only
+    # takes effect on a miss. Clear on the way in, and again on the way out so no later test
+    # inherits a one-CTA entry.
+    monkeypatch.setenv("GDN_WYBWD_CTAS", "1")
+    kernel_wy_bwd._CALL_CACHE.clear()
+    try:
+        inputs = _make_inputs(4, 256, 16, 128, 256)
+        cute = _fwd_bwd(inputs, GDNBackend.cute)
+        fla = _fwd_bwd(inputs, GDNBackend.fla)
+        errs = {name: _rel_err(cute[name], fla[name]) for name in TOL}
+        assert all(errs[name] <= TOL[name] for name in TOL), errs
+    finally:
+        kernel_wy_bwd._CALL_CACHE.clear()
+
+
+@requires_gdn_cute
 def test_chunk_gated_delta_rule_cute_initial_and_final_state():
     B, T, HV, K, V = 2, 128, 4, 128, 256
     inputs = _make_inputs(B, T, HV, K, V)

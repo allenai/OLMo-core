@@ -1058,6 +1058,18 @@ class GdnBwdWyKernel:
                     col = (colacc[0] + colacc[1]) + (colacc[2] + colacc[3])
                     mDG[(c * BT + r, hv_idx, b_idx)] = b_r * (db1 + p3) - col
 
+                # sP is aliased onto the dA_m/S1 operand bytes, and the dg branch above is the
+                # only reader of it - the db branch (threads < BT) never touches sP, so it
+                # falls straight through to the next chunk, takes dam_pipe's producer_acquire
+                # (which waits on the MMA consumer, not on us) and its r2s copy overwrites sP
+                # while the dg half is still column-summing it. The next a_sync_barrier sits
+                # *after* that copy, so nothing else stops it. Hence this barrier: no thread of
+                # group A may start chunk c+1's dA_m store until every thread has finished
+                # reading chunk c's p. Only bites when a CTA owns more than one chunk, which
+                # happens at production sizes (chunks-per-CTA is 32 at B=16/T=8192) and never
+                # at the small shapes a unit test can afford.
+                self.a_sync_barrier.arrive_and_wait()
+
                 big_pipe.consumer_release(big_consumer, pipeline.PipelineOp.AsyncThread)
                 big_consumer.advance()
 

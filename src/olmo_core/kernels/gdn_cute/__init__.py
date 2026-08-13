@@ -32,7 +32,17 @@ returned the *same* buffer. That is fine for a benchmark harness that builds fre
 arm, but fatal in a real model: every GDN layer in a stack has identical shapes, so layer 1's
 forward would overwrite the ``o`` that layer 0 saved for backward. Here the outputs are
 allocated fresh per call and only their memref descriptors are re-pointed, which keeps the
-~0.28ms/call marshaling saving without the aliasing.
+~0.28ms/call marshaling saving without the aliasing. (kernel-fun-2 has since fixed this the
+same way, so the two copies agree again; the regression test is
+``test_chunk_gated_delta_rule_cute_does_not_alias_outputs``.)
+
+**Re-vendoring.** Take these from kernel-fun-2 at ``cute-gdn`` e711e32 or later. Earlier
+commits carry a race in ``kernel_wy_bwd``'s ``dg`` epilogue that only fires when a CTA owns
+more than one chunk — which never happens at a shape small enough to unit-test, and always
+happens at production sizes, where it put ``dg`` three orders of magnitude outside its
+tolerance and made it nondeterministic run to run. See
+``test_chunk_gated_delta_rule_cute_matches_fla_with_many_chunks_per_cta``, which forces the
+multi-chunk path at a small shape via the ``GDN_WYBWD_CTAS`` override.
 """
 
 import torch
