@@ -635,6 +635,8 @@ def _build_lm_config(text_cfg, total_vocab_size: int, n_extra_vocab: int = 0) ->
             vocab_size=total_vocab_size,
             n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
+            # mm_olmo's Molmo2 llm configs all set `rope_full_precision: true`.
+            rope_full_precision=True,
             attn_backend=attn_backend,
             dtype=DType.float32,
         )
@@ -643,6 +645,8 @@ def _build_lm_config(text_cfg, total_vocab_size: int, n_extra_vocab: int = 0) ->
             vocab_size=total_vocab_size,
             n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
+            # mm_olmo's Molmo2 llm configs all set `rope_full_precision: true`.
+            rope_full_precision=True,
             attn_backend=attn_backend,
             dtype=DType.float32,
         )
@@ -667,6 +671,8 @@ def _build_lm_config(text_cfg, total_vocab_size: int, n_extra_vocab: int = 0) ->
             vocab_size=total_vocab_size,
             n_extra_vocab=n_extra_vocab,
             rope_theta=rope_theta,
+            # mm_olmo's Molmo2 llm configs all set `rope_full_precision: true`.
+            rope_full_precision=True,
             attn_backend=attn_backend,
             dtype=DType.float32,
         )
