@@ -20,7 +20,7 @@ import stat
 import tempfile
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -53,6 +53,7 @@ from olmo_core.train import prepare_training_environment, teardown_training_envi
 WORLD_SIZE = 8
 EP_DEGREE = 8
 GLOBAL_BATCH_INSTANCES = 32
+DISTRIBUTED_TIMEOUT = timedelta(minutes=60)
 SCHEMA_VERSION = 4
 PROTOCOL_NAME = "vision-alignment-perception-native-matched-wrong-image-v4"
 PROFILE_PAIR_FORMAT = "vision_alignment_perception_profile_pair_audit"
@@ -1212,7 +1213,7 @@ def _initialize_runtime(*, pairing_only: bool) -> dict[str, Any]:
             state["rendezvous"] = rendezvous
             state["created_pairing_process_group"] = True
     else:
-        prepare_training_environment()
+        prepare_training_environment(timeout=DISTRIBUTED_TIMEOUT)
         state["prepared_training_environment"] = True
     return state
 

@@ -79,6 +79,27 @@ def test_pairing_runtime_uses_gloo_without_preparing_cuda(monkeypatch):
     assert calls[-1] == ("destroy", None)
 
 
+def test_model_runtime_uses_exact_one_hour_collective_timeout(monkeypatch):
+    module = _load_module()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "prepare_training_environment",
+        lambda **kwargs: calls.append(("prepare", kwargs)),
+    )
+    monkeypatch.setattr(
+        module,
+        "teardown_training_environment",
+        lambda: calls.append(("teardown", None)),
+    )
+
+    state = module._initialize_runtime(pairing_only=False)
+    assert module.DISTRIBUTED_TIMEOUT.total_seconds() == 60 * 60
+    assert calls == [("prepare", {"timeout": module.DISTRIBUTED_TIMEOUT})]
+    module._teardown_runtime(state)
+    assert calls[-1] == ("teardown", None)
+
+
 def test_json_loader_hashes_the_same_strict_byte_snapshot(tmp_path):
     module = _load_module()
     artifact = tmp_path / "artifact.json"
@@ -317,6 +338,9 @@ def test_late_new_pairing_pin_mismatch_publishes_nothing(tmp_path, monkeypatch):
 def test_perception_evaluator_reuses_bridge_helpers_without_modifying_source():
     module = _load_module()
     assert Path(module.bridge.__file__).name == "vision_alignment_matched_wrong.py"
+    assert hashlib.sha256(Path(module.bridge.__file__).read_bytes()).hexdigest() == (
+        "fb7c7192e8cf92ccba83cbde51b3c7b8a82d37ca89377a894f27ff37ba9ebbdf"
+    )
     assert module.bridge.SCHEMA_VERSION == 3
     assert module.SCHEMA_VERSION == 4
 

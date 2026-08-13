@@ -85,6 +85,41 @@ def test_native_helper_is_emitted_and_raw_sha_pinned_for_every_receipt() -> None
     assert all(reference == references[0] for reference in references[1:])
 
 
+def test_runtime_uses_exact_one_hour_collective_timeout(monkeypatch) -> None:
+    module = _load_module()
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "prepare_training_environment",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    module._prepare_distributed_runtime()
+
+    assert module.DISTRIBUTED_TIMEOUT.total_seconds() == 60 * 60
+    assert calls == [{"timeout": module.DISTRIBUTED_TIMEOUT}]
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected_sha256"),
+    [
+        (
+            "scripts/eval/vision_alignment_state_text.py",
+            "4f499e557ef4cf263907eb80db20518e02cfac01051f05f8e5e8c0fdadc35ec7",
+        ),
+        (
+            "scripts/train/Vision-Alignment.py",
+            "b8a96d946224e42cd0cb6422d27081da09265ea4d0e963f8e7509ac6f39267a5",
+        ),
+    ],
+)
+def test_historical_evidence_sources_remain_byte_identical(
+    relative_path: str, expected_sha256: str
+) -> None:
+    path = Path(__file__).resolve().parents[2] / relative_path
+    assert promotion.sha256_file(path) == expected_sha256
+
+
 def test_native_helper_binding_rejects_wrong_module_or_existing_evidence() -> None:
     module = _load_module()
     receipt_format = next(iter(module._NATIVE_HELPER_RECEIPT_FORMATS))

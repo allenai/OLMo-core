@@ -16,7 +16,7 @@ import hashlib
 import importlib.util
 import os
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from olmo_core.train import prepare_training_environment, teardown_training_envi
 from olmo_core.utils import gc_cuda, move_to_device
 
 WORLD_SIZE = 8
+DISTRIBUTED_TIMEOUT = timedelta(minutes=60)
 _NATIVE_HELPER_RECEIPT_FORMATS = frozenset(
     {
         "vision_alignment_perception_initialization_parity_receipt",
@@ -65,6 +66,11 @@ def _load_snapshot_evaluator():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _prepare_distributed_runtime() -> None:
+    """Initialize the evaluator process group with the Weka audit timeout."""
+    prepare_training_environment(timeout=DISTRIBUTED_TIMEOUT)
 
 
 def _with_native_helper(
@@ -511,7 +517,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     os.environ.setdefault("OLMO_OWN_SYMM_PREWARM", "1")
     module = _load_matched_evaluator()
     snapshot_module = _load_snapshot_evaluator()
-    prepare_training_environment()
+    _prepare_distributed_runtime()
     try:
         reference = args.reference_checkpoint.expanduser().resolve()
         checkpoint = args.checkpoint.expanduser().resolve()
