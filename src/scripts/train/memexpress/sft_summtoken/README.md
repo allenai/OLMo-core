@@ -10,11 +10,16 @@ mask-mixture schedule — that is the only axis the five arms vary.
 
 | arm | mixture | what it is |
 |---|---|---|
-| `summ-only` | (none) | Floor: every example masked. **Launch this first.** |
-| `summ-p25` | `standard_mix_prob=0.25` | Mode 1 — a static random causal fraction |
-| `summ-step50` | `step`, `0.0 → 1.0` at 50% | Mode 2 — a hard phase switch |
-| `summ-anneal` | `linear`, `0.0 → 0.5` | Mode 3 — a rising causal fraction |
+| `summ-only` | (none) | Floor: every example masked |
+| `summ-p25` | `standard_mix_prob=0.25` | a static 25% causal fraction |
+| **`summ-p50`** | `standard_mix_prob=0.5` | **50% masked / 50% causal throughout** |
+| `summ-step50` | `step`, `0.0 → 1.0` at 50% | a hard phase switch |
+| `summ-anneal` | `linear`, `0.0 → 0.5` | a partially rising causal fraction |
+| **`summ-decay`** | `linear`, `0.0 → 1.0` | **100% masked → 0% masked; ends fully causal** |
 | `summ-causal` | `standard_mix_prob=1.0` | **The control** |
+
+`p` throughout is P(**causal**), so "100% mask mixing decaying to 0%" is `mix_start_p=0.0 →
+mix_end_p=1.0`. At `summ-p50` the two readings coincide, so there is no direction to get wrong there.
 
 `summ-causal` is the control, **not** the existing dense run: it holds data, summary tokens, packing
 and base fixed and varies only the mask. `records/POSSIBLE_BUG_SFT_DATA.md` (open) records that dense
@@ -40,12 +45,12 @@ reads as "the mask is too restrictive", so it manufactures a clean false null. S
 ## Pipeline
 
 ```bash
-# 1. Build the shards. --num-summary-tokens MUST equal the model's n_summary_tokens: roles are
-#    derived by counting summary RUNS, so a mismatch silently renumbers every document.
-python src/scripts/data/convert_unified_to_document_landmark.py \
-    --emit summary --num-summary-tokens 5 --marker-set qwen3_5 \
-    --task contradiction --chunk-by document --seq-len 32768 \
-    --input-jsonl ... --out-dir $SUMMTOK_DATA_ROOT/contra_summary
+# 1. Build the shards by inserting <|summ|> runs into the existing Qwen3.5 box-marker shards.
+#    Documents stay byte-identical to the doc-chunked arms, so the families remain comparable.
+#    (From raw JSONL instead: convert_unified_to_document_landmark.py --emit summary.)
+#    --num-summary-tokens MUST equal the model's n_summary_tokens: roles are derived by counting
+#    summary RUNS, so a mismatch silently renumbers every document.
+src/scripts/data/build_summary_token_shards_gantry.sh
 
 # 2. Audit the base (runs anywhere -- no model construction, no triton).
 #    Expect cos(summary, pad) ~ 1.0 on an unrepaired base: that IS the untrained-row signature.
@@ -53,23 +58,25 @@ python src/scripts/data/fix_marker_embeddings.py --audit-only --family qwen3_5 \
     --marker-set doc_start,doc_end,summary,pad \
     --base .../q35-4b-dense-256k-fix/step2385/model_and_optim --audit-json audit_before.json
 
-# 3. Repair. Building a Qwen3.5 model needs triton (GDN), so run this as a gantry job on the
-#    OLMo-core image, not on a laptop.
-python src/scripts/data/fix_marker_embeddings.py --family qwen3_5 --model-size 4B \
-    --marker-set doc_start,doc_end,summary,pad \
-    --base .../q35-4b-dense-256k-fix/step2385/model_and_optim \
-    --out .../q35-4b-dense-256k-summfix --audit-json audit_after.json
-# Gate every launch on audit_after.json: "audit_pass": true.
+# 3. Repair. Building a Qwen3.5 model needs triton (GDN), so this is a gantry job, not a laptop
+#    script. It audits before, repairs, then RE-AUDITS THE WRITTEN COPY and fails if that does not
+#    pass both gates. Gate every launch on it.
+src/scripts/data/fix_marker_embeddings_gantry.sh
 
 # 4. Measure the realized mixture. dry_run does NOT build the dataset, and the curriculum arms
 #    refuse to launch without the instance count rather than guessing it.
-S=src/scripts/train/memexpress/sft_summtoken/Qwen3.5-4B-summ-only-5task-SFT.py
+S=src/scripts/train/memexpress/sft_summtoken/Qwen3.5-4B-summ-p50-5task-SFT.py
 PYTHONPATH=src python $S launch_prep q35-4b-summ-prep ai2/jupiter-cirrascale-2
 export SUMMTOK_N_INSTANCES=<the "MixingInstanceSource: N instances" line>
+# Also read the realized instance LENGTHS from that job: at 262,144 per window, short rungs of the
+# 2k->256k ladder are almost entirely padding. Check the waste before committing GPU time.
 
-# 5. Launch, floor arm first.
-PYTHONPATH=src python $S launch q35-4b-summ-only-5task ai2/jupiter-cirrascale-2 \
-    --launch.follow=false --launch.step_soft_timeout=null
+# 5. Launch.
+for arm in summ-p50 summ-decay; do
+  PYTHONPATH=src python src/scripts/train/memexpress/sft_summtoken/Qwen3.5-4B-$arm-5task-SFT.py \
+      launch q35-4b-$arm-5task ai2/jupiter-cirrascale-2 \
+      --launch.follow=false --launch.step_soft_timeout=null
+done
 ```
 
 ## Verifying the mask on real data
@@ -117,17 +124,25 @@ silently falls back to defaults):
 
 | var | default | notes |
 |---|---|---|
-| `SUMMTOK_SEQ_LEN` | `32768` | see the 256k note below |
-| `SUMMTOK_N_SUMMARY` | `5` | must match the shards' `--num-summary-tokens` |
-| `SUMMTOK_NUM_NODES` | `4` | |
-| `SUMMTOK_DATA_ROOT` | `.../summtoken_5task_32k` | |
-| `SUMMTOK_BASE` | `.../q35-4b-dense-256k-summfix/model_and_optim` | must be repaired |
-| `SUMMTOK_MAX_STEPS` | `1100` | |
-| `SUMMTOK_N_INSTANCES` | (unset) | required by the curriculum arms |
+| `SUMMTOK_SEQ_LEN` | `262144` | see the 256k note below |
+| `SUMMTOK_N_SUMMARY` | `5` | must match the shards' `num_summary_tokens` |
+| `SUMMTOK_NUM_NODES` | `2` | 2 x 8 GPUs |
+| `SUMMTOK_CP_DEGREE` | `4` | Ulysses only; DP = 16 / CP = 4 |
+| `SUMMTOK_DATA_ROOT` | `.../amandab/summtoken_5task_xlong` | built by `build_summary_token_shards_gantry.sh` |
+| `SUMMTOK_BASE` | `.../amandab/q35-4b-dense-256k-summfix/model_and_optim` | must be repaired |
+| `SUMMTOK_MAX_STEPS` | `2240` | |
+| `SUMMTOK_LR` | `4e-5` | `1e-5 * sqrt(GBS / 65,536)`, as in `sft_xlong256k` |
+| `SUMMTOK_N_INSTANCES` | (unset) | **required by the curriculum arms** |
+
+⚠ `SUMMTOK_N_INSTANCES` feeds `mix_total_forwards`, which is divided by **`DP_DEGREE`, not
+`WORLD_SIZE`**: under CP the four ranks of a DP group process the *same* instance. Using the world
+size would make the anneal finish a quarter of the way through the run and sit pinned at its endpoint
+for the rest — a silently different experiment. `derive_curriculum` asserts the anneal lands.
 
 ## On 256k
 
-The mask machinery is 256k-capable: the block mask is built analytically (~0.6 s and a few MB at
+These runs are configured at 256k (2 nodes, Ulysses CP=4, DP=4, GBS 1,048,576, 2240 steps), matching
+`sft_xlong256k`. The mask machinery is 256k-capable: the block mask is built analytically (~0.6 s and a few MB at
 262,144, against the ~760 GiB and ~17 minutes that `create_block_mask` would need), Ulysses CP is
 wired through `sdpa`, and the flex path is GQA-native.
 
