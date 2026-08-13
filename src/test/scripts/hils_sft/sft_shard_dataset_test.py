@@ -20,8 +20,15 @@ sys.path.insert(
 from sft_shard_dataset import (  # noqa: E402
     IGNORE_INDEX,
     SFTShardDataset,
+    mix_documents,
     split_documents,
 )
+
+
+def _pool(n_docs, doclen):
+    return [
+        (np.arange(doclen, dtype=np.uint32), np.ones(doclen, dtype=bool)) for _ in range(n_docs)
+    ]
 
 EOS, PAD = 100257, 100277
 
@@ -123,3 +130,66 @@ def test_same_seed_gives_identical_batches(tmp_path):
     for i in range(len(a)):
         assert (a[i]["input_ids"] == b[i]["input_ids"]).all()
         assert (a[i]["labels"] == b[i]["labels"]).all()
+
+
+# --- weighted mixing -------------------------------------------------------------------------
+# The mixture is defined by sampling weights. On a flat concatenated corpus those weights would
+# silently do nothing -- the realized share would just be each task's raw token count -- so these
+# assert the weights actually bind.
+
+def test_mix_hits_target_token_shares():
+    per_source = {"contra": _pool(50, 100), "nq": _pool(2000, 100), "oolong": _pool(400, 100)}
+    weights = {"contra": 2.9, "nq": 1.0, "oolong": 1.3}
+    _, report = mix_documents(per_source, weights, seed=34521)
+    for name, r in report.items():
+        assert abs(r["realized_share"] - r["target_share"]) < 0.02, (name, r)
+
+
+def test_mix_respects_repetition_cap():
+    """A token-poor but heavily-weighted source must not be repeated past the cap."""
+    per_source = {"contra": _pool(10, 100), "nq": _pool(5000, 100)}
+    _, report = mix_documents(per_source, {"contra": 2.9, "nq": 1.0}, seed=0, max_repetition_factor=8.0)
+    assert all(r["repetition_factor"] <= 8.0 + 1e-6 for r in report.values())
+    # the scarce source is what binds the budget, so it should sit AT the cap
+    assert report["contra"]["repetition_factor"] == pytest.approx(8.0, rel=1e-3)
+
+
+def test_mix_is_deterministic_across_arms():
+    per_source = {"a": _pool(30, 50), "b": _pool(60, 50)}
+    w = {"a": 1.0, "b": 2.0}
+    d1, _ = mix_documents(per_source, w, seed=34521)
+    d2, _ = mix_documents(per_source, w, seed=34521)
+    assert len(d1) == len(d2)
+    assert all((x[0] == y[0]).all() for x, y in zip(d1, d2))
+
+
+def test_mix_rejects_source_weight_mismatch():
+    with pytest.raises(ValueError, match="disagree"):
+        mix_documents({"a": _pool(5, 10), "b": _pool(5, 10)}, {"a": 1.0}, seed=0)
+
+
+def test_mix_rejects_empty_source():
+    with pytest.raises(ValueError, match="no tokens"):
+        mix_documents({"a": _pool(5, 10), "b": []}, {"a": 1.0, "b": 1.0}, seed=0)
+
+
+def test_dataset_sources_without_weights_raises(tmp_path):
+    d = tmp_path / "s1"
+    d.mkdir()
+    _write_shard(d)
+    with pytest.raises(ValueError, match="weights"):
+        SFTShardDataset(str(d), 16, EOS, PAD, sources={"s1": str(d)})
+
+
+def test_dataset_multi_source_reports_mixture(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    _write_shard(a)
+    _write_shard(b, docs=DOCS * 3)
+    ds = SFTShardDataset(
+        str(a), 32, EOS, PAD, sources={"a": str(a), "b": str(b)}, weights={"a": 3.0, "b": 1.0}
+    )
+    assert set(ds.mix_report) == {"a", "b"}
+    assert ds.mix_report["a"]["target_share"] == pytest.approx(0.75)
+    assert abs(ds.mix_report["a"]["realized_share"] - 0.75) < 0.05

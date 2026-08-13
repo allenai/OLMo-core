@@ -82,6 +82,81 @@ def split_documents(
     return docs
 
 
+def mix_documents(
+    per_source: Dict[str, List[Tuple[np.ndarray, np.ndarray]]],
+    weights: Dict[str, float],
+    seed: int = 34521,
+    max_repetition_factor: float = 8.0,
+) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], Dict[str, Dict[str, float]]]:
+    """
+    Mix per-source document pools to target **token** shares, the way olmo_core's mixing loader
+    does — by repeating or subsampling each source, not by concatenating them.
+
+    This exists because our SFT mixture is defined by sampling weights
+    (``{contra: 2.9, rerank: 1.5, outlier: 1.5, nq: 1.0, oolong: 1.3}`` + 25% Dolci), and a flat
+    concatenated corpus has no mixing stage at all: the realized share would just be whatever each
+    task's raw token count happens to be, and the weights would silently do nothing.
+
+    Shares are over **tokens**, not documents, because the weights are compensation for long
+    documents being dropped — a document-count share would not restore the token share it is meant
+    to fix.
+
+    The scale is chosen as the largest that no source has to exceed ``max_repetition_factor`` to
+    reach; that makes the most-upsampled source the binding constraint and keeps every ratio exact,
+    rather than hitting the target for some sources and quietly missing it for others.
+
+    :param per_source: ``{name: [(ids, mask), ...]}`` document pools.
+    :param weights: ``{name: weight}``; normalized internally. Must cover every source.
+    :param seed: Sampling seed. Must match across arms.
+    :param max_repetition_factor: Cap on how often a source may be repeated.
+
+    :returns: ``(documents, report)`` where report gives per-source target/realized token shares.
+
+    :raises ValueError: If a source has no weight, or a weight names an absent source.
+    """
+    missing = set(per_source) ^ set(weights)
+    if missing:
+        raise ValueError(f"sources and weights disagree on: {sorted(missing)}")
+
+    tokens = {k: sum(len(i) for i, _ in v) for k, v in per_source.items()}
+    for k, n in tokens.items():
+        if n == 0:
+            raise ValueError(f"source {k!r} contributed no tokens")
+    total_w = sum(weights.values())
+    target_frac = {k: w / total_w for k, w in weights.items()}
+
+    # Largest total budget T such that every source's requirement stays within its cap:
+    #   target_frac[k] * T <= tokens[k] * max_repetition_factor
+    budget = min(tokens[k] * max_repetition_factor / target_frac[k] for k in per_source)
+    target_tokens = {k: target_frac[k] * budget for k in per_source}
+
+    rng = np.random.default_rng(seed)
+    out: List[Tuple[np.ndarray, np.ndarray]] = []
+    report: Dict[str, Dict[str, float]] = {}
+    for name, docs in per_source.items():
+        want = target_tokens[name]
+        order = rng.permutation(len(docs))
+        picked, got, i = [], 0, 0
+        while got < want:
+            d = docs[order[i % len(docs)]]
+            picked.append(d)
+            got += len(d[0])
+            i += 1
+        out.extend(picked)
+        report[name] = {
+            "available_tokens": tokens[name],
+            "target_share": target_frac[name],
+            "realized_tokens": got,
+            "repetition_factor": got / tokens[name],
+            "documents_emitted": len(picked),
+        }
+    grand = sum(r["realized_tokens"] for r in report.values())
+    for r in report.values():
+        r["realized_share"] = r["realized_tokens"] / grand
+    rng.shuffle(out)  # type: ignore[arg-type]
+    return out, report
+
+
 class SFTShardDataset(Dataset):
     """
     Map-style dataset over packed SFT windows.
@@ -104,15 +179,31 @@ class SFTShardDataset(Dataset):
         pad_token_id: int,
         drop_longer_than_window: bool = True,
         seed: int = 34521,
+        sources: Optional[Dict[str, str]] = None,
+        weights: Optional[Dict[str, float]] = None,
+        max_repetition_factor: float = 8.0,
     ) -> None:
         self.max_seq_len = max_seq_len
         self.pad_token_id = pad_token_id
+        self.mix_report: Dict[str, Dict[str, float]] = {}
 
-        docs: List[Tuple[np.ndarray, np.ndarray]] = []
-        for tok_path, mask_path in _shard_pairs(data_dir):
-            ids = np.load(tok_path, mmap_mode="r")
-            mask = np.load(mask_path, mmap_mode="r")
-            docs.extend(split_documents(np.asarray(ids), np.asarray(mask), eos_token_id))
+        def _load_dir(d: str) -> List[Tuple[np.ndarray, np.ndarray]]:
+            out: List[Tuple[np.ndarray, np.ndarray]] = []
+            for tok_path, mask_path in _shard_pairs(d):
+                ids = np.load(tok_path, mmap_mode="r")
+                mask = np.load(mask_path, mmap_mode="r")
+                out.extend(split_documents(np.asarray(ids), np.asarray(mask), eos_token_id))
+            return out
+
+        if sources:
+            if not weights:
+                raise ValueError("sources given without weights -- the mixture would be undefined")
+            per_source = {name: _load_dir(d) for name, d in sources.items()}
+            docs, self.mix_report = mix_documents(
+                per_source, weights, seed=seed, max_repetition_factor=max_repetition_factor
+            )
+        else:
+            docs = _load_dir(data_dir)
 
         self.n_docs_total = len(docs)
         self.n_docs_dropped = 0
