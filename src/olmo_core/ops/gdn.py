@@ -15,6 +15,10 @@ uses) and routes to one of:
 Blackwell or newer, and the shapes are in the supported envelope (see
 :func:`gdn_cute_unsupported_reason`); otherwise it falls back to ``fla``.
 
+Which one a given shape resolved to is logged at ``INFO`` by this module's logger
+(``olmo_core.ops.gdn``) the first time it dispatches, and a fallback under ``auto`` is logged at
+``WARNING`` with the reason. Grep a run's logs for ``gated delta rule kernels``.
+
 Note that even on the ``cute`` path fla is still required: the chunk-local WY representation in
 the forward and three of the seven backward stages are fla's Triton kernels. The CuTe port
 covers the state-scan and chunk-parallel stages, which is where the time is.
@@ -364,7 +368,58 @@ class ChunkGatedDeltaRuleCute(torch.autograd.Function):
         )
 
 
-_WARNED_REASONS: set = set()
+_LOGGED: set = set()
+
+
+def _log_once(key: Any, level: int, msg: str, *args) -> None:
+    """
+    Log a dispatch decision the first time it's made.
+
+    Once per distinct decision, not per call: this sits in the forward of every GDN layer of
+    every step. Logging is rank0-only by default (see
+    :func:`~olmo_core.utils.setup_logging`), so one line per shape per run.
+    """
+    if key not in _LOGGED:
+        _LOGGED.add(key)
+        log.log(level, msg, *args)
+
+
+def _log_cute_dispatch(q: torch.Tensor, v: torch.Tensor) -> None:
+    """
+    Report which kernels a shape actually resolved to, CuTe stage by CuTe stage.
+
+    Worth spelling out rather than just saying "cute": the two state-scan backward stages
+    delegate to fla below the grid size where a serial scan beats fla's parallel one, and three
+    stages are always fla's. "Using the CuTe kernels" alone would overstate all of that.
+    """
+    # `_MIN_CTAS` is private to those modules but they're vendored here, and the threshold is
+    # the whole reason a shape can be on the CuTe path and still run its scans on fla.
+    from olmo_core.kernels.gdn_cute.kernel_dhu import _MIN_CTAS as DHU_MIN_CTAS
+    from olmo_core.kernels.gdn_cute.kernel_fwdh import _MIN_CTAS as FWDH_MIN_CTAS
+
+    batch_size, seq_len, n_v_heads, head_k_dim = q.shape
+    head_v_dim = v.shape[3]
+    ctas = batch_size * n_v_heads * (head_v_dim // 64)
+    min_ctas = max(DHU_MIN_CTAS, FWDH_MIN_CTAS)
+    scans = (
+        "CuTe"
+        if ctas >= min_ctas
+        else f"fla ({ctas} CTAs is below the {min_ctas}-CTA threshold where they start to win)"
+    )
+    _log_once(
+        ("cute", tuple(q.shape), head_v_dim),
+        logging.INFO,
+        "Using the CuTe gated delta rule kernels for batch_size=%d, seq_len=%d, n_v_heads=%d, "
+        "head_k_dim=%d, head_v_dim=%d: forward and the dqkwg/wy_bwd backward stages are CuTe, "
+        "the state-scan backward stages (fwd_h, bwd_dhu) run on %s, and the WY forward, "
+        "dv_local and cumsum stages are always fla's",
+        batch_size,
+        seq_len,
+        n_v_heads,
+        head_k_dim,
+        head_v_dim,
+        scans,
+    )
 
 
 # Not traceable: the CuTe path re-points memref descriptors with ctypes pointer writes, and the
@@ -422,6 +477,7 @@ def chunk_gated_delta_rule(
     if backend != GDNBackend.fla:
         reason = gdn_cute_unsupported_reason(q, k, v, cu_seqlens=cu_seqlens, chunk_size=chunk_size)
         if reason is None:
+            _log_cute_dispatch(q, v)
             if scale is None:
                 scale = q.shape[-1] ** -0.5
             return ChunkGatedDeltaRuleCute.apply(  # type: ignore[return-value]
@@ -440,9 +496,18 @@ def chunk_gated_delta_rule(
             raise RuntimeError(f"the CuTe gated delta rule kernels cannot be used here: {reason}")
         # auto: fall back, but say so once per distinct reason. Silently running the slow path
         # is how a "1.27x faster" branch turns out to have been fla all along.
-        if reason not in _WARNED_REASONS:
-            _WARNED_REASONS.add(reason)
-            log.warning("Falling back to the fla gated delta rule kernels: %s", reason)
+        _log_once(
+            ("fla", reason),
+            logging.WARNING,
+            "Falling back to the fla gated delta rule kernels: %s",
+            reason,
+        )
+    else:
+        _log_once(
+            ("fla", "requested"),
+            logging.INFO,
+            "Using the fla gated delta rule kernels (kernel_backend='fla')",
+        )
 
     return dispatch_chunk_gated_delta_rule(
         q=q,

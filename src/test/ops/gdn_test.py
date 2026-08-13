@@ -1,14 +1,18 @@
+import logging
+
 import pytest
 import torch
 import torch.nn.functional as F
 
+import olmo_core.ops.gdn as gdn
 from olmo_core.ops.gdn import (
     GDN_CUTE_CHUNK_SIZE,
     GDNBackend,
     chunk_gated_delta_rule,
     gdn_cute_unsupported_reason,
 )
-from olmo_core.testing import requires_gdn_cute
+from olmo_core.testing import requires_gdn_cute, requires_gpu
+from olmo_core.testing.utils import requires_fla
 
 # Lifted from fla's own tests/ops/test_gdn.py, which compares its chunked kernel against its
 # eager recurrence. These compare two chunked kernels against each other, so they should be
@@ -157,6 +161,33 @@ def test_chunk_gated_delta_rule_cute_rejects_unsupported(kwargs: dict, expected:
             backend=GDNBackend.cute,
             **kwargs,
         )
+
+
+# requires_fla only tags the test `gpu`; the actual CUDA skip comes from requires_gpu.
+@requires_fla
+@requires_gpu
+def test_chunk_gated_delta_rule_auto_falls_back_and_says_so(caplog):
+    """
+    Under ``auto``, an unsupported shape must still run — on fla — and log why.
+
+    head_k_dim=64 is outside the CuTe envelope on every GPU, so this covers the fallback on
+    hardware that has no CuTe path at all as well as on hardware that does.
+    """
+    inputs = _make_inputs(2, 128, 4, 64, 128)
+    q, k, v, g, beta = (inputs[n] for n in ("q", "k", "v", "g", "beta"))
+    assert gdn_cute_unsupported_reason(q, k, v) is not None
+
+    gdn._LOGGED.clear()  # the log fires once per process, so don't let test order decide it
+    with caplog.at_level(logging.WARNING, logger="olmo_core.ops.gdn"):
+        o, _ = chunk_gated_delta_rule(
+            q=q, k=k, v=v, g=g, beta=beta, use_qk_l2norm_in_kernel=True, backend=GDNBackend.auto
+        )
+
+    assert o.shape == v.shape
+    o.backward(inputs["do"])
+    assert q.grad is not None
+
+    assert any("Falling back to the fla" in r.message for r in caplog.records), caplog.text
 
 
 @requires_gdn_cute
