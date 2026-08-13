@@ -146,7 +146,14 @@ def main():
     ap.add_argument("--results-dir", default="", help=f"default: {DEFAULT_RESULTS_ROOT}/<name>")
     ap.add_argument("--ngpu", type=int, default=8)
     ap.add_argument("--max-test", type=int, default=600)
-    ap.add_argument("--max-length", type=int, default=40960)
+    # 65536, not 40960. The 32k rung's prompts are NOT ~32k: scifact's longest is 44,280 tokens,
+    # 35% over the label -- far more than the 0.4-3.3% overage the xlong caps are tuned for -- and
+    # the harness now REJECTS an over-long prompt rather than truncating it (truncating cuts the
+    # tail, where the question lives). At 40960 that killed the scifact job at its last rung
+    # (01KZYASZAG8WMYSJY29ND1AF6X). Raising the cap costs nothing when prompts fit: no truncation
+    # either way, and neither model's max_position_embeddings is raised by it (HiLS 131072,
+    # Olmo-3 65536), so results for fitting prompts are identical.
+    ap.add_argument("--max-length", type=int, default=65536)
     # 1, not 8. Two reasons, and neither is speed:
     #   * memory -- the hf backend has no chunked prefill, and Olmo-3-7B is MHA, so its KV cache is
     #     ~0.5 MB/token; batch 4 at the 16k rung exhausted an 80 GB H100
