@@ -306,7 +306,9 @@ def build_summtoken_experiment(cli_context: CliContext, arm: str) -> ExperimentC
             lr=LR,
             weight_decay=0.0,
             betas=(0.9, 0.95),
-            group_overrides=[OptimGroupOverride(name="embeddings", opts=dict(weight_decay=0.0))],
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         compile_model=False,  # GDN kernels
         dp_config=TransformerDataParallelConfig(
