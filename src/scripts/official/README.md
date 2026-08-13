@@ -39,7 +39,7 @@ and export it as `HF_TOKEN`:
 export HF_TOKEN=hf_...
 ```
 
-The token must be a **fine-grained** token with the "Read contents of public gated repos you can
-access" permission. Unscoped `read` and `write` tokens are rejected with a `403` when reading the
+The token must be a **fine-grained** token; which permissions you give it doesn't matter, since the
+bucket is public. Unscoped `read` and `write` tokens are rejected with a `403` when reading the
 bucket. See [user access tokens](https://huggingface.co/docs/hub/security-tokens) for the difference
 between token types.
