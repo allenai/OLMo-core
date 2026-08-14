@@ -181,6 +181,12 @@ def _prepare(row: dict, task: str, args) -> str:
             if not line:
                 continue
             ex = normalize_example(json.loads(line), task)
+            # normalize_example carries `_task`/`_cot_mode` through as None (they are populated by
+            # the combined-corpus path, not present in the raw files). The converter reads them
+            # with dict.get(key, default), which returns the stored None rather than falling back
+            # to --task/--cot-mode -- so a present-but-null key defeats the CLI flags. Drop them
+            # and let the flags apply.
+            ex = {k: v for k, v in ex.items() if not (k in ("_task", "_cot_mode") and v is None)}
             fout.write(json.dumps(ex) + "\n")
             n += 1
     print(f"    normalized {row['file']}: {n} rows -> {dest}", flush=True)
