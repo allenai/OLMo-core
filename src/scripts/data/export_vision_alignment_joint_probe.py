@@ -34,9 +34,15 @@ from olmo_core.data.multimodal.native_text_replay import (
     NativeTextReplayVerificationReceipt,
 )
 from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH,
     JointVisualProjectionManifest,
     build_selected_joint_dataset,
+    joint_alignment_runtime_implementation_inventory,
+    joint_alignment_runtime_registry_sha256,
     load_joint_visual_projection_manifest,
+    validate_joint_live_example,
+    validate_joint_probe_record,
+    validate_joint_unbounded_dataset_identity,
 )
 from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     JOINT_VISUAL_SOURCE_NAMES,
@@ -44,8 +50,6 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
     build_vision_alignment_joint_dataset_config,
     vision_alignment_joint_adapter_projection_sha256,
-    vision_alignment_joint_implementation_inventory,
-    vision_alignment_joint_source_registry_sha256,
 )
 from olmo_core.data.multimodal.vision_alignment_sources import (
     VISION_ALIGNMENT_FORMATTER_VERSION,
@@ -60,6 +64,7 @@ from olmo_core.data.multimodal.vision_alignment_sources import (
     serialized_probe_record,
 )
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.vision import Molmo2TokenIds
 
 SOURCE_CATALOG_FORMAT = "vision_alignment_joint_preprocessed_source_catalog"
 SOURCE_CATALOG_VERSION = VISION_ALIGNMENT_JOINT_SOURCE_CATALOG_VERSION
@@ -71,7 +76,7 @@ JOINT_VISUAL_PROBE_EPOCHS = (0, 1, 2, 3)
 JOINT_NATIVE_PROBE_INDICES = 1024
 JOINT_NATIVE_PROBE_EPOCHS = (0,)
 JOINT_SEQUENCE_LENGTH = 8192
-UNBOUNDED_SEQUENCE_LENGTH = 2**31 - 1
+UNBOUNDED_SEQUENCE_LENGTH = JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH
 DEFAULT_HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
 CATALOG_NAME = "vision-alignment-joint-source-catalog.json"
 EXPORTER_IMPLEMENTATION_PATH = "src/scripts/data/export_vision_alignment_joint_probe.py"
@@ -120,6 +125,22 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _load_native_manifest_pinned(
+    path: Path, *, expected_raw_sha256: str, expected_content_fingerprint: str
+) -> NativeTextReplayManifest:
+    """Load native replay while binding the parser's bytes to both external identities."""
+    before_sha256 = _sha256_file(path)
+    if before_sha256 != expected_raw_sha256:
+        raise ValueError("Native train manifest differs from its external raw SHA-256 pin")
+    manifest = NativeTextReplayManifest.load(path)
+    if (
+        manifest.manifest_sha256 != expected_raw_sha256
+        or manifest.content_fingerprint != expected_content_fingerprint
+    ):
+        raise ValueError("Native train manifest runtime identity differs from its external pins")
+    return manifest
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -147,10 +168,7 @@ def _publish_no_replace(source: Path, destination: Path) -> None:
     libc = ctypes.CDLL(None, use_errno=True)
     renameat2 = getattr(libc, "renameat2", None)
     if renameat2 is None:
-        if destination.exists():
-            raise FileExistsError(f"Refusing to overwrite joint artifact {destination}")
-        os.rename(source, destination)
-        return
+        raise RuntimeError("renameat2(RENAME_NOREPLACE) is unavailable; refusing unsafe publish")
     renameat2.argtypes = [
         ctypes.c_int,
         ctypes.c_char_p,
@@ -206,8 +224,15 @@ def _live_probe_record(
     dataset_index: int,
     epoch: int,
     unbounded_dataset: Optional[Any],
+    token_ids: Molmo2TokenIds,
 ) -> Dict[str, Any]:
     example = _dataset_get(dataset, dataset_index, epoch)
+    validate_joint_live_example(
+        example,
+        source_name=source_name,
+        source_kind=kind,
+        token_ids=token_ids,
+    )
     record = serialized_probe_record(
         example,
         source_name=source_name,
@@ -224,6 +249,12 @@ def _live_probe_record(
         if isinstance(raw_index, bool) or not isinstance(raw_index, int) or raw_index < 0:
             raise ValueError(f"Joint visual source {source_name!r} has an invalid projected row")
         unbounded_example = _dataset_get(unbounded_dataset, raw_index, epoch)
+        validate_joint_live_example(
+            unbounded_example,
+            source_name=source_name,
+            source_kind=kind,
+            token_ids=token_ids,
+        )
         raw_length = _sequence_length(
             unbounded_example, name=f"unbounded {source_name}/{dataset_index}/{epoch}"
         )
@@ -259,6 +290,15 @@ def _live_probe_record(
         raise ValueError(f"Unknown joint probe source kind {kind!r}")
     record["raw_sequence_length"] = raw_length
     record["truncated"] = False
+    validate_joint_probe_record(
+        record,
+        source_name=source_name,
+        source_kind=kind,
+        expected_index=dataset_index,
+        expected_epoch=epoch,
+        sequence_length=JOINT_SEQUENCE_LENGTH,
+        token_ids=token_ids,
+    )
     return record
 
 
@@ -271,6 +311,7 @@ def export_source_probe(
     unique_indices: int,
     epochs: Sequence[int],
     seed: int,
+    token_ids: Molmo2TokenIds,
     unbounded_dataset: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Write one immutable deterministic joint probe and return its catalog entry.
@@ -282,6 +323,7 @@ def export_source_probe(
     :param unique_indices: Number of deterministic logical indices.
     :param epochs: Exact ordered epoch panel applied to every selected index.
     :param seed: Deterministic affine selection seed.
+    :param token_ids: Exact tokenizer-adapted Molmo2 IDs for this joint runtime.
     :param unbounded_dataset: Required raw unbounded adapter for visual sources.
     :returns: Canonical source-catalog entry.
     :raises ValueError: If runtime identity, serialization, images, or length evidence differs.
@@ -348,6 +390,7 @@ def export_source_probe(
                         dataset_index=dataset_index,
                         epoch=epoch,
                         unbounded_dataset=unbounded_dataset,
+                        token_ids=token_ids,
                     )
                     maximum_length = max(maximum_length, int(record["raw_sequence_length"]))
                     row_hashes.append(record["serialized_row_sha256"])
@@ -431,6 +474,8 @@ def build_probe_catalog(
     names = tuple(str(entry.get("name")) for entry in source_entries)
     if names != JOINT_SOURCE_NAMES:
         raise ValueError("Joint source entries must be the exact canonical nine-source ordering")
+    if isinstance(probe_seed, bool) or not isinstance(probe_seed, int) or probe_seed < 0:
+        raise ValueError("Joint probe seed must be a non-negative integer")
     if _SHA256_RE.fullmatch(exporter_sha256) is None:
         raise ValueError("Joint exporter SHA-256 must be lowercase hexadecimal")
     if _SHA256_RE.fullmatch(verification_receipt_sha256) is None:
@@ -460,6 +505,7 @@ def build_probe_catalog(
         fingerprint = raw_entry["dataset_fingerprint"]
         dataset_size = raw_entry["dataset_size"]
         indices = raw_entry["probe_indices"]
+        raw_epochs = raw_entry["probe_epochs"]
         if (
             raw_entry["name"] != source_name
             or raw_entry["kind"] != expected_kind
@@ -472,7 +518,18 @@ def build_probe_catalog(
             or dataset_size < expected_count
             or not isinstance(indices, list)
             or len(indices) != expected_count
-            or raw_entry["probe_epochs"] != list(expected_epochs)
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= dataset_size
+                for index in indices
+            )
+            or len(set(indices)) != len(indices)
+            or not isinstance(raw_epochs, list)
+            or any(type(epoch) is not int for epoch in raw_epochs)
+            or tuple(raw_epochs) != expected_epochs
+            or type(raw_entry["truncated_rows"]) is not int
             or raw_entry["truncated_rows"] != 0
         ):
             raise ValueError(f"Joint source entry {source_name!r} identity differs")
@@ -508,8 +565,8 @@ def build_probe_catalog(
         "recipe_version": VISION_ALIGNMENT_RECIPE_VERSION,
         "formatter_version": VISION_ALIGNMENT_FORMATTER_VERSION,
         "source_registry_version": VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
-        "source_registry_sha256": vision_alignment_joint_source_registry_sha256(),
-        "source_implementation_inventory": vision_alignment_joint_implementation_inventory(),
+        "source_registry_sha256": joint_alignment_runtime_registry_sha256(),
+        "source_implementation_inventory": joint_alignment_runtime_implementation_inventory(),
         "exporter_implementation": {
             "path": EXPORTER_IMPLEMENTATION_PATH,
             "sha256": exporter_sha256,
@@ -586,9 +643,91 @@ def _build_unbounded_visual_dataset(
     if not callable(validate):
         raise ValueError(f"Unbounded joint source {source_name!r} lacks annotation validation")
     validate()
-    if len(dataset) != selection.base_examples:
-        raise ValueError(f"Unbounded joint source {source_name!r} changed raw row identity")
+    validate_joint_unbounded_dataset_identity(
+        dataset,
+        source_name=source_name,
+        selection=selection,
+        max_sequence_length=UNBOUNDED_SEQUENCE_LENGTH,
+    )
     return dataset
+
+
+def _fresh_native_runtime_evidence(
+    native_manifest: NativeTextReplayManifest,
+    receipt: NativeTextReplayVerificationReceipt,
+    *,
+    expected_size: int,
+    tokenizer: Optional[Any] = None,
+) -> NativeTextReplayDataset:
+    """Rebuild native replay so closing validation repeats every source-file stat check."""
+    dataset = NativeTextReplayDataset(
+        native_manifest.path,
+        expected_fingerprint=native_manifest.content_fingerprint,
+        verification_receipt_path=receipt.path,
+        expected_verification_receipt_sha256=receipt.receipt_sha256,
+        validate_source_files=True,
+    )
+    if tokenizer is not None:
+        dataset.validate_tokenizer(tokenizer)
+    if (
+        len(dataset) != expected_size
+        or len(dataset) != native_manifest.num_windows
+        or dataset.sequence_length != JOINT_SEQUENCE_LENGTH
+        or runtime_dataset_fingerprint(dataset) != native_manifest.content_fingerprint
+        or sum(dataset.source_counts.values()) != expected_size
+    ):
+        raise ValueError("Fresh native replay runtime size or identity evidence differs")
+    return dataset
+
+
+def _closing_validate_inputs(
+    *,
+    projection: JointVisualProjectionManifest,
+    native_manifest: NativeTextReplayManifest,
+    receipt: NativeTextReplayVerificationReceipt,
+    expected_native_size: int,
+    tokenizer: Any,
+    token_ids: Molmo2TokenIds,
+) -> None:
+    """Re-load every external identity and fresh-stat native replay before publication."""
+    closing_native = _load_native_manifest_pinned(
+        native_manifest.path,
+        expected_raw_sha256=native_manifest.manifest_sha256,
+        expected_content_fingerprint=native_manifest.content_fingerprint,
+    )
+    closing_receipt = NativeTextReplayVerificationReceipt.load(
+        receipt.path, expected_sha256=receipt.receipt_sha256
+    )
+    closing_receipt.validate_manifest(closing_native)
+    if (
+        closing_native.provenance.get("verification_receipt_sha256")
+        != closing_receipt.receipt_sha256
+    ):
+        raise ValueError("Closing native manifest does not bind its verification receipt")
+    _fresh_native_runtime_evidence(
+        closing_native,
+        closing_receipt,
+        expected_size=expected_native_size,
+        tokenizer=tokenizer,
+    )
+    # Re-open the receipt after the potentially long source-stat pass so its reviewed builder
+    # identity is the last native-replay dependency observed before publication.
+    closing_receipt = NativeTextReplayVerificationReceipt.load(
+        receipt.path, expected_sha256=receipt.receipt_sha256
+    )
+    closing_receipt.validate_manifest(closing_native)
+    closing_projection = load_joint_visual_projection_manifest(
+        projection.path,
+        expected_token_ids=token_ids,
+        expected_sha256=projection.raw_sha256,
+    )
+    if (
+        closing_projection.raw_sha256 != projection.raw_sha256
+        or closing_projection.content_sha256 != projection.content_sha256
+        or _canonical_bytes(closing_projection.source_spec.as_canonical_dict())
+        != _canonical_bytes(projection.source_spec.as_canonical_dict())
+    ):
+        raise ValueError("Joint visual projection identity changed during closing validation")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -613,17 +752,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if args.seed != JOINT_PROBE_SEED:
             raise ValueError(f"Production joint probes require seed {JOINT_PROBE_SEED}")
+        tokenizer, token_ids = load_pinned_vision_alignment_tokenizer(
+            identifier=VISION_ALIGNMENT_TOKENIZER_ID,
+            revision=VISION_ALIGNMENT_TOKENIZER_REVISION,
+            expected_fingerprint=VISION_ALIGNMENT_TOKENIZER_FINGERPRINT,
+            cache_dir=args.hf_cache_dir,
+        )
         projection = load_joint_visual_projection_manifest(
             args.visual_projection_manifest,
+            expected_token_ids=token_ids,
             expected_sha256=args.expected_visual_projection_sha256,
         )
         native_path = Path(args.native_train_manifest).expanduser().resolve()
-        native_raw_sha256 = _sha256_file(native_path)
-        if native_raw_sha256 != args.expected_native_train_manifest_sha256:
-            raise ValueError("Native train manifest differs from its external raw SHA-256 pin")
-        native_manifest = NativeTextReplayManifest.load(native_path)
-        if native_manifest.content_fingerprint != args.expected_native_content_fingerprint:
-            raise ValueError("Native train manifest differs from its content-fingerprint pin")
+        native_manifest = _load_native_manifest_pinned(
+            native_path,
+            expected_raw_sha256=args.expected_native_train_manifest_sha256,
+            expected_content_fingerprint=args.expected_native_content_fingerprint,
+        )
         if (
             native_manifest.sequence_length != JOINT_SEQUENCE_LENGTH
             or native_manifest.provenance.get("split") != "train"
@@ -640,12 +785,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 "Native train manifest does not bind the supplied verification receipt"
             )
 
-        tokenizer, token_ids = load_pinned_vision_alignment_tokenizer(
-            identifier=VISION_ALIGNMENT_TOKENIZER_ID,
-            revision=VISION_ALIGNMENT_TOKENIZER_REVISION,
-            expected_fingerprint=VISION_ALIGNMENT_TOKENIZER_FINGERPRINT,
-            cache_dir=args.hf_cache_dir,
-        )
         if (
             projection.source_spec.perception_spec.tokenizer_id != VISION_ALIGNMENT_TOKENIZER_ID
             or projection.source_spec.perception_spec.tokenizer_revision
@@ -695,6 +834,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         unique_indices=JOINT_NATIVE_PROBE_INDICES,
                         epochs=JOINT_NATIVE_PROBE_EPOCHS,
                         seed=args.seed,
+                        token_ids=token_ids,
                     )
                 else:
                     selected = build_selected_joint_dataset(
@@ -717,6 +857,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         epochs=JOINT_VISUAL_PROBE_EPOCHS,
                         seed=args.seed,
                         unbounded_dataset=unbounded,
+                        token_ids=token_ids,
                     )
                 entries.append(entry)
             catalog = build_probe_catalog(
@@ -730,14 +871,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             catalog_path = staging_dir / CATALOG_NAME
             _write_once(catalog_path, catalog)
+            native_entry = next(entry for entry in entries if entry["name"] == "native_text_replay")
+            _closing_validate_inputs(
+                projection=projection,
+                native_manifest=native_manifest,
+                receipt=receipt,
+                expected_native_size=native_entry["dataset_size"],
+                tokenizer=tokenizer,
+                token_ids=token_ids,
+            )
             if (
                 _sha256_file(exporter_path) != exporter_sha256
                 or _sha256_file(projection.path) != projection.raw_sha256
                 or _sha256_file(native_path) != native_manifest.manifest_sha256
                 or _sha256_file(receipt_path) != receipt.receipt_sha256
-                or vision_alignment_joint_source_registry_sha256()
-                != catalog["source_registry_sha256"]
-                or vision_alignment_joint_implementation_inventory()
+                or joint_alignment_runtime_registry_sha256() != catalog["source_registry_sha256"]
+                or joint_alignment_runtime_implementation_inventory()
                 != catalog["source_implementation_inventory"]
             ):
                 raise ValueError("Joint source or implementation identity changed during export")

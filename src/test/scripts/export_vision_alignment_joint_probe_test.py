@@ -7,7 +7,30 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from olmo_core.nn.vision import Molmo2TokenIds
 from scripts.data import export_vision_alignment_joint_probe as exporter
+
+_TEST_TOKEN_IDS = Molmo2TokenIds(
+    im_start_id=100278,
+    im_end_id=100279,
+    im_patch_id=100280,
+    im_col_id=100281,
+    low_res_im_start_id=100282,
+    image_placeholder_id=100283,
+    im_end_turn_id=100265,
+)
+
+
+@pytest.fixture(autouse=True)
+def _small_joint_geometry(monkeypatch):
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    monkeypatch.setattr(provenance, "N_PATCHES_SQ", 2)
+    monkeypatch.setattr(provenance, "PATCH_DIM", 3)
+    monkeypatch.setattr(provenance, "POOL_H", 1)
+    monkeypatch.setattr(provenance, "POOL_W", 2)
 
 
 def _canonical_sha256(value) -> str:
@@ -23,6 +46,11 @@ def _canonical_sha256(value) -> str:
 
 def _example(length: int, *, row: int, epoch: int, zero_loss: bool = False):
     input_ids = np.arange(length, dtype=np.int64) + row * 100 + epoch
+    input_ids[0] = _TEST_TOKEN_IDS.im_patch_id
+    token_type_ids = np.isin(
+        input_ids,
+        np.fromiter(_TEST_TOKEN_IDS.image_token_ids, dtype=np.int64),
+    ).astype(np.int64)
     return {
         "input_ids": input_ids,
         "labels": np.array(input_ids, copy=True),
@@ -30,7 +58,7 @@ def _example(length: int, *, row: int, epoch: int, zero_loss: bool = False):
             np.zeros(length, dtype=np.float32) if zero_loss else np.ones(length, dtype=np.float32)
         ),
         "position_ids": np.arange(length, dtype=np.int64),
-        "token_type_ids": np.zeros(length, dtype=np.int64),
+        "token_type_ids": token_type_ids,
         "images": np.zeros((1, 2, 3), dtype=np.float32),
         "pooled_patches_idx": np.zeros((1, 2), dtype=np.int64),
     }
@@ -89,6 +117,8 @@ class _NativeDataset:
 
     def get(self, index: int, epoch: int):
         example = _example(self.length, row=index, epoch=epoch)
+        example["input_ids"][0] = 0
+        example["token_type_ids"][0] = 0
         example["images"] = np.zeros((0, 2, 3), dtype=np.float32)
         example["pooled_patches_idx"] = np.zeros((0, 2), dtype=np.int64)
         return example
@@ -109,9 +139,21 @@ def test_visual_export_proves_unbounded_parity_and_rehashes_images(tmp_path, mon
         epochs=(0, 1),
         seed=13,
         unbounded_dataset=raw,
+        token_ids=_TEST_TOKEN_IDS,
     )
 
     records = [json.loads(line) for line in output.read_text().splitlines()]
+    assert output.read_bytes() == b"".join(
+        json.dumps(
+            row,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+        for row in records
+    )
     assert len(records) == 4
     assert [(row["probe_epoch"], row["probe_index"]) for row in records] == [
         (epoch, index) for epoch in (0, 1) for index in entry["probe_indices"]
@@ -125,6 +167,50 @@ def test_visual_export_proves_unbounded_parity_and_rehashes_images(tmp_path, mon
         entry["probe_indices"]
     )
     assert selected.annotation_validations == 1
+
+
+def test_visual_export_allows_global_plus_eight_tiles_and_rejects_tenth(tmp_path, monkeypatch):
+    monkeypatch.setattr(exporter, "JOINT_SEQUENCE_LENGTH", 8)
+    raw = _RawDataset(8)
+    original_get = raw.get
+
+    def with_crops(index, epoch):
+        example = original_get(index, epoch)
+        example["images"] = np.zeros((9, 2, 3), dtype=np.float32)
+        return example
+
+    raw.get = with_crops
+    selected = _SelectedDataset(raw, source_name="pixmo_caption")
+    exporter.export_source_probe(
+        selected,
+        source_name="pixmo_caption",
+        kind="visual",
+        output_path=tmp_path / "nine-crops.jsonl",
+        unique_indices=1,
+        epochs=(0,),
+        seed=13,
+        unbounded_dataset=raw,
+        token_ids=_TEST_TOKEN_IDS,
+    )
+
+    def with_too_many_crops(index, epoch):
+        example = original_get(index, epoch)
+        example["images"] = np.zeros((10, 2, 3), dtype=np.float32)
+        return example
+
+    raw.get = with_too_many_crops
+    with pytest.raises(ValueError, match="positive image and pooled-token counts"):
+        exporter.export_source_probe(
+            selected,
+            source_name="pixmo_caption",
+            kind="visual",
+            output_path=tmp_path / "ten-crops.jsonl",
+            unique_indices=1,
+            epochs=(0,),
+            seed=13,
+            unbounded_dataset=raw,
+            token_ids=_TEST_TOKEN_IDS,
+        )
 
 
 def test_visual_export_rejects_any_raw_row_above_joint_bound(tmp_path, monkeypatch):
@@ -142,6 +228,7 @@ def test_visual_export_rejects_any_raw_row_above_joint_bound(tmp_path, monkeypat
             epochs=(0,),
             seed=13,
             unbounded_dataset=raw,
+            token_ids=_TEST_TOKEN_IDS,
         )
     assert not (tmp_path / "pixmo_caption.jsonl").exists()
 
@@ -155,7 +242,7 @@ def test_visual_export_rejects_selected_unbounded_serialization_drift(tmp_path, 
     def drifted(index, epoch):
         example = original_get(index, epoch)
         example["input_ids"] = np.array(example["input_ids"], copy=True)
-        example["input_ids"][0] += 1
+        example["input_ids"][1] += 1
         return example
 
     selected.get = drifted
@@ -169,6 +256,110 @@ def test_visual_export_rejects_selected_unbounded_serialization_drift(tmp_path, 
             epochs=(0,),
             seed=13,
             unbounded_dataset=raw,
+            token_ids=_TEST_TOKEN_IDS,
+        )
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "empty_visual",
+        "empty_pooled",
+        "misaligned_tokens",
+        "invalid_image_rank",
+        "invalid_image_geometry",
+        "image_dtype",
+        "pooled_dtype",
+        "pooled_out_of_range",
+        "image_token_mismatch",
+        "negative_position",
+        "position_out_of_range",
+        "negative_subsegment",
+        "token_type_mismatch",
+        "ignored_weighted_label",
+        "input_out_of_vocab",
+        "label_invalid_negative",
+        "label_out_of_vocab",
+    ],
+)
+def test_visual_export_rejects_malformed_complete_record(tmp_path, monkeypatch, defect):
+    monkeypatch.setattr(exporter, "JOINT_SEQUENCE_LENGTH", 8)
+    raw = _RawDataset(8)
+    original_get = raw.get
+
+    def malformed(index, epoch):
+        example = original_get(index, epoch)
+        if defect == "empty_visual":
+            example["images"] = np.zeros((0, 2, 3), dtype=np.float32)
+            example["pooled_patches_idx"] = np.zeros((0, 2), dtype=np.int64)
+        elif defect == "empty_pooled":
+            example["pooled_patches_idx"] = np.zeros((0, 2), dtype=np.int64)
+        elif defect == "misaligned_tokens":
+            example["labels"] = example["labels"][:-1]
+        elif defect == "invalid_image_rank":
+            example["images"] = np.zeros((1, 2), dtype=np.float32)
+        elif defect == "invalid_image_geometry":
+            example["images"] = np.zeros((1, 1, 3), dtype=np.float32)
+        elif defect == "image_dtype":
+            example["images"] = example["images"].astype(np.float64)
+        elif defect == "pooled_dtype":
+            example["pooled_patches_idx"] = example["pooled_patches_idx"].astype(np.int32)
+        elif defect == "pooled_out_of_range":
+            example["pooled_patches_idx"][0, 0] = 2
+        elif defect == "image_token_mismatch":
+            example["input_ids"][0] = 0
+        elif defect == "negative_position":
+            example["position_ids"][0] = -1
+        elif defect == "position_out_of_range":
+            example["position_ids"][0] = len(example["input_ids"])
+        elif defect == "negative_subsegment":
+            example["subsegment_ids"] = np.arange(len(example["input_ids"]), dtype=np.int64)
+            example["subsegment_ids"][0] = -1
+        elif defect == "token_type_mismatch":
+            example["token_type_ids"][0] = 0
+        elif defect == "ignored_weighted_label":
+            example["labels"][1] = -100
+        elif defect == "input_out_of_vocab":
+            example["input_ids"][1] = 100352
+        elif defect == "label_invalid_negative":
+            example["labels"][1] = -1
+        else:
+            example["labels"][1] = 100352
+        return example
+
+    raw.get = malformed
+    selected = _SelectedDataset(raw, source_name="pixmo_caption")
+    with pytest.raises(
+        ValueError,
+        match=(
+            "positive image|must align|shape|exact float32|exact int64|out-of-range|"
+            "image-token|token sequence|subsegment_ids|exactly mark|non-ignored|model-vocabulary"
+        ),
+    ):
+        exporter.export_source_probe(
+            selected,
+            source_name="pixmo_caption",
+            kind="visual",
+            output_path=tmp_path / "pixmo_caption.jsonl",
+            unique_indices=1,
+            epochs=(0,),
+            seed=13,
+            unbounded_dataset=raw,
+            token_ids=_TEST_TOKEN_IDS,
+        )
+
+
+def test_export_rejects_boolean_epoch(tmp_path):
+    with pytest.raises(ValueError, match="non-negative integers"):
+        exporter.export_source_probe(
+            _NativeDataset(8),
+            source_name="native_text_replay",
+            kind="native_text_replay",
+            output_path=tmp_path / "native_text_replay.jsonl",
+            unique_indices=1,
+            epochs=(False,),
+            seed=13,
+            token_ids=_TEST_TOKEN_IDS,
         )
 
 
@@ -186,6 +377,7 @@ def test_native_export_requires_exact_sequence_length_and_empty_image_evidence(
         unique_indices=2,
         epochs=(0,),
         seed=13,
+        token_ids=_TEST_TOKEN_IDS,
     )
     assert entry["probe_image_content_sha256"] == _canonical_sha256([])
     assert entry["max_observed_sequence_length"] == 8
@@ -200,6 +392,28 @@ def test_native_export_requires_exact_sequence_length_and_empty_image_evidence(
             unique_indices=1,
             epochs=(0,),
             seed=13,
+            token_ids=_TEST_TOKEN_IDS,
+        )
+
+
+def test_native_manifest_parser_bytes_must_match_external_raw_pin(tmp_path, monkeypatch):
+    native_path = tmp_path / "native.json"
+    native_path.write_text("pinned bytes")
+    raw_sha256 = hashlib.sha256(native_path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        exporter.NativeTextReplayManifest,
+        "load",
+        lambda path: SimpleNamespace(
+            manifest_sha256="0" * 64,
+            content_fingerprint="1" * 64,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="runtime identity differs"):
+        exporter._load_native_manifest_pinned(
+            native_path,
+            expected_raw_sha256=raw_sha256,
+            expected_content_fingerprint="1" * 64,
         )
 
 
@@ -286,6 +500,25 @@ def test_catalog_binds_all_provenance_and_has_canonical_content_sha(tmp_path, mo
     assert catalog["probe"]["visual"]["rows_per_source"] == 4
     assert catalog["probe"]["native_text_replay"]["rows_per_source"] == 4
 
+    native_ordinal = exporter.JOINT_SOURCE_NAMES.index("native_text_replay")
+    for field, value in (
+        ("probe_epochs", [False]),
+        ("probe_indices", [False, *entries[native_ordinal]["probe_indices"][1:]]),
+        ("truncated_rows", False),
+    ):
+        mutated = json.loads(json.dumps(entries))
+        mutated[native_ordinal][field] = value
+        with pytest.raises(ValueError, match="identity differs"):
+            exporter.build_probe_catalog(
+                projection=projection,
+                native_manifest=native,
+                verification_receipt_path=receipt_path.resolve(),
+                verification_receipt_sha256=hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                source_entries=mutated,
+                exporter_sha256="3" * 64,
+                probe_seed=exporter.JOINT_PROBE_SEED,
+            )
+
 
 def test_catalog_rejects_noncanonical_or_incomplete_source_set(tmp_path):
     projection = SimpleNamespace(
@@ -317,3 +550,131 @@ def test_production_probe_panel_is_exactly_1024_rows_per_source():
     assert exporter.JOINT_VISUAL_PROBE_INDICES * len(exporter.JOINT_VISUAL_PROBE_EPOCHS) == 1024
     assert exporter.JOINT_NATIVE_PROBE_INDICES == 1024
     assert exporter.JOINT_NATIVE_PROBE_EPOCHS == (0,)
+
+
+def test_publish_fails_closed_without_renameat2(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    monkeypatch.setattr(exporter.ctypes, "CDLL", lambda *_args, **_kwargs: object())
+
+    with pytest.raises(RuntimeError, match="renameat2.*unavailable"):
+        exporter._publish_no_replace(source, destination)
+    assert source.is_dir()
+    assert not destination.exists()
+
+
+def test_closing_validation_reloads_all_inputs_and_fresh_stats_native(tmp_path, monkeypatch):
+    projection_path = (tmp_path / "projection.json").resolve()
+    native_path = (tmp_path / "native.json").resolve()
+    receipt_path = (tmp_path / "receipt.json").resolve()
+    for path in (projection_path, native_path, receipt_path):
+        path.write_text(path.name)
+    spec = SimpleNamespace(as_canonical_dict=lambda: {"phase": "joint"})
+    projection = SimpleNamespace(
+        path=projection_path,
+        raw_sha256=hashlib.sha256(projection_path.read_bytes()).hexdigest(),
+        content_sha256="1" * 64,
+        source_spec=spec,
+    )
+    native = SimpleNamespace(
+        path=native_path,
+        manifest_sha256=hashlib.sha256(native_path.read_bytes()).hexdigest(),
+        content_fingerprint="2" * 64,
+        provenance={"verification_receipt_sha256": "3" * 64},
+    )
+
+    class Receipt:
+        path = receipt_path
+        receipt_sha256 = "3" * 64
+        validations = 0
+
+        def validate_manifest(self, manifest):
+            assert manifest is native
+            self.validations += 1
+
+    receipt = Receipt()
+    calls = []
+    monkeypatch.setattr(
+        exporter,
+        "load_joint_visual_projection_manifest",
+        lambda path, *, expected_token_ids, expected_sha256: (
+            projection if expected_token_ids == _TEST_TOKEN_IDS else None
+        ),
+    )
+    monkeypatch.setattr(
+        exporter,
+        "_load_native_manifest_pinned",
+        lambda path, *, expected_raw_sha256, expected_content_fingerprint: native,
+    )
+    monkeypatch.setattr(
+        exporter.NativeTextReplayVerificationReceipt,
+        "load",
+        lambda path, *, expected_sha256: receipt,
+    )
+    monkeypatch.setattr(
+        exporter,
+        "_fresh_native_runtime_evidence",
+        lambda manifest, receipt_arg, *, expected_size, tokenizer: calls.append(
+            (manifest, receipt_arg, expected_size, tokenizer)
+        ),
+    )
+    tokenizer = object()
+    exporter._closing_validate_inputs(
+        projection=projection,
+        native_manifest=native,
+        receipt=receipt,
+        expected_native_size=17,
+        tokenizer=tokenizer,
+        token_ids=_TEST_TOKEN_IDS,
+    )
+
+    assert receipt.validations == 2
+    assert calls == [(native, receipt, 17, tokenizer)]
+
+
+def test_fresh_native_runtime_evidence_uses_strict_dataset_constructor(tmp_path, monkeypatch):
+    calls = []
+    manifest = SimpleNamespace(
+        path=(tmp_path / "native.json").resolve(),
+        content_fingerprint="4" * 64,
+        num_windows=3,
+    )
+    receipt = SimpleNamespace(path=(tmp_path / "receipt.json").resolve(), receipt_sha256="5" * 64)
+
+    class FreshDataset:
+        content_fingerprint = manifest.content_fingerprint
+        sequence_length = exporter.JOINT_SEQUENCE_LENGTH
+        source_counts = {"a": 1, "b": 2}
+
+        def __init__(self, path, **kwargs):
+            calls.append((path, kwargs))
+
+        def __len__(self):
+            return 3
+
+        def validate_tokenizer(self, tokenizer):
+            calls.append(("tokenizer", tokenizer))
+
+    monkeypatch.setattr(exporter, "NativeTextReplayDataset", FreshDataset)
+    tokenizer = object()
+    result = exporter._fresh_native_runtime_evidence(
+        manifest,
+        receipt,
+        expected_size=3,
+        tokenizer=tokenizer,
+    )
+
+    assert isinstance(result, FreshDataset)
+    assert calls == [
+        (
+            manifest.path,
+            {
+                "expected_fingerprint": manifest.content_fingerprint,
+                "verification_receipt_path": receipt.path,
+                "expected_verification_receipt_sha256": receipt.receipt_sha256,
+                "validate_source_files": True,
+            },
+        ),
+        ("tokenizer", tokenizer),
+    ]

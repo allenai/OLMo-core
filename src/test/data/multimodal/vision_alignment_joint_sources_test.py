@@ -6,9 +6,20 @@ import hashlib
 import json
 from dataclasses import asdict, replace
 
+import numpy as np
 import pytest
 
-from olmo_core.data.multimodal.pixmo_points import PixMoCountDatasetConfig
+from olmo_core.data.multimodal.finevision import (
+    FineVisionDataset,
+    FineVisionDatasetConfig,
+)
+from olmo_core.data.multimodal.pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
+from olmo_core.data.multimodal.pixmo_points import (
+    CoSynPointDataset,
+    PixMoCountDataset,
+    PixMoCountDatasetConfig,
+    PixMoPointsDataset,
+)
 from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     JOINT_TO_PERCEPTION_SOURCE,
     JOINT_VISUAL_SOURCE_NAMES,
@@ -18,8 +29,15 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     VisionAlignmentJointSourceSpec,
     build_vision_alignment_joint_dataset_config,
     vision_alignment_joint_adapter_projection_sha256,
+    vision_alignment_joint_annotation_replay_sha256,
     vision_alignment_joint_implementation_inventory,
     vision_alignment_joint_source_registry_sha256,
+)
+from olmo_core.data.multimodal.vision_alignment_perception import (
+    VisionAlignmentAuditedAlignmentDataset,
+    VisionAlignmentAuditedAlignmentDatasetConfig,
+    VisionAlignmentOcrDocumentDataset,
+    VisionAlignmentOcrDocumentDatasetConfig,
 )
 from olmo_core.data.multimodal.vision_alignment_perception_sources import (
     VisionAlignmentPerceptionSourceSpec,
@@ -241,3 +259,295 @@ def test_joint_registry_rejects_parent_source_module_drift(monkeypatch):
     monkeypatch.setattr(joint_sources, "_sha256_file", lambda _path: "0" * 64)
     with pytest.raises(ValueError, match="pinned perception source module"):
         VisionAlignmentJointSourceSpec.from_perception(_perception_spec())
+
+
+def _ocr_dataset() -> VisionAlignmentOcrDocumentDataset:
+    dataset = VisionAlignmentOcrDocumentDataset.__new__(VisionAlignmentOcrDocumentDataset)
+    dataset.config = VisionAlignmentOcrDocumentDatasetConfig(
+        source_names=("text_vqa",),
+        split="train",
+        max_crops=8,
+        max_sequence_length=8192,
+        loss_token_weighting="root_subsegments_root_tokens",
+        message_format="document",
+        prompt_prefix="Question: ",
+        answer_prefix="\nAnswer:",
+        seed=0,
+        skip_bad_rows=False,
+    )
+    dataset._sources = [[{"image": "/images/a.png", "question": "Q?", "answer": "A"}]]
+    dataset._offsets = [0, 1]
+    dataset.content_fingerprint = dataset._build_content_fingerprint()
+    return dataset
+
+
+def _finevision_child(name: str, fingerprint: str) -> FineVisionDataset:
+    class _Rows:
+        _fingerprint = fingerprint
+
+        def __len__(self):
+            return 3
+
+    child = FineVisionDataset.__new__(FineVisionDataset)
+    child.config = FineVisionDatasetConfig(
+        expected_materialized_fingerprint=fingerprint,
+        config_name=name,
+        dataset_path=f"/finevision/{name}",
+        split="train",
+        texts_column="texts",
+        images_column="images",
+        min_formatting=4,
+        min_visual_dependency=4,
+        min_image_correspondence=None,
+        min_relevance=4,
+        require_quality_columns=True,
+        strict_annotations=True,
+        skip_bad_rows=False,
+        max_crops=8,
+        max_images=1,
+        max_sequence_length=8192,
+        loss_token_weighting="root_subsegments_root_tokens",
+        message_format="document",
+        seed=0,
+    )
+    child._data = _Rows()
+    child._index = np.asarray([0, 2], dtype=np.int64)
+    child.content_fingerprint = child._build_content_fingerprint()
+    return child
+
+
+def _audited_dataset() -> VisionAlignmentAuditedAlignmentDataset:
+    dataset = VisionAlignmentAuditedAlignmentDataset.__new__(VisionAlignmentAuditedAlignmentDataset)
+    dataset.config = VisionAlignmentAuditedAlignmentDatasetConfig(
+        split="train",
+        max_crops=8,
+        max_sequence_length=8192,
+        loss_token_weighting="root_subsegments_root_tokens",
+        message_format="document",
+        seed=0,
+    )
+    dataset._datasets = [
+        _finevision_child("visualwebinstruct(filtered)", "a" * 64),
+        _finevision_child("geo170k(align)", "b" * 64),
+    ]
+    dataset._offsets = [0, 2, 4]
+    dataset.content_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "version": dataset.content_fingerprint_version,
+                "split": dataset.config.split,
+                "child_fingerprints": [child.content_fingerprint for child in dataset._datasets],
+                "child_lengths": [len(child) for child in dataset._datasets],
+                "max_crops": dataset.config.max_crops,
+                "max_sequence_length": dataset.config.max_sequence_length,
+                "loss_token_weighting": dataset.config.loss_token_weighting,
+                "message_format": dataset.config.message_format,
+                "seed": dataset.config.seed,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    return dataset
+
+
+@pytest.mark.parametrize("source_name", ["ocr_document", "audited_alignment"])
+def test_sequence_sensitive_annotation_replay_changes_only_the_explicit_bound(source_name):
+    dataset = _ocr_dataset() if source_name == "ocr_document" else _audited_dataset()
+
+    parent = vision_alignment_joint_annotation_replay_sha256(
+        dataset,
+        source_name,
+        sequence_length=2560,
+    )
+    assert len(parent) == 64
+    joint = vision_alignment_joint_annotation_replay_sha256(
+        dataset,
+        source_name,
+        sequence_length=8192,
+    )
+
+    assert parent != joint
+    assert joint == dataset.annotation_content_sha256()
+
+
+def test_ocr_annotation_replay_binds_ordered_annotation_payload():
+    dataset = _ocr_dataset()
+    parent = vision_alignment_joint_annotation_replay_sha256(
+        dataset,
+        "ocr_document",
+        sequence_length=2560,
+    )
+    assert len(parent) == 64
+
+    dataset._sources[0][0]["answer"] = "changed"
+
+    with pytest.raises(ValueError, match="native annotation replay differs"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "ocr_document",
+            sequence_length=2560,
+        )
+    with pytest.raises(ValueError, match="native annotation replay differs"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "ocr_document",
+            sequence_length=8192,
+        )
+
+
+def test_audited_annotation_replay_binds_child_selection():
+    dataset = _audited_dataset()
+    parent = vision_alignment_joint_annotation_replay_sha256(
+        dataset,
+        "audited_alignment",
+        sequence_length=2560,
+    )
+    assert len(parent) == 64
+
+    dataset._datasets[0]._index = np.asarray([0, 1], dtype=np.int64)
+
+    with pytest.raises(ValueError, match="native annotation replay differs"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "audited_alignment",
+            sequence_length=2560,
+        )
+    with pytest.raises(ValueError, match="native annotation replay differs"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "audited_alignment",
+            sequence_length=8192,
+        )
+
+
+def test_sequence_invariant_annotation_replay_is_bound_independent():
+    dataset = PixMoCapDataset.__new__(PixMoCapDataset)
+    dataset.config = PixMoCapDatasetConfig(
+        dataset_path="/reviewed/pixmo-cap",
+        mode="caption",
+        max_sequence_length=8192,
+    )
+    dataset.annotation_content_sha256 = lambda: "c" * 64
+
+    assert (
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "pixmo_caption",
+            sequence_length=2560,
+        )
+        == "c" * 64
+    )
+    assert (
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "pixmo_caption",
+            sequence_length=8192,
+        )
+        == "c" * 64
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_name", "dataset_type"),
+    [
+        ("cosyn_point", CoSynPointDataset),
+        ("count_numeric", PixMoCountDataset),
+        ("pixmo_caption", PixMoCapDataset),
+        ("pixmo_points_basic", PixMoPointsDataset),
+        ("pixmo_points_high_frequency", PixMoPointsDataset),
+        ("pixmo_transcript", PixMoCapDataset),
+    ],
+)
+def test_each_sequence_invariant_source_routes_to_its_exact_adapter(source_name, dataset_type):
+    dataset = dataset_type.__new__(dataset_type)
+    dataset.config = build_vision_alignment_joint_dataset_config(
+        VisionAlignmentJointSourceSpec.from_perception(_perception_spec()),
+        Molmo2TokenIds(),
+        source_name,
+    )
+    dataset.annotation_content_sha256 = lambda: "e" * 64
+
+    assert (
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            source_name,
+            sequence_length=2560,
+        )
+        == "e" * 64
+    )
+
+
+@pytest.mark.parametrize("sequence_length", [True, 0, -1])
+def test_annotation_replay_rejects_noncanonical_sequence_length(sequence_length):
+    with pytest.raises(ValueError, match="positive integer"):
+        vision_alignment_joint_annotation_replay_sha256(
+            _ocr_dataset(),
+            "ocr_document",
+            sequence_length=sequence_length,
+        )
+
+
+def test_annotation_replay_rejects_wrong_exact_dataset_type_and_mode():
+    with pytest.raises(ValueError, match="exact dataset type"):
+        vision_alignment_joint_annotation_replay_sha256(
+            object(),
+            "ocr_document",
+            sequence_length=2560,
+        )
+
+    dataset = PixMoCapDataset.__new__(PixMoCapDataset)
+    dataset.config = PixMoCapDatasetConfig(
+        dataset_path="/reviewed/pixmo-cap",
+        mode="transcript",
+        max_sequence_length=8192,
+    )
+    dataset.annotation_content_sha256 = lambda: "d" * 64
+    with pytest.raises(ValueError, match="caption mode"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "pixmo_caption",
+            sequence_length=8192,
+        )
+
+
+def test_audited_annotation_replay_rejects_child_sequence_and_offset_drift():
+    dataset = _audited_dataset()
+    dataset._datasets[0].config.max_sequence_length = 17
+    with pytest.raises(ValueError, match="child sequence bounds"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "audited_alignment",
+            sequence_length=2560,
+        )
+
+    dataset = _audited_dataset()
+    dataset._datasets[0].config = VisionAlignmentAuditedAlignmentDatasetConfig()
+    with pytest.raises(ValueError, match="exact FineVision child configs"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "audited_alignment",
+            sequence_length=2560,
+        )
+
+    dataset = _audited_dataset()
+    dataset._offsets = [0, 1, 4]
+    with pytest.raises(ValueError, match="child offsets"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "audited_alignment",
+            sequence_length=2560,
+        )
+
+
+def test_annotation_replay_rejects_wrong_exact_config_type():
+    dataset = _ocr_dataset()
+    dataset.config = VisionAlignmentAuditedAlignmentDatasetConfig()
+    with pytest.raises(ValueError, match="exact config type"):
+        vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            "ocr_document",
+            sequence_length=2560,
+        )

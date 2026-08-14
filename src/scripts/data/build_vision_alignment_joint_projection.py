@@ -21,12 +21,13 @@ import re
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    JOINT_VISUAL_PROJECTION_ALGORITHM,
     JOINT_VISUAL_PROJECTION_FORMAT,
     JOINT_VISUAL_PROJECTION_MANIFEST,
     JOINT_VISUAL_PROJECTION_VERSION,
@@ -41,6 +42,7 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     build_vision_alignment_joint_dataset,
     build_vision_alignment_joint_dataset_config,
     vision_alignment_joint_adapter_projection_sha256,
+    vision_alignment_joint_annotation_replay_sha256,
     vision_alignment_joint_implementation_inventory,
     vision_alignment_joint_source_registry_sha256,
 )
@@ -51,14 +53,18 @@ from olmo_core.data.multimodal.vision_alignment_perception_provenance import (
     load_perception_provenance_manifest,
     perception_annotation_content_sha256,
 )
+from olmo_core.data.multimodal.vision_alignment_perception_sources import (
+    build_vision_alignment_perception_dataset,
+    build_vision_alignment_perception_dataset_config,
+)
 from olmo_core.data.multimodal.vision_alignment_sources import (
     load_pinned_vision_alignment_tokenizer,
     runtime_dataset_fingerprint,
 )
+from olmo_core.nn.vision import Molmo2TokenIds
 
 BUILDER_NAME = "build_vision_alignment_joint_projection"
 BUILDER_VERSION = 1
-PROJECTION_ALGORITHM = "exact-parent-logical-row-selection-v1"
 PARENT_SEQUENCE_LENGTH = 2560
 JOINT_SEQUENCE_LENGTH = 8192
 DEFAULT_HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
@@ -213,39 +219,71 @@ def _raw_dataset_identity(
     source_name: str,
     physical_split: str,
     expected_adapter_sha256: str,
+    expected_sequence_length: int,
+    phase_name: str,
 ) -> _RawDatasetIdentity:
     try:
         examples = len(dataset)
     except (TypeError, ValueError) as error:
         raise ValueError(
-            f"Joint adapter {source_name}/{physical_split} has no stable length"
+            f"{phase_name} adapter {source_name}/{physical_split} has no stable length"
         ) from error
     if isinstance(examples, bool) or not isinstance(examples, int) or examples < 1:
-        raise ValueError(f"Joint adapter {source_name}/{physical_split} is empty")
+        raise ValueError(f"{phase_name} adapter {source_name}/{physical_split} is empty")
     fingerprint = _dataset_fingerprint(
         runtime_dataset_fingerprint(dataset),
         name=f"{source_name}/{physical_split} base dataset fingerprint",
     )
     annotation_sha = perception_annotation_content_sha256(dataset)
     config = getattr(dataset, "config", None)
-    if config is None or getattr(config, "max_sequence_length", None) != JOINT_SEQUENCE_LENGTH:
-        raise ValueError(f"Joint adapter {source_name}/{physical_split} has the wrong config")
+    if config is None or getattr(config, "max_sequence_length", None) != expected_sequence_length:
+        raise ValueError(
+            f"{phase_name} adapter {source_name}/{physical_split} has the wrong config"
+        )
     try:
         adapter_sha = vision_alignment_joint_adapter_projection_sha256(config)
     except ValueError as error:
         raise ValueError(
-            f"Joint adapter {source_name}/{physical_split} config cannot be projected"
+            f"{phase_name} adapter {source_name}/{physical_split} config cannot be projected"
         ) from error
     if adapter_sha != expected_adapter_sha256:
-        raise ValueError(
-            f"Joint adapter {source_name}/{physical_split} projection differs from its parent"
-        )
+        raise ValueError(f"{phase_name} adapter {source_name}/{physical_split} projection differs")
     return _RawDatasetIdentity(
         examples=examples,
         fingerprint=fingerprint,
         annotation_sha256=annotation_sha,
         adapter_projection_sha256=adapter_sha,
     )
+
+
+def _validate_annotation_projection(
+    parent_dataset: Any,
+    joint_dataset: Any,
+    *,
+    source_name: str,
+    parent_sha256: str,
+    joint_sha256: str,
+) -> None:
+    """Prove both raw adapters differ only at the reviewed sequence bound."""
+    parent_at_parent = vision_alignment_joint_annotation_replay_sha256(
+        parent_dataset, source_name, sequence_length=PARENT_SEQUENCE_LENGTH
+    )
+    joint_at_parent = vision_alignment_joint_annotation_replay_sha256(
+        joint_dataset, source_name, sequence_length=PARENT_SEQUENCE_LENGTH
+    )
+    parent_at_joint = vision_alignment_joint_annotation_replay_sha256(
+        parent_dataset, source_name, sequence_length=JOINT_SEQUENCE_LENGTH
+    )
+    joint_at_joint = vision_alignment_joint_annotation_replay_sha256(
+        joint_dataset, source_name, sequence_length=JOINT_SEQUENCE_LENGTH
+    )
+    if not (
+        parent_at_parent == joint_at_parent == parent_sha256
+        and parent_at_joint == joint_at_joint == joint_sha256
+    ):
+        raise ValueError(
+            f"Joint annotation identity differs beyond the sequence bound for {source_name}"
+        )
 
 
 def _validate_annotations(dataset: Any, *, source_name: str, physical_split: str) -> None:
@@ -379,6 +417,8 @@ def build_vision_alignment_joint_projection(
         expected_parent_perception_sha256,
         name="expected parent perception provenance SHA-256",
     )
+    if type(token_ids) is not Molmo2TokenIds:
+        raise ValueError("Joint projection requires exact tokenizer-adapted Molmo2TokenIds")
     created_at_value = _resolve_created_at(created_at)
     parent, parent_raw, parent_root = _load_parent(
         parent_perception_provenance,
@@ -396,7 +436,7 @@ def build_vision_alignment_joint_projection(
         parent_root.get("source_registry_sha256"),
         name="parent perception source_registry_sha256",
     )
-    datasets: dict[tuple[str, str], tuple[Any, _RawDatasetIdentity]] = {}
+    datasets: dict[tuple[str, str], tuple[Any, _RawDatasetIdentity, Any, _RawDatasetIdentity]] = {}
     sources: dict[str, Any] = {}
     for source_name in JOINT_VISUAL_SOURCE_NAMES:
         parent_source_name = JOINT_TO_PERCEPTION_SOURCE[source_name]
@@ -419,7 +459,19 @@ def build_vision_alignment_joint_projection(
                 expected_adapter_sha = vision_alignment_joint_adapter_projection_sha256(
                     expected_config
                 )
-                dataset = build_vision_alignment_joint_dataset(
+                parent_config = build_vision_alignment_perception_dataset_config(
+                    parent.source_spec,
+                    token_ids,
+                    parent_source_name,
+                    split=physical_split,
+                )
+                parent_adapter_sha = vision_alignment_joint_adapter_projection_sha256(parent_config)
+                if parent_adapter_sha != expected_adapter_sha:
+                    raise ValueError(
+                        f"Parent/joint adapter projection differs for "
+                        f"{source_name}/{physical_split}"
+                    )
+                joint_dataset = build_vision_alignment_joint_dataset(
                     joint_spec,
                     tokenizer,
                     token_ids,
@@ -427,32 +479,67 @@ def build_vision_alignment_joint_projection(
                     split=physical_split,
                     validate_required_annotations=False,
                 )
+                parent_dataset = build_vision_alignment_perception_dataset(
+                    parent.source_spec,
+                    tokenizer,
+                    token_ids,
+                    parent_source_name,
+                    split=physical_split,
+                    validate_required_annotations=False,
+                )
                 _validate_annotations(
-                    dataset,
+                    joint_dataset,
                     source_name=source_name,
                     physical_split=physical_split,
                 )
-                identity = _raw_dataset_identity(
-                    dataset,
+                _validate_annotations(
+                    parent_dataset,
+                    source_name=source_name,
+                    physical_split=physical_split,
+                )
+                joint_identity = _raw_dataset_identity(
+                    joint_dataset,
                     source_name=source_name,
                     physical_split=physical_split,
                     expected_adapter_sha256=expected_adapter_sha,
+                    expected_sequence_length=JOINT_SEQUENCE_LENGTH,
+                    phase_name="Joint",
                 )
-                cached = (dataset, identity)
+                parent_identity = _raw_dataset_identity(
+                    parent_dataset,
+                    source_name=source_name,
+                    physical_split=physical_split,
+                    expected_adapter_sha256=parent_adapter_sha,
+                    expected_sequence_length=PARENT_SEQUENCE_LENGTH,
+                    phase_name="Parent perception",
+                )
+                cached = (
+                    joint_dataset,
+                    joint_identity,
+                    parent_dataset,
+                    parent_identity,
+                )
                 datasets[cache_key] = cached
-            dataset, identity = cached
-            if identity.examples != parent_selection.base_examples:
+            joint_dataset, joint_identity, parent_dataset, parent_identity = cached
+            if (
+                joint_identity.examples != parent_selection.base_examples
+                or parent_identity.examples != parent_selection.base_examples
+                or parent_identity.fingerprint != parent_selection.base_dataset_fingerprint
+                or parent_identity.annotation_sha256 != parent_selection.base_annotation_sha256
+            ):
                 raise ValueError(
-                    f"Joint base example count differs from parent for "
+                    f"Raw parent/joint base identity differs from provenance for "
                     f"{source_name}/{logical_split}"
                 )
-            if identity.annotation_sha256 != parent_selection.base_annotation_sha256:
-                raise ValueError(
-                    f"Joint base annotation identity differs from parent for "
-                    f"{source_name}/{logical_split}"
-                )
+            _validate_annotation_projection(
+                parent_dataset,
+                joint_dataset,
+                source_name=source_name,
+                parent_sha256=parent_selection.base_annotation_sha256,
+                joint_sha256=joint_identity.annotation_sha256,
+            )
             _validate_selected_images(
-                dataset,
+                joint_dataset,
                 source_name=source_name,
                 logical_split=logical_split,
                 indices=parent_selection.indices,
@@ -460,10 +547,10 @@ def build_vision_alignment_joint_projection(
             )
             source[logical_split] = {
                 "physical_split": physical_split,
-                "base_examples": identity.examples,
-                "joint_base_dataset_fingerprint": identity.fingerprint,
-                "joint_base_annotation_sha256": identity.annotation_sha256,
-                "adapter_projection_sha256": identity.adapter_projection_sha256,
+                "base_examples": joint_identity.examples,
+                "joint_base_dataset_fingerprint": joint_identity.fingerprint,
+                "joint_base_annotation_sha256": joint_identity.annotation_sha256,
+                "adapter_projection_sha256": joint_identity.adapter_projection_sha256,
                 "selection_indices_sha256": parent_selection.selection_indices_sha256,
                 "runtime_examples": len(parent_selection.indices),
                 "row_image_content_sha256": _canonical_sha256(
@@ -477,7 +564,7 @@ def build_vision_alignment_joint_projection(
                     parent_source_name=parent_source_name,
                     logical_split=logical_split,
                     physical_split=physical_split,
-                    joint_base_fingerprint=identity.fingerprint,
+                    joint_base_fingerprint=joint_identity.fingerprint,
                     selection_indices_sha256=parent_selection.selection_indices_sha256,
                     joint_source_spec_sha256=joint_spec_sha,
                     parent_provenance_sha256=parent.raw_sha256,
@@ -487,21 +574,54 @@ def build_vision_alignment_joint_projection(
         sources[source_name] = source
 
     # Close each raw-adapter snapshot after all selected rows have been rehashed.
-    for (source_name, physical_split), (dataset, original_identity) in datasets.items():
+    for (
+        source_name,
+        physical_split,
+    ), (
+        joint_dataset,
+        original_joint_identity,
+        parent_dataset,
+        original_parent_identity,
+    ) in datasets.items():
         _validate_annotations(
-            dataset,
+            joint_dataset,
             source_name=source_name,
             physical_split=physical_split,
         )
-        final_identity = _raw_dataset_identity(
-            dataset,
+        _validate_annotations(
+            parent_dataset,
             source_name=source_name,
             physical_split=physical_split,
-            expected_adapter_sha256=original_identity.adapter_projection_sha256,
         )
-        if final_identity != original_identity:
+        final_joint_identity = _raw_dataset_identity(
+            joint_dataset,
+            source_name=source_name,
+            physical_split=physical_split,
+            expected_adapter_sha256=original_joint_identity.adapter_projection_sha256,
+            expected_sequence_length=JOINT_SEQUENCE_LENGTH,
+            phase_name="Joint",
+        )
+        final_parent_identity = _raw_dataset_identity(
+            parent_dataset,
+            source_name=source_name,
+            physical_split=physical_split,
+            expected_adapter_sha256=original_parent_identity.adapter_projection_sha256,
+            expected_sequence_length=PARENT_SEQUENCE_LENGTH,
+            phase_name="Parent perception",
+        )
+        _validate_annotation_projection(
+            parent_dataset,
+            joint_dataset,
+            source_name=source_name,
+            parent_sha256=original_parent_identity.annotation_sha256,
+            joint_sha256=original_joint_identity.annotation_sha256,
+        )
+        if (
+            final_joint_identity != original_joint_identity
+            or final_parent_identity != original_parent_identity
+        ):
             raise ValueError(
-                f"Joint base dataset identity changed during projection for "
+                f"Parent/joint base dataset identity changed during projection for "
                 f"{source_name}/{physical_split}"
             )
 
@@ -568,6 +688,7 @@ def build_vision_alignment_joint_projection(
             "source_spec_sha256": parent.source_spec_sha256,
             "source_registry_sha256": parent_registry_sha,
         },
+        "token_ids": asdict(token_ids),
         "source_name_projection": dict(JOINT_TO_PERCEPTION_SOURCE),
         "source_spec": joint_spec.as_canonical_dict(),
         "source_spec_sha256": joint_spec_sha,
@@ -575,7 +696,7 @@ def build_vision_alignment_joint_projection(
         "source_registry_sha256": registry_sha,
         "source_implementation_inventory": implementation_inventory,
         "projection_policy": {
-            "algorithm": PROJECTION_ALGORITHM,
+            "algorithm": JOINT_VISUAL_PROJECTION_ALGORITHM,
             "parent_sequence_length": PARENT_SEQUENCE_LENGTH,
             "sequence_length": JOINT_SEQUENCE_LENGTH,
             "allowed_adapter_config_delta": ["max_sequence_length"],
@@ -604,6 +725,7 @@ def build_vision_alignment_joint_projection(
         manifest_sha = hashlib.sha256(manifest_raw).hexdigest()
         validated = load_joint_visual_projection_manifest(
             manifest_path,
+            expected_token_ids=token_ids,
             expected_sha256=manifest_sha,
             verify_finevision_materialization=True,
             load_image_path_signatures=True,
@@ -623,6 +745,7 @@ def build_vision_alignment_joint_projection(
         _fsync_directory(staging)
         load_joint_visual_projection_manifest(
             manifest_path,
+            expected_token_ids=token_ids,
             expected_sha256=manifest_sha,
             verify_finevision_materialization=True,
             load_image_path_signatures=True,

@@ -31,7 +31,7 @@ import math
 import os
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -54,6 +54,19 @@ from olmo_core.data.multimodal.mixtures.vision_alignment import (
     expected_loss_mass,
 )
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
+from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    JointVisualProjectionManifest,
+    build_selected_joint_dataset,
+    joint_alignment_runtime_implementation_inventory,
+    joint_alignment_runtime_registry_sha256,
+    load_joint_visual_projection_manifest,
+    validate_joint_live_example,
+)
+from olmo_core.data.multimodal.vision_alignment_joint_sources import (
+    JOINT_VISUAL_SOURCE_NAMES,
+    VISION_ALIGNMENT_JOINT_SOURCE_CATALOG_VERSION,
+    VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
+)
 from olmo_core.data.multimodal.vision_alignment_perception_provenance import (
     PERCEPTION_SOURCE_NAMES,
     PerceptionProvenanceManifest,
@@ -181,6 +194,7 @@ INIT_SEED = 6198
 EVAL_SEED = 6198
 MIN_SOURCE_AUDIT_EXAMPLES = 1024
 _PERCEPTION_PROVENANCE_RUNTIME_CACHE: Dict[Tuple[str, str], PerceptionProvenanceManifest] = {}
+_JOINT_PROJECTION_RUNTIME_CACHE: Dict[Tuple[str, str, str], JointVisualProjectionManifest] = {}
 PERCEPTION_PROFILE_ROOT = "configs/vision_moe/vision_alignment/perception"
 PERCEPTION_PROFILE_ALLOWLIST = f"{PERCEPTION_PROFILE_ROOT}/approved_profiles.json"
 PERCEPTION_PROFILE_ALLOWLIST_FORMAT = "vision_alignment_perception_profile_allowlist"
@@ -284,6 +298,107 @@ _PERCEPTION_AUDIT_INPUT_FIELDS = frozenset(
         "serialized_row_hashes",
     }
 )
+
+_JOINT_AUDIT_FORMAT = "vision_alignment_joint_source_audit"
+_JOINT_AUDIT_VERSION = 1
+_JOINT_AUDITOR_IMPLEMENTATION = "src/scripts/data/audit_vision_alignment_joint_mix.py"
+_JOINT_SHARED_AUDITOR_IMPLEMENTATION = "src/scripts/data/audit_vision_alignment_mix.py"
+_JOINT_EXPORTER_IMPLEMENTATION = "src/scripts/data/export_vision_alignment_joint_probe.py"
+_JOINT_PROBE_FORMAT = "vision_alignment_joint_runtime_probe"
+_JOINT_PROBE_VERSION = 1
+_JOINT_PROBE_SEED = 6198
+_JOINT_VISUAL_PROBE_INDICES = 256
+_JOINT_VISUAL_PROBE_EPOCHS = (0, 1, 2, 3)
+_JOINT_NATIVE_PROBE_INDICES = 1024
+_JOINT_NATIVE_PROBE_EPOCHS = (0,)
+_JOINT_SEQUENCE_LENGTH = 8192
+_JOINT_SOURCE_NAMES = tuple(sorted((*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay")))
+_JOINT_AUDIT_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "status",
+        "phase",
+        "recipe_version",
+        "formatter_version",
+        "source_catalog_version",
+        "auditor_implementation",
+        "shared_auditor_sha256",
+        "catalog_path",
+        "catalog_sha256",
+        "catalog_content_sha256",
+        "input_content_sha256",
+        "source_registry_version",
+        "source_registry_sha256",
+        "source_implementation_inventory",
+        "exporter_implementation",
+        "visual_projection",
+        "native_train_manifest",
+        "native_verification_receipt",
+        "preprocessing",
+        "preprocessing_sha256",
+        "probe",
+        "inputs",
+        "target_loss_mass",
+        "sources",
+        "mean_loss_weight",
+        "sampling_probabilities",
+        "expected_loss_mass",
+        "failures",
+        "fingerprint",
+    }
+)
+_JOINT_IMPLEMENTATION_FIELDS = frozenset({"path", "sha256"})
+_JOINT_VISUAL_PROJECTION_FIELDS = frozenset({"path", "raw_sha256", "content_sha256"})
+_JOINT_NATIVE_MANIFEST_FIELDS = frozenset({"path", "raw_sha256", "content_fingerprint"})
+_JOINT_RECEIPT_FIELDS = frozenset({"path", "sha256"})
+_JOINT_PREPROCESSING_FIELDS = frozenset({"visual", "native_text_replay_fingerprint"})
+_JOINT_PROBE_FIELDS = frozenset(
+    {
+        "format",
+        "version",
+        "selection_algorithm",
+        "seed",
+        "visual",
+        "native_text_replay",
+        "sequence_length",
+        "truncation_policy",
+    }
+)
+_JOINT_PROBE_KIND_FIELDS = frozenset({"unique_indices", "epochs", "rows_per_source"})
+_JOINT_AUDIT_INPUT_FIELDS = frozenset(
+    {
+        "name",
+        "kind",
+        "format",
+        "path",
+        "dataset_fingerprint",
+        "dataset_size",
+        "sha256",
+        "probe_epochs",
+        "probe_indices",
+        "probe_indices_sha256",
+        "serialized_row_hashes_sha256",
+        "probe_image_content_sha256",
+        "max_observed_sequence_length",
+        "truncated_rows",
+        "serialized_row_hashes",
+    }
+)
+_JOINT_SOURCE_SUMMARY_FIELDS = frozenset(
+    {
+        "examples",
+        "raw_input_tokens",
+        "positive_supervised_tokens",
+        "summed_loss_weight",
+        "mean_sum_loss_masks",
+        "image_crops",
+        "truncated_examples",
+        "zero_loss_examples",
+        "error_samples",
+    }
+)
+_JOINT_METRIC_SUMMARY_FIELDS = frozenset({"total", "mean", "min", "max"})
 
 _PIXMO_MANIFEST_FIELDS = frozenset(
     {"format", "version", "builder", "source", "output", "inventories", "filtering"}
@@ -509,6 +624,8 @@ class VisionAlignmentDataConfig(Config):
     source_audit_fingerprint: Optional[str] = None
     perception_provenance_path: Optional[str] = None
     perception_provenance_sha256: Optional[str] = None
+    joint_visual_projection_path: Optional[str] = None
+    joint_visual_projection_sha256: Optional[str] = None
     allow_unpinned_synthetic_smoke: bool = False
     native_text_replay: Optional[NativeTextReplayDatasetConfig] = None
     native_text_replay_fingerprint: Optional[str] = None
@@ -1443,7 +1560,13 @@ class _AuditedDataset:
 
     content_fingerprint_version = "vision-alignment-source-audit-v2"
 
-    def __init__(self, dataset: Any, source_name: str, audit: Mapping[str, Any]):
+    def __init__(
+        self,
+        dataset: Any,
+        source_name: str,
+        audit: Mapping[str, Any],
+        token_ids: Optional[Molmo2TokenIds] = None,
+    ):
         self._dataset = dataset
         self.source_name = source_name
         source = cast(Mapping[str, Any], cast(Mapping[str, Any], audit["inputs"])[source_name])
@@ -1461,7 +1584,8 @@ class _AuditedDataset:
         probe_indices = cast(Sequence[int], source["probe_indices"])
         row_hashes = cast(Sequence[str], source["serialized_row_hashes"])
         probe_image_content_sha256 = source.get("probe_image_content_sha256")
-        if audit.get("format") == "vision_alignment_perception_source_audit":
+        audit_format = audit.get("format")
+        if audit_format == "vision_alignment_perception_source_audit":
             probe_epochs = cast(int, source["probe_epochs"])
             validate_image_content = getattr(dataset, "validate_image_content", None)
             if not callable(validate_image_content):
@@ -1513,12 +1637,121 @@ class _AuditedDataset:
                     f"Live perception probe loss mass for {source_name!r} differs from "
                     "the pinned source audit"
                 )
+        elif audit_format == _JOINT_AUDIT_FORMAT:
+            raw_joint_probe_epochs = source["probe_epochs"]
+            expected_epochs = (
+                _JOINT_NATIVE_PROBE_EPOCHS
+                if source_name == "native_text_replay"
+                else _JOINT_VISUAL_PROBE_EPOCHS
+            )
+            if (
+                not isinstance(raw_joint_probe_epochs, list)
+                or any(type(epoch) is not int for epoch in raw_joint_probe_epochs)
+                or tuple(raw_joint_probe_epochs) != expected_epochs
+            ):
+                raise ValueError(
+                    f"Joint probe epoch panel for {source_name!r} differs from the runtime policy"
+                )
+            joint_probe_epochs = cast(Sequence[int], raw_joint_probe_epochs)
+            if source_name != "native_text_replay":
+                validate_image_content = getattr(dataset, "validate_image_content", None)
+                if not callable(validate_image_content):
+                    raise ValueError(
+                        f"Live joint visual dataset {source_name!r} lacks image validation"
+                    )
+                if validate_image_content(probe_indices) != probe_image_content_sha256:
+                    raise ValueError(
+                        f"Live joint probe image bytes for {source_name!r} differ from "
+                        "the pinned source audit"
+                    )
+            elif probe_image_content_sha256 != _canonical_sha256([]):
+                raise ValueError("Native joint replay has an invalid image-content digest")
+            probe_pairs = tuple(
+                (index, epoch) for epoch in joint_probe_epochs for index in probe_indices
+            )
+            if len(probe_pairs) != len(row_hashes):
+                raise ValueError(
+                    f"Joint probe epoch panel for {source_name!r} has inconsistent rows"
+                )
+            get = getattr(dataset, "get", None)
+            live_loss_weight_total = 0.0
+            live_zero_loss_examples = 0
+            maximum_length = 0
+            for (probe_index, probe_epoch), row_hash in zip(probe_pairs, row_hashes):
+                example = get(probe_index, probe_epoch) if callable(get) else dataset[probe_index]
+                validate_joint_live_example(
+                    example,
+                    source_name=source_name,
+                    source_kind=(
+                        "native_text_replay" if source_name == "native_text_replay" else "visual"
+                    ),
+                    token_ids=token_ids,
+                )
+                if serialized_example_sha256(example) != row_hash:
+                    raise ValueError(
+                        f"Live joint probe {source_name!r} serialized row differs at "
+                        f"index {probe_index}, epoch {probe_epoch}"
+                    )
+                input_ids = example.get("input_ids")
+                loss_masks = example.get("loss_masks")
+                if input_ids is None or loss_masks is None:
+                    raise ValueError(f"Live joint probe {source_name!r} lacks token/loss arrays")
+                try:
+                    sequence_length = len(input_ids)
+                except TypeError as error:
+                    raise ValueError(
+                        f"Live joint probe {source_name!r} input_ids are not array-like"
+                    ) from error
+                if sequence_length < 1 or sequence_length > _JOINT_SEQUENCE_LENGTH:
+                    raise ValueError(
+                        f"Live joint probe {source_name!r} has invalid sequence length "
+                        f"{sequence_length}"
+                    )
+                if source_name == "native_text_replay" and sequence_length != (
+                    _JOINT_SEQUENCE_LENGTH
+                ):
+                    raise ValueError("Live native joint replay row is not exactly 8,192 tokens")
+                maximum_length = max(maximum_length, sequence_length)
+                row_loss_weight = math.fsum(float(value) for value in loss_masks)
+                if not math.isfinite(row_loss_weight) or row_loss_weight < 0:
+                    raise ValueError(f"Live joint probe {source_name!r} has invalid loss mass")
+                live_zero_loss_examples += int(row_loss_weight == 0)
+                live_loss_weight_total = math.fsum((live_loss_weight_total, row_loss_weight))
+            if live_loss_weight_total <= 0:
+                raise ValueError(
+                    f"Live joint probe {source_name!r} has no aggregate supervised loss mass"
+                )
+            if maximum_length != source.get("max_observed_sequence_length"):
+                raise ValueError(
+                    f"Live joint probe sequence bound for {source_name!r} differs from "
+                    "the pinned source audit"
+                )
+            live_mean_loss_weight = live_loss_weight_total / len(probe_pairs)
+            source_summary = cast(Mapping[str, Any], audit["sources"])[source_name]
+            pinned_mean_loss_weight = source_summary.get("mean_sum_loss_masks")
+            pinned_zero_loss_examples = source_summary.get("zero_loss_examples")
+            if (
+                isinstance(pinned_mean_loss_weight, bool)
+                or not isinstance(pinned_mean_loss_weight, (int, float))
+                or isinstance(pinned_zero_loss_examples, bool)
+                or not isinstance(pinned_zero_loss_examples, int)
+                or live_zero_loss_examples != pinned_zero_loss_examples
+                or not math.isclose(
+                    live_mean_loss_weight,
+                    float(pinned_mean_loss_weight),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    f"Live joint probe loss mass for {source_name!r} differs from "
+                    "the pinned source audit"
+                )
         else:
             validate_serialized_runtime_probe(dataset, probe_indices, row_hashes, epoch=0)
         fingerprint_payload = {
             "audit_fingerprint": audit["fingerprint"],
             "source_registry_sha256": audit["source_registry_sha256"],
-            "exporter_sha256": audit["exporter_sha256"],
             "input_content_sha256": audit["input_content_sha256"],
             "source": source_name,
             "source_sha256": source["sha256"],
@@ -1527,9 +1760,16 @@ class _AuditedDataset:
             "runtime_dataset_fingerprint": runtime_fingerprint,
             "runtime_dataset_length": len(dataset),
         }
+        if audit_format == _JOINT_AUDIT_FORMAT:
+            fingerprint_payload["exporter_implementation"] = audit["exporter_implementation"]
+        else:
+            fingerprint_payload["exporter_sha256"] = audit["exporter_sha256"]
         if probe_image_content_sha256 is not None:
             fingerprint_payload["probe_image_content_sha256"] = probe_image_content_sha256
-        if audit.get("format") == "vision_alignment_perception_source_audit":
+        if audit_format in {
+            "vision_alignment_perception_source_audit",
+            _JOINT_AUDIT_FORMAT,
+        }:
             fingerprint_payload["probe_epochs"] = source["probe_epochs"]
         self.content_fingerprint = _canonical_sha256(fingerprint_payload)
 
@@ -1620,6 +1860,94 @@ def _perception_provenance(config: ExperimentConfig) -> PerceptionProvenanceMani
     return manifest
 
 
+def _joint_visual_projection(
+    config: ExperimentConfig,
+    token_ids: Optional[Molmo2TokenIds] = None,
+) -> JointVisualProjectionManifest:
+    """Load the exact 8,192-token visual projection inherited from perception."""
+    data = config.data
+    if data.joint_visual_projection_path is None or data.joint_visual_projection_sha256 is None:
+        raise ValueError("Joint alignment requires a pinned visual-projection artifact")
+    if token_ids is None:
+        _, token_ids = _load_tokenizer(config.artifacts)
+    if type(token_ids) is not Molmo2TokenIds:
+        raise ValueError("Joint projection requires exact tokenizer-adapted token IDs")
+    token_ids_sha256 = _canonical_sha256(asdict(token_ids))
+    cache_key = (
+        str(Path(data.joint_visual_projection_path).expanduser().resolve()),
+        data.joint_visual_projection_sha256,
+        token_ids_sha256,
+    )
+    manifest = _JOINT_PROJECTION_RUNTIME_CACHE.get(cache_key)
+    if manifest is None:
+        import torch.distributed as dist
+
+        distributed = dist.is_available() and dist.is_initialized()
+        rank = dist.get_rank() if distributed else 0
+        error_message: Optional[str] = None
+        if rank == 0:
+            try:
+                manifest = load_joint_visual_projection_manifest(
+                    data.joint_visual_projection_path,
+                    expected_token_ids=token_ids,
+                    expected_sha256=data.joint_visual_projection_sha256,
+                )
+                manifest.parent_provenance.validate_image_path_signatures()
+                # Close the long path-restat window with a second exact artifact/code check.
+                load_joint_visual_projection_manifest(
+                    data.joint_visual_projection_path,
+                    expected_token_ids=token_ids,
+                    expected_sha256=data.joint_visual_projection_sha256,
+                    verify_finevision_materialization=False,
+                    load_image_path_signatures=False,
+                )
+            except Exception as error:
+                error_message = f"{type(error).__name__}: {error}"
+        if distributed:
+            result = [error_message]
+            dist.broadcast_object_list(result, src=0)
+            error_message = cast(Optional[str], result[0])
+        if error_message is not None:
+            raise ValueError(
+                f"Joint visual-projection runtime snapshot validation failed: {error_message}"
+            )
+        if rank != 0:
+            try:
+                manifest = load_joint_visual_projection_manifest(
+                    data.joint_visual_projection_path,
+                    expected_token_ids=token_ids,
+                    expected_sha256=data.joint_visual_projection_sha256,
+                    verify_finevision_materialization=False,
+                    load_image_path_signatures=False,
+                )
+            except Exception as error:
+                error_message = f"rank {rank}: {type(error).__name__}: {error}"
+        if distributed:
+            rank_errors: list[Optional[str]] = [None] * dist.get_world_size()
+            dist.all_gather_object(rank_errors, error_message)
+            failures = [value for value in rank_errors if value is not None]
+            if failures:
+                raise ValueError(
+                    "Joint visual-projection rank-local validation failed: " + "; ".join(failures)
+                )
+        assert manifest is not None
+        _JOINT_PROJECTION_RUNTIME_CACHE[cache_key] = manifest
+    parent_spec = manifest.source_spec.perception_spec
+    if parent_spec.pixmo_cap_path != str(Path(data.pixmo_cap_path).resolve()):
+        raise ValueError("Joint visual projection PixMoCap path differs from the training config")
+    if (
+        manifest.source_spec.sequence_length != data.sequence_length
+        or parent_spec.max_crops != data.max_crops
+        or parent_spec.message_format != data.message_format
+        or parent_spec.loss_token_weighting != data.loss_token_weighting
+        or parent_spec.caption_prompt != data.caption_prompt
+        or parent_spec.transcript_prompt != data.transcript_prompt
+        or parent_spec.require_transcript != data.require_transcript
+    ):
+        raise ValueError("Joint visual projection serialization differs from the training config")
+    return manifest
+
+
 def _source_spec(config: ExperimentConfig) -> VisionAlignmentSourceSpec:
     """Return the exact source specification shared with the canonical exporter."""
     data = config.data
@@ -1653,6 +1981,8 @@ def _preprocessing_config_sha256(config: ExperimentConfig) -> str:
     """Hash every recipe field that changes serialized source examples."""
     if config.phase is VisionAlignmentPhase.perception:
         return _perception_provenance(config).source_spec_sha256
+    if config.phase is VisionAlignmentPhase.joint:
+        return _joint_visual_projection(config).source_spec_sha256
     return _source_spec(config).preprocessing_sha256
 
 
@@ -1678,13 +2008,21 @@ def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, A
         )
     audit_path = Path(data.source_audit_path).expanduser().resolve()
     try:
-        audit = json.loads(audit_path.read_bytes(), object_pairs_hook=_strict_json_object)
+        audit_raw = audit_path.read_bytes()
+        audit = json.loads(audit_raw, object_pairs_hook=_strict_json_object)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise ValueError(f"Invalid vision-alignment source audit {audit_path}: {error}") from error
     if not isinstance(audit, dict):
         raise ValueError(f"Vision-alignment source audit must be an object: {audit_path}")
     if config.phase is VisionAlignmentPhase.perception:
         return _validate_perception_source_audit(config, audit_path, audit)
+    if config.phase is VisionAlignmentPhase.joint:
+        return _validate_joint_source_audit(
+            config,
+            audit_path,
+            audit,
+            expected_audit_raw_sha256=hashlib.sha256(audit_raw).hexdigest(),
+        )
     if set(audit) != _SOURCE_AUDIT_FIELDS:
         raise ValueError("Vision-alignment source audit fields differ from the locked schema")
     recorded_fingerprint = audit.get("fingerprint")
@@ -1878,6 +2216,465 @@ def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, A
                 f"Vision-alignment audit summary for {source_name!r} is incomplete, too "
                 "small, or inconsistent with its calibrated loss weight"
             )
+    return audit
+
+
+def _joint_audit_mapping(value: Any, fields: frozenset[str], *, name: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    actual = set(value)
+    if actual != fields:
+        raise ValueError(
+            f"{name} fields differ: missing={sorted(fields - actual)}, "
+            f"extra={sorted(actual - fields)}"
+        )
+    return value
+
+
+def _joint_audit_sha256(value: Any, *, name: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError(f"{name} must be a lowercase SHA-256")
+    return value
+
+
+def _joint_audit_count(value: Any, *, name: str, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return value
+
+
+def _joint_audit_absolute_file(value: Any, *, name: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty absolute path")
+    unresolved = Path(value).expanduser()
+    if not unresolved.is_absolute() or ".." in unresolved.parts:
+        raise ValueError(f"{name} must be an absolute normalized path without traversal")
+    path = unresolved.resolve()
+    if str(path) != value or not path.is_file():
+        raise ValueError(f"{name} must identify a normalized existing file")
+    return path
+
+
+def _validate_joint_source_audit(
+    config: ExperimentConfig,
+    audit_path: Path,
+    audit: Mapping[str, Any],
+    *,
+    expected_audit_raw_sha256: str,
+) -> Mapping[str, Any]:
+    """Validate the joint auditor's exact nine-source version-1 report."""
+    if set(audit) != _JOINT_AUDIT_FIELDS:
+        raise ValueError("Joint source-audit fields differ from the locked schema")
+    unsigned = dict(audit)
+    recorded_fingerprint = unsigned.pop("fingerprint", None)
+    computed_fingerprint = _canonical_sha256(unsigned)
+    if (
+        recorded_fingerprint != computed_fingerprint
+        or config.data.source_audit_fingerprint != computed_fingerprint
+    ):
+        raise ValueError("Joint source-audit fingerprint differs")
+
+    auditor = _joint_audit_mapping(
+        audit["auditor_implementation"],
+        _JOINT_IMPLEMENTATION_FIELDS,
+        name="joint audit auditor_implementation",
+    )
+    exporter = _joint_audit_mapping(
+        audit["exporter_implementation"],
+        _JOINT_IMPLEMENTATION_FIELDS,
+        name="joint audit exporter_implementation",
+    )
+    repo_root = Path(__file__).resolve().parents[3]
+    auditor_path = repo_root / _JOINT_AUDITOR_IMPLEMENTATION
+    exporter_path = repo_root / _JOINT_EXPORTER_IMPLEMENTATION
+    shared_auditor_path = repo_root / _JOINT_SHARED_AUDITOR_IMPLEMENTATION
+    if (
+        audit.get("format") != _JOINT_AUDIT_FORMAT
+        or type(audit.get("version")) is not int
+        or audit["version"] != _JOINT_AUDIT_VERSION
+        or audit.get("status") != "ok"
+        or audit.get("phase") != "joint"
+        or type(audit.get("recipe_version")) is not int
+        or audit.get("recipe_version") != RECIPE_VERSION
+        or audit.get("formatter_version") != FORMATTER_VERSION
+        or type(audit.get("source_catalog_version")) is not int
+        or audit.get("source_catalog_version") != VISION_ALIGNMENT_JOINT_SOURCE_CATALOG_VERSION
+        or auditor
+        != {
+            "path": _JOINT_AUDITOR_IMPLEMENTATION,
+            "sha256": _sha256_file(auditor_path),
+        }
+        or audit.get("shared_auditor_sha256") != _sha256_file(shared_auditor_path)
+        or exporter
+        != {
+            "path": _JOINT_EXPORTER_IMPLEMENTATION,
+            "sha256": _sha256_file(exporter_path),
+        }
+        or type(audit.get("source_registry_version")) is not int
+        or audit.get("source_registry_version") != VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION
+        or audit.get("source_registry_sha256") != joint_alignment_runtime_registry_sha256()
+        or _canonical_sha256(audit.get("source_implementation_inventory"))
+        != _canonical_sha256(joint_alignment_runtime_implementation_inventory())
+        or audit.get("failures") != []
+    ):
+        raise ValueError("Joint source-audit implementation, identity, or status differs")
+
+    catalog_path = _joint_audit_absolute_file(
+        audit.get("catalog_path"), name="joint audit catalog_path"
+    )
+    if audit.get("catalog_sha256") != _sha256_file(catalog_path):
+        raise ValueError("Joint source-audit catalog bytes differ")
+    _joint_audit_sha256(
+        audit.get("catalog_content_sha256"), name="joint audit catalog_content_sha256"
+    )
+
+    projection = _joint_visual_projection(config)
+    projection_ref = _joint_audit_mapping(
+        audit["visual_projection"],
+        _JOINT_VISUAL_PROJECTION_FIELDS,
+        name="joint audit visual_projection",
+    )
+    if projection_ref != {
+        "path": str(projection.path),
+        "raw_sha256": projection.raw_sha256,
+        "content_sha256": projection.content_sha256,
+    }:
+        raise ValueError("Joint source audit identifies a different visual projection")
+
+    replay = config.data.native_text_replay
+    if replay is None or config.data.native_text_replay_fingerprint is None:
+        raise ValueError("Joint source audit requires configured native train replay")
+    native_path = _joint_audit_absolute_file(
+        replay.manifest_path, name="native train manifest path"
+    )
+    native_ref = _joint_audit_mapping(
+        audit["native_train_manifest"],
+        _JOINT_NATIVE_MANIFEST_FIELDS,
+        name="joint audit native_train_manifest",
+    )
+    expected_native_ref = {
+        "path": str(native_path),
+        "raw_sha256": _sha256_file(native_path),
+        "content_fingerprint": config.data.native_text_replay_fingerprint,
+    }
+    if (
+        native_ref != expected_native_ref
+        or replay.expected_fingerprint != expected_native_ref["content_fingerprint"]
+    ):
+        raise ValueError("Joint source audit identifies a different native train manifest")
+    if (
+        replay.verification_receipt_path is None
+        or replay.expected_verification_receipt_sha256 is None
+    ):
+        raise ValueError("Joint source audit requires a pinned native verification receipt")
+    receipt_path = _joint_audit_absolute_file(
+        replay.verification_receipt_path, name="native verification receipt path"
+    )
+    receipt_ref = _joint_audit_mapping(
+        audit["native_verification_receipt"],
+        _JOINT_RECEIPT_FIELDS,
+        name="joint audit native_verification_receipt",
+    )
+    expected_receipt_ref = {
+        "path": str(receipt_path),
+        "sha256": replay.expected_verification_receipt_sha256,
+    }
+    if (
+        receipt_ref != expected_receipt_ref
+        or _sha256_file(receipt_path) != replay.expected_verification_receipt_sha256
+    ):
+        raise ValueError("Joint source audit identifies a different native verification receipt")
+
+    preprocessing = _joint_audit_mapping(
+        audit["preprocessing"],
+        _JOINT_PREPROCESSING_FIELDS,
+        name="joint audit preprocessing",
+    )
+    expected_preprocessing = {
+        "visual": projection.source_spec.as_canonical_dict(),
+        "native_text_replay_fingerprint": config.data.native_text_replay_fingerprint,
+    }
+    if _canonical_sha256(preprocessing) != _canonical_sha256(expected_preprocessing) or audit.get(
+        "preprocessing_sha256"
+    ) != _canonical_sha256(expected_preprocessing):
+        raise ValueError("Joint source-audit preprocessing identity differs from training")
+
+    probe = _joint_audit_mapping(audit["probe"], _JOINT_PROBE_FIELDS, name="joint audit probe")
+    visual_probe = _joint_audit_mapping(
+        probe["visual"], _JOINT_PROBE_KIND_FIELDS, name="joint audit probe.visual"
+    )
+    native_probe = _joint_audit_mapping(
+        probe["native_text_replay"],
+        _JOINT_PROBE_KIND_FIELDS,
+        name="joint audit probe.native_text_replay",
+    )
+    expected_probe = {
+        "format": _JOINT_PROBE_FORMAT,
+        "version": _JOINT_PROBE_VERSION,
+        "selection_algorithm": VISION_ALIGNMENT_PROBE_SELECTION_ALGORITHM,
+        "seed": _JOINT_PROBE_SEED,
+        "visual": {
+            "unique_indices": _JOINT_VISUAL_PROBE_INDICES,
+            "epochs": list(_JOINT_VISUAL_PROBE_EPOCHS),
+            "rows_per_source": _JOINT_VISUAL_PROBE_INDICES * len(_JOINT_VISUAL_PROBE_EPOCHS),
+        },
+        "native_text_replay": {
+            "unique_indices": _JOINT_NATIVE_PROBE_INDICES,
+            "epochs": list(_JOINT_NATIVE_PROBE_EPOCHS),
+            "rows_per_source": _JOINT_NATIVE_PROBE_INDICES * len(_JOINT_NATIVE_PROBE_EPOCHS),
+        },
+        "sequence_length": _JOINT_SEQUENCE_LENGTH,
+        "truncation_policy": "forbid-raw-length-above-sequence-length-v1",
+    }
+    if (
+        _canonical_sha256(probe) != _canonical_sha256(expected_probe)
+        or _canonical_sha256(visual_probe) != _canonical_sha256(expected_probe["visual"])
+        or _canonical_sha256(native_probe)
+        != _canonical_sha256(expected_probe["native_text_replay"])
+    ):
+        raise ValueError("Joint source-audit probe identity or epoch panel differs")
+
+    targets = config.data.mixture.resolved_targets()
+    means = config.data.mixture.mean_loss_weight
+    sampling = config.data.mixture.sampling_weights()
+    if tuple(sorted(targets)) != _JOINT_SOURCE_NAMES or set(means) != set(targets):
+        raise ValueError("Joint training mixture does not contain the exact nine sources")
+    for field_name, expected in (
+        ("target_loss_mass", targets),
+        ("mean_loss_weight", means),
+        ("sampling_probabilities", sampling),
+    ):
+        actual = audit.get(field_name)
+        if not isinstance(actual, Mapping) or _canonical_sha256(actual) != _canonical_sha256(
+            expected
+        ):
+            raise ValueError(f"Joint source-audit {field_name} differs from training")
+    expected_mass = expected_loss_mass(sampling, means)
+    actual_mass = audit.get("expected_loss_mass")
+    if (
+        not isinstance(actual_mass, Mapping)
+        or set(actual_mass) != set(expected_mass)
+        or any(
+            isinstance(actual_mass[name], bool)
+            or not isinstance(actual_mass[name], (int, float))
+            or not math.isfinite(float(actual_mass[name]))
+            or not math.isclose(
+                float(actual_mass[name]), float(expected_mass[name]), rel_tol=0.0, abs_tol=1e-12
+            )
+            for name in expected_mass
+        )
+    ):
+        raise ValueError("Joint source-audit expected loss mass differs from targets")
+
+    inputs = audit.get("inputs")
+    summaries = audit.get("sources")
+    if (
+        not isinstance(inputs, Mapping)
+        or not isinstance(summaries, Mapping)
+        or tuple(sorted(inputs)) != _JOINT_SOURCE_NAMES
+        or tuple(sorted(summaries)) != _JOINT_SOURCE_NAMES
+    ):
+        raise ValueError("Joint source-audit source set differs")
+    input_descriptors: List[Dict[str, Any]] = []
+    pinned_probe_files: List[Tuple[Path, str]] = []
+    for source_name in _JOINT_SOURCE_NAMES:
+        source = _joint_audit_mapping(
+            inputs[source_name],
+            _JOINT_AUDIT_INPUT_FIELDS,
+            name=f"joint audit input {source_name!r}",
+        )
+        kind = "native_text_replay" if source_name == "native_text_replay" else "visual"
+        expected_epochs = (
+            _JOINT_NATIVE_PROBE_EPOCHS
+            if kind == "native_text_replay"
+            else _JOINT_VISUAL_PROBE_EPOCHS
+        )
+        expected_indices_count = (
+            _JOINT_NATIVE_PROBE_INDICES
+            if kind == "native_text_replay"
+            else _JOINT_VISUAL_PROBE_INDICES
+        )
+        expected_rows = expected_indices_count * len(expected_epochs)
+        dataset_size = _joint_audit_count(
+            source.get("dataset_size"), name=f"{source_name}.dataset_size", minimum=1
+        )
+        fingerprint = _joint_audit_sha256(
+            source.get("dataset_fingerprint"), name=f"{source_name}.dataset_fingerprint"
+        )
+        raw_probe_epochs = source.get("probe_epochs")
+        probe_indices = source.get("probe_indices")
+        row_hashes = source.get("serialized_row_hashes")
+        if (
+            source.get("name") != source_name
+            or source.get("kind") != kind
+            or source.get("format") != "jsonl"
+            or source.get("path") != f"{source_name}.jsonl"
+            or not isinstance(raw_probe_epochs, list)
+            or any(type(epoch) is not int for epoch in raw_probe_epochs)
+            or tuple(raw_probe_epochs) != expected_epochs
+            or not isinstance(probe_indices, list)
+            or len(probe_indices) != expected_indices_count
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= dataset_size
+                for index in probe_indices
+            )
+            or len(set(probe_indices)) != len(probe_indices)
+            or tuple(probe_indices)
+            != select_deterministic_probe_indices(
+                dataset_size,
+                expected_indices_count,
+                seed=_JOINT_PROBE_SEED,
+                dataset_fingerprint=fingerprint,
+            )
+            or source.get("probe_indices_sha256") != _canonical_sha256(probe_indices)
+            or not isinstance(row_hashes, list)
+            or len(row_hashes) != expected_rows
+            or any(
+                not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in row_hashes
+            )
+            or source.get("serialized_row_hashes_sha256") != _canonical_sha256(row_hashes)
+        ):
+            raise ValueError(f"Joint audit source {source_name!r} runtime probe differs")
+        source_sha = _joint_audit_sha256(source.get("sha256"), name=f"{source_name}.sha256")
+        image_sha = _joint_audit_sha256(
+            source.get("probe_image_content_sha256"),
+            name=f"{source_name}.probe_image_content_sha256",
+        )
+        maximum_length = _joint_audit_count(
+            source.get("max_observed_sequence_length"),
+            name=f"{source_name}.max_observed_sequence_length",
+            minimum=1,
+        )
+        truncated_rows = _joint_audit_count(
+            source.get("truncated_rows"), name=f"{source_name}.truncated_rows"
+        )
+        if (
+            maximum_length > _JOINT_SEQUENCE_LENGTH
+            or (kind == "native_text_replay" and maximum_length != _JOINT_SEQUENCE_LENGTH)
+            or truncated_rows != 0
+            or (kind == "native_text_replay" and image_sha != _canonical_sha256([]))
+        ):
+            raise ValueError(
+                f"Joint audit source {source_name!r} truncation/image evidence differs"
+            )
+        source_path = (catalog_path.parent / str(source["path"])).resolve()
+        if (
+            source_path.parent != catalog_path.parent
+            or not source_path.is_file()
+            or _sha256_file(source_path) != source_sha
+        ):
+            raise ValueError(f"Joint audit source {source_name!r} probe bytes differ")
+        pinned_probe_files.append((source_path, source_sha))
+
+        summary = _joint_audit_mapping(
+            summaries[source_name],
+            _JOINT_SOURCE_SUMMARY_FIELDS,
+            name=f"joint audit summary {source_name!r}",
+        )
+        if summary.get("examples") != {
+            "seen": expected_rows,
+            "valid": expected_rows,
+            "errors": 0,
+        }:
+            raise ValueError(f"Joint audit summary {source_name!r} example counts differ")
+        metric_summaries: Dict[str, Mapping[str, Any]] = {}
+        for metric_name in (
+            "raw_input_tokens",
+            "positive_supervised_tokens",
+            "summed_loss_weight",
+            "image_crops",
+        ):
+            metric = _joint_audit_mapping(
+                summary[metric_name],
+                _JOINT_METRIC_SUMMARY_FIELDS,
+                name=f"joint audit summary {source_name!r}.{metric_name}",
+            )
+            if any(
+                isinstance(metric[field_name], bool)
+                or not isinstance(metric[field_name], (int, float))
+                or not math.isfinite(float(metric[field_name]))
+                or float(metric[field_name]) < 0
+                for field_name in _JOINT_METRIC_SUMMARY_FIELDS
+            ):
+                raise ValueError(f"Joint audit summary {source_name!r}.{metric_name} is not finite")
+            metric_summaries[metric_name] = metric
+        calibrated_mean = summary.get("mean_sum_loss_masks")
+        truncated_examples = _joint_audit_count(
+            summary.get("truncated_examples"),
+            name=f"{source_name}.truncated_examples",
+        )
+        zero_loss_examples = _joint_audit_count(
+            summary.get("zero_loss_examples"),
+            name=f"{source_name}.zero_loss_examples",
+        )
+        loss_metric = metric_summaries["summed_loss_weight"]
+        if (
+            truncated_examples != 0
+            or zero_loss_examples > expected_rows
+            or (kind == "visual" and zero_loss_examples != 0)
+            or (zero_loss_examples > 0) != (float(loss_metric["min"]) == 0.0)
+            or summary.get("error_samples") != []
+            or isinstance(calibrated_mean, bool)
+            or not isinstance(calibrated_mean, (int, float))
+            or not math.isfinite(float(calibrated_mean))
+            or float(calibrated_mean) <= 0
+            or not math.isclose(
+                float(loss_metric["mean"]),
+                float(calibrated_mean),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                float(loss_metric["total"]),
+                float(calibrated_mean) * expected_rows,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            or not math.isclose(
+                float(calibrated_mean),
+                float(means[source_name]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ValueError(f"Joint audit summary {source_name!r} calibration differs")
+        input_descriptors.append(
+            {
+                "name": source_name,
+                "kind": kind,
+                "sha256": source_sha,
+                "dataset_fingerprint": fingerprint,
+                "probe_indices_sha256": source["probe_indices_sha256"],
+                "probe_epochs": list(expected_epochs),
+                "serialized_row_hashes_sha256": source["serialized_row_hashes_sha256"],
+                "probe_image_content_sha256": image_sha,
+                "max_observed_sequence_length": maximum_length,
+                "truncated_rows": 0,
+            }
+        )
+    if audit.get("input_content_sha256") != _canonical_sha256(input_descriptors):
+        raise ValueError("Joint source-audit input-content identity differs")
+
+    # Close the path-restat window after every dependent probe file has been checked.
+    if (
+        _sha256_file(audit_path) != expected_audit_raw_sha256
+        or _sha256_file(catalog_path) != audit["catalog_sha256"]
+        or _sha256_file(auditor_path) != auditor["sha256"]
+        or _sha256_file(exporter_path) != exporter["sha256"]
+        or _sha256_file(shared_auditor_path) != audit["shared_auditor_sha256"]
+        or _sha256_file(projection.path) != projection.raw_sha256
+        or _sha256_file(native_path) != native_ref["raw_sha256"]
+        or _sha256_file(receipt_path) != receipt_ref["sha256"]
+        or any(_sha256_file(path) != sha256 for path, sha256 in pinned_probe_files)
+        or joint_alignment_runtime_registry_sha256() != audit["source_registry_sha256"]
+        or _canonical_sha256(joint_alignment_runtime_implementation_inventory())
+        != _canonical_sha256(audit["source_implementation_inventory"])
+    ):
+        raise ValueError("Joint source-audit inputs changed during launcher validation")
     return audit
 
 
@@ -2536,6 +3333,45 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
                 holdout_index += 1
 
 
+def _validate_joint_parent_projection_lineage(
+    config: ExperimentConfig, parent_config: Mapping[str, Any]
+) -> None:
+    """Bind the joint projection to the provenance saved by its perception parent."""
+    if config.phase is not VisionAlignmentPhase.joint:
+        return
+    parent_data = parent_config.get("data")
+    if not isinstance(parent_data, Mapping):
+        raise ValueError("Joint parent checkpoint lacks its saved perception data config")
+    parent_provenance_path = parent_data.get("perception_provenance_path")
+    parent_provenance_sha256 = parent_data.get("perception_provenance_sha256")
+    if (
+        not isinstance(parent_provenance_path, str)
+        or not parent_provenance_path
+        or not isinstance(parent_provenance_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", parent_provenance_sha256) is None
+    ):
+        raise ValueError(
+            "Joint parent checkpoint lacks a pinned perception provenance path and raw SHA-256"
+        )
+    unresolved_parent_path = Path(parent_provenance_path).expanduser()
+    resolved_parent_path = unresolved_parent_path.resolve()
+    if (
+        not unresolved_parent_path.is_absolute()
+        or ".." in unresolved_parent_path.parts
+        or str(resolved_parent_path) != parent_provenance_path
+    ):
+        raise ValueError("Joint parent checkpoint perception provenance path is not normalized")
+    projection_parent = _joint_visual_projection(config).parent_provenance
+    if (
+        resolved_parent_path != projection_parent.path
+        or parent_provenance_sha256 != projection_parent.raw_sha256
+    ):
+        raise ValueError(
+            "Joint visual projection parent provenance differs from the approved perception "
+            "checkpoint data config"
+        )
+
+
 def _validate_parent_or_resume(config: ExperimentConfig) -> None:
     existing = _latest_output_checkpoint(config)
     if existing is not None:
@@ -2593,6 +3429,16 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
             )
         config.initialization.parent_gate_sha256 = saved_gate_sha
         config.vision_alignment.parent_gate_sha256 = saved_gate_sha
+        if config.phase is VisionAlignmentPhase.joint:
+            parent = config.initialization.checkpoint
+            if not isinstance(parent, str) or not parent:
+                raise ValueError("A joint resume lacks its perception parent checkpoint")
+            parent_config, parent_sha = _checkpoint_config(parent)
+            if parent_sha != saved_parent_sha:
+                raise ValueError(
+                    "Joint resume perception parent config differs from its saved lineage SHA"
+                )
+            _validate_joint_parent_projection_lineage(config, parent_config)
         return
 
     if config.phase is VisionAlignmentPhase.bridge:
@@ -2621,6 +3467,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
         )
     config.initialization.parent_config_sha256 = parent_sha
     config.vision_alignment.parent_config_sha256 = parent_sha
+    _validate_joint_parent_projection_lineage(config, parent_config)
     parent_gate_sha = _validate_parent_gate(config, parent, parent_config, parent_sha)
     config.initialization.parent_gate_sha256 = parent_gate_sha
     config.vision_alignment.parent_gate_sha256 = parent_gate_sha
@@ -2887,6 +3734,24 @@ def _validate_reviewed_profile(config: ExperimentConfig) -> None:
         )
 
 
+def _validate_native_artifact_phase(config: ExperimentConfig) -> None:
+    """Forbid every native replay artifact outside the joint phase."""
+    if config.phase is VisionAlignmentPhase.joint:
+        return
+    if any(
+        value is not None
+        for value in (
+            config.data.native_text_replay,
+            config.data.native_text_replay_fingerprint,
+            config.evaluation.native_text_holdout,
+            config.evaluation.native_text_holdout_fingerprint,
+        )
+    ):
+        raise ValueError(
+            f"Native replay configs and fingerprints are forbidden outside joint ({config.phase})"
+        )
+
+
 def _validate_phase_contract(
     config: ExperimentConfig, run_name: str, *, runtime: bool = False
 ) -> None:
@@ -3057,8 +3922,8 @@ def _validate_phase_contract(
                 "runtime size checks without re-hashing the full corpus"
             )
         _validate_native_replay_pair(config)
-    elif replay is not None:
-        raise ValueError(f"Native text replay is forbidden while the LM is frozen ({config.phase})")
+    else:
+        _validate_native_artifact_phase(config)
 
     source_audit = _validated_source_audit(config)
     if config.phase is VisionAlignmentPhase.perception:
@@ -3077,12 +3942,43 @@ def _validate_phase_contract(
             or config.evaluation.validation_manifest_sha256 is not None
         ):
             raise ValueError("Perception uses its union provenance, not the PixMo-only manifest")
+        if (
+            config.data.joint_visual_projection_path is not None
+            or config.data.joint_visual_projection_sha256 is not None
+        ):
+            raise ValueError("Joint visual projection is forbidden outside the joint phase")
+    elif config.phase is VisionAlignmentPhase.joint:
+        projection = _joint_visual_projection(config)
+        if any(
+            len(projection.selection(source_name, "validation").indices)
+            != config.evaluation.examples_per_source
+            for source_name in JOINT_VISUAL_SOURCE_NAMES
+        ):
+            raise ValueError(
+                "Joint visual projection must provide exactly the configured held-out rows "
+                "for every visual source"
+            )
+        if (
+            config.data.perception_provenance_path is not None
+            or config.data.perception_provenance_sha256 is not None
+        ):
+            raise ValueError("Perception provenance is forbidden outside the perception phase")
+        if (
+            config.evaluation.validation_manifest_path is not None
+            or config.evaluation.validation_manifest_sha256 is not None
+        ):
+            raise ValueError("Joint uses its visual projection, not the PixMo-only manifest")
     else:
         if (
             config.data.perception_provenance_path is not None
             or config.data.perception_provenance_sha256 is not None
         ):
             raise ValueError("Perception provenance is forbidden outside the perception phase")
+        if (
+            config.data.joint_visual_projection_path is not None
+            or config.data.joint_visual_projection_sha256 is not None
+        ):
+            raise ValueError("Joint visual projection is forbidden outside the joint phase")
         _validate_validation_manifest(config, source_audit)
 
     parent = config.initialization.checkpoint
@@ -3299,6 +4195,7 @@ def _build_mixture_sources(
         "native_text_replay",
         "ocr_document",
         "scalar_count",
+        "count_numeric",
         "audited_alignment",
     }
     missing = sorted(set(targets) - supported)
@@ -3310,6 +4207,11 @@ def _build_mixture_sources(
     audit = _validated_source_audit(config)
     perception_provenance = (
         _perception_provenance(config) if config.phase is VisionAlignmentPhase.perception else None
+    )
+    joint_projection = (
+        _joint_visual_projection(config, token_ids)
+        if config.phase is VisionAlignmentPhase.joint
+        else None
     )
     weights = config.data.mixture.sampling_weights()
     sources: List[Tuple[str, Any, float]] = []
@@ -3323,7 +4225,16 @@ def _build_mixture_sources(
             if dataset.sequence_length != config.data.sequence_length:
                 raise ValueError("Native replay and joint training sequence lengths must match")
         else:
-            if perception_provenance is not None:
+            if joint_projection is not None:
+                dataset = build_selected_joint_dataset(
+                    joint_projection,
+                    tokenizer,
+                    token_ids,
+                    name,
+                    logical_split="train",
+                    validate_required_annotations=True,
+                )
+            elif perception_provenance is not None:
                 dataset = build_selected_perception_dataset(
                     perception_provenance,
                     tokenizer,
@@ -3343,7 +4254,7 @@ def _build_mixture_sources(
                     validate_required_annotations=True,
                 )
         if audit is not None:
-            dataset = _AuditedDataset(dataset, name, audit)
+            dataset = _AuditedDataset(dataset, name, audit, token_ids=token_ids)
         sources.append((name, dataset, weights[name]))
     sources.sort(key=lambda item: item[0])
     names = [item[0] for item in sources]
@@ -3377,17 +4288,36 @@ def _add_intrinsic_visual_evaluators(
     evaluators: List[Evaluator] = []
     validation_manifest = None
     perception_provenance = None
+    joint_projection = None
     validation_sources: Tuple[str, ...]
     if config.phase is VisionAlignmentPhase.perception:
         perception_provenance = _perception_provenance(config)
         validation_sources = PERCEPTION_SOURCE_NAMES
+    elif config.phase is VisionAlignmentPhase.joint:
+        joint_projection = _joint_visual_projection(config, token_ids)
+        validation_sources = JOINT_VISUAL_SOURCE_NAMES
     else:
         validation_manifest = _validate_validation_manifest(
             config, _validated_source_audit(config), validate_live_datasets=False
         )
         validation_sources = ("pixmo_caption", "pixmo_transcript")
     for source_name in validation_sources:
-        if perception_provenance is not None:
+        if joint_projection is not None:
+            dataset = build_selected_joint_dataset(
+                joint_projection,
+                tokenizer,
+                token_ids,
+                source_name,
+                logical_split="validation",
+                validate_required_annotations=True,
+            )
+            if len(dataset) != eval_config.examples_per_source:
+                raise ValueError(
+                    f"Joint validation {source_name!r} must contain exactly "
+                    f"{eval_config.examples_per_source} projection-selected rows"
+                )
+            dataset.validate_image_content()
+        elif perception_provenance is not None:
             dataset = build_selected_perception_dataset(
                 perception_provenance,
                 tokenizer,
@@ -3466,6 +4396,16 @@ def _add_intrinsic_visual_evaluators(
                 process_group=trainer.dp_process_group,
                 deterministic=True,
             )
+        )
+    expected_evaluators = {
+        VisionAlignmentPhase.bridge: 4,
+        VisionAlignmentPhase.perception: 10,
+        VisionAlignmentPhase.joint: 11,
+    }[config.phase]
+    if len(evaluators) != expected_evaluators:
+        raise ValueError(
+            f"Phase {config.phase.value} requires exactly {expected_evaluators} intrinsic "
+            f"evaluators, got {len(evaluators)}"
         )
     trainer.add_callback(
         "vision_alignment_intrinsic_validation",

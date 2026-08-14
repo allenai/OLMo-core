@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import stat
 from collections.abc import Mapping, Sequence
@@ -19,9 +20,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+
 from olmo_core.nn.vision import Molmo2TokenIds
+from olmo_core.nn.vision.molmo2_tokens import (
+    DEFAULT_MAX_CROPS,
+    N_PATCHES_SQ,
+    PATCH_DIM,
+    POOL_H,
+    POOL_W,
+)
 
 from .vision_alignment_joint_sources import (
+    JOINT_SEQUENCE_SENSITIVE_ANNOTATION_SOURCES,
     JOINT_TO_PERCEPTION_SOURCE,
     JOINT_VISUAL_SOURCE_NAMES,
     VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
@@ -29,6 +40,7 @@ from .vision_alignment_joint_sources import (
     build_vision_alignment_joint_dataset,
     build_vision_alignment_joint_dataset_config,
     vision_alignment_joint_adapter_projection_sha256,
+    vision_alignment_joint_annotation_replay_sha256,
     vision_alignment_joint_implementation_inventory,
     vision_alignment_joint_source_registry_sha256,
 )
@@ -40,31 +52,81 @@ from .vision_alignment_perception_provenance import (
     load_perception_provenance_manifest,
     perception_annotation_content_sha256,
 )
-from .vision_alignment_sources import runtime_dataset_fingerprint
+from .vision_alignment_sources import (
+    array_content_descriptor,
+    runtime_dataset_fingerprint,
+    serialized_descriptor_sha256,
+)
 
 __all__ = [
     "JOINT_VISUAL_PROJECTION_FORMAT",
+    "JOINT_VISUAL_PROJECTION_ALGORITHM",
     "JOINT_VISUAL_PROJECTION_MANIFEST",
     "JOINT_VISUAL_PROJECTION_VERSION",
+    "JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH",
     "JointVisualProjectionManifest",
     "JointVisualSplitProjection",
     "SelectedVisionAlignmentJointDataset",
     "build_selected_joint_dataset",
+    "joint_alignment_runtime_implementation_inventory",
+    "joint_alignment_runtime_registry_sha256",
     "joint_selected_dataset_fingerprint",
     "load_joint_visual_projection_manifest",
+    "validate_joint_live_example",
+    "validate_joint_probe_record",
+    "validate_joint_unbounded_dataset_identity",
 ]
 
 JOINT_VISUAL_PROJECTION_FORMAT = "vision_alignment_joint_visual_projection"
 JOINT_VISUAL_PROJECTION_MANIFEST = "vision-alignment-joint-visual-projection.json"
 JOINT_VISUAL_PROJECTION_VERSION = 1
+JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH = 2**31 - 1
+JOINT_MODEL_VOCAB_SIZE = 100352
 
-_PROJECTION_ALGORITHM = "exact-parent-logical-row-selection-v1"
+JOINT_VISUAL_PROJECTION_ALGORITHM = (
+    "exact-parent-logical-row-selection-with-source-aware-annotation-projection-v1"
+)
 _PARENT_SEQUENCE_LENGTH = 2560
 _JOINT_SEQUENCE_LENGTH = 8192
 _BUILDER_NAME = "build_vision_alignment_joint_projection"
 _BUILDER_VERSION = 1
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _DATASET_FINGERPRINT_RE = re.compile(r"[0-9a-f]{16,64}")
+_JOINT_RUNTIME_SOURCE_NAMES = tuple(sorted((*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay")))
+
+_SERIALIZED_DESCRIPTOR_REQUIRED_FIELDS = frozenset(
+    {
+        "input_ids",
+        "labels",
+        "loss_masks",
+        "position_ids",
+        "token_type_ids",
+        "images",
+        "pooled_patches_idx",
+    }
+)
+_SERIALIZED_DESCRIPTOR_OPTIONAL_FIELDS = frozenset({"subsegment_ids"})
+_INLINE_SERIALIZED_FIELDS = frozenset(
+    {"input_ids", "labels", "loss_masks", "position_ids", "token_type_ids"}
+)
+_ARRAY_DESCRIPTOR_FIELDS = frozenset({"dtype", "shape", "sha256"})
+_INT64_SERIALIZED_FIELDS = frozenset(
+    {"input_ids", "labels", "position_ids", "token_type_ids", "subsegment_ids"}
+)
+_FLOAT32_SERIALIZED_FIELDS = frozenset({"loss_masks", "images"})
+_PROBE_RECORD_BASE_FIELDS = frozenset(
+    {
+        "source",
+        "probe_index",
+        "probe_epoch",
+        "serialized_fields",
+        "serialized_row_sha256",
+        "image_crops",
+        "pooled_tokens",
+        "raw_sequence_length",
+        "truncated",
+    }
+)
 
 _ROOT_FIELDS = frozenset(
     {
@@ -75,6 +137,7 @@ _ROOT_FIELDS = frozenset(
         "created_at",
         "builder",
         "parent_perception_provenance",
+        "token_ids",
         "source_name_projection",
         "source_spec",
         "source_spec_sha256",
@@ -88,6 +151,17 @@ _ROOT_FIELDS = frozenset(
     }
 )
 _BUILDER_FIELDS = frozenset({"name", "version", "script_sha256"})
+_TOKEN_ID_FIELDS = frozenset(
+    {
+        "im_start_id",
+        "im_end_id",
+        "im_patch_id",
+        "im_col_id",
+        "low_res_im_start_id",
+        "image_placeholder_id",
+        "im_end_turn_id",
+    }
+)
 _PARENT_FIELDS = frozenset(
     {"path", "sha256", "content_sha256", "source_spec_sha256", "source_registry_sha256"}
 )
@@ -151,6 +225,35 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def joint_alignment_runtime_implementation_inventory() -> Dict[str, Any]:
+    """Return the exact visual-selection and native-replay implementation inventory.
+
+    The visual source registry covers adapter construction for the independently published
+    projection. A joint nine-source catalog additionally depends on this selected-row wrapper
+    and the native replay implementation, so its runtime inventory binds those seams too.
+
+    :returns: Canonical implementation metadata with a sorted file-to-SHA mapping.
+    """
+    inventory = dict(vision_alignment_joint_implementation_inventory())
+    files = dict(inventory["files"])
+    module_dir = Path(__file__).resolve().parent
+    files["vision_alignment_joint_provenance.py"] = _sha256_file(Path(__file__).resolve())
+    files["native_text_replay.py"] = _sha256_file(module_dir / "native_text_replay.py")
+    files["data/utils.py"] = _sha256_file(module_dir.parent / "utils.py")
+    inventory["runtime_inventory_version"] = 1
+    inventory["runtime_source_names"] = list(_JOINT_RUNTIME_SOURCE_NAMES)
+    inventory["files"] = {name: files[name] for name in sorted(files)}
+    return inventory
+
+
+def joint_alignment_runtime_registry_sha256() -> str:
+    """Hash the complete nine-source runtime implementation inventory.
+
+    :returns: Lowercase SHA-256 of the canonical runtime inventory.
+    """
+    return _canonical_sha256(joint_alignment_runtime_implementation_inventory())
+
+
 def _strict_json_object(pairs: Sequence[tuple[str, Any]]) -> Dict[str, Any]:
     value: Dict[str, Any] = {}
     for key, item in pairs:
@@ -188,6 +291,441 @@ def _count(value: Any, *, name: str, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{name} must be an integer >= {minimum}")
     return value
+
+
+def _projection_token_ids(value: Any) -> Molmo2TokenIds:
+    token_ids = _exact_mapping(value, _TOKEN_ID_FIELDS, name="token_ids")
+    parsed = {
+        field_name: _count(token_ids[field_name], name=f"token_ids.{field_name}")
+        for field_name in sorted(_TOKEN_ID_FIELDS)
+    }
+    if len(set(parsed.values())) != len(parsed) or any(
+        value >= JOINT_MODEL_VOCAB_SIZE for value in parsed.values()
+    ):
+        raise ValueError("Joint projection token IDs must be distinct model-vocabulary rows")
+    return Molmo2TokenIds(**parsed)
+
+
+def _probe_list(value: Any, *, name: str, nonempty: bool = False) -> list[Any]:
+    if not isinstance(value, list) or (nonempty and not value):
+        qualifier = "non-empty " if nonempty else ""
+        raise ValueError(f"{name} must be a {qualifier}list")
+    return value
+
+
+def _probe_integer(value: Any, *, name: str, minimum: Optional[int] = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}")
+    return value
+
+
+def _live_probe_array(value: Any, *, field_name: str) -> np.ndarray:
+    if hasattr(value, "detach") and hasattr(value, "cpu"):
+        value = value.detach().cpu().numpy()
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise ValueError(f"Joint live field {field_name!r} may not have object dtype")
+    return array
+
+
+def _joint_probe_token_ids(
+    source_kind: str,
+    token_ids: Molmo2TokenIds,
+) -> Molmo2TokenIds:
+    if source_kind not in {"visual", "native_text_replay"}:
+        raise ValueError(f"Unknown joint source kind {source_kind!r}")
+    if type(token_ids) is not Molmo2TokenIds:
+        raise ValueError("Joint validation requires the exact tokenizer-adapted token IDs")
+    return token_ids
+
+
+def validate_joint_live_example(
+    example: Mapping[str, Any],
+    *,
+    source_name: str,
+    source_kind: str,
+    token_ids: Molmo2TokenIds,
+) -> None:
+    """Validate the exact model-visible arrays of one live joint example.
+
+    Stored probe records carry content hashes rather than the large image tensors themselves.
+    Export, independent audit, and training therefore call this validator on the live row before
+    hashing it. It enforces the exact model dtypes, token alignment, Molmo2 crop geometry, finite
+    pixels, pooled-patch ranges, and image-token correspondence.
+
+    :param example: Exact example returned by a reviewed joint runtime dataset.
+    :param source_name: Exact canonical joint source name.
+    :param source_kind: Either ``visual`` or ``native_text_replay``.
+    :param token_ids: Exact tokenizer-adapted Molmo2 IDs for this joint runtime.
+    :raises ValueError: If any model-visible array is malformed or inconsistent.
+    """
+    if not isinstance(example, Mapping):
+        raise ValueError("Joint live example must be an object")
+    if source_name not in _JOINT_RUNTIME_SOURCE_NAMES:
+        raise ValueError(f"Unknown joint probe source {source_name!r}")
+    expected_kind = "native_text_replay" if source_name == "native_text_replay" else "visual"
+    if source_kind != expected_kind:
+        raise ValueError(f"Joint source {source_name!r} requires kind {expected_kind!r}")
+    resolved_token_ids = _joint_probe_token_ids(source_kind, token_ids)
+
+    required = set(_SERIALIZED_DESCRIPTOR_REQUIRED_FIELDS)
+    missing = sorted(required - set(example))
+    if missing:
+        raise ValueError(f"Joint live example is missing model fields {missing}")
+    fields = [*sorted(required)]
+    if "subsegment_ids" in example:
+        fields.append("subsegment_ids")
+    arrays = {
+        field_name: _live_probe_array(example[field_name], field_name=field_name)
+        for field_name in fields
+    }
+    for field_name in _INT64_SERIALIZED_FIELDS & set(arrays):
+        if arrays[field_name].dtype != np.dtype(np.int64):
+            raise ValueError(f"Joint live field {field_name!r} must have exact int64 dtype")
+    for field_name in _FLOAT32_SERIALIZED_FIELDS & set(arrays):
+        if arrays[field_name].dtype != np.dtype(np.float32):
+            raise ValueError(f"Joint live field {field_name!r} must have exact float32 dtype")
+    pooled = arrays["pooled_patches_idx"]
+    if pooled.dtype != np.dtype(np.int64):
+        raise ValueError("Joint live field 'pooled_patches_idx' must have exact int64 dtype")
+
+    input_ids = arrays["input_ids"]
+    if input_ids.ndim != 1 or input_ids.shape[0] == 0:
+        raise ValueError("Joint live input_ids must be a non-empty rank-1 array")
+    if np.any(input_ids < 0) or np.any(input_ids >= JOINT_MODEL_VOCAB_SIZE):
+        raise ValueError("Joint live input_ids must be valid model-vocabulary IDs")
+    token_length = input_ids.shape[0]
+    for field_name in ("labels", "loss_masks", "position_ids", "token_type_ids"):
+        if arrays[field_name].shape != (token_length,):
+            raise ValueError("Joint live token, label, position, type, and loss arrays must align")
+    if "subsegment_ids" in arrays and arrays["subsegment_ids"].shape != (token_length,):
+        raise ValueError("Joint live subsegment_ids must align with input_ids")
+    if "subsegment_ids" in arrays and np.any(arrays["subsegment_ids"] < 0):
+        raise ValueError("Joint live subsegment_ids must be non-negative")
+    if np.any(arrays["position_ids"] < 0) or np.any(arrays["position_ids"] >= token_length):
+        raise ValueError("Joint live position_ids must be within the token sequence")
+    image_token_mask = np.isin(
+        input_ids,
+        np.fromiter(resolved_token_ids.image_token_ids, dtype=np.int64),
+    )
+    expected_token_types = (
+        np.zeros_like(input_ids)
+        if source_kind == "native_text_replay"
+        else image_token_mask.astype(np.int64)
+    )
+    native_forbidden_ids = frozenset(
+        (*resolved_token_ids.image_token_ids, resolved_token_ids.image_placeholder_id)
+    )
+    if source_kind == "native_text_replay" and np.any(
+        np.isin(input_ids, np.fromiter(native_forbidden_ids, dtype=np.int64))
+    ):
+        raise ValueError("Native replay rows must not contain configured image tokens")
+    if not np.array_equal(arrays["token_type_ids"], expected_token_types):
+        raise ValueError("Joint live token_type_ids do not exactly mark image tokens")
+    labels = arrays["labels"]
+    if (
+        np.any(labels < -100)
+        or np.any((labels < 0) & (labels != -100))
+        or np.any(labels >= JOINT_MODEL_VOCAB_SIZE)
+    ):
+        raise ValueError("Joint live labels must be -100 or valid model-vocabulary IDs")
+    loss_masks = arrays["loss_masks"]
+    if not np.isfinite(loss_masks).all() or np.any(loss_masks < 0):
+        raise ValueError("Joint live loss_masks must be finite and non-negative")
+    if source_kind == "visual" and np.any((loss_masks > 0) & (labels == -100)):
+        raise ValueError("Joint visual positive loss weights require non-ignored labels")
+
+    images = arrays["images"]
+    if images.ndim != 3 or images.shape[1:] != (N_PATCHES_SQ, PATCH_DIM):
+        raise ValueError(
+            "Joint live images must have shape " f"(crops, {N_PATCHES_SQ}, {PATCH_DIM})"
+        )
+    if not np.isfinite(images).all():
+        raise ValueError("Joint live images must contain only finite values")
+    if pooled.ndim != 2 or pooled.shape[1:] != (POOL_H * POOL_W,):
+        raise ValueError(
+            "Joint live pooled_patches_idx must have shape " f"(pooled_tokens, {POOL_H * POOL_W})"
+        )
+
+    if source_kind == "visual":
+        # ``max_crops`` bounds high-resolution tiles; the processor prepends one global crop.
+        if not 1 <= images.shape[0] <= DEFAULT_MAX_CROPS + 1 or pooled.shape[0] == 0:
+            raise ValueError("Joint visual rows require positive image and pooled-token counts")
+        valid = pooled >= 0
+        if not np.all(valid.any(axis=1)):
+            raise ValueError("Every joint pooled-patch row must contain a valid patch index")
+        if np.any(pooled < -1) or np.any(pooled[valid] >= images.shape[0] * N_PATCHES_SQ):
+            raise ValueError("Joint pooled_patches_idx contains an out-of-range patch index")
+        if int(np.count_nonzero(input_ids == resolved_token_ids.im_patch_id)) != pooled.shape[0]:
+            raise ValueError("Joint visual image-token and pooled-patch counts differ")
+    elif images.shape[0] != 0 or pooled.shape[0] != 0:
+        raise ValueError("Native replay rows must not contain visual inputs")
+
+
+def validate_joint_probe_record(
+    record: Mapping[str, Any],
+    *,
+    source_name: str,
+    source_kind: str,
+    expected_index: int,
+    expected_epoch: int,
+    sequence_length: int,
+    token_ids: Molmo2TokenIds,
+) -> str:
+    """Validate one complete joint probe record against the versioned runtime schema.
+
+    This validates the inline token arrays, their content descriptors, image geometry, row
+    digest, exact source/index/epoch identity, and the explicit no-truncation evidence. Visual
+    records must contain both image crops and pooled patch tokens, while native replay records
+    must contain neither.
+
+    :param record: Parsed JSON probe row.
+    :param source_name: Exact canonical joint source name.
+    :param source_kind: Either ``visual`` or ``native_text_replay``.
+    :param expected_index: Exact deterministic dataset index for this row.
+    :param expected_epoch: Exact source epoch for this row.
+    :param sequence_length: Maximum joint sequence length.
+    :param token_ids: Exact tokenizer-adapted Molmo2 IDs for this joint runtime.
+    :returns: The validated serialized-row SHA-256.
+    :raises ValueError: If the record is malformed or differs from the expected identity.
+    """
+    if not isinstance(record, Mapping):
+        raise ValueError("joint probe record must be an object")
+    if source_name not in _JOINT_RUNTIME_SOURCE_NAMES:
+        raise ValueError(f"Unknown joint probe source {source_name!r}")
+    expected_kind = "native_text_replay" if source_name == "native_text_replay" else "visual"
+    if source_kind != expected_kind:
+        raise ValueError(f"Joint source {source_name!r} requires kind {expected_kind!r}")
+    resolved_token_ids = _joint_probe_token_ids(source_kind, token_ids)
+    expected_index = _probe_integer(expected_index, name="expected probe index", minimum=0)
+    expected_epoch = _probe_integer(expected_epoch, name="expected probe epoch", minimum=0)
+    sequence_length = _probe_integer(sequence_length, name="joint sequence length", minimum=1)
+
+    descriptor_value = record.get("serialized_fields")
+    if not isinstance(descriptor_value, Mapping):
+        raise ValueError("serialized_fields must be an object")
+    descriptor = descriptor_value
+    descriptor_fields = set(_SERIALIZED_DESCRIPTOR_REQUIRED_FIELDS)
+    if "subsegment_ids" in descriptor:
+        descriptor_fields.update(_SERIALIZED_DESCRIPTOR_OPTIONAL_FIELDS)
+    if set(descriptor) != descriptor_fields:
+        raise ValueError("serialized_fields differ from the versioned model-input schema")
+    record_fields = set(_PROBE_RECORD_BASE_FIELDS | _INLINE_SERIALIZED_FIELDS)
+    if "subsegment_ids" in descriptor:
+        record_fields.add("subsegment_ids")
+    if set(record) != record_fields:
+        raise ValueError("joint probe record fields differ from the versioned schema")
+    if record["source"] != source_name:
+        raise ValueError(f"joint probe source differs from {source_name!r}")
+    if _probe_integer(record["probe_index"], name="probe_index", minimum=0) != expected_index:
+        raise ValueError("joint probe index differs")
+    if _probe_integer(record["probe_epoch"], name="probe_epoch", minimum=0) != expected_epoch:
+        raise ValueError("joint probe epoch differs")
+
+    for field_name, field_value in descriptor.items():
+        if not isinstance(field_value, Mapping) or set(field_value) != _ARRAY_DESCRIPTOR_FIELDS:
+            raise ValueError(f"serialized_fields.{field_name} descriptor fields differ")
+        dtype_name = field_value["dtype"]
+        if not isinstance(dtype_name, str) or not dtype_name:
+            raise ValueError(f"serialized_fields.{field_name}.dtype must be non-empty")
+        try:
+            dtype = np.dtype(dtype_name)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"serialized_fields.{field_name}.dtype is invalid") from error
+        if dtype.hasobject:
+            raise ValueError(f"serialized_fields.{field_name}.dtype may not be object")
+        expected_dtype = (
+            np.dtype(np.int64)
+            if field_name in _INT64_SERIALIZED_FIELDS or field_name == "pooled_patches_idx"
+            else np.dtype(np.float32)
+        )
+        if dtype != expected_dtype or dtype_name != expected_dtype.newbyteorder("<").str:
+            raise ValueError(f"serialized_fields.{field_name}.dtype differs from model input")
+        shape = field_value["shape"]
+        if not isinstance(shape, list) or any(
+            isinstance(dimension, bool) or not isinstance(dimension, int) or dimension < 0
+            for dimension in shape
+        ):
+            raise ValueError(f"serialized_fields.{field_name}.shape is invalid")
+        _sha256(field_value["sha256"], name=f"serialized_fields.{field_name}.sha256")
+        if field_name in _INLINE_SERIALIZED_FIELDS or field_name == "subsegment_ids":
+            inline = _probe_list(
+                record[field_name], name=field_name, nonempty=field_name == "input_ids"
+            )
+            try:
+                actual_descriptor = array_content_descriptor(
+                    np.asarray(inline, dtype=dtype), field_name=field_name
+                )
+            except (TypeError, ValueError, OverflowError) as error:
+                raise ValueError(f"inline {field_name} is incompatible with its dtype") from error
+            if actual_descriptor != field_value:
+                raise ValueError(f"inline {field_name} differs from its serialized descriptor")
+
+    input_ids = _probe_list(record["input_ids"], name="input_ids", nonempty=True)
+    for ordinal, token_id in enumerate(input_ids):
+        parsed_token_id = _probe_integer(token_id, name=f"input_ids[{ordinal}]", minimum=0)
+        if parsed_token_id >= JOINT_MODEL_VOCAB_SIZE:
+            raise ValueError(f"input_ids[{ordinal}] exceeds the model vocabulary")
+    token_shape = descriptor["input_ids"]["shape"]
+    if len(token_shape) != 1 or token_shape != [len(input_ids)]:
+        raise ValueError("serialized input_ids must be a non-empty one-dimensional array")
+    aligned_fields = ["labels", "loss_masks", "position_ids", "token_type_ids"]
+    if "subsegment_ids" in descriptor:
+        aligned_fields.append("subsegment_ids")
+    if any(descriptor[field_name]["shape"] != token_shape for field_name in aligned_fields):
+        raise ValueError("serialized token, label, position, type, and loss arrays must align")
+    for field_name in ("labels", "position_ids", "token_type_ids", "subsegment_ids"):
+        if field_name not in record:
+            continue
+        for ordinal, value in enumerate(_probe_list(record[field_name], name=field_name)):
+            _probe_integer(value, name=f"{field_name}[{ordinal}]")
+    if any(
+        label < -100 or (label < 0 and label != -100) or label >= JOINT_MODEL_VOCAB_SIZE
+        for label in record["labels"]
+    ):
+        raise ValueError("serialized labels must be -100 or valid model-vocabulary IDs")
+    if any(value < 0 or value >= len(input_ids) for value in record["position_ids"]):
+        raise ValueError("serialized position_ids must be within the token sequence")
+    if "subsegment_ids" in record and any(value < 0 for value in record["subsegment_ids"]):
+        raise ValueError("serialized subsegment_ids must be non-negative")
+    image_token_mask = np.isin(
+        np.asarray(input_ids, dtype=np.int64),
+        np.fromiter(resolved_token_ids.image_token_ids, dtype=np.int64),
+    )
+    expected_token_types = (
+        [0] * len(input_ids)
+        if source_kind == "native_text_replay"
+        else image_token_mask.astype(np.int64).tolist()
+    )
+    native_forbidden_ids = frozenset(
+        (*resolved_token_ids.image_token_ids, resolved_token_ids.image_placeholder_id)
+    )
+    if source_kind == "native_text_replay" and np.any(
+        np.isin(
+            np.asarray(input_ids, dtype=np.int64),
+            np.fromiter(native_forbidden_ids, dtype=np.int64),
+        )
+    ):
+        raise ValueError("Native replay rows must not contain configured image tokens")
+    if record["token_type_ids"] != expected_token_types:
+        raise ValueError("serialized token_type_ids do not exactly mark image tokens")
+    loss_weights = _probe_list(record["loss_masks"], name="loss_masks")
+    for ordinal, weight in enumerate(loss_weights):
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise ValueError(f"loss_masks[{ordinal}] must be numeric")
+        try:
+            finite_weight = math.isfinite(float(weight))
+        except (OverflowError, ValueError) as error:
+            raise ValueError(f"loss_masks[{ordinal}] must be finite and non-negative") from error
+        if not finite_weight or weight < 0:
+            raise ValueError(f"loss_masks[{ordinal}] must be finite and non-negative")
+    if source_kind == "visual" and any(
+        weight > 0 and label == -100
+        for weight, label in zip(loss_weights, record["labels"], strict=True)
+    ):
+        raise ValueError("Joint visual positive loss weights require non-ignored labels")
+
+    images_shape = descriptor["images"]["shape"]
+    pooled_shape = descriptor["pooled_patches_idx"]["shape"]
+    if images_shape[1:] != [N_PATCHES_SQ, PATCH_DIM] or pooled_shape[1:] != [POOL_H * POOL_W]:
+        raise ValueError("serialized image and pooled-patch arrays have invalid geometry")
+    image_crops = _probe_integer(record["image_crops"], name="image_crops", minimum=0)
+    pooled_tokens = _probe_integer(record["pooled_tokens"], name="pooled_tokens", minimum=0)
+    if image_crops != images_shape[0] or pooled_tokens != pooled_shape[0]:
+        raise ValueError("probe image geometry differs from serialized field descriptors")
+    if source_kind == "visual" and (
+        not 1 <= image_crops <= DEFAULT_MAX_CROPS + 1 or pooled_tokens <= 0
+    ):
+        raise ValueError("joint visual probe rows require valid image and pooled-token counts")
+    if source_kind == "visual":
+        if (
+            sum(token_id == resolved_token_ids.im_patch_id for token_id in input_ids)
+            != pooled_tokens
+        ):
+            raise ValueError("serialized visual image-token and pooled-patch counts differ")
+    if source_kind == "native_text_replay" and (image_crops != 0 or pooled_tokens != 0):
+        raise ValueError("native replay probe rows must not contain visual inputs")
+
+    raw_length = _probe_integer(
+        record["raw_sequence_length"], name="raw_sequence_length", minimum=1
+    )
+    if raw_length != len(input_ids) or raw_length > sequence_length:
+        raise ValueError("joint probe raw sequence length differs or exceeds the phase limit")
+    if record["truncated"] is not False:
+        raise ValueError("joint probe truncated must be exactly false")
+    row_sha256 = _sha256(record["serialized_row_sha256"], name="serialized_row_sha256")
+    if row_sha256 != serialized_descriptor_sha256(descriptor):
+        raise ValueError("serialized_row_sha256 does not match serialized_fields")
+    return row_sha256
+
+
+def validate_joint_unbounded_dataset_identity(
+    dataset: Any,
+    *,
+    source_name: str,
+    selection: JointVisualSplitProjection,
+    max_sequence_length: int,
+) -> Tuple[str, str]:
+    """Bind an unbounded visual adapter to its exact selected joint base.
+
+    The adapter projection deliberately removes the sequence field and must still equal the
+    selection's pinned projection. PixMoCap exposes its underlying Arrow fingerprint, which is
+    sequence-independent; the other adapters include serialization policy and therefore require
+    a distinct unbounded fingerprint. Six source families expose sequence-independent annotation
+    scans and are compared directly. OCR and audited-alignment identities include the sequence
+    bound and require the shared sequence-substitution replay.
+
+    :param dataset: Canonically built unbounded raw visual adapter.
+    :param source_name: Canonical joint visual source name.
+    :param selection: Exact 8,192-token selected-base projection.
+    :param max_sequence_length: Explicit unbounded adapter limit.
+    :returns: The unbounded runtime fingerprint and annotation SHA-256.
+    :raises ValueError: If config, adapter, population, fingerprint, or stable annotation differs.
+    """
+    if source_name not in JOINT_VISUAL_SOURCE_NAMES:
+        raise ValueError(f"Unknown joint visual source {source_name!r}")
+    if max_sequence_length != JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH:
+        raise ValueError("Unbounded joint sequence length must equal the reviewed unbounded limit")
+    config = getattr(dataset, "config", None)
+    if (
+        config is None
+        or getattr(config, "max_sequence_length", None) != max_sequence_length
+        or vision_alignment_joint_adapter_projection_sha256(config)
+        != selection.adapter_projection_sha256
+    ):
+        raise ValueError(f"Unbounded joint adapter identity differs for {source_name!r}")
+    if len(dataset) != selection.base_examples:
+        raise ValueError(f"Unbounded joint source {source_name!r} changed raw row identity")
+    fingerprint = runtime_dataset_fingerprint(dataset)
+    if not isinstance(fingerprint, str) or _DATASET_FINGERPRINT_RE.fullmatch(fingerprint) is None:
+        raise ValueError(f"Unbounded joint source {source_name!r} runtime fingerprint differs")
+    fingerprint_matches_bounded = fingerprint == selection.joint_base_dataset_fingerprint
+    if (source_name in {"pixmo_caption", "pixmo_transcript"}) != fingerprint_matches_bounded:
+        raise ValueError(f"Unbounded joint source {source_name!r} runtime fingerprint differs")
+    annotation_sha256 = perception_annotation_content_sha256(dataset)
+    if source_name in JOINT_SEQUENCE_SENSITIVE_ANNOTATION_SOURCES:
+        unbounded_replay = vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            source_name,
+            sequence_length=max_sequence_length,
+        )
+        bounded_replay = vision_alignment_joint_annotation_replay_sha256(
+            dataset,
+            source_name,
+            sequence_length=_JOINT_SEQUENCE_LENGTH,
+        )
+        if (
+            unbounded_replay != annotation_sha256
+            or bounded_replay != selection.joint_base_annotation_sha256
+        ):
+            raise ValueError(
+                f"Unbounded joint source {source_name!r} annotation sequence replay differs"
+            )
+    elif annotation_sha256 != selection.joint_base_annotation_sha256:
+        raise ValueError(f"Unbounded joint source {source_name!r} annotation identity differs")
+    return fingerprint, annotation_sha256
 
 
 def _parent_manifest_path(root: Path, value: Any) -> Path:
@@ -281,6 +819,7 @@ class JointVisualProjectionManifest:
     raw_sha256: str
     content_sha256: str
     parent_provenance: PerceptionProvenanceManifest
+    token_ids: Molmo2TokenIds
     source_spec: VisionAlignmentJointSourceSpec
     source_spec_sha256: str
     selections: Mapping[tuple[str, str], JointVisualSplitProjection]
@@ -297,6 +836,7 @@ class JointVisualProjectionManifest:
 def load_joint_visual_projection_manifest(
     path: str | Path,
     *,
+    expected_token_ids: Molmo2TokenIds,
     expected_sha256: Optional[str] = None,
     verify_finevision_materialization: bool = True,
     load_image_path_signatures: bool = True,
@@ -305,6 +845,7 @@ def load_joint_visual_projection_manifest(
     """Load a joint projection and prove it is an exact 8,192-token parent projection.
 
     :param path: Canonically named projection manifest.
+    :param expected_token_ids: Exact tokenizer-adapted IDs required by the caller.
     :param expected_sha256: Optional externally pinned raw manifest SHA-256.
     :param verify_finevision_materialization: Forwarded to the parent provenance loader.
     :param load_image_path_signatures: Forwarded to the parent provenance loader.
@@ -413,6 +954,9 @@ def load_joint_visual_projection_manifest(
     ):
         raise ValueError("Parent perception provenance reference differs")
 
+    token_ids = _projection_token_ids(root["token_ids"])
+    if type(expected_token_ids) is not Molmo2TokenIds or token_ids != expected_token_ids:
+        raise ValueError("Joint projection token IDs differ from the expected runtime")
     if root["source_name_projection"] != dict(JOINT_TO_PERCEPTION_SOURCE):
         raise ValueError("Joint source-name projection differs")
     joint_spec = VisionAlignmentJointSourceSpec.from_perception(parent.source_spec)
@@ -432,7 +976,7 @@ def load_joint_visual_projection_manifest(
 
     policy = _exact_mapping(root["projection_policy"], _POLICY_FIELDS, name="projection_policy")
     if (
-        policy["algorithm"] != _PROJECTION_ALGORITHM
+        policy["algorithm"] != JOINT_VISUAL_PROJECTION_ALGORITHM
         or _count(policy["parent_sequence_length"], name="parent sequence length", minimum=1)
         != _PARENT_SEQUENCE_LENGTH
         or _count(policy["sequence_length"], name="joint sequence length", minimum=1)
@@ -447,7 +991,6 @@ def load_joint_visual_projection_manifest(
     ):
         raise ValueError("Joint projection must contain the exact eight-source set")
     selections: Dict[tuple[str, str], JointVisualSplitProjection] = {}
-    default_token_ids = Molmo2TokenIds()
     for source_name in JOINT_VISUAL_SOURCE_NAMES:
         parent_source_name = JOINT_TO_PERCEPTION_SOURCE[source_name]
         source = _exact_mapping(
@@ -484,6 +1027,12 @@ def load_joint_visual_projection_manifest(
                 split["joint_base_annotation_sha256"],
                 name=f"{source_name}.{logical_split}.joint_base_annotation_sha256",
             )
+            if (source_name in JOINT_SEQUENCE_SENSITIVE_ANNOTATION_SOURCES) == (
+                base_annotation == parent_selection.base_annotation_sha256
+            ):
+                raise ValueError(
+                    f"{source_name}.{logical_split} annotation projection relation differs"
+                )
             selection_sha = _sha256(
                 split["selection_indices_sha256"],
                 name=f"{source_name}.{logical_split}.selection_indices_sha256",
@@ -493,7 +1042,7 @@ def load_joint_visual_projection_manifest(
             expected_adapter_sha = vision_alignment_joint_adapter_projection_sha256(
                 build_vision_alignment_joint_dataset_config(
                     joint_spec,
-                    default_token_ids,
+                    token_ids,
                     source_name,
                     split=physical_split,
                 )
@@ -611,6 +1160,7 @@ def load_joint_visual_projection_manifest(
         raw_sha256=raw_sha,
         content_sha256=content_sha,
         parent_provenance=parent,
+        token_ids=token_ids,
         source_spec=joint_spec,
         source_spec_sha256=joint_spec_sha,
         selections=selections,
@@ -629,6 +1179,7 @@ class SelectedVisionAlignmentJointDataset:
         source_name: str,
         logical_split: str,
         selection: JointVisualSplitProjection,
+        parent_annotation_sha256: str,
     ):
         base_fingerprint = runtime_dataset_fingerprint(dataset)
         if (
@@ -646,6 +1197,32 @@ class SelectedVisionAlignmentJointDataset:
             != selection.adapter_projection_sha256
         ):
             raise ValueError(f"Raw joint {source_name}/{logical_split} adapter differs")
+        parent_annotation_sha256 = _sha256(
+            parent_annotation_sha256,
+            name=f"{source_name}/{logical_split} parent annotation SHA-256",
+        )
+        if source_name in JOINT_SEQUENCE_SENSITIVE_ANNOTATION_SOURCES:
+            joint_replay = vision_alignment_joint_annotation_replay_sha256(
+                dataset,
+                source_name,
+                sequence_length=_JOINT_SEQUENCE_LENGTH,
+            )
+            parent_replay = vision_alignment_joint_annotation_replay_sha256(
+                dataset,
+                source_name,
+                sequence_length=_PARENT_SEQUENCE_LENGTH,
+            )
+            if (
+                joint_replay != selection.joint_base_annotation_sha256
+                or parent_replay != parent_annotation_sha256
+            ):
+                raise ValueError(
+                    f"Raw joint {source_name}/{logical_split} annotation projection differs"
+                )
+        elif selection.joint_base_annotation_sha256 != parent_annotation_sha256:
+            raise ValueError(
+                f"Raw joint {source_name}/{logical_split} stable annotation projection differs"
+            )
         self._dataset = dataset
         self._selection = selection
         self.source_name = source_name
@@ -719,7 +1296,12 @@ def build_selected_joint_dataset(
     validate_required_annotations: bool = True,
 ) -> SelectedVisionAlignmentJointDataset:
     """Build one 8,192-token joint adapter and apply its exact parent row selection."""
+    if type(token_ids) is not Molmo2TokenIds or token_ids != manifest.token_ids:
+        raise ValueError("Joint runtime token IDs differ from the projection artifact")
     selection = manifest.selection(source_name, logical_split)
+    parent_selection = manifest.parent_provenance.selection(
+        JOINT_TO_PERCEPTION_SOURCE[source_name], logical_split
+    )
     dataset = build_vision_alignment_joint_dataset(
         manifest.source_spec,
         tokenizer,
@@ -733,4 +1315,5 @@ def build_selected_joint_dataset(
         source_name=source_name,
         logical_split=logical_split,
         selection=selection,
+        parent_annotation_sha256=parent_selection.base_annotation_sha256,
     )

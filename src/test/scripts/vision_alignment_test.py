@@ -62,6 +62,257 @@ def _canonical_policy_config(vision_alignment, phase):
     return SimpleNamespace(phase=phase, data=data)
 
 
+def _joint_audit_fixture(tmp_path, vision_alignment):
+    projection_path = (tmp_path / "vision-alignment-joint-visual-projection.json").resolve()
+    projection_path.write_bytes(b"joint projection\n")
+    parent_provenance_path = (tmp_path / "vision-alignment-perception-provenance.json").resolve()
+    parent_provenance_path.write_bytes(b"perception provenance\n")
+    native_path = (tmp_path / "native-train.json").resolve()
+    native_path.write_bytes(b"native train manifest\n")
+    receipt_path = (tmp_path / "native-verification.json").resolve()
+    receipt_path.write_bytes(b"native verification receipt\n")
+    catalog_path = (tmp_path / "vision-alignment-joint-source-catalog.json").resolve()
+    catalog_path.write_bytes(b"joint source catalog\n")
+
+    source_spec = SimpleNamespace(
+        as_canonical_dict=lambda: {
+            "phase": "joint",
+            "sequence_length": vision_alignment._JOINT_SEQUENCE_LENGTH,
+            "parent_perception_preprocessing_sha256": "a" * 64,
+        }
+    )
+    projection = SimpleNamespace(
+        path=projection_path,
+        raw_sha256=vision_alignment._sha256_file(projection_path),
+        content_sha256="b" * 64,
+        source_spec=source_spec,
+        source_spec_sha256="c" * 64,
+        parent_provenance=SimpleNamespace(
+            path=parent_provenance_path,
+            raw_sha256=vision_alignment._sha256_file(parent_provenance_path),
+        ),
+    )
+    mixture = vision_alignment.VisionAlignmentMixtureConfig(phase="joint")
+    mixture.mean_loss_weight = {source_name: 1.0 for source_name in mixture.resolved_targets()}
+    data = vision_alignment.VisionAlignmentDataConfig(mixture=mixture)
+    data.sequence_length = vision_alignment._JOINT_SEQUENCE_LENGTH
+    data.native_text_replay_fingerprint = "d" * 64
+    data.native_text_replay = SimpleNamespace(
+        manifest_path=str(native_path),
+        expected_fingerprint=data.native_text_replay_fingerprint,
+        verification_receipt_path=str(receipt_path),
+        expected_verification_receipt_sha256=vision_alignment._sha256_file(receipt_path),
+    )
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        data=data,
+    )
+
+    inputs = {}
+    summaries = {}
+    input_descriptors = []
+    for source_name in vision_alignment._JOINT_SOURCE_NAMES:
+        kind = "native_text_replay" if source_name == "native_text_replay" else "visual"
+        epochs = (
+            vision_alignment._JOINT_NATIVE_PROBE_EPOCHS
+            if kind == "native_text_replay"
+            else vision_alignment._JOINT_VISUAL_PROBE_EPOCHS
+        )
+        unique_indices = (
+            vision_alignment._JOINT_NATIVE_PROBE_INDICES
+            if kind == "native_text_replay"
+            else vision_alignment._JOINT_VISUAL_PROBE_INDICES
+        )
+        dataset_size = 2048
+        dataset_fingerprint = hashlib.sha256(source_name.encode()).hexdigest()
+        probe_indices = list(
+            vision_alignment.select_deterministic_probe_indices(
+                dataset_size,
+                unique_indices,
+                seed=vision_alignment._JOINT_PROBE_SEED,
+                dataset_fingerprint=dataset_fingerprint,
+            )
+        )
+        rows = unique_indices * len(epochs)
+        row_hashes = [
+            hashlib.sha256(f"{source_name}-{index}".encode()).hexdigest() for index in range(rows)
+        ]
+        source_path = tmp_path / f"{source_name}.jsonl"
+        source_path.write_bytes(f"{source_name} pinned rows\n".encode())
+        image_sha = (
+            vision_alignment._canonical_sha256([])
+            if kind == "native_text_replay"
+            else hashlib.sha256(f"{source_name}-images".encode()).hexdigest()
+        )
+        maximum_length = (
+            vision_alignment._JOINT_SEQUENCE_LENGTH if kind == "native_text_replay" else 64
+        )
+        source = {
+            "name": source_name,
+            "kind": kind,
+            "format": "jsonl",
+            "path": source_path.name,
+            "dataset_fingerprint": dataset_fingerprint,
+            "dataset_size": dataset_size,
+            "sha256": vision_alignment._sha256_file(source_path),
+            "probe_epochs": list(epochs),
+            "probe_indices": probe_indices,
+            "probe_indices_sha256": vision_alignment._canonical_sha256(probe_indices),
+            "serialized_row_hashes_sha256": vision_alignment._canonical_sha256(row_hashes),
+            "probe_image_content_sha256": image_sha,
+            "max_observed_sequence_length": maximum_length,
+            "truncated_rows": 0,
+            "serialized_row_hashes": row_hashes,
+        }
+        inputs[source_name] = source
+        token_length = maximum_length
+        summaries[source_name] = {
+            "examples": {"seen": rows, "valid": rows, "errors": 0},
+            "raw_input_tokens": {
+                "total": rows * token_length,
+                "mean": float(token_length),
+                "min": token_length,
+                "max": token_length,
+            },
+            "positive_supervised_tokens": {
+                "total": rows,
+                "mean": 1.0,
+                "min": 1,
+                "max": 1,
+            },
+            "summed_loss_weight": {
+                "total": float(rows),
+                "mean": 1.0,
+                "min": 1.0,
+                "max": 1.0,
+            },
+            "mean_sum_loss_masks": 1.0,
+            "image_crops": {
+                "total": 0,
+                "mean": 0.0,
+                "min": 0,
+                "max": 0,
+            },
+            "truncated_examples": 0,
+            "zero_loss_examples": 0,
+            "error_samples": [],
+        }
+        input_descriptors.append(
+            {
+                "name": source_name,
+                "kind": kind,
+                "sha256": source["sha256"],
+                "dataset_fingerprint": dataset_fingerprint,
+                "probe_indices_sha256": source["probe_indices_sha256"],
+                "probe_epochs": list(epochs),
+                "serialized_row_hashes_sha256": source["serialized_row_hashes_sha256"],
+                "probe_image_content_sha256": image_sha,
+                "max_observed_sequence_length": maximum_length,
+                "truncated_rows": 0,
+            }
+        )
+
+    preprocessing = {
+        "visual": source_spec.as_canonical_dict(),
+        "native_text_replay_fingerprint": data.native_text_replay_fingerprint,
+    }
+    targets = mixture.resolved_targets()
+    sampling = mixture.sampling_weights()
+    audit = {
+        "format": vision_alignment._JOINT_AUDIT_FORMAT,
+        "version": vision_alignment._JOINT_AUDIT_VERSION,
+        "status": "ok",
+        "phase": "joint",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "source_catalog_version": vision_alignment.VISION_ALIGNMENT_JOINT_SOURCE_CATALOG_VERSION,
+        "auditor_implementation": {
+            "path": vision_alignment._JOINT_AUDITOR_IMPLEMENTATION,
+            "sha256": vision_alignment._sha256_file(
+                Path(vision_alignment.__file__).parents[3]
+                / vision_alignment._JOINT_AUDITOR_IMPLEMENTATION
+            ),
+        },
+        "shared_auditor_sha256": vision_alignment._sha256_file(
+            Path(vision_alignment.__file__).parents[3]
+            / vision_alignment._JOINT_SHARED_AUDITOR_IMPLEMENTATION
+        ),
+        "catalog_path": str(catalog_path),
+        "catalog_sha256": vision_alignment._sha256_file(catalog_path),
+        "catalog_content_sha256": "e" * 64,
+        "input_content_sha256": vision_alignment._canonical_sha256(input_descriptors),
+        "source_registry_version": vision_alignment.VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
+        "source_registry_sha256": vision_alignment.joint_alignment_runtime_registry_sha256(),
+        "source_implementation_inventory": vision_alignment.joint_alignment_runtime_implementation_inventory(),
+        "exporter_implementation": {
+            "path": vision_alignment._JOINT_EXPORTER_IMPLEMENTATION,
+            "sha256": vision_alignment._sha256_file(
+                Path(vision_alignment.__file__).parents[3]
+                / vision_alignment._JOINT_EXPORTER_IMPLEMENTATION
+            ),
+        },
+        "visual_projection": {
+            "path": str(projection.path),
+            "raw_sha256": projection.raw_sha256,
+            "content_sha256": projection.content_sha256,
+        },
+        "native_train_manifest": {
+            "path": str(native_path),
+            "raw_sha256": vision_alignment._sha256_file(native_path),
+            "content_fingerprint": data.native_text_replay_fingerprint,
+        },
+        "native_verification_receipt": {
+            "path": str(receipt_path),
+            "sha256": vision_alignment._sha256_file(receipt_path),
+        },
+        "preprocessing": preprocessing,
+        "preprocessing_sha256": vision_alignment._canonical_sha256(preprocessing),
+        "probe": {
+            "format": vision_alignment._JOINT_PROBE_FORMAT,
+            "version": vision_alignment._JOINT_PROBE_VERSION,
+            "selection_algorithm": vision_alignment.VISION_ALIGNMENT_PROBE_SELECTION_ALGORITHM,
+            "seed": vision_alignment._JOINT_PROBE_SEED,
+            "visual": {
+                "unique_indices": vision_alignment._JOINT_VISUAL_PROBE_INDICES,
+                "epochs": list(vision_alignment._JOINT_VISUAL_PROBE_EPOCHS),
+                "rows_per_source": vision_alignment._JOINT_VISUAL_PROBE_INDICES
+                * len(vision_alignment._JOINT_VISUAL_PROBE_EPOCHS),
+            },
+            "native_text_replay": {
+                "unique_indices": vision_alignment._JOINT_NATIVE_PROBE_INDICES,
+                "epochs": list(vision_alignment._JOINT_NATIVE_PROBE_EPOCHS),
+                "rows_per_source": vision_alignment._JOINT_NATIVE_PROBE_INDICES
+                * len(vision_alignment._JOINT_NATIVE_PROBE_EPOCHS),
+            },
+            "sequence_length": vision_alignment._JOINT_SEQUENCE_LENGTH,
+            "truncation_policy": "forbid-raw-length-above-sequence-length-v1",
+        },
+        "inputs": inputs,
+        "target_loss_mass": targets,
+        "sources": summaries,
+        "mean_loss_weight": mixture.mean_loss_weight,
+        "sampling_probabilities": sampling,
+        "expected_loss_mass": vision_alignment.expected_loss_mass(
+            sampling, mixture.mean_loss_weight
+        ),
+        "failures": [],
+    }
+    audit["fingerprint"] = vision_alignment._canonical_sha256(audit)
+    audit_path = tmp_path / "joint-audit.json"
+    audit_path.write_text(json.dumps(audit))
+    data.source_audit_path = str(audit_path)
+    data.source_audit_fingerprint = audit["fingerprint"]
+    return config, audit, audit_path, projection
+
+
+def _rewrite_joint_audit(vision_alignment, config, audit, audit_path):
+    audit["fingerprint"] = vision_alignment._canonical_sha256(
+        {key: value for key, value in audit.items() if key != "fingerprint"}
+    )
+    audit_path.write_text(json.dumps(audit))
+    config.data.source_audit_fingerprint = audit["fingerprint"]
+
+
 def test_phase_selector_is_required_before_derived_defaults():
     vision_alignment = _load_module()
 
@@ -505,6 +756,31 @@ def test_perception_sources_are_supported_but_require_pinned_audit():
 
     with pytest.raises(ValueError, match="pinned successful serialized-source audit"):
         vision_alignment._build_mixture_sources(object(), Molmo2TokenIds(), config)
+
+
+@pytest.mark.parametrize("phase", ["bridge", "perception"])
+@pytest.mark.parametrize(
+    ("scope", "field_name", "value"),
+    [
+        ("data", "native_text_replay", object()),
+        ("data", "native_text_replay_fingerprint", "a" * 64),
+        ("evaluation", "native_text_holdout", object()),
+        ("evaluation", "native_text_holdout_fingerprint", "b" * 64),
+    ],
+)
+def test_non_joint_phases_forbid_all_native_replay_configs_and_fingerprints(
+    phase, scope, field_name, value
+):
+    vision_alignment = _load_module()
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase(phase),
+        data=vision_alignment.VisionAlignmentDataConfig(),
+        evaluation=vision_alignment.VisionAlignmentEvalConfig(),
+    )
+    setattr(getattr(config, scope), field_name, value)
+
+    with pytest.raises(ValueError, match="forbidden outside joint"):
+        vision_alignment._validate_native_artifact_phase(config)
 
 
 def test_profile_owns_phase_and_forbids_a_second_selector(tmp_path):
@@ -1188,18 +1464,23 @@ def test_joint_v3_gate_rejects_schema_and_version_type_confusion(tmp_path, mutat
         )
 
 
-def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(
-    monkeypatch,
-):
+def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(monkeypatch, tmp_path):
     vision_alignment = _load_module()
     parent = "/checkpoints/perception/step4000"
     parent_config_sha = "a" * 64
+    provenance_path = (tmp_path / "vision-alignment-perception-provenance.json").resolve()
+    provenance_path.write_bytes(b"parent provenance\n")
+    provenance_sha = vision_alignment._sha256_file(provenance_path)
     parent_config = {
         "vision_alignment": {
             "phase": "perception",
             "recipe_version": 1,
             "formatter_version": "vision-alignment-document-v1",
-        }
+        },
+        "data": {
+            "perception_provenance_path": str(provenance_path),
+            "perception_provenance_sha256": provenance_sha,
+        },
     }
     config = SimpleNamespace(
         phase=vision_alignment.VisionAlignmentPhase.joint,
@@ -1222,6 +1503,14 @@ def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(
         "_checkpoint_config",
         lambda checkpoint: (parent_config, parent_config_sha),
     )
+    projection = SimpleNamespace(
+        parent_provenance=SimpleNamespace(path=provenance_path, raw_sha256=provenance_sha)
+    )
+    monkeypatch.setattr(
+        vision_alignment,
+        "_joint_visual_projection",
+        lambda config_arg, token_ids=None: projection,
+    )
 
     def validate_gate(config, selected_parent, selected_config, selected_config_sha):
         observed.update(
@@ -1242,6 +1531,76 @@ def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(
     }
     assert config.initialization.parent_config_sha256 == parent_config_sha
     assert config.initialization.parent_gate_sha256 == "b" * 64
+
+    projection.parent_provenance.raw_sha256 = "f" * 64
+    with pytest.raises(ValueError, match="differs from the approved perception checkpoint"):
+        vision_alignment._validate_parent_or_resume(config)
+
+
+def test_joint_resume_rechecks_parent_projection_lineage(monkeypatch, tmp_path):
+    vision_alignment = _load_module()
+    existing = "/checkpoints/joint/step100"
+    parent = "/checkpoints/perception/step4000"
+    parent_sha = "a" * 64
+    gate_sha = "b" * 64
+    provenance_path = (tmp_path / "vision-alignment-perception-provenance.json").resolve()
+    provenance_path.write_bytes(b"parent provenance\n")
+    provenance_sha = vision_alignment._sha256_file(provenance_path)
+    parent_config = {
+        "data": {
+            "perception_provenance_path": str(provenance_path),
+            "perception_provenance_sha256": provenance_sha,
+        }
+    }
+    saved_config = {
+        "vision_alignment": {
+            "recipe_version": vision_alignment.RECIPE_VERSION,
+            "formatter_version": vision_alignment.FORMATTER_VERSION,
+            "phase": "joint",
+            "lineage_id": "joint-lineage",
+            "parent_checkpoint": parent,
+            "parent_config_sha256": parent_sha,
+            "parent_gate_sha256": gate_sha,
+            "data_contract_sha256": "c" * 64,
+            "trainable_contract_sha256": "d" * 64,
+        }
+    }
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        initialization=SimpleNamespace(
+            checkpoint=parent,
+            parent_config_sha256=None,
+            parent_gate_sha256=None,
+        ),
+        vision_alignment=SimpleNamespace(
+            lineage_id="joint-lineage",
+            parent_checkpoint=parent,
+            parent_config_sha256=None,
+            parent_gate_sha256=None,
+            data_contract_sha256="c" * 64,
+            trainable_contract_sha256="d" * 64,
+        ),
+    )
+    projection = SimpleNamespace(
+        parent_provenance=SimpleNamespace(path=provenance_path, raw_sha256=provenance_sha)
+    )
+    monkeypatch.setattr(vision_alignment, "_latest_output_checkpoint", lambda _: existing)
+
+    def checkpoint_config(checkpoint):
+        return (saved_config, "e" * 64) if checkpoint == existing else (parent_config, parent_sha)
+
+    monkeypatch.setattr(vision_alignment, "_checkpoint_config", checkpoint_config)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_joint_visual_projection",
+        lambda config_arg, token_ids=None: projection,
+    )
+
+    vision_alignment._validate_parent_or_resume(config)
+
+    parent_config["data"]["perception_provenance_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="differs from the approved perception checkpoint"):
+        vision_alignment._validate_parent_or_resume(config)
 
 
 def test_non_joint_parent_still_rejects_recipe_version_mismatch(monkeypatch):
@@ -1503,6 +1862,74 @@ def test_real_data_requires_a_matching_pinned_source_audit(tmp_path):
     audit_path.write_text(json.dumps(audit))
     data.source_audit_fingerprint = audit["fingerprint"]
     with pytest.raises(ValueError, match="expected loss mass differs"):
+        vision_alignment._validated_source_audit(config)
+
+
+def test_joint_source_audit_strictly_binds_all_nine_sources(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    config, audit, audit_path, projection = _joint_audit_fixture(tmp_path, vision_alignment)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_joint_visual_projection",
+        lambda config_arg, token_ids=None: projection,
+    )
+    native_summary = audit["sources"]["native_text_replay"]
+    native_summary["zero_loss_examples"] = 1
+    native_summary["summed_loss_weight"]["min"] = 0.0
+    native_summary["summed_loss_weight"]["max"] = 2.0
+    _rewrite_joint_audit(vision_alignment, config, audit, audit_path)
+
+    loaded = vision_alignment._validated_source_audit(config)
+
+    assert loaded is not None
+    assert tuple(sorted(loaded["inputs"])) == vision_alignment._JOINT_SOURCE_NAMES
+    assert loaded["probe"]["visual"]["epochs"] == [0, 1, 2, 3]
+    assert loaded["probe"]["native_text_replay"]["epochs"] == [0]
+
+    audit["probe"]["visual"]["epochs"] = [0, 1, 2]
+    _rewrite_joint_audit(vision_alignment, config, audit, audit_path)
+    with pytest.raises(ValueError, match="probe identity or epoch panel"):
+        vision_alignment._validated_source_audit(config)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("extra_field", "fields differ"),
+        ("auditor_sha", "implementation, identity, or status"),
+        ("projection_sha", "different visual projection"),
+        ("calibration", "calibration differs"),
+        ("native_image", "truncation/image evidence"),
+        ("native_epoch_bool", "runtime probe differs"),
+    ],
+)
+def test_joint_source_audit_rejects_self_consistent_adversarial_drift(
+    tmp_path, monkeypatch, mutation, message
+):
+    vision_alignment = _load_module()
+    config, audit, audit_path, projection = _joint_audit_fixture(tmp_path, vision_alignment)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_joint_visual_projection",
+        lambda config_arg, token_ids=None: projection,
+    )
+    if mutation == "extra_field":
+        audit["unreviewed"] = True
+    elif mutation == "auditor_sha":
+        audit["auditor_implementation"]["sha256"] = "f" * 64
+    elif mutation == "projection_sha":
+        audit["visual_projection"]["raw_sha256"] = "f" * 64
+    elif mutation == "calibration":
+        audit["sources"]["pixmo_caption"]["mean_sum_loss_masks"] = 1.1
+    elif mutation == "native_image":
+        audit["inputs"]["native_text_replay"]["probe_image_content_sha256"] = "f" * 64
+    elif mutation == "native_epoch_bool":
+        audit["inputs"]["native_text_replay"]["probe_epochs"] = [False]
+    else:  # pragma: no cover - parameter table is exhaustive.
+        raise AssertionError(mutation)
+    _rewrite_joint_audit(vision_alignment, config, audit, audit_path)
+
+    with pytest.raises(ValueError, match=message):
         vision_alignment._validated_source_audit(config)
 
 
@@ -1998,6 +2425,209 @@ def test_audited_dataset_binds_offline_audit_to_live_source_identity():
         vision_alignment._AuditedDataset(dataset, "pixmo_caption", audit)
 
 
+def test_joint_audited_dataset_replays_epoch_order_images_and_calibration(monkeypatch):
+    vision_alignment = _load_module()
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    monkeypatch.setattr(provenance, "N_PATCHES_SQ", 2)
+    monkeypatch.setattr(provenance, "PATCH_DIM", 3)
+    token_ids = Molmo2TokenIds(
+        im_start_id=100278,
+        im_end_id=100279,
+        im_patch_id=100280,
+        im_col_id=100281,
+        low_res_im_start_id=100282,
+        image_placeholder_id=100283,
+        im_end_turn_id=100265,
+    )
+
+    class Dataset:
+        content_fingerprint = "a" * 64
+
+        def __init__(self):
+            self.image_salt = "pinned"
+
+        def __len__(self):
+            return 2
+
+        def get(self, index, epoch=0):
+            input_ids = np.array([index, epoch, index + epoch + 1], dtype=np.int64)
+            input_ids[0] = token_ids.im_patch_id
+            token_type_ids = np.isin(
+                input_ids,
+                np.fromiter(token_ids.image_token_ids, dtype=np.int64),
+            ).astype(np.int64)
+            return {
+                "input_ids": input_ids,
+                "labels": np.array(input_ids, copy=True),
+                "loss_masks": np.ones(3, dtype=np.float32),
+                "position_ids": np.arange(3, dtype=np.int64),
+                "token_type_ids": token_type_ids,
+                "images": np.zeros((1, 2, 3), dtype=np.float32),
+                "pooled_patches_idx": np.zeros((1, 4), dtype=np.int64),
+            }
+
+        def validate_image_content(self, indices):
+            return vision_alignment._canonical_sha256(
+                [{"index": index, "salt": self.image_salt} for index in indices]
+            )
+
+    dataset = Dataset()
+    probe_indices = [0, 1]
+    row_hashes = [
+        serialized_example_sha256(dataset.get(index, epoch))
+        for epoch in vision_alignment._JOINT_VISUAL_PROBE_EPOCHS
+        for index in probe_indices
+    ]
+    source = {
+        "sha256": "b" * 64,
+        "dataset_fingerprint": dataset.content_fingerprint,
+        "dataset_size": len(dataset),
+        "probe_indices": probe_indices,
+        "probe_indices_sha256": vision_alignment._canonical_sha256(probe_indices),
+        "probe_epochs": list(vision_alignment._JOINT_VISUAL_PROBE_EPOCHS),
+        "serialized_row_hashes": row_hashes,
+        "serialized_row_hashes_sha256": vision_alignment._canonical_sha256(row_hashes),
+        "probe_image_content_sha256": dataset.validate_image_content(probe_indices),
+        "max_observed_sequence_length": 3,
+    }
+    audit = {
+        "format": vision_alignment._JOINT_AUDIT_FORMAT,
+        "fingerprint": "c" * 64,
+        "source_registry_sha256": "d" * 64,
+        "exporter_implementation": {
+            "path": vision_alignment._JOINT_EXPORTER_IMPLEMENTATION,
+            "sha256": "e" * 64,
+        },
+        "input_content_sha256": "f" * 64,
+        "inputs": {"pixmo_caption": source},
+        "sources": {
+            "pixmo_caption": {
+                "mean_sum_loss_masks": 3.0,
+                "zero_loss_examples": 0,
+            }
+        },
+    }
+
+    wrapped = vision_alignment._AuditedDataset(dataset, "pixmo_caption", audit, token_ids=token_ids)
+
+    assert len(wrapped.content_fingerprint) == 64
+    reordered = list(row_hashes)
+    reordered[0], reordered[-1] = reordered[-1], reordered[0]
+    source["serialized_row_hashes"] = reordered
+    with pytest.raises(ValueError, match="serialized row differs"):
+        vision_alignment._AuditedDataset(dataset, "pixmo_caption", audit, token_ids=token_ids)
+    source["serialized_row_hashes"] = row_hashes
+
+    dataset.image_salt = "drifted"
+    with pytest.raises(ValueError, match="image bytes"):
+        vision_alignment._AuditedDataset(dataset, "pixmo_caption", audit, token_ids=token_ids)
+    dataset.image_salt = "pinned"
+
+    audit["sources"]["pixmo_caption"]["mean_sum_loss_masks"] = 2.0
+    with pytest.raises(ValueError, match="loss mass"):
+        vision_alignment._AuditedDataset(dataset, "pixmo_caption", audit, token_ids=token_ids)
+
+
+def test_joint_audited_native_dataset_allows_zero_rows_but_requires_positive_aggregate(
+    monkeypatch,
+):
+    vision_alignment = _load_module()
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    monkeypatch.setattr(provenance, "N_PATCHES_SQ", 2)
+    monkeypatch.setattr(provenance, "PATCH_DIM", 3)
+    token_ids = Molmo2TokenIds(
+        im_start_id=100278,
+        im_end_id=100279,
+        im_patch_id=100280,
+        im_col_id=100281,
+        low_res_im_start_id=100282,
+        image_placeholder_id=100283,
+        im_end_turn_id=100265,
+    )
+
+    class Dataset:
+        content_fingerprint = "a" * 64
+
+        def __init__(self):
+            self.all_zero = False
+
+        def __len__(self):
+            return 2
+
+        def get(self, index, epoch=0):
+            assert epoch == 0
+            input_ids = np.arange(vision_alignment._JOINT_SEQUENCE_LENGTH, dtype=np.int64)
+            loss_masks = np.zeros(vision_alignment._JOINT_SEQUENCE_LENGTH, dtype=np.float32)
+            if index == 1 and not self.all_zero:
+                loss_masks[0] = 1.0
+            return {
+                "input_ids": input_ids,
+                "labels": np.array(input_ids, copy=True),
+                "loss_masks": loss_masks,
+                "position_ids": np.arange(vision_alignment._JOINT_SEQUENCE_LENGTH, dtype=np.int64),
+                "token_type_ids": np.zeros(vision_alignment._JOINT_SEQUENCE_LENGTH, dtype=np.int64),
+                "images": np.zeros((0, 2, 3), dtype=np.float32),
+                "pooled_patches_idx": np.zeros((0, 4), dtype=np.int64),
+            }
+
+    dataset = Dataset()
+    probe_indices = [0, 1]
+    row_hashes = [serialized_example_sha256(dataset.get(index, 0)) for index in probe_indices]
+    source = {
+        "sha256": "b" * 64,
+        "dataset_fingerprint": dataset.content_fingerprint,
+        "dataset_size": len(dataset),
+        "probe_indices": probe_indices,
+        "probe_indices_sha256": vision_alignment._canonical_sha256(probe_indices),
+        "probe_epochs": [0],
+        "serialized_row_hashes": row_hashes,
+        "serialized_row_hashes_sha256": vision_alignment._canonical_sha256(row_hashes),
+        "probe_image_content_sha256": vision_alignment._canonical_sha256([]),
+        "max_observed_sequence_length": vision_alignment._JOINT_SEQUENCE_LENGTH,
+    }
+    summary = {"mean_sum_loss_masks": 0.5, "zero_loss_examples": 1}
+    audit = {
+        "format": vision_alignment._JOINT_AUDIT_FORMAT,
+        "fingerprint": "c" * 64,
+        "source_registry_sha256": "d" * 64,
+        "exporter_implementation": {
+            "path": vision_alignment._JOINT_EXPORTER_IMPLEMENTATION,
+            "sha256": "e" * 64,
+        },
+        "input_content_sha256": "f" * 64,
+        "inputs": {"native_text_replay": source},
+        "sources": {"native_text_replay": summary},
+    }
+
+    wrapped = vision_alignment._AuditedDataset(
+        dataset, "native_text_replay", audit, token_ids=token_ids
+    )
+
+    assert len(wrapped.content_fingerprint) == 64
+    summary["zero_loss_examples"] = 0
+    with pytest.raises(ValueError, match="loss mass"):
+        vision_alignment._AuditedDataset(dataset, "native_text_replay", audit, token_ids=token_ids)
+    summary["zero_loss_examples"] = 1
+
+    source["probe_epochs"] = [False]
+    with pytest.raises(ValueError, match="epoch panel"):
+        vision_alignment._AuditedDataset(dataset, "native_text_replay", audit, token_ids=token_ids)
+    source["probe_epochs"] = [0]
+
+    dataset.all_zero = True
+    source["serialized_row_hashes"] = [
+        serialized_example_sha256(dataset.get(index, 0)) for index in probe_indices
+    ]
+    with pytest.raises(ValueError, match="no aggregate supervised loss mass"):
+        vision_alignment._AuditedDataset(dataset, "native_text_replay", audit, token_ids=token_ids)
+
+
 def test_checked_in_smoke_profile_is_cluster_only_and_calibrated():
     import yaml
 
@@ -2021,7 +2651,9 @@ def test_checked_in_smoke_profile_is_cluster_only_and_calibrated():
     assert any("mean_loss_weight.pixmo_transcript" in value for value in profile["overrides"])
 
 
-def test_native_holdout_uses_a_deterministic_shuffle(monkeypatch, tmp_path):
+def test_joint_evaluates_all_visual_sources_and_deterministically_shuffles_native_holdout(
+    monkeypatch, tmp_path
+):
     vision_alignment = _load_module()
     loader_calls: List[Dict[str, Any]] = []
 
@@ -2030,10 +2662,17 @@ def test_native_holdout_uses_a_deterministic_shuffle(monkeypatch, tmp_path):
             del dataset, collator
             loader_calls.append(kwargs)
 
+    class FakeDataset:
+        def __len__(self):
+            return 8
+
+        def validate_image_content(self):
+            return "a" * 64
+
     class FakeDatasetConfig:
         def build(self, tokenizer):
             del tokenizer
-            return object()
+            return FakeDataset()
 
     callbacks: Dict[str, Any] = {}
     trainer = SimpleNamespace(
@@ -2063,20 +2702,21 @@ def test_native_holdout_uses_a_deterministic_shuffle(monkeypatch, tmp_path):
         "MultimodalLMEvaluator",
         lambda **kwargs: SimpleNamespace(**kwargs),
     )
+    monkeypatch.setattr(
+        vision_alignment,
+        "MultimodalBlankImageEvaluator",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
     monkeypatch.setattr(vision_alignment, "EvaluatorCallback", lambda **kwargs: kwargs)
     monkeypatch.setattr(
         vision_alignment,
-        "_visual_dataset_config",
-        lambda *args, **kwargs: FakeDatasetConfig(),
+        "_joint_visual_projection",
+        lambda config, token_ids=None: object(),
     )
-    monkeypatch.setattr(vision_alignment, "_validated_source_audit", lambda config: {})
     monkeypatch.setattr(
         vision_alignment,
-        "_validate_validation_manifest",
-        lambda config, audit, **kwargs: {},
-    )
-    monkeypatch.setattr(
-        vision_alignment, "_validate_live_validation_dataset", lambda dataset, manifest: None
+        "build_selected_joint_dataset",
+        lambda *args, **kwargs: FakeDataset(),
     )
 
     vision_alignment._add_intrinsic_visual_evaluators(
@@ -2089,6 +2729,18 @@ def test_native_holdout_uses_a_deterministic_shuffle(monkeypatch, tmp_path):
         dp_rank=0,
     )
 
-    assert [call["shuffle"] for call in loader_calls] == [False, False, True]
+    assert len(loader_calls) == 9
+    assert [call["shuffle"] for call in loader_calls] == [False] * 8 + [True]
     assert loader_calls[-1]["seed"] == evaluation.seed
     assert "vision_alignment_intrinsic_validation" in callbacks
+    evaluators = callbacks["vision_alignment_intrinsic_validation"]["evaluators"]
+    assert len(evaluators) == 11
+    assert {evaluator.name for evaluator in evaluators} == {
+        *(
+            f"vision-alignment-{name}-validation"
+            for name in vision_alignment.JOINT_VISUAL_SOURCE_NAMES
+        ),
+        "vision-alignment-pixmo_caption-blank-image",
+        "vision-alignment-pixmo_transcript-blank-image",
+        "vision-alignment-native-text-holdout",
+    }

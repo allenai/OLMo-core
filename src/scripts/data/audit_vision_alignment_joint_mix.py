@@ -32,9 +32,15 @@ from olmo_core.data.multimodal.native_text_replay import (
     NativeTextReplayVerificationReceipt,
 )
 from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH,
     JointVisualProjectionManifest,
     build_selected_joint_dataset,
+    joint_alignment_runtime_implementation_inventory,
+    joint_alignment_runtime_registry_sha256,
     load_joint_visual_projection_manifest,
+    validate_joint_live_example,
+    validate_joint_probe_record,
+    validate_joint_unbounded_dataset_identity,
 )
 from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     JOINT_VISUAL_SOURCE_NAMES,
@@ -42,8 +48,6 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     VISION_ALIGNMENT_JOINT_SOURCE_REGISTRY_VERSION,
     build_vision_alignment_joint_dataset_config,
     vision_alignment_joint_adapter_projection_sha256,
-    vision_alignment_joint_implementation_inventory,
-    vision_alignment_joint_source_registry_sha256,
 )
 from olmo_core.data.multimodal.vision_alignment_sources import (
     VISION_ALIGNMENT_FORMATTER_VERSION,
@@ -58,6 +62,7 @@ from olmo_core.data.multimodal.vision_alignment_sources import (
     serialized_probe_record,
 )
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.vision import Molmo2TokenIds
 from scripts.data import audit_vision_alignment_mix as shared_audit
 
 CATALOG_FORMAT = "vision_alignment_joint_preprocessed_source_catalog"
@@ -72,7 +77,7 @@ JOINT_VISUAL_PROBE_EPOCHS = (0, 1, 2, 3)
 JOINT_NATIVE_PROBE_INDICES = 1024
 JOINT_NATIVE_PROBE_EPOCHS = (0,)
 JOINT_SEQUENCE_LENGTH = 8192
-UNBOUNDED_SEQUENCE_LENGTH = 2**31 - 1
+UNBOUNDED_SEQUENCE_LENGTH = JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH
 DEFAULT_HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
 EXPORTER_IMPLEMENTATION_PATH = "src/scripts/data/export_vision_alignment_joint_probe.py"
 AUDITOR_IMPLEMENTATION_PATH = "src/scripts/data/audit_vision_alignment_joint_mix.py"
@@ -142,6 +147,7 @@ _SOURCE_FIELDS = frozenset(
 class _RuntimeProbeSource:
     dataset: Any
     unbounded_dataset: Optional[Any]
+    token_ids: Molmo2TokenIds
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -251,6 +257,9 @@ def _load_jsonl(path: Path, *, expected_sha256: str) -> tuple[bytes, list[Mappin
         if not isinstance(value, Mapping):
             raise ValueError(f"Joint probe {path} row {ordinal} must be an object")
         records.append(value)
+    canonical_raw = b"".join(_canonical_bytes(record) + b"\n" for record in records)
+    if raw != canonical_raw:
+        raise ValueError(f"Joint source {path.stem!r} probe is not exact canonical JSONL")
     return raw, records
 
 
@@ -322,6 +331,12 @@ def _live_probe_record(
     epoch: int,
 ) -> Dict[str, Any]:
     example = _dataset_get(runtime.dataset, dataset_index, epoch)
+    validate_joint_live_example(
+        example,
+        source_name=source_name,
+        source_kind=kind,
+        token_ids=runtime.token_ids,
+    )
     record = serialized_probe_record(
         example,
         source_name=source_name,
@@ -338,6 +353,12 @@ def _live_probe_record(
         if isinstance(raw_index, bool) or not isinstance(raw_index, int) or raw_index < 0:
             raise ValueError(f"Joint visual source {source_name!r} has an invalid projected row")
         raw_example = _dataset_get(runtime.unbounded_dataset, raw_index, epoch)
+        validate_joint_live_example(
+            raw_example,
+            source_name=source_name,
+            source_kind=kind,
+            token_ids=runtime.token_ids,
+        )
         raw_length = _sequence_length(
             raw_example, name=f"unbounded {source_name}/{dataset_index}/{epoch}"
         )
@@ -372,6 +393,15 @@ def _live_probe_record(
         raise ValueError(f"Unknown joint source kind {kind!r}")
     record["raw_sequence_length"] = raw_length
     record["truncated"] = False
+    validate_joint_probe_record(
+        record,
+        source_name=source_name,
+        source_kind=kind,
+        expected_index=dataset_index,
+        expected_epoch=epoch,
+        sequence_length=JOINT_SEQUENCE_LENGTH,
+        token_ids=runtime.token_ids,
+    )
     return record
 
 
@@ -402,8 +432,12 @@ def _build_unbounded_visual_dataset(
     if not callable(validate):
         raise ValueError(f"Unbounded joint source {source_name!r} lacks annotation validation")
     validate()
-    if len(dataset) != selection.base_examples:
-        raise ValueError(f"Unbounded joint source {source_name!r} changed raw row identity")
+    validate_joint_unbounded_dataset_identity(
+        dataset,
+        source_name=source_name,
+        selection=selection,
+        max_sequence_length=UNBOUNDED_SEQUENCE_LENGTH,
+    )
     return dataset
 
 
@@ -412,14 +446,9 @@ def _build_runtime_sources(
     native_manifest: NativeTextReplayManifest,
     receipt: NativeTextReplayVerificationReceipt,
     *,
-    hf_cache_dir: str,
+    tokenizer: Any,
+    token_ids: Molmo2TokenIds,
 ) -> Mapping[str, _RuntimeProbeSource]:
-    tokenizer, token_ids = load_pinned_vision_alignment_tokenizer(
-        identifier=VISION_ALIGNMENT_TOKENIZER_ID,
-        revision=VISION_ALIGNMENT_TOKENIZER_REVISION,
-        expected_fingerprint=VISION_ALIGNMENT_TOKENIZER_FINGERPRINT,
-        cache_dir=hf_cache_dir,
-    )
     parent_spec = projection.source_spec.perception_spec
     if (
         parent_spec.tokenizer_id != VISION_ALIGNMENT_TOKENIZER_ID
@@ -442,6 +471,7 @@ def _build_runtime_sources(
             unbounded_dataset=_build_unbounded_visual_dataset(
                 projection, tokenizer, token_ids, source_name
             ),
+            token_ids=token_ids,
         )
     native = NativeTextReplayDataset(
         native_manifest.path,
@@ -450,7 +480,7 @@ def _build_runtime_sources(
         expected_verification_receipt_sha256=receipt.receipt_sha256,
     )
     native.validate_tokenizer(tokenizer)
-    sources["native_text_replay"] = _RuntimeProbeSource(native, None)
+    sources["native_text_replay"] = _RuntimeProbeSource(native, None, token_ids)
     if tuple(sorted(sources)) != JOINT_SOURCE_NAMES:
         raise ValueError("Rebuilt joint runtime source set differs")
     return sources
@@ -464,6 +494,78 @@ def _load_native_receipt(
     path: Path, *, expected_sha256: str
 ) -> NativeTextReplayVerificationReceipt:
     return NativeTextReplayVerificationReceipt.load(path, expected_sha256=expected_sha256)
+
+
+def _fresh_native_runtime_evidence(
+    native_manifest: NativeTextReplayManifest,
+    receipt: NativeTextReplayVerificationReceipt,
+    *,
+    expected_size: int,
+) -> NativeTextReplayDataset:
+    """Rebuild native replay so closing validation repeats every source-file stat check."""
+    dataset = NativeTextReplayDataset(
+        native_manifest.path,
+        expected_fingerprint=native_manifest.content_fingerprint,
+        verification_receipt_path=receipt.path,
+        expected_verification_receipt_sha256=receipt.receipt_sha256,
+        validate_source_files=True,
+    )
+    if (
+        len(dataset) != expected_size
+        or len(dataset) != native_manifest.num_windows
+        or dataset.sequence_length != JOINT_SEQUENCE_LENGTH
+        or runtime_dataset_fingerprint(dataset) != native_manifest.content_fingerprint
+        or sum(dataset.source_counts.values()) != expected_size
+    ):
+        raise ValueError("Fresh native replay runtime size or identity evidence differs")
+    return dataset
+
+
+def _closing_validate_inputs(
+    *,
+    projection: JointVisualProjectionManifest,
+    native_manifest: NativeTextReplayManifest,
+    receipt: NativeTextReplayVerificationReceipt,
+    expected_native_size: int,
+    token_ids: Molmo2TokenIds,
+) -> None:
+    """Re-load every external identity and fresh-stat native replay before returning."""
+    if _sha256_file(native_manifest.path) != native_manifest.manifest_sha256:
+        raise ValueError("Native train manifest changed during closing validation")
+    closing_native = _load_native_manifest(native_manifest.path)
+    if (
+        closing_native.manifest_sha256 != native_manifest.manifest_sha256
+        or closing_native.content_fingerprint != native_manifest.content_fingerprint
+    ):
+        raise ValueError("Native train manifest identity changed during closing validation")
+    closing_receipt = _load_native_receipt(receipt.path, expected_sha256=receipt.receipt_sha256)
+    closing_receipt.validate_manifest(closing_native)
+    if (
+        closing_native.provenance.get("verification_receipt_sha256")
+        != closing_receipt.receipt_sha256
+    ):
+        raise ValueError("Closing native manifest does not bind its verification receipt")
+    _fresh_native_runtime_evidence(
+        closing_native,
+        closing_receipt,
+        expected_size=expected_native_size,
+    )
+    # Make reviewed producer identities the final dependencies observed after the potentially
+    # long native source-stat pass.
+    closing_receipt = _load_native_receipt(receipt.path, expected_sha256=receipt.receipt_sha256)
+    closing_receipt.validate_manifest(closing_native)
+    closing_projection = load_joint_visual_projection_manifest(
+        projection.path,
+        expected_token_ids=token_ids,
+        expected_sha256=projection.raw_sha256,
+    )
+    if (
+        closing_projection.raw_sha256 != projection.raw_sha256
+        or closing_projection.content_sha256 != projection.content_sha256
+        or _canonical_bytes(closing_projection.source_spec.as_canonical_dict())
+        != _canonical_bytes(projection.source_spec.as_canonical_dict())
+    ):
+        raise ValueError("Joint visual projection identity changed during closing validation")
 
 
 def audit_joint_catalog(
@@ -495,8 +597,8 @@ def audit_joint_catalog(
     if _canonical_sha256(unsigned_catalog) != declared_content_sha:
         raise ValueError("Joint catalog content SHA-256 differs")
 
-    registry_sha256 = vision_alignment_joint_source_registry_sha256()
-    implementation_inventory = vision_alignment_joint_implementation_inventory()
+    registry_sha256 = joint_alignment_runtime_registry_sha256()
+    implementation_inventory = joint_alignment_runtime_implementation_inventory()
     if (
         _integer(
             catalog["source_registry_version"],
@@ -532,8 +634,16 @@ def audit_joint_catalog(
     projection_sha256 = _sha256(projection_ref["raw_sha256"], name="visual_projection.raw_sha256")
     if _sha256_file(projection_path) != projection_sha256:
         raise ValueError("Joint visual projection differs from its raw SHA-256 pin")
+    tokenizer, token_ids = load_pinned_vision_alignment_tokenizer(
+        identifier=VISION_ALIGNMENT_TOKENIZER_ID,
+        revision=VISION_ALIGNMENT_TOKENIZER_REVISION,
+        expected_fingerprint=VISION_ALIGNMENT_TOKENIZER_FINGERPRINT,
+        cache_dir=hf_cache_dir,
+    )
     projection = load_joint_visual_projection_manifest(
-        projection_path, expected_sha256=projection_sha256
+        projection_path,
+        expected_token_ids=token_ids,
+        expected_sha256=projection_sha256,
     )
     if projection.raw_sha256 != projection_sha256 or projection.content_sha256 != _sha256(
         projection_ref["content_sha256"], name="visual_projection.content_sha256"
@@ -603,7 +713,8 @@ def audit_joint_catalog(
         projection,
         native_manifest,
         receipt,
-        hf_cache_dir=hf_cache_dir,
+        tokenizer=tokenizer,
+        token_ids=token_ids,
     )
     if tuple(sorted(runtime_sources)) != JOINT_SOURCE_NAMES:
         raise ValueError("Joint runtime rebuild did not produce the exact nine-source set")
@@ -648,7 +759,11 @@ def audit_joint_catalog(
             else JOINT_VISUAL_PROBE_INDICES
         )
         raw_epochs = source["probe_epochs"]
-        if not isinstance(raw_epochs, list) or tuple(raw_epochs) != expected_epochs:
+        if (
+            not isinstance(raw_epochs, list)
+            or any(type(epoch) is not int for epoch in raw_epochs)
+            or tuple(raw_epochs) != expected_epochs
+        ):
             raise ValueError(f"Joint source {source_name!r} epoch panel differs")
         raw_indices = source["probe_indices"]
         if not isinstance(raw_indices, list):
@@ -696,6 +811,15 @@ def audit_joint_catalog(
         for row_ordinal, ((dataset_index, epoch), stored_record) in enumerate(
             zip(expected_pairs, records)
         ):
+            validate_joint_probe_record(
+                stored_record,
+                source_name=source_name,
+                source_kind=kind,
+                expected_index=dataset_index,
+                expected_epoch=epoch,
+                sequence_length=JOINT_SEQUENCE_LENGTH,
+                token_ids=runtime.token_ids,
+            )
             live_record = _live_probe_record(
                 runtime,
                 source_name=source_name,
@@ -737,7 +861,11 @@ def audit_joint_catalog(
             failures.append(f"{source_name}: malformed or missing probe rows")
         if accumulator.truncated:
             failures.append(f"{source_name}: contains truncated rows")
-        if accumulator.loss_weight.total <= 0 or accumulator.zero_loss:
+        if kind == "visual" and accumulator.zero_loss:
+            failures.append(
+                f"{source_name}: contains {accumulator.zero_loss} zero-loss visual probe rows"
+            )
+        if accumulator.loss_weight.total <= 0:
             failures.append(f"{source_name}: has non-positive supervised loss mass")
         else:
             mean_loss_weight[source_name] = accumulator.loss_weight.total / accumulator.valid
@@ -766,7 +894,8 @@ def audit_joint_catalog(
         sampling_probabilities = sampling_weights_from_loss_mass(targets, mean_loss_weight)
         expected_mass = expected_loss_mass(sampling_probabilities, mean_loss_weight)
         if any(
-            not math.isclose(expected_mass[name], targets[name], abs_tol=1e-12) for name in targets
+            not math.isclose(expected_mass[name], targets[name], rel_tol=0.0, abs_tol=1e-12)
+            for name in targets
         ):
             failures.append("Calibrated joint expected loss mass differs from exact targets")
 
@@ -812,6 +941,13 @@ def audit_joint_catalog(
     # Keep the launcher-facing audit identity consistent with the established bridge and
     # perception contracts: ``fingerprint`` hashes the entire unsigned canonical report.
     report["fingerprint"] = _canonical_sha256(report)
+    _closing_validate_inputs(
+        projection=projection,
+        native_manifest=native_manifest,
+        receipt=receipt,
+        expected_native_size=int(source_inputs["native_text_replay"]["dataset_size"]),
+        token_ids=token_ids,
+    )
     if (
         _sha256_file(catalog_path) != catalog_sha256
         or _sha256_file(exporter_path) != exporter_sha256
@@ -820,8 +956,8 @@ def audit_joint_catalog(
         or _sha256_file(receipt_path) != receipt_sha256
         or _sha256_file(auditor_path) != auditor_sha256
         or _sha256_file(shared_auditor_path) != shared_auditor_sha256
-        or vision_alignment_joint_source_registry_sha256() != registry_sha256
-        or vision_alignment_joint_implementation_inventory() != implementation_inventory
+        or joint_alignment_runtime_registry_sha256() != registry_sha256
+        or joint_alignment_runtime_implementation_inventory() != implementation_inventory
         or any(source_path.read_bytes() != raw for source_path, raw in pinned_probe_bytes.items())
     ):
         raise ValueError("Joint audit input or implementation changed during audit")

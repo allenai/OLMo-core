@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +18,15 @@ from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
     JointVisualSplitProjection,
     SelectedVisionAlignmentJointDataset,
     build_selected_joint_dataset,
+    joint_alignment_runtime_implementation_inventory,
+    joint_alignment_runtime_registry_sha256,
     joint_selected_dataset_fingerprint,
-    load_joint_visual_projection_manifest,
+)
+from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    load_joint_visual_projection_manifest as _load_joint_visual_projection_manifest,
+)
+from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
+    validate_joint_unbounded_dataset_identity,
 )
 from olmo_core.data.multimodal.vision_alignment_joint_sources import (
     JOINT_TO_PERCEPTION_SOURCE,
@@ -43,6 +50,21 @@ from olmo_core.data.multimodal.vision_alignment_perception_sources import (
     vision_alignment_perception_source_registry_sha256,
 )
 from olmo_core.nn.vision import Molmo2TokenIds
+
+_TEST_TOKEN_IDS = Molmo2TokenIds(
+    im_start_id=100278,
+    im_end_id=100279,
+    im_patch_id=100280,
+    im_col_id=100281,
+    low_res_im_start_id=100282,
+    image_placeholder_id=100283,
+    im_end_turn_id=100265,
+)
+
+
+def load_joint_visual_projection_manifest(path, **kwargs):
+    kwargs.setdefault("expected_token_ids", _TEST_TOKEN_IDS)
+    return _load_joint_visual_projection_manifest(path, **kwargs)
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -153,7 +175,7 @@ def _artifact_root(
     builder_path: Path,
 ) -> dict[str, Any]:
     joint_spec = VisionAlignmentJointSourceSpec.from_perception(parent.source_spec)
-    token_ids = Molmo2TokenIds()
+    token_ids = _TEST_TOKEN_IDS
     sources: dict[str, Any] = {}
     for source_name in JOINT_VISUAL_SOURCE_NAMES:
         parent_name = JOINT_TO_PERCEPTION_SOURCE[source_name]
@@ -176,7 +198,11 @@ def _artifact_root(
                 "physical_split": parent_selection.physical_split,
                 "base_examples": parent_selection.base_examples,
                 "joint_base_dataset_fingerprint": base_fingerprint,
-                "joint_base_annotation_sha256": _digest(f"{source_name}/{logical_split}/joint-ann"),
+                "joint_base_annotation_sha256": (
+                    _digest(f"{source_name}/{logical_split}/joint-ann")
+                    if source_name in {"audited_alignment", "ocr_document"}
+                    else parent_selection.base_annotation_sha256
+                ),
                 "adapter_projection_sha256": adapter_sha,
                 "selection_indices_sha256": parent_selection.selection_indices_sha256,
                 "runtime_examples": len(parent_selection.indices),
@@ -235,6 +261,7 @@ def _artifact_root(
             "source_spec_sha256": parent.source_spec_sha256,
             "source_registry_sha256": parent_root["source_registry_sha256"],
         },
+        "token_ids": asdict(token_ids),
         "source_name_projection": dict(JOINT_TO_PERCEPTION_SOURCE),
         "source_spec": joint_spec.as_canonical_dict(),
         "source_spec_sha256": joint_spec.preprocessing_sha256,
@@ -242,7 +269,9 @@ def _artifact_root(
         "source_registry_sha256": vision_alignment_joint_source_registry_sha256(),
         "source_implementation_inventory": vision_alignment_joint_implementation_inventory(),
         "projection_policy": {
-            "algorithm": "exact-parent-logical-row-selection-v1",
+            "algorithm": (
+                "exact-parent-logical-row-selection-with-source-aware-annotation-" "projection-v1"
+            ),
             "parent_sequence_length": 2560,
             "sequence_length": 8192,
             "allowed_adapter_config_delta": ["max_sequence_length"],
@@ -294,11 +323,16 @@ def projection_artifact(tmp_path: Path, monkeypatch):
 
 def test_loads_exact_parent_rows_and_512_validation_population(projection_artifact):
     artifact_path, raw_sha, _, parent, _ = projection_artifact
-    loaded = load_joint_visual_projection_manifest(artifact_path, expected_sha256=raw_sha)
+    loaded = load_joint_visual_projection_manifest(
+        artifact_path,
+        expected_token_ids=_TEST_TOKEN_IDS,
+        expected_sha256=raw_sha,
+    )
 
     assert loaded.raw_sha256 == raw_sha
     assert loaded.parent_provenance is parent
     assert loaded.source_spec.sequence_length == 8192
+    assert loaded.token_ids == _TEST_TOKEN_IDS
     assert set(loaded.selections) == {
         (source_name, split)
         for source_name in JOINT_VISUAL_SOURCE_NAMES
@@ -310,6 +344,13 @@ def test_loads_exact_parent_rows_and_512_validation_population(projection_artifa
     assert count_selection.selection_indices_sha256 == parent_selection.selection_indices_sha256
     assert len(count_selection.indices) == 512
     assert len(count_selection.unique_image_content_sha256) == 512
+
+    with pytest.raises(ValueError, match="token IDs differ"):
+        load_joint_visual_projection_manifest(
+            artifact_path,
+            expected_token_ids=Molmo2TokenIds(),
+            expected_sha256=raw_sha,
+        )
 
 
 @pytest.mark.parametrize(
@@ -414,6 +455,29 @@ def test_rejects_each_parent_identity_reference(projection_artifact, field):
         load_joint_visual_projection_manifest(artifact_path)
 
 
+@pytest.mark.parametrize(
+    ("source_name", "joint_annotation"),
+    [
+        ("pixmo_caption", "0" * 64),
+        ("ocr_document", None),
+    ],
+)
+def test_rejects_invalid_source_aware_annotation_projection_relation(
+    projection_artifact, source_name, joint_annotation
+):
+    artifact_path, _, root, parent, _ = projection_artifact
+    split = root["sources"][source_name]["train"]
+    if joint_annotation is None:
+        joint_annotation = parent.selection(
+            JOINT_TO_PERCEPTION_SOURCE[source_name], "train"
+        ).base_annotation_sha256
+    split["joint_base_annotation_sha256"] = joint_annotation
+    _write_artifact(artifact_path, root)
+
+    with pytest.raises(ValueError, match="annotation projection relation differs"):
+        load_joint_visual_projection_manifest(artifact_path)
+
+
 def test_rejects_builder_and_joint_registry_current_code_drift(projection_artifact, monkeypatch):
     from olmo_core.data.multimodal import (
         vision_alignment_joint_provenance as provenance,
@@ -460,7 +524,7 @@ class _RawDataset:
     def __init__(self, selection: JointVisualSplitProjection):
         self.config = build_vision_alignment_joint_dataset_config(
             VisionAlignmentJointSourceSpec.from_perception(_spec()),
-            Molmo2TokenIds(),
+            _TEST_TOKEN_IDS,
             "pixmo_caption",
             split="train",
         )
@@ -488,7 +552,7 @@ class _RawDataset:
 def _wrapper_selection() -> JointVisualSplitProjection:
     config = build_vision_alignment_joint_dataset_config(
         VisionAlignmentJointSourceSpec.from_perception(_spec()),
-        Molmo2TokenIds(),
+        _TEST_TOKEN_IDS,
         "pixmo_caption",
         split="train",
     )
@@ -519,6 +583,7 @@ def test_selected_wrapper_preserves_indices_fingerprint_and_image_checks():
         source_name="pixmo_caption",
         logical_split="train",
         selection=selection,
+        parent_annotation_sha256=selection.joint_base_annotation_sha256,
     )
 
     assert len(selected) == 2
@@ -553,6 +618,153 @@ def test_selected_wrapper_rejects_base_annotation_and_adapter_drift(drift):
             source_name="pixmo_caption",
             logical_split="train",
             selection=selection,
+            parent_annotation_sha256=selection.joint_base_annotation_sha256,
+        )
+
+
+def test_selected_wrapper_cross_binds_sequence_sensitive_parent_annotation(monkeypatch):
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    selection = _wrapper_selection()
+    raw = _RawDataset(selection)
+    parent_annotation = _digest("parent-annotation")
+
+    def replay(dataset, source_name, *, sequence_length):
+        assert dataset is raw
+        assert source_name == "ocr_document"
+        return (
+            selection.joint_base_annotation_sha256 if sequence_length == 8192 else parent_annotation
+        )
+
+    monkeypatch.setattr(
+        provenance,
+        "vision_alignment_joint_annotation_replay_sha256",
+        replay,
+    )
+    selected = SelectedVisionAlignmentJointDataset(
+        raw,
+        source_name="ocr_document",
+        logical_split="train",
+        selection=selection,
+        parent_annotation_sha256=parent_annotation,
+    )
+    assert selected.indices == selection.indices
+
+    with pytest.raises(ValueError, match="annotation projection differs"):
+        SelectedVisionAlignmentJointDataset(
+            raw,
+            source_name="ocr_document",
+            logical_split="train",
+            selection=selection,
+            parent_annotation_sha256="0" * 64,
+        )
+
+
+def test_unbounded_identity_binds_config_fingerprint_and_stable_annotations(monkeypatch):
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    selection = replace(
+        _wrapper_selection(),
+        joint_base_dataset_fingerprint="d42fc5b7bd389a25",
+    )
+    raw = _RawDataset(selection)
+    unbounded_length = 2**31 - 1
+    raw.config = replace(raw.config, max_sequence_length=unbounded_length)
+    raw.content_fingerprint = selection.joint_base_dataset_fingerprint
+
+    assert validate_joint_unbounded_dataset_identity(
+        raw,
+        source_name="pixmo_caption",
+        selection=selection,
+        max_sequence_length=unbounded_length,
+    ) == (raw.content_fingerprint, selection.joint_base_annotation_sha256)
+
+    raw._annotation = _digest("annotation-drift")
+    with pytest.raises(ValueError, match="annotation identity differs"):
+        validate_joint_unbounded_dataset_identity(
+            raw,
+            source_name="pixmo_caption",
+            selection=selection,
+            max_sequence_length=unbounded_length,
+        )
+    monkeypatch.setattr(
+        provenance,
+        "vision_alignment_joint_annotation_replay_sha256",
+        lambda dataset, source_name, *, sequence_length: (
+            raw._annotation
+            if sequence_length == unbounded_length
+            else selection.joint_base_annotation_sha256
+        ),
+    )
+    raw.content_fingerprint = _digest("unbounded")
+    assert (
+        validate_joint_unbounded_dataset_identity(
+            raw,
+            source_name="audited_alignment",
+            selection=selection,
+            max_sequence_length=unbounded_length,
+        )[1]
+        == raw._annotation
+    )
+
+    raw.content_fingerprint = selection.joint_base_dataset_fingerprint
+    with pytest.raises(ValueError, match="runtime fingerprint differs"):
+        validate_joint_unbounded_dataset_identity(
+            raw,
+            source_name="audited_alignment",
+            selection=selection,
+            max_sequence_length=unbounded_length,
+        )
+
+    with pytest.raises(ValueError, match="reviewed unbounded limit"):
+        validate_joint_unbounded_dataset_identity(
+            raw,
+            source_name="pixmo_caption",
+            selection=selection,
+            max_sequence_length=8192,
+        )
+
+
+@pytest.mark.parametrize("source_name", ["audited_alignment", "ocr_document"])
+@pytest.mark.parametrize("tampered_sequence_length", [8192, 2**31 - 1])
+def test_unbounded_sequence_sensitive_annotation_replay_rejects_each_tamper(
+    monkeypatch, source_name, tampered_sequence_length
+):
+    from olmo_core.data.multimodal import (
+        vision_alignment_joint_provenance as provenance,
+    )
+
+    selection = _wrapper_selection()
+    raw = _RawDataset(selection)
+    unbounded_length = 2**31 - 1
+    raw.config = replace(raw.config, max_sequence_length=unbounded_length)
+    raw.content_fingerprint = _digest("unbounded")
+    raw._annotation = _digest("unbounded-annotation")
+
+    def replay(dataset, replay_source_name, *, sequence_length):
+        assert dataset is raw
+        assert replay_source_name == source_name
+        if sequence_length == tampered_sequence_length:
+            return "0" * 64
+        if sequence_length == unbounded_length:
+            return raw._annotation
+        return selection.joint_base_annotation_sha256
+
+    monkeypatch.setattr(
+        provenance,
+        "vision_alignment_joint_annotation_replay_sha256",
+        replay,
+    )
+    with pytest.raises(ValueError, match="annotation sequence replay differs"):
+        validate_joint_unbounded_dataset_identity(
+            raw,
+            source_name=source_name,
+            selection=selection,
+            max_sequence_length=unbounded_length,
         )
 
 
@@ -573,7 +785,7 @@ def test_build_selected_joint_dataset_and_unknown_names(projection_artifact, mon
     selected = build_selected_joint_dataset(
         manifest,
         tokenizer=object(),
-        token_ids=Molmo2TokenIds(),
+        token_ids=_TEST_TOKEN_IDS,
         source_name="pixmo_caption",
         logical_split="train",
     )
@@ -619,3 +831,27 @@ def test_validation_count_cannot_be_projected_below_512(projection_artifact):
     _write_artifact(artifact_path, root)
     with pytest.raises(ValueError, match="exactly 512"):
         load_joint_visual_projection_manifest(artifact_path)
+
+
+def test_joint_runtime_inventory_binds_selection_and_native_replay_implementations():
+    from olmo_core.data import utils as data_utils
+    from olmo_core.data.multimodal import (
+        native_text_replay,
+        vision_alignment_joint_provenance,
+    )
+
+    inventory = joint_alignment_runtime_implementation_inventory()
+    assert inventory["runtime_inventory_version"] == 1
+    assert inventory["runtime_source_names"] == sorted(
+        [*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay"]
+    )
+    for name, module in {
+        "vision_alignment_joint_provenance.py": vision_alignment_joint_provenance,
+        "native_text_replay.py": native_text_replay,
+        "data/utils.py": data_utils,
+    }.items():
+        assert (
+            inventory["files"][name]
+            == hashlib.sha256(Path(module.__file__).resolve().read_bytes()).hexdigest()
+        )
+    assert joint_alignment_runtime_registry_sha256() == _canonical_sha256(inventory)

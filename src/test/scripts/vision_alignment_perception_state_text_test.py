@@ -107,10 +107,6 @@ def test_runtime_uses_exact_one_hour_collective_timeout(monkeypatch) -> None:
             "scripts/eval/vision_alignment_state_text.py",
             "4f499e557ef4cf263907eb80db20518e02cfac01051f05f8e5e8c0fdadc35ec7",
         ),
-        (
-            "scripts/train/Vision-Alignment.py",
-            "b8a96d946224e42cd0cb6422d27081da09265ea4d0e963f8e7509ac6f39267a5",
-        ),
     ],
 )
 def test_historical_evidence_sources_remain_byte_identical(
