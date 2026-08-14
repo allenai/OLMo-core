@@ -162,7 +162,11 @@ def _prepare(row: dict, task: str, args) -> str:
     if task != "rerank":
         return src
 
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data"))
+    # hils_sft -> memexpress -> train -> scripts, then /data. Three levels, not two: with two this
+    # resolves to src/scripts/train/data, which does not exist, and the import fails at runtime.
+    sys.path.insert(
+        0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "data")
+    )
     from build_combined_suite_jsonl import normalize_example  # type: ignore[import-not-found]
 
     dest_dir = os.path.join(args.out_root, "_normalized")
