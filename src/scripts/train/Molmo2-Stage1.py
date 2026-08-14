@@ -281,6 +281,21 @@ class ExperimentConfig(Config):
     """``"molmo2"`` (released Molmo2-4B weights) or ``"scratch"`` (mm_olmo stage-1 init:
     base Qwen3-4B + base SigLIP2 + random connector/new embeddings)."""
 
+    # Data-loader knobs. Exposed as fields (rather than left as module constants) so they can
+    # be swept from the CLI: data loading was measured at ~11% of step time, and the packer
+    # parameters are the other lever on examples/sec.
+    data_prefetch_workers: int = DATA_PREFETCH_WORKERS
+    """Background threads preprocessing examples (0 = synchronous)."""
+
+    pack_max_crops: int = PACK_MAX_CROPS
+    """Image-crop budget per pack — the knapsack's second dimension."""
+
+    pack_buffer_size: int = PACK_BUFFER_SIZE
+    """Examples buffered before the 2D knapsack picks a pack (mm_olmo ``buffer_size``)."""
+
+    pack_image_weight: float = PACK_IMAGE_WEIGHT
+    """Objective weight per image crop in the knapsack (mm_olmo ``image_weight``)."""
+
 
 def _build_model_config(model_size: str, init_from: str) -> MultimodalLMConfig:
     """Build the Molmo2-4B :class:`MultimodalLMConfig` natively (no weights, no HF read).
@@ -721,10 +736,10 @@ def train(config: ExperimentConfig):
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
             pack=config.pack_sequences,
-            pack_max_crops=PACK_MAX_CROPS if config.pack_sequences else None,
-            pack_buffer_size=PACK_BUFFER_SIZE,
-            pack_image_weight=PACK_IMAGE_WEIGHT,
-            prefetch_workers=DATA_PREFETCH_WORKERS,
+            pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
+            pack_buffer_size=config.pack_buffer_size,
+            pack_image_weight=config.pack_image_weight,
+            prefetch_workers=config.data_prefetch_workers,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )
