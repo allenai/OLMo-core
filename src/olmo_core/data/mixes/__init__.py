@@ -138,6 +138,7 @@ class DataMix(DataMixBase):
                     labels.append(label)
         return paths, labels
 
+
 @contextmanager
 def _get_data_mix_path(name: str) -> Generator[Path, None, None]:
     import importlib_resources
