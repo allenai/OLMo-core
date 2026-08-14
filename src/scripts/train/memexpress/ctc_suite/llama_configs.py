@@ -190,6 +190,13 @@ def assert_matches_hf(
     bad = []
     for key, want in shape.items():
         got = raw.get(key)
+        # `head_dim` is OPTIONAL in an HF llama config: Llama-3.2-3B states it explicitly, but
+        # Llama-3.1-8B omits it, and transformers then derives it as hidden_size //
+        # num_attention_heads. Comparing the absent key against 128 would fail a checkpoint whose
+        # geometry is in fact correct, so apply the same default here rather than dropping the
+        # field from the table (it still catches a genuinely wrong head_dim, stated or derived).
+        if key == "head_dim" and got is None:
+            got = raw["hidden_size"] // raw["num_attention_heads"]
         if isinstance(want, bool):
             ok = bool(got) == want
         elif isinstance(want, float):
