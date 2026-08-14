@@ -52,8 +52,16 @@ TASK_SELECTORS: Dict[str, Dict[str, object]] = {
     },
     "rerank": {
         "converter_task": "rerank",
-        "manifest_task": "rerank",
-        "include": ["msmarco_helmet_rerank_train_"],
+        # Selected by FILENAME, like nq: the CE-graded build is filed under the overloaded
+        # `retrieval` task, while manifest task `rerank` points at the DEPRECATED helmet files.
+        "manifest_task": None,
+        # msmarco_helmet_rerank_train_* is the old BINARY format and build_prompt refuses it:
+        #   "DEPRECATED binary rerank format: example has no `ce_scores`, so the reference order
+        #    would fall back to the old gold-first-then-displayed scheme."
+        # Schema normalization cannot rescue it -- it maps ctxs -> documents but cannot invent CE
+        # scores. rerank is EVALUATED CE-graded (NDCG@10 + Kendall-tau), so the trainhn build is
+        # required for train/eval consistency, not preferred.
+        "include": ["msmarco_trainhn_train_"],
         "exclude": [],
     },
     # `include` is empty for these two: the manifest's own `split` column already selects train,
@@ -160,6 +168,13 @@ def _prepare(row: dict, task: str, args) -> str:
     """
     src = os.path.join(args.data_dir, row["file"])
     if task != "rerank":
+        return src
+    # The CE-graded trainhn files already carry `documents`, so normalize_example is a no-op for
+    # them; copying a 400 MB file to change nothing is pure waste. Only rewrite when the source
+    # actually has the ctxs schema.
+    with open(src) as fh:
+        first = json.loads(fh.readline())
+    if "documents" in first:
         return src
 
     # hils_sft -> memexpress -> train -> scripts, then /data. Three levels, not two: with two this
