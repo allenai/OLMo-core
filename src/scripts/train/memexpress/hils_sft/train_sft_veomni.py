@@ -244,27 +244,64 @@ def main() -> int:
                     wandb.log({"loss": out.loss.item(), "lr": lr_scheduler.get_last_lr()[0],
                                "grad_norm": float(gnorm), "step": step})
             if args.save_steps and step % args.save_steps == 0:
-                _save(model, args.out_dir, step, is_main)
+                _save(model, args.out_dir, step, rank, is_main, args.model_path)
             if step >= max_steps:
                 done = True
                 break
         if done:
             break
 
-    _save(model, args.out_dir, step, is_main)
+    _save(model, args.out_dir, step, rank, is_main, args.model_path)
     if is_main:
         print(f"[done] {step} steps in {(time.time()-t0)/60:.1f} min -> {args.out_dir}")
     return 0
 
 
-def _save(model, out_dir: str, step: int, is_main: bool) -> None:
-    """Save weights for the eval path (`--backend hf` reads an HF dir; DCP needs conversion)."""
+#: Non-weight files copied from the source checkpoint so the saved dir is a COMPLETE HF model.
+#: Without them the output has safetensors and nothing else, and `eval_lc_native.py --backend hf`
+#: cannot load it (no config.json -> no model_type -> the HiLS classes are never registered).
+_ASSET_FILES = (
+    "config.json",
+    "generation_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "vocab.json",
+    "merges.txt",
+    "added_tokens.json",
+)
+
+
+def _save(model, out_dir: str, step: int, rank: int, is_main: bool, source_model_path: str) -> None:
+    """
+    Save a directly-loadable HF checkpoint.
+
+    ``save_model_weights`` takes a **state dict**, not a model, and gathers DTensors itself
+    (``tensor.data.full_tensor()``), so FSDP sharding needs no special handling here. It must be
+    called on every rank when ``global_rank`` is passed.
+
+    Weights land as safetensors, so copying the config/tokenizer beside them makes this a complete
+    HF directory -- the eval path reads it as-is, with no DCP->HF conversion step.
+
+    :param model: The (parallelized) model.
+    :param out_dir: Run save folder; the step dir is created under it.
+    :param step: Step number, used for the step dir name.
+    :param rank: Global rank -- passed through so veomni knows this runs on all ranks.
+    :param is_main: Whether this rank does the rank-0-only asset copy and logging.
+    :param source_model_path: The HF checkpoint this run started from, for the asset files.
+    """
+    import shutil
+
     from veomni.models import save_model_weights
 
     dest = os.path.join(out_dir, f"step{step}")
-    save_model_weights(dest, model)
+    save_model_weights(dest, model.state_dict(), global_rank=rank)
     if is_main:
-        print(f"[save] {dest}", flush=True)
+        for name in _ASSET_FILES:
+            src = os.path.join(source_model_path, name)
+            if os.path.exists(src):
+                shutil.copy2(src, os.path.join(dest, name))
+        print(f"[save] {dest} (weights + config/tokenizer; loadable by --backend hf)", flush=True)
 
 
 if __name__ == "__main__":
