@@ -38,7 +38,13 @@ TASK_SELECTORS: Dict[str, Dict[str, object]] = {
     "nq": {
         "manifest_task": None,  # selected by filename: `retrieval` is overloaded
         "include": ["nq_train_"],
-        "exclude": ["hn98", "hn198", "hn398", "hn498", "hn48", "hn18"],  # keep only the p10 build
+        # `_cot` is a different target format; the mixture references one `nq` source, so taking
+        # both would train two answer formats for one task under one weight.
+        "exclude": ["_cot"],
+        # p10 is enforced by RATIO below, not by a blocklist. A blocklist was tried and was wrong:
+        # it listed hotpotqa's hn98/hn198 while NQ's banned files are hn99/hn199/hn19/hn49
+        # (hn = k-1). Any new k would need a new entry, and a miss silently trains the 98%-hard
+        # build. The ratio rule needs no maintenance and states the actual requirement.
         "require_p10": True,
     },
     "rerank": {
@@ -90,13 +96,39 @@ def select(rows: List[dict], task: str) -> List[dict]:
     if not out:
         raise SystemExit(f"[{task}] selected NO files -- refusing to build a mixture missing a task")
     if sel.get("require_p10"):
-        bad = [r["file"] for r in out if "hn10" not in r["file"] and "hn2" not in r["file"]]
-        if bad:
+        out = [r for r in out if _is_p10(r["file"])]
+        if not out:
             raise SystemExit(
-                f"[{task}] p10 required but selection includes non-p10 files: {bad}. "
-                f"hn<N> is the hard-negative COUNT; p10 means hn ~ 10% of k."
+                f"[{task}] no p10 file found. hn<N> is the hard-negative COUNT and p10 means "
+                f"hn <= {P10_MAX_RATIO:.0%} of k; the 98%-hard build (hn = k-1) is banned because "
+                f"everything is EVALUATED on the p10 ladder."
             )
     return out
+
+
+P10_MAX_RATIO = 0.15  # 10% hard negatives, with slack for rounding at small k
+
+
+def _is_p10(filename: str) -> bool:
+    """
+    Decide from the filename whether a retrieval file is the p10 (10%-hard-negative) build.
+
+    Positive rule rather than a blocklist: the banned families differ per task (hotpotqa uses
+    ``hn98``/``hn198``, NQ uses ``hn99``/``hn199``/``hn19``/``hn49``), so a blocklist has to be
+    maintained per task and a miss silently trains the wrong build.
+
+    :param filename: e.g. ``nq_train_k100_hn10_2500.jsonl``.
+
+    :returns: ``True`` if ``hn / k`` is within the p10 ratio.
+    """
+    import re
+
+    k = re.search(r"_k(\d+)", filename)
+    hn = re.search(r"_hn(\d+)", filename)
+    if not (k and hn):
+        return False
+    k_n, hn_n = int(k.group(1)), int(hn.group(1))
+    return k_n > 0 and hn_n / k_n <= P10_MAX_RATIO
 
 
 def main() -> int:
