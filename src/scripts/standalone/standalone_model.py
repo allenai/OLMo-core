@@ -17,7 +17,7 @@ model layers.  The KDA recurrence and expert dispatch below are unfused referenc
 implementations and are meant for inspection and small-shape tests, not production.
 
 Importing this module creates ``largest_model`` on the meta device.  This instantiates
-the complete 65.34B-parameter module hierarchy without allocating parameter storage.
+the complete 62.86B-parameter module hierarchy without allocating parameter storage.
 Call ``OLMoE3(largest_config, device=...)`` only on appropriately sharded hardware.
 """
 
@@ -36,13 +36,13 @@ class OLMoE3Config:
     vocab_size: int = 100_352
     d_model: int = 1792
     n_layers: int = 30
-    n_heads: int = 16
-    n_kv_heads: int = 8
-    head_dim: int = 128
-    expert_hidden_size: int = 1600
+    n_heads: int = 8
+    n_kv_heads: int = 4
+    head_dim: int = 256
+    expert_hidden_size: int = 1792
     num_routed_experts: int = 512
     top_k: int = 16
-    latent_compression: int = 2
+    latent_dim: int = 768
     kda_expand_v: float = 2.0
     kda_conv_size: int = 4
     rms_norm_eps: float = 1e-6
@@ -61,15 +61,20 @@ class OLMoE3Config:
     emo_eval_document_expert_pool: int = 512
 
     @property
-    def latent_dim(self) -> int:
-        return self.d_model // self.latent_compression
-
-    @property
     def full_attention_layers(self) -> tuple[int, ...]:
         return tuple(range(4, self.n_layers, 5))
 
     def validate(self) -> None:
-        assert self.d_model % self.latent_compression == 0
+        # TPU MXU alignment (256x256 systolic array): every reduction/output
+        # dimension that appears in a GEMM must be a multiple of 256, or the
+        # matmul pads out to the next tile and burns cycles on zeros.
+        for name, dim in (
+            ("d_model", self.d_model),
+            ("head_dim", self.head_dim),
+            ("expert_hidden_size", self.expert_hidden_size),
+            ("latent_dim", self.latent_dim),
+        ):
+            assert dim % 256 == 0, f"{name}={dim} must be a multiple of 256 for MXU alignment"
         assert self.n_heads % self.n_kv_heads == 0
         assert self.top_k <= self.num_routed_experts
         if self.emo_enabled:

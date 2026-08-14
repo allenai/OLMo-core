@@ -138,4 +138,13 @@ parameter counts.
 | Config | Total parameters | Active parameters | Active non-embedding |
 | --- | ---: | ---: | ---: |
 | `30m` | 32,323,588 | 29,964,292 | 17,119,236 |
-| `3p5b` | 65,342,371,200 | 3,479,664,000 | 3,299,833,216 |
+| `3p5b` | 62,864,102,080 | 3,475,903,168 | 3,296,072,384 |
+
+`3p5b`'s shapes (`head_dim`, `expert_hidden_size`, `latent_dim`) are all multiples of
+256 for TPU MXU alignment; see `tpu-optimizations-guide.md` (Principle 1) and the PR
+that introduced this geometry for the parameter-count trade-off versus the prior,
+unaligned shapes (`head_dim=128`, `expert_hidden_size=1600`, `latent_dim=896`), which
+had 65,342,371,200 total / 3,479,664,000 active parameters. Active params are matched
+to within 0.1%; total parameters (and therefore the sparsity ratio) are about 3.8%
+lower, since no combination of 256-aligned `expert_hidden_size`/`latent_dim` exactly
+reproduces both simultaneously.

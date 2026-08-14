@@ -24,7 +24,7 @@ Pass ``--device meta`` to construct shapes without parameter storage, or ``--dev
 cuda`` on appropriately sharded hardware. Module construction requires the production
 FLA, FlashAttention 4, Triton, and (for expert parallelism) NVSHMEM environment.
 Use ``--model-size 30m`` for the single-GPU smoke configuration; the default is
-the 3.5B-active / 65B-stored target configuration.
+the 3.5B-active / 63B-stored target configuration.
 """
 
 from __future__ import annotations
@@ -70,7 +70,6 @@ from olmo_core.nn.transformer import (
 )
 
 VOCAB_SIZE = 100_352
-HEAD_DIM = 128
 TOP_K = 16
 
 
@@ -80,14 +79,12 @@ class Geometry:
     n_layers: int
     n_heads: int
     n_kv_heads: int
+    head_dim: int
     expert_hidden_size: int
     num_routed_experts: int
+    latent_dim: int
     expected_total_params: int
     expected_active_params: int
-
-    @property
-    def latent_dim(self) -> int:
-        return self.d_model // 2
 
     @property
     def full_attention_layers(self) -> tuple[int, ...]:
@@ -95,8 +92,12 @@ class Geometry:
 
 
 GEOMETRIES = {
-    "30m": Geometry(128, 5, 1, 1, 192, 32, 32_323_588, 29_964_292),
-    "3p5b": Geometry(1792, 30, 16, 8, 1600, 512, 65_342_371_200, 3_479_664_000),
+    # Left unaligned: a fast plumbing/correctness check, not performance-representative.
+    "30m": Geometry(128, 5, 1, 1, 128, 192, 32, 64, 32_323_588, 29_964_292),
+    # head_dim/expert_hidden_size/latent_dim are all multiples of 256 for TPU MXU
+    # alignment (tpu-optimizations-guide.md, Principle 1); see PR description for
+    # the parameter-count trade-off this implies relative to the prior geometry.
+    "3p5b": Geometry(1792, 30, 8, 4, 256, 1792, 512, 768, 62_864_102_080, 3_475_903_168),
 }
 
 
@@ -129,7 +130,7 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
     kda = KimiDeltaAttentionConfig(
         n_heads=geometry.n_heads,
         n_v_heads=geometry.n_heads,
-        head_dim=HEAD_DIM,
+        head_dim=geometry.head_dim,
         expand_v=2.0,
         allow_neg_eigval=True,
         conv_size=4,
@@ -141,7 +142,7 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
         name=AttentionType.default,
         n_heads=geometry.n_heads,
         n_kv_heads=geometry.n_kv_heads,
-        head_dim=HEAD_DIM,
+        head_dim=geometry.head_dim,
         bias=False,
         gate=GateConfig(granularity=GateGranularity.elementwise, full_precision=True),
         rope=None,
