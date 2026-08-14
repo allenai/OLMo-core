@@ -77,14 +77,25 @@ def build_prompt(example: Dict, **opts) -> str:
     )
 
 
+def _ce_top_k(example: Dict, k: int) -> List[int]:
+    """The ``k`` highest-CE document ids (1-based), CE=None (pooled-foreign docs) excluded."""
+    ce = example.get("ce_scores") or []
+    ranked = sorted((i for i, v in enumerate(ce) if v is not None),
+                    key=lambda i: ce[i], reverse=True)
+    return [i + 1 for i in ranked[:k]]
+
+
 def build_target(example: Dict) -> str:
     """
-    :param example: A unified-format example with 0-based ``gold_doc_indices``.
+    :param example: A unified-format example.
 
-    :returns: The ``Ranking: [i], [j], ...`` answer line, ids 1-based.
+    :returns: The ``Ranking: [i], [j], ...`` answer line, 1-based -- the CE-ordered top-10 when
+        ``ce_scores`` are present, which is both the SFT training target
+        (``_rerank_reference_order``) and the answer :func:`score` grades for; the bare qrel gold
+        otherwise.
     """
-    ids = ", ".join(f"[{g + 1}]" for g in example["gold_doc_indices"])
-    return f"Ranking: {ids}"
+    ids = _ce_top_k(example, TOP_K) or [g + 1 for g in example["gold_doc_indices"]]
+    return "Ranking: " + ", ".join(f"[{i}]" for i in ids)
 
 
 def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[int]]:
@@ -116,29 +127,46 @@ def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[int]]:
 def score(parsed: Optional[List[int]], gold, k: int = TOP_K) -> Dict[str, float]:
     """
     :param parsed: Output of :func:`parse`.
-    :param gold: 0-based gold indices, or the example carrying them.
-    :param k: Cutoff for MRR and recall.
+    :param gold: The EXAMPLE (via ``extra["score_takes_example"]``), or bare 0-based gold
+        indices from a legacy caller.
+    :param k: Cutoff for every @k metric.
 
-    :returns: ``mrr@10``, ``recall@10``, ``parsed``.
+    :returns: ``ce_top10_recall`` (primary -- fraction of the CE-top-10 documents present in the
+        model's first 10 ids), plus ``mrr@10``/``recall@10`` against the single qrel gold, and
+        ``parsed``. The qrel metrics saturate near 0.98 even for weak arms -- finding ONE known
+        document is easy -- which is why they were demoted (prasann, 2026-08-14): the task is
+        meant to measure tracking the whole top-10.
+
+    ``ce_top10_recall`` is always present (the registry contract requires the primary metric in
+    every score() output); ``ce_ref_available`` says whether a CE reference set actually existed,
+    so a legacy caller that passes bare indices produces a diagnosable 0/0 rather than a silent
+    zero that reads as a model collapse.
     """
-    indices = gold["gold_doc_indices"] if isinstance(gold, dict) else gold
+    example = gold if isinstance(gold, dict) else None
+    indices = example["gold_doc_indices"] if example else gold
     gold_ids = {int(g) + 1 for g in indices}
+    ce_ref = set(_ce_top_k(example, k)) if example else set()
+
+    out: Dict[str, float] = {f"mrr@{k}": 0.0, f"recall@{k}": 0.0, "ce_top10_recall": 0.0,
+                             "ce_ref_available": 1.0 if ce_ref else 0.0, "parsed": 0.0}
     if not parsed:
-        return {f"mrr@{k}": 0.0, f"recall@{k}": 0.0, "parsed": 0.0}
+        return out
 
     prefix = parsed[:k]
-    rr = 0.0
     for rank, doc in enumerate(prefix, start=1):
         if doc in gold_ids:
-            rr = 1.0 / rank
+            out[f"mrr@{k}"] = 1.0 / rank
             break
-    recall = len(set(prefix) & gold_ids) / len(gold_ids) if gold_ids else 0.0
-    return {f"mrr@{k}": rr, f"recall@{k}": recall, "parsed": 1.0}
+    out[f"recall@{k}"] = len(set(prefix) & gold_ids) / len(gold_ids) if gold_ids else 0.0
+    if ce_ref:
+        out["ce_top10_recall"] = len(set(prefix) & ce_ref) / len(ce_ref)
+    out["parsed"] = 1.0
+    return out
 
 
 SPEC = TaskSpec(
     name="rerank",
-    description="Order candidate documents by relevance to the query (MRR@10).",
+    description="Order candidate documents by relevance; graded on CE-top-10 recall.",
     gold_index_base=0,
     instruction=RERANK_INSTRUCTION,
     instruction_variants=(rerank_instruction(TOP_K),),
@@ -148,10 +176,10 @@ SPEC = TaskSpec(
     build_prompt=build_prompt,
     parse=parse,
     score=score,
-    primary_metric="mrr@10",
+    primary_metric="ce_top10_recall",
     max_new_tokens=512,
     stop="newline",
     answer_is_set=False,
     sources=("msmarco",),
-    extra={"top_k": TOP_K, "requires_ce_scores": True},
+    extra={"top_k": TOP_K, "requires_ce_scores": True, "score_takes_example": True},
 )

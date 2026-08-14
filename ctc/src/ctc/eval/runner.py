@@ -382,7 +382,13 @@ def run_task(
     for ex, prompt, text in zip(examples, prompts, raw):
         cleaned = apply_stop(text, stop)
         parsed = spec.parse(cleaned, len(ex["documents"]))
-        scored = spec.score(parsed, ex["gold_doc_indices"])
+        # The gold argument is the spec's declared field, or the whole example when the spec
+        # says so (rerank's scorer needs ce_scores, not just the qrel gold).
+        if spec.extra.get("score_takes_example"):
+            gold_arg = ex
+        else:
+            gold_arg = ex[spec.extra.get("gold_field", "gold_doc_indices")]
+        scored = spec.score(parsed, gold_arg)
         per_example.append(scored)
         n_parsed += int(scored.get("parsed", 1.0))
         if cfg.dump_generations:
