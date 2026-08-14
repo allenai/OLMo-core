@@ -284,3 +284,26 @@ def test_read_shard_rejects_length_mismatch(tmp_path):
     with pytest.raises(ValueError, match="misaligned"):
         read_shard(str(tmp_path / "token_ids_part_000000.npy"),
                    str(tmp_path / "labels_mask_000000.npy"))
+
+
+def test_over_long_documents_dropped_before_mixing(tmp_path):
+    """Shares must be computed on documents that actually reach the pack.
+
+    Dropping after mixing makes the reported shares wrong, and wrong in a biased direction: the
+    loss lands on whichever sources have the longest documents.
+    """
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    # `a` is half over-length; `b` is entirely short. Equal weights -> equal shares of the KEPT
+    # pool, which is only true if the drop happens first.
+    _write_shard(a, docs=[([1], [2]), (list(range(100, 160)), [3]), ([4], [5]), (list(range(200, 260)), [6])])
+    _write_shard(b, docs=[([7], [8]), ([9], [10]), ([11], [12]), ([13], [14])])
+    ds = SFTShardDataset(
+        str(a), 16, EOS, PAD, sources={"a": str(a), "b": str(b)}, weights={"a": 1.0, "b": 1.0}
+    )
+    assert ds.n_docs_dropped == 2
+    for name in ("a", "b"):
+        assert abs(ds.mix_report[name]["realized_share"] - 0.5) < 0.05, ds.mix_report
+    # and the availability figure reflects the kept pool, not the raw one
+    assert ds.mix_report["a"]["available_tokens"] == 2 * 3  # two 3-token docs survive

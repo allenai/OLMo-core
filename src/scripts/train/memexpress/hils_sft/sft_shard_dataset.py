@@ -336,23 +336,34 @@ class SFTShardDataset(Dataset):
                 out.extend(split_documents(*read_shard(tok_path, mask_path), eos_token_id))
             return out
 
+        def _drop_too_long(pool):
+            kept = [d for d in pool if len(d[0]) <= max_seq_len]
+            return kept, len(pool) - len(kept)
+
         if sources:
             if not weights:
                 raise ValueError("sources given without weights -- the mixture would be undefined")
             per_source = {name: _load_dir(d) for name, d in sources.items()}
+            self.n_docs_total = sum(len(v) for v in per_source.values())
+            self.n_docs_dropped = 0
+            if drop_longer_than_window:
+                # Drop BEFORE mixing. Dropping afterwards makes the reported shares a lie: they
+                # would be computed over documents that never reach the pack, and the loss falls
+                # hardest on the sources with the longest documents -- contra and oolong, which are
+                # precisely the ones the weights exist to protect.
+                for name in list(per_source):
+                    per_source[name], n = _drop_too_long(per_source[name])
+                    self.n_docs_dropped += n
             docs, self.mix_report = mix_documents(
                 per_source, weights, seed=seed, max_repetition_factor=max_repetition_factor,
                 target_tokens=target_tokens,
             )
         else:
             docs = _load_dir(data_dir)
-
-        self.n_docs_total = len(docs)
-        self.n_docs_dropped = 0
-        if drop_longer_than_window:
-            kept = [d for d in docs if len(d[0]) <= max_seq_len]
-            self.n_docs_dropped = len(docs) - len(kept)
-            docs = kept
+            self.n_docs_total = len(docs)
+            self.n_docs_dropped = 0
+            if drop_longer_than_window:
+                docs, self.n_docs_dropped = _drop_too_long(docs)
 
         rng = np.random.default_rng(seed)
         rng.shuffle(docs)  # type: ignore[arg-type]
