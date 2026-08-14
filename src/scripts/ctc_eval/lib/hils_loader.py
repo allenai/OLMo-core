@@ -130,7 +130,7 @@ def register_hils(path: str, repo: Optional[str] = None) -> Any:
     return hils_cls
 
 
-def init_veomni_parallel_state() -> None:
+def init_veomni_parallel_state(shard: bool = False) -> None:
     """
     Initialize veomni's global parallel state to plain replicated data parallelism.
 
@@ -145,10 +145,19 @@ def init_veomni_parallel_state() -> None:
     That is why the single-process smoke test passed while every 8-way ``torchrun`` eval job died
     on the first generate (jobs 01KZY9N0W1FNMNV0DFZBNMXEE1 et al.).
 
-    We run pure DP -- one full model copy per rank, no sharding of any kind -- so declare exactly
-    that: ``dp_replicate_size = world_size``, everything else 1. The forward only ever reads
-    ``sp_enabled`` (``ulysses_size > 1 or cp_size > 1``), which stays False, so this makes the
-    state consistent without changing what the model computes.
+    Two regimes, and picking the wrong one is a silent out-of-memory rather than an error:
+
+    * ``shard=False`` (default, **eval**): pure replication -- one full model copy per rank, no
+      sharding. Correct for inference, where there is no optimizer state and every rank must be
+      able to run a whole forward pass.
+    * ``shard=True`` (**training**): FSDP full shard across the world. A 7B trained with replication
+      needs weights + grads + fp32 Adam moments on *every* rank (~84 GB) and OOMs on an 80 GB card;
+      sharded it is ~10 GB per rank.
+
+    The forward only ever reads ``sp_enabled`` (``ulysses_size > 1 or cp_size > 1``), which stays
+    False either way, so this makes the state consistent without changing what the model computes.
+
+    :param shard: Shard parameters/optimizer across ranks (training) instead of replicating (eval).
 
     No-op when torch.distributed is not initialized, or when a state already exists.
     """
@@ -170,8 +179,13 @@ def init_veomni_parallel_state() -> None:
         return  # already initialized (or trivially valid) -- do not stomp on it
     except Exception:  # noqa: BLE001 -- the "product != world size" case is exactly why we are here
         pass
-    init_parallel_state(dp_size=world, dp_replicate_size=world, dp_shard_size=1)
-    print(f"[hils] veomni parallel state initialized: dp_replicate={world} (pure DP)", flush=True)
+    if shard:
+        init_parallel_state(dp_size=world, dp_replicate_size=1, dp_shard_size=world)
+        print(f"[hils] veomni parallel state: dp_shard={world} (FSDP full shard, training)",
+              flush=True)
+    else:
+        init_parallel_state(dp_size=world, dp_replicate_size=world, dp_shard_size=1)
+        print(f"[hils] veomni parallel state: dp_replicate={world} (replicated, eval)", flush=True)
 
 
 def load_hils_model(

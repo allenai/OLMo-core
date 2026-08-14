@@ -145,7 +145,10 @@ def main() -> int:
         # HiLS's forward reads on every step (it asserts the parallel sizes multiply to world_size,
         # so it passes at world=1 and fails under torchrun if left alone).
         register_hils(args.model_path)
-    init_veomni_parallel_state()
+    # shard=True: TRAINING. Replicating a 7B puts weights + grads + fp32 Adam moments on every
+    # rank (~84 GB) and OOMs an 80 GB card; the eval path's default (replicate) is right there and
+    # wrong here.
+    init_veomni_parallel_state(shard=True)
 
     attn_candidates = [args.attn_impl] if args.attn_impl else [
         "flash_attention_3", "flash_attention_2", "sdpa"
