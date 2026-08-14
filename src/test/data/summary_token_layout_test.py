@@ -8,6 +8,8 @@ two live in different files and are run by different processes months apart, so 
 would not crash -- it would rebind every role and quietly change the experiment.
 """
 
+import json
+
 import pytest
 
 from olmo_core.data.document_chunk_landmark import (
@@ -21,6 +23,9 @@ from olmo_core.nn.attention.summary_mask import (
     ROLE_KIND,
     TokenKind,
     build_summary_roles,
+)
+from scripts.ctc_eval.eval.eval_lc_native_docchunk_ladder import (
+    validate_summary_checkpoint_config,
 )
 
 IDS = RESERVED_IDS["qwen3_5"]
@@ -91,6 +96,65 @@ def test_summary_layout_is_the_dense_layout_plus_the_runs():
 def test_invalid_summary_count_is_rejected():
     with pytest.raises(ValueError, match="n_summary_tokens"):
         emit_document_chunk_summary(_segments(), summary_token_id=IDS.summary, n_summary_tokens=0)
+
+
+def test_eval_checkpoint_gate_accepts_exact_qwen35_summary_layout(tmp_path):
+    cfg = {
+        "model": {
+            "summary_token_attention": {
+                "doc_start_id": IDS.doc_start,
+                "doc_end_id": IDS.doc_end,
+                "summary_token_id": IDS.summary,
+                "eos_id": IDS.eos,
+                "pad_id": IDS.pad,
+            },
+            "block": {
+                "attn": {
+                    "sequence_mixer": {
+                        "name": "summary_token",
+                        "n_summary_tokens": N_SUMMARY,
+                    }
+                }
+            },
+        }
+    }
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    validate_summary_checkpoint_config(tmp_path, IDS, N_SUMMARY)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        (("summary_token_attention", "summary_token_id", -1), "reserved-id mismatch"),
+        (("sequence_mixer", "n_summary_tokens", 4), "n_summary_tokens"),
+    ],
+)
+def test_eval_checkpoint_gate_rejects_layout_mismatch(tmp_path, mutation, match):
+    cfg = {
+        "model": {
+            "summary_token_attention": {
+                "doc_start_id": IDS.doc_start,
+                "doc_end_id": IDS.doc_end,
+                "summary_token_id": IDS.summary,
+                "eos_id": IDS.eos,
+                "pad_id": IDS.pad,
+            },
+            "block": {
+                "attn": {
+                    "sequence_mixer": {
+                        "name": "summary_token",
+                        "n_summary_tokens": N_SUMMARY,
+                    }
+                }
+            },
+        }
+    }
+    section, key, value = mutation
+    target = cfg["model"][section] if section == "summary_token_attention" else cfg["model"]["block"]["attn"][section]
+    target[key] = value
+    (tmp_path / "config.json").write_text(json.dumps(cfg))
+    with pytest.raises(ValueError, match=match):
+        validate_summary_checkpoint_config(tmp_path, IDS, N_SUMMARY)
 
 
 # ---------------------------------------------------------------------------------------------

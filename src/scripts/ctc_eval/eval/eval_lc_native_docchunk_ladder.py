@@ -34,6 +34,7 @@ Variants:
   * ``hierarchical`` -> loaded EXACTLY like dense (config.json drives the attention class).
   * ``full``         -> plain full attention baseline (no chunked mask; box markers ignored).
   * ``landmark``     -> DocumentLandmarkAttention, landmark emitter (a landmark token every --mem-freq).
+  * ``summary``      -> SummaryTokenAttention, with a fixed ``<|summ|>`` run after every document.
 
 Decode is the bs=1 greedy KV-cached loop from the single-task scripts. To stay inside a contended
 Beaker wall-clock budget, SPLIT with ``--tasks`` and ``--rungs`` (the launcher fans out one Beaker job
@@ -70,6 +71,62 @@ PAD_TOKEN_ID = 151863
 # Full task order (5 in-distribution v2 tasks + 4 OOD ladders).
 ALL_TASKS = ["contradiction", "nq", "oolong", "rerank", "outlier",
              "fiqa", "scifact", "outlier_review", "contra_fever"]
+
+
+def validate_summary_checkpoint_config(model_path, ids_set, n_summary_tokens):
+    """Fail before model allocation if the eval layout disagrees with the trained checkpoint."""
+    cfg_path = os.path.join(model_path, "config.json")
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read summary checkpoint config {cfg_path}: {exc}") from exc
+
+    model = cfg.get("model") or {}
+    summary_cfg = model.get("summary_token_attention")
+    if not isinstance(summary_cfg, dict):
+        raise ValueError(
+            f"{cfg_path}: model.summary_token_attention is missing; refusing to run the summary "
+            "emitter against a checkpoint that does not declare the matching role builder"
+        )
+    expected_ids = {
+        "doc_start_id": ids_set.doc_start,
+        "doc_end_id": ids_set.doc_end,
+        "summary_token_id": ids_set.summary,
+        "eos_id": ids_set.eos,
+        "pad_id": ids_set.pad,
+    }
+    wrong = {
+        key: (summary_cfg.get(key), expected)
+        for key, expected in expected_ids.items()
+        if summary_cfg.get(key) != expected
+    }
+    if wrong:
+        raise ValueError(f"{cfg_path}: summary reserved-id mismatch (saved, eval)={wrong}")
+
+    declared_counts = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            name = str(node.get("name", "")).lower()
+            cls = str(node.get("_CLASS_", "")).lower()
+            if "n_summary_tokens" in node and ("summary" in name or "summary" in cls):
+                declared_counts.append(node["n_summary_tokens"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(model)
+    if not declared_counts:
+        raise ValueError(f"{cfg_path}: no SummaryTokenAttention n_summary_tokens setting found")
+    if any(value != n_summary_tokens for value in declared_counts):
+        raise ValueError(
+            f"{cfg_path}: checkpoint n_summary_tokens={declared_counts}, but eval requested "
+            f"{n_summary_tokens}"
+        )
+    return summary_cfg
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -210,7 +267,7 @@ def build_task_spec(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full", "hierarchical"],
+    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full", "hierarchical", "summary"],
                     help="hierarchical loads EXACTLY like dense (DocumentChunkedAttention, dense "
                          "doc-chunk data, no landmarks) -- config.json drives the attention class.")
     ap.add_argument("--model-path", required=True, help="step dir: config.json + model_and_optim/")
@@ -218,6 +275,10 @@ def main():
                     help="ladder JSON. MERGES <task>_<rung> keys into an existing file if present, so "
                          "per-task/per-rung split invocations accumulate into one ladder JSON.")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
+    ap.add_argument("--tokenizer-family", choices=["qwen3", "qwen3_5"], default="qwen3")
+    ap.add_argument("--num-summary-tokens", type=int, default=5,
+                    help="summary variant only: <|summ|> tokens appended after every document; "
+                         "must match the training shards and checkpoint config.")
     ap.add_argument("--ladder-version", choices=["v2"], default="v2",
                     help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
                          "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).")
@@ -283,19 +344,17 @@ def main():
     from transformers import AutoTokenizer
 
     from olmo_core.config import DType
-    from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
-    from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
     from olmo_core.data.document_chunk_landmark import (
         emit_document_chunk_dense,
         emit_document_chunk_landmark,
+        emit_document_chunk_summary,
+        reserved_ids,
         segment_prompt_to_chunks,
     )
     from olmo_core.generate.generation_module.config import GenerationConfig
     from olmo_core.generate.generation_module.transformer import (
         TransformerGenerationModuleConfig,
     )
-
-    assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
 
     # Grader per task. OOD ladders reuse their base-task grader (fiqa/scifact->retrieval,
     # outlier_review->outlier, contra_fever->contradiction), matching eval_lc_native.py's LSPEC.
@@ -324,6 +383,16 @@ def main():
         sys.stdout = open(os.devnull, "w")
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    ids_set = reserved_ids(args.tokenizer_family)
+    if args.variant == "summary":
+        validate_summary_checkpoint_config(args.model_path, ids_set, args.num_summary_tokens)
+        print(
+            f"[summary-layout] validated checkpoint config: family={args.tokenizer_family} "
+            f"summary_token_id={ids_set.summary} tokens_per_document={args.num_summary_tokens}",
+            flush=True,
+        )
+    eos_token_id = ids_set.eos
+    im_end_id = tok.convert_tokens_to_ids("<|im_end|>")
     NEWLINE_ID = tok("\n", add_special_tokens=False).input_ids[-1]
     torch.cuda.set_device(local_rank)
     device = torch.device(f"cuda:{local_rank}")
@@ -334,9 +403,9 @@ def main():
 
     t0 = time.time()
     # GenerationConfig requires pad != eos; Qwen3 has no pad and we decode bs=1 (pad unused).
-    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, EOS_TOKEN_ID) else 151645
+    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, eos_token_id) else im_end_id
     gen_cfg = GenerationConfig(
-        eos_token_id=EOS_TOKEN_ID,
+        eos_token_id=eos_token_id,
         pad_token_id=pad_id,
         max_length=args.max_length,
         use_cache=True,
@@ -344,13 +413,13 @@ def main():
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False
     ).build(checkpoint_dir=args.model_path, device=device)
-    if not is_full:
+    if not is_full and args.variant != "summary":
         gm.model.enable_document_chunk_attention(
-            doc_start_id=DOC_START_ID,
-            doc_end_id=DOC_END_ID,
-            eos_id=EOS_TOKEN_ID,
+            doc_start_id=ids_set.doc_start,
+            doc_end_id=ids_set.doc_end,
+            eos_id=eos_token_id,
             mode="chunked",
-            pad_id=PAD_TOKEN_ID if is_landmark else None,
+            pad_id=ids_set.pad if is_landmark else None,
         )
     print(f"[docchunk-ladder-{args.variant}] built from {args.model_path} in {time.time()-t0:.1f}s",
           flush=True)
@@ -365,13 +434,18 @@ def main():
         segs, _ids, _ = segment_prompt_to_chunks(
             tok, raw_example, loadtask, query_position="both", cot_mode=args.cot_mode,
             chunk_by=chunk_by, item_regex=item_regex, include_answer=False,
-            doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
+            doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end,
         )
-        if use_dense_emit:
+        if args.variant == "summary":
+            out, _ = emit_document_chunk_summary(
+                segs, summary_token_id=ids_set.summary,
+                n_summary_tokens=args.num_summary_tokens,
+            )
+        elif use_dense_emit:
             out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
         else:
             out, _ = emit_document_chunk_landmark(
-                segs, mem_freq=args.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+                segs, mem_freq=args.mem_freq, mem_id=ids_set.landmark, pad_id=ids_set.pad
             )
         return out
 
@@ -386,7 +460,7 @@ def main():
         if stopkind == "contra":
             def _f(content_ids):
                 txt = tok.decode(
-                    [t for t in content_ids if t != LANDMARK_TOKEN_ID], skip_special_tokens=True
+                    [t for t in content_ids if t != ids_set.landmark], skip_special_tokens=True
                 ).lower()
                 return "contradicting pairs:" in txt
             return _f
@@ -414,7 +488,7 @@ def main():
             nxt = int(logits[0, -1].argmax().item())
             new_content = []
             for _ in range(max_new_tokens):
-                if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
+                if nxt == eos_token_id or nxt == im_end_id:
                     break
                 new_content.append(nxt)
                 if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
@@ -434,13 +508,13 @@ def main():
         new_content = []
         since_landmark = 0
         for _ in range(max_new_tokens):
-            if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
+            if nxt == eos_token_id or nxt == im_end_id:
                 break
             new_content.append(nxt)
             logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
             since_landmark += 1
             if since_landmark == args.mem_freq:
-                logits = gm.model(torch.tensor([[LANDMARK_TOKEN_ID]], device=device), logits_to_keep=1)
+                logits = gm.model(torch.tensor([[ids_set.landmark]], device=device), logits_to_keep=1)
                 since_landmark = 0
             if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
                 break
@@ -493,14 +567,20 @@ def main():
             # bs=1 DP shard: this rank decodes global indices [rank, rank+world, ...].
             my_gidx = list(range(rank, len(examples), world))
             local = []
-            skipped = 0
             for gi in my_gidx:
                 raw = examples[gi].get("ex", examples[gi])
                 prefill = build_prefill(raw, loadtask, chunk_by, item_regex)
                 if len(prefill) > cap:
-                    skipped += 1
-                    local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-                    continue
+                    # An over-budget prefill used to be scored as an empty generation, i.e. graded
+                    # WRONG on an example the model was never shown -- a config error laundered
+                    # into the rung's metric, where it reads as a long-context collapse. Fail.
+                    raise SystemExit(
+                        f"[maxlen] {task}@{label} example {gi} builds a {len(prefill)}-token "
+                        f"prefill, past the {cap}-token cap (--max-length {args.max_length} minus "
+                        f"max_new_tokens {max_new_tokens}). Scoring it as empty would grade the "
+                        f"model on an example it never saw. Re-run with --max-length >= "
+                        f"{len(prefill) + max_new_tokens}."
+                    )
                 if is_landmark and args.landmark_top_k_fraction is not None:
                     n_blocks = max(1, len(prefill) // block_size)
                     gm.model.set_landmark_eval_top_k(
@@ -528,7 +608,7 @@ def main():
                 summary[f"{task}_{label}"] = (float(prim) if prim is not None else None)
                 print(f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
                       f"{prim if prim is None else round(float(prim), 3)} "
-                      f"(n={len(examples)}, skipped_too_long={skipped})", flush=True)
+                      f"(n={len(examples)})", flush=True)
                 flush()
             if world > 1:
                 torch.distributed.barrier()

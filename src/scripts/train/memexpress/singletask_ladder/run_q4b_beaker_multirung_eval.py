@@ -54,10 +54,12 @@ ALL_TASKS = [
     "outlier_review",
     "contra_fever",
 ]
-VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
+VARIANTS = ["dense", "landmark", "compressive", "docchunk", "summary"]
 
 
 def variant_from_run_name(run_name: str) -> str:
+    if "summ-" in run_name or "summtoken" in run_name:
+        return "summary"
     # docchunk run names use the explicit "docchunk_dense" token; check docchunk first.
     if "docchunk" in run_name:
         return "docchunk"
@@ -99,6 +101,8 @@ def build_eval_launch_config(
     gate_log_dir="",
     gate_log_all=False,
     landmark_flat_softmax=False,
+    num_summary_tokens=5,
+    rungs="",
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -126,6 +130,8 @@ def build_eval_launch_config(
         f"LANDMARK_GROUP_SELECTION='{landmark_group_selection or ''}' "
         f"LANDMARK_DECODE_GATE_MODE='{landmark_decode_gate_mode or ''}' "
         f"EVAL_TAG='{eval_tag}' "
+        f"NUM_SUMMARY_TOKENS={num_summary_tokens} "
+        f"RUNGS_OVERRIDE='{rungs}' "
         f"LADDER_VERSION={ladder_version} {landmark_env}WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -197,7 +203,20 @@ def main():
         "--variant",
         default=None,
         choices=VARIANTS,
-        help="dense|landmark|compressive|docchunk (default: infer from run name).",
+        help="dense|landmark|compressive|docchunk|summary (default: infer from run name).",
+    )
+    ap.add_argument(
+        "--num-summary-tokens",
+        type=int,
+        default=5,
+        help="summary variant only: number of <|summ|> tokens appended after every context document; "
+        "must match training.",
+    )
+    ap.add_argument(
+        "--rungs",
+        default="",
+        help="restrict each selected task to these comma-separated rung labels; intended for "
+        "single-rung smoke tests. Empty uses the standardized ladder.",
     )
     ap.add_argument(
         "--step", default="", help="pin a step dir (e.g. step580); default = latest complete."
@@ -443,6 +462,8 @@ def main():
             gate_log_dir=args.gate_log_dir,
             gate_log_all=args.gate_log_all,
             landmark_flat_softmax=args.landmark_flat_softmax,
+            num_summary_tokens=args.num_summary_tokens,
+            rungs=args.rungs,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
@@ -450,7 +471,9 @@ def main():
             print("    [dry-run] not submitting.")
             continue
         workload = lc.launch(follow=False)
-        print(f"    submitted: {getattr(workload, 'id', workload)}")
+        experiment = getattr(workload, "experiment", None)
+        experiment_id = getattr(experiment, "id", None) or getattr(workload, "id", workload)
+        print(f"    submitted: {experiment_id}")
     print("\n=== done ===")
 
 

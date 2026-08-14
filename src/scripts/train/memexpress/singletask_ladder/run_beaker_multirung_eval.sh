@@ -32,6 +32,8 @@ MAX_TEST="${MAX_TEST:-600}"
 MAX_LENGTH="${MAX_LENGTH:-40960}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
+NUM_SUMMARY_TOKENS="${NUM_SUMMARY_TOKENS:-5}"
+RUNGS_OVERRIDE="${RUNGS_OVERRIDE:-}"
 # TOKENIZER is resolved AFTER the checkpoint is known (see "infer from the checkpoint" below) --
 # deliberately NOT defaulted here. The old `${TOKENIZER:-Qwen/Qwen3-4B}` silently mis-tokenized
 # every Qwen3.5 eval, scoring 0.000 while reporting success.
@@ -277,6 +279,7 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
   # The table itself lives in ladder_rungs.sh so the hf-backend runner scores external models on
   # exactly this ladder rather than on a second copy of it.
   . "$(dirname "${BASH_SOURCE[0]}")/ladder_rungs.sh"
+[ -n "$RUNGS_OVERRIDE" ] && RUNGS="$RUNGS_OVERRIDE"
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier|rerank|oolong)
@@ -319,15 +322,21 @@ if [ "$LADDER_XLONG" = "1" ]; then
         *,512k,*) MAX_LENGTH=578765;  PREFILL_CHUNK_SIZE=32768 ;;
         *,256k,*) MAX_LENGTH=290406;  PREFILL_CHUNK_SIZE=32768 ;;
         *,128k,*) MAX_LENGTH=146227 ;;
-        # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) run
-        # skipped_too_long=0. NOTE the empirical single-80GB-H100 ceiling for the docchunk
+        # 64k-only: 68608 (cap 68512) -> nq (max real prefill 67679) and outlier (67986) fit with
+        # nothing over the cap. NOTE the empirical single-80GB-H100 ceiling for the docchunk
         # FlexAttention eval path: seq_len ~66k fits, ~77k OOMs (measured -- contra's long tail
         # OOMed at seq_len=77167 even after the Tier-1 empty_cache retry). contra's 64k/32k files
         # have a heavy >66k tail (query-dominated), so a cap high enough to clear it (e.g. 81920)
-        # makes those examples OOM, while a memory-safe cap skips ~half of them -- i.e. contra 64k
-        # is NOT cleanly measurable on one 80GB GPU and needs Tier-2 tensor/context-parallel (same
-        # class as 128k). This 68608 keeps nq/outlier exact and stays just above the proven-safe
-        # ~66k so contra completes (its extreme tail skipped) rather than OOM-crashing the job.
+        # makes those examples OOM, while a memory-safe cap leaves ~half of them over the cap --
+        # i.e. contra 64k is NOT cleanly measurable on one 80GB GPU and needs Tier-2
+        # tensor/context-parallel (same class as 128k).
+        #
+        # ⚠ contra@64k NO LONGER COMPLETES on this path. The evaluator used to score an
+        # over-cap example as an empty generation (grading the model on an example it never saw,
+        # which is how "its extreme tail skipped" quietly contaminated the contra 64k number);
+        # it now RAISES instead. nq/outlier@64k are unaffected -- they have nothing over the cap.
+        # Run contra@64k under Tier-2 parallelism, or not at all; do not raise MAX_LENGTH to
+        # silence the error, since that trades the error for the OOM it was chosen to avoid.
         *)        MAX_LENGTH=68608  ;;
       esac
       # torchrun inherits the environment, and eval_lc_native.py defaults --prefill-chunk-size from
@@ -369,6 +378,17 @@ if [ "$VARIANT" = "docchunk" ]; then
     --variant "$DC_EMIT" --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
     --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS
+  rc=$?
+elif [ "$VARIANT" = "summary" ]; then
+  # SummaryTokenAttention training appends a fixed run of <|summ|> tokens after every document.
+  # The checkpoint config drives the attention mask; these flags make the eval token layout match
+  # the training shards. Qwen3.5 reserved ids are resolved by family inside the evaluator.
+  torchrun --nproc_per_node="$NGPU" --master_port="$PORT" \
+    src/scripts/ctc_eval/eval/eval_lc_native_docchunk_ladder.py \
+    --variant summary --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
+    --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
+    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS \
+    --tokenizer-family qwen3_5 --num-summary-tokens "$NUM_SUMMARY_TOKENS"
   rc=$?
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
