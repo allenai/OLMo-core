@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
@@ -14,7 +15,9 @@ import numpy as np
 import pytest
 import torch.nn as nn
 
+from olmo_core.data.multimodal import NativeTextReplayManifest
 from olmo_core.data.multimodal.vision_alignment_sources import serialized_example_sha256
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.vision import Molmo2TokenIds
 
 
@@ -28,9 +31,277 @@ def _load_module():
     return module
 
 
+def _write_compact_v3_replay_pair(
+    tmp_path,
+    vision_alignment,
+    *,
+    parent_mix_sha256=None,
+    parent_config_sha256=None,
+    parent_trainer_state_sha256=None,
+    parent_dataset_fingerprint=None,
+    train_parent_starts=None,
+    holdout_parent_starts=None,
+):
+    """Write a strict, self-consistent compact-v3 manifest/receipt fixture."""
+    sequence_length = vision_alignment._JOINT_SEQUENCE_LENGTH
+    parent_mix_sha256 = (
+        vision_alignment.BASE_PARENT_MIX_SHA256 if parent_mix_sha256 is None else parent_mix_sha256
+    )
+    parent_config_sha256 = (
+        vision_alignment.BASE_CONFIG_SHA256
+        if parent_config_sha256 is None
+        else parent_config_sha256
+    )
+    parent_trainer_state_sha256 = (
+        vision_alignment.BASE_TRAINER_STATE_SHA256
+        if parent_trainer_state_sha256 is None
+        else parent_trainer_state_sha256
+    )
+    parent_dataset_fingerprint = (
+        vision_alignment.BASE_DATASET_FINGERPRINT
+        if parent_dataset_fingerprint is None
+        else parent_dataset_fingerprint
+    )
+    train_parent_starts = (
+        (0, sequence_length) if train_parent_starts is None else train_parent_starts
+    )
+    holdout_parent_starts = (
+        (2 * sequence_length, 3 * sequence_length)
+        if holdout_parent_starts is None
+        else holdout_parent_starts
+    )
+    parent_num_tokens = 4 * sequence_length
+    parent_paths = tuple(
+        f"s3://ai2-llm/tokens/s002-{index:04d}.npy"
+        for index in range(vision_alignment._JOINT_NATIVE_REPLAY_PARENT_OBJECTS)
+    )
+    remote_sources = [
+        {
+            "parent_path_index": index,
+            "parent_path": parent_path,
+            "mirror_uri": parent_path.replace("s3://", "gs://", 1),
+            "size_bytes": parent_num_tokens * np.dtype(np.uint32).itemsize,
+            "num_tokens": parent_num_tokens,
+            "generation": str(index + 1),
+            "etag": f"etag-{index}",
+            "md5_hash": None,
+            "crc32c": "AAAAAA==",
+            "source_etag": None,
+        }
+        for index, parent_path in enumerate(parent_paths)
+    ]
+
+    builder_path = (
+        Path(__file__).parents[2] / "scripts" / "data" / "build_s002_compact_replay.py"
+    ).resolve()
+    builder_sha256 = hashlib.sha256(builder_path.read_bytes()).hexdigest()
+    builder_implementation = "src/scripts/data/build_s002_compact_replay.py"
+    split_sources = {}
+    manifest_sources = {}
+    for split, parent_starts in (
+        ("train", train_parent_starts),
+        ("holdout", holdout_parent_starts),
+    ):
+        token_path = (tmp_path / f"native-{split}.npy").resolve()
+        tokens = np.arange(len(parent_starts) * sequence_length, dtype=np.uint32)
+        tokens.tofile(token_path)
+        token_sha256 = hashlib.sha256(token_path.read_bytes()).hexdigest()
+        token_stat = token_path.stat()
+        source_id = f"web-000000-{split}"
+        local_starts = [index * sequence_length for index in range(len(parent_starts))]
+        manifest_source = {
+            "id": source_id,
+            "source": "web",
+            "parent_path_index": 0,
+            "parent_path": parent_paths[0],
+            "path": token_path.name,
+            "parent_num_tokens": parent_num_tokens,
+            "num_tokens": len(tokens),
+            "size_bytes": token_stat.st_size,
+            "sha256": token_sha256,
+            "window_starts": local_starts,
+            "parent_window_starts": list(parent_starts),
+        }
+        manifest_sources[split] = manifest_source
+        split_sources[split] = [
+            {
+                "id": source_id,
+                "source": "web",
+                "parent_path_index": 0,
+                "parent_path": parent_paths[0],
+                "path": token_path.name,
+                "resolved_path": str(token_path),
+                "parent_num_tokens": parent_num_tokens,
+                "num_tokens": len(tokens),
+                "size_bytes": token_stat.st_size,
+                "mtime_ns": token_stat.st_mtime_ns,
+                "ctime_ns": token_stat.st_ctime_ns,
+                "inode": token_stat.st_ino,
+                "device": token_stat.st_dev,
+                "sha256": token_sha256,
+                "num_windows": len(parent_starts),
+                "parent_window_starts_sha256": vision_alignment._canonical_sha256(
+                    list(parent_starts)
+                ),
+            }
+        ]
+
+    remote_snapshot_sha256 = vision_alignment._canonical_sha256(remote_sources)
+    compact_materialization_sha256 = vision_alignment._canonical_sha256(split_sources)
+    manifest_data = {}
+    manifest_contract_sha256 = {}
+    for split in ("train", "holdout"):
+        num_windows = len(manifest_sources[split]["window_starts"])
+        manifest = {
+            "format": "olmo_native_text_replay",
+            "version": 3,
+            "sequence_length": sequence_length,
+            "dtype": "uint32",
+            "tokenizer": {
+                "identifier": "allenai/dolma2-tokenizer",
+                "vocab_size": 100_278,
+                "eos_token_id": 100_257,
+                "pad_token_id": 100_277,
+            },
+            "provenance": {
+                "parent_checkpoint": vision_alignment.BASE_CHECKPOINT,
+                "parent_mix": vision_alignment.PARENT_TEXT_MIX,
+                "parent_paths_sha256": vision_alignment.BASE_DATA_PATHS_SHA256,
+                "parent_mix_sha256": parent_mix_sha256,
+                "parent_config_sha256": parent_config_sha256,
+                "parent_trainer_state_sha256": parent_trainer_state_sha256,
+                "parent_dataset_fingerprint": parent_dataset_fingerprint,
+                "remote_snapshot_sha256": remote_snapshot_sha256,
+                "compact_materialization_sha256": compact_materialization_sha256,
+                "builder_implementation": builder_implementation,
+                "builder_sha256": builder_sha256,
+                "instance_filter": {
+                    "repetition_min_period": 1,
+                    "repetition_max_period": 13,
+                    "repetition_max_count": 32,
+                },
+                "selection_algorithm": vision_alignment._JOINT_NATIVE_REPLAY_SELECTION_ALGORITHM,
+                "selection_seed": vision_alignment._JOINT_NATIVE_REPLAY_SELECTION_SEED,
+                "split": split,
+                "usable_tokens": num_windows * (sequence_length - 1),
+                "source_usable_tokens": {"web": num_windows * (sequence_length - 1)},
+                "minimum_source_usable_tokens": {},
+                "raw_tokens_per_window": sequence_length,
+                "loss_tokens_per_window": sequence_length - 1,
+                "verification_receipt_sha256": "0" * 64,
+            },
+            "num_windows": num_windows,
+            "sources": [manifest_sources[split]],
+        }
+        contract = json.loads(json.dumps(manifest))
+        del contract["provenance"]["verification_receipt_sha256"]
+        manifest_contract_sha256[split] = vision_alignment._canonical_sha256(contract)
+        manifest_data[split] = manifest
+
+    receipt = {
+        "format": "olmo_native_text_replay_verification_receipt",
+        "version": 3,
+        "hash_algorithm": "sha256",
+        "builder_implementation": builder_implementation,
+        "builder_sha256": builder_sha256,
+        "parent_paths_sha256": vision_alignment.BASE_DATA_PATHS_SHA256,
+        "parent_mix_sha256": parent_mix_sha256,
+        "parent_config_sha256": parent_config_sha256,
+        "parent_trainer_state_sha256": parent_trainer_state_sha256,
+        "parent_dataset_fingerprint": parent_dataset_fingerprint,
+        "remote_snapshot_sha256": remote_snapshot_sha256,
+        "compact_materialization_sha256": compact_materialization_sha256,
+        "manifest_contract_sha256": manifest_contract_sha256,
+        "mirror_policy": "s3-to-gs-same-bucket-key-v1",
+        "remote_sources": remote_sources,
+        "splits": split_sources,
+    }
+    receipt_path = (tmp_path / "native-verification.json").resolve()
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    receipt_sha256 = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+
+    manifests = {}
+    manifest_paths = {}
+    for split, manifest in manifest_data.items():
+        manifest["provenance"]["verification_receipt_sha256"] = receipt_sha256
+        manifest_path = (tmp_path / f"native-{split}.json").resolve()
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        manifest_paths[split] = manifest_path
+        manifests[split] = NativeTextReplayManifest.load(manifest_path)
+
+    loaded_receipt = vision_alignment.NativeTextReplayVerificationReceipt.load(
+        receipt_path, expected_sha256=receipt_sha256
+    )
+    return SimpleNamespace(
+        parent_paths=parent_paths,
+        receipt=loaded_receipt,
+        receipt_path=receipt_path,
+        receipt_sha256=receipt_sha256,
+        train=manifests["train"],
+        holdout=manifests["holdout"],
+        train_path=manifest_paths["train"],
+        holdout_path=manifest_paths["holdout"],
+    )
+
+
+def _compact_v3_replay_config(vision_alignment, artifacts):
+    def replay_config(manifest, manifest_path):
+        return SimpleNamespace(
+            manifest_path=str(manifest_path),
+            expected_fingerprint=manifest.content_fingerprint,
+            expected_parent_checkpoint=vision_alignment.BASE_CHECKPOINT,
+            expected_parent_mix=vision_alignment.PARENT_TEXT_MIX,
+            expected_parent_paths_sha256=vision_alignment.BASE_DATA_PATHS_SHA256,
+            verification_receipt_path=str(artifacts.receipt_path),
+            expected_verification_receipt_sha256=artifacts.receipt_sha256,
+            validate_source_files=True,
+            verify_source_hashes=False,
+            build=lambda manifest=manifest: SimpleNamespace(manifest=manifest),
+        )
+
+    train_config = replay_config(artifacts.train, artifacts.train_path)
+    holdout_config = replay_config(artifacts.holdout, artifacts.holdout_path)
+    return SimpleNamespace(
+        artifacts=vision_alignment.ArtifactConfig(),
+        data=SimpleNamespace(
+            native_text_replay=train_config,
+            native_text_replay_fingerprint=artifacts.train.content_fingerprint,
+            sequence_length=vision_alignment._JOINT_SEQUENCE_LENGTH,
+        ),
+        evaluation=SimpleNamespace(
+            native_text_holdout=holdout_config,
+            native_text_holdout_fingerprint=artifacts.holdout.content_fingerprint,
+            examples_per_source=1,
+        ),
+    )
+
+
+def _patch_compact_parent_evidence(monkeypatch, vision_alignment, artifacts) -> None:
+    monkeypatch.setattr(
+        vision_alignment,
+        "_load_pinned_native_parent_paths",
+        lambda unused_artifacts: artifacts.parent_paths,
+    )
+    monkeypatch.setattr(
+        vision_alignment,
+        "_native_parent_dataset_fingerprint",
+        lambda unused_remote_sources: vision_alignment.BASE_DATASET_FINGERPRINT,
+    )
+
+
 def _load_pixmo_builder():
     path = Path(__file__).parents[2] / "scripts" / "data" / "build_vision_alignment_pixmo_cap.py"
     spec = importlib.util.spec_from_file_location("vision_alignment_pixmo_builder", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_s002_compact_builder():
+    path = Path(__file__).parents[2] / "scripts" / "data" / "build_s002_compact_replay.py"
+    spec = importlib.util.spec_from_file_location("s002_compact_replay_builder", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -781,6 +1052,128 @@ def test_non_joint_phases_forbid_all_native_replay_configs_and_fingerprints(
 
     with pytest.raises(ValueError, match="forbidden outside joint"):
         vision_alignment._validate_native_artifact_phase(config)
+
+
+def test_joint_native_replay_accepts_strict_compact_v3_pair(monkeypatch, tmp_path):
+    vision_alignment = _load_module()
+    artifacts = _write_compact_v3_replay_pair(tmp_path, vision_alignment)
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    _patch_compact_parent_evidence(monkeypatch, vision_alignment, artifacts)
+
+    vision_alignment._validate_native_replay_pair(config)
+
+
+@pytest.mark.parametrize("legacy_artifact", ["receipt", "manifest"])
+def test_joint_native_replay_rejects_legacy_v2(monkeypatch, tmp_path, legacy_artifact):
+    vision_alignment = _load_module()
+    artifacts = _write_compact_v3_replay_pair(tmp_path, vision_alignment)
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    _patch_compact_parent_evidence(monkeypatch, vision_alignment, artifacts)
+    if legacy_artifact == "receipt":
+        legacy_receipt = replace(artifacts.receipt, version=2)
+        monkeypatch.setattr(
+            vision_alignment.NativeTextReplayVerificationReceipt,
+            "load",
+            staticmethod(lambda *args, **kwargs: legacy_receipt),
+        )
+        message = "compact v3 verification receipt"
+    else:
+        legacy_manifest = replace(artifacts.train, version=2)
+        config.data.native_text_replay.build = lambda: SimpleNamespace(manifest=legacy_manifest)
+        message = "compact v3 train and holdout manifests"
+
+    with pytest.raises(ValueError, match=message):
+        vision_alignment._validate_native_replay_pair(config)
+
+
+@pytest.mark.parametrize(
+    "lineage_override",
+    [
+        {"parent_mix_sha256": "0" * 64},
+        {"parent_config_sha256": "1" * 64},
+        {"parent_trainer_state_sha256": "2" * 64},
+        {"parent_dataset_fingerprint": "3" * 64},
+    ],
+)
+def test_joint_native_replay_rejects_self_consistent_external_pin_mismatch(
+    monkeypatch, tmp_path, lineage_override
+):
+    vision_alignment = _load_module()
+    artifacts = _write_compact_v3_replay_pair(tmp_path, vision_alignment, **lineage_override)
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    _patch_compact_parent_evidence(monkeypatch, vision_alignment, artifacts)
+
+    with pytest.raises(ValueError, match=next(iter(lineage_override))):
+        vision_alignment._validate_native_replay_pair(config)
+
+
+def test_joint_native_replay_rejects_parent_overlap_with_different_local_offsets(
+    monkeypatch, tmp_path
+):
+    vision_alignment = _load_module()
+    sequence_length = vision_alignment._JOINT_SEQUENCE_LENGTH
+    artifacts = _write_compact_v3_replay_pair(
+        tmp_path,
+        vision_alignment,
+        train_parent_starts=(0, 2 * sequence_length),
+        holdout_parent_starts=(2 * sequence_length, 3 * sequence_length),
+    )
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    _patch_compact_parent_evidence(monkeypatch, vision_alignment, artifacts)
+    assert artifacts.train.sources[0].window_starts[1] == sequence_length
+    assert artifacts.holdout.sources[0].window_starts[0] == 0
+    assert (
+        artifacts.train.sources[0].parent_window_starts[1]
+        == artifacts.holdout.sources[0].parent_window_starts[0]
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="overlap in parent path"):
+        vision_alignment._validate_native_replay_pair(config)
+
+
+def test_joint_native_replay_receipt_must_enumerate_exact_parent_paths(monkeypatch, tmp_path):
+    vision_alignment = _load_module()
+    artifacts = _write_compact_v3_replay_pair(tmp_path, vision_alignment)
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_load_pinned_native_parent_paths",
+        lambda unused_artifacts: tuple(reversed(artifacts.parent_paths)),
+    )
+
+    with pytest.raises(ValueError, match="exactly enumerate"):
+        vision_alignment._validate_native_replay_pair(config)
+
+
+def test_joint_native_replay_remote_sizes_must_reconstruct_saved_fingerprint(monkeypatch, tmp_path):
+    vision_alignment = _load_module()
+    artifacts = _write_compact_v3_replay_pair(tmp_path, vision_alignment)
+    config = _compact_v3_replay_config(vision_alignment, artifacts)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_load_pinned_native_parent_paths",
+        lambda unused_artifacts: artifacts.parent_paths,
+    )
+
+    with pytest.raises(ValueError, match="remote sizes do not reconstruct"):
+        vision_alignment._validate_native_replay_pair(config)
+
+
+def test_joint_native_parent_fingerprint_replay_matches_compact_builder():
+    vision_alignment = _load_module()
+    compact_builder = _load_s002_compact_builder()
+    paths = (
+        "s3://ai2-llm/tokens/example-a.npy",
+        "s3://ai2-llm/tokens/example-b.npy",
+    )
+    sizes = (4 * 8192, 12 * 8192)
+    remote_sources = tuple(
+        {"parent_path": path, "size_bytes": size} for path, size in zip(paths, sizes)
+    )
+
+    assert vision_alignment._native_parent_dataset_fingerprint(
+        remote_sources
+    ) == compact_builder.reconstruct_parent_dataset_fingerprint(paths, sizes)
 
 
 def test_profile_owns_phase_and_forbids_a_second_selector(tmp_path):

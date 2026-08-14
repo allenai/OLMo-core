@@ -37,6 +37,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
 
+import numpy as np
 import yaml
 from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
@@ -48,6 +49,7 @@ from olmo_core.data.multimodal import (
     MultimodalCollatorConfig,
     MultimodalDataLoader,
     NativeTextReplayDatasetConfig,
+    NativeTextReplayVerificationReceipt,
 )
 from olmo_core.data.multimodal.mixtures.vision_alignment import (
     VisionAlignmentMixtureConfig,
@@ -162,6 +164,9 @@ FORMATTER_VERSION = VISION_ALIGNMENT_FORMATTER_VERSION
 BASE_CHECKPOINT = "/weka/oe-training-default/robertb/s002-step125500"
 BASE_CONFIG_SHA256 = "35ce23db053dd2204bc37783546f1b2f98eafb742488903773dd0ef3e5741146"
 BASE_DATA_PATHS_SHA256 = "f1155957f4f249fc17e1c7067512e7d881ce6675c6b854d5ce089c649cec1c2d"
+BASE_TRAINER_STATE_SHA256 = "451a536f6483b5347837251ab931c38c70434854c001d74456737592750170d3"
+BASE_DATASET_FINGERPRINT = "37e1ae62dccee1f0cb5c3e416572e6e48218a6c644580fa5034f575880e08c11"
+BASE_PARENT_MIX_SHA256 = "fcc6a82b9a5e868885decfbc30486967644c7ca482a7d687102f7ff597dbd7c9"
 BASE_CHECKPOINT_MARKER_SHA256 = "77dfdeec42fe7990f4b3b9c4eeecd480edcf5066c110603b115920af38423d03"
 BASE_CHECKPOINT_METADATA_SHA256 = "ce7a6c254c7b3aeca6d6a9b521328e09601211ddf98dc238e97b5b6c84c34633"
 PARENT_TEXT_MIX = "OLMo-mix-0925"
@@ -312,6 +317,9 @@ _JOINT_VISUAL_PROBE_EPOCHS = (0, 1, 2, 3)
 _JOINT_NATIVE_PROBE_INDICES = 1024
 _JOINT_NATIVE_PROBE_EPOCHS = (0,)
 _JOINT_SEQUENCE_LENGTH = 8192
+_JOINT_NATIVE_REPLAY_PARENT_OBJECTS = 950
+_JOINT_NATIVE_REPLAY_SELECTION_ALGORITHM = "affine-grid-v1"
+_JOINT_NATIVE_REPLAY_SELECTION_SEED = 6198
 _JOINT_SOURCE_NAMES = tuple(sorted((*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay")))
 _JOINT_AUDIT_FIELDS = frozenset(
     {
@@ -3259,6 +3267,67 @@ def _set_contract_hashes(config: ExperimentConfig) -> None:
     )
 
 
+def _load_pinned_native_parent_paths(artifacts: ArtifactConfig) -> Tuple[str, ...]:
+    """Load the exact expanded s002 parent-path inventory behind a replay receipt."""
+    path = Path(artifacts.base_checkpoint) / "data_paths.txt"
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise ValueError(
+            f"Could not read pinned native replay parent paths {path}: {error}"
+        ) from error
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if actual_sha256 != artifacts.base_data_paths_sha256:
+        raise ValueError(
+            "Native replay parent data-path bytes differ from the pinned SHA-256: "
+            f"expected {artifacts.base_data_paths_sha256}, got {actual_sha256}"
+        )
+    try:
+        parent_paths = tuple(raw.decode("utf-8").splitlines())
+    except UnicodeDecodeError as error:
+        raise ValueError("Native replay parent data paths must be UTF-8") from error
+    if (
+        len(parent_paths) != _JOINT_NATIVE_REPLAY_PARENT_OBJECTS
+        or len(set(parent_paths)) != len(parent_paths)
+        or any(not value or value.strip() != value for value in parent_paths)
+    ):
+        raise ValueError(
+            "Native replay parent data paths must contain exactly "
+            f"{_JOINT_NATIVE_REPLAY_PARENT_OBJECTS} unique canonical rows"
+        )
+    return parent_paths
+
+
+def _native_parent_dataset_fingerprint(
+    remote_sources: Sequence[Mapping[str, Any]],
+) -> str:
+    """Reconstruct the pinned s002 NumpyFSLDataset fingerprint from remote metadata."""
+    digest = hashlib.sha256()
+    digest.update(b"class=NumpyFSLDataset")
+    for field_name, field_value in (
+        ("vocab_size", 100_278),
+        ("pad_token_id", 100_277),
+        ("eos_token_id", 100_257),
+        ("dtype", np.uint32),
+        ("max_target_sequence_length", _JOINT_SEQUENCE_LENGTH),
+        ("bos_token_id", None),
+    ):
+        digest.update(f"{field_name}={field_value},".encode())
+    for index, source in enumerate(remote_sources):
+        parent_path = source.get("parent_path")
+        size_bytes = source.get("size_bytes")
+        if (
+            not isinstance(parent_path, str)
+            or not parent_path
+            or isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or size_bytes <= 0
+        ):
+            raise ValueError(f"Native replay remote source {index} has invalid path or size")
+        digest.update(f"path={os.path.basename(parent_path)},size={size_bytes},".encode())
+    return digest.hexdigest()
+
+
 def _validate_native_replay_pair(config: ExperimentConfig) -> None:
     """Validate pinned, disjoint native train/holdout replay manifests for joint CPT."""
     train_config = config.data.native_text_replay
@@ -3297,40 +3366,68 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
         != holdout_config.expected_verification_receipt_sha256
     ):
         raise ValueError("Native train and holdout must use the same verification receipt")
+
+    receipt = NativeTextReplayVerificationReceipt.load(
+        train_config.verification_receipt_path,
+        expected_sha256=train_config.expected_verification_receipt_sha256,
+    )
+    if receipt.version != 3:
+        raise ValueError("Joint native replay requires a compact v3 verification receipt")
+    expected_receipt_lineage = {
+        "parent_paths_sha256": config.artifacts.base_data_paths_sha256,
+        "parent_mix_sha256": BASE_PARENT_MIX_SHA256,
+        "parent_config_sha256": config.artifacts.base_config_sha256,
+        "parent_trainer_state_sha256": BASE_TRAINER_STATE_SHA256,
+        "parent_dataset_fingerprint": BASE_DATASET_FINGERPRINT,
+    }
+    for field_name, expected_value in expected_receipt_lineage.items():
+        if getattr(receipt, field_name) != expected_value:
+            raise ValueError(f"Native replay verification receipt has incompatible {field_name}")
+    parent_paths = _load_pinned_native_parent_paths(config.artifacts)
+    receipt_parent_paths = tuple(
+        cast(str, remote_source["parent_path"]) for remote_source in receipt.remote_sources
+    )
+    if receipt_parent_paths != parent_paths:
+        raise ValueError(
+            "Native replay verification receipt remote_sources must exactly enumerate the "
+            "pinned parent data paths"
+        )
+    if _native_parent_dataset_fingerprint(receipt.remote_sources) != BASE_DATASET_FINGERPRINT:
+        raise ValueError(
+            "Native replay verification receipt remote sizes do not reconstruct the pinned "
+            "parent dataset fingerprint"
+        )
+
     train = train_config.build().manifest
     holdout = holdout_config.build().manifest
+    if train.version != 3 or holdout.version != 3:
+        raise ValueError("Joint native replay requires compact v3 train and holdout manifests")
     if (
         train.sequence_length != config.data.sequence_length
         or holdout.sequence_length != config.data.sequence_length
         or holdout.num_windows < config.evaluation.examples_per_source
         or train.provenance.get("split") != "train"
         or holdout.provenance.get("split") != "holdout"
-        or train.provenance.get("materialized_sources_sha256")
-        != holdout.provenance.get("materialized_sources_sha256")
-        or train.provenance.get("source_catalog_sha256")
-        != holdout.provenance.get("source_catalog_sha256")
-        or train.provenance.get("selection_seed") != holdout.provenance.get("selection_seed")
     ):
         raise ValueError("Native replay train/holdout lineage, size, or sequence contract differs")
-    holdout_sources = {source.source_id: source for source in holdout.sources}
-    for train_source in train.sources:
-        holdout_source = holdout_sources.get(train_source.source_id)
-        if holdout_source is None:
-            continue
-        train_starts = train_source.window_starts
-        holdout_starts = holdout_source.window_starts
-        train_index = holdout_index = 0
-        while train_index < len(train_starts) and holdout_index < len(holdout_starts):
-            train_start = train_starts[train_index]
-            holdout_start = holdout_starts[holdout_index]
-            if train_start == holdout_start:
-                raise ValueError(
-                    f"Native train and holdout replay overlap for source {train_source.source_id!r}"
-                )
-            if train_start < holdout_start:
-                train_index += 1
-            else:
-                holdout_index += 1
+
+    expected_manifest_lineage = {
+        "parent_checkpoint": config.artifacts.base_checkpoint,
+        "parent_mix": config.artifacts.parent_text_mix,
+        "parent_paths_sha256": config.artifacts.base_data_paths_sha256,
+        "parent_config_sha256": config.artifacts.base_config_sha256,
+        "parent_trainer_state_sha256": BASE_TRAINER_STATE_SHA256,
+        "parent_dataset_fingerprint": BASE_DATASET_FINGERPRINT,
+        "remote_snapshot_sha256": receipt.remote_snapshot_sha256,
+        "compact_materialization_sha256": receipt.compact_materialization_sha256,
+        "selection_algorithm": _JOINT_NATIVE_REPLAY_SELECTION_ALGORITHM,
+        "selection_seed": _JOINT_NATIVE_REPLAY_SELECTION_SEED,
+    }
+    for split, manifest in (("train", train), ("holdout", holdout)):
+        for field_name, expected_value in expected_manifest_lineage.items():
+            if manifest.provenance.get(field_name) != expected_value:
+                raise ValueError(f"Native {split} replay manifest has incompatible {field_name}")
+    receipt.validate_pair(train, holdout)
 
 
 def _validate_joint_parent_projection_lineage(

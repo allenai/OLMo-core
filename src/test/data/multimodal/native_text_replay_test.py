@@ -1,9 +1,11 @@
 import hashlib
 import json
+import os
 import pickle
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 import pytest
@@ -11,6 +13,7 @@ import pytest
 from olmo_core.data.multimodal.collator import MultimodalCollator
 from olmo_core.data.multimodal.native_text_replay import (
     NATIVE_TEXT_REPLAY_BUILDER_IMPLEMENTATION_REFERENCE,
+    NATIVE_TEXT_REPLAY_COMPACT_BUILDER_IMPLEMENTATION_REFERENCE,
     NATIVE_TEXT_REPLAY_FORMAT,
     NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT,
     NATIVE_TEXT_REPLAY_VERIFICATION_VERSION,
@@ -37,7 +40,7 @@ def _sha256(path: Path) -> str:
 def _manifest_data(token_path: Path, tokens: np.ndarray, *, sequence_length: int = 3):
     return {
         "format": NATIVE_TEXT_REPLAY_FORMAT,
-        "version": NATIVE_TEXT_REPLAY_VERSION,
+        "version": 2,
         "sequence_length": sequence_length,
         "dtype": "uint32",
         "tokenizer": {
@@ -98,7 +101,7 @@ def _write_verification_receipt(path: Path, manifest_data, token_path: Path) -> 
     source = manifest_data["sources"][0]
     receipt = {
         "format": NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT,
-        "version": NATIVE_TEXT_REPLAY_VERIFICATION_VERSION,
+        "version": 2,
         "hash_algorithm": "sha256",
         "builder_implementation": manifest_data["provenance"]["builder_implementation"],
         "builder_sha256": manifest_data["provenance"]["builder_sha256"],
@@ -135,6 +138,194 @@ def _write_verification_receipt(path: Path, manifest_data, token_path: Path) -> 
 def _rewrite_json_with_sha256(path: Path, data) -> str:
     path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
     return _sha256(path)
+
+
+def _canonical_sha256(value) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _manifest_contract_sha256(manifest) -> str:
+    contract = deepcopy(manifest)
+    del contract["provenance"]["verification_receipt_sha256"]
+    return _canonical_sha256(contract)
+
+
+def _write_v3_artifacts(
+    tmp_path: Path,
+    *,
+    train_parent_starts=(0, 6),
+    holdout_parent_starts=(3, 9),
+):
+    sequence_length = 3
+    parent_num_tokens = 12
+    compact_paths = {
+        "train": tmp_path / "train-tokens.npy",
+        "holdout": tmp_path / "holdout-tokens.npy",
+    }
+    for split, compact_path in compact_paths.items():
+        starts = train_parent_starts if split == "train" else holdout_parent_starts
+        _write_raw_tokens(compact_path, list(range(1, len(starts) * sequence_length + 1)))
+
+    remote_sources = [
+        {
+            "parent_path_index": 0,
+            "parent_path": "s3://ai2-llm/tokens/web-000000.npy",
+            "mirror_uri": "gs://ai2-llm/tokens/web-000000.npy",
+            "size_bytes": parent_num_tokens * 4,
+            "num_tokens": parent_num_tokens,
+            "generation": "123456789",
+            "etag": "gcs-etag",
+            "md5_hash": None,
+            "crc32c": "AAAAAA==",
+            "source_etag": None,
+        }
+    ]
+    remote_snapshot_sha256 = _canonical_sha256(remote_sources)
+    builder_sha256 = _reviewed_builder_sha256(
+        NATIVE_TEXT_REPLAY_COMPACT_BUILDER_IMPLEMENTATION_REFERENCE
+    )
+    manifests: dict[str, dict[str, Any]] = {}
+    split_receipt_sources: dict[str, list[dict[str, Any]]] = {}
+    for split in ("train", "holdout"):
+        starts = list(train_parent_starts if split == "train" else holdout_parent_starts)
+        compact_path = compact_paths[split]
+        num_windows = len(starts)
+        num_tokens = num_windows * sequence_length
+        source_id = f"web-000000-{split}"
+        compact_stat = compact_path.stat()
+        source = {
+            "id": source_id,
+            "source": "web",
+            "parent_path_index": 0,
+            "parent_path": remote_sources[0]["parent_path"],
+            "path": compact_path.name,
+            "parent_num_tokens": parent_num_tokens,
+            "num_tokens": num_tokens,
+            "size_bytes": num_tokens * 4,
+            "sha256": _sha256(compact_path),
+            "window_starts": [index * sequence_length for index in range(num_windows)],
+            "parent_window_starts": starts,
+        }
+        split_receipt_sources[split] = [
+            {
+                "id": source_id,
+                "source": "web",
+                "parent_path_index": 0,
+                "parent_path": remote_sources[0]["parent_path"],
+                "path": compact_path.name,
+                "resolved_path": str(compact_path.resolve()),
+                "parent_num_tokens": parent_num_tokens,
+                "num_tokens": num_tokens,
+                "size_bytes": num_tokens * 4,
+                "mtime_ns": compact_stat.st_mtime_ns,
+                "ctime_ns": compact_stat.st_ctime_ns,
+                "inode": compact_stat.st_ino,
+                "device": compact_stat.st_dev,
+                "sha256": source["sha256"],
+                "num_windows": num_windows,
+                "parent_window_starts_sha256": _canonical_sha256(starts),
+            }
+        ]
+        manifests[split] = {
+            "format": NATIVE_TEXT_REPLAY_FORMAT,
+            "version": 3,
+            "sequence_length": sequence_length,
+            "dtype": "uint32",
+            "tokenizer": {
+                "identifier": "allenai/dolma2-tokenizer",
+                "vocab_size": 100_300,
+                "eos_token_id": 100_257,
+                "pad_token_id": 100_277,
+            },
+            "provenance": {
+                "parent_checkpoint": "/checkpoints/s002-step125500",
+                "parent_mix": "OLMo-mix-0925",
+                "parent_paths_sha256": "a" * 64,
+                "parent_mix_sha256": "b" * 64,
+                "parent_config_sha256": "c" * 64,
+                "parent_trainer_state_sha256": "d" * 64,
+                "parent_dataset_fingerprint": "e" * 64,
+                "remote_snapshot_sha256": remote_snapshot_sha256,
+                "compact_materialization_sha256": "0" * 64,
+                "builder_implementation": NATIVE_TEXT_REPLAY_COMPACT_BUILDER_IMPLEMENTATION_REFERENCE,
+                "builder_sha256": builder_sha256,
+                "instance_filter": {
+                    "repetition_min_period": 1,
+                    "repetition_max_period": 13,
+                    "repetition_max_count": 32,
+                },
+                "selection_algorithm": "affine-grid-v1",
+                "selection_seed": 17,
+                "split": split,
+                "usable_tokens": num_windows * (sequence_length - 1),
+                "source_usable_tokens": {"web": num_windows * (sequence_length - 1)},
+                "minimum_source_usable_tokens": {},
+                "raw_tokens_per_window": sequence_length,
+                "loss_tokens_per_window": sequence_length - 1,
+                "verification_receipt_sha256": "0" * 64,
+            },
+            "num_windows": num_windows,
+            "sources": [source],
+        }
+
+    compact_materialization_sha256 = _canonical_sha256(split_receipt_sources)
+    for manifest in manifests.values():
+        manifest["provenance"]["compact_materialization_sha256"] = compact_materialization_sha256
+    manifest_contract_sha256 = {
+        split: _manifest_contract_sha256(manifest) for split, manifest in manifests.items()
+    }
+    receipt: dict[str, Any] = {
+        "format": NATIVE_TEXT_REPLAY_VERIFICATION_FORMAT,
+        "version": 3,
+        "hash_algorithm": "sha256",
+        "builder_implementation": NATIVE_TEXT_REPLAY_COMPACT_BUILDER_IMPLEMENTATION_REFERENCE,
+        "builder_sha256": builder_sha256,
+        "parent_paths_sha256": "a" * 64,
+        "parent_mix_sha256": "b" * 64,
+        "parent_config_sha256": "c" * 64,
+        "parent_trainer_state_sha256": "d" * 64,
+        "parent_dataset_fingerprint": "e" * 64,
+        "remote_snapshot_sha256": remote_snapshot_sha256,
+        "compact_materialization_sha256": compact_materialization_sha256,
+        "manifest_contract_sha256": manifest_contract_sha256,
+        "mirror_policy": "s3-to-gs-same-bucket-key-v1",
+        "remote_sources": remote_sources,
+        "splits": split_receipt_sources,
+    }
+    receipt_path = tmp_path / "v3-receipt.json"
+    receipt_sha256 = _rewrite_json_with_sha256(receipt_path, receipt)
+    manifest_paths: dict[str, Path] = {}
+    for split, manifest in manifests.items():
+        manifest["provenance"]["verification_receipt_sha256"] = receipt_sha256
+        manifest_paths[split] = _write_manifest(tmp_path / f"v3-{split}.json", manifest, indent=2)
+    return manifest_paths, manifests, receipt_path, receipt, receipt_sha256, compact_paths
+
+
+def _v3_fingerprint(manifest_path: Path) -> str:
+    return NativeTextReplayManifest.load(manifest_path).content_fingerprint
+
+
+def _republish_v3_artifacts(manifest_paths, manifests, receipt_path, receipt) -> str:
+    compact_materialization_sha256 = _canonical_sha256(receipt["splits"])
+    receipt["compact_materialization_sha256"] = compact_materialization_sha256
+    for manifest in manifests.values():
+        manifest["provenance"]["compact_materialization_sha256"] = compact_materialization_sha256
+    receipt["manifest_contract_sha256"] = {
+        split: _manifest_contract_sha256(manifest) for split, manifest in manifests.items()
+    }
+    receipt_sha256 = _rewrite_json_with_sha256(receipt_path, receipt)
+    for split, manifest in manifests.items():
+        manifest["provenance"]["verification_receipt_sha256"] = receipt_sha256
+        _write_manifest(manifest_paths[split], manifest, indent=2)
+    return receipt_sha256
 
 
 @pytest.fixture
@@ -501,3 +692,405 @@ def test_loaded_windows_reject_ids_outside_native_vocabulary(tmp_path: Path):
         NativeTextReplayDataset(manifest_path, validate_token_ids=False)[0]["labels"],
         np.array([tokens[1], tokens[2], -100], dtype=np.int64),
     )
+
+
+def test_v3_compact_runtime_cross_binds_shared_receipt_and_parent_provenance(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, _ = _write_v3_artifacts(tmp_path)
+
+    assert NATIVE_TEXT_REPLAY_VERSION == 3
+    assert NATIVE_TEXT_REPLAY_VERIFICATION_VERSION == 3
+    with pytest.raises(OLMoConfigurationError, match="v3 requires a pinned verification receipt"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+        )
+    with pytest.raises(OLMoConfigurationError, match="explicit expected_fingerprint"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
+
+    dataset = NativeTextReplayDataset(
+        manifest_paths["train"],
+        expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+        verification_receipt_path=receipt_path,
+        expected_verification_receipt_sha256=receipt_sha256,
+    )
+    receipt = dataset.verification_receipt
+    assert receipt is not None
+    assert receipt.version == 3
+    assert receipt.mirror_policy == "s3-to-gs-same-bucket-key-v1"
+    assert len(receipt.remote_sources) == 1
+    assert set(receipt.split_sources) == {"train", "holdout"}
+    assert dataset.fingerprint_version == "native-text-replay-v3"
+    np.testing.assert_array_equal(dataset[1]["input_ids"], [4, 5, 6])
+    assert dataset.provenance_for(1) == {
+        "dataset_fingerprint": dataset.fingerprint,
+        "manifest_index": 1,
+        "source_id": "web-000000-train",
+        "source": "web",
+        "path": "train-tokens.npy",
+        "source_sha256": dataset.manifest.sources[0].sha256,
+        "start": 3,
+        "stop": 6,
+        "parent_path_index": 0,
+        "parent_path": "s3://ai2-llm/tokens/web-000000.npy",
+        "parent_start": 6,
+        "parent_stop": 9,
+        "parent_num_tokens": 12,
+        "compact_path": "train-tokens.npy",
+        "compact_start": 3,
+        "compact_stop": 6,
+    }
+
+    holdout_manifest = NativeTextReplayManifest.load(manifest_paths["holdout"])
+    receipt.validate_pair(dataset.manifest, holdout_manifest)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda data: data.update(dtype="uint16"), "v3 dtype must be 'uint32'"),
+        (
+            lambda data: data["sources"][0].update(window_starts=[0, 6]),
+            "local window_starts",
+        ),
+        (
+            lambda data: data["sources"][0].update(
+                num_tokens=9, size_bytes=36, window_starts=[0, 3]
+            ),
+            "num_tokens must equal",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_window_starts=[0]),
+            "local and parent window counts",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_window_starts=[0, 4]),
+            "not aligned",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_window_starts=[0, 0]),
+            "ordered and non-overlapping",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_window_starts=[0, 12]),
+            "out of bounds",
+        ),
+        (
+            lambda data: data["sources"][0].update(parent_window_starts=[0, True]),
+            r"parent_window_starts\[1\].*integer",
+        ),
+        (
+            lambda data: data["sources"][0].update(path="../outside.npy"),
+            "normalized relative POSIX path",
+        ),
+        (
+            lambda data: data["sources"][0].update(path="/tmp/outside.npy"),
+            "normalized relative POSIX path",
+        ),
+    ],
+)
+def test_v3_manifest_rejects_compact_and_parent_window_attacks(tmp_path, mutate, match):
+    _, manifests, _, _, _, _ = _write_v3_artifacts(tmp_path)
+    train = deepcopy(manifests["train"])
+    mutate(train)
+    path = _write_manifest(tmp_path / "attacked-v3.json", train)
+    with pytest.raises(OLMoConfigurationError, match=match):
+        NativeTextReplayManifest.load(path)
+
+
+def test_v3_manifest_rejects_compact_symlink(tmp_path: Path):
+    _, manifests, _, _, _, compact_paths = _write_v3_artifacts(tmp_path)
+    symlink = tmp_path / "compact-link.npy"
+    symlink.symlink_to(compact_paths["train"])
+    train = deepcopy(manifests["train"])
+    train["sources"][0]["path"] = symlink.name
+
+    with pytest.raises(OLMoConfigurationError, match="must not traverse symbolic links"):
+        NativeTextReplayManifest.load(_write_manifest(tmp_path / "symlink.json", train))
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda receipt: receipt.update(unexpected=True), "unknown fields"),
+        (
+            lambda receipt: receipt.update(mirror_policy="some-other-policy"),
+            "mirror_policy",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(
+                mirror_uri="gs://other-bucket/tokens.npy"
+            ),
+            "wrong mirror URI",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(generation="12x"),
+            "generation.*digits",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(crc32c="AAAA"),
+            "encode exactly 4 bytes",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(md5_hash=True),
+            "md5_hash.*non-empty string",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(
+                md5_hash="AAAAAAAAAAAAAAAAAAAAAA=="
+            ),
+            "remote_snapshot_sha256",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(source_etag=True),
+            "source_etag.*non-empty string",
+        ),
+        (
+            lambda receipt: receipt["remote_sources"][0].update(parent_path_index=True),
+            "parent_path_index.*integer",
+        ),
+        (lambda receipt: receipt["splits"].pop("holdout"), "missing required fields"),
+        (lambda receipt: receipt["splits"].update(holdout=[]), "holdout.*non-empty"),
+        (
+            lambda receipt: receipt["manifest_contract_sha256"].pop("holdout"),
+            "manifest_contract_sha256.*missing required fields",
+        ),
+        (
+            lambda receipt: receipt["manifest_contract_sha256"].update(train=True),
+            "manifest_contract_sha256.train.*non-empty string",
+        ),
+        (
+            lambda receipt: receipt["splits"]["train"][0].update(num_windows=True),
+            "num_windows.*integer",
+        ),
+        (
+            lambda receipt: receipt["splits"]["train"][0].update(mtime_ns=True),
+            "mtime_ns.*integer",
+        ),
+        (
+            lambda receipt: receipt["splits"]["train"][0].update(
+                resolved_path="/tmp/../tmp/not-normalized.npy"
+            ),
+            "resolved paths must be normalized",
+        ),
+        (
+            lambda receipt: receipt["splits"]["train"][0].update(parent_num_tokens=11),
+            "parent token count differs",
+        ),
+    ],
+)
+def test_v3_receipt_rejects_remote_and_materialization_attacks(tmp_path, mutate, match):
+    _, _, receipt_path, receipt, _, _ = _write_v3_artifacts(tmp_path)
+    attacked = deepcopy(receipt)
+    mutate(attacked)
+    attacked_sha256 = _rewrite_json_with_sha256(receipt_path, attacked)
+
+    with pytest.raises(OLMoConfigurationError, match=match):
+        NativeTextReplayVerificationReceipt.load(
+            receipt_path,
+            expected_sha256=attacked_sha256,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda manifest: manifest["tokenizer"].update(identifier="attacker/tokenizer"),
+        lambda manifest: manifest["provenance"].update(parent_checkpoint="/checkpoints/attacker"),
+        lambda manifest: manifest["provenance"].update(parent_mix="attacker-mix"),
+        lambda manifest: manifest["provenance"].update(selection_seed=18),
+    ],
+)
+def test_v3_manifest_contract_binds_fields_outside_receipt_lineage(tmp_path, mutate):
+    manifest_paths, manifests, receipt_path, _, receipt_sha256, _ = _write_v3_artifacts(tmp_path)
+    attacked = deepcopy(manifests["train"])
+    mutate(attacked)
+    attacked_path = _write_manifest(manifest_paths["train"], attacked, indent=2)
+
+    with pytest.raises(OLMoConfigurationError, match="manifest contract"):
+        NativeTextReplayDataset(
+            attacked_path,
+            expected_fingerprint=_v3_fingerprint(attacked_path),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "parent_config_sha256",
+        "parent_trainer_state_sha256",
+        "parent_dataset_fingerprint",
+        "remote_snapshot_sha256",
+        "compact_materialization_sha256",
+    ],
+)
+def test_v3_receipt_cross_binds_all_parent_and_materialization_lineage(tmp_path, field_name):
+    manifest_paths, _, receipt_path, receipt, _, _ = _write_v3_artifacts(tmp_path)
+    attacked = deepcopy(receipt)
+    attacked[field_name] = "f" * 64
+    attacked_sha256 = _rewrite_json_with_sha256(receipt_path, attacked)
+
+    with pytest.raises(OLMoConfigurationError, match=field_name):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=attacked_sha256,
+        )
+
+
+def test_v3_receipt_cross_binds_exact_source_and_parent_starts_digest(tmp_path: Path):
+    manifest_paths, manifests, receipt_path, receipt, _, _ = _write_v3_artifacts(tmp_path)
+    attacked = deepcopy(receipt)
+    attacked["splits"]["train"][0]["parent_window_starts_sha256"] = "f" * 64
+    attacked_manifest = deepcopy(manifests["train"])
+    attacked_manifests = {**manifests, "train": attacked_manifest}
+    attacked_manifest_paths = {
+        **manifest_paths,
+        "train": tmp_path / "attacked-parent-starts-manifest.json",
+    }
+    attacked_sha256 = _republish_v3_artifacts(
+        attacked_manifest_paths,
+        attacked_manifests,
+        receipt_path,
+        attacked,
+    )
+    attacked_manifest_path = attacked_manifest_paths["train"]
+
+    with pytest.raises(OLMoConfigurationError, match="differs from the pinned"):
+        NativeTextReplayDataset(
+            attacked_manifest_path,
+            expected_fingerprint=_v3_fingerprint(attacked_manifest_path),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=attacked_sha256,
+        )
+
+
+def test_v3_pair_validator_rejects_parent_interval_overlap(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, _ = _write_v3_artifacts(
+        tmp_path,
+        holdout_parent_starts=(0, 9),
+    )
+    receipt = NativeTextReplayVerificationReceipt.load(
+        receipt_path,
+        expected_sha256=receipt_sha256,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="overlap in parent path"):
+        receipt.validate_pair(
+            NativeTextReplayManifest.load(manifest_paths["train"]),
+            NativeTextReplayManifest.load(manifest_paths["holdout"]),
+        )
+
+
+def test_v3_runtime_rejects_same_size_compact_edit_from_stat_signature(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, compact_paths = _write_v3_artifacts(
+        tmp_path
+    )
+    compact_path = compact_paths["train"]
+    original = np.fromfile(compact_path, dtype=np.uint32)
+    original[0] = 42
+    original.tofile(compact_path)
+
+    with pytest.raises(OLMoConfigurationError, match="stat signature"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
+
+
+def test_v3_offline_verify_hashes_full_compact_file(tmp_path: Path):
+    manifest_paths, manifests, receipt_path, receipt, _, compact_paths = _write_v3_artifacts(
+        tmp_path
+    )
+    compact_path = compact_paths["train"]
+    original = np.fromfile(compact_path, dtype=np.uint32)
+    original[0] = 42
+    original.tofile(compact_path)
+    compact_stat = compact_path.stat()
+    receipt["splits"]["train"][0].update(
+        mtime_ns=compact_stat.st_mtime_ns,
+        ctime_ns=compact_stat.st_ctime_ns,
+        inode=compact_stat.st_ino,
+        device=compact_stat.st_dev,
+    )
+    receipt_sha256 = _republish_v3_artifacts(
+        manifest_paths,
+        manifests,
+        receipt_path,
+        receipt,
+    )
+
+    NativeTextReplayDataset(
+        manifest_paths["train"],
+        expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+        verification_receipt_path=receipt_path,
+        expected_verification_receipt_sha256=receipt_sha256,
+        verify_source_hashes=False,
+    )
+    with pytest.raises(OLMoConfigurationError, match="has SHA-256"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+            verify_source_hashes=True,
+        )
+
+
+def test_v3_reopen_rejects_same_size_path_replacement(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, compact_paths = _write_v3_artifacts(
+        tmp_path
+    )
+    dataset = NativeTextReplayDataset(
+        manifest_paths["train"],
+        expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+        verification_receipt_path=receipt_path,
+        expected_verification_receipt_sha256=receipt_sha256,
+    )
+    replacement = tmp_path / "replacement.npy"
+    replacement.write_bytes(compact_paths["train"].read_bytes())
+    os.replace(replacement, compact_paths["train"])
+
+    with pytest.raises(RuntimeError, match="changed stat signature before read"):
+        _ = dataset[0]
+
+
+def test_v3_runtime_rejects_non_regular_compact_source(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, compact_paths = _write_v3_artifacts(
+        tmp_path
+    )
+    compact_path = compact_paths["train"]
+    compact_path.unlink()
+    compact_path.mkdir()
+
+    with pytest.raises(OLMoConfigurationError, match="not a regular file"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
+
+
+def test_v3_runtime_rejects_fifo_without_blocking(tmp_path: Path):
+    manifest_paths, _, receipt_path, _, receipt_sha256, compact_paths = _write_v3_artifacts(
+        tmp_path
+    )
+    compact_paths["train"].unlink()
+    os.mkfifo(compact_paths["train"])
+
+    with pytest.raises(OLMoConfigurationError, match="not a regular file"):
+        NativeTextReplayDataset(
+            manifest_paths["train"],
+            expected_fingerprint=_v3_fingerprint(manifest_paths["train"]),
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt_sha256,
+        )
