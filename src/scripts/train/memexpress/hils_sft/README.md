@@ -183,6 +183,46 @@ The p10 choice is confirmed by the eval set it is scored against:
 `HELD_OUT_GLOBS` excludes it — that assertion is load-bearing here, since scifact and fiqa are
 scored as OOD ladders and must never enter training.
 
+### ⚠ rerank: `cr_suite_data`'s msmarco files are the DEPRECATED format
+
+`build_prompt` refuses them outright:
+
+```
+NotImplementedError: DEPRECATED binary rerank format: example has no `ce_scores`, so the reference
+order would fall back to the old gold-first-then-displayed scheme. That format is disabled.
+Regenerate rerank with generate_msmarco_trainhn_data.py (CE-graded).
+```
+
+So `msmarco_helmet_rerank_train_k*_2000.jsonl` cannot be used even after schema normalization —
+normalization fixes `ctxs` → `documents`, but cannot invent the CE scores the graded reference
+order needs. Same shape as the NQ p10 trap: the unusable file sits beside the usable one under a
+plausible name. The rerank source must be the **CE-graded** build, and rerank is evaluated
+CE-graded (NDCG@10 + Kendall-tau), so this is a train/eval consistency requirement, not a
+preference.
+
+### Conversion quirks worth knowing
+
+* The converter reads `_task`/`_cot_mode` with `dict.get(key, default)`, so a **present-but-null**
+  key defeats `--task`/`--cot-mode` rather than falling back. `normalize_example` copies both
+  through as `None`, so they must be dropped.
+* The converter **exits 0 after skipping every row** — per-row failures only warn. Never treat exit
+  status as the success signal; `build_olmo3_sft_data.py` fails the build when a task wrote no
+  shards.
+
+## Olmo-3 → olmo_core conversion: the tolerance test lies
+
+`convert_checkpoint_from_hf.py` exits 1 with
+`AssertionError: Tensor-likes are not close! Mismatched elements: 4767902 / 6016680 (79.2%)` on a
+**correct** conversion — its validation asserts logits agree to `atol=rtol=1e-4`, which bf16 at 7B
+cannot meet. The checkpoint is fully written before the assert fires.
+
+Verified 2026-08-14 with `ctc_suite/olmo3_parity_check.py` (the check that discriminates):
+**`top1_agreement = 0.9934`, PARITY: PASS**. Base checkpoint at
+`/weka/oe-training-default/amandab/olmo3-7b-base-olmocore`, parity json alongside it.
+
+Do not "fix" the conversion in response to that AssertionError, and do not skip validation
+entirely — run the parity check.
+
 **Pass the same template file the eval attaches.** A training-time template that differs from the
 eval-time one reintroduces the mismatch silently — nothing errors, the numbers are just wrong.
 
