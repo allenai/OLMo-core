@@ -155,6 +155,7 @@ def mix_documents(
     weights: Dict[str, float],
     seed: int = 34521,
     max_repetition_factor: float = 8.0,
+    target_tokens: Optional[int] = None,
 ) -> Tuple[List[Tuple[np.ndarray, np.ndarray]], Dict[str, Dict[str, float]]]:
     """
     Mix per-source document pools to target **token** shares, the way olmo_core's mixing loader
@@ -177,6 +178,10 @@ def mix_documents(
     :param weights: ``{name: weight}``; normalized internally. Must cover every source.
     :param seed: Sampling seed. Must match across arms.
     :param max_repetition_factor: Cap on how often a source may be repeated.
+    :param target_tokens: Total content tokens to emit. Without it the budget is the largest the
+        repetition cap allows, which is an artifact of corpus sizes rather than a training
+        decision -- it can run to billions of tokens and makes the pack size (and therefore the
+        step budget) arbitrary. Set it to the intended SFT budget.
 
     :returns: ``(documents, report)`` where report gives per-source target/realized token shares.
 
@@ -196,13 +201,22 @@ def mix_documents(
     # Largest total budget T such that every source's requirement stays within its cap:
     #   target_frac[k] * T <= tokens[k] * max_repetition_factor
     budget = min(tokens[k] * max_repetition_factor / target_frac[k] for k in per_source)
-    target_tokens = {k: target_frac[k] * budget for k in per_source}
+    if target_tokens is not None:
+        if target_tokens > budget:
+            raise ValueError(
+                f"target_tokens={target_tokens:,} needs a source repeated more than "
+                f"{max_repetition_factor}x to hold the requested shares (cap allows "
+                f"{int(budget):,}). Lower the budget or raise max_repetition_factor -- silently "
+                f"clipping would distort the mixture."
+            )
+        budget = target_tokens
+    per_source_target = {k: target_frac[k] * budget for k in per_source}
 
     rng = np.random.default_rng(seed)
     out: List[Tuple[np.ndarray, np.ndarray]] = []
     report: Dict[str, Dict[str, float]] = {}
     for name, docs in per_source.items():
-        want = target_tokens[name]
+        want = per_source_target[name]
         order = rng.permutation(len(docs))
         picked, got, i = [], 0, 0
         while got < want:
@@ -250,6 +264,7 @@ class SFTShardDataset(Dataset):
         sources: Optional[Dict[str, str]] = None,
         weights: Optional[Dict[str, float]] = None,
         max_repetition_factor: float = 8.0,
+        target_tokens: Optional[int] = None,
         prepacked: bool = False,
     ) -> None:
         self.max_seq_len = max_seq_len
@@ -297,7 +312,8 @@ class SFTShardDataset(Dataset):
                 raise ValueError("sources given without weights -- the mixture would be undefined")
             per_source = {name: _load_dir(d) for name, d in sources.items()}
             docs, self.mix_report = mix_documents(
-                per_source, weights, seed=seed, max_repetition_factor=max_repetition_factor
+                per_source, weights, seed=seed, max_repetition_factor=max_repetition_factor,
+                target_tokens=target_tokens,
             )
         else:
             docs = _load_dir(data_dir)
@@ -402,6 +418,14 @@ def _main() -> int:
     ap.add_argument("--seed", type=int, default=34521)
     ap.add_argument("--max-repetition-factor", type=float, default=8.0)
     ap.add_argument("--shard-windows", type=int, default=512)
+    ap.add_argument(
+        "--target-tokens",
+        type=int,
+        default=None,
+        help="Total content tokens in the pack. Sets the SFT budget: the pack IS the epoch, so "
+        "windows = target_tokens / max_seq_len and every arm trains on exactly that. Without it "
+        "the pack is as large as the repetition cap allows, which is arbitrary.",
+    )
     args = ap.parse_args()
 
     sources = dict(s.split("=", 1) for s in args.source)
@@ -416,6 +440,7 @@ def _main() -> int:
         sources=sources,
         weights=weights,
         max_repetition_factor=args.max_repetition_factor,
+        target_tokens=args.target_tokens,
     )
     print(json.dumps(ds.stats(), indent=2))
     print("\nrealized mixture:")
