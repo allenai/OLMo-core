@@ -369,7 +369,13 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                         flat_labels = labels.to(self.device).reshape(-1)[response_mask.reshape(-1)]
                         flat_weights = mb_loss_masks.reshape(-1)[response_mask.reshape(-1)]
                     else:
-                        logits = self.model(input_ids, labels=None, **model_kwargs)
+                        # `loss_masks` is passed even though the logits are dense: the model
+                        # needs it to build the per-token residual drop mask when the LM was
+                        # configured with `masked_dropout` (response_residual_dropout). It is
+                        # popped by `MultimodalLM.forward` and ignored otherwise.
+                        logits = self.model(
+                            input_ids, labels=None, loss_masks=mb_loss_masks, **model_kwargs
+                        )
                         vocab_size = logits.shape[-1]
                         flat_logits = logits.reshape(-1, vocab_size)
                         flat_labels = labels.to(self.device).reshape(-1)

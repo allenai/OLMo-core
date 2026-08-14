@@ -9,7 +9,7 @@ import torch
 
 from olmo_core.nn.residual_stream import ResidualStream
 
-B, T, D = 1, 4000, 8
+B, T, D = 1, 4000, 8  # D small enough that per-token vs per-element is distinguishable
 
 
 def _inputs():
@@ -29,6 +29,30 @@ def test_masked_dropout_only_drops_masked_tokens():
     assert (unmasked == 1.0).all(), "prompt/image tokens must never be dropped"
     dropped = (masked == 0).float().mean().item()
     assert 0.06 < dropped < 0.14, dropped  # ~0.10
+
+
+def test_masked_dropout_samples_per_element_not_per_token():
+    """Each activation is dropped independently, not whole token vectors at once.
+
+    Regression test: sampling one Bernoulli per token (broadcasting a ``(B, T, 1)`` mask)
+    zeroes a token's entire residual contribution, which across a 36-layer model's 72
+    residual adds made training diverge. The element-fraction checks in the other tests pass
+    either way, so this is what distinguishes them.
+    """
+    torch.manual_seed(0)
+    residual, x, drop_mask = _inputs()
+    out = ResidualStream(dropout=0.0, masked_dropout=0.5).train()(residual, x, drop_mask=drop_mask)
+    masked = out[:, T // 2 :]  # rate 0.5 -> most tokens should be partially, not fully, dropped
+
+    zero_per_token = (masked == 0).sum(-1)
+    all_zero = int((zero_per_token == D).sum())
+    none_zero = int((zero_per_token == 0).sum())
+    mixed = int(masked.shape[1] - all_zero - none_zero)
+    # With per-element sampling at p=0.5 and D=8, all-or-nothing tokens are rare (2 * 0.5**8).
+    assert mixed > 0.9 * masked.shape[1], (
+        f"expected mostly partially-dropped tokens, got mixed={mixed} "
+        f"all_zero={all_zero} none_zero={none_zero}"
+    )
 
 
 def test_masked_dropout_is_unbiased_and_inverted():
