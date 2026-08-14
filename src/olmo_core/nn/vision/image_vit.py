@@ -270,6 +270,18 @@ class VisionTransformer(nn.Module):
         """Per-block activation checkpointing (mm_olmo ``VitConfig.activation_checkpointing``)."""
         self._activation_checkpoint_fn = _vit_activation_checkpoint_function(self.cfg)
 
+    def apply_compile(self) -> None:
+        """``torch.compile`` each ViT block (mm_olmo ``compile_vit: blocks``).
+
+        Per-block compilation keeps compile times low thanks to the repeated structure, the
+        same strategy :meth:`olmo_core.nn.transformer.Transformer.apply_compile` uses.
+
+        .. warning::
+            Call after :meth:`apply_activation_checkpointing` and before FSDP wrapping.
+        """
+        for idx, block in enumerate(self.blocks):
+            self.blocks[idx] = torch.compile(block)  # type: ignore[assignment]
+
     def reset_parameters(self):
         """Re-initialise all parameters."""
         scale = self.cfg.image_emb_dim**-0.5

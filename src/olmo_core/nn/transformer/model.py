@@ -570,6 +570,7 @@ class Transformer(nn.Module):
         response_mask: Optional[torch.Tensor] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        drop_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         flex_attn_is_image: Optional[torch.Tensor] = None,
         flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
@@ -700,6 +701,11 @@ class Transformer(nn.Module):
                 h = h * self.embed_scale
             if self.embedding_norm is not None:
                 h = self.embedding_norm(h)
+
+        # Per-token residual dropout mask (Molmo2's `response_residual_dropout`). Only
+        # forwarded when supplied, so blocks that do not accept it are unaffected.
+        if drop_mask is not None:
+            all_block_kwargs["drop_mask"] = drop_mask
 
         # Run each block.
         for block_key, block in self.blocks.items():

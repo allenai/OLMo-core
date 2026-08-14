@@ -85,6 +85,8 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         vision_activation_checkpointing: bool = True,
         connector_activation_checkpointing: bool = True,
+        compile_vision: bool = True,
+        compile_connector: bool = True,
         label_ignore_index: int = -100,
         response_logits_only: bool = False,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -132,7 +134,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             log.info(f"Froze {n_frozen} parameter tensors matching {self.freeze_params}")
 
         model.to(self.device)
-        if vision_activation_checkpointing and hasattr(model.vision, "apply_activation_checkpointing"):
+        if vision_activation_checkpointing and hasattr(
+            model.vision, "apply_activation_checkpointing"
+        ):
             model.vision.apply_activation_checkpointing()
             log.info("Applied per-block activation checkpointing to model.vision")
         if connector_activation_checkpointing and hasattr(
@@ -154,6 +158,15 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             # (or_mask / and_mask) don't trip full-graph compile on the outer forward.
             log.info("Compiling model.lm blocks ...")
             model.lm.apply_compile()
+            # mm_olmo compiles the vision tower and connector too (`compile_vit: blocks`,
+            # `compile_connector: dynamic`). The connector is compiled with dynamic shapes
+            # because its pooled-group count follows the per-batch crop count.
+            if compile_vision and hasattr(model.vision, "apply_compile"):
+                log.info("Compiling model.vision blocks ...")
+                model.vision.apply_compile()
+            if compile_connector and hasattr(model.connector, "apply_compile"):
+                log.info("Compiling model.connector (dynamic) ...")
+                model.connector.apply_compile()
         self.model = model
         self._model_mode = None
 
@@ -504,6 +517,13 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     vision_activation_checkpointing: bool = True
     connector_activation_checkpointing: bool = True
+    compile_vision: bool = True
+    """Also ``torch.compile`` the vision tower when :data:`compile_model` is set
+    (mm_olmo ``compile_vit: blocks``)."""
+
+    compile_connector: bool = True
+    """Also ``torch.compile`` the connector when :data:`compile_model` is set, with dynamic
+    shapes (mm_olmo ``compile_connector: dynamic``)."""
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
     label_ignore_index: int = -100

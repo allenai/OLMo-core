@@ -13,7 +13,7 @@ from olmo_core.distributed.utils import barrier, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.embedding import SplitVocabEmbedding
 from olmo_core.nn.lm_head import LMOutputWithLoss
-from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import (
     ImagePoolingType,
@@ -123,6 +123,7 @@ class MultimodalLMConfig(Config):
         lm: TransformerConfig,
         *,
         connector_mlp_hidden_size: int,
+        response_residual_dropout: float = 0.0,
         **kwargs,
     ) -> "MultimodalLMConfig":
         """
@@ -136,6 +137,17 @@ class MultimodalLMConfig(Config):
             field, so it is passed explicitly rather than derived from ``lm``.
         """
         from olmo_core.nn.vision.config import VisionEncoderType
+
+        # mm_olmo `llm.response_residual_dropout`: drop this fraction of the residual on
+        # *response* tokens only (`residual_dropout` stays 0 for prompt and image tokens).
+        # Defaults to 0 so the factory keeps matching the HF-derived config, which describes
+        # the released weights for inference; training scripts opt in (stage 1 uses 0.1).
+        if response_residual_dropout:
+            if not isinstance(lm.block, TransformerBlockConfig):
+                raise OLMoConfigurationError(
+                    "response_residual_dropout needs a single block config, got a per-block dict"
+                )
+            lm.block.masked_dropout = response_residual_dropout
 
         # Molmo2 keeps only blocks 0..24 of SigLIP2's 27 — everything past the deepest
         # feature layer (``vit_layers`` max 24) is dropped. ``name`` is a label only (the
@@ -169,7 +181,9 @@ class MultimodalLMConfig(Config):
         )
 
     @classmethod
-    def molmo2_4B(cls, *, rope_theta: int = 5_000_000, **kwargs) -> "MultimodalLMConfig":
+    def molmo2_4B(
+        cls, *, rope_theta: int = 5_000_000, response_residual_dropout: float = 0.0, **kwargs
+    ) -> "MultimodalLMConfig":
         """
         Molmo2-4B architecture: a Qwen3-4B LM plus the shared Molmo2 vision stack.
 
@@ -196,11 +210,14 @@ class MultimodalLMConfig(Config):
                 dtype=DType.float32,
             ),
             connector_mlp_hidden_size=9728,
+            response_residual_dropout=response_residual_dropout,
             **kwargs,
         )
 
     @classmethod
-    def molmo2_8B(cls, *, rope_theta: int = 1_000_000, **kwargs) -> "MultimodalLMConfig":
+    def molmo2_8B(
+        cls, *, rope_theta: int = 1_000_000, response_residual_dropout: float = 0.0, **kwargs
+    ) -> "MultimodalLMConfig":
         """
         Molmo2-8B architecture: a Qwen3-8B LM plus the shared Molmo2 vision stack.
 
@@ -223,6 +240,7 @@ class MultimodalLMConfig(Config):
                 dtype=DType.float32,
             ),
             connector_mlp_hidden_size=12288,
+            response_residual_dropout=response_residual_dropout,
             **kwargs,
         )
 
@@ -266,6 +284,8 @@ class MultimodalLM(nn.Module):
             )
         self.cfg = cfg
         self.lm = cfg.lm.build(init_device=init_device)
+        # Cached so `forward` only builds a drop mask when some block will consume it.
+        self._masked_residual_dropout = float(getattr(cfg.lm.block, "masked_dropout", 0.0) or 0.0)
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
 
@@ -449,6 +469,18 @@ class MultimodalLM(nn.Module):
                 raise ValueError("`loss_masks` is required when `response_logits_only=True`")
             response_mask = loss_masks > 0
 
+        # Per-token residual dropout (mm_olmo `response_residual_dropout`): the mask selects
+        # *response* tokens, so prompt and image tokens keep the plain `dropout` rate. Only
+        # built when a block actually asks for it, and only while training.
+        drop_mask: Optional[torch.Tensor] = None
+        if self.training and self._masked_residual_dropout > 0.0:
+            if loss_masks is None:
+                raise ValueError(
+                    "`loss_masks` is required when the LM uses `masked_dropout` "
+                    "(response_residual_dropout)"
+                )
+            drop_mask = (loss_masks > 0).to(dtype=torch.bool)
+
         if labels is not None and self.cfg.output_vocab_size is not None:
             # The LM head would compute the loss internally over the full (padded) vocab,
             # bypassing the output-vocab masking below and shifting the softmax
@@ -599,6 +631,7 @@ class MultimodalLM(nn.Module):
             position_ids=position_ids,
             response_logits_only=response_logits_only,
             response_mask=response_mask,
+            drop_mask=drop_mask,
             **kwargs,
         )
 

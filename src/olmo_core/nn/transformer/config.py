@@ -184,6 +184,13 @@ class TransformerBlockConfig(ModuleConfig):
     """
     Dropout probability.
     """
+    masked_dropout: Optional[float] = None
+    """
+    Residual-stream dropout applied only to tokens selected by the ``drop_mask`` passed to
+    the block (mm_olmo's ``response_residual_dropout``: Molmo2 drops 10% of the residual on
+    *response* tokens while leaving prompt and image tokens untouched). Tokens outside the
+    mask keep the :data:`dropout` rate. Requires the ``default`` block type.
+    """
     attention_residual_alpha: Optional[float] = None
     """
     A scaling factor applied to the attention/recurrent output before adding it to the residual stream.
@@ -237,6 +244,12 @@ class TransformerBlockConfig(ModuleConfig):
             init_device=init_device,
             cache=cache,
         )
+
+        if self.masked_dropout and self.name != TransformerBlockType.default:
+            raise OLMoConfigurationError(
+                f"'masked_dropout' is only supported by the '{TransformerBlockType.default}' "
+                f"block type, got '{self.name}'"
+            )
 
         try:
             if self.name == TransformerBlockType.default:
