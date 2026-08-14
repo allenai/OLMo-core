@@ -167,6 +167,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         global_batch_size=GLOBAL_BATCH_SIZE,
         seed=34521,  # same seed as the veomni arms
         num_workers=4,
+        work_dir=str(get_work_dir(root_dir)),  # required; the loader asserts on it at build time
     )
 
     run_name_with_ts = f"{cli_context.run_name}-{datetime.now().strftime('%m%d%H%M')}"

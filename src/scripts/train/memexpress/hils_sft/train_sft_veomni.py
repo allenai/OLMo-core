@@ -203,10 +203,19 @@ def main() -> int:
 
     use_wandb = is_main and not args.no_wandb
     if use_wandb:
-        import wandb
+        # A missing logger must never kill a multi-hour training run. Every smoke test passed
+        # --no-wandb, so the import was first exercised by the real launch -- which died at it.
+        try:
+            import wandb
 
-        wandb.init(project=args.wandb_project, name=args.wandb_name or os.path.basename(args.out_dir),
-                   config=vars(args))
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_name or os.path.basename(args.out_dir),
+                config=vars(args),
+            )
+        except Exception as e:  # noqa: BLE001 -- logging is not worth losing the run over
+            print(f"[wandb] disabled ({type(e).__name__}: {e})", flush=True)
+            use_wandb = False
 
     # ---- train ---------------------------------------------------------------------------------
     os.makedirs(args.out_dir, exist_ok=True)

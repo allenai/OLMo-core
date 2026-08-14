@@ -90,7 +90,7 @@ echo "[build-env] transformers + our eval deps"
 uv pip install \
   "transformers==$TRANSFORMERS_VERSION" \
   einops accelerate safetensors huggingface_hub \
-  numpy tqdm scipy scikit-learn \
+  numpy tqdm scipy scikit-learn wandb \
   nvidia-cuda-nvrtc-cu12
 
 # The ABI suffix must match how torch itself was built, or the extension fails to load with an
