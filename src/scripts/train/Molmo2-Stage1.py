@@ -56,6 +56,7 @@ from olmo_core.internal.common import (
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
 from olmo_core.optim import (
     AdamWConfig,
@@ -80,6 +81,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     MultimodalTransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
 )
 from olmo_core.utils import get_default_device, seed_all
@@ -158,7 +160,17 @@ SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 v
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
 SEQUENCE_LENGTH = 2560  # fixed pad length; the released runs passed `--seq_len=2560`
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
-PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
+PACK_SEQUENCES = True  # pack several examples per sequence
+# mm_olmo `packing: {mode: dynamic_solver, buffer_size: 48, text_weight: 1.0,
+# image_weight: 1.0}` — a 2D knapsack over (text tokens, image crops) rather than the
+# token-only next-fit we used before. The crop budget is the second knapsack dimension: an
+# 8-crop example costs at most 9 crops (1 global + 8 high-res) and ~1348 image tokens, so at
+# seq 2560 the token budget binds first and this mainly bounds worst-case ViT/collator
+# memory. Set below a single example's 9 crops it would force that example into its own
+# mostly-padding pack.
+PACK_MAX_CROPS = 3 * (1 + 8)
+PACK_BUFFER_SIZE = 48
+PACK_IMAGE_WEIGHT = 1.0
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
 MAX_CROPS = 8
@@ -185,7 +197,10 @@ MAX_CROPS = 8
 # the same global batch — and microbatch >1 at this sequence length OOM'd without activation
 # checkpointing (see the `ac_config` follow-up).
 GLOBAL_BATCH_INSTANCES = 128
-RANK_MICROBATCH_INSTANCES = 1
+# mm_olmo's `device_train_microbatch_size: 4`, which its `activation_checkpointing: true`
+# pays for. NOTE 128 % (4 x dp_world_size) must be 0, so this supports world sizes up to 32
+# (the released 4B ran 16 GPUs, the 8B 32); at 64 use microbatch 2.
+RANK_MICROBATCH_INSTANCES = 4
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
 
@@ -387,6 +402,14 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ),
         # An empty list keeps the encoder trainable *and* in train mode — the train module
         # only forces `vision.eval()` when `vision.*` is frozen.
+        # mm_olmo: `activation_checkpointing: true` with `llm.activation_checkpoint:
+        # whole_layer` — every block checkpointed. This is what makes microbatch 4 fit.
+        # (vision/connector AC are already on by default in the train module, matching
+        # the released config's vit `activation_checkpointing: true` and
+        # `connector_activation_checkpointing: true`.)
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.full
+        ),
         freeze_params=(
             ([] if train_vit else ["vision.*"])
             # The extra image-token rows live in `embeddings.extra_weight`, so freezing
@@ -700,6 +723,9 @@ def train(config: ExperimentConfig):
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
             pack=config.pack_sequences,
+            pack_max_crops=PACK_MAX_CROPS if config.pack_sequences else None,
+            pack_buffer_size=PACK_BUFFER_SIZE,
+            pack_image_weight=PACK_IMAGE_WEIGHT,
             prefetch_workers=DATA_PREFETCH_WORKERS,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
