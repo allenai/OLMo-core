@@ -68,6 +68,12 @@ def main() -> int:
     world = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     rank = int(os.environ.get("RANK", "0"))
+    # BEFORE anything allocates: without this every rank defaults to cuda:0 and eight 7B models
+    # land on one card. It does not fail cleanly either -- the attention-implementation probe
+    # catches the resulting OOM and reports "flash_attention_2 unavailable", which reads as a
+    # missing dependency rather than a device-placement bug.
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
     if world > 1 and not dist.is_initialized():
         dist.init_process_group(backend="nccl")
         rank, world = dist.get_rank(), dist.get_world_size()
@@ -152,11 +158,19 @@ def main() -> int:
                 weights_path=args.model_path,
                 torch_dtype="bfloat16",
                 attn_implementation=attn,
-                init_device="cuda",
+                # meta, like the HiLS repo's own task: build_parallelize_model materializes
+                # sharded weights from weights_path, so no rank ever holds the full 7B. With
+                # "cuda" each rank first builds a complete model on its card.
+                init_device="meta",
             )
             if is_main:
                 print(f"[model] built with attn_implementation={attn}")
             break
+        except torch.cuda.OutOfMemoryError:
+            # An OOM is NOT evidence that this attention implementation is unsupported, and
+            # silently falling through to the next one turns a memory/placement bug into a
+            # misleading "unavailable" message. Fail here instead.
+            raise
         except Exception as e:  # noqa: BLE001 -- probing what this runtime supports
             if is_main:
                 print(f"[model] attn={attn} unavailable ({type(e).__name__}: {e})")
@@ -165,7 +179,7 @@ def main() -> int:
 
     model = build_parallelize_model(
         model,
-        init_device="cuda",
+        init_device="meta",
         weights_path=args.model_path,
         enable_full_shard=True,
         enable_mixed_precision=True,
