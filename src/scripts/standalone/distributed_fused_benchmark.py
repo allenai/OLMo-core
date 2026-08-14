@@ -44,8 +44,8 @@ from olmo_core.train.train_module import (
 )
 
 
-def enable_single_gpu_permutation_fallback() -> bool:
-    """Install a differentiable TE-compatible permutation for EP degree one.
+def enable_single_gpu_runtime_fallbacks() -> bool:
+    """Install dependency-light, alignment-safe fallbacks for EP degree one.
 
     OLMo-core currently imports its no-EP ``moe_permute``/``moe_unpermute``
     functions from Transformer Engine, but TE is not an OLMo-core dependency.
@@ -100,6 +100,37 @@ def enable_single_gpu_permutation_fallback() -> bool:
 
     moe_utils.moe_permute = permute
     moe_utils.moe_unpermute = unpermute
+
+    # OLMo-core's meta-device materialization may place an expert parameter at
+    # a non-16-byte storage offset. PyTorch grouped_mm rejects such operands,
+    # even in eager mode. Clone only offending views at the call boundary;
+    # clone remains differentiable, so gradients still reach the parameter.
+    from olmo_core.nn.moe.v2 import routed_experts
+
+    original_gmm = routed_experts.gmm
+
+    def aligned_gmm(
+        a: torch.Tensor,
+        b: torch.Tensor,
+        batch_sizes: torch.Tensor,
+        trans_b: bool = False,
+        out: torch.Tensor | None = None,
+        input_grad_out: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if a.data_ptr() % 16:
+            a = a.clone()
+        if b.data_ptr() % 16:
+            b = b.clone()
+        return original_gmm(
+            a,
+            b,
+            batch_sizes,
+            trans_b=trans_b,
+            out=out,
+            input_grad_out=input_grad_out,
+        )
+
+    routed_experts.gmm = aligned_gmm
     return True
 
 
@@ -174,7 +205,7 @@ def build_train_module(args: argparse.Namespace, device: torch.device):
         )
 
     if resolved_ep_degree == 1:
-        fallback_enabled = enable_single_gpu_permutation_fallback()
+        fallback_enabled = enable_single_gpu_runtime_fallbacks()
         if fallback_enabled and dist.get_rank() == 0:
             print(
                 "Transformer Engine unavailable: using the PyTorch permutation fallback "

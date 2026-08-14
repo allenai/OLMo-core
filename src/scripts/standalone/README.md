@@ -49,8 +49,9 @@ pip install \
 Transformer Engine is required even though full attention uses FA4: at the pinned
 OLMo-core commit, the fused MoE path uses TE's `moe_permute` and `moe_unpermute`
 operators. OLMo-core does not declare TE in its `fa4` or `fla` extras. The
-single-GPU smoke benchmark supplies a differentiable PyTorch fallback for these
-two permutation operations, so TE and NVCC are not required for that test.
+single-GPU smoke benchmark supplies differentiable PyTorch permutation
+operations and repairs any misaligned grouped-MM operand at the kernel boundary,
+so TE and NVCC are not required for that test.
 
 The multi-GPU EP benchmark does require TE. Install a compatible prebuilt wheel,
 or run the following in a CUDA development image that provides `nvcc`:
@@ -100,11 +101,11 @@ torchrun --standalone --nproc-per-node=1 \
   --no-compile
 ```
 
-The Transformer Engine-free permutation fallback is intentionally run without
-the outer `torch.compile` wrapper. Inductor may otherwise give PyTorch's
-`grouped_mm` an intermediate buffer whose data pointer is not 16-byte aligned.
-This does not disable the fused FLA, FlashAttention, or grouped-MM kernels; it
-only avoids compiling the surrounding Python module. If Transformer Engine is
+The Transformer Engine-free fallback is intentionally run without the outer
+`torch.compile` wrapper. It also makes a differentiable copy of a grouped-MM
+operand only when its storage pointer is not 16-byte aligned; PyTorch rejects
+such operands in both compiled and eager execution. This does not disable the
+fused FLA, FlashAttention, or grouped-MM kernels. If Transformer Engine is
 installed, the fallback is not selected and compiled single-GPU execution can
 be used.
 
