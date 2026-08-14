@@ -46,6 +46,26 @@ pip install \
   'ai2-olmo-core[fa4,fla] @ git+https://github.com/allenai/OLMo-core.git@f2cf93839a823b88955e94a851c808829c5201ba'
 ```
 
+Transformer Engine is required even though full attention uses FA4: at the pinned
+OLMo-core commit, the fused MoE path uses TE's `moe_permute` and `moe_unpermute`
+operators. OLMo-core does not declare TE in its `fa4` or `fla` extras. The
+single-GPU smoke benchmark supplies a differentiable PyTorch fallback for these
+two permutation operations, so TE and NVCC are not required for that test.
+
+The multi-GPU EP benchmark does require TE. Install a compatible prebuilt wheel,
+or run the following in a CUDA development image that provides `nvcc`:
+
+```bash
+pip install --no-build-isolation 'transformer-engine[pytorch]'
+```
+
+Verify that both its Python and compiled extensions load:
+
+```bash
+python -c \
+  'import transformer_engine.pytorch; import transformer_engine_torch; print("TE available")'
+```
+
 PyTorch supplies its compatible Triton build. Multi-GPU rowwise expert
 parallelism additionally requires the NVSHMEM environment expected by OLMo-core.
 
@@ -110,4 +130,3 @@ parameter counts.
 | --- | ---: | ---: | ---: |
 | `30m` | 32,323,588 | 29,964,292 | 17,119,236 |
 | `3p5b` | 65,342,371,200 | 3,479,664,000 | 3,299,833,216 |
-

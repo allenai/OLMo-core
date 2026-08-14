@@ -44,6 +44,65 @@ from olmo_core.train.train_module import (
 )
 
 
+def enable_single_gpu_permutation_fallback() -> bool:
+    """Install a differentiable TE-compatible permutation for EP degree one.
+
+    OLMo-core currently imports its no-EP ``moe_permute``/``moe_unpermute``
+    functions from Transformer Engine, but TE is not an OLMo-core dependency.
+    This fallback keeps the single-GPU installation smoke test usable on CUDA
+    runtime images without NVCC. It is deliberately not used for EP benchmarks.
+    """
+    from olmo_core.nn.moe import utils as moe_utils
+
+    if moe_utils.moe_permute is not None and moe_utils.moe_unpermute is not None:
+        return False
+
+    def permute(
+        *,
+        inp: torch.Tensor,
+        routing_map: torch.Tensor,
+        num_out_tokens: int,
+        map_type: str,
+        **kwargs,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        del kwargs
+        if map_type != "index":
+            raise ValueError(f"single-GPU fallback requires map_type='index', got {map_type!r}")
+        flat_experts = routing_map.reshape(-1)
+        assignment_order = torch.argsort(flat_experts, stable=True)
+        if assignment_order.numel() != num_out_tokens:
+            raise ValueError(
+                f"expected {num_out_tokens} routed rows, got {assignment_order.numel()}"
+            )
+        top_k = routing_map.shape[-1]
+        token_indices = torch.div(assignment_order, top_k, rounding_mode="floor")
+        return inp.index_select(0, token_indices), assignment_order
+
+    def unpermute(
+        *,
+        inp: torch.Tensor,
+        row_id_map: torch.Tensor,
+        restore_shape: torch.Size | tuple[int, ...],
+        map_type: str,
+        merging_probs: torch.Tensor | None = None,
+        **kwargs,
+    ) -> torch.Tensor:
+        del kwargs
+        if map_type != "index":
+            raise ValueError(f"single-GPU fallback requires map_type='index', got {map_type!r}")
+        if merging_probs is None:
+            raise ValueError("single-GPU fallback requires merging_probs")
+        assignment_rows = torch.empty_like(inp).index_copy(0, row_id_map.long(), inp)
+        token_count, top_k = merging_probs.shape
+        merged = assignment_rows.view(token_count, top_k, -1)
+        merged = (merged * merging_probs.unsqueeze(-1).to(merged.dtype)).sum(1)
+        return merged.view(restore_shape)
+
+    moe_utils.moe_permute = permute
+    moe_utils.moe_unpermute = unpermute
+    return True
+
+
 @dataclass(frozen=True)
 class BenchmarkResult:
     model_size: str
@@ -113,6 +172,24 @@ def build_train_module(args: argparse.Namespace, device: torch.device):
         raise ValueError(
             f"world size {world_size} must be divisible by EP degree {resolved_ep_degree}"
         )
+
+    if resolved_ep_degree == 1:
+        fallback_enabled = enable_single_gpu_permutation_fallback()
+        if fallback_enabled and dist.get_rank() == 0:
+            print(
+                "Transformer Engine unavailable: using the PyTorch permutation fallback "
+                "for the single-GPU smoke test.",
+                flush=True,
+            )
+    else:
+        from olmo_core.nn.moe import utils as moe_utils
+
+        if moe_utils.moe_permute is None or moe_utils.moe_unpermute is None:
+            raise RuntimeError(
+                "Multi-GPU EP requires Transformer Engine's compiled permutation operators. "
+                "Install a compatible prebuilt transformer-engine[pytorch] wheel or use a "
+                "CUDA development image with nvcc."
+            )
 
     model_config = build_fused_config(
         FusedModelOptions(
