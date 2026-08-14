@@ -97,27 +97,102 @@ def llama3_2_3B(vocab_size: int = 128256, **kwargs) -> TransformerConfig:
     )
 
 
-def assert_matches_hf(hf_dir: str, config: TransformerConfig) -> Dict[str, Any]:
+#: HF ``config.json`` fields that MUST match :func:`llama3_1_8B`.
+#:
+#: ⚠ THIS IS NOT THE 3B TABLE WITH BIGGER NUMBERS. Two fields differ *structurally*, and both fail
+#: silently rather than loudly if carried over from Llama-3.2-3B:
+#:
+#: * ``tie_word_embeddings`` is **False** here and True at 3B. The 3B converter copies the
+#:   embedding matrix into the LM head because HF ships no ``lm_head.weight``; 8B ships a real,
+#:   separately-trained one. Running the tie-copy on 8B would OVERWRITE a trained LM head with the
+#:   embedding matrix -- the model still loads and still generates, just worse.
+#: * ``rope_scaling.factor`` is **8.0** here and 32.0 at 3B, and
+#:   :class:`StepwiseRoPEScalingConfig` defaults to 32.0 -- i.e. the *default* is wrong for this
+#:   model. A mis-scaled RoPE degrades long-context behaviour specifically, which is the axis this
+#:   whole suite measures, so it would read as a Llama long-context finding.
+LLAMA3_1_8B_HF_SHAPE: Dict[str, Any] = {
+    "model_type": "llama",
+    "hidden_size": 4096,
+    "num_hidden_layers": 32,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "head_dim": 128,
+    "intermediate_size": 14336,
+    "rms_norm_eps": 1e-5,
+    "rope_theta": 500000.0,
+    "vocab_size": 128256,
+    "tie_word_embeddings": False,
+}
+
+#: Parameter count of the HF checkpoint. UNLIKE the 3B constant this one is already UNTIED (8B
+#: ships its own ``lm_head.weight``), so olmo-core's ``num_params`` should equal it exactly with
+#: no extra embedding matrix added. Asserted at conversion time by :func:`assert_matches_hf`, so a
+#: wrong value here fails a 10-minute conversion job rather than reaching a training run.
+LLAMA3_1_8B_HF_NUM_PARAMS = 8_030_261_248
+
+
+def llama3_1_8B(vocab_size: int = 128256, **kwargs) -> TransformerConfig:
+    """Build the OLMo-core config for ``meta-llama/Llama-3.1-8B``.
+
+    Unlike :func:`llama3_2_3B` this maps onto olmo-core's own :meth:`TransformerConfig.llama3_8B`
+    factory, whose ``hidden_size_multiplier=1.3`` / ``hidden_size_multiple_of=1024`` reproduce the
+    checkpoint's ``intermediate_size`` of 14336. :func:`assert_matches_hf` re-checks that against
+    the real ``config.json`` rather than trusting it.
+
+    :param vocab_size: Embedding-matrix rows (128256 for the stock checkpoint).
+    :param kwargs: Forwarded to :meth:`TransformerConfig.llama3_8B`.
+
+    :returns: The transformer config.
+    """
+    # factor=8.0 is Llama-3.1-8B's own value; the class default of 32.0 is Llama-3.2's. See the
+    # warning on LLAMA3_1_8B_HF_SHAPE -- this line is why that table exists.
+    kwargs.setdefault("rope_scaling", StepwiseRoPEScalingConfig(factor=8.0))
+    return TransformerConfig.llama3_8B(
+        vocab_size=vocab_size,
+        layer_norm_eps=kwargs.pop("layer_norm_eps", 1e-5),
+        **kwargs,
+    )
+
+
+def assert_matches_hf(
+    hf_dir: str,
+    config: TransformerConfig,
+    shape: Dict[str, Any] | None = None,
+    hf_num_params: int | None = None,
+    factory_name: str = "llama3_2_3B",
+) -> Dict[str, Any]:
     """Hard-check a built config against the checkpoint's own ``config.json``.
 
-    Checks every shape field in :data:`LLAMA3_2_3B_HF_SHAPE` and the parameter count. A mismatched
-    architecture does NOT crash on load (olmo-core's converter reports missing/unexpected keys but
-    shapes that happen to line up load fine), so this is the guard that keeps a wrong factory from
-    producing plausible-looking numbers.
+    Checks every shape field and the parameter count. A mismatched architecture does NOT crash on
+    load (olmo-core's converter reports missing/unexpected keys but shapes that happen to line up
+    load fine), so this is the guard that keeps a wrong factory from producing plausible-looking
+    numbers.
+
+    Whether olmo-core carries an *extra* embedding matrix relative to HF is derived from the
+    checkpoint's own ``tie_word_embeddings`` rather than assumed: olmo-core always keeps the LM
+    head separate, so a tied HF checkpoint (3.2-3B) gains one matrix and an untied one (3.1-8B)
+    gains none. Hardcoding either behaviour breaks the other model.
 
     :param hf_dir: The HF checkpoint directory (must contain ``config.json``).
     :param config: The built :class:`TransformerConfig`.
+    :param shape: Expected HF fields; defaults to :data:`LLAMA3_2_3B_HF_SHAPE`.
+    :param hf_num_params: The HF checkpoint's parameter count; defaults to the 3B constant.
+    :param factory_name: Name used in error messages.
 
     :returns: The parsed HF config dict.
 
     :raises SystemExit: On any mismatch.
     """
+    shape = LLAMA3_2_3B_HF_SHAPE if shape is None else shape
+    hf_num_params = LLAMA3_2_3B_HF_NUM_PARAMS if hf_num_params is None else hf_num_params
     with open(os.path.join(hf_dir, "config.json")) as f:
         raw = json.load(f)
     bad = []
-    for key, want in LLAMA3_2_3B_HF_SHAPE.items():
+    for key, want in shape.items():
         got = raw.get(key)
-        if isinstance(want, float):
+        if isinstance(want, bool):
+            ok = bool(got) == want
+        elif isinstance(want, float):
             ok = got is not None and abs(float(got) - want) < 1e-9
         else:
             ok = got == want
@@ -125,15 +200,21 @@ def assert_matches_hf(hf_dir: str, config: TransformerConfig) -> Dict[str, Any]:
             bad.append(f"{key}: HF={got!r} expected={want!r}")
     if bad:
         raise SystemExit(
-            "HF config does not match the llama3_2_3B factory:\n  " + "\n  ".join(bad)
+            f"HF config does not match the {factory_name} factory:\n  " + "\n  ".join(bad)
         )
-    # OLMo-core unties the LM head, so it carries exactly one extra embedding matrix.
-    extra = raw["vocab_size"] * raw["hidden_size"]
-    want_untied = LLAMA3_2_3B_HF_NUM_PARAMS + extra
+    # OLMo-core always unties the LM head, so it carries one extra embedding matrix relative to a
+    # TIED checkpoint and none relative to an untied one.
+    tied = bool(raw.get("tie_word_embeddings"))
+    extra = raw["vocab_size"] * raw["hidden_size"] if tied else 0
+    want_untied = hf_num_params + extra
     if config.num_params != want_untied:
+        detail = (
+            f"(= HF tied {hf_num_params:,} + untied lm_head {extra:,})"
+            if tied
+            else f"(= HF {hf_num_params:,}, already untied)"
+        )
         raise SystemExit(
             f"param-count mismatch: built config has {config.num_params:,} params, expected "
-            f"{want_untied:,} (= HF tied {LLAMA3_2_3B_HF_NUM_PARAMS:,} + untied lm_head {extra:,}). "
-            "The architecture does not match the checkpoint."
+            f"{want_untied:,} {detail}. The architecture does not match the checkpoint."
         )
     return raw

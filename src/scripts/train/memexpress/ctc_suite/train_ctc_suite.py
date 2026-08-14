@@ -92,13 +92,18 @@ from olmo_core.utils import seed_all
 try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on the file path)
     from scripts.train.memexpress.ctc_suite.llama_configs import (
         LLAMA_MARKER_TOKENIZER,
+        llama3_1_8B,
         llama3_2_3B,
     )
 except ImportError:  # pragma: no cover
     import sys as _sys
 
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from llama_configs import LLAMA_MARKER_TOKENIZER, llama3_2_3B  # type: ignore[no-redef]
+    from llama_configs import (  # type: ignore[no-redef]
+        LLAMA_MARKER_TOKENIZER,
+        llama3_1_8B,
+        llama3_2_3B,
+    )
 
 try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on the file path)
     from scripts.train.memexpress.ctc_suite.olmo3_configs import (
@@ -175,11 +180,17 @@ MODEL_FACTORIES = {
             global_rope_linear_scaling_factor=8.0,
         ),
     },
-    # Llama 3.2 (plain dense/causal, GQA). olmo-core ships no 3B factory, so ``llama_configs``
+    # Llama 3.x (plain dense/causal, GQA). olmo-core ships no 3B factory, so ``llama_configs``
     # builds one with the generic ``llama_like`` using dims read off ``meta-llama/Llama-3.2-3B``'s
-    # own config.json, and hard-asserts the resulting parameter count against it.
+    # own config.json, and hard-asserts the resulting parameter count against it. 8b maps onto
+    # olmo-core's own ``llama3_8B`` but still overrides ``rope_scaling``: the class default factor
+    # (32.0) is Llama-3.2's, and Llama-3.1-8B's is 8.0 -- see llama_configs.LLAMA3_1_8B_HF_SHAPE.
+    # 8b is the SIZE CONTROL for the 3b contradiction result (0.362 at 2k vs ~0.83 for Qwen3.5-4B
+    # and OLMo-3-7B): until a bigger Llama is measured on the identical task, "Llama is weak at
+    # N^2 pair-finding" and "3B is too small for it" are indistinguishable.
     "llama": {
         "3b": llama3_2_3B,
+        "8b": llama3_1_8B,
     },
     # OLMo 3 (``allenai/Olmo-3-1025-7B``), this repo's native family. ``olmo3_configs`` wraps the
     # stock ``olmo3_7B`` factory to disable sliding-window attention (DocumentChunkedAttention

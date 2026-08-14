@@ -46,15 +46,21 @@ import torch
 
 try:  # package import (PYTHONPATH=src) or same-directory fallback
     from scripts.train.memexpress.ctc_suite.llama_configs import (
+        LLAMA3_1_8B_HF_NUM_PARAMS,
+        LLAMA3_1_8B_HF_SHAPE,
         LLAMA_MARKER_TOKENIZER,
         assert_matches_hf,
+        llama3_1_8B,
         llama3_2_3B,
     )
 except ImportError:  # pragma: no cover
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from llama_configs import (  # type: ignore[no-redef]
+        LLAMA3_1_8B_HF_NUM_PARAMS,
+        LLAMA3_1_8B_HF_SHAPE,
         LLAMA_MARKER_TOKENIZER,
         assert_matches_hf,
+        llama3_1_8B,
         llama3_2_3B,
     )
 
@@ -160,6 +166,15 @@ def main() -> None:
         "TokenizerConfig sidecar",
     )
     ap.add_argument("--out", required=True, help="output olmo-core model-only distcp dir")
+    ap.add_argument(
+        "--scale",
+        default="3b",
+        choices=["3b", "8b"],
+        help="which Llama the --base-dir holds: 3b=Llama-3.2-3B (tied LM head, RoPE factor 32), "
+        "8b=Llama-3.1-8B (untied LM head, RoPE factor 8). Selects the factory AND the shape table "
+        "asserted against config.json, so a wrong value fails here rather than training a "
+        "mis-shaped model. Defaults to 3b so existing callers are unchanged.",
+    )
     ap.add_argument("--family", default="llama", help="RESERVED_IDS key")
     ap.add_argument("--seed", type=int, default=34521)
     ap.add_argument("--jitter", type=float, default=0.1)
@@ -182,8 +197,18 @@ def main() -> None:
     ids = RESERVED_IDS[args.family]
     raw = json.load(open(os.path.join(args.base_dir, "config.json")))
 
-    model_cfg = llama3_2_3B(vocab_size=raw["vocab_size"])
-    assert_matches_hf(args.base_dir, model_cfg)
+    if args.scale == "8b":
+        model_cfg = llama3_1_8B(vocab_size=raw["vocab_size"])
+        assert_matches_hf(
+            args.base_dir,
+            model_cfg,
+            shape=LLAMA3_1_8B_HF_SHAPE,
+            hf_num_params=LLAMA3_1_8B_HF_NUM_PARAMS,
+            factory_name="llama3_1_8B",
+        )
+    else:
+        model_cfg = llama3_2_3B(vocab_size=raw["vocab_size"])
+        assert_matches_hf(args.base_dir, model_cfg)
     print(
         f"[convert] {args.base_dir}: shape + param-count check PASSED "
         f"({model_cfg.num_params:,} olmo-core params, untied LM head)",
@@ -238,6 +263,20 @@ def main() -> None:
         if tied:
             # Keep the head consistent with the repaired embeddings (that is what the tie meant).
             head.copy_(emb)
+        else:
+            # ⚠ UNTIED CHECKPOINTS NEED THE HEAD REPAIRED SEPARATELY (Llama-3.1-8B; 3.2-3B is
+            # tied and takes the branch above). Repairing only `emb` fixes the INPUT side and
+            # leaves the OUTPUT side's marker rows exactly as untrained as they arrived -- the
+            # same defect the repair exists to remove, just on the logits. An untrained head row
+            # with an out-of-distribution norm can dominate the softmax and make the model emit
+            # `<|box_start|>`/`<|box_end|>` into its answer, which the graders then score as a
+            # malformed generation. Run the same donor-seeding on the head matrix: because
+            # repair_markers derives its donors and its target norm from the matrix it is handed,
+            # this seeds the head's marker rows from the head's OWN trained delimiter rows, which
+            # is the correct output-side analogue rather than a copy of the input embeddings.
+            audit["marker_repair_lm_head"] = repair_markers(
+                head, tok, ids, seed=args.seed + 1, jitter=args.jitter
+            )
         audit["marker_ids"] = ids._asdict()
 
     tok_cfg = TokenizerConfig(

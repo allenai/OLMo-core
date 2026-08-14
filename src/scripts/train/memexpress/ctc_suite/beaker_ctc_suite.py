@@ -58,16 +58,24 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--model-scale",
         required=True,
-        choices=["4b", "9b", "7b"],
-        help="Beaker family is 4B/9B for Qwen; 7b is the OLMo-3 scale. 0.8B trains locally",
+        choices=["0.8b", "2b", "4b", "9b", "7b", "3b", "8b"],
+        help="4b/9b for Qwen, 7b for OLMo-3. 0.8b/2b were originally local-only (hence the old "
+        "'0.8B trains locally' note), but the model-scale study needs them on Beaker too: on "
+        "lambda they get 3 serialized lanes and two of those lanes are preemptible (runs were "
+        "lost at 1h45m). Note --base-checkpoint must be passed explicitly for 0.8b -- the default "
+        "path template yields 'q35-0.8b-base-modelonly' while the real directory is "
+        "'q35-08b-base-modelonly'.",
     )
     ap.add_argument(
         "--model-family",
         default="qwen3_5",
-        choices=["qwen3_5", "qwen3", "olmo3"],
-        help="qwen3_5 (GDN hybrid, default), qwen3 (dense), or olmo3 (OLMo 3 7B dense). Selects the "
-        "default base checkpoint and is passed through to the trainer (which also auto-detects it "
-        "from the shard). ``olmo3`` has no default base -- pass --base-checkpoint explicitly.",
+        choices=["qwen3_5", "qwen3", "olmo3", "llama"],
+        help="qwen3_5 (GDN hybrid, default), qwen3 (dense), olmo3 (OLMo 3 7B dense), or llama "
+        "(Llama-3.x dense/GQA; 3b=Llama-3.2-3B, 8b=Llama-3.1-8B). Selects the default base "
+        "checkpoint and is passed through to the trainer (which also auto-detects it from the "
+        "shard). ``olmo3`` and ``llama`` have no default base -- pass --base-checkpoint "
+        "explicitly. Note a llama run also needs llama-tokenized SHARDS: the marker ids come from "
+        "RESERVED_IDS['llama'] and a qwen3_5 shard fed to a llama model is silently wrong.",
     )
     ap.add_argument(
         "--run-name", required=True, help="fresh name per config -- silent auto-resume trap"
@@ -147,6 +155,16 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--wandb-group", default=None, help="default: ctc-suite-<task>")
     ap.add_argument("--priority", default="urgent", help="ALWAYS urgent per project directive")
+    ap.add_argument(
+        "--no-follow",
+        dest="follow",
+        action="store_false",
+        default=True,
+        help="submit and return immediately instead of streaming the job's logs. The default "
+        "(follow) blocks for the WHOLE training run, so a script launching several runs in a "
+        "loop would submit the first and then sit on it for hours -- pass this when batch-"
+        "launching. The experiment URL is printed either way.",
+    )
     ap.add_argument(
         "--no-allow-dirty",
         dest="allow_dirty",
@@ -283,7 +301,23 @@ def main() -> None:
         print(launch_config)
         return
 
-    workload = launch_config.launch(follow=True)
+    if not opts.follow:
+        # build_launch_config defaults step_soft_timeout to 10 min, and BeakerLaunchConfig rejects
+        # any step timeout (or Slack notification) when follow=False -- both are implemented by
+        # watching the streamed log. Clearing them is what makes --no-follow usable; without this
+        # the launch raises "Step soft timeout requires 'follow=True'" and submits NOTHING.
+        launch_config.step_timeout = None
+        launch_config.step_soft_timeout = None
+
+    workload = launch_config.launch(follow=opts.follow)
+    # Print the id/name on ONE greppable line. `workload` renders as a multi-hundred-line protobuf
+    # dump, so a batch launcher that keeps only the tail of stdout loses the id entirely and cannot
+    # record what it just submitted.
+    wl_id = getattr(workload, "id", None) or getattr(getattr(workload, "experiment", None), "id", None)
+    wl_name = getattr(workload, "name", None) or run_name
+    print(f"[beaker_ctc_suite] SUBMITTED id={wl_id} name={wl_name}")
+    if wl_id:
+        print(f"[beaker_ctc_suite] url=https://beaker.org/ex/{wl_id}")
     print(f"[beaker_ctc_suite] launched: {workload}")
 
 
