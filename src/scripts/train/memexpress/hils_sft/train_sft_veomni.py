@@ -212,6 +212,7 @@ def main() -> int:
     os.makedirs(args.out_dir, exist_ok=True)
     model.train()
     step, t0 = 0, time.time()
+    last_t = t0
     done = False
     for epoch in range(args.epochs):
         if sampler is not None:
@@ -232,17 +233,25 @@ def main() -> int:
             lr_scheduler.step()
             optimizer.zero_grad(set_to_none=True)
             step += 1
+            now = time.time()
+            # Instantaneous, NOT elapsed/step. The cumulative average buries steady-state
+            # throughput under the one-off startup cost (model load + tilelang JIT is ~90 s, so a
+            # 7 s/step run reads as 22 s/step over its first few steps) -- which is exactly the
+            # number someone extrapolates a multi-hour ETA from.
+            step_s, last_t = now - last_t, now
             if is_main and step % args.log_every == 0:
                 # Loss is over ASSISTANT tokens only (labels are IGNORE_INDEX elsewhere), so it is
                 # not comparable to a pretraining CE on the same data.
                 ntrain = int((batch["labels"] != IGNORE_INDEX).sum())
                 msg = (f"step {step}/{max_steps} loss {out.loss.item():.4f} "
                        f"lr {lr_scheduler.get_last_lr()[0]:.2e} gnorm {float(gnorm):.2f} "
-                       f"trainable_tok/micro {ntrain} {(time.time()-t0)/step:.2f}s/step")
+                       f"trainable_tok/micro {ntrain} {step_s:.2f}s/step "
+                       f"(avg {(now - t0) / step:.2f})")
                 print(msg, flush=True)
                 if use_wandb:
                     wandb.log({"loss": out.loss.item(), "lr": lr_scheduler.get_last_lr()[0],
-                               "grad_norm": float(gnorm), "step": step})
+                               "grad_norm": float(gnorm), "step": step,
+                               "seconds_per_step": step_s})
             if args.save_steps and step % args.save_steps == 0:
                 _save(model, args.out_dir, step, rank, is_main, args.model_path)
             if step >= max_steps:
