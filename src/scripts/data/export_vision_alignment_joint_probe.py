@@ -23,10 +23,14 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
+import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Generator, Iterable, Mapping, Optional, Sequence
 
 from olmo_core.data.multimodal.native_text_replay import (
     NativeTextReplayDataset,
@@ -78,9 +82,14 @@ JOINT_NATIVE_PROBE_EPOCHS = (0,)
 JOINT_SEQUENCE_LENGTH = 8192
 UNBOUNDED_SEQUENCE_LENGTH = JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH
 DEFAULT_HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
+DEFAULT_GUARD_WORKERS = 4
+MAX_GUARD_WORKERS = 16
+PROGRESS_INTERVAL_ROWS = 128
 CATALOG_NAME = "vision-alignment-joint-source-catalog.json"
 EXPORTER_IMPLEMENTATION_PATH = "src/scripts/data/export_vision_alignment_joint_probe.py"
 JOINT_SOURCE_NAMES = tuple(sorted((*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay")))
+
+ProgressCallback = Callable[[Mapping[str, Any]], None]
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _SOURCE_ENTRY_FIELDS = frozenset(
@@ -115,6 +124,97 @@ def _canonical_bytes(value: Any) -> bytes:
 
 def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _validate_workers(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_GUARD_WORKERS:
+        raise ValueError(f"workers must be an integer in [1, {MAX_GUARD_WORKERS}]")
+    return value
+
+
+def _emit_progress(
+    callback: Optional[ProgressCallback],
+    *,
+    event: str,
+    started_at: float,
+    source_name: Optional[str] = None,
+    **fields: Any,
+) -> None:
+    if callback is None:
+        return
+    payload: Dict[str, Any] = {
+        "phase": "joint_probe_export",
+        "event": event,
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+    }
+    if source_name is not None:
+        payload["source"] = source_name
+    payload.update(fields)
+    try:
+        callback(payload)
+    except Exception:
+        # Telemetry must never alter immutable evidence or publication behavior.
+        pass
+
+
+def _stderr_progress(payload: Mapping[str, Any]) -> None:
+    try:
+        print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+    except OSError:
+        # Progress is operational telemetry, never part of the immutable evidence bytes.
+        pass
+
+
+def _ordered_live_records(
+    dataset: Any,
+    *,
+    source_name: str,
+    kind: str,
+    work_items: Iterable[tuple[int, int]],
+    unbounded_dataset: Optional[Any],
+    token_ids: Molmo2TokenIds,
+    workers: int,
+) -> Generator[Dict[str, Any], None, None]:
+    """Build independent rows concurrently while yielding exact canonical input order."""
+
+    def build(item: tuple[int, int]) -> Dict[str, Any]:
+        dataset_index, epoch = item
+        return _live_probe_record(
+            dataset,
+            source_name=source_name,
+            kind=kind,
+            dataset_index=dataset_index,
+            epoch=epoch,
+            unbounded_dataset=unbounded_dataset,
+            token_ids=token_ids,
+        )
+
+    if workers == 1:
+        yield from map(build, work_items)
+        return
+
+    # One in-flight row per worker caps decoded-image and serialized-record memory. Waiting
+    # during shutdown is intentional: a guard must be fully quiescent before it returns or raises.
+    items = iter(work_items)
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="joint-probe-export")
+    futures: deque[Future[Dict[str, Any]]] = deque()
+    try:
+        for _ in range(workers):
+            try:
+                futures.append(executor.submit(build, next(items)))
+            except StopIteration:
+                break
+        while futures:
+            result = futures.popleft().result()
+            try:
+                futures.append(executor.submit(build, next(items)))
+            except StopIteration:
+                pass
+            yield result
+    finally:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
 
 
 def _sha256_file(path: Path) -> str:
@@ -313,6 +413,8 @@ def export_source_probe(
     seed: int,
     token_ids: Molmo2TokenIds,
     unbounded_dataset: Optional[Any] = None,
+    workers: int = 1,
+    progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Write one immutable deterministic joint probe and return its catalog entry.
 
@@ -325,6 +427,8 @@ def export_source_probe(
     :param seed: Deterministic affine selection seed.
     :param token_ids: Exact tokenizer-adapted Molmo2 IDs for this joint runtime.
     :param unbounded_dataset: Required raw unbounded adapter for visual sources.
+    :param workers: Bounded row-build concurrency. Results are always reduced in probe order.
+    :param progress: Optional structured operational progress callback. Its timing is not evidence.
     :returns: Canonical source-catalog entry.
     :raises ValueError: If runtime identity, serialization, images, or length evidence differs.
     """
@@ -348,7 +452,9 @@ def export_source_probe(
         raise ValueError("Joint probe unique_indices must be positive")
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("Joint probe seed must be non-negative")
+    workers = _validate_workers(workers)
 
+    started_at = time.monotonic()
     validate = getattr(dataset, "validate_required_annotations", None)
     if kind == "visual":
         if not callable(validate):
@@ -369,6 +475,16 @@ def export_source_probe(
         if kind == "visual"
         else _canonical_sha256([])
     )
+    work_items = tuple((dataset_index, epoch) for epoch in epoch_panel for dataset_index in indices)
+    _emit_progress(
+        progress,
+        event="source_start",
+        started_at=started_at,
+        source_name=source_name,
+        rows_completed=0,
+        rows_total=len(work_items),
+        workers=workers,
+    )
     if output_path.exists():
         raise FileExistsError(f"Refusing to overwrite immutable joint probe {output_path}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -381,22 +497,34 @@ def export_source_probe(
     maximum_length = 0
     try:
         with os.fdopen(descriptor, "wb") as file_handle:
-            for epoch in epoch_panel:
-                for dataset_index in indices:
-                    record = _live_probe_record(
-                        dataset,
-                        source_name=source_name,
-                        kind=kind,
-                        dataset_index=dataset_index,
-                        epoch=epoch,
-                        unbounded_dataset=unbounded_dataset,
-                        token_ids=token_ids,
-                    )
+            records = _ordered_live_records(
+                dataset,
+                source_name=source_name,
+                kind=kind,
+                work_items=work_items,
+                unbounded_dataset=unbounded_dataset,
+                token_ids=token_ids,
+                workers=workers,
+            )
+            try:
+                for row_ordinal, record in enumerate(records, start=1):
                     maximum_length = max(maximum_length, int(record["raw_sequence_length"]))
                     row_hashes.append(record["serialized_row_sha256"])
                     raw = _canonical_bytes(record) + b"\n"
                     file_handle.write(raw)
                     file_digest.update(raw)
+                    if row_ordinal % PROGRESS_INTERVAL_ROWS == 0 or row_ordinal == len(work_items):
+                        _emit_progress(
+                            progress,
+                            event="source_progress",
+                            started_at=started_at,
+                            source_name=source_name,
+                            rows_completed=row_ordinal,
+                            rows_total=len(work_items),
+                            workers=workers,
+                        )
+            finally:
+                records.close()
             file_handle.flush()
             os.fsync(file_handle.fileno())
         if kind == "visual" and (
@@ -406,7 +534,7 @@ def export_source_probe(
         os.link(temporary, output_path)
     finally:
         temporary.unlink(missing_ok=True)
-    return {
+    entry = {
         "name": source_name,
         "kind": kind,
         "format": "jsonl",
@@ -422,6 +550,16 @@ def export_source_probe(
         "max_observed_sequence_length": maximum_length,
         "truncated_rows": 0,
     }
+    _emit_progress(
+        progress,
+        event="source_complete",
+        started_at=started_at,
+        source_name=source_name,
+        rows_completed=len(work_items),
+        rows_total=len(work_items),
+        workers=workers,
+    )
+    return entry
 
 
 def _preprocessing_descriptor(
@@ -652,6 +790,67 @@ def _build_unbounded_visual_dataset(
     return dataset
 
 
+def _export_catalog_source(
+    *,
+    source_name: str,
+    projection: JointVisualProjectionManifest,
+    native_manifest: NativeTextReplayManifest,
+    receipt: NativeTextReplayVerificationReceipt,
+    native_path: Path,
+    receipt_path: Path,
+    tokenizer: Any,
+    token_ids: Molmo2TokenIds,
+    output_path: Path,
+    seed: int,
+    workers: int,
+    progress: Optional[ProgressCallback],
+) -> Dict[str, Any]:
+    """Build, probe, and release exactly one runtime source."""
+    if source_name == "native_text_replay":
+        native_dataset = NativeTextReplayDataset(
+            native_path,
+            expected_fingerprint=native_manifest.content_fingerprint,
+            verification_receipt_path=receipt_path,
+            expected_verification_receipt_sha256=receipt.receipt_sha256,
+        )
+        native_dataset.validate_tokenizer(tokenizer)
+        return export_source_probe(
+            native_dataset,
+            source_name=source_name,
+            kind="native_text_replay",
+            output_path=output_path,
+            unique_indices=JOINT_NATIVE_PROBE_INDICES,
+            epochs=JOINT_NATIVE_PROBE_EPOCHS,
+            seed=seed,
+            token_ids=token_ids,
+            workers=workers,
+            progress=progress,
+        )
+
+    selected = build_selected_joint_dataset(
+        projection,
+        tokenizer,
+        token_ids,
+        source_name,
+        logical_split="train",
+        validate_required_annotations=False,
+    )
+    unbounded = _build_unbounded_visual_dataset(projection, tokenizer, token_ids, source_name)
+    return export_source_probe(
+        selected,
+        source_name=source_name,
+        kind="visual",
+        output_path=output_path,
+        unique_indices=JOINT_VISUAL_PROBE_INDICES,
+        epochs=JOINT_VISUAL_PROBE_EPOCHS,
+        seed=seed,
+        unbounded_dataset=unbounded,
+        token_ids=token_ids,
+        workers=workers,
+        progress=progress,
+    )
+
+
 def _fresh_native_runtime_evidence(
     native_manifest: NativeTextReplayManifest,
     receipt: NativeTextReplayVerificationReceipt,
@@ -741,6 +940,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-native-verification-receipt-sha256", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, default=JOINT_PROBE_SEED)
+    parser.add_argument("--workers", type=int, default=DEFAULT_GUARD_WORKERS)
     parser.add_argument("--hf-cache-dir", default=DEFAULT_HF_CACHE_DIR)
     return parser
 
@@ -749,9 +949,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Export the immutable nine-source joint catalog and return a process exit code."""
     parser = _parser()
     args = parser.parse_args(argv)
+    phase_started_at = time.monotonic()
     try:
         if args.seed != JOINT_PROBE_SEED:
             raise ValueError(f"Production joint probes require seed {JOINT_PROBE_SEED}")
+        workers = _validate_workers(args.workers)
+        _emit_progress(
+            _stderr_progress,
+            event="phase_start",
+            started_at=phase_started_at,
+            sources_total=len(JOINT_SOURCE_NAMES),
+            workers=workers,
+        )
         tokenizer, token_ids = load_pinned_vision_alignment_tokenizer(
             identifier=VISION_ALIGNMENT_TOKENIZER_ID,
             revision=VISION_ALIGNMENT_TOKENIZER_REVISION,
@@ -816,49 +1025,28 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     prefix=f".{output_dir.name}.", suffix=".building", dir=output_dir.parent
                 )
             )
-            native_dataset: Optional[NativeTextReplayDataset] = None
             for source_name in JOINT_SOURCE_NAMES:
-                if source_name == "native_text_replay":
-                    native_dataset = NativeTextReplayDataset(
-                        native_path,
-                        expected_fingerprint=native_manifest.content_fingerprint,
-                        verification_receipt_path=receipt_path,
-                        expected_verification_receipt_sha256=receipt.receipt_sha256,
-                    )
-                    native_dataset.validate_tokenizer(tokenizer)
-                    entry = export_source_probe(
-                        native_dataset,
-                        source_name=source_name,
-                        kind="native_text_replay",
-                        output_path=staging_dir / f"{source_name}.jsonl",
-                        unique_indices=JOINT_NATIVE_PROBE_INDICES,
-                        epochs=JOINT_NATIVE_PROBE_EPOCHS,
-                        seed=args.seed,
-                        token_ids=token_ids,
-                    )
-                else:
-                    selected = build_selected_joint_dataset(
-                        projection,
-                        tokenizer,
-                        token_ids,
-                        source_name,
-                        logical_split="train",
-                        validate_required_annotations=False,
-                    )
-                    unbounded = _build_unbounded_visual_dataset(
-                        projection, tokenizer, token_ids, source_name
-                    )
-                    entry = export_source_probe(
-                        selected,
-                        source_name=source_name,
-                        kind="visual",
-                        output_path=staging_dir / f"{source_name}.jsonl",
-                        unique_indices=JOINT_VISUAL_PROBE_INDICES,
-                        epochs=JOINT_VISUAL_PROBE_EPOCHS,
-                        seed=args.seed,
-                        unbounded_dataset=unbounded,
-                        token_ids=token_ids,
-                    )
+                _emit_progress(
+                    _stderr_progress,
+                    event="source_prepare_start",
+                    started_at=phase_started_at,
+                    source_name=source_name,
+                    workers=workers,
+                )
+                entry = _export_catalog_source(
+                    source_name=source_name,
+                    projection=projection,
+                    native_manifest=native_manifest,
+                    receipt=receipt,
+                    native_path=native_path,
+                    receipt_path=receipt_path,
+                    tokenizer=tokenizer,
+                    token_ids=token_ids,
+                    output_path=staging_dir / f"{source_name}.jsonl",
+                    seed=args.seed,
+                    workers=workers,
+                    progress=_stderr_progress,
+                )
                 entries.append(entry)
             catalog = build_probe_catalog(
                 projection=projection,
@@ -872,6 +1060,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             catalog_path = staging_dir / CATALOG_NAME
             _write_once(catalog_path, catalog)
             native_entry = next(entry for entry in entries if entry["name"] == "native_text_replay")
+            _emit_progress(
+                _stderr_progress,
+                event="closing_validation_start",
+                started_at=phase_started_at,
+                workers=workers,
+            )
             _closing_validate_inputs(
                 projection=projection,
                 native_manifest=native_manifest,
@@ -894,6 +1088,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             _publish_no_replace(staging_dir, output_dir)
             _fsync_directory(output_dir.parent)
             catalog_path = output_dir / CATALOG_NAME
+            _emit_progress(
+                _stderr_progress,
+                event="phase_complete",
+                started_at=phase_started_at,
+                sources_completed=len(entries),
+                workers=workers,
+            )
         except BaseException:
             if staging_dir is not None:
                 shutil.rmtree(staging_dir, ignore_errors=True)

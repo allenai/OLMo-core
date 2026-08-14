@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -169,6 +171,135 @@ def test_visual_export_proves_unbounded_parity_and_rehashes_images(tmp_path, mon
     assert selected.annotation_validations == 1
 
 
+def test_parallel_visual_export_is_byte_identical_under_out_of_order_completion(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(exporter, "JOINT_SEQUENCE_LENGTH", 8)
+    raw = _RawDataset(8, rows=8)
+    selected = _SelectedDataset(raw, source_name="pixmo_caption")
+    serial_path = tmp_path / "serial" / "pixmo_caption.jsonl"
+    parallel_path = tmp_path / "parallel" / "pixmo_caption.jsonl"
+    serial_entry = exporter.export_source_probe(
+        selected,
+        source_name="pixmo_caption",
+        kind="visual",
+        output_path=serial_path,
+        unique_indices=4,
+        epochs=(0, 1),
+        seed=13,
+        unbounded_dataset=raw,
+        token_ids=_TEST_TOKEN_IDS,
+        workers=1,
+    )
+
+    first_pair = (serial_entry["probe_indices"][0], 0)
+    release_first = threading.Event()
+    lock = threading.Lock()
+    completion_order = []
+    active = 0
+    maximum_active = 0
+    original = exporter._live_probe_record
+
+    def adversarial_completion(*args, **kwargs):
+        nonlocal active, maximum_active
+        pair = (kwargs["dataset_index"], kwargs["epoch"])
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        try:
+            if pair == first_pair:
+                if not release_first.wait(timeout=2):
+                    raise AssertionError("parallel exporter did not overlap independent rows")
+            result = original(*args, **kwargs)
+            if pair != first_pair:
+                release_first.set()
+            with lock:
+                completion_order.append(pair)
+            return result
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(exporter, "_live_probe_record", adversarial_completion)
+    progress = []
+    parallel_entry = exporter.export_source_probe(
+        selected,
+        source_name="pixmo_caption",
+        kind="visual",
+        output_path=parallel_path,
+        unique_indices=4,
+        epochs=(0, 1),
+        seed=13,
+        unbounded_dataset=raw,
+        token_ids=_TEST_TOKEN_IDS,
+        workers=3,
+        progress=progress.append,
+    )
+
+    assert completion_order[0] != first_pair
+    assert 2 <= maximum_active <= 3
+    assert parallel_path.read_bytes() == serial_path.read_bytes()
+    assert parallel_entry == serial_entry
+    assert [event["event"] for event in progress] == [
+        "source_start",
+        "source_progress",
+        "source_complete",
+    ]
+    assert all(event["phase"] == "joint_probe_export" for event in progress)
+    assert all(isinstance(event["elapsed_seconds"], float) for event in progress)
+
+
+def test_parallel_export_is_quiescent_before_row_failure_returns(tmp_path, monkeypatch):
+    monkeypatch.setattr(exporter, "JOINT_SEQUENCE_LENGTH", 8)
+    native = _NativeDataset(8, rows=8)
+    indices = exporter.select_deterministic_probe_indices(
+        len(native),
+        4,
+        seed=13,
+        dataset_fingerprint=native.content_fingerprint,
+    )
+    first_pair = (indices[0], 0)
+    another_worker_started = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    original = exporter._live_probe_record
+
+    def fail_with_slow_in_flight_work(*args, **kwargs):
+        nonlocal active
+        pair = (kwargs["dataset_index"], kwargs["epoch"])
+        with lock:
+            active += 1
+        try:
+            if pair == first_pair:
+                if not another_worker_started.wait(timeout=2):
+                    raise AssertionError("parallel exporter did not start another worker")
+                raise ValueError("synthetic row failure")
+            another_worker_started.set()
+            time.sleep(0.05)
+            return original(*args, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(exporter, "_live_probe_record", fail_with_slow_in_flight_work)
+    output = tmp_path / "native_text_replay.jsonl"
+    with pytest.raises(ValueError, match="synthetic row failure"):
+        exporter.export_source_probe(
+            native,
+            source_name="native_text_replay",
+            kind="native_text_replay",
+            output_path=output,
+            unique_indices=4,
+            epochs=(0,),
+            seed=13,
+            token_ids=_TEST_TOKEN_IDS,
+            workers=3,
+        )
+
+    assert active == 0
+    assert not output.exists()
+
+
 def test_visual_export_allows_global_plus_eight_tiles_and_rejects_tenth(tmp_path, monkeypatch):
     monkeypatch.setattr(exporter, "JOINT_SEQUENCE_LENGTH", 8)
     raw = _RawDataset(8)
@@ -257,6 +388,7 @@ def test_visual_export_rejects_selected_unbounded_serialization_drift(tmp_path, 
             seed=13,
             unbounded_dataset=raw,
             token_ids=_TEST_TOKEN_IDS,
+            workers=4,
         )
 
 

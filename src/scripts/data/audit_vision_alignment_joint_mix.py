@@ -17,9 +17,22 @@ import os
 import re
 import sys
 import tempfile
+import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    Iterable,
+    Iterator,
+    Mapping,
+    Optional,
+    Sequence,
+)
 
 from olmo_core.data.multimodal.mixtures.vision_alignment import (
     VisionAlignmentMixtureConfig,
@@ -79,9 +92,14 @@ JOINT_NATIVE_PROBE_EPOCHS = (0,)
 JOINT_SEQUENCE_LENGTH = 8192
 UNBOUNDED_SEQUENCE_LENGTH = JOINT_VISUAL_UNBOUNDED_SEQUENCE_LENGTH
 DEFAULT_HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
+DEFAULT_GUARD_WORKERS = 4
+MAX_GUARD_WORKERS = 16
+PROGRESS_INTERVAL_ROWS = 128
 EXPORTER_IMPLEMENTATION_PATH = "src/scripts/data/export_vision_alignment_joint_probe.py"
 AUDITOR_IMPLEMENTATION_PATH = "src/scripts/data/audit_vision_alignment_joint_mix.py"
 JOINT_SOURCE_NAMES = tuple(sorted((*JOINT_VISUAL_SOURCE_NAMES, "native_text_replay")))
+
+ProgressCallback = Callable[[Mapping[str, Any]], None]
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _ROOT_FIELDS = frozenset(
@@ -148,6 +166,45 @@ class _RuntimeProbeSource:
     dataset: Any
     unbounded_dataset: Optional[Any]
     token_ids: Molmo2TokenIds
+
+
+def _validate_workers(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_GUARD_WORKERS:
+        raise ValueError(f"workers must be an integer in [1, {MAX_GUARD_WORKERS}]")
+    return value
+
+
+def _emit_progress(
+    callback: Optional[ProgressCallback],
+    *,
+    event: str,
+    started_at: float,
+    source_name: Optional[str] = None,
+    **fields: Any,
+) -> None:
+    if callback is None:
+        return
+    payload: Dict[str, Any] = {
+        "phase": "joint_mix_audit",
+        "event": event,
+        "elapsed_seconds": round(time.monotonic() - started_at, 3),
+    }
+    if source_name is not None:
+        payload["source"] = source_name
+    payload.update(fields)
+    try:
+        callback(payload)
+    except Exception:
+        # Telemetry must never alter immutable evidence or audit behavior.
+        pass
+
+
+def _stderr_progress(payload: Mapping[str, Any]) -> None:
+    try:
+        print(json.dumps(payload, sort_keys=True), file=sys.stderr, flush=True)
+    except OSError:
+        # Progress is operational telemetry, never part of the immutable audit bytes.
+        pass
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -405,6 +462,54 @@ def _live_probe_record(
     return record
 
 
+def _ordered_live_records(
+    runtime: _RuntimeProbeSource,
+    *,
+    source_name: str,
+    kind: str,
+    work_items: Iterable[tuple[int, int]],
+    workers: int,
+) -> Generator[Dict[str, Any], None, None]:
+    """Rebuild independent rows concurrently and yield exact catalog order."""
+
+    def build(item: tuple[int, int]) -> Dict[str, Any]:
+        dataset_index, epoch = item
+        return _live_probe_record(
+            runtime,
+            source_name=source_name,
+            kind=kind,
+            dataset_index=dataset_index,
+            epoch=epoch,
+        )
+
+    if workers == 1:
+        yield from map(build, work_items)
+        return
+
+    # Ordered yielding preserves floating-point accumulation and report bytes exactly. Waiting
+    # during shutdown ensures no runtime source can remain active past an audit failure boundary.
+    items = iter(work_items)
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="joint-mix-audit")
+    futures: deque[Future[Dict[str, Any]]] = deque()
+    try:
+        for _ in range(workers):
+            try:
+                futures.append(executor.submit(build, next(items)))
+            except StopIteration:
+                break
+        while futures:
+            result = futures.popleft().result()
+            try:
+                futures.append(executor.submit(build, next(items)))
+            except StopIteration:
+                pass
+            yield result
+    finally:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
 def _build_unbounded_visual_dataset(
     projection: JointVisualProjectionManifest,
     tokenizer: Any,
@@ -441,6 +546,60 @@ def _build_unbounded_visual_dataset(
     return dataset
 
 
+class _LazyRuntimeProbeSources(Mapping[str, _RuntimeProbeSource]):
+    """Build one runtime source per lookup without retaining earlier heavy adapters."""
+
+    def __init__(
+        self,
+        projection: JointVisualProjectionManifest,
+        native_manifest: NativeTextReplayManifest,
+        receipt: NativeTextReplayVerificationReceipt,
+        *,
+        tokenizer: Any,
+        token_ids: Molmo2TokenIds,
+    ):
+        self.projection = projection
+        self.native_manifest = native_manifest
+        self.receipt = receipt
+        self.tokenizer = tokenizer
+        self.token_ids = token_ids
+
+    def __len__(self) -> int:
+        return len(JOINT_SOURCE_NAMES)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(JOINT_SOURCE_NAMES)
+
+    def __getitem__(self, source_name: str) -> _RuntimeProbeSource:
+        if source_name not in JOINT_SOURCE_NAMES:
+            raise KeyError(source_name)
+        if source_name == "native_text_replay":
+            native = NativeTextReplayDataset(
+                self.native_manifest.path,
+                expected_fingerprint=self.native_manifest.content_fingerprint,
+                verification_receipt_path=self.receipt.path,
+                expected_verification_receipt_sha256=self.receipt.receipt_sha256,
+            )
+            native.validate_tokenizer(self.tokenizer)
+            return _RuntimeProbeSource(native, None, self.token_ids)
+
+        selected = build_selected_joint_dataset(
+            self.projection,
+            self.tokenizer,
+            self.token_ids,
+            source_name,
+            logical_split="train",
+            validate_required_annotations=False,
+        )
+        unbounded = _build_unbounded_visual_dataset(
+            self.projection,
+            self.tokenizer,
+            self.token_ids,
+            source_name,
+        )
+        return _RuntimeProbeSource(selected, unbounded, self.token_ids)
+
+
 def _build_runtime_sources(
     projection: JointVisualProjectionManifest,
     native_manifest: NativeTextReplayManifest,
@@ -456,34 +615,13 @@ def _build_runtime_sources(
         or parent_spec.tokenizer_fingerprint != VISION_ALIGNMENT_TOKENIZER_FINGERPRINT
     ):
         raise ValueError("Joint visual projection does not bind the pinned runtime tokenizer")
-    sources: Dict[str, _RuntimeProbeSource] = {}
-    for source_name in JOINT_VISUAL_SOURCE_NAMES:
-        selected = build_selected_joint_dataset(
-            projection,
-            tokenizer,
-            token_ids,
-            source_name,
-            logical_split="train",
-            validate_required_annotations=False,
-        )
-        sources[source_name] = _RuntimeProbeSource(
-            dataset=selected,
-            unbounded_dataset=_build_unbounded_visual_dataset(
-                projection, tokenizer, token_ids, source_name
-            ),
-            token_ids=token_ids,
-        )
-    native = NativeTextReplayDataset(
-        native_manifest.path,
-        expected_fingerprint=native_manifest.content_fingerprint,
-        verification_receipt_path=receipt.path,
-        expected_verification_receipt_sha256=receipt.receipt_sha256,
+    return _LazyRuntimeProbeSources(
+        projection,
+        native_manifest,
+        receipt,
+        tokenizer=tokenizer,
+        token_ids=token_ids,
     )
-    native.validate_tokenizer(tokenizer)
-    sources["native_text_replay"] = _RuntimeProbeSource(native, None, token_ids)
-    if tuple(sorted(sources)) != JOINT_SOURCE_NAMES:
-        raise ValueError("Rebuilt joint runtime source set differs")
-    return sources
 
 
 def _load_native_manifest(path: Path) -> NativeTextReplayManifest:
@@ -573,8 +711,28 @@ def audit_joint_catalog(
     *,
     expected_catalog_sha256: Optional[str] = None,
     hf_cache_dir: str = DEFAULT_HF_CACHE_DIR,
+    workers: int = 1,
+    progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
-    """Audit a strict joint catalog and return its canonical version-1 report."""
+    """Audit a strict joint catalog and return its canonical version-1 report.
+
+    :param path: Exact catalog path.
+    :param expected_catalog_sha256: Optional external raw-byte catalog pin.
+    :param hf_cache_dir: Pinned-tokenizer cache directory.
+    :param workers: Bounded row-rebuild concurrency. Reduction always follows catalog order.
+    :param progress: Optional structured timing callback excluded from report evidence.
+    :returns: Canonical version-1 audit report.
+    :raises ValueError: If any catalog, runtime, row, image, or implementation evidence differs.
+    """
+    workers = _validate_workers(workers)
+    audit_started_at = time.monotonic()
+    _emit_progress(
+        progress,
+        event="phase_start",
+        started_at=audit_started_at,
+        sources_total=len(JOINT_SOURCE_NAMES),
+        workers=workers,
+    )
     catalog_path = Path(path).expanduser().resolve()
     catalog_raw, catalog = _load_catalog(catalog_path)
     catalog_sha256 = hashlib.sha256(catalog_raw).hexdigest()
@@ -730,6 +888,7 @@ def audit_joint_catalog(
     pinned_probe_bytes: Dict[Path, bytes] = {}
     for ordinal, raw_source in enumerate(raw_sources):
         source_name = JOINT_SOURCE_NAMES[ordinal]
+        source_started_at = time.monotonic()
         source = _exact_mapping(raw_source, _SOURCE_FIELDS, name=f"catalog.sources[{ordinal}]")
         kind = "native_text_replay" if source_name == "native_text_replay" else "visual"
         if (
@@ -739,6 +898,24 @@ def audit_joint_catalog(
             or source["path"] != f"{source_name}.jsonl"
         ):
             raise ValueError(f"Joint source {source_name!r} catalog identity differs")
+        expected_epochs = (
+            JOINT_NATIVE_PROBE_EPOCHS if kind == "native_text_replay" else JOINT_VISUAL_PROBE_EPOCHS
+        )
+        expected_unique = (
+            JOINT_NATIVE_PROBE_INDICES
+            if kind == "native_text_replay"
+            else JOINT_VISUAL_PROBE_INDICES
+        )
+        rows_total = expected_unique * len(expected_epochs)
+        _emit_progress(
+            progress,
+            event="source_start",
+            started_at=source_started_at,
+            source_name=source_name,
+            rows_completed=0,
+            rows_total=rows_total,
+            workers=workers,
+        )
         runtime = runtime_sources[source_name]
         dataset = runtime.dataset
         fingerprint = runtime_dataset_fingerprint(dataset)
@@ -750,14 +927,6 @@ def audit_joint_catalog(
             != len(dataset)
         ):
             raise ValueError(f"Joint source {source_name!r} runtime identity differs")
-        expected_epochs = (
-            JOINT_NATIVE_PROBE_EPOCHS if kind == "native_text_replay" else JOINT_VISUAL_PROBE_EPOCHS
-        )
-        expected_unique = (
-            JOINT_NATIVE_PROBE_INDICES
-            if kind == "native_text_replay"
-            else JOINT_VISUAL_PROBE_INDICES
-        )
         raw_epochs = source["probe_epochs"]
         if (
             not isinstance(raw_epochs, list)
@@ -808,33 +977,47 @@ def audit_joint_catalog(
         accumulator = shared_audit.SourceAccumulator()
         row_hashes = []
         maximum_length = 0
-        for row_ordinal, ((dataset_index, epoch), stored_record) in enumerate(
-            zip(expected_pairs, records)
-        ):
-            validate_joint_probe_record(
-                stored_record,
-                source_name=source_name,
-                source_kind=kind,
-                expected_index=dataset_index,
-                expected_epoch=epoch,
-                sequence_length=JOINT_SEQUENCE_LENGTH,
-                token_ids=runtime.token_ids,
-            )
-            live_record = _live_probe_record(
-                runtime,
-                source_name=source_name,
-                kind=kind,
-                dataset_index=dataset_index,
-                epoch=epoch,
-            )
-            if _canonical_bytes(stored_record) != _canonical_bytes(live_record):
-                raise ValueError(
-                    f"Joint source {source_name!r} serialized row drifted at ordinal "
-                    f"{row_ordinal}"
+        live_records = _ordered_live_records(
+            runtime,
+            source_name=source_name,
+            kind=kind,
+            work_items=expected_pairs,
+            workers=workers,
+        )
+        try:
+            for row_ordinal, ((dataset_index, epoch), stored_record, live_record) in enumerate(
+                zip(expected_pairs, records, live_records),
+                start=1,
+            ):
+                validate_joint_probe_record(
+                    stored_record,
+                    source_name=source_name,
+                    source_kind=kind,
+                    expected_index=dataset_index,
+                    expected_epoch=epoch,
+                    sequence_length=JOINT_SEQUENCE_LENGTH,
+                    token_ids=runtime.token_ids,
                 )
-            row_hashes.append(live_record["serialized_row_sha256"])
-            maximum_length = max(maximum_length, int(live_record["raw_sequence_length"]))
-            accumulator.add_example(live_record)
+                if _canonical_bytes(stored_record) != _canonical_bytes(live_record):
+                    raise ValueError(
+                        f"Joint source {source_name!r} serialized row drifted at ordinal "
+                        f"{row_ordinal - 1}"
+                    )
+                row_hashes.append(live_record["serialized_row_sha256"])
+                maximum_length = max(maximum_length, int(live_record["raw_sequence_length"]))
+                accumulator.add_example(live_record)
+                if row_ordinal % PROGRESS_INTERVAL_ROWS == 0 or row_ordinal == len(expected_pairs):
+                    _emit_progress(
+                        progress,
+                        event="source_progress",
+                        started_at=source_started_at,
+                        source_name=source_name,
+                        rows_completed=row_ordinal,
+                        rows_total=len(expected_pairs),
+                        workers=workers,
+                    )
+        finally:
+            live_records.close()
         declared_row_hashes = _sha256(
             source["serialized_row_hashes_sha256"],
             name=f"{source_name}.serialized_row_hashes_sha256",
@@ -887,6 +1070,18 @@ def audit_joint_catalog(
                 "truncated_rows": 0,
             }
         )
+        _emit_progress(
+            progress,
+            event="source_complete",
+            started_at=source_started_at,
+            source_name=source_name,
+            rows_completed=len(expected_pairs),
+            rows_total=len(expected_pairs),
+            workers=workers,
+        )
+        # The production runtime mapping is lazy; dropping these locals releases both the
+        # selected and unbounded adapters before the next source is constructed.
+        del dataset, live_records, records, runtime
 
     sampling_probabilities = None
     expected_mass = None
@@ -941,6 +1136,12 @@ def audit_joint_catalog(
     # Keep the launcher-facing audit identity consistent with the established bridge and
     # perception contracts: ``fingerprint`` hashes the entire unsigned canonical report.
     report["fingerprint"] = _canonical_sha256(report)
+    _emit_progress(
+        progress,
+        event="closing_validation_start",
+        started_at=audit_started_at,
+        workers=workers,
+    )
     _closing_validate_inputs(
         projection=projection,
         native_manifest=native_manifest,
@@ -961,6 +1162,13 @@ def audit_joint_catalog(
         or any(source_path.read_bytes() != raw for source_path, raw in pinned_probe_bytes.items())
     ):
         raise ValueError("Joint audit input or implementation changed during audit")
+    _emit_progress(
+        progress,
+        event="phase_complete",
+        started_at=audit_started_at,
+        sources_completed=len(source_reports),
+        workers=workers,
+    )
     return report
 
 
@@ -994,6 +1202,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("catalog")
     parser.add_argument("--expected-catalog-sha256", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--workers", type=int, default=DEFAULT_GUARD_WORKERS)
     parser.add_argument("--hf-cache-dir", default=DEFAULT_HF_CACHE_DIR)
     return parser
 
@@ -1007,6 +1216,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.catalog,
             expected_catalog_sha256=args.expected_catalog_sha256,
             hf_cache_dir=args.hf_cache_dir,
+            workers=args.workers,
+            progress=_stderr_progress,
         )
         _write_once(Path(args.output), report)
     except (FileExistsError, OLMoConfigurationError, OSError, ValueError) as error:

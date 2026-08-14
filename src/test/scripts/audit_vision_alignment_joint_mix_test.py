@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
+import threading
+import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -375,6 +379,77 @@ def test_audit_rebuilds_exact_nine_sources_and_calibrates_joint_targets(tmp_path
     assert fingerprint == _canonical_sha256(unsigned)
 
 
+def test_parallel_audit_report_is_byte_identical_to_serial(tmp_path, monkeypatch):
+    fixture = _build_fixture(tmp_path, monkeypatch)
+    serial = auditor.audit_joint_catalog(fixture.catalog_path, workers=1)
+    progress = []
+    parallel = auditor.audit_joint_catalog(
+        fixture.catalog_path,
+        workers=4,
+        progress=progress.append,
+    )
+
+    assert _canonical_bytes(parallel) == _canonical_bytes(serial)
+    assert progress[0]["event"] == "phase_start"
+    assert progress[-1]["event"] == "phase_complete"
+    assert [event["source"] for event in progress if event["event"] == "source_complete"] == list(
+        auditor.JOINT_SOURCE_NAMES
+    )
+    assert all(event["phase"] == "joint_mix_audit" for event in progress)
+    assert all(isinstance(event["elapsed_seconds"], float) for event in progress)
+
+
+def test_runtime_sources_are_built_lazily_and_released_per_source(monkeypatch):
+    parent_spec = SimpleNamespace(
+        tokenizer_id=auditor.VISION_ALIGNMENT_TOKENIZER_ID,
+        tokenizer_revision=auditor.VISION_ALIGNMENT_TOKENIZER_REVISION,
+        tokenizer_fingerprint=auditor.VISION_ALIGNMENT_TOKENIZER_FINGERPRINT,
+    )
+    projection = SimpleNamespace(source_spec=SimpleNamespace(perception_spec=parent_spec))
+    native_manifest = SimpleNamespace()
+    receipt = SimpleNamespace()
+    built = []
+    references = []
+
+    class RuntimeDataset:
+        pass
+
+    def new_dataset(label):
+        dataset = RuntimeDataset()
+        built.append(label)
+        references.append(weakref.ref(dataset))
+        return dataset
+
+    monkeypatch.setattr(
+        auditor,
+        "build_selected_joint_dataset",
+        lambda *_args, **kwargs: new_dataset(f"selected:{kwargs['logical_split']}"),
+    )
+    monkeypatch.setattr(
+        auditor,
+        "_build_unbounded_visual_dataset",
+        lambda _projection, _tokenizer, _token_ids, source_name: new_dataset(
+            f"unbounded:{source_name}"
+        ),
+    )
+    sources = auditor._build_runtime_sources(
+        projection,
+        native_manifest,
+        receipt,
+        tokenizer=object(),
+        token_ids=_TEST_TOKEN_IDS,
+    )
+
+    assert tuple(sorted(sources)) == auditor.JOINT_SOURCE_NAMES
+    assert built == []
+    runtime = sources["pixmo_caption"]
+    assert built == ["selected:train", "unbounded:pixmo_caption"]
+    assert all(reference() is not None for reference in references)
+    del runtime
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
 def test_audit_calibration_uses_zero_relative_tolerance(tmp_path, monkeypatch):
     fixture = _build_fixture(tmp_path, monkeypatch)
     real_isclose = auditor.math.isclose
@@ -544,9 +619,41 @@ def test_auditor_fresh_native_evidence_rechecks_size_and_source_stats(tmp_path, 
 def test_audit_rejects_live_serialized_row_drift(tmp_path, monkeypatch):
     fixture = _build_fixture(tmp_path, monkeypatch)
     fixture.native_dataset.drift = True
+    native_source = next(
+        source
+        for source in json.loads(fixture.catalog_path.read_text())["sources"]
+        if source["name"] == "native_text_replay"
+    )
+    first_pair = (native_source["probe_indices"][0], 0)
+    another_worker_started = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    original = auditor._live_probe_record
+
+    def slow_parallel_native(runtime, **kwargs):
+        nonlocal active
+        if kwargs["source_name"] != "native_text_replay":
+            return original(runtime, **kwargs)
+        pair = (kwargs["dataset_index"], kwargs["epoch"])
+        with lock:
+            active += 1
+        try:
+            if pair == first_pair:
+                if not another_worker_started.wait(timeout=2):
+                    raise AssertionError("parallel auditor did not start another worker")
+            else:
+                another_worker_started.set()
+                time.sleep(0.05)
+            return original(runtime, **kwargs)
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(auditor, "_live_probe_record", slow_parallel_native)
 
     with pytest.raises(ValueError, match="serialized row drifted"):
-        auditor.audit_joint_catalog(fixture.catalog_path)
+        auditor.audit_joint_catalog(fixture.catalog_path, workers=4)
+    assert active == 0
 
 
 def test_audit_rejects_live_visual_truncation(tmp_path, monkeypatch):
