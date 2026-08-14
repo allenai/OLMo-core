@@ -52,8 +52,19 @@ TASK_SELECTORS: Dict[str, Dict[str, object]] = {
         "include": ["msmarco_helmet_rerank_train_"],
         "exclude": [],
     },
-    "outlier": {"manifest_task": "outlier", "include": ["_train"], "exclude": []},
-    "oolong": {"manifest_task": "oolong", "include": ["_train"], "exclude": []},
+    # `include` is empty for these two: the manifest's own `split` column already selects train,
+    # and an extra "_train" substring filter is both redundant and wrong -- oolong's files are
+    # named `..._splittrain.jsonl`, which does not contain "_train", so the filter silently
+    # selected nothing and the guard had to catch it.
+    "outlier": {"manifest_task": "outlier", "include": [], "exclude": []},
+    "oolong": {
+        "manifest_task": "oolong",
+        "include": [],
+        # ctx65536 documents cannot fit the 32k SFT window, so every one would be dropped by the
+        # packer after being tokenized. Excluding them saves the conversion rather than changing
+        # the mixture.
+        "exclude": ["ctx65536"],
+    },
 }
 
 HELD_OUT = ["beir_scifact", "beir_fiqa", "redundancy_"]
