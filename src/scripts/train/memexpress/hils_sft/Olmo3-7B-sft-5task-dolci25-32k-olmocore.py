@@ -72,9 +72,12 @@ BASE_CHECKPOINT = "/weka/oe-training-default/amandab/olmo3-7b-base-olmocore/mode
 
 DP_DEGREE = 8
 GLOBAL_BATCH_SIZE = DP_DEGREE * SEQUENCE_LENGTH  # tokens per optimizer step
-#: Set from the pack manifest's `windows` count once the pack is built; None refuses to launch
-#: rather than guess a budget, which would silently rescale the comparison.
-PACK_WINDOWS: int | None = None
+#: From the pack manifest's `windows` count. Built 2026-08-14, Beaker 01M00TBDC1CB43P5FT9HZJAF8X:
+#: 24,849 windows x 32768 = 814,252,032 window-token slots at 86.0% packing efficiency = 700M
+#: content tokens, the requested budget. Realized shares matched targets to 3 decimals on all six
+#: sources. None here refuses to launch rather than guess, which would rescale this arm against the
+#: veomni arms it is controlled against.
+PACK_WINDOWS: int | None = 24849
 
 
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
