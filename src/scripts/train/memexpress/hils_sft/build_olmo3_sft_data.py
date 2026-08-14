@@ -21,6 +21,7 @@ Run on a weka-mounted CPU gantry node.
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -146,6 +147,49 @@ def _is_p10(filename: str) -> bool:
     return k_n > 0 and hn_n / k_n <= P10_MAX_RATIO
 
 
+def _prepare(row: dict, task: str, args) -> str:
+    """
+    Return the JSONL path to feed the converter, normalizing the schema first when needed.
+
+    rerank's HELMET train files are ``{qid, query, ctxs:[...]}`` while ``build_prompt`` expects
+    ``{documents, queries, gold_doc_indices}``. Without this, EVERY rerank row fails with
+    ``KeyError: 'documents'`` and the converter writes zero instances **while exiting 0** -- the
+    mixture then trains with rerank silently absent (observed: 8000/8000 rows skipped, job green).
+
+    :returns: Either the original path or a normalized copy under ``--out-root/_normalized``.
+    """
+    src = os.path.join(args.data_dir, row["file"])
+    if task != "rerank":
+        return src
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data"))
+    from build_combined_suite_jsonl import normalize_example  # type: ignore[import-not-found]
+
+    dest_dir = os.path.join(args.out_root, "_normalized")
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, row["file"])
+    if os.path.exists(dest):
+        return dest
+    n = 0
+    with open(src) as fin, open(dest, "w") as fout:
+        for line in fin:
+            line = line.strip()
+            if not line:
+                continue
+            ex = normalize_example(json.loads(line), task)
+            fout.write(json.dumps(ex) + "\n")
+            n += 1
+    print(f"    normalized {row['file']}: {n} rows -> {dest}", flush=True)
+    return dest
+
+
+def _instances_written(out_dir: str) -> int:
+    """Count instances actually on disk, to catch a converter that wrote nothing but exited 0."""
+    import glob as _glob
+
+    return len(_glob.glob(os.path.join(out_dir, "token_ids_part_*.npy")))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--data-dir", required=True, help="cr_suite_data (manifest + JSONL)")
@@ -172,11 +216,12 @@ def main() -> int:
     converter = "src/scripts/data/convert_unified_to_sft.py"
     for task, files in plan.items():
         out_dir = os.path.join(args.out_root, task)
+        files = [dict(r, path=_prepare(r, task, args)) for r in files]
         # One converter invocation per cot_mode: the mode changes the target format, and mixing two
         # formats under one task would teach the model two different answers to the same prompt.
         by_mode: Dict[str, List[str]] = {}
         for r in files:
-            by_mode.setdefault(r["cot_mode"], []).append(os.path.join(args.data_dir, r["file"]))
+            by_mode.setdefault(r["cot_mode"], []).append(r["path"])
         for mode, paths in by_mode.items():
             dest = out_dir if len(by_mode) == 1 else f"{out_dir}_{mode}"
             cmd = [
@@ -200,6 +245,14 @@ def main() -> int:
             if rc != 0:
                 print(f"FAILED [{task}/{mode}] rc={rc}")
                 return rc
+            # rc==0 is NOT success: the converter exits 0 after skipping every row (a schema
+            # mismatch skips per-row and only warns). A task that wrote no shards would leave the
+            # mixture missing that task while the whole build looked green.
+            if _instances_written(dest) == 0:
+                print(f"FAILED [{task}/{mode}] converter exited 0 but wrote NO shards to {dest} -- "
+                      f"every row was skipped (check the build_prompt warnings above for a schema "
+                      f"mismatch).")
+                return 3
     print("\nAll tasks converted.")
     return 0
 
