@@ -82,7 +82,17 @@ def _train_module(masked_dropout: float, response_logits_only: bool):
         compile_model=False,
         response_logits_only=response_logits_only,
     )
-    train_module = config.build(_model_config(masked_dropout).build(init_device="cpu"))
+    model = _model_config(masked_dropout).build(init_device="cpu")
+    # `build` allocates parameters without filling them, and `MultimodalLM` has no single
+    # `init_weights` — the training script initialises the three components separately (LM and
+    # ViT from pretrained checkpoints, connector randomly). Skipping this leaves the model running
+    # on whatever was in memory, which produced NaN logits in roughly half of all runs.
+    # `device` defaults to the default device, which is CUDA wherever a GPU is visible; this test
+    # is CPU-only, so pin it.
+    model.lm.init_weights(max_seq_len=SEQ_LEN, device=torch.device("cpu"))
+    model.vision.reset_parameters()
+    model.connector.reset_parameters()
+    train_module = config.build(model)
     train_module._trainer = _StubTrainer()  # type: ignore[assignment]
     return train_module
 
