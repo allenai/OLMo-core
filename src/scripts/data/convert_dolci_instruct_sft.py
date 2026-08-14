@@ -251,6 +251,15 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--tokenizer", default=DEFAULT_TOKENIZER)
     parser.add_argument(
+        "--chat-template",
+        default=None,
+        help="Jinja chat-template FILE to attach to the tokenizer before rendering. Required for "
+        "BASE-model vocabularies, whose tokenizers ship no template (Olmo-3-1025-7B and "
+        "HiLS-Attention-7B both lack one) -- apply_chat_template otherwise raises. Pass the SAME "
+        "file used for the task shards and by the eval harness, or the two halves of the mixture "
+        "are rendered by different templates.",
+    )
+    parser.add_argument(
         "--eos-token-id",
         type=int,
         default=DEFAULT_EOS_TOKEN_ID,
@@ -294,6 +303,15 @@ def main() -> None:
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    if args.chat_template:
+        with open(args.chat_template) as fh:
+            tok.chat_template = fh.read()
+        log.info(f"attached chat template from {args.chat_template}")
+    if not getattr(tok, "chat_template", None):
+        raise SystemExit(
+            f"{args.tokenizer} has no chat_template, so Dolci's conversations cannot be rendered. "
+            f"Pass --chat-template <file.jinja> -- the same one used for the task shards."
+        )
     assert tok.vocab_size <= np.iinfo(TOKEN_DTYPE).max
     if getattr(tok, "eos_token_id", None) not in (None, EOS_TOKEN_ID):
         log.warning(
