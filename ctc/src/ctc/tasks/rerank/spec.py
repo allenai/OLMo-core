@@ -85,6 +85,22 @@ def _ce_top_k(example: Dict, k: int) -> List[int]:
     return [i + 1 for i in ranked[:k]]
 
 
+def _ce_pos_ref(example: Dict, k: int) -> List[int]:
+    """The graded reference set: document ids (1-based) with ``CE > 0``, capped at the ``k``
+    highest so the metric ceiling stays exactly 1.0 for a ``k``-slot answer.
+
+    Measured on the token-accurate ladder (100 examples/rung, 2k and 32k): median 3 docs/example
+    have CE > 0, p90 5, and there is essentially nothing in (-5, 0] -- relevance is bimodal. That
+    is why the reference is the CE-POSITIVE set and not the CE-top-10: ranks 4-10 of the top-10
+    are ordering noise among ~-11 CE docs that no model could reproduce, which put a ~0.5 luck
+    ceiling on the top-10-recall variant this metric replaces (2026-08-14, measured before the
+    first repriced number was ever produced)."""
+    ce = example.get("ce_scores") or []
+    pos = sorted((i for i, v in enumerate(ce) if v is not None and v > 0),
+                 key=lambda i: ce[i], reverse=True)
+    return [i + 1 for i in pos[:k]]
+
+
 def build_target(example: Dict) -> str:
     """
     :param example: A unified-format example.
@@ -131,13 +147,14 @@ def score(parsed: Optional[List[int]], gold, k: int = TOP_K) -> Dict[str, float]
         indices from a legacy caller.
     :param k: Cutoff for every @k metric.
 
-    :returns: ``ce_top10_recall`` (primary -- fraction of the CE-top-10 documents present in the
-        model's first 10 ids), plus ``mrr@10``/``recall@10`` against the single qrel gold, and
-        ``parsed``. The qrel metrics saturate near 0.98 even for weak arms -- finding ONE known
-        document is easy -- which is why they were demoted (prasann, 2026-08-14): the task is
-        meant to measure tracking the whole top-10.
+    :returns: ``ce_pos_recall`` (primary -- fraction of the CE-positive documents, median 3 /
+        p90 5 per example, present in the model's first 10 ids), plus ``mrr@10``/``recall@10``
+        against the single qrel gold, and ``parsed``. The qrel metrics saturate near 0.98 even
+        for weak arms -- finding ONE known document is easy -- which is why they were demoted
+        (prasann, 2026-08-14): the task is meant to measure tracking every genuinely relevant
+        document.
 
-    ``ce_top10_recall`` is always present (the registry contract requires the primary metric in
+    ``ce_pos_recall`` is always present (the registry contract requires the primary metric in
     every score() output); ``ce_ref_available`` says whether a CE reference set actually existed,
     so a legacy caller that passes bare indices produces a diagnosable 0/0 rather than a silent
     zero that reads as a model collapse.
@@ -145,9 +162,9 @@ def score(parsed: Optional[List[int]], gold, k: int = TOP_K) -> Dict[str, float]
     example = gold if isinstance(gold, dict) else None
     indices = example["gold_doc_indices"] if example else gold
     gold_ids = {int(g) + 1 for g in indices}
-    ce_ref = set(_ce_top_k(example, k)) if example else set()
+    ce_ref = set(_ce_pos_ref(example, k)) if example else set()
 
-    out: Dict[str, float] = {f"mrr@{k}": 0.0, f"recall@{k}": 0.0, "ce_top10_recall": 0.0,
+    out: Dict[str, float] = {f"mrr@{k}": 0.0, f"recall@{k}": 0.0, "ce_pos_recall": 0.0,
                              "ce_ref_available": 1.0 if ce_ref else 0.0, "parsed": 0.0}
     if not parsed:
         return out
@@ -159,14 +176,14 @@ def score(parsed: Optional[List[int]], gold, k: int = TOP_K) -> Dict[str, float]
             break
     out[f"recall@{k}"] = len(set(prefix) & gold_ids) / len(gold_ids) if gold_ids else 0.0
     if ce_ref:
-        out["ce_top10_recall"] = len(set(prefix) & ce_ref) / len(ce_ref)
+        out["ce_pos_recall"] = len(set(prefix) & ce_ref) / len(ce_ref)
     out["parsed"] = 1.0
     return out
 
 
 SPEC = TaskSpec(
     name="rerank",
-    description="Order candidate documents by relevance; graded on CE-top-10 recall.",
+    description="Order candidate documents by relevance; graded on CE-positive recall.",
     gold_index_base=0,
     instruction=RERANK_INSTRUCTION,
     instruction_variants=(rerank_instruction(TOP_K),),
@@ -176,7 +193,7 @@ SPEC = TaskSpec(
     build_prompt=build_prompt,
     parse=parse,
     score=score,
-    primary_metric="ce_top10_recall",
+    primary_metric="ce_pos_recall",
     max_new_tokens=512,
     stop="newline",
     answer_is_set=False,
