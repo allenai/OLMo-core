@@ -1,4 +1,4 @@
-# Standalone OLMoE3 model references
+# Standalone test model references
 
 This directory contains portable implementations and benchmarks for the smallest
 and largest OLMoE3 ladder configurations. The files can be copied together and
