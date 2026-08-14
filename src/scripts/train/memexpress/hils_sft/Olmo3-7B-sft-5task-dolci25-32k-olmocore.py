@@ -55,7 +55,6 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.train_module import (
     TransformerActivationCheckpointingConfig,
-    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerTrainModuleConfig,
 )
@@ -117,6 +116,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     model_config = TransformerConfig.olmo3_7B(
         vocab_size=tokenizer_config.padded_vocab_size(),
         dtype=DType.bfloat16,
+        attn_backend=AttentionBackendName.flash_2,
     )
 
     train_module_config = TransformerTrainModuleConfig(
@@ -126,20 +126,24 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             lr=1e-5,
             weight_decay=0.0,
             betas=(0.9, 0.95),
-            group_overrides=[OptimGroupOverride(name="embeddings", opts=dict(weight_decay=0.0))],
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         compile_model=False,
+        # Plain FSDP data parallel, NO context parallel. With CP degree 8 on 8 GPUs there is no
+        # data parallelism left -- one sequence per step, split across the ranks -- while the
+        # veomni arms do 8 windows per step. Matching the veomni arms step-for-step is what makes
+        # `max_steps = PACK_WINDOWS / DP_DEGREE` mean the same thing in both stacks.
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32
         ),
-        cp_config=TransformerContextParallelConfig(degree=DP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
             mode=TransformerActivationCheckpointingMode.full
         ),
         scheduler=LinearWithWarmup(warmup_steps=round(0.03 * max_steps)),
         max_grad_norm=1.0,
         z_loss_multiplier=None,
-        attention_backend=AttentionBackendName.flash_2,
     )
 
     # ---- data: the SHARED pack, chunked at its own window length ----------------------------
