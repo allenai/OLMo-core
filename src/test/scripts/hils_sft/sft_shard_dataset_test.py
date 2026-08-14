@@ -46,8 +46,11 @@ def _write_shard(tmp_path, docs=DOCS, part=0):
     for prompt, response in docs:
         ids.extend(prompt + response + [EOS])
         mask.extend([False] * len(prompt) + [True] * (len(response) + 1))
-    np.save(tmp_path / f"token_ids_part_{part:06d}.npy", np.array(ids, dtype=np.uint32))
-    np.save(tmp_path / f"labels_mask_{part:06d}.npy", np.array(mask, dtype=bool))
+    # RAW, exactly as convert_unified_to_sft.py writes them (ndarray.tofile). Using np.save here
+    # is what let the reader's np.load bug pass every test: the fixture encoded the same wrong
+    # assumption as the code, so the suite validated the misunderstanding instead of the format.
+    np.array(ids, dtype=np.uint32).tofile(tmp_path / f"token_ids_part_{part:06d}.npy")
+    np.array(mask, dtype=bool).tofile(tmp_path / f"labels_mask_{part:06d}.npy")
     return np.array(ids), np.array(mask)
 
 
@@ -74,7 +77,7 @@ def test_split_documents_rejects_shape_mismatch():
 
 
 def test_missing_mask_twin_raises(tmp_path):
-    np.save(tmp_path / "token_ids_part_000000.npy", np.array([10, 20, EOS], dtype=np.uint32))
+    np.array([10, 20, EOS], dtype=np.uint32).tofile(tmp_path / "token_ids_part_000000.npy")
     # Training on a token shard with no mask would put the PROMPT in the loss and never error.
     with pytest.raises(FileNotFoundError, match="labels_mask"):
         SFTShardDataset(str(tmp_path), 16, EOS, PAD)
@@ -231,9 +234,14 @@ def test_materialized_shards_are_window_aligned(tmp_path):
     import glob
 
     for p in glob.glob(str(out / "token_ids_part_*.npy")):
-        assert len(np.load(p)) % 16 == 0, p
+        assert len(np.memmap(p, dtype=np.uint32, mode="r")) % 16 == 0, p
     # and chunking the concatenated stream at the window length reproduces the windows in order
-    stream = np.concatenate([np.load(p) for p in sorted(glob.glob(str(out / "token_ids_part_*.npy")))])
+    stream = np.concatenate(
+        [
+            np.array(np.memmap(p, dtype=np.uint32, mode="r"))
+            for p in sorted(glob.glob(str(out / "token_ids_part_*.npy")))
+        ]
+    )
     for i in range(len(built)):
         assert (stream[i * 16 : (i + 1) * 16] == built[i]["input_ids"].numpy()).all(), i
 
@@ -248,3 +256,31 @@ def test_prepacked_rejects_misaligned_window(tmp_path):
     materialize(SFTShardDataset(str(src), 16, EOS, PAD, seed=0), str(out), shard_windows=3)
     with pytest.raises(ValueError, match="multiple of max_seq_len"):
         SFTShardDataset(str(out), 15, EOS, PAD, prepacked=True)
+
+
+def test_shards_are_raw_not_npy(tmp_path):
+    """The shard format is RAW binary under a .npy name; np.load must NOT be able to read it.
+
+    Guards the bug this suite originally missed: the code used np.load and the fixture used
+    np.save, so both agreed with each other and disagreed with the converter.
+    """
+    _write_shard(tmp_path)
+    p = tmp_path / "token_ids_part_000000.npy"
+    with pytest.raises(ValueError, match="pickled"):
+        np.load(p)
+    from sft_shard_dataset import read_shard
+
+    ids, mask = read_shard(str(p), str(tmp_path / "labels_mask_000000.npy"))
+    assert len(ids) == len(mask)
+    assert ids.dtype == np.uint32
+
+
+def test_read_shard_rejects_length_mismatch(tmp_path):
+    """A mask shorter/longer than its tokens would misalign every label."""
+    np.array([1, 2, 3], dtype=np.uint32).tofile(tmp_path / "token_ids_part_000000.npy")
+    np.array([True, False], dtype=bool).tofile(tmp_path / "labels_mask_000000.npy")
+    from sft_shard_dataset import read_shard
+
+    with pytest.raises(ValueError, match="misaligned"):
+        read_shard(str(tmp_path / "token_ids_part_000000.npy"),
+                   str(tmp_path / "labels_mask_000000.npy"))

@@ -54,6 +54,36 @@ def _shard_pairs(data_dir: str) -> List[Tuple[str, str]]:
     return pairs
 
 
+#: The shards are RAW binary despite the ``.npy`` extension -- ``convert_unified_to_sft.py`` writes
+#: them with ``ndarray.tofile()``, and olmo_core reads them back with an explicit dtype. ``np.load``
+#: therefore fails on every one of them ("This file contains pickled (object) data"), and
+#: ``np.save`` would prepend a 128-byte header that olmo_core's raw reader would consume AS TOKENS.
+TOKEN_DTYPE = np.uint32
+MASK_DTYPE = np.bool_
+
+
+def read_shard(tok_path: str, mask_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Memory-map one raw ``(token_ids, labels_mask)`` shard pair.
+
+    :param tok_path: Raw uint32 token file.
+    :param mask_path: Raw bool mask file, same element count.
+
+    :returns: ``(ids, mask)`` as read-only memmaps.
+
+    :raises ValueError: If the two files disagree on length -- that would silently misalign every
+        loss mask against its tokens.
+    """
+    ids = np.memmap(tok_path, dtype=TOKEN_DTYPE, mode="r")
+    mask = np.memmap(mask_path, dtype=MASK_DTYPE, mode="r")
+    if len(ids) != len(mask):
+        raise ValueError(
+            f"{tok_path} has {len(ids)} tokens but {mask_path} has {len(mask)} mask entries; "
+            f"the labels would be misaligned against the tokens."
+        )
+    return ids, mask
+
+
 def split_documents(
     token_ids: np.ndarray, labels_mask: np.ndarray, eos_token_id: int
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
@@ -123,8 +153,10 @@ def materialize(
         ids = np.concatenate(buf_ids)
         mask = np.concatenate(buf_mask)
         assert len(ids) % L == 0, f"shard length {len(ids)} is not a multiple of {L}"
-        np.save(os.path.join(out_dir, f"token_ids_part_{part_idx:06d}.npy"), ids.astype(np.uint32))
-        np.save(os.path.join(out_dir, f"labels_mask_{part_idx:06d}.npy"), mask.astype(np.bool_))
+        # RAW, matching the converter -- see the note on read_shard. np.save here would make the
+        # pack unreadable by olmo_core (its header would be parsed as tokens) and by read_shard.
+        ids.astype(TOKEN_DTYPE).tofile(os.path.join(out_dir, f"token_ids_part_{part_idx:06d}.npy"))
+        mask.astype(MASK_DTYPE).tofile(os.path.join(out_dir, f"labels_mask_{part_idx:06d}.npy"))
 
     for i in range(len(dataset)):
         ex = dataset[i]
@@ -271,14 +303,13 @@ class SFTShardDataset(Dataset):
         self.pad_token_id = pad_token_id
         self.mix_report: Dict[str, Dict[str, float]] = {}
 
-        if prepacked:
+        if prepacked:  # noqa: C901
             # Read an artifact written by materialize(): already mixed, shuffled and packed, so do
             # NOT mix/shuffle/pack again -- that is the whole point. Every arm reads these bytes.
             self._prepacked_ids: List[np.ndarray] = []
             self._prepacked_mask: List[np.ndarray] = []
             for tok_path, mask_path in _shard_pairs(data_dir):
-                ids = np.load(tok_path, mmap_mode="r")
-                mask = np.load(mask_path, mmap_mode="r")
+                ids, mask = read_shard(tok_path, mask_path)
                 if len(ids) % max_seq_len:
                     raise ValueError(
                         f"{tok_path} has {len(ids)} tokens, not a multiple of max_seq_len "
@@ -302,9 +333,7 @@ class SFTShardDataset(Dataset):
         def _load_dir(d: str) -> List[Tuple[np.ndarray, np.ndarray]]:
             out: List[Tuple[np.ndarray, np.ndarray]] = []
             for tok_path, mask_path in _shard_pairs(d):
-                ids = np.load(tok_path, mmap_mode="r")
-                mask = np.load(mask_path, mmap_mode="r")
-                out.extend(split_documents(np.asarray(ids), np.asarray(mask), eos_token_id))
+                out.extend(split_documents(*read_shard(tok_path, mask_path), eos_token_id))
             return out
 
         if sources:
