@@ -10,7 +10,7 @@ For a single-GPU installation test, use the 30M smoke rung::
 
     torchrun --standalone --nproc-per-node=1 distributed_fused_benchmark.py \
         --model-size 30m --ep-degree 1 --sequence-length 512 \
-        --microbatch-sequences 1 --warmup 1 --iterations 2
+        --microbatch-sequences 1 --warmup 1 --iterations 2 --no-compile
 
 ``--ep-degree -1`` uses every launched rank for expert parallelism. The harness
 uses OLMo-core's production rowwise-NVSHMEM EP path, BF16 model/forward/backward,
@@ -181,6 +181,20 @@ def build_train_module(args: argparse.Namespace, device: torch.device):
                 "for the single-GPU smoke test.",
                 flush=True,
             )
+        if fallback_enabled and args.compile:
+            # Inductor can lower the fallback's index_select output to a
+            # temporary allocation that does not satisfy grouped_mm's 16-byte
+            # data-pointer contract. Keep the production fused operators, but
+            # do not wrap the surrounding model in torch.compile in this
+            # dependency-light smoke-test path.
+            args.compile = False
+            if dist.get_rank() == 0:
+                print(
+                    "Disabling outer torch.compile: its grouped_mm lowering is not "
+                    "alignment-safe with the PyTorch permutation fallback. FLA, "
+                    "FlashAttention, and grouped-MM kernels remain enabled.",
+                    flush=True,
+                )
     else:
         from olmo_core.nn.moe import utils as moe_utils
 
@@ -304,10 +318,10 @@ def main() -> None:
         )
 
         if dist.get_rank() == 0:
-            print(
-                f"warming up {args.warmup} iterations; first compiled iteration may take minutes",
-                flush=True,
-            )
+            message = f"warming up {args.warmup} iterations"
+            if args.compile:
+                message += "; first compiled iteration may take minutes"
+            print(message, flush=True)
         for _ in range(args.warmup):
             benchmark_iteration(
                 module,

@@ -96,8 +96,17 @@ torchrun --standalone --nproc-per-node=1 \
   --sequence-length 512 \
   --microbatch-sequences 1 \
   --warmup 1 \
-  --iterations 2
+  --iterations 2 \
+  --no-compile
 ```
+
+The Transformer Engine-free permutation fallback is intentionally run without
+the outer `torch.compile` wrapper. Inductor may otherwise give PyTorch's
+`grouped_mm` an intermediate buffer whose data pointer is not 16-byte aligned.
+This does not disable the fused FLA, FlashAttention, or grouped-MM kernels; it
+only avoids compiling the surrounding Python module. If Transformer Engine is
+installed, the fallback is not selected and compiled single-GPU execution can
+be used.
 
 ## Multi-GPU target benchmark
 
@@ -117,8 +126,7 @@ torchrun --standalone --nproc-per-node=8 \
 ```
 
 Add `--include-optimizer-step` to time the configured AdamW update and allocate
-its optimizer state. Use `--no-compile` only for debugging; compiled execution is
-the benchmark default.
+its optimizer state. Compiled execution is the multi-GPU benchmark default.
 
 The benchmark reports synchronized iteration time, global tokens per second,
 estimated TFLOP/s per GPU, peak allocated GPU memory, and exact active/total
