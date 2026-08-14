@@ -190,6 +190,8 @@ class MultimodalLMConfig(Config):
                 vocab_size=MOLMO2_BASE_VOCAB_SIZE,
                 n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
                 rope_theta=rope_theta,
+                # The released pretrain configs set `rope_full_precision: true`.
+                rope_full_precision=True,
                 attn_backend=_molmo2_attn_backend(),
                 dtype=DType.float32,
             ),
@@ -215,6 +217,8 @@ class MultimodalLMConfig(Config):
                 vocab_size=MOLMO2_BASE_VOCAB_SIZE,
                 n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
                 rope_theta=rope_theta,
+                # The released pretrain configs set `rope_full_precision: true`.
+                rope_full_precision=True,
                 attn_backend=_molmo2_attn_backend(),
                 dtype=DType.float32,
             ),

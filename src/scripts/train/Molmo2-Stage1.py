@@ -118,21 +118,28 @@ class ModelSizeSpec:
         return self.scratch_rope_theta if init_from == "scratch" else self.molmo2_rope_theta
 
 
-# `rope_theta` follows the *weight source*: every base Qwen3 backbone uses 1e6, and so does
-# the released Molmo2-8B — the released Molmo2-4B is the sole variant that differs (5e6).
-# Deriving the architecture from a released config while loading base weights therefore puts
-# 4B weights on the wrong rotary base.
+# Per-variant weight sources, taken from the released pretrain configs at
+# /weka/oe-training-default/mm-olmo/released-models-molmo2-1225/Molmo2-{4B,8B}-Pretrain/.
+# `rope_theta` follows the weight source, and the two variants used different backbones.
 MODEL_SIZES = {
     "4b": ModelSizeSpec(
         factory=MultimodalLMConfig.molmo2_4B,
         molmo2_id="allenai/Molmo2-4B",
-        scratch_lm_id="Qwen/Qwen3-4B",
-        scratch_rope_theta=1_000_000,
+        # The released 4B pretrain ran `train_captioner.py qwen3_4b_instruct`, i.e. the
+        # *instruct* backbone (`Qwen/Qwen3-4B-Instruct-2507`), whose RoPE base is 5e6 — which
+        # is where the released Molmo2-4B's 5e6 comes from. Its tokenizer is identical to
+        # Molmo2's for everything the data pipeline uses (BPE, eos_token_id 151645, and the
+        # user-turn chat template).
+        scratch_lm_id="Qwen/Qwen3-4B-Instruct-2507",
+        scratch_rope_theta=5_000_000,
         molmo2_rope_theta=5_000_000,
     ),
     "8b": ModelSizeSpec(
         factory=MultimodalLMConfig.molmo2_8B,
         molmo2_id="allenai/Molmo2-8B",
+        # The released 8B pretrain ran `train_captioner.py qwen3_8b` — the *base* backbone,
+        # RoPE base 1e6, untied. Hence the 4B/8B asymmetry: different backbones, not a
+        # Molmo2-side change.
         scratch_lm_id="Qwen/Qwen3-8B",
         scratch_rope_theta=1_000_000,
         molmo2_rope_theta=1_000_000,
@@ -149,7 +156,7 @@ INIT_FROM_CHOICES = ("scratch", "molmo2")
 _BOOLS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
 SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 variant
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
-SEQUENCE_LENGTH = 4096  # fixed pad length; mm_olmo's captioner default is 2536
+SEQUENCE_LENGTH = 2560  # fixed pad length; the released runs passed `--seq_len=2560`
 USE_FLEX_ATTN = True  # fused FlexAttention backend for the multimodal masks (~+8% MFU)
 PACK_SEQUENCES = True  # pack several examples per sequence (most are ~1.4k of 4096 tokens)
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
@@ -166,8 +173,18 @@ MAX_CROPS = 8
 # reproduction. (The other mm_olmo delta, the `style_and_length_v2` length-conditioning
 # system prompt, IS implemented — see PixMoCapDataset.style_length_conditioning.)
 
-# Instance-based batching (mm_olmo: global 8, device microbatch 1), expressed in tokens.
-GLOBAL_BATCH_INSTANCES = 8
+# Instance-based batching, expressed in tokens for the token-based Trainer.
+#
+# `GLOBAL_BATCH_INSTANCES` matches mm_olmo's `global_train_batch_size=128` — the
+# optimization-relevant quantity. 128 also divides every DP world size we run (8/16/32),
+# which the previous default of 8 did not: at 16 GPUs it failed the
+# `global % (microbatch x dp_world_size) == 0` check.
+#
+# mm_olmo uses `device_train_microbatch_size=4`; we keep 1. That is purely a
+# memory/throughput knob — gradient accumulation makes the two mathematically identical for
+# the same global batch — and microbatch >1 at this sequence length OOM'd without activation
+# checkpointing (see the `ac_config` follow-up).
+GLOBAL_BATCH_INSTANCES = 128
 RANK_MICROBATCH_INSTANCES = 1
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
@@ -230,8 +247,8 @@ class ExperimentConfig(Config):
     model_size: str = MODEL_SIZE
     """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
     the released checkpoint used by ``--init_from=molmo2``."""
-    data_seed: int = 34521
-    init_seed: int = 12536
+    data_seed: int = 95818  # mm_olmo `data.seed`
+    init_seed: int = 6198  # mm_olmo `seed`
     global_batch_size: int = GLOBAL_BATCH_SIZE
     """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
     pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
@@ -326,8 +343,12 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         mode="transcript_and_caption",
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
-        loss_token_weighting="root_subsegments",
-        seed=34521,
+        # mm_olmo's captioner leaves `loss_token_weighting` at its "none" default, so every
+        # response token is weighted equally. `root_subsegments` (1/sqrt(n_branches)) does not
+        # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
+        # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
+        loss_token_weighting="none",
+        seed=95818,
     )
 
     # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a
@@ -389,7 +410,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
-            param_dtype=DType.bfloat16,
+            # mm_olmo's released pretrain used `fsdp.precision: float` — fp32 params,
+            # gradients and buffers, with bf16 only from the `amp_bf16` autocast below.
+            param_dtype=DType.float32,
             reduce_dtype=DType.float32,
         ),
     )
