@@ -36,6 +36,8 @@ still match on first use, so a re-vendoring that retunes either fails loudly rat
 mis-gating.
 """
 
+import functools
+
 import torch
 
 __all__ = [
@@ -50,6 +52,7 @@ __all__ = [
 GNORM_CUTE_MIN_COMPUTE_CAPABILITY = 10
 
 
+@functools.cache
 def has_cutlass_dsl() -> bool:
     """
     Check if the CuTe DSL (``nvidia-cutlass-dsl``) is installed.
@@ -61,10 +64,14 @@ def has_cutlass_dsl() -> bool:
     return True
 
 
+@functools.cache
 def has_gnorm_cute(device: torch.device | None = None) -> bool:
     """
     Check if the CuTe gated RMS norm kernels can run here: the CuTe DSL is installed and the
     device is Blackwell or newer.
+
+    Cached: this sits on the dispatch path of every GDN layer's forward, and none of the
+    answer — install state, CUDA availability, device capability — changes within a process.
 
     :param device: The device to check. Defaults to the current CUDA device.
     """
