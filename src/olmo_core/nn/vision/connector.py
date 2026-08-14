@@ -355,6 +355,19 @@ class VisionConnector(nn.Module):
             self.pooling = checkpoint_wrapper(self.pooling)
         self.projector = checkpoint_wrapper(self.projector)
 
+    def apply_compile(self) -> None:
+        """``torch.compile`` pooling + projector (mm_olmo ``compile_connector: dynamic``).
+
+        Compiled with ``dynamic=True``: the number of pooled groups varies per batch (it
+        follows the crop count), so a static compile would recompile on every new shape.
+
+        .. warning::
+            Call after :meth:`apply_activation_checkpointing` and before FSDP wrapping.
+        """
+        if self.pooling is not None:
+            self.pooling = torch.compile(self.pooling, dynamic=True)  # type: ignore[assignment]
+        self.projector = torch.compile(self.projector, dynamic=True)  # type: ignore[assignment]
+
     def forward(
         self,
         image_features: torch.Tensor,
