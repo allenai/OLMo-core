@@ -1,1 +1,1 @@
-{"format":"vision_alignment_joint_profile_allowlist","profiles":{},"version":1}
+{"format":"vision_alignment_joint_profile_allowlist","profiles":{"configs/vision_moe/vision_alignment/joint/joint_v1.yaml":"294da420f4f911fc96aad2a9eff43c59dc0831276fad5d1c0fbec37c6f78c2f5"},"version":1}

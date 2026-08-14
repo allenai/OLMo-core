@@ -6,6 +6,8 @@ import hashlib
 import importlib.util
 import json
 import sys
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +31,19 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _perception_path_signature(vision_alignment, path: Path):
+    info = path.stat()
+    return vision_alignment.PerceptionPathSignature(
+        path=str(path),
+        size_bytes=info.st_size,
+        mtime_ns=info.st_mtime_ns,
+        ctime_ns=info.st_ctime_ns,
+        inode=info.st_ino,
+        device=info.st_dev,
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
 
 
 def _write_compact_v3_replay_pair(
@@ -1279,7 +1294,7 @@ def test_production_profile_requires_exact_reviewed_allowlist_entry(
     assert overrides == [f"--phase={phase}", "--data.prefetch_workers=0"]
 
 
-def test_checked_in_joint_profile_allowlist_is_empty_and_canonical():
+def test_checked_in_joint_profile_allowlist_contains_exact_production_profile():
     vision_alignment = _load_module()
     repository_root = Path(vision_alignment.__file__).resolve().parents[3]
 
@@ -1287,7 +1302,9 @@ def test_checked_in_joint_profile_allowlist_is_empty_and_canonical():
         repository_root, vision_alignment.VisionAlignmentPhase.joint
     )
 
-    assert profiles == {}
+    relative_path = "configs/vision_moe/vision_alignment/joint/joint_v1.yaml"
+    profile_path = repository_root / relative_path
+    assert profiles == {relative_path: hashlib.sha256(profile_path.read_bytes()).hexdigest()}
     assert len(raw_sha256) == 64
 
 
@@ -1854,6 +1871,131 @@ def test_joint_v3_gate_rejects_schema_and_version_type_confusion(tmp_path, mutat
             str(case.parent),
             case.parent_config,
             case.parent_config_sha,
+        )
+
+
+def test_parallel_image_path_signature_validation_preserves_exact_checks(tmp_path):
+    vision_alignment = _load_module()
+    paths = [tmp_path / f"image-{index}.png" for index in range(4)]
+    for index, path in enumerate(paths):
+        path.write_bytes(f"image-{index}".encode())
+    records = tuple(_perception_path_signature(vision_alignment, path) for path in paths)
+    manifest = SimpleNamespace(image_path_signatures=records)
+
+    vision_alignment._validate_image_path_signatures_parallel(
+        manifest,
+        workers=2,
+        max_pending=3,
+    )
+
+    paths[2].write_bytes(b"changed image bytes")
+    with pytest.raises(ValueError, match=f"signature changed: {paths[2]}"):
+        vision_alignment._validate_image_path_signatures_parallel(
+            manifest,
+            workers=2,
+            max_pending=3,
+        )
+
+
+def test_parallel_image_path_signature_failure_is_ordered_and_quiescent(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    first_missing = tmp_path / "first-missing.png"
+    slow_path = tmp_path / "slow.png"
+    slow_path.write_bytes(b"slow image")
+    slow_record = _perception_path_signature(vision_alignment, slow_path)
+    missing_record = vision_alignment.PerceptionPathSignature(
+        path=str(first_missing),
+        size_bytes=0,
+        mtime_ns=0,
+        ctime_ns=0,
+        inode=0,
+        device=0,
+        sha256="0" * 64,
+    )
+    original_stat = Path.stat
+    slow_started = threading.Event()
+    active_lock = threading.Lock()
+    active = 0
+
+    def controlled_stat(path, *args, **kwargs):
+        nonlocal active
+        if path == first_missing:
+            assert slow_started.wait(timeout=5)
+            raise FileNotFoundError(str(path))
+        if path == slow_path:
+            with active_lock:
+                active += 1
+            slow_started.set()
+            try:
+                time.sleep(0.05)
+                return original_stat(path, *args, **kwargs)
+            finally:
+                with active_lock:
+                    active -= 1
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", controlled_stat)
+    manifest = SimpleNamespace(image_path_signatures=(missing_record, slow_record))
+    with pytest.raises(ValueError, match=f"unavailable: {first_missing}") as error:
+        vision_alignment._validate_image_path_signatures_parallel(
+            manifest,
+            workers=2,
+            max_pending=2,
+        )
+    assert isinstance(error.value.__cause__, FileNotFoundError)
+    assert active == 0
+
+
+def test_parallel_image_path_signature_failure_uses_manifest_order(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    first_missing = tmp_path / "first-missing.png"
+    second_missing = tmp_path / "second-missing.png"
+    second_finished = threading.Event()
+
+    def missing_record(path):
+        return vision_alignment.PerceptionPathSignature(
+            path=str(path),
+            size_bytes=0,
+            mtime_ns=0,
+            ctime_ns=0,
+            inode=0,
+            device=0,
+            sha256="0" * 64,
+        )
+
+    def inverted_stat(path, *args, **kwargs):
+        del args, kwargs
+        if path == first_missing:
+            assert second_finished.wait(timeout=5)
+        elif path == second_missing:
+            second_finished.set()
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr(Path, "stat", inverted_stat)
+    manifest = SimpleNamespace(
+        image_path_signatures=(missing_record(first_missing), missing_record(second_missing))
+    )
+    with pytest.raises(ValueError, match=f"unavailable: {first_missing}"):
+        vision_alignment._validate_image_path_signatures_parallel(
+            manifest,
+            workers=2,
+            max_pending=2,
+        )
+
+
+@pytest.mark.parametrize(
+    ("workers", "max_pending"),
+    [(True, 2), (0, 2), (65, 65), (2, True), (2, 1), (2, 257)],
+)
+def test_parallel_image_path_signature_validation_rejects_unsafe_bounds(workers, max_pending):
+    vision_alignment = _load_module()
+    manifest = SimpleNamespace(image_path_signatures=())
+
+    with pytest.raises(ValueError, match="Image path-signature"):
+        vision_alignment._validate_image_path_signatures_parallel(
+            manifest,
+            workers=workers,
+            max_pending=max_pending,
         )
 
 

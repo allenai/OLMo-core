@@ -48,36 +48,30 @@ The implementation is split by responsibility:
   replay with no detokenization, prompts, or chat tokens.
 - `src/scripts/data/export_vision_alignment_probe.py`: canonical exact-runtime probe exporter.
 - `src/scripts/data/audit_vision_alignment_mix.py`: strict probe audit and loss-mass calibration.
-- `src/scripts/data/build_s002_replay_manifest.py`: deterministic, disjoint native replay and
-  holdout manifest builder.
+- `src/scripts/data/build_s002_compact_replay.py`: deterministic, disjoint compact-v3 native
+  replay and holdout builder.
 
-The s002 replay logistics catalog is deliberately limited to
-`{parent_path_index, local_materialized_path}` and must map every row of the exact expanded
-parent path list. Labels, remote paths, source IDs, token counts, and byte digests may not be
-supplied by that catalog. They derive from the pinned `OLMo-mix-0925` and checkpoint path
-manifests plus a separately reviewed upstream per-object byte inventory. No authoritative
-inventory currently exists in this checkout, so its path/SHA constants remain unset and joint
-production fails closed until the data owners publish and review it.
+The compact s002 builder derives its authority directly from the exact checkpoint state: the
+pinned config, ordered 950-path manifest, checked-in `OLMo-mix-0925`, rank-0 trainer state, and
+saved dataset fingerprint. It snapshots only those exact remote object names without listing,
+reconstructs the saved dataset fingerprint from their sizes, and downloads only the selected
+8,192-token byte ranges under generation and ETag preconditions. This avoids inventing an owner
+inventory while preserving exact lineage for every consumed token.
 
-After that provenance artifact is pinned, the builder streams each local materialized token
-file once, verifies its authoritative size and SHA-256, and emits
-`native-text-replay-verification.json`. Production joint profiles pin that receipt's exact
-SHA-256; runtime validates the receipt and current file sizes without re-hashing terabytes of
-replay data. Train and holdout manifests are deterministically disjoint, and the holdout is an
-intrinsic native-LM evaluator. Validate the post-provenance build without writing artifacts:
+The immutable v3 receipt binds both disjoint split contracts, all remote generations, every
+compact shard SHA-256 and filesystem identity, and the builder implementation. Production joint
+profiles pin that receipt and the train/holdout semantic fingerprints; runtime performs cheap
+same-file stat validation while the offline builder and audit perform full content verification.
+Build the compact replay with:
 
 ```bash
-PYTHONPATH=src python src/scripts/data/build_s002_replay_manifest.py \
-  --catalog /path/to/s002-replay-sources.json \
-  --output-dir /path/to/vision-alignment/replay \
-  --sequence-length 8192 \
-  --train-tokens 819100000 \
-  --holdout-tokens 8191000 \
-  --dry-run
+PYTHONPATH=src python src/scripts/data/build_s002_compact_replay.py \
+  --output-dir /path/to/vision-alignment/s002-compact-replay-v3 \
+  --workers 32
 ```
 
-After reviewing that output, rerun the same command without `--dry-run` to write the manifests
-and verification receipt.
+Publication is atomic and no-replace. An interrupted build resumes only from its exact
+plan-bound staging data and still repeats closing remote metadata and local full-content checks.
 
 First export exact `dataset.get(index, epoch=0)` rows through the same pinned tokenizer and
 source registry used by training. The image-hash input is the sorted, unique SHA-256 inventory

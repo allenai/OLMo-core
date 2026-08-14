@@ -30,7 +30,10 @@ import logging
 import math
 import os
 import re
+import stat
 import sys
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -71,6 +74,7 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
 )
 from olmo_core.data.multimodal.vision_alignment_perception_provenance import (
     PERCEPTION_SOURCE_NAMES,
+    PerceptionPathSignature,
     PerceptionProvenanceManifest,
     build_selected_perception_dataset,
     load_perception_provenance_manifest,
@@ -191,6 +195,8 @@ WANDB_ENTITY: Optional[str] = None
 EP_DEGREE = 8
 GLOBAL_BATCH_INSTANCES = 128
 DATA_PREFETCH_WORKERS = 8
+IMAGE_PATH_SIGNATURE_WORKERS = 64
+IMAGE_PATH_SIGNATURE_MAX_PENDING = 256
 PACK_BUFFER_SIZE = 48
 PACK_MAX_CROPS = 9
 MAX_CROPS = 8
@@ -1792,6 +1798,103 @@ class _AuditedDataset:
         return get(index, epoch) if get is not None else self._dataset[index]
 
 
+def _validate_image_path_signatures_parallel(
+    manifest: PerceptionProvenanceManifest,
+    *,
+    workers: int = IMAGE_PATH_SIGNATURE_WORKERS,
+    max_pending: int = IMAGE_PATH_SIGNATURE_MAX_PENDING,
+) -> None:
+    """Exhaustively restat pinned images with bounded, ordered concurrency.
+
+    This preserves :meth:`PerceptionProvenanceManifest.validate_image_path_signatures`
+    exactly while avoiding a serial metadata walk over more than one million Weka paths.
+    Results are consumed in manifest order so the same earliest bad path wins regardless of
+    completion order. Any failure cancels queued work and waits for running calls to quiesce
+    before returning control to the caller.
+    """
+    if (
+        isinstance(workers, bool)
+        or not isinstance(workers, int)
+        or workers < 1
+        or workers > IMAGE_PATH_SIGNATURE_WORKERS
+    ):
+        raise ValueError(
+            f"Image path-signature workers must be an integer in [1, {IMAGE_PATH_SIGNATURE_WORKERS}]"
+        )
+    if (
+        isinstance(max_pending, bool)
+        or not isinstance(max_pending, int)
+        or max_pending < workers
+        or max_pending > IMAGE_PATH_SIGNATURE_MAX_PENDING
+    ):
+        raise ValueError(
+            "Image path-signature pending work must be an integer between workers and "
+            f"{IMAGE_PATH_SIGNATURE_MAX_PENDING}"
+        )
+
+    def restat(
+        record: PerceptionPathSignature,
+    ) -> tuple[Path, Optional[OSError], bool]:
+        path = Path(record.path)
+        try:
+            info = path.stat()
+        except OSError as error:
+            return path, error, False
+        actual = (
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            info.st_ino,
+            info.st_dev,
+        )
+        expected = (
+            record.size_bytes,
+            record.mtime_ns,
+            record.ctime_ns,
+            record.inode,
+            record.device,
+        )
+        return path, None, not stat.S_ISREG(info.st_mode) or actual != expected
+
+    records = iter(manifest.image_path_signatures)
+    pending: deque[
+        tuple[
+            PerceptionPathSignature,
+            Future[tuple[Path, Optional[OSError], bool]],
+        ]
+    ] = deque()
+    executor = ThreadPoolExecutor(
+        max_workers=workers,
+        thread_name_prefix="vision-image-signature",
+    )
+    try:
+        for _ in range(max_pending):
+            try:
+                record = next(records)
+            except StopIteration:
+                break
+            pending.append((record, executor.submit(restat, record)))
+        while pending:
+            _, future = pending.popleft()
+            path, unavailable, changed = future.result()
+            if unavailable is not None:
+                raise ValueError(f"Pinned perception image is unavailable: {path}") from unavailable
+            if changed:
+                raise ValueError(f"Pinned perception image signature changed: {path}")
+            try:
+                record = next(records)
+            except StopIteration:
+                continue
+            pending.append((record, executor.submit(restat, record)))
+    except BaseException:
+        for _, future in pending:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+
+
 def _perception_provenance(config: ExperimentConfig) -> PerceptionProvenanceManifest:
     """Load the externally SHA-pinned perception train/validation provenance."""
     data = config.data
@@ -1900,7 +2003,7 @@ def _joint_visual_projection(
                     expected_token_ids=token_ids,
                     expected_sha256=data.joint_visual_projection_sha256,
                 )
-                manifest.parent_provenance.validate_image_path_signatures()
+                _validate_image_path_signatures_parallel(manifest.parent_provenance)
                 # Close the long path-restat window with a second exact artifact/code check.
                 load_joint_visual_projection_manifest(
                     data.joint_visual_projection_path,
