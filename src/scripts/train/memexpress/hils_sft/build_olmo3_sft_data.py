@@ -31,11 +31,13 @@ from typing import Dict, List
 # cr_suite_data cannot silently join the mixture.
 TASK_SELECTORS: Dict[str, Dict[str, object]] = {
     "contra": {
+        "converter_task": "contradiction",
         "manifest_task": "contradiction",
         "include": ["contradiction_train_pubmed_both_", "_k3"],
         "exclude": ["cotmix"],  # the enumerate-CoT variant is a different target format
     },
     "nq": {
+        "converter_task": "nq",
         "manifest_task": None,  # selected by filename: `retrieval` is overloaded
         "include": ["nq_train_"],
         # `_cot` is a different target format; the mixture references one `nq` source, so taking
@@ -48,6 +50,7 @@ TASK_SELECTORS: Dict[str, Dict[str, object]] = {
         "require_p10": True,
     },
     "rerank": {
+        "converter_task": "rerank",
         "manifest_task": "rerank",
         "include": ["msmarco_helmet_rerank_train_"],
         "exclude": [],
@@ -56,8 +59,9 @@ TASK_SELECTORS: Dict[str, Dict[str, object]] = {
     # and an extra "_train" substring filter is both redundant and wrong -- oolong's files are
     # named `..._splittrain.jsonl`, which does not contain "_train", so the filter silently
     # selected nothing and the guard had to catch it.
-    "outlier": {"manifest_task": "outlier", "include": [], "exclude": []},
+    "outlier": {"converter_task": "outlier", "manifest_task": "outlier", "include": [], "exclude": []},
     "oolong": {
+        "converter_task": "oolong",
         "manifest_task": "oolong",
         "include": [],
         # ctx65536 documents cannot fit the 32k SFT window, so every one would be dropped by the
@@ -182,7 +186,10 @@ def main() -> int:
                 "--landmark-token-id", "-1",
                 "--chat-template", args.chat_template,
                 "--out-dir", dest,
-                "--task", task if task != "nq" else "nq",
+                # The CANONICAL task name, not our short key: it selects the prompt builder, and
+                # these must be the same names the eval ladder uses as LTASK (contra ->
+                # contradiction) or training and eval render different prompts for one task.
+                "--task", str(TASK_SELECTORS[task]["converter_task"]),
                 "--cot-mode", mode,
                 "--input-jsonl", *paths,
             ]
