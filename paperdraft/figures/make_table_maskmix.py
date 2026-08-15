@@ -139,8 +139,17 @@ def main():
         if not gains:
             continue
         shallow = min(g for g in [gains[0]])
+        # Ladder means per arm. Both average over the SAME rung set, so mean(mix) - mean(nomix) is
+        # exactly the mean per-rung gain -- the table's two columns and the gain reported elsewhere
+        # cannot disagree. Only rungs where both arms exist contribute, which is what `gains` walks.
+        paired = [(C, P) for rung in RUNGS
+                  for C in [cmix.get(str(rung))] for P in [pure.get(rung)]
+                  if C is not None and P is not None]
+        mix_avg = sum(c["value"] for c, _ in paired) / len(paired)
+        nomix_avg = sum(p["value"] for _, p in paired) / len(paired)
         rows.append({
             "name": name, "cls": cls, "metric": METRIC_TEX[e["metric"]],
+            "mix_avg": mix_avg, "nomix_avg": nomix_avg,
             "n_rungs": len(gains), "avg": sum(gains) / len(gains),
             "deep_rung": deepest[0], "deep_gain": deepest[1],
             "deep_cmix": deepest[2], "deep_pure": deepest[3], "deep_dense": deepest[4],
@@ -172,10 +181,15 @@ def main():
     # the table, so they are emitted as LaTeX comments directly above it AND printed to stdout --
     # they must reach the body text, because two of these five numbers are misleading without them.
     NOTES = [
-        "CAVEATS -- the caption is gone, so these belong in the body text:",
-        "  * Gain = (chunked-mix) - (pure-chunked). Both arms use the identical document-chunked",
-        "    mask at eval; they differ only in training, where +Mix anneals an unrestricted-",
-        "    attention coin p_standard 0.8 -> 0. Qwen3.5-4B, identical shards/ladders/hyperparams.",
+        "CAVEATS -- the caption is one sentence, so these belong in the body text:",
+        "  * Both columns are ladder-mean scores. They average over the SAME rungs, so",
+        "    Mix - No Mix is exactly the mean per-rung mask-mixing gain:",
+        "    " + ", ".join(f"{r['name']} {r['avg']:+.3f}" for r in rows) + ".",
+        "  * Each task uses its own metric (gold-ID F1 / set-F1 / pair-F1 / Kendall tau), so the",
+        "    columns are NOT comparable across rows -- read a row, not a column.",
+        "  * Both arms use the identical document-chunked mask at eval; they differ only in",
+        "    training, where Mix anneals an unrestricted-attention coin p_standard 0.8 -> 0.",
+        "    Qwen3.5-4B, identical shards / ladders / hyperparameters.",
         f"  * eval_size = 500 per rung, so a gain under ~0.04 is within noise ({fiqa_avg} on FiQA is not",
         "    distinguishable from zero).",
         "  * Each number is the mean per-rung gain over the 2k-32k ladder: 5 rungs, except",
@@ -209,18 +223,26 @@ def main():
     # a caveat exists and then refuses to say what it is. The caveats themselves did NOT go away:
     # they are emitted as LaTeX comments above the table and printed to stdout (see NOTES), and
     # they belong in the body text. Both `flag` and `floored` are still computed and still printed.
-    L.append(r"\begin{tabular}{llr}")
+    L.append(r"\begin{tabular}{lrr}")
     L.append(r"\toprule")
-    L.append(r"Task & CTC & Mask-mixing gain \\")
+    L.append(r"Task & No Mix & Mix \\")
     L.append(r"\midrule")
     for r in rows:
-        L.append(f"{r['name']} & {r['cls']} & \\textbf{{{fmt(r['avg'], True)}}} \\\\")
+        L.append(f"{r['name']} & {fmt(r['nomix_avg'])} & "
+                 f"\\textbf{{{fmt(r['mix_avg'])}}} \\\\")
     L.append(r"\bottomrule")
     L.append(r"\end{tabular}")
+    # ⚠ ONE SENTENCE, BUT THE "read across a row" CLAUSE IS NOT PADDING. With the metric column
+    # gone, this table stacks gold-ID F1, set-F1, pair-F1 and Kendall tau in one pair of columns;
+    # nothing stops a reader comparing FiQA's 0.283 to reordering's 0.011 as if they were the same
+    # scale. The rows are ordered by traversal complexity so the trend is still readable downward.
+    L.append(r"\caption{Curriculum mask-mixing is worth almost nothing on $O_T(N)$ retrieval and "
+             r"becomes the difference between learning the task and not learning it at all as "
+             r"corpus-traversal complexity rises; both columns are ladder-mean scores for "
+             r"document-chunked attention trained without and with mixing, each task on its own "
+             r"metric, so read across a row rather than down a column.}")
+    L.append(r"\label{tab:maskmix}")
     L.append(r"\end{wraptable}")
-    # No \caption and no \label: \label without \caption inside a float binds to whatever counter
-    # was last stepped, so \ref{tab:maskmix} would print an unrelated number rather than fail
-    # loudly. If the table needs referencing, give it a caption again.
 
     OUT_TEX.parent.mkdir(parents=True, exist_ok=True)
     OUT_TEX.write_text("\n".join(L) + "\n")

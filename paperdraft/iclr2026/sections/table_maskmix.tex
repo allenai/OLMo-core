@@ -3,10 +3,15 @@
 % Requires \usepackage{wrapfig} (and booktabs). A wraptable must NOT start in a
 % paragraph's first line or inside a list -- put it just before the paragraph it
 % should sit beside, or wrapfig silently drops the wrap and it overlaps the text.
-% CAVEATS -- the caption is gone, so these belong in the body text:
-%   * Gain = (chunked-mix) - (pure-chunked). Both arms use the identical document-chunked
-%     mask at eval; they differ only in training, where +Mix anneals an unrestricted-
-%     attention coin p_standard 0.8 -> 0. Qwen3.5-4B, identical shards/ladders/hyperparams.
+% CAVEATS -- the caption is one sentence, so these belong in the body text:
+%   * Both columns are ladder-mean scores. They average over the SAME rungs, so
+%     Mix - No Mix is exactly the mean per-rung mask-mixing gain:
+%     BEIR FiQA +0.011, Outlier (scale-$k$) +0.505, QDmatch (FiQA) +0.031, Reordering +0.182, Contradiction +0.791.
+%   * Each task uses its own metric (gold-ID F1 / set-F1 / pair-F1 / Kendall tau), so the
+%     columns are NOT comparable across rows -- read a row, not a column.
+%   * Both arms use the identical document-chunked mask at eval; they differ only in
+%     training, where Mix anneals an unrestricted-attention coin p_standard 0.8 -> 0.
+%     Qwen3.5-4B, identical shards / ladders / hyperparameters.
 %   * eval_size = 500 per rung, so a gain under ~0.04 is within noise (+0.011 on FiQA is not
 %     distinguishable from zero).
 %   * Each number is the mean per-rung gain over the 2k-32k ladder: 5 rungs, except
@@ -23,15 +28,17 @@
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
-\begin{tabular}{llr}
+\begin{tabular}{lrr}
 \toprule
-Task & CTC & Mask-mixing gain \\
+Task & No Mix & Mix \\
 \midrule
-BEIR FiQA & $O_T(N)$ & \textbf{+0.011} \\
-Outlier (scale-$k$) & $O_T(NM)$ & \textbf{+0.505} \\
-QDmatch (FiQA) & $O_T(N^2)$ & \textbf{+0.031} \\
-Reordering & $O_T(N^2)$ & \textbf{+0.182} \\
-Contradiction & $O_T(N^2)$ & \textbf{+0.791} \\
+BEIR FiQA & 0.648 & \textbf{0.658} \\
+Outlier (scale-$k$) & 0.083 & \textbf{0.588} \\
+QDmatch (FiQA) & 0.212 & \textbf{0.243} \\
+Reordering & 0.000 & \textbf{0.182} \\
+Contradiction & 0.000 & \textbf{0.791} \\
 \bottomrule
 \end{tabular}
+\caption{Curriculum mask-mixing is worth almost nothing on $O_T(N)$ retrieval and becomes the difference between learning the task and not learning it at all as corpus-traversal complexity rises; both columns are ladder-mean scores for document-chunked attention trained without and with mixing, each task on its own metric, so read across a row rather than down a column.}
+\label{tab:maskmix}
 \end{wraptable}
