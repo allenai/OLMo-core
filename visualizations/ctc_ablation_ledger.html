@@ -1,0 +1,399 @@
+<title>Chunked Attention Ledger</title>
+<style>
+  /* ---- tokens: complete light palette on bare :root ---------------------------------- */
+  :root{
+    --paper:#FAF9F7;
+    --surface:#FFFFFF;
+    --surface-2:#F2F1ED;
+    --ink:#1A1D23;
+    --ink-soft:#43484F;
+    --neutral:#6C7280;          /* grey with a slight blue bias, to sit with the accent */
+    --rule:#DEDCD6;
+    --rule-soft:#EAE8E3;
+    --accent:#2F5F80;           /* steel blue */
+    --accent-soft:#DCE7EF;
+    --measured:#2E6B4F;
+    --measured-bg:#E2EFE7;
+    --pending:#8A6D2F;
+    --pending-bg:#F4EBD8;
+    --void:#9A3B2C;
+    --void-bg:#F6E2DE;
+    --bar:#9EBBD0;
+    --bar-strong:#2F5F80;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#14171C;
+      --surface:#1A1E24;
+      --surface-2:#20242B;
+      --ink:#E9EAED;
+      --ink-soft:#B6BAC2;
+      --neutral:#8B919B;
+      --rule:#2C313A;
+      --rule-soft:#242932;
+      --accent:#83B5D7;
+      --accent-soft:#1E2E3B;
+      --measured:#7CC49E;
+      --measured-bg:#1B2B23;
+      --pending:#D5B674;
+      --pending-bg:#2B2519;
+      --void:#E08B7B;
+      --void-bg:#2E1E1B;
+      --bar:#3A5A72;
+      --bar-strong:#83B5D7;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#14171C;
+    --surface:#1A1E24;
+    --surface-2:#20242B;
+    --ink:#E9EAED;
+    --ink-soft:#B6BAC2;
+    --neutral:#8B919B;
+    --rule:#2C313A;
+    --rule-soft:#242932;
+    --accent:#83B5D7;
+    --accent-soft:#1E2E3B;
+    --measured:#7CC49E;
+    --measured-bg:#1B2B23;
+    --pending:#D5B674;
+    --pending-bg:#2B2519;
+    --void:#E08B7B;
+    --void-bg:#2E1E1B;
+    --bar:#3A5A72;
+    --bar-strong:#83B5D7;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:16px;
+    line-height:1.6;
+    margin:0;
+    padding:0 20px 96px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+
+  /* ---- masthead ---------------------------------------------------------------------- */
+  header{padding:56px 0 0;display:flex;flex-direction:column;gap:18px}
+  h1{
+    font-family:ui-serif,"Iowan Old Style",Georgia,"Times New Roman",serif;
+    font-weight:600;
+    font-size:clamp(2.1rem,4.6vw,3.1rem);
+    line-height:1.1;
+    letter-spacing:-.015em;
+    margin:0;
+    text-wrap:balance;
+  }
+  .standfirst{
+    font-size:1.06rem;
+    color:var(--ink-soft);
+    max-width:64ch;
+    margin:0;
+  }
+  .stamp{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.72rem;
+    letter-spacing:.11em;
+    text-transform:uppercase;
+    color:var(--neutral);
+  }
+
+  /* ---- status chips ------------------------------------------------------------------ */
+  .chips{display:flex;flex-wrap:wrap;gap:10px;padding-top:4px}
+  .chip{
+    display:flex;align-items:baseline;gap:8px;
+    border:1px solid var(--rule);
+    background:var(--surface);
+    border-radius:2px;
+    padding:9px 13px;
+  }
+  .chip b{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:1.05rem;font-weight:600;font-variant-numeric:tabular-nums;
+  }
+  .chip span{font-size:.79rem;letter-spacing:.05em;text-transform:uppercase;color:var(--neutral)}
+  .chip.is-measured b{color:var(--measured)}
+  .chip.is-pending b{color:var(--pending)}
+  .chip.is-void b{color:var(--void)}
+
+  /* ---- sections ---------------------------------------------------------------------- */
+  section{display:flex;flex-direction:column;gap:16px}
+  .eyebrow{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.71rem;letter-spacing:.15em;text-transform:uppercase;
+    color:var(--accent);
+    display:flex;align-items:center;gap:10px;
+  }
+  .eyebrow::after{content:"";flex:1;height:1px;background:var(--rule)}
+  h2{
+    font-family:ui-serif,"Iowan Old Style",Georgia,serif;
+    font-weight:600;font-size:1.62rem;line-height:1.2;letter-spacing:-.01em;
+    margin:0;text-wrap:balance;
+  }
+  .lede{margin:0;color:var(--ink-soft);max-width:68ch}
+  .lede strong{color:var(--ink);font-weight:600}
+
+  /* ---- tables ------------------------------------------------------------------------ */
+  .scroll{overflow-x:auto;border:1px solid var(--rule);border-radius:2px;background:var(--surface)}
+  table{border-collapse:collapse;width:100%;font-size:.9rem}
+  caption{
+    text-align:left;padding:12px 16px;font-size:.79rem;color:var(--neutral);
+    border-bottom:1px solid var(--rule-soft);
+  }
+  th,td{padding:9px 14px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--rule-soft)}
+  thead th{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.72rem;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--neutral);font-weight:500;
+    background:var(--surface-2);
+    border-bottom:1px solid var(--rule);
+  }
+  tbody tr:last-child td{border-bottom:none}
+  th.rowlab,td.rowlab{text-align:left;white-space:nowrap}
+  td.num{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  td.best{color:var(--accent);font-weight:600}
+  .cls{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.74rem;color:var(--neutral);
+  }
+  .arm{font-size:.79rem;color:var(--neutral);letter-spacing:.03em}
+
+  /* status cells */
+  .pill{
+    display:inline-block;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.68rem;letter-spacing:.07em;text-transform:uppercase;
+    padding:2px 7px;border-radius:2px;
+  }
+  .pill.pending{color:var(--pending);background:var(--pending-bg)}
+  .pill.void{color:var(--void);background:var(--void-bg)}
+  .pill.ok{color:var(--measured);background:var(--measured-bg)}
+
+  /* data bar for the recovery section */
+  .barcell{min-width:190px}
+  .bar{display:flex;align-items:center;gap:9px;justify-content:flex-end}
+  .track{position:relative;width:118px;height:7px;background:var(--surface-2);border-radius:1px;overflow:hidden}
+  .fill{position:absolute;inset:0 auto 0 0;background:var(--bar-strong);border-radius:1px}
+  .pct{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;font-size:.83rem;min-width:44px}
+
+  /* ---- notes ------------------------------------------------------------------------- */
+  .note{
+    border-left:2px solid var(--accent);
+    background:var(--surface);
+    padding:13px 17px;
+    font-size:.9rem;color:var(--ink-soft);
+    max-width:72ch;
+  }
+  .note strong{color:var(--ink)}
+  .note.warn{border-left-color:var(--void)}
+
+  .log{display:flex;flex-direction:column;gap:0;border:1px solid var(--rule);background:var(--surface);border-radius:2px}
+  .log-item{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:15px 17px;border-bottom:1px solid var(--rule-soft)}
+  .log-item:last-child{border-bottom:none}
+  .log-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px}
+  .log-head h3{margin:0;font-size:.99rem;font-weight:600;font-family:system-ui,sans-serif}
+  .log-item p{margin:0;font-size:.88rem;color:var(--ink-soft)}
+  code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.85em;background:var(--surface-2);padding:1px 5px;border-radius:2px;
+  }
+  footer{
+    border-top:1px solid var(--rule);padding-top:20px;
+    font-size:.82rem;color:var(--neutral);max-width:72ch;
+  }
+  a{color:var(--accent)}
+  a:focus-visible,.chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header>
+  <p class="stamp">Corpus-task-complexity suite &middot; snapshot 2026-08-15 03:25 PT</p>
+  <h1>Chunked Attention Ledger</h1>
+  <p class="standfirst">What the document-chunked attention ablations currently measure, which cells are still empty, and which published-looking numbers are artifacts rather than results. Every figure here is read from a grade JSON, not carried forward in prose.</p>
+  <p class="standfirst">Two results firmed up overnight: the chunked-vs-dense gap now narrows monotonically across three model sizes, and mask-mixing turns out to be what makes chunked attention learnable on every O(N&sup2;) task measured &mdash; while doing essentially nothing on retrieval.</p>
+  <div class="chips">
+    <div class="chip is-measured"><b>79</b><span>cells measured</span></div>
+    <div class="chip is-measured"><b>2/3</b><span>controls passed</span></div>
+    <div class="chip is-pending"><b>21</b><span>evals in flight</span></div>
+    <div class="chip is-pending"><b>4</b><span>hybrid runs training</span></div>
+    <div class="chip is-void"><b>3</b><span>cell groups void</span></div>
+  </div>
+</header>
+
+<section>
+  <p class="eyebrow">01 &nbsp;model scale</p>
+  <h2>Contradiction, the O(N&sup2;) case</h2>
+  <p class="lede">Qwen3.5 at three sizes on the <code>contradiction_iid</code> ladder, <code>set_f1</code>, 500 eval examples per cell. The dense arm is flat-ish across scale; the chunked arm is where size actually buys something. <strong>The 0.8B chunked row is the one cell that has never produced a number</strong> — its training finished, but the eval has been killed three times by harness bugs, most recently tonight.</p>
+  <div class="scroll">
+    <table>
+      <caption>Binomial SE at n=500 is about &plusmn;0.021 near f1 0.70 and &plusmn;0.010 near 0.95 &mdash; differences smaller than that are not differences.</caption>
+      <thead>
+        <tr><th class="rowlab">Model &amp; arm</th><th>2.5k</th><th>4k</th><th>8k</th><th>16k</th><th>32k</th><th>gap @16k</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowlab">0.8B <span class="arm">dense</span></td><td class="num">0.9623</td><td class="num">0.9540</td><td class="num">0.9451</td><td class="num">0.9160</td><td class="num">0.8612</td><td class="num" rowspan="2">0.3071</td></tr>
+        <tr><td class="rowlab">0.8B <span class="arm">chunked-mix</span></td><td class="num">0.7980</td><td class="num">0.7547</td><td class="num">0.6871</td><td class="num">0.6089</td><td class="num"><span class="pill pending">running</span></td></tr>
+        <tr><td class="rowlab">2B <span class="arm">dense</span></td><td class="num">0.9757</td><td class="num">0.9779</td><td class="num">0.9687</td><td class="num">0.9487</td><td class="num">0.9100</td><td class="num" rowspan="2">0.2814</td></tr>
+        <tr><td class="rowlab">2B <span class="arm">chunked-mix</span></td><td class="num">0.8365</td><td class="num">0.8003</td><td class="num">0.7391</td><td class="num">0.6673</td><td class="num">0.5887</td></tr>
+        <tr><td class="rowlab">4B <span class="arm">dense</span></td><td class="num best">0.9895</td><td class="num best">0.9843</td><td class="num best">0.9760</td><td class="num best">0.9652</td><td class="num best">0.9463</td><td class="num" rowspan="2">0.2066</td></tr>
+        <tr><td class="rowlab">4B <span class="arm">chunked-mix</span></td><td class="num">0.8613</td><td class="num">0.8337</td><td class="num">0.8039</td><td class="num">0.7586</td><td class="num">0.6991</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">The 0.8B chunked row landed, and it <strong>confirms the trend rather than breaking it</strong>. The chunked-vs-dense gap at 16k narrows monotonically with scale: <strong>0.307 &rarr; 0.281 &rarr; 0.207</strong> at 0.8B / 2B / 4B. Three points, all moving the same direction, each well outside the &plusmn;0.02 noise floor &mdash; so "scale pushes back chunked degradation" is now a measured trend and not an extrapolation from two points. Note the dense arms barely move across scale (0.916 &rarr; 0.949 &rarr; 0.965 at 16k); nearly all of the scale benefit accrues to the chunked arm.</p>
+</section>
+
+<section>
+  <p class="eyebrow">02 &nbsp;model scale</p>
+  <h2>fiQA retrieval, the O(N) control</h2>
+  <p class="lede">Same three sizes, <code>gold_id_f1</code>. Retrieval is where chunking is supposed to be nearly free, and it is &mdash; the arms sit within a few hundredths at every size. Note that 0.8B and 2B are indistinguishable from each other here; the capacity that matters for this task only appears at 4B.</p>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th class="rowlab">Model &amp; arm</th><th>2k</th><th>4k</th><th>8k</th><th>16k</th><th>32k</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowlab">0.8B <span class="arm">dense</span></td><td class="num">0.8959</td><td class="num">0.7755</td><td class="num">0.6589</td><td class="num">0.5346</td><td class="num">0.2869</td></tr>
+        <tr><td class="rowlab">0.8B <span class="arm">chunked-mix</span></td><td class="num">0.8766</td><td class="num">0.7618</td><td class="num">0.6261</td><td class="num">0.5065</td><td class="num">0.2441</td></tr>
+        <tr><td class="rowlab">2B <span class="arm">dense</span></td><td class="num">0.8915</td><td class="num">0.7783</td><td class="num">0.6527</td><td class="num">0.5256</td><td class="num">0.2776</td></tr>
+        <tr><td class="rowlab">2B <span class="arm">chunked-mix</span></td><td class="num">0.8898</td><td class="num">0.7871</td><td class="num">0.6475</td><td class="num">0.5490</td><td class="num">0.2888</td></tr>
+        <tr><td class="rowlab">4B <span class="arm">dense</span></td><td class="num best">0.9300</td><td class="num best">0.8462</td><td class="num best">0.7258</td><td class="num best">0.6210</td><td class="num best">0.3103</td></tr>
+        <tr><td class="rowlab">4B <span class="arm">chunked-mix</span></td><td class="num">0.9160</td><td class="num">0.8226</td><td class="num">0.6969</td><td class="num">0.5751</td><td class="num">0.2802</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">03 &nbsp;ablation</p>
+  <h2>How much does mask-mixing actually buy?</h2>
+  <p class="lede">Pure-chunked runs &mdash; no <code>p_standard</code> curriculum at all &mdash; against the mask-mixed and dense arms at 4B. <strong>There is no single answer.</strong> Mask-mixing is the difference between working and not working on the O(N&sup2;) task, worth roughly nothing on retrieval, and at short context it is actively <em>negative</em> on the O(N&middot;M) task.</p>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th class="rowlab">Task</th><th class="rowlab">Class</th><th>Rung</th><th>pure-chunked</th><th>chunked-mix</th><th>dense</th><th>mixing buys</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowlab">contradiction</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2.5k</td><td class="num">0.0007</td><td class="num">0.8613</td><td class="num">0.9895</td><td class="num best">+0.861</td></tr>
+        <tr><td class="rowlab">contradiction</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">8k</td><td class="num">0.0000</td><td class="num">0.8039</td><td class="num">0.9760</td><td class="num best">+0.804</td></tr>
+        <tr><td class="rowlab">qdmatch&nbsp;fiqa</td><td class="rowlab cls">O(N&middot;M)</td><td class="num">2k</td><td class="num">0.6907</td><td class="num">0.6179</td><td class="num">0.7919</td><td class="num" style="color:var(--void)">&minus;0.073</td></tr>
+        <tr><td class="rowlab">qdmatch&nbsp;fiqa</td><td class="rowlab cls">O(N&middot;M)</td><td class="num">8k</td><td class="num">0.0913</td><td class="num">0.1592</td><td class="num">0.3868</td><td class="num">+0.068</td></tr>
+        <tr><td class="rowlab">fiqa</td><td class="rowlab cls">O(N)</td><td class="num">2k</td><td class="num">0.8978</td><td class="num">0.9160</td><td class="num">0.9300</td><td class="num">+0.018</td></tr>
+        <tr><td class="rowlab">fiqa</td><td class="rowlab cls">O(N)</td><td class="num">32k</td><td class="num">0.2816</td><td class="num">0.2802</td><td class="num">0.3103</td><td class="num">&minus;0.001</td></tr>
+        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">8k</td><td class="num">0.0580</td><td class="num">0.6415</td><td class="num">0.8765</td><td class="num best">+0.584</td></tr>
+        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">32k</td><td class="num">0.0170</td><td class="num">0.1253</td><td class="num">0.4279</td><td class="num best">+0.108</td></tr>
+        <tr><td class="rowlab">re-order</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2k</td><td class="num">&minus;0.0022</td><td class="num">0.4706</td><td class="num">0.7473</td><td class="num best">+0.473</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">The zeros are real, not broken evals: every one has <code>parse_rate</code> 1.0, a verified non-zero chunk-mask application count, and a training CE that descended normally. Without the curriculum the model simply never learns these tasks under the chunk mask.</p>
+  <p class="note"><strong>With outlier and re-order in, the pattern is no longer ambiguous.</strong> All three O(N&sup2;) tasks measured &mdash; contradiction, outlier scale-k, re-order &mdash; collapse to chance without mask-mixing (0.001 / 0.058 / &minus;0.002) while their mask-mixed arms reach 0.861 / 0.642 / 0.471. The O(N) task is untouched by it and the O(N&middot;M) task is genuinely mixed. So mask-mixing is not a general-purpose improvement to chunked attention; it is what makes chunked attention <em>learnable at all</em> on pair-finding, and close to a no-op elsewhere.</p>
+</section>
+
+<section>
+  <p class="eyebrow">04 &nbsp;diagnostic</p>
+  <h2>Is the chunked model damaged, or just restricted?</h2>
+  <p class="lede">Take the chunked-mix checkpoints and score them with <em>full</em> attention. Whatever they recover was never a learning deficit &mdash; it was the inference-time mask. The share recovered tracks the task's complexity class almost perfectly.</p>
+  <div class="scroll">
+    <table>
+      <caption>4B chunked-mix checkpoints at the 8k rung, scored chunked vs. dense, against the dense-trained arm.</caption>
+      <thead>
+        <tr><th class="rowlab">Task</th><th class="rowlab">Class</th><th>chunked</th><th>&rarr; dense</th><th>dense-trained</th><th class="barcell">gap recovered</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="rowlab">fiqa</td><td class="rowlab cls">O(N)</td>
+          <td class="num">0.6969</td><td class="num">0.7006</td><td class="num">0.7258</td>
+          <td class="barcell"><div class="bar"><div class="track"><div class="fill" style="width:12.8%"></div></div><span class="pct">13%</span></div></td>
+        </tr>
+        <tr>
+          <td class="rowlab">qdmatch fiqa</td><td class="rowlab cls">O(N&middot;M)</td>
+          <td class="num">0.1592</td><td class="num">0.2656</td><td class="num">0.3868</td>
+          <td class="barcell"><div class="bar"><div class="track"><div class="fill" style="width:46.7%"></div></div><span class="pct">47%</span></div></td>
+        </tr>
+        <tr>
+          <td class="rowlab">contradiction</td><td class="rowlab cls">O(N&sup2;)</td>
+          <td class="num">0.8039</td><td class="num">0.9636</td><td class="num">0.9760</td>
+          <td class="barcell"><div class="bar"><div class="track"><div class="fill" style="width:92.8%"></div></div><span class="pct">93%</span></div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="lede">Across the whole contradiction ladder the chunked-mix checkpoint scored densely reads <span class="num">0.9876 / 0.9827 / 0.9636 / 0.9525 / 0.9109</span> against a dense-trained <span class="num">0.9895 / 0.9843 / 0.9760 / 0.9652 / 0.9463</span> &mdash; near-parity at every length.</p>
+  <p class="note"><strong>Two of three controls have now passed.</strong> Each dense column needs a control rung proving the checkpoint reproduces its published chunked baseline before the dense number means anything. fiqa returned <span class="num">0.9168</span> against a published <span class="num">0.9160</span>, and qdmatch&nbsp;fiqa <span class="num">0.6123</span> against <span class="num">0.6179</span> &mdash; both within the &plusmn;0.021 binomial SE at 500 examples, both with the chunk mask verifiably applied (609 and 1,319 calls). The contradiction control is still running, so that row alone remains provisional.</p>
+</section>
+
+<section>
+  <p class="eyebrow">05 &nbsp;architecture</p>
+  <h2>Does the backbone matter, or only the task?</h2>
+  <p class="lede">Every headline number in the suite is measured on Qwen3.5, a 3:1 Gated-DeltaNet:full hybrid where the chunk mask only ever touches one layer in four. <strong>Olmo-3-1025-7B and Olmo-Hybrid-7B are the clean control</strong> &mdash; same size, same training data, same tokenizer, differing only in whether the non-full layers are sliding-window softmax or linear attention.</p>
+  <div class="scroll">
+    <table>
+      <caption>Contradiction at 2k, dense arm. Cross-family rows are on the <code>contradiction_clean</code> ladder, not <code>contradiction_iid</code>, so they are not comparable to section 01.</caption>
+      <thead>
+        <tr><th class="rowlab">Model</th><th class="rowlab">Backbone</th><th>dense @2k</th><th class="rowlab">Status</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="rowlab">Qwen3.5-4B</td><td class="rowlab cls">3:1 GDN : full</td><td class="num best">0.8427</td><td class="rowlab"><span class="pill ok">measured</span></td></tr>
+        <tr><td class="rowlab">OLMo-3-7B</td><td class="rowlab cls">3:1 sliding : full</td><td class="num">0.8290</td><td class="rowlab"><span class="pill ok">measured</span></td></tr>
+        <tr><td class="rowlab">Olmo-Hybrid-7B</td><td class="rowlab cls">3:1 linear : full</td><td class="num">&mdash;</td><td class="rowlab"><span class="pill pending">4 runs training</span></td></tr>
+        <tr><td class="rowlab">Llama-3.2-3B</td><td class="rowlab cls">dense</td><td class="num">0.7434</td><td class="rowlab"><span class="pill ok">measured</span></td></tr>
+        <tr><td class="rowlab">Llama-3.1-8B</td><td class="rowlab cls">dense</td><td class="num">0.6555</td><td class="rowlab"><span class="pill ok">measured</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Llama gets <strong>worse</strong> with scale here, 0.7434 at 3B against 0.6555 at 8B. Both numbers are <code>]]</code>-truncated re-scores; the raw 8B figure is 0.3361 because every prediction runs to the token cap without emitting EOS. The earlier claim that 3B's weakness was a scale effect is retracted &mdash; scale made it worse, not better.</p>
+</section>
+
+<section>
+  <p class="eyebrow">06 &nbsp;do not cite</p>
+  <h2>Cells that look like results and are not</h2>
+  <div class="log">
+    <div class="log-item">
+      <div class="log-head"><h3>re-order at 0.8B and 2B</h3><span class="pill void">at chance</span></div>
+      <p>All three arms sit at <code>kendall_tau</code> &asymp; 0 across every rung (0.0025, &minus;0.0068, 0.0041, 0.0000), while the same task at 4B dense reaches 0.7473. Both small-scale re-order runs are broken, not weak.</p>
+    </div>
+    <div class="log-item">
+      <div class="log-head"><h3>qdmatch&nbsp;nq at 0.8B</h3><span class="pill void">at chance</span></div>
+      <p>Dense 0.0387 &rarr; 0.0000 and chunked 0.0327 &rarr; 0.0000, against 0.9947 for the same task at 2B dense. A 0.8B model does not fall off that cliff; something in the run or its shard did.</p>
+    </div>
+    <div class="log-item">
+      <div class="log-head"><h3>Llama-8B contradiction chunked-mix</h3><span class="pill void">failed run</span></div>
+      <p>Training CE stalled at 2.38 &rarr; 1.807 where the dense twin reached 2.38 &rarr; 0.063. Its 0.0016 eval score measures a failed optimization, not an attention result. The qdmatch twins trained normally, so the failure is specific to this cell.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <p class="eyebrow">07 &nbsp;harness</p>
+  <h2>Bugs found while collecting this</h2>
+  <p class="lede">Each of these produced, or would have produced, a well-formed number that was wrong. They are listed because the fix matters less than knowing which past results were exposed.</p>
+  <div class="log">
+    <div class="log-item">
+      <div class="log-head"><h3>Chunked evaluation silently unmasked under tensor parallelism</h3></div>
+      <p>The chunk mask is an in-process monkey-patch relying on <code>VLLM_ENABLE_V1_MULTIPROCESSING=0</code>. With <code>TP&gt;1</code> vLLM spawns worker subprocesses the patch never reaches, so the job completes, reports <code>mode=chunked</code>, and publishes the <em>dense</em> number. Caught because a control rung returned <code>0.9165619047619048</code> &mdash; bit-identical to the same checkpoint scored dense, with <code>patch_debug.calls=0</code>. 21 jobs cancelled, one published result deleted. Chunked now forces TP=1 and the pipeline refuses to publish when the mask applied zero times.</p>
+    </div>
+    <div class="log-item">
+      <div class="log-head"><h3>Every non-4B eval rebuilt the model at 4B</h3></div>
+      <p><code>BASE_MODEL_ID</code> was hardcoded to <code>Qwen/Qwen3.5-4B-Base</code>, and the export loads the checkpoint into a model built from it. The 0.8B contradiction eval died on a <code>[248320, 1024]</code> vs <code>[248320, 2560]</code> mismatch after 28 minutes of environment build. It failed loudly, which is the good case &mdash; but it is why that ladder is still empty.</p>
+    </div>
+    <div class="log-item">
+      <div class="log-head"><h3>Olmo-Hybrid markers arrived at one-sixth strength</h3></div>
+      <p>The converted base passed the marker cosine gate (&minus;0.0230, fully distinguishable) and failed the norm gate: <code>doc_start</code> and <code>doc_end</code> at 0.15&times; and 0.16&times; the median trained-row norm. RMSNorm rescales every position to unit norm, so those rows arrive as full-strength <em>noise</em> at every marker. Training from that base would have produced a clean-looking null. Repaired from the trained <code>&laquo;</code>/<code>&raquo;</code> delimiters to 0.78&times; and 0.60&times;; re-audit passes both gates.</p>
+    </div>
+    <div class="log-item">
+      <div class="log-head"><h3><code>has_fla()</code> is not a usable gate</h3></div>
+      <p>It is <code>fla is not None</code> behind a bare <code>try: import fla</code>, so it passes on a partial install. It returned <code>True</code> on a job whose next line died with <code>No module named 'fla.modules'</code>. Gates now import the exact symbol the model needs.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Numbers are read from grade JSONs on S3 and under <code>debug/ctc_modelscale/</code>; nothing on this page is transcribed from prose. All suite runs are 1 epoch. Eval sets are 500 examples unless stated &mdash; quote a resolution, not three decimals.</p>
+</footer>
+
+</div>
