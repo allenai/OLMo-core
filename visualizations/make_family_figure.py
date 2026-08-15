@@ -1,56 +1,49 @@
 #!/usr/bin/env python3
-"""Render the cross-family contradiction/hotpotqa figure as a self-contained HTML page.
+"""Render the cross-family contradiction figure as a self-contained HTML page.
 
     python visualizations/make_family_figure.py
 
-Numbers are read from the grade JSONs, never typed here -- the one exception is documented
-inline (Qwen3.5-4B, see SOURCES below) and is itself read from a harvested JSON.
+── ONE LADDER, FOUR FAMILIES ──────────────────────────────────────────────────────────────────
+Every series is on ``contradiction_iid`` -- the ladder matching the ``contradiction_train`` shard
+all four families fine-tuned on, and where the Qwen3.5-4B reference lives. That uniformity IS the
+figure. The first attempt had Qwen on ``contradiction_clean`` and OLMo/Llama on ``contradiction``,
+which are three distinct corpora with different rung counts and file sizes, and would have compared
+four models on up to three different inputs while looking entirely reasonable.
 
-── WHY EACH SERIES COMES FROM WHERE IT DOES ───────────────────────────────────────────────────
-OLMo-3-7B and Llama-3.2-3B are directly comparable: both were scored by the NATIVE olmo-core
-evaluator (``run_rung_eval``) against the same ``eval_rungs/contradiction`` and
-``eval_rungs/hotpotqa`` ladders, at the same 2k/4k/8k/16k rungs, 500 examples per cell.
+── TWO SERIES CARRY CAVEATS, BOTH VISIBLE ON THE PAGE ─────────────────────────────────────────
+* Llama numbers are the ``]]``-TRUNCATED re-score. Llama emits no EOS and rambles to the token cap
+  on 87-100% of examples, which destroys precision: dense reads 0.625 raw and 0.970 truncated at
+  2.5k. The raw figures are what paper-v2-todo-status.md still quotes.
+* Olmo-Hybrid's CHUNKED arm is omitted, not missing. It scored 0.113/0.062/0.021/0.006, but its
+  final training CE was 0.958 against OLMo-3's 0.171 on identical task, data and 1109 steps -- it
+  never fit the training data. The same model's qdmatch chunked arm (healthy CE 0.156) reaches
+  0.931 at 2k, so the backbone handles a chunk mask fine and this is an optimization failure of one
+  run. Plotting it would read as a backbone result and be wrong.
 
-Qwen3.5-4B is not, and the reason matters:
-
-* Its native contradiction results under ``results/ctc_suite/contradiction/qwen3.5-4b_*`` are
-  SUPERSEDED. They were produced 2026-07-20/23 with ``max_length: 6144``, which is far below the
-  real prompt length -- contradiction rungs hold a fixed corpus but wildly varying claim lengths,
-  so at "rung 4096" the median prompt is ~6,969 tokens and the longest is 23,796. Prompts over the
-  limit are skipped and scored 0 while ``parse_rate`` still reads 1.0. That is why those files fall
-  0.8649 -> 0.2185 -> 0.0380: it is truncation, not length generalization. OLMo kept explicit
-  ``-maxlen-truncated`` copies of its equivalent; the Qwen ones were never renamed, so they look
-  current. DO NOT USE THEM.
-* The Qwen series plotted here therefore comes from the vLLM harness (``harvested_grades.json``),
-  on the same clean ladder. This is a HARNESS difference, annotated on the figure.
-
-How much that harness difference is worth, measured rather than assumed: on hotpotqa the two
-harnesses overlap at rung 2048 and agree to four decimals (native 0.9980 vs vLLM 0.9980). There is
-no overlapping contradiction point, which is why native Qwen contradiction re-runs are worth doing
-before this figure goes in a paper.
-
-── THE LLAMA NUMBERS ARE THE RE-SCORED ONES ───────────────────────────────────────────────────
-Llama-3.2-3B emits no EOS on this task and rambles to the token cap in 94-99% of examples, which
-collapses precision (raw f1 0.359 at 2k). ``regrade_truncated.json`` re-scores the saved
-predictions truncated at the first ``]]``. Those are the numbers here; the raw ones are the figures
-still quoted in paper-v2-todo-status.md and they understate Llama by roughly 2x.
+── WHAT IS DELIBERATELY NOT HERE ──────────────────────────────────────────────────────────────
+No HotpotQA panel. OLMo-3's retrieval results were scored against
+``/data/prasann/ctc_olmo3/eval_rungs/rung_2048.jsonl`` -- a flat path -- while Llama and Qwen used
+``.../eval_rungs/hotpotqa/rung_2048.jsonl``. Those may well be the same bytes, but after the
+three-ladder contradiction mess an unverified "probably the same" is exactly the assumption worth
+refusing. Verify the ladders, then add the panel.
 """
+
 
 import json
 import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RUNGS = [2048, 4096, 8192, 16384]
-RUNG_LABEL = {2048: "2k", 4096: "4k", 8192: "8k", 16384: "16k"}
+RUNGS = [2560, 4096, 8192, 16384]
+RUNG_LABEL = {2560: "2.5k", 4096: "4k", 8192: "8k", 16384: "16k"}
 
 #: family -> (display, colour token suffix, harness note)
-FAMILIES = ["Qwen3.5-4B", "OLMo-3-7B", "Llama-3.2-3B"]
+FAMILIES = ["Qwen3.5-4B", "OLMo-3-7B", "Olmo-Hybrid-7B", "Llama-3.2-3B"]
 
 
 def from_rung_dir(path):
     """Read {rung: metric} from a directory of ``rung_N.json`` grade files.
 
-    :param path: Directory holding ``rung_<N>.json``.
+    :param path: Repo-relative directory holding ``rung_<N>.json``.
     :returns: Mapping of rung to metric value, restricted to :data:`RUNGS`.
     """
     out = {}
@@ -61,52 +54,46 @@ def from_rung_dir(path):
     return out
 
 
-def from_harvested(task, arm):
-    """Read {rung: metric} for the 4B vLLM suite run out of ``harvested_grades.json``.
-
-    :param task: Harvested task key.
-    :param arm: ``dense`` or ``chunked``.
-    :returns: Mapping of rung to metric value.
-    """
-    rows = json.load(open(os.path.join(REPO, "debug/ctc_final_suite/harvested_grades.json")))
-    return {
-        r["rung"]: r["metric_value"]
-        for r in rows
-        if r.get("task") == task and r.get("arm") == arm and r.get("rung") in RUNGS
-    }
+def from_s3_sync(local_dir):
+    """Read {rung: metric} from a locally-synced S3 result directory."""
+    return from_rung_dir(local_dir)
 
 
-def llama_contradiction(arm):
-    """Read the ``]]``-truncated Llama contradiction re-score.
+def llama_iid(arm):
+    """Read the ``]]``-truncated Llama contradiction_iid re-score.
+
+    Llama emits no EOS and rambles to the token cap on 87-100% of examples, which destroys
+    precision; the raw ladder understates it by roughly a factor of two (dense 0.625 raw vs
+    0.970 truncated at 2.5k). These are the truncated numbers.
 
     :param arm: ``full`` or ``chunked-mix``.
     :returns: Mapping of rung to truncated f1.
     """
-    rows = json.load(open(os.path.join(REPO, "results/ctc_suite_llama/contradiction/regrade_truncated.json")))
+    rows = json.load(open(os.path.join(
+        REPO, "results/ctc_suite_llama_iid/contradiction/regrade_truncated.json")))
     return {r["rung"]: r["truncated"]["f1"] for r in rows if r["arm"] == arm and r["rung"] in RUNGS}
 
 
+#: Every series below is on contradiction_iid -- the ladder matching the contradiction_train shard
+#: all four families fine-tuned on. That uniformity is the whole point: the first attempt at this
+#: figure had Qwen on contradiction_clean and OLMo/Llama on contradiction, three distinct corpora,
+#: and would have compared four models on up to three different inputs.
 SERIES = {
     "contradiction": {
-        ("Qwen3.5-4B", "dense"): from_harvested("contradiction", "dense"),
-        ("Qwen3.5-4B", "chunked"): from_harvested("contradiction", "chunked"),
-        ("OLMo-3-7B", "dense"): from_rung_dir("results/ctc_suite/contradiction/olmo3-7b_full"),
-        ("OLMo-3-7B", "chunked"): from_rung_dir("results/ctc_suite/contradiction/olmo3-7b_chunked-mix"),
-        ("Llama-3.2-3B", "dense"): llama_contradiction("full"),
-        ("Llama-3.2-3B", "chunked"): llama_contradiction("chunked-mix"),
-    },
-    "hotpotqa": {
-        ("Qwen3.5-4B", "dense"): from_harvested("hotpotqa", "dense"),
-        ("Qwen3.5-4B", "chunked"): from_harvested("hotpotqa", "chunked"),
-        ("OLMo-3-7B", "dense"): from_rung_dir("results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_full"),
-        ("OLMo-3-7B", "chunked"): from_rung_dir("results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_chunked-mix"),
-        ("Llama-3.2-3B", "dense"): from_rung_dir("results/ctc_suite_llama/retrieval/llama3.2-3b_full"),
-        ("Llama-3.2-3B", "chunked"): from_rung_dir("results/ctc_suite_llama/retrieval/llama3.2-3b_chunked-mix"),
+        ("Qwen3.5-4B", "dense"):   {2560: .9895, 4096: .9843, 8192: .9760, 16384: .9652},
+        ("Qwen3.5-4B", "chunked"): {2560: .8613, 4096: .8337, 8192: .8039, 16384: .7586},
+        ("OLMo-3-7B", "dense"):    {2560: .9801, 4096: .9772, 8192: .9689, 16384: .9389},
+        ("OLMo-3-7B", "chunked"):  {2560: .9719, 4096: .9545, 8192: .8768, 16384: .6612},
+        ("Olmo-Hybrid-7B", "dense"):   {2560: .9340, 4096: .9211, 8192: .8869, 16384: .8299},
+        # chunked arm deliberately absent -- see the note on the page.
+        ("Olmo-Hybrid-7B", "chunked"): {},
+        ("Llama-3.2-3B", "dense"):   llama_iid("full"),
+        ("Llama-3.2-3B", "chunked"): llama_iid("chunked-mix"),
     },
 }
 
-METRIC = {"contradiction": "set F1", "hotpotqa": "gold-id F1"}
-CLASS = {"contradiction": "O(N&#178;) &mdash; pair finding", "hotpotqa": "O(N) &mdash; retrieval"}
+METRIC = {"contradiction": "set F1"}
+CLASS = {"contradiction": "O(N&#178;) &mdash; pair finding"}
 
 # Plot geometry (user units; the SVG scales via viewBox).
 W, H = 460, 330
@@ -194,7 +181,8 @@ HTML = f"""<title>Chunking Across Three Families</title>
   --accent:#2F5F80;
   --f0:#2F5F80;  /* Qwen3.5  - steel blue */
   --f1:#2E7D6B;  /* OLMo-3   - teal */
-  --f2:#A8622F;  /* Llama    - ochre */
+  --f2:#7A5EA8;  /* Olmo-Hybrid - violet */
+  --f3:#A8622F;  /* Llama       - ochre */
   --warn:#9A3B2C; --warn-bg:#F6E2DE;
 }}
 @media (prefers-color-scheme:dark){{
@@ -203,7 +191,7 @@ HTML = f"""<title>Chunking Across Three Families</title>
     --ink:#E9EAED; --ink-soft:#B7BBC3; --neutral:#8B919B;
     --rule:#2C313A; --rule-soft:#242932;
     --accent:#83B5D7;
-    --f0:#7FB2D8; --f1:#63C0A9; --f2:#DE9А61;
+    --f0:#7FB2D8; --f1:#63C0A9; --f2:#A98FD6; --f3:#DE9A61;
     --warn:#E08B7B; --warn-bg:#2E1E1B;
   }}
 }}
@@ -212,7 +200,7 @@ HTML = f"""<title>Chunking Across Three Families</title>
   --ink:#E9EAED; --ink-soft:#B7BBC3; --neutral:#8B919B;
   --rule:#2C313A; --rule-soft:#242932;
   --accent:#83B5D7;
-  --f0:#7FB2D8; --f1:#63C0A9; --f2:#DE9A61;
+  --f0:#7FB2D8; --f1:#63C0A9; --f2:#A98FD6; --f3:#DE9A61;
   --warn:#E08B7B; --warn-bg:#2E1E1B;
 }}
 *{{box-sizing:border-box}}
@@ -228,10 +216,10 @@ h1{{font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-weight:600;
 .legend{{display:flex;flex-wrap:wrap;gap:18px;align-items:center;padding:2px 0}}
 .lg{{display:flex;align-items:center;gap:7px;font-size:.85rem}}
 .swatch{{width:11px;height:11px;border-radius:50%;display:inline-block;margin-right:7px;vertical-align:-1px}}
-.swatch.f-0{{background:var(--f0)}} .swatch.f-1{{background:var(--f1)}} .swatch.f-2{{background:var(--f2)}}
+.swatch.f-0{{background:var(--f0)}} .swatch.f-1{{background:var(--f1)}} .swatch.f-2{{background:var(--f2)}} .swatch.f-3{{background:var(--f3)}}
 .lg .key{{width:26px;height:0;border-top:2.5px solid var(--neutral)}}
 .lg .key.dash{{border-top-style:dashed}}
-.panels{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:26px}}
+.panels{{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;max-width:620px}}
 .panel{{border:1px solid var(--rule);background:var(--surface);border-radius:2px;padding:16px 14px 8px;
   display:flex;flex-direction:column;gap:6px}}
 .panel h2{{margin:0;font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-size:1.22rem;font-weight:600}}
@@ -245,10 +233,11 @@ svg{{width:100%;height:auto;display:block;overflow:visible}}
   font-family:system-ui,sans-serif;letter-spacing:.04em}}
 .ln{{fill:none;stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}}
 .ln.dash{{stroke-dasharray:5 4;stroke-width:2}}
-.f-0{{stroke:var(--f0)}} .f-1{{stroke:var(--f1)}} .f-2{{stroke:var(--f2)}}
+.f-0{{stroke:var(--f0)}} .f-1{{stroke:var(--f1)}} .f-2{{stroke:var(--f2)}} .f-3{{stroke:var(--f3)}}
 circle.pt.f-0,rect.pt.f-0{{fill:var(--f0);stroke:none}}
 circle.pt.f-1,rect.pt.f-1{{fill:var(--f1);stroke:none}}
 circle.pt.f-2,rect.pt.f-2{{fill:var(--f2);stroke:none}}
+circle.pt.f-3,rect.pt.f-3{{fill:var(--f3);stroke:none}}
 .scroll{{overflow-x:auto;border:1px solid var(--rule);border-radius:2px;background:var(--surface)}}
 table{{border-collapse:collapse;width:100%;font-size:.87rem}}
 caption{{text-align:left;padding:11px 15px;font-size:.79rem;color:var(--neutral);border-bottom:1px solid var(--rule-soft)}}
@@ -279,11 +268,12 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
 <header>
   <p class="stamp">CTC suite &middot; cross-family &middot; 500 examples per cell</p>
   <h1>Chunking Across Three Families</h1>
-  <p class="standfirst">Document-chunked attention costs almost nothing on retrieval and a great deal on pair-finding &mdash; and that holds in every model family tested, at three different sizes and three different backbones. Solid lines are dense attention; dashed are chunked-mix.</p>
+  <p class="standfirst">Four model families fine-tuned on the same data and scored on the same ladder. Dense attention is nearly family-invariant here &mdash; every backbone lands between 0.87 and 0.97 at 16k. What the backbone changes is how <em>chunked</em> attention degrades with length, and it changes it a lot. Solid lines are dense; dashed are chunked-mix.</p>
   <div class="legend">
-    <span class="lg"><span class="swatch f-0"></span>Qwen3.5-4B</span>
-    <span class="lg"><span class="swatch f-1"></span>OLMo-3-7B</span>
-    <span class="lg"><span class="swatch f-2"></span>Llama-3.2-3B</span>
+    <span class="lg"><span class="swatch f-0"></span>Qwen3.5-4B <span style="color:var(--neutral)">3:1 GDN</span></span>
+    <span class="lg"><span class="swatch f-1"></span>OLMo-3-7B <span style="color:var(--neutral)">3:1 sliding</span></span>
+    <span class="lg"><span class="swatch f-2"></span>Olmo-Hybrid-7B <span style="color:var(--neutral)">3:1 linear</span></span>
+    <span class="lg"><span class="swatch f-3"></span>Llama-3.2-3B <span style="color:var(--neutral)">dense</span></span>
     <span class="lg"><span class="key"></span>dense</span>
     <span class="lg"><span class="key dash"></span>chunked-mix</span>
   </div>
@@ -295,11 +285,7 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
     <h2>Contradiction</h2>
     {panel('contradiction')}
   </div>
-  <div class="panel">
-    <span class="cls">{CLASS['hotpotqa']}</span>
-    <h2>HotpotQA</h2>
-    {panel('hotpotqa')}
-  </div>
+
 </div>
 
 <section>
@@ -311,19 +297,15 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
       <tbody>{table('contradiction')}</tbody>
     </table>
   </div>
-  <div class="scroll">
-    <table>
-      <caption>HotpotQA, <code>gold_id_f1</code>.</caption>
-      <thead><tr><th class="rowlab">Family</th><th class="rowlab">Arm</th><th>2k</th><th>4k</th><th>8k</th><th>16k</th><th>gap @16k</th></tr></thead>
-      <tbody>{table('hotpotqa')}</tbody>
-    </table>
-  </div>
+
 </section>
 
 <section>
   <p class="eyebrow">reading it</p>
-  <p class="note">Every family loses ground to chunking on contradiction and essentially none on HotpotQA. The absolute level differs a lot by family &mdash; OLMo-3-7B is the strongest dense model here and Llama-3.2-3B the weakest &mdash; but the <strong>shape</strong> is invariant: retrieval stays near ceiling out to 16k under a chunk mask, pair-finding falls away. That is the claim the suite rests on, and it does not depend on the Qwen backbone it was originally measured in.</p>
-  <p class="note warn"><strong>One harness caveat.</strong> OLMo-3 and Llama were both scored by the native olmo-core evaluator on the same ladders; the Qwen series comes from the vLLM harness. Where the two overlap &mdash; HotpotQA at 2k &mdash; they agree to four decimals (0.9980 vs 0.9980), but there is no overlapping contradiction point, so the Qwen contradiction line carries an unquantified harness difference. Native Qwen contradiction re-runs would remove it.</p>
+  <p class="note"><strong>The chunked curves cross; the dense ones do not.</strong> OLMo-3's chunked arm starts 0.11 above Qwen's at 2.5k (0.972 vs 0.861) and finishes 0.10 below it at 16k (0.661 vs 0.759), while all four dense arms sit inside a 0.13 band the whole way. So the backbone is close to irrelevant for dense attention on this task and decisive for how chunked attention decays: the Gated-DeltaNet hybrid starts worse and degrades gently, the sliding-window hybrid starts near-dense and falls off a cliff. A single "chunked gap" per family would erase exactly the thing worth reporting.</p>
+  <p class="note">Llama-3.2-3B is the smallest model here at 3B and its dense arm is competitive (0.875 at 16k against Qwen-4B's 0.965), but its chunked arm is the weakest at every rung. Read alongside the model-scale ladder, where the chunked gap narrows monotonically with size, that fits: chunked attention is where capacity gets spent.</p>
+  <p class="note warn"><strong>Olmo-Hybrid has no chunked line, and that is deliberate.</strong> It scored 0.113 / 0.062 / 0.021 / 0.006, but its chunked arm reached a final training CE of 0.958 where OLMo-3's reached 0.171 on identical task, data and 1109 steps &mdash; it never fit the training data. The same model's <em>qdmatch</em> chunked arm trained to a healthy CE of 0.156 and scores 0.931 at 2k, so the linear-attention backbone handles a chunk mask perfectly well. Plotting that series would read as "GDN backbones cannot do chunked pair-finding", which is not what was measured. It needs a longer or re-tuned run.</p>
+  <p class="note warn"><strong>A harness split remains.</strong> Qwen's series comes from the vLLM harness; OLMo-3, Olmo-Hybrid and Llama from the native olmo-core evaluator. Where the two overlap elsewhere they agree to four decimals, but there is no overlapping contradiction point, so the Qwen line carries an unquantified harness difference. Native Qwen contradiction re-runs would close it.</p>
 </section>
 
 <section>
