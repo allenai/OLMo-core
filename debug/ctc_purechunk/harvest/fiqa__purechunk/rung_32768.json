@@ -1,0 +1,30 @@
+{
+  "mode": "chunked",
+  "hf_model": "/root/vllm_beaker_eval_fiqa_32768/serving",
+  "task": "beir_fiqa",
+  "canonical_task": "retrieval",
+  "scorer": "retrieval",
+  "eval_data": "/root/vllm_beaker_eval_fiqa_32768/rung_32768.jsonl",
+  "eval_size": 500,
+  "query_position": "both",
+  "cot_mode": "none",
+  "metric_name": "gold_id_f1",
+  "metric_value": 0.28161904761904766,
+  "parse_rate": null,
+  "patch_debug": {
+    "calls": 7815,
+    "applied": 7815,
+    "direct": 0,
+    "fallback": 7815,
+    "freepath": 0,
+    "logged": false,
+    "divchecked": true
+  },
+  "gen_seconds": 1511.7006740570068,
+  "metrics": {
+    "exact_match": 0.164,
+    "recall": 0.28833333333333333,
+    "precision": 0.28578717948717947,
+    "f1": 0.28161904761904766
+  }
+}

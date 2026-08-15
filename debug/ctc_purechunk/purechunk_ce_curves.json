@@ -1,0 +1,64 @@
+{
+ "contradiction": {
+  "arm": "pure-chunked (--variant chunked, no mask-mixing)",
+  "n_points": 2420,
+  "deciles": [
+   1.1749,
+   1.1178,
+   1.1024,
+   1.0912,
+   1.0896,
+   1.086,
+   1.0805,
+   1.075,
+   1.0734,
+   1.0709
+  ],
+  "first": 1.592,
+  "last20_mean": 1.0684,
+  "min": 0.9702
+ },
+ "contradiction_cmix_08b": {
+  "note": "no usable CE series (run crashed before training)",
+  "n_points": 0
+ },
+ "fiqa": {
+  "arm": "pure-chunked (--variant chunked, no mask-mixing)",
+  "n_points": 2500,
+  "deciles": [
+   0.4773,
+   0.3923,
+   0.3284,
+   0.2706,
+   0.22,
+   0.1714,
+   0.1421,
+   0.1055,
+   0.0855,
+   0.0652
+  ],
+  "first": 1.506,
+  "last20_mean": 0.071,
+  "min": 0.0006
+ },
+ "qdmatch_fiqa": {
+  "arm": "pure-chunked (--variant chunked, no mask-mixing)",
+  "n_points": 2499,
+  "deciles": [
+   0.5728,
+   0.5009,
+   0.4325,
+   0.3924,
+   0.3596,
+   0.3423,
+   0.3268,
+   0.3011,
+   0.2865,
+   0.2682
+  ],
+  "first": 1.542,
+  "last20_mean": 0.2531,
+  "min": 0.0952
+ },
+ "_README": "CE curves for the pure-chunked (no mask-mixing) CTC runs, distilled from the beaker training logs so the flat-CE claim in TABLE-MASKMIX has committed provenance without carrying 2.9MB of raw logs. contradiction is FLAT (1.175 -> 1.071 across the whole run) while fiqa and qdmatch_fiqa on the identical recipe descend normally -- that contrast is what makes the near-zero contradiction eval a task-specific failure to fit rather than broken infra. Regenerate: beaker experiment logs <id> | grep -oE 'CE loss=[0-9.]+'. Experiment ids are in debug/ctc_purechunk/LAUNCH_LEDGER.tsv."
+}

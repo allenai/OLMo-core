@@ -1,0 +1,56 @@
+{
+  "mode": "chunked",
+  "hf_model": "/root/vllm_beaker_eval_reorder_16384/serving",
+  "task": "reorder",
+  "canonical_task": "reorder",
+  "scorer": "reorder",
+  "eval_data": "/root/vllm_beaker_eval_reorder_16384/rung_16384.jsonl",
+  "eval_size": 500,
+  "query_position": "both",
+  "cot_mode": "none",
+  "metric_name": "kendall_tau",
+  "metric_value": 0.0,
+  "parse_rate": 0.0,
+  "patch_debug": {
+    "calls": 16738,
+    "applied": 16738,
+    "direct": 0,
+    "fallback": 16738,
+    "freepath": 0,
+    "logged": false,
+    "divchecked": true
+  },
+  "gen_seconds": 9023.302896022797,
+  "metrics": {
+    "kendall_tau": 0.0,
+    "spearman_rho": 0.0,
+    "pmr": 0.0,
+    "position_accuracy": 0.0,
+    "pairwise_accuracy": 0.0,
+    "first_last_accuracy": 0.0,
+    "lcs_norm": 0.0,
+    "parse_rate": 0.0,
+    "per_source": {
+      "gutenberg": {
+        "kendall_tau": 0.0,
+        "spearman_rho": 0.0,
+        "pmr": 0.0,
+        "position_accuracy": 0.0,
+        "pairwise_accuracy": 0.0,
+        "first_last_accuracy": 0.0,
+        "lcs_norm": 0.0
+      }
+    },
+    "per_n_bin": {
+      "long": {
+        "kendall_tau": 0.0,
+        "spearman_rho": 0.0,
+        "pmr": 0.0,
+        "position_accuracy": 0.0,
+        "pairwise_accuracy": 0.0,
+        "first_last_accuracy": 0.0,
+        "lcs_norm": 0.0
+      }
+    }
+  }
+}

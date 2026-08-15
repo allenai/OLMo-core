@@ -84,3 +84,9 @@ core
 
 # repo-root symlink to src/scripts/train/memexpress (the training-code hub) for quick inspection
 /training
+
+# Raw beaker training logs pulled for the pure-chunked CE audit (~3MB of text). The claim they
+# support lives in debug/ctc_purechunk/purechunk_ce_curves.json, which IS committed; regenerate the
+# raw logs with `beaker experiment logs <id>` using the ids in debug/ctc_purechunk/LAUNCH_LEDGER.tsv.
+debug/ctc_purechunk/trainlogs/
+debug/ctc_purechunk/tablerender/

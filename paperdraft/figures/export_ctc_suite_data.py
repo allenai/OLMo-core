@@ -83,7 +83,7 @@ STATUS = {
     "fiqa": "ok", "nq": "ok", "hpqa": "ok", "qdmatch_fiqa": "ok", "qdmatch_nq": "ok",
     "qdmatch_hpqa": "ok", "outlier_amazon": "ok", "outlier_scalek": "ok",
     "outlier_fixk": "partial", "oolong": "ok", "grouping": "ok", "absence": "partial",
-    "xabsence": "superseded", "rerank": "ok", "msmarco": "ok", "reorder": "ok",
+    "xabsence": "ok", "rerank": "ok", "msmarco": "ok", "reorder": "ok",
     "obliq": "partial", "niah_contra": "partial", "contra_real": "ok", "strmatch": "partial",
     "textgroups": "ok", "scifact": "ok",
 }
@@ -104,8 +104,14 @@ NOTE = {
     "grouping": "Regraded after the parser fix; the old 0.439/0.358 row is dead.",
     "absence": "32k rung never built; 16k graded on eval_size=148 only. Labels run 3.0-3.6x. "
                "Classified low / O_T(N) per the 2026-08-03 correction, overriding suite_table.",
-    "xabsence": "SUPERSEDED. Training CE sat on the 0.78 flatline, so these are not a trained "
-                "model. Learnability probes now reach CE 0.23-0.33 and decide the row.",
+    # The old row (dense 0.61->0.52, chunked 0.135->0.008) was NOT a trained model -- training CE
+    # sat on the 0.78 flatline. Root cause was capacity, not the task: 0.8B and 2B collapse to the
+    # chance floor on the identical shard, 4B learns it. Retrained 2026-08-13 on the two-sided
+    # `xabsence_both_ladder5` shard (20k examples over 5 rungs, missing item can come from either
+    # corpus) at 4B; both arms evaluated in their native mode. The row is live and quotable.
+    "xabsence": "Retrained at 4B on the two-sided ladder5 shard 2026-08-13; the pre-2026-08-13 "
+                "row (dense 0.61->0.52) was an untrained CE-0.78 flatline and is dead. Capacity "
+                "threshold, not task difficulty: 0.8B/2B sit at the chance floor on this shard.",
     "rerank": "Ladder rebuilt token-accurate and fully regraded 2026-08-12.",
     "msmarco": "Ladder rebuilt token-accurate and fully regraded 2026-08-12.",
     "reorder": "32k capped by rung policy -- deliberate, not a gap.",
@@ -149,10 +155,12 @@ STOP_TOKEN_CAVEAT = ("stop='eos' + the <|im_end|> stop-token bug: generation run
                      "cap, so this is a LOWER BOUND, not a measurement, pending re-eval")
 
 # Individual cells the artifact says are not quotable even though a number exists for them.
-CELL_DROP = {
-    ("niah_contra", 2048): "dense 2k is 0.164 on disk vs 0.988 in the July table; the on-disk "
-                           "number predates the pipeline fix, so the pair is not comparable",
-}
+#
+# niah_contra@2048 CAME OFF this list on 2026-08-14: build_suite_table.py now substitutes the July
+# table's 0.988 for the implausible on-disk dense 0.164 (CELL_OVERRIDES, on Prasann's instruction),
+# so the pair the export sees is 0.988/0.984 and is comparable again. Keeping the drop here would
+# exclude a cell the suite table itself stands behind.
+CELL_DROP = {}
 
 # ── length generalization ─────────────────────────────────────────────────────────────
 # Injection safety, from the gold_semantics table in debug/ctc_modelscale/expand_ctc_rung.py.
@@ -181,8 +189,12 @@ LG_TO_ROW = {
     "cycle": None,  # cycle is not one of the 22 suite rows, so it has no in-ladder anchor
 }
 
-# oolong's 64k rung was run by the oolong driver and lands in its own results tree.
-OOLONG_64K = REPO / "debug/ctc_oolong_eval/results/ctcms-oolong-full-4b-vsl/grade_65536.json"
+# oolong's long rungs were run by the oolong driver and land in its own results tree, not under
+# lengthgen_results/. 128k added 2026-08-14 (eval_size 669, partial_credit 0.5750).
+OOLONG_LONG = [
+    REPO / "debug/ctc_oolong_eval/results/ctcms-oolong-full-4b-vsl/grade_65536.json",
+    REPO / "debug/ctc_oolong_eval/results/ctcms-oolong-full-4b-vsl/grade_131072.json",
+]
 
 # The two niah long-rung builds disagree with each other by 0.73 f1 at the same length, so no
 # niah long-rung number is quotable until the ladder is rebuilt.
@@ -342,14 +354,18 @@ def export_grid():
 # ── model scale ───────────────────────────────────────────────────────────────────────
 SCALE_LABEL = {"0.8b": "Qwen3.5-0.8B", "2b": "Qwen3.5-2B", "4b": "Qwen3.5-4B"}
 
-# Why a scale cell can be missing. Both are documented on the artifact page; neither is a result.
+# Why a scale cell can be missing. All are documented on the artifact page; none is a result.
+#
+# ⚠ ("contradiction", "0.8b") WAS HERE AND IS NOT ANY MORE. That entry recorded the 0.8B x
+# chunked-mix x seq_len 40960 OOM as an open mystery. The arm was re-run and landed complete on
+# 2026-08-15 (0.7980/0.7547/0.6871/0.6089/0.5199 on contradiction_iid, all five rungs, eval_size
+# 500, parse_rate 1.0). Leaving the entry in would have stamped "do NOT read the absence as a gap"
+# onto cells that are now populated. reorder's 0.8B chunked arm is still genuinely absent.
 SCALE_MISSING = {
     ("fiqa", "2b"): "fiqa was only ever run at 0.8B and 4B; the 2B pair was not launched",
-    ("contradiction", "0.8b"): "0.8B x chunked-mix x seq_len 40960 OOMs on both saturn and "
-                               "jupiter while 2B/4B and 0.8B@33792 train fine; four hypotheses "
-                               "tested and refuted, cause still unknown -- do NOT read the "
-                               "absence as a gap",
-    ("reorder", "0.8b"): "same unexplained 0.8B x chunked-mix x 40960 OOM as contradiction",
+    ("reorder", "0.8b"): "unexplained 0.8B x chunked-mix x seq_len 40960 OOM on both saturn and "
+                         "jupiter while 2B/4B train fine; four hypotheses tested and refuted, "
+                         "cause still unknown -- do NOT read the absence as a gap",
 }
 
 
@@ -435,11 +451,11 @@ def _lengthgen_grades():
     """(task_dir, rung file) -> {arm: grade}, over every long-rung grade JSON on disk."""
     found = {}
     files = sorted(glob.glob(str(SCALE / "lengthgen_results/*/*.json")))
-    if OOLONG_64K.exists():
-        files.append(str(OOLONG_64K))
+    oolong_files = [str(p) for p in OOLONG_LONG if p.exists()]
+    files.extend(oolong_files)
     for f in files:
         g = json.load(open(f))
-        task_dir = ("oolong" if f == str(OOLONG_64K)
+        task_dir = ("oolong" if f in oolong_files
                     else os.path.basename(os.path.dirname(f)))
         rung_file = os.path.basename(g.get("eval_data", ""))
         arm = "dense" if g.get("mode") == "full" else "chunked"

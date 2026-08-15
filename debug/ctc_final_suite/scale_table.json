@@ -278,7 +278,38 @@
       "parse_rate": 1.0
      }
     },
-    "chunked": {}
+    "chunked": {
+     "2048": {
+      "value": 0.798,
+      "eval_size": 500,
+      "se": 0.018,
+      "parse_rate": 1.0
+     },
+     "4096": {
+      "value": 0.7547,
+      "eval_size": 500,
+      "se": 0.0192,
+      "parse_rate": 1.0
+     },
+     "8192": {
+      "value": 0.6871,
+      "eval_size": 500,
+      "se": 0.0207,
+      "parse_rate": 1.0
+     },
+     "16384": {
+      "value": 0.6089,
+      "eval_size": 500,
+      "se": 0.0218,
+      "parse_rate": 1.0
+     },
+     "32768": {
+      "value": 0.5199,
+      "eval_size": 500,
+      "se": 0.0223,
+      "parse_rate": 1.0
+     }
+    }
    },
    "2b": {
     "dense": {
@@ -434,7 +465,10 @@
    }
   },
   "gap": {
-   "0.8b": null,
+   "0.8b": {
+    "rung": 32768,
+    "value": 0.3413
+   },
    "2b": {
     "rung": 32768,
     "value": 0.3213

@@ -1,0 +1,39 @@
+{
+  "mode": "chunked",
+  "hf_model": "/root/vllm_beaker_eval_outlier_2048/serving",
+  "task": "outlier",
+  "canonical_task": "outlier",
+  "scorer": "outlier",
+  "eval_data": "/root/vllm_beaker_eval_outlier_2048/rung_2048.jsonl",
+  "eval_size": 500,
+  "query_position": "both",
+  "cot_mode": "none",
+  "metric_name": "set_f1",
+  "metric_value": 0.16845714285714286,
+  "parse_rate": 1.0,
+  "patch_debug": {
+    "calls": 16255,
+    "applied": 16255,
+    "direct": 0,
+    "fallback": 16255,
+    "freepath": 0,
+    "logged": false,
+    "divchecked": true
+  },
+  "gen_seconds": 8892.794345140457,
+  "metrics": {
+    "precision": 0.1915,
+    "recall": 0.15333333333333332,
+    "f1": 0.16845714285714286,
+    "exact_match": 0.002,
+    "parse_rate": 1.0,
+    "per_source": {
+      "wiki_outlier_topic": {
+        "precision": 0.1915,
+        "recall": 0.15333333333333332,
+        "f1": 0.16845714285714286,
+        "exact_match": 0.002
+      }
+    }
+  }
+}

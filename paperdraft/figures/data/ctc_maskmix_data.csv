@@ -1,0 +1,25 @@
+table,task,task_label,ctc_order,metric_key,context_tokens,dense,chunked_mix,pure_chunked,maskmix_gain,eval_size,gain_se,flat_ce_purechunk
+maskmix,fiqa,BEIR FiQA,$O_T(N)$,gold_id_f1,2048,0.93,0.916,0.8977619047619048,0.0182,500,0.0184,no
+maskmix,fiqa,BEIR FiQA,$O_T(N)$,gold_id_f1,4096,0.8462,0.8226,0.7950603174603175,0.0275,500,0.0249,no
+maskmix,fiqa,BEIR FiQA,$O_T(N)$,gold_id_f1,8192,0.7258,0.6969,0.6918666666666666,0.005,500,0.0291,no
+maskmix,fiqa,BEIR FiQA,$O_T(N)$,gold_id_f1,16384,0.621,0.5751,0.5714111111111112,0.0037,500,0.0313,no
+maskmix,fiqa,BEIR FiQA,$O_T(N)$,gold_id_f1,32768,0.3103,0.2802,0.28161904761904766,-0.0014,500,0.0284,no
+maskmix,outlier_scalek,Outlier (scale-$k$),$O_T(NM)$,set_f1,2048,0.982,0.9624,0.16845714285714286,0.7939,500,0.0188,no
+maskmix,outlier_scalek,Outlier (scale-$k$),$O_T(NM)$,set_f1,4096,0.9556,0.8692,0.12883333333333336,0.7404,500,0.0213,no
+maskmix,outlier_scalek,Outlier (scale-$k$),$O_T(NM)$,set_f1,8192,0.8765,0.6415,0.057955555555555566,0.5835,500,0.0239,no
+maskmix,outlier_scalek,Outlier (scale-$k$),$O_T(NM)$,set_f1,16384,0.6789,0.3432,0.04232833832833833,0.3009,500,0.0231,no
+maskmix,outlier_scalek,Outlier (scale-$k$),$O_T(NM)$,set_f1,32768,0.4279,0.1253,0.01696190476190476,0.1083,500,0.0159,no
+maskmix,qdmatch_fiqa,QDmatch (FiQA),$O_T(N^2)$,pair_f1,2048,0.7919,0.6179,0.6906666666666667,-0.0728,500,0.03,no
+maskmix,qdmatch_fiqa,QDmatch (FiQA),$O_T(N^2)$,pair_f1,4096,0.5848,0.3577,0.24533333333333332,0.1124,500,0.0288,no
+maskmix,qdmatch_fiqa,QDmatch (FiQA),$O_T(N^2)$,pair_f1,8192,0.3868,0.1592,0.09133333333333332,0.0679,500,0.0208,no
+maskmix,qdmatch_fiqa,QDmatch (FiQA),$O_T(N^2)$,pair_f1,16384,0.2368,0.0634,0.02333333333333333,0.0401,500,0.0128,no
+maskmix,qdmatch_fiqa,QDmatch (FiQA),$O_T(N^2)$,pair_f1,32768,0.1244,0.0168,0.010666666666666666,0.0061,500,0.0074,no
+maskmix,reorder,Reordering,$O_T(N^2)$,kendall_tau,2048,0.7473,0.4706,-0.002181818181818182,0.4728,500,0.0223,yes
+maskmix,reorder,Reordering,$O_T(N^2)$,kendall_tau,4096,0.5998,0.2142,-0.005145299145299146,0.2193,500,0.0183,yes
+maskmix,reorder,Reordering,$O_T(N^2)$,kendall_tau,8192,0.2618,0.0428,0.008288220551378447,0.0345,500,0.0099,yes
+maskmix,reorder,Reordering,$O_T(N^2)$,kendall_tau,16384,0.0473,0.0,0.0,0.0,500,0.0,yes
+maskmix,contra_real,Contradiction,$O_T(N^2)$,set_f1,2048,0.9895,0.8613,0.0006666666666666666,0.8606,500,0.0155,yes
+maskmix,contra_real,Contradiction,$O_T(N^2)$,set_f1,4096,0.9843,0.8337,0.0013333333333333333,0.8324,500,0.0167,yes
+maskmix,contra_real,Contradiction,$O_T(N^2)$,set_f1,8192,0.976,0.8039,0.0,0.8039,500,0.0178,yes
+maskmix,contra_real,Contradiction,$O_T(N^2)$,set_f1,16384,0.9652,0.7586,0.0,0.7586,500,0.0191,yes
+maskmix,contra_real,Contradiction,$O_T(N^2)$,set_f1,32768,0.9463,0.6991,0.0,0.6991,500,0.0205,yes
