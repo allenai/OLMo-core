@@ -271,6 +271,30 @@ def test_cached_decode_matches_full_sequence_last_row():
     torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
+def test_flex_prefill_pads_arbitrary_prompt_length(monkeypatch):
+    """Natural eval prompt lengths must not fall off the block-sparse path."""
+    torch.manual_seed(0)
+    T, H, H_kv, D = 513, 4, 2, 16
+    attn = _build_attention(n_summary_tokens=5)
+    roles = _roles(640)[:, :, :T]
+    q = torch.randn(1, T, H, D)
+    k = torch.randn(1, T, H_kv, D)
+    v = torch.randn(1, T, H_kv, D)
+    attn._summary_roles = roles
+    seen = {}
+
+    def fake_flex(qh, kh, vh, **kwargs):
+        seen["shape"] = qh.shape
+        return qh
+
+    monkeypatch.setattr("olmo_core.nn.attention.summary_token._flex_attention", fake_flex)
+    with torch.no_grad():
+        out = attn._run_flex(q, k, v, roles, B=1, T=T)
+    assert out is not None
+    assert out.shape == q.shape
+    assert seen["shape"][2] == 640
+
+
 def test_levers_rejected_on_other_attention_types():
     with pytest.raises(OLMoConfigurationError, match="summary_token"):
         AttentionConfig(name=AttentionType.document_chunked, n_heads=4, n_summary_tokens=5).build(

@@ -458,7 +458,13 @@ class SummaryTokenAttention(Attention):
             roles = roles.expand(batch_size, -1, -1)
         return roles
 
-    def _block_mask(self, roles: torch.Tensor, B: int, T: int):
+    def _block_mask(
+        self,
+        roles: torch.Tensor,
+        B: int,
+        T: int,
+        causal_example: Optional[torch.Tensor],
+    ):
         """Build (or reuse) this forward's :class:`BlockMask`. Single-slot cache across layers."""
         src = self._summary_roles
         assert src is not None
@@ -470,7 +476,7 @@ class SummaryTokenAttention(Attention):
             T,
             self.flex_block_size,
             self.spec.cache_key,
-            None if self._causal_example is None else self._causal_example.data_ptr(),
+            None if causal_example is None else causal_example.data_ptr(),
             str(roles.device),
         )
         cached = _BLOCK_MASK_CACHE.get("cur")
@@ -479,7 +485,7 @@ class SummaryTokenAttention(Attention):
         block_mask = build_summary_block_mask(
             roles,
             self.spec,
-            causal_example=self._causal_example,
+            causal_example=causal_example,
             block_size=self.flex_block_size,
         )
         _BLOCK_MASK_CACHE["cur"] = (key, block_mask)
@@ -536,11 +542,26 @@ class SummaryTokenAttention(Attention):
 
     def _run_flex(self, q, k, v, roles, *, B: int, T: int) -> Optional[torch.Tensor]:
         """Run the block-sparse path once. Returns ``None`` if flex could not run."""
+        # Flex block masks require complete blocks, while eval prompts naturally have arbitrary
+        # lengths. Pad only this prefill kernel invocation; the K/V cache retains the unpadded prompt.
+        kernel_T = ((T + self.flex_block_size - 1) // self.flex_block_size) * self.flex_block_size
+        causal_example = self._causal_example
+        if kernel_T != T:
+            pad = kernel_T - T
+            q = F.pad(q, (0, 0, 0, 0, 0, pad))
+            k = F.pad(k, (0, 0, 0, 0, 0, pad))
+            v = F.pad(v, (0, 0, 0, 0, 0, pad))
+            role_pad = torch.full(
+                (B, N_ROLE_FIELDS, pad), -1, dtype=roles.dtype, device=roles.device
+            )
+            role_pad[:, ROLE_KIND] = int(TokenKind.PAD)
+            roles = torch.cat([roles, role_pad], dim=-1)
+            if causal_example is not None and causal_example.dim() == 2:
+                causal_example = F.pad(causal_example, (0, pad), value=False)
         for attempt in range(2):
             try:
-                block_mask = self._block_mask(roles, B, T)
-                if block_mask is None:  # sequence length not a multiple of the block size
-                    return None
+                block_mask = self._block_mask(roles, B, kernel_T, causal_example)
+                assert block_mask is not None
                 out = _flex_attention(
                     q.transpose(1, 2).contiguous(),
                     k.transpose(1, 2).contiguous(),
@@ -549,7 +570,7 @@ class SummaryTokenAttention(Attention):
                     scale=self.softmax_scale,
                     enable_gqa=k.shape[2] != q.shape[2],
                 )
-                return out.transpose(1, 2).contiguous()
+                return out.transpose(1, 2)[:, :T].contiguous()
             except torch.cuda.OutOfMemoryError:  # pragma: no cover - CUDA-only long-context path
                 _BLOCK_MASK_CACHE.pop("cur", None)
                 torch.cuda.empty_cache()
