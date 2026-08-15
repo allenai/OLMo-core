@@ -358,6 +358,10 @@ case "$LADDER_VERSION" in
   *)  OUT="$EVAL_OUT_DIR/${TASK}_multirung_${LADDER_VERSION}.json" ;;
 esac
 echo "=== EVAL $TASK rungs=$RUNGS ladder=$LADDER_VERSION variant=$VARIANT -> $OUT ($(date -u '+%T')Z) ==="
+# Both structured-prefill variants use the same CoT flags. Define them before branching so the
+# summary path cannot trip `set -u`; only plan-mode OOLONG widens its decode budget.
+COT_ARGS="--cot-mode ${COT_MODE:-none}"
+[ "${COT_MODE:-none}" = plan ] && COT_ARGS="$COT_ARGS --oolong-max-new-tokens 512"
 if [ "$VARIANT" = "docchunk" ]; then
   # box-marker chunked prefill + bs=1 KV-cached decode; same ladder keys ($LTASK/$RUNGS) as the
   # dense/landmark path (incl. the 4 OOD ladders). NO-CoT throughout -> contra keeps its short budget
@@ -366,8 +370,6 @@ if [ "$VARIANT" = "docchunk" ]; then
   # COT_MODE (default none) keeps the no-CoT eval byte-identical; COT_MODE=plan builds the OOLONG
   # prefill WITH the plan CoT (to match a CoT-trained checkpoint) and widens the OOLONG gen budget so
   # the plan+answer fits before the newline-after-"answer:" early-stop.
-  COT_ARGS="--cot-mode ${COT_MODE:-none}"
-  [ "${COT_MODE:-none}" = plan ] && COT_ARGS="$COT_ARGS --oolong-max-new-tokens 512"
   # Emitter MUST match how the model was TRAINED (_docchunk_5task_32k_nocpt_common.py:
   # emit="landmark" if variant in {landmark,compressive} else "dense"). dense/random_doc use the dense
   # box-marker emitter; landmark/compressive use landmark tokens. Feeding the wrong emitter = garbage.
