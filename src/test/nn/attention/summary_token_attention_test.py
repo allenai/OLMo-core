@@ -23,6 +23,7 @@ import torch.nn.functional as F
 
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.summary_mask import (
     SummaryMaskSpec,
     build_summary_mask_mod,
@@ -240,6 +241,34 @@ def test_config_builds_the_right_class_and_spec():
     assert attn.spec.summaries_read_own_document is True
     assert attn.spec.summaries_read_earlier_summaries is True
     assert attn.spec.query_reads_documents is False
+
+
+def test_cached_decode_matches_full_sequence_last_row():
+    """A generated QUERY token must retain the summary mask while using cached K/V."""
+    torch.manual_seed(0)
+    attn = _build_attention(n_summary_tokens=5)
+    attn.eval()
+    prompt_ids = torch.tensor(
+        [[10, DOC_START, 20, DOC_END, SUMM, SUMM, SUMM, SUMM, SUMM, 30]]
+    )
+    full_ids = torch.cat([prompt_ids, torch.tensor([[31]])], dim=1)
+    prompt_roles = build_summary_roles(prompt_ids, **IDS_KW)
+    full_roles = build_summary_roles(full_ids, **IDS_KW)
+
+    B, T, H, H_kv, D = 1, prompt_ids.shape[1], 4, 2, 16
+    q = torch.randn(B, T + 1, H, D)
+    k = torch.randn(B, T + 1, H_kv, D)
+    v = torch.randn(B, T + 1, H_kv, D)
+    with torch.no_grad():
+        attn._summary_roles = full_roles
+        expected = attn._sdpa_masked(q, k, v)[:, -1:]
+        attn._summary_roles = prompt_roles
+        attn.kv_cache_manager = KVCacheManager(B, T + 4, H_kv, D, torch.device("cpu"), q.dtype)
+        attn._sdpa_cached(q[:, :T], k[:, :T], v[:, :T], cache_leftpad=None)
+        attn._summary_roles = full_roles[:, :, -1:]
+        actual = attn._sdpa_cached(q[:, -1:], k[:, -1:], v[:, -1:], cache_leftpad=None)
+
+    torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-5)
 
 
 def test_levers_rejected_on_other_attention_types():

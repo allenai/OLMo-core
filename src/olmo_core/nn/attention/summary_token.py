@@ -24,7 +24,8 @@ in ``src/test/nn/attention/summary_token_attention_test.py``.
 rather than materializing ``n_heads``-wide copies via ``_repeat_kv``, which on Qwen3.5-4B
 (``n_heads=16``, ``n_kv_heads=4``) is a 4x saving on the two largest activation tensors.
 
-No KV-caching, no intra-document packing (``cu_doc_lens``), and Ulysses context parallelism only.
+Cached generation uses a masked prefill followed by one-row masked decode. No intra-document packing
+(``cu_doc_lens``), and Ulysses context parallelism only.
 """
 
 import logging
@@ -46,6 +47,7 @@ from .summary_mask import (
     ROLE_DOC_ID,
     ROLE_EXAMPLE_ID,
     ROLE_KIND,
+    ROLE_SUMMARY_OFFSET,
     SummaryMaskSpec,
     TokenKind,
     build_summary_mask_mod,
@@ -264,6 +266,10 @@ class SummaryTokenAttention(Attention):
         # Transient per-forward state, stashed by ``forward`` for ``sdpa`` to read.
         self._summary_roles: Optional[torch.Tensor] = None
         self._causal_example: Optional[torch.Tensor] = None
+        # Per-layer decode state. This is only one bool per cached token (rather than retaining the
+        # four-field roles tensor): generated tokens are all in the trailing QUERY span, so the set
+        # of prompt keys visible to every decode query is constant and each generated key is visible.
+        self._decode_key_allowed: Optional[torch.Tensor] = None
         # Sticky fallback: set if FlexAttention errors at runtime. Also settable by tests to force
         # the materialized path for flex-vs-dense parity checks.
         self._force_eager_mask: bool = False
@@ -311,15 +317,20 @@ class SummaryTokenAttention(Attention):
         Attention over the full sequence restricted by the summary-token mask. ``q``/``k``/``v``
         arrive as ``(B, T, H, D)`` / ``(B, T, H_kv, D)``; the result is ``(B, T, H, D)``.
         """
-        del max_doc_len, max_doc_len_q, max_doc_len_k, cache_leftpad
+        del max_doc_len, max_doc_len_q, max_doc_len_k
         if any(o is not None for o in (cu_doc_lens, cu_doc_lens_q, cu_doc_lens_k, local_k_slice)):
             raise NotImplementedError(
                 "SummaryTokenAttention does not support intra-document packing (cu_doc_lens). The "
                 "summary mask already governs document isolation for the layers it covers; set "
                 "generate_doc_lengths=False on the data loader."
             )
-        if self.kv_cache_manager is not None:
-            raise NotImplementedError("SummaryTokenAttention does not support KV caching.")
+        kvm = self.kv_cache_manager
+        if kvm is not None:
+            if self.cp_enabled:
+                raise NotImplementedError(
+                    "SummaryTokenAttention cached generation does not support context parallelism."
+                )
+            return self._sdpa_cached(q, k, v, cache_leftpad=cache_leftpad)
 
         if not self.cp_enabled:
             return self._sdpa_masked(q, k, v)
@@ -341,6 +352,90 @@ class SummaryTokenAttention(Attention):
         out = self._sdpa_masked(q, k, v)
         # ``_sdpa_masked`` already returns a contiguous (B, T, H/CP, D); the collective needs that.
         return all_to_all_single_hp2cp(out.contiguous(), cp_pg)
+
+    def _decode_prompt_key_mask(self, roles: torch.Tensor) -> torch.Tensor:
+        """Return the exact keys visible to a trailing QUERY token, in O(B*T) memory."""
+        kind = roles[:, ROLE_KIND]
+        doc = roles[:, ROLE_DOC_ID]
+        ex = roles[:, ROLE_EXAMPLE_ID]
+        B, T = kind.shape
+        pos = torch.arange(T, device=kind.device).expand(B, T)
+        valid = kind != int(TokenKind.PAD)
+        last = torch.where(valid, pos, torch.zeros_like(pos)).amax(1)
+        q_doc = doc.gather(1, last[:, None])
+        q_ex = ex.gather(1, last[:, None])
+
+        same_example = (ex == q_ex) & (q_ex >= 0)
+        same_document = (doc == q_doc) & (q_doc >= 0)
+        instruction = kind == int(TokenKind.INSTRUCTION)
+        earlier_summary = (kind == int(TokenKind.SUMMARY)) & (doc < q_doc)
+        if self.spec.summary_visible_tokens is not None:
+            offset = roles[:, ROLE_SUMMARY_OFFSET]
+            earlier_summary &= offset < self.spec.summary_visible_tokens
+        reachable = same_document | instruction | earlier_summary
+        if self.spec.query_reads_documents:
+            reachable |= torch.ones_like(reachable)
+
+        ce = causal_example_row(self._causal_example, B, T, kind.device)
+        causal_row = ce.gather(1, last[:, None])
+        return valid & same_example & (causal_row | reachable)
+
+    def _sdpa_cached(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        cache_leftpad: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Masked prefill plus incremental QUERY decode over the ordinary K/V cache."""
+        kvm = self.kv_cache_manager
+        assert kvm is not None
+        if cache_leftpad is not None and bool(cache_leftpad.ne(0).any()):
+            raise NotImplementedError(
+                "SummaryTokenAttention generation requires batch_size=1 / no left-padding."
+            )
+        if q.shape[0] != 1:
+            raise NotImplementedError("SummaryTokenAttention generation currently requires batch_size=1.")
+
+        pos = int(kvm.current_position())
+        T_new = q.shape[1]
+        if T_new > 1:
+            if pos != 0:
+                raise NotImplementedError("Only a single prefill from cache position 0 is supported.")
+            roles = self._prepared_roles(T_new, q.device, q.shape[0])
+            self._decode_key_allowed = self._decode_prompt_key_mask(roles)
+            kvm.record_leftpad(cache_leftpad)
+            kvm.k_cache[:, :T_new].copy_(k)
+            kvm.v_cache[:, :T_new].copy_(v)
+            out = self._sdpa_masked(q, k, v)
+            kvm.update_seqlen(T_new)
+            return out
+
+        if self._decode_key_allowed is None or self._decode_key_allowed.shape[1] != pos:
+            raise RuntimeError("SummaryTokenAttention decode cache is missing or out of sync with K/V.")
+        kvm.k_cache[:, pos : pos + 1].copy_(k)
+        kvm.v_cache[:, pos : pos + 1].copy_(v)
+        total = pos + 1
+        allowed = torch.cat(
+            [self._decode_key_allowed, torch.ones((1, 1), dtype=torch.bool, device=q.device)],
+            dim=1,
+        )
+        self._decode_key_allowed = allowed
+
+        n_rep = q.shape[2] // k.shape[2]
+        kh = _repeat_kv(kvm.k_cache[:, :total], n_rep).transpose(1, 2)
+        vh = _repeat_kv(kvm.v_cache[:, :total], n_rep).transpose(1, 2)
+        bias = torch.where(
+            allowed[:, None, None, :],
+            torch.zeros((), dtype=q.dtype, device=q.device),
+            torch.full((), torch.finfo(q.dtype).min, dtype=q.dtype, device=q.device),
+        )
+        out = F.scaled_dot_product_attention(
+            q.transpose(1, 2), kh, vh, attn_mask=bias, is_causal=False, scale=self.softmax_scale
+        )
+        kvm.update_seqlen(1)
+        return out.transpose(1, 2).contiguous()
 
     def _prepared_roles(self, T: int, device: torch.device, batch_size: int) -> torch.Tensor:
         roles = self._summary_roles
