@@ -140,6 +140,16 @@ def main() -> int:
     from veomni.models import build_foundation_model
     from veomni.optim import build_lr_scheduler, build_optimizer
 
+    # Build through transformers' AutoModelForCausalLM for BOTH arms, rather than veomni's own
+    # MODELING_REGISTRY. Two reasons, and the second is the important one:
+    #   * veomni has no `olmo3` entry -- the control died with
+    #     "Unknown Modeling name: olmo3. No Modeling registered for this source."
+    #   * registering Olmo-3 separately would leave HiLS on veomni's registry path and the control
+    #     on another. The arms must be constructed identically or the contrast is not just the
+    #     model. HiLS is registered into AutoModelForCausalLM by register_hils() below, so this one
+    #     switch covers both.
+    os.environ["MODELING_BACKEND"] = "hf"
+
     if is_hils_checkpoint(args.model_path):
         # Registers the out-of-tree modeling code AND initializes veomni's parallel state, which
         # HiLS's forward reads on every step (it asserts the parallel sizes multiply to world_size,
