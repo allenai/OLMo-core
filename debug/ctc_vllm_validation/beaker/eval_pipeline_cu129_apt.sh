@@ -458,9 +458,41 @@ RESP="$WORK/responses.json"
 # 2048. The job still exits 0, so this shows up as a "result", not a failure.
 # TP shards the KV cache across GPUs (see node_local/gpu_eval_task.sh for the head-count
 # divisibility rule). Must match --gpus on the gantry call; TP>1 with fewer GPUs dies at init.
-echo "=== run_vllm_eval TP=${TP:-1} stop_ids=+${EXTRA_STOP_TOKEN_IDS:-<none>} gpu_mem_util=${GPU_MEM_UTIL:-0.85} ==="
+# ⚠ MODE MUST MATCH THE MASK THE CHECKPOINT WAS TRAINED WITH.
+# This script used to hardcode `--mode full`, which is correct ONLY for a dense-trained arm.
+# Scoring a document-chunked checkpoint under dense attention hands it a layout it never saw in
+# training, and the failure is TOTAL rather than partial: the pure-chunked contradiction arm read
+# 0.0007 / 0.0013 / 0.0000 set_f1 at 2560/4096/8192 while its training CE had descended normally
+# to ~1.05. A CE-healthy model scoring exactly zero is an eval artifact, and if it had been
+# believed it would have been published as "mask-mixing is worth +0.86", which is not a thing the
+# data says. The chunked-mix BASELINE these numbers get compared against was itself graded with
+# mode=chunked, so anything but a matching mode is not a comparison.
+# MODE defaults to full so every existing caller is unchanged.
+MODE="${MODE:-full}"
+# The chunked path rebuilds a FlexAttention block mask per step and is ~18x slower without the
+# varlen prefill plan; turn it on by default for chunked mode (validated: +0.0014/-0.0020 metric
+# movement at eval_size 500) and keep concurrency pinned at the measured-best 16/18.
+# ⚠ CHUNK_VARLEN_PREFILL DEFAULTS OFF *ON BEAKER*, unlike the node-local driver.
+# The varlen plan routes prefill through flash_attn_varlen_func, and the flash-attn that ships
+# with the cu129 vLLM wheel carries PTX the jupiter/ceres 12.8 driver refuses:
+#   torch.AcceleratorError: CUDA error: the provided PTX was compiled with an unsupported
+#   toolchain  (cudaErrorUnsupportedPtxVersion)  at vllm_chunked_patch._varlen_forward
+# It dies on the very first prefill step ("varlen step #1: prefill_reqs=1"), so the whole rung is
+# lost. Dense mode never enters that kernel, which is why the same image evaluates a full-attention
+# checkpoint fine. Leaving it off falls back to the FlexAttention block-mask path -- correct, but
+# ~18x slower, so expect long wall-clock on the high rungs. Set CHUNK_VARLEN_PREFILL=1 explicitly
+# only on an image whose flash-attn matches the driver.
+if [ "$MODE" = "chunked" ]; then
+  export CHUNK_VARLEN_PREFILL="${CHUNK_VARLEN_PREFILL:-0}"
+  if [ "$CHUNK_VARLEN_PREFILL" = "1" ]; then
+    export CHUNK_FAST_MAX_RUNG="${CHUNK_FAST_MAX_RUNG:-99999999}"
+    export CHUNK_MAX_NUM_SEQS_FAST="${CHUNK_MAX_NUM_SEQS_FAST:-16}"
+    export CHUNK_SEQ_HEADROOM_FAST="${CHUNK_SEQ_HEADROOM_FAST:-18}"
+  fi
+fi
+echo "=== run_vllm_eval MODE=$MODE TP=${TP:-1} stop_ids=+${EXTRA_STOP_TOKEN_IDS:-<none>} gpu_mem_util=${GPU_MEM_UTIL:-0.85} varlen=${CHUNK_VARLEN_PREFILL:-0} ==="
 "$VENV/bin/python" -u "$REPO/debug/ctc_vllm_validation/run_vllm_eval.py" \
-  --hf-model "$SERVE" --prefills "$PREFILLS" --mode full --task "$EVAL_TASK" \
+  --hf-model "$SERVE" --prefills "$PREFILLS" --mode "$MODE" --task "$EVAL_TASK" \
   --max-new-tokens 256 --max-model-len 4096 --gpu-mem-util "${GPU_MEM_UTIL:-0.85}" \
   --tensor-parallel-size "${TP:-1}" \
   --out "$RESP"
