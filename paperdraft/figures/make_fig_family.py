@@ -123,12 +123,12 @@ for ax, (task, title, metric, cls, rungs) in zip(axes, PANELS):
             fontsize=14, color=CLASS_ORANGE if task == "contradiction" else CLASS_BLUE)
     ax.set_ylabel(f"Score ({metric})")
 
-# The absent-series notes: drawn in-panel, in ink, low in the plot where no series runs.
-axes[0].text(0.020, 0.045,
-             "Olmo-Hybrid chunked omitted:\noptimization failure, not a result",
-             transform=axes[0].transAxes, fontsize=11.5, color=TXT, va="bottom", ha="left")
-axes[1].text(0.020, 0.045, "Olmo-Hybrid not trained on HotpotQA",
-             transform=axes[1].transAxes, fontsize=11.5, color=TXT, va="bottom", ha="left")
+# ⚠ THE TWO OLMO-HYBRID ABSENCE NOTES USED TO BE DRAWN IN-PANEL HERE AND ARE NOW CAPTION-ONLY.
+# They still print in the CAPTION block below, and the reasons are in this module's docstring --
+# the explanation moved, it was not retracted. Both absences remain deliberate: the contradiction
+# chunked arm is an optimization failure (CE 0.958 vs OLMo-3's 0.171 on identical task/data/steps)
+# and HotpotQA was never trained for that family. Anyone re-adding an in-panel note should put it
+# back in ink at the bottom-left, where no series runs.
 
 handles = [Line2D([], [], color=COLOR[f], linewidth=2.4, label=f) for f in _fam.FAMILIES]
 handles += [Line2D([], [], color=TXT, linewidth=2.0, linestyle="-", marker="o",
@@ -160,5 +160,12 @@ print("  Contradiction is scored on contradiction_iid, the ladder matching the t
       "across the two staging paths the families used).")
 print("  Llama-3.2-3B contradiction is the ']]'-truncated re-score: it emits no EOS and rambles to "
       "the token cap on 87-100% of examples, which halves raw precision.")
+# These two lines carry the absences that used to be drawn in-panel. They MUST reach the paper
+# caption: a family with no chunked line reads as a measured collapse to zero otherwise.
+print("  NOT SHOWN, Olmo-Hybrid-7B chunked on contradiction: the arm trained, but its final CE was "
+      "0.958 against OLMo-3's 0.171 on identical task, data and steps -- an optimization failure. "
+      "Its own qdmatch chunked arm converged (CE 0.156, 0.931 at 2k), so the backbone is sound.")
+print("  NOT SHOWN, Olmo-Hybrid-7B on HotpotQA: never trained on it -- that family's "
+      "retrieval-family run was qdmatch_hpqa, an $O_T(N^2)$ task.")
 print("  eval_size = 500 per rung except the Llama contradiction ladder; a difference under ~0.04 "
       "is within noise.")
