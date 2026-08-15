@@ -1144,6 +1144,11 @@ class Trainer:
         with self._async_checkpoint_completion_lock:
             return bool(self._pending_async_checkpoint_paths)
 
+    def async_checkpoint_finalization_pending_for(self, path: PathOrStr) -> bool:
+        """Whether an async checkpoint path still needs completion reconciliation."""
+        with self._async_checkpoint_completion_lock:
+            return str(path) in self._pending_async_checkpoint_paths
+
     def _reconcile_async_checkpoint_durations(
         self, local_status: Dict[str, Tuple[Optional[float], Optional[str]]]
     ) -> AsyncCheckpointReconciliation:

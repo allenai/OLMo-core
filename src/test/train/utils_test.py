@@ -72,6 +72,8 @@ def run_reduce_metrics_with_rank_local_shapes():
     if rank == 1:
         raw_metrics[0]["train/z_extra"] = torch.tensor(4.0, device=device)
         raw_metrics[1] = {"train/loss": torch.tensor(6.0, device=device)}
+    else:
+        raw_metrics[2] = {"train/z_last": torch.tensor(8.0, device=device)}
 
     metrics = reduce_metrics(
         raw_metrics,
@@ -79,6 +81,7 @@ def run_reduce_metrics_with_rank_local_shapes():
             "train/loss": ReduceType.mean,
             "train/negative_max": ReduceType.max,
             "train/z_extra": ReduceType.sum,
+            "train/z_last": ReduceType.sum,
         },
         device,
         # Exercise the defensive shape negotiation even when a stale schema cache claims that
@@ -88,9 +91,36 @@ def run_reduce_metrics_with_rank_local_shapes():
 
     assert metrics[0]["train/loss"] == 2.0
     assert metrics[0]["train/negative_max"] == -2.0
-    if rank == 1:
-        assert metrics[0]["train/z_extra"] == 4.0
-        assert metrics[1]["train/loss"] == 3.0
+    assert metrics[0]["train/z_extra"] == 4.0
+    assert metrics[1]["train/loss"] == 6.0
+    assert metrics[2]["train/z_last"] == 8.0
+
+
+def run_reduce_metrics_with_rank_local_columns():
+    device = get_default_device()
+    rank = dist.get_rank()
+    raw_metrics = {
+        0: (
+            {"metric/b": torch.tensor(2.0, device=device)}
+            if rank == 0
+            else {
+                "metric/a": torch.tensor(3.0, device=device),
+                "metric/b": torch.tensor(5.0, device=device),
+            }
+        )
+    }
+    metrics = reduce_metrics(
+        raw_metrics,
+        {"metric/a": ReduceType.sum, "metric/b": ReduceType.sum},
+        device,
+        metrics_consistent=True,
+    )
+    assert metrics[0] == {"metric/a": 3.0, "metric/b": 7.0}
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_with_rank_local_columns(backend):
+    run_distributed_test(run_reduce_metrics_with_rank_local_columns, backend=backend)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

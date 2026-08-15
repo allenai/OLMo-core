@@ -142,17 +142,20 @@ def test_checkpoint_gc_waits_for_global_async_finalization():
     )
     trainer = MagicMock()
     trainer.global_step = 10
-    trainer.async_checkpoint_finalization_pending = True
+    trainer.async_checkpoint_finalization_pending_for.return_value = True
     callback.trainer = trainer
-    remove_old_checkpoints = MagicMock()
-    setattr(callback, "_remove_old_checkpoints", remove_old_checkpoints)
+    callback._checkpoints_to_remove = ["/checkpoints/step10"]
+    remove_checkpoint = MagicMock()
+    setattr(callback, "_remove_checkpoint", remove_checkpoint)
 
     callback.post_train_batch()
-    remove_old_checkpoints.assert_not_called()
+    remove_checkpoint.assert_not_called()
+    assert callback._checkpoints_to_remove == ["/checkpoints/step10"]
 
-    trainer.async_checkpoint_finalization_pending = False
+    trainer.async_checkpoint_finalization_pending_for.return_value = False
     callback.post_train_batch()
-    remove_old_checkpoints.assert_called_once_with()
+    remove_checkpoint.assert_called_once_with("/checkpoints/step10")
+    assert callback._checkpoints_to_remove == []
 
 
 def test_save_async_false_does_not_enter_async_checkpoint_path():

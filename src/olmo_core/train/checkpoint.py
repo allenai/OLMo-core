@@ -171,16 +171,23 @@ class Checkpointer:
             _skip_prepare=True,
         )
 
-        def done_callback(fut: Future):
-            # Do not publish metadata for a failed write. The metadata file is the marker that
-            # makes a directory discoverable as a complete checkpoint.
-            fut.result()
-            self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
+        completion_future: Future[None] = Future()
+
+        def done_callback(fut: Future[None]) -> None:
+            try:
+                # Do not publish metadata for a failed write. The metadata file is the marker that
+                # makes a directory discoverable as a complete checkpoint.
+                fut.result()
+                self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
+            except BaseException as exc:
+                completion_future.set_exception(exc)
+            else:
+                completion_future.set_result(None)
 
         # Upload metadata when everything else is done.
         future.add_done_callback(done_callback)
 
-        return future
+        return completion_future
 
     def load(
         self,

@@ -218,23 +218,25 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
-    if metrics_consistent is None:
-        metrics_consistent = check_metrics_consistent(
-            metrics_reduce_type, process_group=process_group
-        )
-    all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
-    all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
-    if not metrics_consistent:
-        all_steps_metric_world_sizes = get_metric_world_sizes_by_step(
-            metrics,
-            metrics_reduce_type,
-            process_group=process_group,
-        )
-        all_steps_metrics_reduce_type = get_metrics_reduce_type_by_step(
-            metrics,
-            metrics_reduce_type,
-            process_group=process_group,
-        )
+    del metrics_consistent
+
+    local_schema = {
+        step: {name: metrics_reduce_type[name] for name in step_metrics}
+        for step, step_metrics in metrics.items()
+    }
+    all_schemas = all_gather_object(local_schema, group=process_group)
+    all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = defaultdict(dict)
+    all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for rank_schema in all_schemas:
+        for step, step_schema in rank_schema.items():
+            for name, reduce_type in step_schema.items():
+                previous_reduce_type = all_steps_metrics_reduce_type[step].get(name, reduce_type)
+                if previous_reduce_type != reduce_type:
+                    raise RuntimeError(
+                        f"metric '{name}' at step {step} has inconsistent reduction types"
+                    )
+                all_steps_metrics_reduce_type[step][name] = reduce_type
+                all_steps_metric_world_sizes[step][name] += 1
 
     # Flattened metrics by step and reduce type.
     sum_metric_names: List[List[str]] = []
@@ -242,22 +244,16 @@ def reduce_metrics(
     max_metric_names: List[List[str]] = []
     max_metric_values: List[torch.Tensor] = []
 
-    for step in sorted(metrics.keys()):
-        step_metrics_reduce_type: Dict[
-            str, Optional[ReduceType]
-        ] = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+    sorted_steps = sorted(all_steps_metrics_reduce_type)
+    for step in sorted_steps:
+        step_metrics_reduce_type = all_steps_metrics_reduce_type[step]
         step_sum_metric_names: List[str] = []
         step_sum_metric_values: List[torch.Tensor] = []
         step_max_metric_names: List[str] = []
         step_max_metric_values: List[torch.Tensor] = []
 
-        step_metrics = metrics[step]
-
-        sorted_metric_names: List[str]
-        if not metrics_consistent:
-            sorted_metric_names = sorted(all_steps_metric_world_sizes[step].keys())
-        else:
-            sorted_metric_names = sorted(step_metrics.keys())
+        step_metrics = metrics.get(step, {})
+        sorted_metric_names = sorted(step_metrics_reduce_type)
 
         for name in sorted_metric_names:
             value = step_metrics.get(name)
@@ -301,20 +297,11 @@ def reduce_metrics(
             else torch.tensor([]).to(device=device, non_blocking=True)
         )
 
-    local_shape = torch.tensor(
-        [
-            len(sum_metric_values),
-            max(t.numel() for t in sum_metric_values),
-            max(t.numel() for t in max_metric_values),
-        ],
-        device=device,
-        dtype=torch.int64,
-    )
-    # Metric callbacks can add keys at different times on different ranks. Agree on the tensor
-    # shape before reducing values so a transient schema difference cannot turn into mismatched
-    # collectives and a process-group timeout.
-    dist.all_reduce(local_shape, op=dist.ReduceOp.MAX, group=process_group)
-    max_num_steps, max_num_sum_metrics, max_num_max_metrics = local_shape.tolist()
+    if not sorted_steps:
+        return out
+
+    max_num_sum_metrics = max(t.numel() for t in sum_metric_values)
+    max_num_max_metrics = max(t.numel() for t in max_metric_values)
 
     all_sum_metrics = torch.stack(
         [F.pad(t, (0, max_num_sum_metrics - t.numel()), value=0.0) for t in sum_metric_values]
@@ -325,15 +312,6 @@ def reduce_metrics(
             for t in max_metric_values
         ]
     )
-    if all_sum_metrics.shape[0] < max_num_steps:
-        all_sum_metrics = F.pad(
-            all_sum_metrics, (0, 0, 0, max_num_steps - all_sum_metrics.shape[0]), value=0.0
-        )
-        all_max_metrics = F.pad(
-            all_max_metrics,
-            (0, 0, 0, max_num_steps - all_max_metrics.shape[0]),
-            value=float("-inf"),
-        )
     del sum_metric_values
     del max_metric_values
 
@@ -356,8 +334,8 @@ def reduce_metrics(
     all_sum_metrics = all_sum_metrics.cpu()
     all_max_metrics = all_max_metrics.cpu()
 
-    for i, step in enumerate(sorted(metrics.keys())):
-        step_metrics_reduce_type = all_steps_metrics_reduce_type.get(step, metrics_reduce_type)
+    for i, step in enumerate(sorted_steps):
+        step_metrics_reduce_type = all_steps_metrics_reduce_type[step]
         step_sum_metric_names = sum_metric_names[i]
         step_sum_metric_items = all_sum_metrics[i].tolist()
         step_max_metric_names = max_metric_names[i]

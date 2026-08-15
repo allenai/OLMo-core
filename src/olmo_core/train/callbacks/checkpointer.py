@@ -204,9 +204,13 @@ class CheckpointerCallback(Callback):
         self._checkpoints_to_remove.append(path)
 
     def _remove_old_checkpoints(self):
+        still_pending = []
         for path in self._checkpoints_to_remove:
-            self._remove_checkpoint(path)
-        self._checkpoints_to_remove.clear()
+            if self.trainer.async_checkpoint_finalization_pending_for(path):
+                still_pending.append(path)
+            else:
+                self._remove_checkpoint(path)
+        self._checkpoints_to_remove = still_pending
 
     def _trim_checkpoints(self):
         if self.max_checkpoints is not None:
@@ -284,7 +288,7 @@ class CheckpointerCallback(Callback):
             return
 
         self._await_last_checkpoint(blocking=False)
-        if not self.checkpoint_pending and not self.trainer.async_checkpoint_finalization_pending:
+        if not self.checkpoint_pending:
             self._remove_old_checkpoints()
 
         if self.fixed_steps is not None and self.step in self.fixed_steps:
