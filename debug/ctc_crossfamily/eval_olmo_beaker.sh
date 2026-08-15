@@ -88,6 +88,16 @@ command -v aws >/dev/null || pip install -q awscli
 REPO=\$(find / -maxdepth 3 -iname pyproject.toml 2>/dev/null | grep -v /opt/conda | grep -v /root/.cache | head -1 | xargs -r dirname)
 export PYTHONPATH=\"\$REPO/src\"
 python -m pip install --quiet --no-deps 'dataclass-extensions>=0.3.0' 2>&1 | tail -3
+# ⚠ GDN-hybrid checkpoints (Olmo-Hybrid-7B) NEED flash-linear-attention TO BUILD AT ALL.
+# GatedDeltaNet.__init__ does `assert has_fla()` then `from fla.modules import FusedRMSNormGated`,
+# and the baked olmo-core image ships neither -- all 16 Olmo-Hybrid evals died on that assert after
+# loading, while the OLMo-3 evals passed because OLMo-3 has no GDN layers. Installed WITH deps under
+# a PIP_CONSTRAINT pinning the image's torch: --no-deps yields a partial package whose fla.modules
+# is missing, and has_fla() (literally `fla is not None`) does not catch that.
+python -c 'import torch; print(torch.__version__)' > /tmp/torchver.txt
+printf 'torch==%s\n' \$(cat /tmp/torchver.txt) > /tmp/pipconstraint.txt
+PIP_CONSTRAINT=/tmp/pipconstraint.txt python -m pip install --quiet 'flash-linear-attention==0.4.1' einops 2>&1 | tail -5
+python -c 'from fla.modules import FusedRMSNormGated; print(FusedRMSNormGated)'
 export TOKENIZERS_PARALLELISM=false PYTHONWARNINGS=ignore PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 CKPT_DIR=$WEKA/ctc_suite/ckpts/$CKPT
