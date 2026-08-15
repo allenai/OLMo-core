@@ -340,6 +340,47 @@ def test_pairing_builder_selects_largest_common_multiple_of_eight(module, monkey
     )
 
 
+def test_pairing_implementation_references_are_checkout_portable_and_strict(
+    module, monkeypatch, tmp_path
+):
+    checkout_references = []
+    for checkout_name in ("checkout-a", "checkout-b"):
+        checkout = tmp_path / checkout_name
+        references = {}
+        for field, relative in module._PAIRING_IMPLEMENTATION_REPO_PATHS.items():
+            implementation = checkout / relative
+            implementation.parent.mkdir(parents=True, exist_ok=True)
+            implementation.write_bytes(f"frozen {field}\n".encode())
+            references[field] = module._implementation_reference(
+                field,
+                implementation,
+                repository_root=checkout,
+            )
+        checkout_references.append(references)
+
+    first, second = checkout_references
+    assert first == second
+    assert {field: reference["path"] for field, reference in first.items()} == (
+        module._PAIRING_IMPLEMENTATION_REPO_PATHS
+    )
+    monkeypatch.setattr(module, "_pairing_manifest_implementation_references", lambda: second)
+    module._validate_pairing_manifest_implementation_references(first)
+
+    traversal = {field: dict(reference) for field, reference in first.items()}
+    traversal["producer"]["path"] = "../vision_alignment_joint_matched_wrong.py"
+    with pytest.raises(ValueError, match="producer implementation differs"):
+        module._validate_pairing_manifest_implementation_references(traversal)
+
+    wrong_location = tmp_path / "checkout-b" / "joint.py"
+    wrong_location.write_bytes(b"frozen producer\n")
+    with pytest.raises(ValueError, match="expected repository-relative location"):
+        module._implementation_reference(
+            "producer",
+            wrong_location,
+            repository_root=tmp_path / "checkout-b",
+        )
+
+
 def test_immutable_output_refuses_replacement(module, tmp_path):
     output = tmp_path / "receipt.json"
     digest = module._write_json_exclusive(output, {"status": "valid"})

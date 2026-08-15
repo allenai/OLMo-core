@@ -31,7 +31,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any, cast
 
@@ -116,6 +116,12 @@ _PAIRING_REQUIRED_MODEL_FIELDS = (
 )
 _PAIRING_OPTIONAL_MODEL_FIELDS = ("subsegment_ids",)
 _PAIRING_IGNORED_FIELDS = frozenset({"metadata"})
+
+_PAIRING_IMPLEMENTATION_REPO_PATHS = {
+    "producer": "src/scripts/eval/vision_alignment_joint_matched_wrong.py",
+    "bridge_helper": "src/scripts/eval/vision_alignment_matched_wrong.py",
+    "pairing_implementation": "src/olmo_core/eval/matched_wrong_image.py",
+}
 
 
 def _load_local_module(name: str, filename: str) -> ModuleType:
@@ -1214,6 +1220,87 @@ def _prepare_pairings_distributed(
     )
 
 
+def _implementation_repository_root() -> Path:
+    """Derive the checkout root from this producer's frozen repository location."""
+    relative = PurePosixPath(_PAIRING_IMPLEMENTATION_REPO_PATHS["producer"])
+    producer = perception._direct_existing_path(Path(__file__), name="joint evaluator")
+    root = producer
+    for _ in relative.parts:
+        root = root.parent
+    root = perception._direct_existing_path(root, name="implementation repository root")
+    if root.joinpath(*relative.parts) != producer:
+        raise ValueError("Joint evaluator is not at its expected repository-relative location")
+    return root
+
+
+def _implementation_reference(
+    field: str,
+    live_path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> dict[str, str]:
+    """Bind implementation bytes to an exact, checkout-portable repository path."""
+    try:
+        expected_text = _PAIRING_IMPLEMENTATION_REPO_PATHS[field]
+    except KeyError as error:
+        raise ValueError(f"Unknown pairing implementation field: {field}") from error
+    expected = PurePosixPath(expected_text)
+    if (
+        expected.is_absolute()
+        or not expected.parts
+        or any(part in ("", ".", "..") for part in expected.parts)
+    ):
+        raise RuntimeError(f"Invalid frozen repository path for {field}: {expected_text!r}")
+    root = perception._direct_existing_path(
+        repository_root if repository_root is not None else _implementation_repository_root(),
+        name="implementation repository root",
+    )
+    live = perception._direct_existing_path(live_path, name=f"live {field}")
+    expected_live = root.joinpath(*expected.parts)
+    try:
+        relative = live.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"Live {field} is outside the implementation repository") from error
+    if live != expected_live or relative.as_posix() != expected_text:
+        raise ValueError(f"Live {field} is not at its expected repository-relative location")
+    return {
+        "path": relative.as_posix(),
+        "sha256": _stable_file_sha256(live, name=f"live {field}"),
+    }
+
+
+def _pairing_manifest_implementation_references() -> dict[str, dict[str, str]]:
+    """Return the live implementation identities used by a pairing manifest."""
+    pairing_source = inspect.getsourcefile(build_matched_wrong_image_pairing)
+    if pairing_source is None:
+        raise RuntimeError("Could not locate pairing implementation")
+    live_paths = {
+        "producer": Path(__file__),
+        "bridge_helper": Path(str(bridge.__file__)),
+        "pairing_implementation": Path(pairing_source),
+    }
+    root = _implementation_repository_root()
+    return {
+        field: _implementation_reference(field, live_paths[field], repository_root=root)
+        for field in _PAIRING_IMPLEMENTATION_REPO_PATHS
+    }
+
+
+def _validate_pairing_manifest_implementation_references(
+    manifest: Mapping[str, Any],
+) -> None:
+    """Require exact repository-relative paths and live implementation byte hashes."""
+    expected = _pairing_manifest_implementation_references()
+    for field, live_reference in expected.items():
+        reference = manifest.get(field)
+        if (
+            not isinstance(reference, Mapping)
+            or set(reference) != {"path", "sha256"}
+            or dict(reference) != live_reference
+        ):
+            raise ValueError(f"Pairing manifest {field} implementation differs")
+
+
 def _pairing_manifest_payload(
     *,
     checkpoint_config: Mapping[str, Any],
@@ -1223,30 +1310,15 @@ def _pairing_manifest_payload(
     examples: int,
     pairings: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    producer = Path(__file__).resolve()
-    bridge_path = Path(str(bridge.__file__)).resolve()
-    pairing_source = inspect.getsourcefile(build_matched_wrong_image_pairing)
-    if pairing_source is None:
-        raise RuntimeError("Could not locate pairing implementation")
+    implementation_references = _pairing_manifest_implementation_references()
     payload: dict[str, Any] = {
         "format": PAIRING_MANIFEST_FORMAT,
         "version": PAIRING_MANIFEST_VERSION,
         "status": "prepared",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "producer": {
-            "path": str(producer),
-            "sha256": _stable_file_sha256(producer, name="joint evaluator"),
-        },
-        "bridge_helper": {
-            "path": str(bridge_path),
-            "sha256": _stable_file_sha256(bridge_path, name="bridge evaluator"),
-        },
-        "pairing_implementation": {
-            "path": str(Path(pairing_source).resolve()),
-            "sha256": _stable_file_sha256(
-                Path(pairing_source).resolve(), name="pairing implementation"
-            ),
-        },
+        "producer": implementation_references["producer"],
+        "bridge_helper": implementation_references["bridge_helper"],
+        "pairing_implementation": implementation_references["pairing_implementation"],
         "checkpoint_config": dict(checkpoint_config),
         "projection": dict(projection),
         "source_audit": dict(source_audit),
@@ -1337,24 +1409,7 @@ def _load_pairing_manifest_distributed(
                 raise ValueError("Pairing manifest created_at lacks a timezone")
             protocol = manifest.get("protocol")
             pair_meta = manifest.get("pairings")
-            pairing_source = inspect.getsourcefile(build_matched_wrong_image_pairing)
-            if pairing_source is None:
-                raise RuntimeError("Could not locate live pairing implementation")
-            implementation_refs = {
-                "producer": Path(__file__).resolve(),
-                "bridge_helper": Path(str(bridge.__file__)).resolve(),
-                "pairing_implementation": Path(pairing_source).resolve(),
-            }
-            for field, live_path in implementation_refs.items():
-                reference = manifest.get(field)
-                if (
-                    not isinstance(reference, Mapping)
-                    or set(reference) != {"path", "sha256"}
-                    or str(reference.get("path")) != str(live_path)
-                    or reference.get("sha256")
-                    != _stable_file_sha256(live_path, name=f"live {field}")
-                ):
-                    raise ValueError(f"Pairing manifest {field} implementation differs")
+            _validate_pairing_manifest_implementation_references(manifest)
             examples = (
                 protocol.get("examples_per_source") if isinstance(protocol, Mapping) else None
             )
