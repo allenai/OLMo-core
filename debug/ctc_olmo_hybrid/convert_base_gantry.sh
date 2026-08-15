@@ -24,6 +24,8 @@
 # -- so unlike Qwen3 they may genuinely be healthy. olmo3_marker_audit.py MEASURES and only repairs
 # on failure; "repairing" an already-trained row would throw away signal. Read its numbers.
 set -euo pipefail
+# gantry lives in the corpus-reasoning-olmo env; a bare `gantry` is not on the default PATH here.
+export PATH=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:$HOME/.local/bin:$PATH
 
 HF_MODEL_ID="${HF_MODEL_ID:-allenai/Olmo-Hybrid-7B}"
 # ⚠ REPEATED --cluster FLAGS, NOT A COMMA LIST, and the SHORT names. `--cluster a,b,c` fails with
