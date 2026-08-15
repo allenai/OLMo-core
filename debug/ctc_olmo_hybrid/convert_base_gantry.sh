@@ -65,17 +65,30 @@ python -c 'import huggingface_hub, torch, transformers, safetensors; print(\"dep
 # cannot \"satisfy\" a transitive pin by relocating torch.
 python -m pip install --quiet --no-deps 'dataclass-extensions>=0.3.0' 2>&1 | tail -5
 # ⚠ flash-linear-attention IS REQUIRED TO BUILD THE MODEL AT ALL, not just to run it fast.
-# GatedDeltaNet.__init__ opens with a bare `assert has_fla()`, so without fla the CONVERSION dies
-# -- after the download and after the key mapping -- with a context-free AssertionError. The baked
-# olmo-core image has torch/transformers but not fla (nothing in the dense suite needs it).
-# --no-deps for the usual reason: fla requires torch, and letting pip satisfy that would relocate
-# the image's torch. einops is fla's only import-time dep the image may lack; both are idempotent,
-# so the retry path stays cheap.
-python -m pip install --quiet --no-deps 'flash-linear-attention==0.4.1' einops 2>&1 | tail -5
-# ⚠ NO DOUBLE QUOTES ON THIS LINE. It sits inside a single-quoted `python -c` inside the launcher's
-# outer double-quoted `bash -c` body; an escaped \" here terminated the string early and the job
-# died before doing any work with `unexpected EOF while looking for matching '`.
-python -c 'from olmo_core.nn.attention.flash_linear_attn_api import has_fla; assert has_fla(); print(has_fla())'
+# GatedDeltaNet.__init__ does `assert has_fla()` and then `from fla.modules import FusedRMSNormGated`,
+# so without a COMPLETE fla the conversion dies after the 15GB download and after the key mapping.
+#
+# ⚠ has_fla() IS NOT A SUFFICIENT GATE. It is literally `fla is not None` behind a bare
+# `try: import fla`, so it passes whenever the top-level package imports -- it said True on a run
+# whose very next step died with `ModuleNotFoundError: No module named 'fla.modules'`. The real
+# gate is importing the exact symbol GatedDeltaNet needs, which is what is asserted below.
+#
+# Installed WITHOUT --no-deps this time, under a PIP_CONSTRAINT pinning the image's torch so pip
+# cannot relocate it while resolving fla's own requirements (torch/transformers/einops). --no-deps
+# was the earlier attempt and produced exactly the partial install described above.
+python -c 'import torch; print(torch.__version__)' > /tmp/torchver.txt
+# \$(...) escaped: this whole body is inside the launcher's double-quoted `bash -c`, so an
+# unescaped $(...) would be evaluated HERE on the login node instead of on the Beaker node.
+printf 'torch==%s\n' \$(cat /tmp/torchver.txt) > /tmp/pipconstraint.txt
+cat /tmp/pipconstraint.txt
+PIP_CONSTRAINT=/tmp/pipconstraint.txt python -m pip install 'flash-linear-attention==0.4.1' einops 2>&1 | tail -15
+echo '--- fla diagnostics ---'
+python -m pip show flash-linear-attention 2>&1 | head -8
+python -c 'import fla; print(fla.__file__)'
+python -c 'import torch; print(torch.__version__)'
+# THE gate: the exact import GatedDeltaNet performs. Fails fast here (seconds) instead of after
+# the download and mapping (minutes).
+python -c 'from fla.modules import FusedRMSNormGated; print(FusedRMSNormGated)'
 
 echo '=== 1/3 snapshot_download '\"${HF_MODEL_ID}\"' (ungated; no token needed) ==='
 mkdir -p '${HF_STAGING}'
