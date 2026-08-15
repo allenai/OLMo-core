@@ -112,6 +112,11 @@ try:  # package import (PYTHONPATH=src) or same-directory fallback (torchrun on 
         olmo3_7B_ctc,
         olmo3_7B_ctc_swa,
     )
+    from scripts.train.memexpress.ctc_suite.olmo_hybrid_configs import (
+        OLMO_HYBRID_MARKER_TOKENIZER,
+        OLMO_HYBRID_VOCAB_SIZE,
+        olmo_hybrid_7B_ctc,
+    )
 except ImportError:  # pragma: no cover
     import sys as _sys
 
@@ -121,6 +126,11 @@ except ImportError:  # pragma: no cover
         OLMO3_VOCAB_SIZE,
         olmo3_7B_ctc,
         olmo3_7B_ctc_swa,
+    )
+    from olmo_hybrid_configs import (  # type: ignore[no-redef]
+        OLMO_HYBRID_MARKER_TOKENIZER,
+        OLMO_HYBRID_VOCAB_SIZE,
+        olmo_hybrid_7B_ctc,
     )
 
 #: Supported model families. The trainer is family-agnostic: everything below (marker ids,
@@ -203,6 +213,15 @@ MODEL_FACTORIES = {
         # Superseded no-sliding-window variant: disabling the windows costs the base model ~41x CE
         # before training (olmo3_swa_ablation.py). Kept so the first wave of runs reproduces.
         "7b-noswa": olmo3_7B_ctc,
+        # ``allenai/Olmo-Hybrid-7B``: same size and same training data as Olmo-3-1025-7B, but a 3:1
+        # LINEAR (Gated-DeltaNet):full backbone instead of 3:1 sliding:full. It belongs here rather
+        # than in a family of its own because it shares dolma2, the patched marker tokenizer, the
+        # marker ids and the 100352-row embedding -- so it trains on the SAME olmo3 shards, and the
+        # shard's ``marker_set`` cross-check passes without an exemption. That shared everything is
+        # the whole point: pairing 7b against 7b-hybrid varies the attention backbone and nothing
+        # else, which no other entry in this table can do. Chunks the 8 full-attention layers only,
+        # exactly as ``olmo3_7B_ctc_swa`` and the Qwen3.5 arms do.
+        "7b-hybrid": olmo_hybrid_7B_ctc,
     },
 }
 

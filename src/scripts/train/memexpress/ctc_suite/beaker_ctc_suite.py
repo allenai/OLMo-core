@@ -58,8 +58,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--model-scale",
         required=True,
-        choices=["0.8b", "2b", "4b", "9b", "7b", "3b", "8b"],
-        help="4b/9b for Qwen, 7b for OLMo-3. 0.8b/2b were originally local-only (hence the old "
+        choices=["0.8b", "2b", "4b", "9b", "7b", "7b-hybrid", "7b-noswa", "3b", "8b"],
+        help="4b/9b for Qwen, 7b for OLMo-3 (7b-hybrid = allenai/Olmo-Hybrid-7B, the same-size "
+        "same-data linear-attention twin used as the hybrid-vs-not control; 7b-noswa is the "
+        "superseded no-sliding-window variant). 0.8b/2b were originally local-only (hence the old "
         "'0.8B trains locally' note), but the model-scale study needs them on Beaker too: on "
         "lambda they get 3 serialized lanes and two of those lanes are preemptible (runs were "
         "lost at 1h45m). Note --base-checkpoint must be passed explicitly for 0.8b -- the default "
