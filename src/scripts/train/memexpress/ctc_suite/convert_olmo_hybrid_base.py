@@ -136,7 +136,8 @@ def main() -> None:
     state = build_olmo_state(hf_state)
     print(f"[convert] mapped {len(state)} olmo-core tensors", flush=True)
 
-    model = config.build(device=torch.device("cpu"))
+    # ``init_device``, not ``device`` -- TransformerConfig.build() has no ``device`` kwarg.
+    model = config.build(init_device="cpu")
     # strict=True is the validation: any missing / unexpected / wrong-shaped tensor stops here
     # rather than becoming a base that trains to nonsense.
     model.load_state_dict(state, strict=True)
