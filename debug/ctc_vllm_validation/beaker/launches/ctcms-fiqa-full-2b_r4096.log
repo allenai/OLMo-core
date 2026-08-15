@@ -1,0 +1,19 @@
+
+                                             o=======[]   
+   __ _                    _               _ |_      []   
+  / _` |  __ _    _ _     | |_      _ _   | || |     []   
+  \__, | / _` |  | ' \    |  _|    | '_|   \_, |   _/ ]_  
+  |___/  \__,_|  |_||_|   _\__|   _|_|_   _|__/   |_____| 
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_| """"| 
+ `---------------------------------------------' 
+
+Attempted to use the GitHub CLI to validate that the commit exists on the 
+remote, however it appears that it's not installed. Please ensure the GitHub CLI
+is installed to avoid this warning message.
+Experiment: prasanns/ms2b-fiqa-full-r4096 → 
+https://beaker.org/ex/01M01YC3M02RRD9PDX8A4J0F63
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: f8e1d91 eval: one committed gantry launcher instead of ad… → 
+https://github.com/allenai/OLMo-core/commit/f8e1d91
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark

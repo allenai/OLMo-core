@@ -49,6 +49,16 @@ REF="${REF:-$(git rev-parse HEAD)}"
 # own vLLM venv on top either way.
 IMAGE="${IMAGE:-tylerr/olmo-core-tch291cu128-2025-11-25}"
 
+# The HF base the pipeline rebuilds the model from. It MUST match the checkpoint's model scale --
+# export_olmo_to_hf loads the distcp into a model built from this id, so a mismatch is a tensor
+# shape mismatch. Derived from MODEL_SCALE so callers name the scale, not a HF repo path.
+declare -A BASE_FOR_SCALE=(
+  [0.8b]=Qwen/Qwen3.5-0.8B-Base [2b]=Qwen/Qwen3.5-2B-Base [4b]=Qwen/Qwen3.5-4B-Base [9b]=Qwen/Qwen3.5-9B-Base
+)
+MODEL_SCALE="${MODEL_SCALE:-4b}"
+BASE_MODEL_ID="${BASE_MODEL_ID:-${BASE_FOR_SCALE[$MODEL_SCALE]:-}}"
+[ -n "$BASE_MODEL_ID" ] || { echo "FATAL: no HF base for MODEL_SCALE=$MODEL_SCALE; pass BASE_MODEL_ID"; exit 2; }
+
 # ⚠ GANTRY SHIPS THE PUSHED COMMIT, NOT THE WORKING TREE. --allow-dirty silences the check but
 # does not upload anything, so a local-only fix to the pipeline runs as whatever is on the remote.
 if ! git diff --quiet HEAD -- debug/ctc_vllm_validation/beaker/eval_pipeline_cu129_apt.sh; then
@@ -69,7 +79,7 @@ mkdir -p "$LOGD"
 LEDGER="$LOGD/LAUNCH_LEDGER.tsv"
 [ -f "$LEDGER" ] || printf 'launched_at\tckpt\ttask\teval_task\trung_task\tmode\trung\tresult_dir\texperiment_id\n' > "$LEDGER"
 
-echo "ckpt=$CKPT task=$TASK eval_task=$EVAL_TASK rung_task=$RUNG_TASK mode=$MODE tp=$TP -> $RESULT_DIR"
+echo "ckpt=$CKPT task=$TASK eval_task=$EVAL_TASK rung_task=$RUNG_TASK mode=$MODE scale=$MODEL_SCALE base=$BASE_MODEL_ID tp=$TP -> $RESULT_DIR"
 for R in $RUNGS; do
   NAME="${NAME_PREFIX}-$(echo "$TASK-$MODE-r$R" | tr '_' '-')"
   LOG="$LOGD/${RESULT_DIR//\//_}_r${R}.log"
@@ -83,7 +93,7 @@ for R in $RUNGS; do
     --env "TASK=$RUNG_TASK" --env "EVAL_TASK=$EVAL_TASK" --env "RUNG=$R" \
     --env "CKPT_NAME=$CKPT" --env "MODE=$MODE" --env "TP=$TP" \
     --env "RUNG_TREE=$RUNG_TREE" --env "CODE_TARBALL=$CODE_TARBALL" \
-    --env "RESULT_DIR=$RESULT_DIR" \
+    --env "RESULT_DIR=$RESULT_DIR" --env "BASE_MODEL_ID=$BASE_MODEL_ID" \
     ${MAX_TEST_SAMPLES:+--env MAX_TEST_SAMPLES=$MAX_TEST_SAMPLES} \
     ${QUERY_POSITION:+--env QUERY_POSITION=$QUERY_POSITION} \
     ${COT_MODE:+--env COT_MODE=$COT_MODE} \

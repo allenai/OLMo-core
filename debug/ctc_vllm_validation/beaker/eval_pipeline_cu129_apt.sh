@@ -224,7 +224,15 @@ unset TRANSFORMERS_CACHE
 
 CKPT_WEKA="/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/${CKPT_NAME}"
 HF_EXPORT="$WORK/hf_export"
-BASE_MODEL_ID="Qwen/Qwen3.5-4B-Base"
+# ⚠ MUST MATCH THE CHECKPOINT'S MODEL SCALE.
+# export_olmo_to_hf builds the olmo-core model from --base-model and then loads the distcp into it,
+# so a scale mismatch is a shape mismatch: a 0.8B checkpoint against the 4B default dies with
+#   ValueError: Size mismatch between saved torch.Size([248320, 1024]) and current:
+#   torch.Size([248320, 2560]) for model.embeddings.weight
+# That is the good case -- it fails loudly. This was hardcoded to 4B because the Beaker pipeline had
+# only ever evaluated the 4B suite (the model-scale cells were graded by the node-local driver
+# instead), so the first 0.8B job through here lost ~28 minutes of venv build before dying.
+BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-4B-Base}"
 
 if [ -f "$CKPT_WEKA/config.json" ] || [ -d "$CKPT_WEKA/model_and_optim" ]; then
   CKPT="$CKPT_WEKA"
