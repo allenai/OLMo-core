@@ -72,7 +72,10 @@ python -m pip install --quiet --no-deps 'dataclass-extensions>=0.3.0' 2>&1 | tai
 # the image's torch. einops is fla's only import-time dep the image may lack; both are idempotent,
 # so the retry path stays cheap.
 python -m pip install --quiet --no-deps 'flash-linear-attention==0.4.1' einops 2>&1 | tail -5
-python -c 'from olmo_core.nn.attention.flash_linear_attn_api import has_fla; assert has_fla(), "fla still not importable"; print("fla OK")'
+# ⚠ NO DOUBLE QUOTES ON THIS LINE. It sits inside a single-quoted `python -c` inside the launcher's
+# outer double-quoted `bash -c` body; an escaped \" here terminated the string early and the job
+# died before doing any work with `unexpected EOF while looking for matching '`.
+python -c 'from olmo_core.nn.attention.flash_linear_attn_api import has_fla; assert has_fla(); print(has_fla())'
 
 echo '=== 1/3 snapshot_download '\"${HF_MODEL_ID}\"' (ungated; no token needed) ==='
 mkdir -p '${HF_STAGING}'
