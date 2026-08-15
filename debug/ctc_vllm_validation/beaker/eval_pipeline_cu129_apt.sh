@@ -523,6 +523,31 @@ echo "--- [$TASK] rung=$RUNG GRADE ---"
 cat "$GRADE"
 echo ""
 
+# ⚠ REFUSE TO PUBLISH AN UNMASKED "CHUNKED" RESULT.
+# The document-chunk mask is an IN-PROCESS monkey-patch that relies on
+# VLLM_ENABLE_V1_MULTIPROCESSING=0 keeping the model in the driver process. Anything that forces
+# vLLM to spawn workers -- tensor_parallel_size > 1 above all -- leaves the model unpatched, and
+# the run then completes normally and writes a well-formed grade that is simply the DENSE number
+# wearing a chunked label. Nothing downstream can distinguish it. Measured: fiqa cmix at rung 2048
+# under MODE=chunked TP=2 returned gold_id_f1=0.9165619047619048, bit-identical to the same
+# checkpoint scored dense, with patch_debug.calls=0.
+# run_vllm_eval prints a warning for this, but the repo copy is shadowed by the S3 code tarball
+# that is untarred over $REPO above, so the enforcement has to live here to be reliable.
+if [ "$MODE" = "chunked" ]; then
+  APPLIED=$("$VENV/bin/python" -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+print((d.get('patch_debug') or {}).get('applied', 0))
+" "$GRADE" 2>/dev/null || echo 0)
+  echo "chunk-mask applied count: $APPLIED"
+  if [ "${APPLIED:-0}" -eq 0 ] 2>/dev/null; then
+    echo "FATAL: MODE=chunked but the chunk mask was applied 0 times -- this run is UNMASKED."
+    echo "       Its metric is the dense number mislabelled as chunked; refusing to publish it."
+    echo "       Most likely cause: TP>1. Re-run chunked mode with TP=1."
+    exit 4
+  fi
+fi
+
 echo "=== pushing grade to S3 $(date '+%F %T') ==="
 # ⚠ THE DESTINATION MUST CARRY MODEL IDENTITY, NOT JUST $TASK. Keyed on the task alone, every
 # checkpoint evaluated on a task overwrites the previous one in place -- on 2026-08-12 that is how

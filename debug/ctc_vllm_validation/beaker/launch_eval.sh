@@ -38,7 +38,15 @@ RUNG_TASK="${RUNG_TASK:-$TASK}"
 RUNGS="${RUNGS:-2048 4096 8192 16384 32768}"
 RUNG_TREE="${RUNG_TREE:-ctc_eval_rungs}"
 CODE_TARBALL="${CODE_TARBALL:-ctc_eval_code_2026-08-13.tar.gz}"
-TP="${TP:-2}"
+# ⚠ CHUNKED MODE IS INCOMPATIBLE WITH TP>1 -- AND FAILS SILENTLY, NOT LOUDLY.
+# run_vllm_eval installs the document-chunk mask as an IN-PROCESS monkey-patch and relies on
+# VLLM_ENABLE_V1_MULTIPROCESSING=0 to keep the model in the driver process. TP>1 forces vLLM to
+# spawn Worker_TP0/Worker_TP1 subprocesses anyway, so the patch never reaches the model: the run
+# completes, reports mode=chunked, and is UNMASKED. Measured: fiqa cmix at 2048 returned
+# gold_id_f1=0.9165619047619048 under MODE=chunked TP=2 -- bit-identical to the same checkpoint
+# scored dense, with patch_debug calls=0.
+# So chunked defaults to TP=1, and an explicit TP>1 with MODE=chunked is refused below.
+TP="${TP:-$([ "${MODE:-}" = chunked ] && echo 1 || echo 2)}"
 PRIORITY="${PRIORITY:-urgent}"
 LOGD="${LOGD:-debug/ctc_vllm_validation/beaker/launches}"
 NAME_PREFIX="${NAME_PREFIX:-ev}"
@@ -69,6 +77,9 @@ if ! git merge-base --is-ancestor "$REF" "origin/$(git rev-parse --abbrev-ref HE
 fi
 
 case "$MODE" in full|chunked) ;; *) echo "FATAL: MODE must be full or chunked, got '$MODE'"; exit 2 ;; esac
+if [ "$MODE" = "chunked" ] && [ "$TP" != "1" ]; then
+  echo "FATAL: MODE=chunked requires TP=1 (the mask patch cannot reach vLLM worker processes); got TP=$TP"; exit 2
+fi
 
 # The catalog keys that differ from the logical task name. Getting one of these wrong does not
 # crash -- grade_any scores against the wrong task's parser and returns a plausible number.

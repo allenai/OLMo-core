@@ -395,8 +395,16 @@ def main():
         debug = dict(vllm_chunked_patch.get_debug_state())
         print(f"[driver] patch debug state: {debug}", flush=True)
         if not debug.get("applied"):
-            print("[driver] *** WARNING: chunked patch NEVER APPLIED — "
-                  "this run is UNMASKED ***", flush=True)
+            # HARD FAIL, not a warning. An unmasked run under mode=chunked still writes a
+            # perfectly well-formed result file with a plausible metric -- it is simply the DENSE
+            # number wearing a chunked label, and nothing downstream can tell. This fired for real
+            # when TP=2 put the model in worker subprocesses the in-process patch cannot reach.
+            raise SystemExit(
+                "FATAL: chunked patch NEVER APPLIED (calls=0) -- this run is UNMASKED and its "
+                "metric would be the dense number mislabelled as chunked. Most likely cause: "
+                "tensor_parallel_size > 1, which forces vLLM worker subprocesses that the "
+                "in-process monkey-patch cannot reach. Re-run chunked mode with TP=1."
+            )
 
     with open(args.out, "w") as f:
         json.dump({
