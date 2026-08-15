@@ -64,6 +64,15 @@ python -c 'import huggingface_hub, torch, transformers, safetensors; print(\"dep
 # The image carries the heavy ML stack but not olmo-core's own pure-python deps. --no-deps so pip
 # cannot \"satisfy\" a transitive pin by relocating torch.
 python -m pip install --quiet --no-deps 'dataclass-extensions>=0.3.0' 2>&1 | tail -5
+# ⚠ flash-linear-attention IS REQUIRED TO BUILD THE MODEL AT ALL, not just to run it fast.
+# GatedDeltaNet.__init__ opens with a bare `assert has_fla()`, so without fla the CONVERSION dies
+# -- after the download and after the key mapping -- with a context-free AssertionError. The baked
+# olmo-core image has torch/transformers but not fla (nothing in the dense suite needs it).
+# --no-deps for the usual reason: fla requires torch, and letting pip satisfy that would relocate
+# the image's torch. einops is fla's only import-time dep the image may lack; both are idempotent,
+# so the retry path stays cheap.
+python -m pip install --quiet --no-deps 'flash-linear-attention==0.4.1' einops 2>&1 | tail -5
+python -c 'from olmo_core.nn.attention.flash_linear_attn_api import has_fla; assert has_fla(), "fla still not importable"; print("fla OK")'
 
 echo '=== 1/3 snapshot_download '\"${HF_MODEL_ID}\"' (ungated; no token needed) ==='
 mkdir -p '${HF_STAGING}'
