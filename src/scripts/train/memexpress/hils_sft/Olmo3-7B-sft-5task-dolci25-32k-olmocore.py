@@ -168,6 +168,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         seed=34521,  # same seed as the veomni arms
         num_workers=4,
         work_dir=str(get_work_dir(root_dir)),  # required; the loader asserts on it at build time
+        # Required too, and asserted only at build() -- i.e. after the model and optimizer are
+        # already up, ~4 minutes into the job. The base config, not `doc_tokenizer_config`: the
+        # loader uses this solely for the collator's pad_token_id and padded_vocab_size, and the
+        # bos override exists for the source's doc-boundary detection, not for padding.
+        tokenizer=tokenizer_config,
     )
 
     run_name_with_ts = f"{cli_context.run_name}-{datetime.now().strftime('%m%d%H%M')}"
