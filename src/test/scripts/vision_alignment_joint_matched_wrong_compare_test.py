@@ -382,6 +382,36 @@ def test_final_tokenizer_and_protocol_schema_are_exact(monkeypatch):
         )
 
 
+def test_projection_and_source_audit_registry_domains_are_distinct_and_exact():
+    visual_registry = "ec6d511c5e3797be558cb10aaff680d1e3831078e4402eac109381a442eeea82"
+    runtime_registry = "2833734cc14ec38398c35dddba10315e076c25bcfa6b0e90f62c84cd53bfebdc"
+    projection = {
+        "visual_source_registry_sha256": visual_registry,
+        "runtime_registry_sha256": runtime_registry,
+    }
+    source_audit = {
+        "source_registry_sha256": runtime_registry,
+        "runtime_registry_sha256": runtime_registry,
+    }
+
+    assert visual_registry != runtime_registry
+    module._validate_registry_domains(projection, source_audit, name="registries")
+
+    for owner, field in (
+        ("projection", "runtime_registry_sha256"),
+        ("source_audit", "source_registry_sha256"),
+        ("source_audit", "runtime_registry_sha256"),
+    ):
+        changed_projection = dict(projection)
+        changed_source_audit = dict(source_audit)
+        target = changed_projection if owner == "projection" else changed_source_audit
+        target[field] = "f" * 64
+        with pytest.raises(ValueError, match="registries differ"):
+            module._validate_registry_domains(
+                changed_projection, changed_source_audit, name="registries"
+            )
+
+
 def test_producer_exactly_binds_live_comparator():
     comparator = Path(module.__file__)
     evaluator = comparator.with_name("vision_alignment_joint_matched_wrong.py")

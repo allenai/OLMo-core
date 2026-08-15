@@ -1647,6 +1647,17 @@ def _validate_source_audit(value: Any, *, name: str) -> Mapping[str, Any]:
     return audit
 
 
+def _validate_registry_domains(
+    projection: Mapping[str, Any], source_audit: Mapping[str, Any], *, name: str
+) -> None:
+    runtime_registry = projection["runtime_registry_sha256"]
+    if (
+        runtime_registry != source_audit["source_registry_sha256"]
+        or runtime_registry != source_audit["runtime_registry_sha256"]
+    ):
+        raise ValueError(f"{name} registries differ")
+
+
 def _validate_native_identity(value: Any, *, name: str) -> Mapping[str, Any]:
     fields = frozenset(
         {
@@ -1742,11 +1753,7 @@ def _load_evaluator_receipt(
     _validate_git(receipt["git"], name=f"step{step} git")
     projection = _validate_projection(receipt["projection"], name=f"step{step} projection")
     source_audit = _validate_source_audit(receipt["source_audit"], name=f"step{step} source audit")
-    if (
-        projection["visual_source_registry_sha256"] != source_audit["source_registry_sha256"]
-        or projection["runtime_registry_sha256"] != source_audit["runtime_registry_sha256"]
-    ):
-        raise ValueError(f"step{step} projection/source-audit registries differ")
+    _validate_registry_domains(projection, source_audit, name=f"step{step} projection/source-audit")
     tokenizer = _validate_tokenizer(receipt["tokenizer"], name=f"step{step} tokenizer")
     protocol = _validate_protocol(receipt["protocol"], name=f"step{step} protocol")
     _validate_semantic_policy(receipt["artifact_policy"], name=f"step{step} artifact policy")
