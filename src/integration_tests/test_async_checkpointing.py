@@ -29,10 +29,10 @@ from olmo_core.train.trainer import Trainer
 from olmo_core.train.utils import reduce_metrics
 
 
-def _delay_future(source: Future, delay: float, executor: ThreadPoolExecutor) -> Future:
+def _delay_future(source: Future[None], delay: float, executor: ThreadPoolExecutor) -> Future[None]:
     delayed: Future[None] = Future()
 
-    def propagate(source_future: Future) -> None:
+    def propagate(source_future: Future[None]) -> None:
         def complete() -> None:
             try:
                 source_future.result()
@@ -70,11 +70,13 @@ def _build_minimal_trainer(
     trainer._metrics_lock = threading.RLock()
     trainer._metrics = OrderedDict()
     trainer._metrics_reduce_type = {}
-    trainer._log_metrics = MagicMock()
-    trainer._join_bookkeeping_ops = MagicMock()
-    trainer._iter_callbacks = MagicMock(side_effect=lambda: iter([]))
-    trainer.state_dict = MagicMock(
-        side_effect=lambda: {"rank": get_rank(), "step": trainer.global_step}
+    setattr(trainer, "_log_metrics", MagicMock())
+    setattr(trainer, "_join_bookkeeping_ops", MagicMock())
+    setattr(trainer, "_iter_callbacks", MagicMock(side_effect=lambda: iter([])))
+    setattr(
+        trainer,
+        "state_dict",
+        MagicMock(side_effect=lambda: {"rank": get_rank(), "step": trainer.global_step}),
     )
     trainer.work_dir = work_dir
     return trainer
@@ -102,7 +104,7 @@ def run_async_checkpointing_integration(base_dir: Path) -> None:
         def delayed_save_async(*args, **kwargs):
             return _delay_future(original_save_async(*args, **kwargs), round_delay, delay_executor)
 
-        checkpointer.save_async = delayed_save_async
+        setattr(checkpointer, "save_async", delayed_save_async)
 
         for round_idx in range(4):
             step = (round_idx + 1) * 10

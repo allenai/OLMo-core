@@ -23,7 +23,7 @@ class ThreadRecordingCallback:
         self.post_save_thread_id = threading.get_ident()
 
 
-def make_minimal_trainer(write_future: Future):
+def make_minimal_trainer(write_future: Future[None]):
     trainer = object.__new__(Trainer)
     trainer.global_step = 10
     trainer.save_folder = "/tmp/checkpoints"
@@ -36,14 +36,14 @@ def make_minimal_trainer(write_future: Future):
     trainer._completed_async_checkpoint_durations = {}
     trainer._completed_async_checkpoint_errors = {}
     trainer._pending_async_checkpoint_paths = set()
-    trainer._log_metrics = MagicMock()
-    trainer._join_bookkeeping_ops = MagicMock()
-    trainer.state_dict = MagicMock(return_value={})
+    setattr(trainer, "_log_metrics", MagicMock())
+    setattr(trainer, "_join_bookkeeping_ops", MagicMock())
+    setattr(trainer, "state_dict", MagicMock(return_value={}))
     return trainer
 
 
 def test_async_checkpoint_writer_only_publishes_completion():
-    writer_future = Future()
+    writer_future: Future[None] = Future()
     trainer = make_minimal_trainer(writer_future)
     callback = ThreadRecordingCallback()
     trainer._iter_callbacks = MagicMock(return_value=iter([callback]))
@@ -66,7 +66,7 @@ def test_async_checkpoint_writer_only_publishes_completion():
 
 
 def test_async_checkpoint_writer_publishes_failure_without_finalization():
-    writer_future = Future()
+    writer_future: Future[None] = Future()
     trainer = make_minimal_trainer(writer_future)
     trainer._iter_callbacks = MagicMock(return_value=iter([]))
     _, completion_future = trainer.save_checkpoint_async()
@@ -84,7 +84,7 @@ def test_async_checkpoint_writer_publishes_failure_without_finalization():
 
 
 def test_failed_async_checkpoint_skips_metadata_poll():
-    writer_future = Future()
+    writer_future: Future[None] = Future()
     trainer = make_minimal_trainer(writer_future)
     trainer._iter_callbacks = MagicMock(return_value=iter([]))
     path, completion_future = trainer.save_checkpoint_async()
@@ -129,7 +129,9 @@ def test_metric_snapshot_is_atomic_with_concurrent_recording():
 
     trainer.record_metric("next_metric", torch.tensor(4.0), reduce_type=ReduceType.sum)
     assert "next_metric" not in metrics[10]
-    assert trainer.get_metric("next_metric").item() == 4.0
+    next_metric = trainer.get_metric("next_metric")
+    assert next_metric is not None
+    assert next_metric.item() == 4.0
 
 
 def test_checkpoint_gc_waits_for_global_async_finalization():
@@ -142,14 +144,15 @@ def test_checkpoint_gc_waits_for_global_async_finalization():
     trainer.global_step = 10
     trainer.async_checkpoint_finalization_pending = True
     callback.trainer = trainer
-    callback._remove_old_checkpoints = MagicMock()
+    remove_old_checkpoints = MagicMock()
+    setattr(callback, "_remove_old_checkpoints", remove_old_checkpoints)
 
     callback.post_train_batch()
-    callback._remove_old_checkpoints.assert_not_called()
+    remove_old_checkpoints.assert_not_called()
 
     trainer.async_checkpoint_finalization_pending = False
     callback.post_train_batch()
-    callback._remove_old_checkpoints.assert_called_once_with()
+    remove_old_checkpoints.assert_called_once_with()
 
 
 def test_save_async_false_does_not_enter_async_checkpoint_path():

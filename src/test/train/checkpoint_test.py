@@ -118,11 +118,12 @@ def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
 
 
 def test_async_checkpointer_does_not_publish_metadata_after_failed_write(tmp_path, monkeypatch):
-    write_future = Future()
+    write_future: Future[None] = Future()
     checkpointer = Checkpointer(work_dir=tmp_path)
-    checkpointer._temporary_wd = MagicMock(return_value=nullcontext(tmp_path))
-    checkpointer._save_train_state = MagicMock()
-    checkpointer._save_metadata = MagicMock()
+    save_metadata = MagicMock()
+    setattr(checkpointer, "_temporary_wd", MagicMock(return_value=nullcontext(tmp_path)))
+    setattr(checkpointer, "_save_train_state", MagicMock())
+    setattr(checkpointer, "_save_metadata", save_metadata)
     train_module = MagicMock()
     train_module.state_dict_to_save.return_value = {}
     monkeypatch.setattr(
@@ -134,7 +135,7 @@ def test_async_checkpointer_does_not_publish_metadata_after_failed_write(tmp_pat
 
     with pytest.raises(RuntimeError, match="write failed"):
         returned_future.result()
-    checkpointer._save_metadata.assert_not_called()
+    save_metadata.assert_not_called()
 
 
 def test_async_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
