@@ -161,6 +161,7 @@ class CheckpointerCallback(Callback):
                         lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
                         "waiting to finalize checkpoint",
                     )
+                self.trainer.finalize_async_checkpoint(self._latest_checkpoint_path)
                 self._future = None
                 return fut
         return None
@@ -284,7 +285,7 @@ class CheckpointerCallback(Callback):
             return
 
         self._await_last_checkpoint(blocking=False)
-        if not self.checkpoint_pending:
+        if not self.checkpoint_pending and not self.trainer.async_checkpoint_finalization_pending:
             self._remove_old_checkpoints()
 
         if self.fixed_steps is not None and self.step in self.fixed_steps:

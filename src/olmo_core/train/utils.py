@@ -205,7 +205,7 @@ def reduce_metrics(
     metrics_reduce_type: Dict[str, Optional[ReduceType]],
     device: torch.device,
     process_group: Optional[dist.ProcessGroup] = None,
-    metrics_consistent: bool = True,
+    metrics_consistent: Optional[bool] = None,
 ) -> Dict[int, Dict[str, float]]:
     metrics = move_metrics(metrics, device)
     out: Dict[int, Dict[str, float]] = defaultdict(dict)
@@ -218,6 +218,10 @@ def reduce_metrics(
 
     world_size = get_world_size(process_group)
     divide_factor = get_reduce_divide_factor(world_size)
+    if metrics_consistent is None:
+        metrics_consistent = check_metrics_consistent(
+            metrics_reduce_type, process_group=process_group
+        )
     all_steps_metric_world_sizes: Dict[int, Dict[str, int]] = {}
     all_steps_metrics_reduce_type: Dict[int, Dict[str, Optional[ReduceType]]] = {}
     if not metrics_consistent:
@@ -297,15 +301,39 @@ def reduce_metrics(
             else torch.tensor([]).to(device=device, non_blocking=True)
         )
 
-    max_num_sum_metrics = max(t.numel() for t in sum_metric_values)
-    max_num_max_metrics = max(t.numel() for t in max_metric_values)
+    local_shape = torch.tensor(
+        [
+            len(sum_metric_values),
+            max(t.numel() for t in sum_metric_values),
+            max(t.numel() for t in max_metric_values),
+        ],
+        device=device,
+        dtype=torch.int64,
+    )
+    # Metric callbacks can add keys at different times on different ranks. Agree on the tensor
+    # shape before reducing values so a transient schema difference cannot turn into mismatched
+    # collectives and a process-group timeout.
+    dist.all_reduce(local_shape, op=dist.ReduceOp.MAX, group=process_group)
+    max_num_steps, max_num_sum_metrics, max_num_max_metrics = local_shape.tolist()
 
     all_sum_metrics = torch.stack(
         [F.pad(t, (0, max_num_sum_metrics - t.numel()), value=0.0) for t in sum_metric_values]
     )
     all_max_metrics = torch.stack(
-        [F.pad(t, (0, max_num_max_metrics - t.numel()), value=0.0) for t in max_metric_values]
+        [
+            F.pad(t, (0, max_num_max_metrics - t.numel()), value=float("-inf"))
+            for t in max_metric_values
+        ]
     )
+    if all_sum_metrics.shape[0] < max_num_steps:
+        all_sum_metrics = F.pad(
+            all_sum_metrics, (0, 0, 0, max_num_steps - all_sum_metrics.shape[0]), value=0.0
+        )
+        all_max_metrics = F.pad(
+            all_max_metrics,
+            (0, 0, 0, max_num_steps - all_max_metrics.shape[0]),
+            value=float("-inf"),
+        )
     del sum_metric_values
     del max_metric_values
 

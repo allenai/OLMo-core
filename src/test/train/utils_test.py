@@ -1,4 +1,5 @@
 import math
+import random
 
 import pytest
 import torch
@@ -57,3 +58,73 @@ def run_reduce_metrics():
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_reduce_metrics(backend):
     run_distributed_test(run_reduce_metrics, backend=backend)
+
+
+def run_reduce_metrics_with_rank_local_shapes():
+    device = get_default_device()
+    rank = dist.get_rank()
+    raw_metrics = {
+        0: {
+            "train/loss": torch.tensor(2.0, device=device),
+            "train/negative_max": torch.tensor(-3.0 if rank == 0 else -2.0, device=device),
+        }
+    }
+    if rank == 1:
+        raw_metrics[0]["train/z_extra"] = torch.tensor(4.0, device=device)
+        raw_metrics[1] = {"train/loss": torch.tensor(6.0, device=device)}
+
+    metrics = reduce_metrics(
+        raw_metrics,
+        {
+            "train/loss": ReduceType.mean,
+            "train/negative_max": ReduceType.max,
+            "train/z_extra": ReduceType.sum,
+        },
+        device,
+        # Exercise the defensive shape negotiation even when a stale schema cache claims that
+        # metrics are consistent.
+        metrics_consistent=True,
+    )
+
+    assert metrics[0]["train/loss"] == 2.0
+    assert metrics[0]["train/negative_max"] == -2.0
+    if rank == 1:
+        assert metrics[0]["train/z_extra"] == 4.0
+        assert metrics[1]["train/loss"] == 3.0
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_with_rank_local_shapes(backend):
+    run_distributed_test(run_reduce_metrics_with_rank_local_shapes, backend=backend)
+
+
+def run_reduce_metrics_dynamic_schema_stress():
+    device = get_default_device()
+    rank = dist.get_rank()
+    rng = random.Random(1729 + rank)
+
+    for iteration in range(25):
+        raw_metrics = {
+            iteration: {
+                "shared/loss": torch.tensor(float(rank + 1), device=device),
+            }
+        }
+        metrics_reduce_type = {"shared/loss": ReduceType.mean}
+        for metric_idx in range(rng.randint(0, 4)):
+            name = f"rank_local/z{rank}_{metric_idx}"
+            raw_metrics[iteration][name] = torch.tensor(rng.uniform(-5.0, 5.0), device=device)
+            metrics_reduce_type[name] = rng.choice(
+                [ReduceType.sum, ReduceType.max, ReduceType.mean]
+            )
+        if rng.random() < 0.5:
+            raw_metrics[iteration + 1] = {
+                "shared/loss": torch.tensor(float(rank + 1), device=device)
+            }
+
+        metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device)
+        assert metrics[iteration]["shared/loss"] == 1.5
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_dynamic_schema_stress(backend):
+    run_distributed_test(run_reduce_metrics_dynamic_schema_stress, backend=backend)

@@ -1,5 +1,8 @@
 import os
 import time
+from concurrent.futures import Future
+from contextlib import nullcontext
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -112,6 +115,26 @@ def test_async_checkpointer_with_local_dir(tmp_path, tiny_model_factory):
         func_args=(tmp_path / "checkpoint", tmp_path / "work_dir", tiny_model_factory),
         start_method="spawn",
     )
+
+
+def test_async_checkpointer_does_not_publish_metadata_after_failed_write(tmp_path, monkeypatch):
+    write_future = Future()
+    checkpointer = Checkpointer(work_dir=tmp_path)
+    checkpointer._temporary_wd = MagicMock(return_value=nullcontext(tmp_path))
+    checkpointer._save_train_state = MagicMock()
+    checkpointer._save_metadata = MagicMock()
+    train_module = MagicMock()
+    train_module.state_dict_to_save.return_value = {}
+    monkeypatch.setattr(
+        "olmo_core.train.checkpoint.async_save_state_dict", MagicMock(return_value=write_future)
+    )
+
+    returned_future = checkpointer.save_async(tmp_path / "checkpoint", train_module, {})
+    write_future.set_exception(RuntimeError("write failed"))
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        returned_future.result()
+    checkpointer._save_metadata.assert_not_called()
 
 
 def test_async_checkpointer_with_remote_s3_dir(s3_checkpoint_dir, tmp_path, tiny_model_factory):
