@@ -1,4 +1,4 @@
-<title>Chunking Across Three Families</title>
+<title>Chunking Across Four Families</title>
 <style>
 :root{
   --paper:#FAF9F7; --surface:#FFFFFF; --surface-2:#F2F1ED;
@@ -45,7 +45,7 @@ h1{font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-weight:600;
 .swatch.f-0{background:var(--f0)} .swatch.f-1{background:var(--f1)} .swatch.f-2{background:var(--f2)} .swatch.f-3{background:var(--f3)}
 .lg .key{width:26px;height:0;border-top:2.5px solid var(--neutral)}
 .lg .key.dash{border-top-style:dashed}
-.panels{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;max-width:620px}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:26px}
 .panel{border:1px solid var(--rule);background:var(--surface);border-radius:2px;padding:16px 14px 8px;
   display:flex;flex-direction:column;gap:6px}
 .panel h2{margin:0;font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-size:1.22rem;font-weight:600}
@@ -93,8 +93,8 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color:
 <div class="wrap">
 <header>
   <p class="stamp">CTC suite &middot; cross-family &middot; 500 examples per cell</p>
-  <h1>Chunking Across Three Families</h1>
-  <p class="standfirst">Four model families fine-tuned on the same data and scored on the same ladder. Dense attention is nearly family-invariant here &mdash; every backbone lands between 0.87 and 0.97 at 16k. What the backbone changes is how <em>chunked</em> attention degrades with length, and it changes it a lot. Solid lines are dense; dashed are chunked-mix.</p>
+  <h1>Chunking Across Four Families</h1>
+  <p class="standfirst">The same models, the same ladders, two task complexity classes. On retrieval every family sits near ceiling whether or not the chunk mask is on; on pair-finding they separate hard. Put side by side, the two panels are the suite's central claim in one image. Solid lines are dense; dashed are chunked-mix.</p>
   <div class="legend">
     <span class="lg"><span class="swatch f-0"></span>Qwen3.5-4B <span style="color:var(--neutral)">3:1 GDN</span></span>
     <span class="lg"><span class="swatch f-1"></span>OLMo-3-7B <span style="color:var(--neutral)">3:1 sliding</span></span>
@@ -165,6 +165,60 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color:
 <rect class="pt f-3" x="443.1" y="137.5" width="5.8" height="5.8"/>
 </svg>
   </div>
+  <div class="panel">
+    <span class="cls">O(N) &mdash; retrieval</span>
+    <h2>HotpotQA</h2>
+    <svg viewBox="0 0 460 330" role="img" aria-label="hotpotqa across model families">
+<line class="grid" x1="52" y1="286.0" x2="446" y2="286.0"/>
+<text class="tick ytick" x="43" y="289.5">0.0</text>
+<line class="grid" x1="52" y1="232.0" x2="446" y2="232.0"/>
+<text class="tick ytick" x="43" y="235.5">0.2</text>
+<line class="grid" x1="52" y1="178.0" x2="446" y2="178.0"/>
+<text class="tick ytick" x="43" y="181.5">0.4</text>
+<line class="grid" x1="52" y1="124.0" x2="446" y2="124.0"/>
+<text class="tick ytick" x="43" y="127.5">0.6</text>
+<line class="grid" x1="52" y1="70.0" x2="446" y2="70.0"/>
+<text class="tick ytick" x="43" y="73.5">0.8</text>
+<line class="grid" x1="52" y1="16.0" x2="446" y2="16.0"/>
+<text class="tick ytick" x="43" y="19.5">1.0</text>
+<text class="tick" x="52.0" y="305">2k</text>
+<text class="tick" x="183.3" y="305">4k</text>
+<text class="tick" x="314.7" y="305">8k</text>
+<text class="tick" x="446.0" y="305">16k</text>
+<text class="axis-title" x="249.0" y="324">context rung</text>
+<text class="axis-title" transform="translate(13,151.0) rotate(-90)" x="0" y="0">gold-id F1</text>
+<path class="ln f-0" d="M52.0,16.5 L183.3,18.4 L314.7,19.7 L446.0,24.1"/>
+<circle class="pt f-0" cx="52.0" cy="16.5" r="3.4"/>
+<circle class="pt f-0" cx="183.3" cy="18.4" r="3.4"/>
+<circle class="pt f-0" cx="314.7" cy="19.7" r="3.4"/>
+<circle class="pt f-0" cx="446.0" cy="24.1" r="3.4"/>
+<path class="ln f-0 dash" d="M52.0,17.4 L183.3,19.5 L314.7,20.6 L446.0,25.5"/>
+<rect class="pt f-0" x="49.1" y="14.5" width="5.8" height="5.8"/>
+<rect class="pt f-0" x="180.4" y="16.6" width="5.8" height="5.8"/>
+<rect class="pt f-0" x="311.8" y="17.7" width="5.8" height="5.8"/>
+<rect class="pt f-0" x="443.1" y="22.6" width="5.8" height="5.8"/>
+<path class="ln f-1" d="M52.0,16.0 L183.3,16.5 L314.7,16.8 L446.0,19.5"/>
+<circle class="pt f-1" cx="52.0" cy="16.0" r="3.4"/>
+<circle class="pt f-1" cx="183.3" cy="16.5" r="3.4"/>
+<circle class="pt f-1" cx="314.7" cy="16.8" r="3.4"/>
+<circle class="pt f-1" cx="446.0" cy="19.5" r="3.4"/>
+<path class="ln f-1 dash" d="M52.0,16.5 L183.3,16.8 L314.7,17.8 L446.0,22.7"/>
+<rect class="pt f-1" x="49.1" y="13.6" width="5.8" height="5.8"/>
+<rect class="pt f-1" x="180.4" y="13.9" width="5.8" height="5.8"/>
+<rect class="pt f-1" x="311.8" y="14.9" width="5.8" height="5.8"/>
+<rect class="pt f-1" x="443.1" y="19.8" width="5.8" height="5.8"/>
+<path class="ln f-3" d="M52.0,22.2 L183.3,24.1 L314.7,22.3 L446.0,27.4"/>
+<circle class="pt f-3" cx="52.0" cy="22.2" r="3.4"/>
+<circle class="pt f-3" cx="183.3" cy="24.1" r="3.4"/>
+<circle class="pt f-3" cx="314.7" cy="22.3" r="3.4"/>
+<circle class="pt f-3" cx="446.0" cy="27.4" r="3.4"/>
+<path class="ln f-3 dash" d="M52.0,27.9 L183.3,28.1 L314.7,36.4 L446.0,51.4"/>
+<rect class="pt f-3" x="49.1" y="25.0" width="5.8" height="5.8"/>
+<rect class="pt f-3" x="180.4" y="25.2" width="5.8" height="5.8"/>
+<rect class="pt f-3" x="311.8" y="33.5" width="5.8" height="5.8"/>
+<rect class="pt f-3" x="443.1" y="48.5" width="5.8" height="5.8"/>
+</svg>
+  </div>
 
 </div>
 
@@ -184,6 +238,20 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color:
 <tr><td class="rowlab"><span class="swatch f-3"></span>Llama-3.2-3B</td><td class="rowlab arm">chunked-mix</td><td class="num">0.718</td><td class="num">0.660</td><td class="num">0.590</td><td class="num">0.539</td><td class="num gap">&minus;0.336</td></tr></tbody>
     </table>
   </div>
+  <div class="scroll">
+    <table>
+      <caption>HotpotQA, <code>gold_id_f1</code>. Ladder verified byte-identical across families (md5, all four rungs).</caption>
+      <thead><tr><th class="rowlab">Family</th><th class="rowlab">Arm</th><th>2k</th><th>4k</th><th>8k</th><th>16k</th><th>gap @16k</th></tr></thead>
+      <tbody><tr><td class="rowlab"><span class="swatch f-0"></span>Qwen3.5-4B</td><td class="rowlab arm">dense</td><td class="num">0.998</td><td class="num">0.991</td><td class="num">0.986</td><td class="num">0.970</td><td class="num"></td></tr>
+<tr><td class="rowlab"><span class="swatch f-0"></span>Qwen3.5-4B</td><td class="rowlab arm">chunked-mix</td><td class="num">0.995</td><td class="num">0.987</td><td class="num">0.983</td><td class="num">0.965</td><td class="num gap">&minus;0.005</td></tr>
+<tr><td class="rowlab"><span class="swatch f-1"></span>OLMo-3-7B</td><td class="rowlab arm">dense</td><td class="num">1.000</td><td class="num">0.998</td><td class="num">0.997</td><td class="num">0.987</td><td class="num"></td></tr>
+<tr><td class="rowlab"><span class="swatch f-1"></span>OLMo-3-7B</td><td class="rowlab arm">chunked-mix</td><td class="num">0.998</td><td class="num">0.997</td><td class="num">0.993</td><td class="num">0.975</td><td class="num gap">&minus;0.012</td></tr>
+<tr><td class="rowlab"><span class="swatch f-2"></span>Olmo-Hybrid-7B</td><td class="rowlab arm">dense</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num"></td></tr>
+<tr><td class="rowlab"><span class="swatch f-2"></span>Olmo-Hybrid-7B</td><td class="rowlab arm">chunked-mix</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num na">&mdash;</td><td class="num"></td></tr>
+<tr><td class="rowlab"><span class="swatch f-3"></span>Llama-3.2-3B</td><td class="rowlab arm">dense</td><td class="num">0.977</td><td class="num">0.970</td><td class="num">0.977</td><td class="num">0.958</td><td class="num"></td></tr>
+<tr><td class="rowlab"><span class="swatch f-3"></span>Llama-3.2-3B</td><td class="rowlab arm">chunked-mix</td><td class="num">0.956</td><td class="num">0.955</td><td class="num">0.924</td><td class="num">0.869</td><td class="num gap">&minus;0.089</td></tr></tbody>
+    </table>
+  </div>
 
 </section>
 
@@ -191,6 +259,7 @@ footer{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color:
   <p class="eyebrow">reading it</p>
   <p class="note"><strong>The chunked curves cross; the dense ones do not.</strong> OLMo-3's chunked arm starts 0.11 above Qwen's at 2.5k (0.972 vs 0.861) and finishes 0.10 below it at 16k (0.661 vs 0.759), while all four dense arms sit inside a 0.13 band the whole way. So the backbone is close to irrelevant for dense attention on this task and decisive for how chunked attention decays: the Gated-DeltaNet hybrid starts worse and degrades gently, the sliding-window hybrid starts near-dense and falls off a cliff. A single "chunked gap" per family would erase exactly the thing worth reporting.</p>
   <p class="note">Llama-3.2-3B is the smallest model here at 3B and its dense arm is competitive (0.875 at 16k against Qwen-4B's 0.965), but its chunked arm is the weakest at every rung. Read alongside the model-scale ladder, where the chunked gap narrows monotonically with size, that fits: chunked attention is where capacity gets spent.</p>
+  <p class="note"><strong>The HotpotQA panel is the control that makes the contradiction panel mean something.</strong> Same models, same chunk mask, same rungs &mdash; and the chunked arms track dense within 0.02 for Qwen and OLMo-3 out to 16k, where on contradiction the same models lose 0.21 and 0.28. Llama is the one family that pays a visible retrieval cost (0.958 &rarr; 0.869 at 16k, &minus;0.089), which is consistent with 3B simply having less to spare. Whatever chunking costs, it is not a general capability tax; it is priced by what the task asks the attention to do.</p>
   <p class="note warn"><strong>Olmo-Hybrid has no chunked line, and that is deliberate.</strong> It scored 0.113 / 0.062 / 0.021 / 0.006, but its chunked arm reached a final training CE of 0.958 where OLMo-3's reached 0.171 on identical task, data and 1109 steps &mdash; it never fit the training data. The same model's <em>qdmatch</em> chunked arm trained to a healthy CE of 0.156 and scores 0.931 at 2k, so the linear-attention backbone handles a chunk mask perfectly well. Plotting that series would read as "GDN backbones cannot do chunked pair-finding", which is not what was measured. It needs a longer or re-tuned run.</p>
   <p class="note warn"><strong>A harness split remains.</strong> Qwen's series comes from the vLLM harness; OLMo-3, Olmo-Hybrid and Llama from the native olmo-core evaluator. Where the two overlap elsewhere they agree to four decimals, but there is no overlapping contradiction point, so the Qwen line carries an unquantified harness difference. Native Qwen contradiction re-runs would close it.</p>
 </section>

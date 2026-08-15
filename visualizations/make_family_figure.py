@@ -20,12 +20,15 @@ four models on up to three different inputs while looking entirely reasonable.
   0.931 at 2k, so the backbone handles a chunk mask fine and this is an optimization failure of one
   run. Plotting it would read as a backbone result and be wrong.
 
-── WHAT IS DELIBERATELY NOT HERE ──────────────────────────────────────────────────────────────
-No HotpotQA panel. OLMo-3's retrieval results were scored against
-``/data/prasann/ctc_olmo3/eval_rungs/rung_2048.jsonl`` -- a flat path -- while Llama and Qwen used
-``.../eval_rungs/hotpotqa/rung_2048.jsonl``. Those may well be the same bytes, but after the
-three-ladder contradiction mess an unverified "probably the same" is exactly the assumption worth
-refusing. Verify the ladders, then add the panel.
+── THE HOTPOTQA LADDER WAS VERIFIED, NOT ASSUMED ──────────────────────────────────────────────
+OLMo-3's retrieval results were scored against ``/data/prasann/ctc_olmo3/eval_rungs/rung_N.jsonl``
+-- a FLAT path -- while Llama and Qwen used ``.../eval_rungs/hotpotqa/rung_N.jsonl``. That is
+exactly the shape of the contradiction mess, where three ladders looked interchangeable and were
+three different corpora. So it was checked rather than assumed: md5sum on all four rungs is
+IDENTICAL between the two paths. Same corpus, staged to a different directory. The panel ships.
+
+Olmo-Hybrid has no HotpotQA row because it was never trained on that task -- its retrieval-family
+run was qdmatch_hpqa, a different (O(N*M)) task.
 """
 
 
@@ -34,7 +37,8 @@ import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNGS = [2560, 4096, 8192, 16384]
-RUNG_LABEL = {2560: "2.5k", 4096: "4k", 8192: "8k", 16384: "16k"}
+RUNG_LABEL = {2560: "2.5k", 2048: "2k", 4096: "4k", 8192: "8k", 16384: "16k"}
+HPQA_RUNGS = [2048, 4096, 8192, 16384]
 
 #: family -> (display, colour token suffix, harness note)
 FAMILIES = ["Qwen3.5-4B", "OLMo-3-7B", "Olmo-Hybrid-7B", "Llama-3.2-3B"]
@@ -92,17 +96,57 @@ SERIES = {
     },
 }
 
-METRIC = {"contradiction": "set F1"}
-CLASS = {"contradiction": "O(N&#178;) &mdash; pair finding"}
+def hpqa(path):
+    """Read a hotpotqa {rung: metric} from a native-evaluator result dir, on HPQA_RUNGS."""
+    out = {}
+    for r in HPQA_RUNGS:
+        f = os.path.join(REPO, path, f"rung_{r}.json")
+        if os.path.exists(f):
+            out[r] = json.load(open(f))["metric_value"]
+    return out
+
+
+def hpqa_harvested(arm):
+    """Read the Qwen3.5-4B hotpotqa ladder out of harvested_grades.json."""
+    rows = json.load(open(os.path.join(REPO, "debug/ctc_final_suite/harvested_grades.json")))
+    return {r["rung"]: r["metric_value"] for r in rows
+            if r.get("task") == "hotpotqa" and r.get("arm") == arm and r.get("rung") in HPQA_RUNGS}
+
+
+#: HotpotQA uses the 2k-aligned ladder, not contradiction_iid's 2.5k base.
+#: ⚠ THE LADDER IS VERIFIED, NOT ASSUMED. OLMo-3 was scored against a FLAT path
+#: (/data/prasann/ctc_olmo3/eval_rungs/rung_N.jsonl) while Llama and Qwen used
+#: .../eval_rungs/hotpotqa/rung_N.jsonl. md5sum on all four rungs: IDENTICAL. It was the same
+#: corpus staged to a different directory. After the contradiction ladder mess -- three distinct
+#: corpora that all looked interchangeable -- this panel does not ship on a resemblance.
+SERIES["hotpotqa"] = {
+    ("Qwen3.5-4B", "dense"):   hpqa_harvested("dense"),
+    ("Qwen3.5-4B", "chunked"): hpqa_harvested("chunked"),
+    ("OLMo-3-7B", "dense"):    hpqa("results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_full"),
+    ("OLMo-3-7B", "chunked"):  hpqa("results/ctc_suite_olmo3_hpqa/retrieval/olmo3-7b_chunked-mix"),
+    # Olmo-Hybrid was never trained on hotpotqa -- its retrieval-family run was qdmatch_hpqa.
+    ("Olmo-Hybrid-7B", "dense"):   {},
+    ("Olmo-Hybrid-7B", "chunked"): {},
+    ("Llama-3.2-3B", "dense"):   hpqa("results/ctc_suite_llama/retrieval/llama3.2-3b_full"),
+    ("Llama-3.2-3B", "chunked"): hpqa("results/ctc_suite_llama/retrieval/llama3.2-3b_chunked-mix"),
+}
+
+METRIC = {"contradiction": "set F1", "hotpotqa": "gold-id F1"}
+CLASS = {"contradiction": "O(N&#178;) &mdash; pair finding", "hotpotqa": "O(N) &mdash; retrieval"}
 
 # Plot geometry (user units; the SVG scales via viewBox).
 W, H = 460, 330
 PAD_L, PAD_R, PAD_T, PAD_B = 52, 14, 16, 44
 
 
-def x_of(i):
+def rungs_for(task):
+    """Rung list for a task -- contradiction is 2.5k-based, hotpotqa 2k-based."""
+    return HPQA_RUNGS if task == "hotpotqa" else RUNGS
+
+
+def x_of(i, n=None):
     """X pixel for rung index *i* (rungs are evenly spaced, i.e. log-2 spacing)."""
-    return PAD_L + i * (W - PAD_L - PAD_R) / (len(RUNGS) - 1)
+    return PAD_L + i * (W - PAD_L - PAD_R) / ((n or len(RUNGS)) - 1)
 
 
 def y_of(v):
@@ -123,15 +167,16 @@ def panel(task):
         p.append(f'<line class="grid" x1="{PAD_L}" y1="{y:.1f}" x2="{W-PAD_R}" y2="{y:.1f}"/>')
         p.append(f'<text class="tick ytick" x="{PAD_L-9}" y="{y+3.5:.1f}">{v:.1f}</text>')
     # x labels
-    for i, r in enumerate(RUNGS):
-        p.append(f'<text class="tick" x="{x_of(i):.1f}" y="{H-PAD_B+19}">{RUNG_LABEL[r]}</text>')
+    rl = rungs_for(task)
+    for i, r in enumerate(rl):
+        p.append(f'<text class="tick" x="{x_of(i, len(rl)):.1f}" y="{H-PAD_B+19}">{RUNG_LABEL[r]}</text>')
     p.append(f'<text class="axis-title" x="{(PAD_L+W-PAD_R)/2:.1f}" y="{H-6}">context rung</text>')
     p.append(f'<text class="axis-title" transform="translate(13,{(PAD_T+H-PAD_B)/2:.1f}) rotate(-90)" x="0" y="0">{METRIC[task]}</text>')
 
     for fam in FAMILIES:
         for arm in ("dense", "chunked"):
             pts = SERIES[task][(fam, arm)]
-            xy = [(x_of(i), y_of(pts[r])) for i, r in enumerate(RUNGS) if r in pts]
+            xy = [(x_of(i, len(rl)), y_of(pts[r])) for i, r in enumerate(rl) if r in pts]
             if len(xy) < 2:
                 continue
             d = " ".join(("M" if k == 0 else "L") + f"{x:.1f},{y:.1f}" for k, (x, y) in enumerate(xy))
@@ -152,14 +197,15 @@ def table(task):
     for fam in FAMILIES:
         for arm, lab in (("dense", "dense"), ("chunked", "chunked-mix")):
             pts = SERIES[task][(fam, arm)]
+            rl = rungs_for(task)
             cells = "".join(
                 f'<td class="num">{pts[r]:.3f}</td>' if r in pts else '<td class="num na">&mdash;</td>'
-                for r in RUNGS
+                for r in rl
             )
             gap = ""
             if arm == "chunked":
                 d = SERIES[task][(fam, "dense")]
-                common = [r for r in RUNGS if r in d and r in pts]
+                common = [r for r in rungs_for(task) if r in d and r in pts]
                 if common:
                     r = common[-1]
                     gap = f'<td class="num gap">&minus;{d[r]-pts[r]:.3f}</td>'
@@ -172,7 +218,7 @@ def table(task):
     return "\n".join(rows)
 
 
-HTML = f"""<title>Chunking Across Three Families</title>
+HTML = f"""<title>Chunking Across Four Families</title>
 <style>
 :root{{
   --paper:#FAF9F7; --surface:#FFFFFF; --surface-2:#F2F1ED;
@@ -219,7 +265,7 @@ h1{{font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-weight:600;
 .swatch.f-0{{background:var(--f0)}} .swatch.f-1{{background:var(--f1)}} .swatch.f-2{{background:var(--f2)}} .swatch.f-3{{background:var(--f3)}}
 .lg .key{{width:26px;height:0;border-top:2.5px solid var(--neutral)}}
 .lg .key.dash{{border-top-style:dashed}}
-.panels{{display:grid;grid-template-columns:minmax(0,1fr);gap:26px;max-width:620px}}
+.panels{{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:26px}}
 .panel{{border:1px solid var(--rule);background:var(--surface);border-radius:2px;padding:16px 14px 8px;
   display:flex;flex-direction:column;gap:6px}}
 .panel h2{{margin:0;font-family:ui-serif,"Iowan Old Style",Georgia,serif;font-size:1.22rem;font-weight:600}}
@@ -267,8 +313,8 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
 <div class="wrap">
 <header>
   <p class="stamp">CTC suite &middot; cross-family &middot; 500 examples per cell</p>
-  <h1>Chunking Across Three Families</h1>
-  <p class="standfirst">Four model families fine-tuned on the same data and scored on the same ladder. Dense attention is nearly family-invariant here &mdash; every backbone lands between 0.87 and 0.97 at 16k. What the backbone changes is how <em>chunked</em> attention degrades with length, and it changes it a lot. Solid lines are dense; dashed are chunked-mix.</p>
+  <h1>Chunking Across Four Families</h1>
+  <p class="standfirst">The same models, the same ladders, two task complexity classes. On retrieval every family sits near ceiling whether or not the chunk mask is on; on pair-finding they separate hard. Put side by side, the two panels are the suite's central claim in one image. Solid lines are dense; dashed are chunked-mix.</p>
   <div class="legend">
     <span class="lg"><span class="swatch f-0"></span>Qwen3.5-4B <span style="color:var(--neutral)">3:1 GDN</span></span>
     <span class="lg"><span class="swatch f-1"></span>OLMo-3-7B <span style="color:var(--neutral)">3:1 sliding</span></span>
@@ -285,6 +331,11 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
     <h2>Contradiction</h2>
     {panel('contradiction')}
   </div>
+  <div class="panel">
+    <span class="cls">{CLASS['hotpotqa']}</span>
+    <h2>HotpotQA</h2>
+    {panel('hotpotqa')}
+  </div>
 
 </div>
 
@@ -297,6 +348,13 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
       <tbody>{table('contradiction')}</tbody>
     </table>
   </div>
+  <div class="scroll">
+    <table>
+      <caption>HotpotQA, <code>gold_id_f1</code>. Ladder verified byte-identical across families (md5, all four rungs).</caption>
+      <thead><tr><th class="rowlab">Family</th><th class="rowlab">Arm</th><th>2k</th><th>4k</th><th>8k</th><th>16k</th><th>gap @16k</th></tr></thead>
+      <tbody>{table('hotpotqa')}</tbody>
+    </table>
+  </div>
 
 </section>
 
@@ -304,6 +362,7 @@ footer{{border-top:1px solid var(--rule);padding-top:18px;font-size:.82rem;color
   <p class="eyebrow">reading it</p>
   <p class="note"><strong>The chunked curves cross; the dense ones do not.</strong> OLMo-3's chunked arm starts 0.11 above Qwen's at 2.5k (0.972 vs 0.861) and finishes 0.10 below it at 16k (0.661 vs 0.759), while all four dense arms sit inside a 0.13 band the whole way. So the backbone is close to irrelevant for dense attention on this task and decisive for how chunked attention decays: the Gated-DeltaNet hybrid starts worse and degrades gently, the sliding-window hybrid starts near-dense and falls off a cliff. A single "chunked gap" per family would erase exactly the thing worth reporting.</p>
   <p class="note">Llama-3.2-3B is the smallest model here at 3B and its dense arm is competitive (0.875 at 16k against Qwen-4B's 0.965), but its chunked arm is the weakest at every rung. Read alongside the model-scale ladder, where the chunked gap narrows monotonically with size, that fits: chunked attention is where capacity gets spent.</p>
+  <p class="note"><strong>The HotpotQA panel is the control that makes the contradiction panel mean something.</strong> Same models, same chunk mask, same rungs &mdash; and the chunked arms track dense within 0.02 for Qwen and OLMo-3 out to 16k, where on contradiction the same models lose 0.21 and 0.28. Llama is the one family that pays a visible retrieval cost (0.958 &rarr; 0.869 at 16k, &minus;0.089), which is consistent with 3B simply having less to spare. Whatever chunking costs, it is not a general capability tax; it is priced by what the task asks the attention to do.</p>
   <p class="note warn"><strong>Olmo-Hybrid has no chunked line, and that is deliberate.</strong> It scored 0.113 / 0.062 / 0.021 / 0.006, but its chunked arm reached a final training CE of 0.958 where OLMo-3's reached 0.171 on identical task, data and 1109 steps &mdash; it never fit the training data. The same model's <em>qdmatch</em> chunked arm trained to a healthy CE of 0.156 and scores 0.931 at 2k, so the linear-attention backbone handles a chunk mask perfectly well. Plotting that series would read as "GDN backbones cannot do chunked pair-finding", which is not what was measured. It needs a longer or re-tuned run.</p>
   <p class="note warn"><strong>A harness split remains.</strong> Qwen's series comes from the vLLM harness; OLMo-3, Olmo-Hybrid and Llama from the native olmo-core evaluator. Where the two overlap elsewhere they agree to four decimals, but there is no overlapping contradiction point, so the Qwen line carries an unquantified harness difference. Native Qwen contradiction re-runs would close it.</p>
 </section>
@@ -328,6 +387,7 @@ with open(out, "w") as f:
 print("wrote", out)
 for task in SERIES:
     for k, v in SERIES[task].items():
-        missing = [r for r in RUNGS if r not in v]
-        print(f"  {task:14s} {k[0]:14s} {k[1]:8s} " + " ".join(f"{r}:{v[r]:.4f}" for r in RUNGS if r in v)
+        rl = rungs_for(task)
+        missing = [r for r in rl if r not in v]
+        print(f"  {task:14s} {k[0]:14s} {k[1]:8s} " + " ".join(f"{r}:{v[r]:.4f}" for r in rl if r in v)
               + (f"   MISSING {missing}" if missing else ""))
