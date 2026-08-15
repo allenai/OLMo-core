@@ -603,3 +603,153 @@ def test_finevision_image_correspondence_filter_is_opt_in(tmp_path):
         len(FineVisionDatasetConfig(dataset_path=str(d), min_image_correspondence=4).build(tok))
         == 0
     )
+
+
+def test_finevision_require_single_image_filter(tmp_path):
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+
+    d = tmp_path / "multi"
+    d.mkdir()
+    cols = [
+        "images",
+        "texts",
+        "relevance_min",
+        "visual_dependency_min",
+        "formatting_min",
+        "image_correspondence_min",
+    ]
+    rows = [
+        {
+            "images": [{"bytes": _png_bytes(0), "path": None}],
+            "texts": [{"user": "one", "assistant": "a"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        },
+        {
+            "images": [
+                {"bytes": _png_bytes(1), "path": None},
+                {"bytes": _png_bytes(2), "path": None},
+            ],
+            "texts": [{"user": "two", "assistant": "b"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        },
+    ]
+    _write_parquet(str(d / "train-00000.parquet"), rows, cols)
+    tok = _FakeTokenizer()
+
+    assert len(FineVisionDatasetConfig(dataset_path=str(d)).build(tok)) == 2
+    assert (
+        len(FineVisionDatasetConfig(dataset_path=str(d), require_single_image=True).build(tok)) == 1
+    )
+
+
+def test_finevision_max_rows_subsample_is_deterministic(tmp_path):
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+
+    d = tmp_path / "cap"
+    d.mkdir()
+    cols = [
+        "images",
+        "texts",
+        "relevance_min",
+        "visual_dependency_min",
+        "formatting_min",
+        "image_correspondence_min",
+    ]
+    rows = [
+        {
+            "images": [{"bytes": _png_bytes(i), "path": None}],
+            "texts": [{"user": f"q{i}", "assistant": f"a{i}"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        }
+        for i in range(8)
+    ]
+    _write_parquet(str(d / "train-00000.parquet"), rows, cols)
+    tok = _FakeTokenizer()
+    kw = dict(dataset_path=str(d), max_rows=3, shuffle_seed=6198)
+
+    ds_a = FineVisionDatasetConfig(**kw).build(tok)
+    ds_b = FineVisionDatasetConfig(**kw).build(tok)
+    assert len(ds_a) == 3
+    assert [ds_a[i]["input_ids"].tolist() for i in range(3)] == [
+        ds_b[i]["input_ids"].tolist() for i in range(3)
+    ]
+
+
+def test_finevision_hub_load(monkeypatch, tmp_path):
+    from datasets import Dataset
+
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+    from olmo_core.data.multimodal.finevision import FINEVISION_HUB_REPO
+
+    fixture = Dataset.from_dict(
+        {
+            "images": [[{"bytes": _png_bytes(0), "path": None}]],
+            "texts": [[{"user": "hub q", "assistant": "hub a"}]],
+            "relevance_min": [4],
+            "visual_dependency_min": [4],
+            "formatting_min": [4],
+            "image_correspondence_min": [4],
+        }
+    )
+
+    def fake_load_dataset(repo, name, split, **kwargs):
+        assert repo == FINEVISION_HUB_REPO
+        assert name == "densefusion_1m"
+        assert split == "train"
+        assert kwargs.get("cache_dir") == "/tmp/hf-cache"
+        return fixture
+
+    monkeypatch.setattr(
+        "datasets.load_dataset",
+        fake_load_dataset,
+    )
+
+    ds = FineVisionDatasetConfig(
+        hub_repo=FINEVISION_HUB_REPO,
+        config_name="densefusion_1m",
+        cache_dir="/tmp/hf-cache",
+    ).build(_FakeTokenizer())
+    assert len(ds) == 1
+    assert float(ds[0]["loss_masks"].sum()) == 3.0  # "hub a" -> 2 tokens + EOS
+
+
+def test_build_finevision_v10_config():
+    from olmo_core.data.multimodal import build_finevision_v10_config
+    from olmo_core.data.multimodal.finevision import (
+        FINEVISION_HUB_REPO,
+        FINEVISION_V10_CONFIGS,
+        FINEVISION_V10_SHUFFLE_SEED,
+    )
+
+    cfg = build_finevision_v10_config("arxivqa", max_crops=4)
+    assert cfg.hub_repo == FINEVISION_HUB_REPO
+    assert cfg.config_name == "arxivqa"
+    assert cfg.max_rows == FINEVISION_V10_CONFIGS["arxivqa"]
+    assert cfg.require_single_image is True
+    assert cfg.shuffle_seed == FINEVISION_V10_SHUFFLE_SEED
+    assert cfg.max_crops == 4
+    assert cfg.uses_hub() is True
+
+    with pytest.raises(KeyError, match="unknown_config"):
+        build_finevision_v10_config("unknown_config")
+
+
+def test_finevision_uses_hub_requires_no_dataset_path():
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+    from olmo_core.data.multimodal.finevision import FINEVISION_HUB_REPO
+
+    assert (
+        FineVisionDatasetConfig(hub_repo=FINEVISION_HUB_REPO, config_name="arxivqa").uses_hub()
+        is True
+    )
+    assert FineVisionDatasetConfig(dataset_path="/local", hub_repo=FINEVISION_HUB_REPO).uses_hub() is False
+    assert FineVisionDatasetConfig(config_name="arxivqa").uses_hub() is False

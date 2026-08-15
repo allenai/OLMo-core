@@ -18,11 +18,15 @@ packer), this carries variable-shape image tensors alongside the token sequence.
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
 from .finevision import (
+    FINEVISION_HUB_REPO,
     FINEVISION_ROOT,
+    FINEVISION_V10_CONFIGS,
+    FINEVISION_V10_SHUFFLE_SEED,
     FineVisionDataset,
     FineVisionDatasetConfig,
     VisualWebInstructDataset,
     VisualWebInstructDatasetConfig,
+    build_finevision_v10_config,
 )
 from .mixture_data_loader import MixtureDataLoader
 from .mmfinereason import (
@@ -66,6 +70,10 @@ __all__ = [
     "VisualWebInstructDataset",
     "VisualWebInstructDatasetConfig",
     "FINEVISION_ROOT",
+    "FINEVISION_HUB_REPO",
+    "FINEVISION_V10_CONFIGS",
+    "FINEVISION_V10_SHUFFLE_SEED",
+    "build_finevision_v10_config",
     "MMFineReasonDataset",
     "MMFineReasonDatasetConfig",
     "extract_answer_text",

@@ -15,7 +15,12 @@ one EOS target at the end) by
 qwen3 layout as every other stage-2 source: no BOS, the image token block(s) inside the
 first user turn, ``Image {i+1}`` prefixes when a row carries several images.
 
-Configs verified against the copies on weka (see :data:`FINEVISION_ROOT`):
+**Loading.** By default configs resolve to parquet shards under :data:`FINEVISION_ROOT`.
+Set :attr:`FineVisionDatasetConfig.hub_repo` to load directly from the HuggingFace hub
+(``HuggingFaceM4/FineVision``) instead; rows are cached under ``HF_DATASETS_CACHE`` /
+:attr:`cache_dir` as a memory-mapped Arrow table suitable for map-style random access.
+
+Configs verified against local parquet copies on weka (see :data:`FINEVISION_ROOT`):
 
 ===========================  =========  ================  =========================
 config                       rows       ``<image>`` mark  notes
@@ -26,6 +31,10 @@ config                       rows       ``<image>`` mark  notes
 ``geo170k(align)``                35,297  **none**        geometry caption/alignment
 ``geo170k(qa)``                   12,101  **none**        geometry multiple-choice
 ===========================  =========  ================  =========================
+
+:image-only-v10 subsets (hub configs, see :data:`FINEVISION_V10_CONFIGS`):
+
+* ``densefusion_1m``, ``objects365_qa``, ``arxivqa``, ``geomverse``, ``DoclingMatix``
 
 Every one of those is single-turn with exactly one image per row. Note that three of them
 carry **no** ``<image>`` marker at all: the image block is positioned from the ``images``
@@ -65,12 +74,31 @@ __all__ = [
     "FineVisionDataset",
     "VisualWebInstructDatasetConfig",
     "FINEVISION_ROOT",
+    "FINEVISION_HUB_REPO",
+    "FINEVISION_V10_CONFIGS",
+    "FINEVISION_V10_SHUFFLE_SEED",
+    "build_finevision_v10_config",
 ]
 
 log = logging.getLogger(__name__)
 
 FINEVISION_ROOT = "/weka/oe-training-default/mm-olmo/hf_datasets/HuggingFaceM4___FineVision"
 """Directory holding one subdirectory of parquet shards per downloaded FineVision config."""
+
+FINEVISION_HUB_REPO = "HuggingFaceM4/FineVision"
+"""HuggingFace dataset repo for all FineVision configs."""
+
+# mm_olmo image-only-v10: shuffle then cap (see download_finevision.py).
+FINEVISION_V10_SHUFFLE_SEED = 6198
+
+# Hub config name -> row cap used in mm_olmo image-only-v10 after single-image filtering.
+FINEVISION_V10_CONFIGS: Dict[str, int] = {
+    "densefusion_1m": 100_000,
+    "objects365_qa": 100_000,
+    "arxivqa": 50_000,
+    "geomverse": 50_000,
+    "DoclingMatix": 100_000,
+}
 
 _QUALITY_COLUMNS = {
     "min_formatting": "formatting_min",
@@ -80,20 +108,58 @@ _QUALITY_COLUMNS = {
 }
 
 
+def build_finevision_v10_config(
+    config_name: str,
+    *,
+    hub_repo: str = FINEVISION_HUB_REPO,
+    cache_dir: Optional[str] = None,
+    **kwargs,
+) -> FineVisionDatasetConfig:
+    """Return a hub-backed config for one image-only-v10 FineVision subset.
+
+    Applies mm_olmo v10 defaults: single-image rows only, shuffle seed
+    :data:`FINEVISION_V10_SHUFFLE_SEED`, and the per-config row cap from
+    :data:`FINEVISION_V10_CONFIGS`.
+
+    :raises KeyError: If ``config_name`` is not in :data:`FINEVISION_V10_CONFIGS`.
+    """
+    if config_name not in FINEVISION_V10_CONFIGS:
+        available = ", ".join(sorted(FINEVISION_V10_CONFIGS))
+        raise KeyError(
+            f"Unknown FineVision v10 config {config_name!r}; expected one of: {available}"
+        )
+    return FineVisionDatasetConfig(
+        hub_repo=hub_repo,
+        config_name=config_name,
+        cache_dir=cache_dir,
+        max_rows=FINEVISION_V10_CONFIGS[config_name],
+        require_single_image=True,
+        shuffle_seed=FINEVISION_V10_SHUFFLE_SEED,
+        **kwargs,
+    )
+
+
 @dataclass
 class FineVisionDatasetConfig(Config):
     """Configuration for :class:`FineVisionDataset`."""
 
     config_name: str = "visualwebinstruct(filtered)"
     """FineVision config to load, e.g. ``"mavis_math_rule_geo"`` or ``"geo170k(qa)"``.
-    Resolved against :attr:`root` unless :attr:`dataset_path` is set."""
+    Resolved against :attr:`root` unless :attr:`dataset_path` or :attr:`hub_repo` is set."""
 
     root: str = FINEVISION_ROOT
-    """Directory containing one subdirectory per FineVision config."""
+    """Directory containing one subdirectory per FineVision config (local parquet layout)."""
 
     dataset_path: Optional[str] = None
     """Explicit parquet directory / glob / file, or a ``save_to_disk`` Arrow directory.
-    Overrides :attr:`root` + :attr:`config_name` when set."""
+    Overrides :attr:`root` + :attr:`config_name` and :attr:`hub_repo` when set."""
+
+    hub_repo: Optional[str] = None
+    """When set (and :attr:`dataset_path` is unset), load via
+    ``load_dataset(hub_repo, name=config_name, ...)`` instead of local parquet."""
+
+    cache_dir: Optional[str] = None
+    """HuggingFace datasets cache directory for hub loads (defaults to ``HF_DATASETS_CACHE``)."""
 
     split: str = "train"
 
@@ -116,6 +182,16 @@ class FineVisionDatasetConfig(Config):
     min_relevance: Optional[int] = None
     """Keep rows with ``relevance_min >=`` this (1-5)."""
 
+    require_single_image: bool = False
+    """Keep only rows with exactly one image (mm_olmo image-only-v10 uses this)."""
+
+    max_rows: Optional[int] = None
+    """Cap the number of rows after filtering. When set, rows are subsampled with
+    :attr:`shuffle_seed` (mm_olmo v10 download script semantics)."""
+
+    shuffle_seed: int = FINEVISION_V10_SHUFFLE_SEED
+    """RNG seed for :attr:`max_rows` subsampling."""
+
     max_crops: int = 8
     """Max high-res crops *per image*. Rows with several images cost a multiple of this."""
 
@@ -126,8 +202,12 @@ class FineVisionDatasetConfig(Config):
     loss_token_weighting: str = "root_subsegments"
     seed: int = 0
 
+    def uses_hub(self) -> bool:
+        """Whether this config loads from the HuggingFace hub."""
+        return self.dataset_path is None and self.hub_repo is not None
+
     def resolved_path(self) -> str:
-        """The directory this config will read.
+        """The directory this config will read for local parquet / save_to_disk layouts.
 
         :returns: :attr:`dataset_path` if set, else ``root/config_name``.
         """
@@ -157,28 +237,64 @@ class FineVisionDataset:
         self.config = config
         self.tokenizer = tokenizer
 
-        self._data = load_hf_dataset(
-            config.resolved_path(),
-            config.split,
-            keep_columns=[config.texts_column, config.images_column]
-            + list(_QUALITY_COLUMNS.values()),
-        )
+        self._data = self._load_table(config)
         self._index = self._build_index()
         self._warned = 0
 
+    @staticmethod
+    def _load_table(config: FineVisionDatasetConfig):
+        keep_columns = [config.texts_column, config.images_column] + list(
+            _QUALITY_COLUMNS.values()
+        )
+
+        if config.dataset_path is not None:
+            return load_hf_dataset(
+                config.dataset_path,
+                config.split,
+                keep_columns=keep_columns,
+            )
+
+        if config.uses_hub():
+            from datasets import load_dataset
+
+            load_kwargs = {}
+            if config.cache_dir is not None:
+                load_kwargs["cache_dir"] = config.cache_dir
+            log.info(
+                "FineVision[%s]: loading from hub %s (cache_dir=%s)",
+                config.config_name,
+                config.hub_repo,
+                config.cache_dir or os.environ.get("HF_DATASETS_CACHE", "(default)"),
+            )
+            ds = load_dataset(
+                config.hub_repo,
+                name=config.config_name,
+                split=config.split,
+                **load_kwargs,
+            )
+            extra = [c for c in ds.column_names if c not in keep_columns]
+            if extra:
+                ds = ds.remove_columns(extra)
+            return ds
+
+        return load_hf_dataset(
+            config.resolved_path(),
+            config.split,
+            keep_columns=keep_columns,
+        )
+
     def _build_index(self) -> Optional[np.ndarray]:
-        """Row positions kept after the quality filters (``None`` when none are active)."""
+        """Row positions kept after quality / single-image filters and optional subsampling."""
         cfg = self.config
-        active = {
+        n = len(self._data)
+        keep = np.ones(n, dtype=bool)
+
+        active_quality = {
             column: getattr(cfg, attr)
             for attr, column in _QUALITY_COLUMNS.items()
             if getattr(cfg, attr) is not None
         }
-        if not active:
-            return None
-
-        keep = np.ones(len(self._data), dtype=bool)
-        for column, threshold in active.items():
+        for column, threshold in active_quality.items():
             if column not in self._data.column_names:
                 log.warning("FineVision: no %r column; ignoring that filter", column)
                 continue
@@ -187,15 +303,50 @@ class FineVisionDataset:
                 dtype=np.float64,
             )
             keep &= values >= threshold
-        index = np.nonzero(keep)[0]
-        log.info(
-            "FineVision[%s]: kept %d / %d rows after quality filtering (%s)",
-            cfg.config_name,
-            len(index),
-            len(self._data),
-            ", ".join(f"{c}>={t}" for c, t in active.items()),
-        )
-        return index
+
+        if cfg.require_single_image:
+            img_col = cfg.images_column
+            for i in range(n):
+                if not keep[i]:
+                    continue
+                images = self._data[i].get(img_col) or []
+                if len(images) != 1:
+                    keep[i] = False
+
+        positions = np.nonzero(keep)[0]
+        if active_quality:
+            log.info(
+                "FineVision[%s]: kept %d / %d rows after quality filtering (%s)",
+                cfg.config_name,
+                len(positions),
+                n,
+                ", ".join(f"{c}>={t}" for c, t in active_quality.items()),
+            )
+
+        if cfg.require_single_image:
+            log.info(
+                "FineVision[%s]: %d / %d rows have exactly one image",
+                cfg.config_name,
+                len(positions),
+                n,
+            )
+
+        if cfg.max_rows is not None and len(positions) > cfg.max_rows:
+            rng = np.random.RandomState(cfg.shuffle_seed)
+            positions = rng.permutation(positions)[: cfg.max_rows]
+            log.info(
+                "FineVision[%s]: subsampled to %d rows (shuffle_seed=%d)",
+                cfg.config_name,
+                len(positions),
+                cfg.shuffle_seed,
+            )
+
+        if len(positions) == 0:
+            log.warning("FineVision[%s]: no rows remain after filtering", cfg.config_name)
+            return positions
+        if len(positions) == n:
+            return None
+        return positions
 
     def __len__(self) -> int:
         return len(self._data) if self._index is None else len(self._index)
