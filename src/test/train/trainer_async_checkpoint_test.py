@@ -54,15 +54,15 @@ def test_async_checkpoint_writer_only_publishes_completion():
         writer_thread_id = executor.submit(threading.get_ident).result()
         executor.submit(writer_future.set_result, None).result()
 
-    completion_future.result()
     assert callback.post_save_thread_id is None
     assert str(path) in trainer._async_checkpoint_completions
 
-    completion = trainer.finalize_async_checkpoint(path)
+    completion = completion_future.result()
     assert completion.step == 10
     assert callback.post_save_thread_id == main_thread_id
     assert callback.post_save_thread_id != writer_thread_id
     assert str(path) in trainer._completed_async_checkpoint_durations
+    assert completion_future.result() is completion
 
 
 def test_async_checkpoint_writer_publishes_failure_without_finalization():
@@ -75,11 +75,30 @@ def test_async_checkpoint_writer_publishes_failure_without_finalization():
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(writer_future.set_exception, error).result()
 
-    completion_future.result()
-    completion = trainer.finalize_async_checkpoint("/tmp/checkpoints/step10")
+    with pytest.raises(RuntimeError, match="checkpoint write failed"):
+        completion_future.result()
+    completion = completion_future.completion()
     assert completion.error is error
     assert not trainer._async_checkpoint_completions
     assert str(completion.path) in trainer._completed_async_checkpoint_errors
+
+
+def test_failed_async_checkpoint_skips_metadata_poll():
+    writer_future = Future()
+    trainer = make_minimal_trainer(writer_future)
+    trainer._iter_callbacks = MagicMock(return_value=iter([]))
+    path, completion_future = trainer.save_checkpoint_async()
+    callback = CheckpointerCallback(save_async=True)
+    callback.trainer = trainer
+    callback._future = completion_future
+    callback._latest_checkpoint_path = str(path)
+
+    writer_future.set_exception(RuntimeError("checkpoint write failed"))
+    callback._await_last_checkpoint()
+
+    trainer.checkpointer.dir_is_checkpoint.assert_not_called()
+    assert callback._future is None
+    assert str(path) in trainer._completed_async_checkpoint_errors
 
 
 def test_metric_snapshot_is_atomic_with_concurrent_recording():

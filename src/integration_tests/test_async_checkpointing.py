@@ -139,7 +139,6 @@ def run_async_checkpointing_integration(base_dir: Path) -> None:
                 assert not completion_future.done(), "checkpoint save unexpectedly blocked training"
 
             completion_future.result(timeout=30)
-            trainer.finalize_async_checkpoint(path)
 
             # Reconcile at a shared metrics boundary. Every rank records under the same step, and
             # MAX must report the deliberately slowest completion for this round.

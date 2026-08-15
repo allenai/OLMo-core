@@ -154,14 +154,13 @@ class CheckpointerCallback(Callback):
         if (fut := self._future) is not None:
             # Wait for last async checkpoint to finish.
             if blocking or fut.done():
-                fut.result()
-                if get_rank() == 0:
+                completion = fut.completion()
+                if completion.error is None and get_rank() == 0:
                     # Just to be safe, make sure the checkpointer has finalized the checkpoint.
                     wait_for(
                         lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
                         "waiting to finalize checkpoint",
                     )
-                self.trainer.finalize_async_checkpoint(self._latest_checkpoint_path)
                 self._future = None
                 return fut
         return None
