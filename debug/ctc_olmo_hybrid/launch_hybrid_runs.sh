@@ -38,7 +38,13 @@ mkdir -p "$LOGD"
 [ -f "$LEDGER" ] || printf 'launched_at\trun_name\ttask\tarm\tscale\tseq_len\tcluster\texperiment_id\tnotes\n' > "$LEDGER"
 
 OLMO3_ROOT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3
-BASE="${BASE:-$OLMO3_ROOT/bases/olmo-hybrid-7b-base-fixmark/model_and_optim}"
+# ⚠ THE -repaired COPY, NOT THE RAW CONVERT. The converted base failed the marker NORM gate:
+# doc_start/doc_end sit at 0.15x/0.16x the median trained-row norm (cosine is fine at -0.023, so
+# this is the second marker bug, not the first). RMSNorm rescales every position to unit norm, so
+# those rows arrive as full-strength NOISE at every marker position and flatline training for every
+# mask -- see records/n100-chunked-marker-position-bug.md. repair_markers_gantry.sh writes the
+# repaired copy and re-audits it.
+BASE="${BASE:-$OLMO3_ROOT/bases/olmo-hybrid-7b-base-fixmark-repaired/model_and_optim}"
 CLUSTER="${CLUSTER:-ai2/jupiter-cirrascale-2}"
 TASKS="${TASKS:-contradiction qdmatch}"
 TS=$(date +%m%d%H%M)

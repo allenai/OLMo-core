@@ -41,6 +41,19 @@ def main() -> None:
     ap.add_argument("--checkpoint", required=True, help="model_and_optim distcp dir of the base")
     ap.add_argument("--out", default=None, help="write the audit JSON here")
     ap.add_argument("--family", default="olmo3", help="RESERVED_IDS family key")
+    # The MEASUREMENT path is architecture-free -- it reads the embedding matrix with load_keys and
+    # never builds a model. Only the REPAIR path needs a model, and it used to hardcode olmo3_7B,
+    # which silently made this script olmo3-only: pointed at the Olmo-Hybrid base it measured
+    # correctly, decided a repair was needed, and then died with
+    #   ValueError: Size mismatch between saved [100352, 3840] and current: [100352, 4096]
+    # because Olmo-3 is d_model 4096 and Olmo-Hybrid is 3840. Same tokenizer and same marker ids,
+    # different backbone -- so the family key stays "olmo3" while the ARCH must be selectable.
+    ap.add_argument(
+        "--arch",
+        default="olmo3",
+        choices=["olmo3", "olmo_hybrid"],
+        help="model architecture to rebuild for the repair path (measurement needs none)",
+    )
     ap.add_argument(
         "--tokenizer",
         default="/scratch/users/prasann/hf_models/Olmo-3-1025-7B-docchunk",
@@ -112,9 +125,14 @@ def main() -> None:
         from olmo_core.nn.transformer import TransformerConfig
 
         tok = AutoTokenizer.from_pretrained(args.tokenizer)
-        model = TransformerConfig.olmo3_7B(
-            vocab_size=TokenizerConfig.dolma2().padded_vocab_size()
-        ).build(init_device="cpu")
+        vocab = TokenizerConfig.dolma2().padded_vocab_size()
+        if args.arch == "olmo_hybrid":
+            from olmo_hybrid_configs import olmo_hybrid_7B_ctc  # type: ignore[import-not-found]
+
+            model_config = olmo_hybrid_7B_ctc(vocab_size=vocab)
+        else:
+            model_config = TransformerConfig.olmo3_7B(vocab_size=vocab)
+        model = model_config.build(init_device="cpu")
         load_model_and_optim_state(args.checkpoint, model)
         w = model.embeddings.weight.data
         std = w[: ids.real_vocab_size].float().std()
