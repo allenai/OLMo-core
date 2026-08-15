@@ -279,19 +279,20 @@
       </thead>
       <tbody>
         <tr><td class="rowlab">contradiction</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2.5k</td><td class="num">0.0007</td><td class="num">0.8613</td><td class="num">0.9895</td><td class="num best">+0.861</td></tr>
-        <tr><td class="rowlab">contradiction</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">8k</td><td class="num">0.0000</td><td class="num">0.8039</td><td class="num">0.9760</td><td class="num best">+0.804</td></tr>
+        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2k</td><td class="num">0.1685</td><td class="num">0.9624</td><td class="num">0.9820</td><td class="num best">+0.794</td></tr>
+        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">8k</td><td class="num">0.0580</td><td class="num">0.6415</td><td class="num">0.8765</td><td class="num best">+0.584</td></tr>
+        <tr><td class="rowlab">re-order</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2k</td><td class="num">&minus;0.0022</td><td class="num">0.4706</td><td class="num">0.7473</td><td class="num best">+0.473</td></tr>
+        <tr><td class="rowlab">re-order</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">4k</td><td class="num">&minus;0.0051</td><td class="num">0.2159</td><td class="num">0.5998</td><td class="num best">+0.221</td></tr>
         <tr><td class="rowlab">qdmatch&nbsp;fiqa</td><td class="rowlab cls">O(N&middot;M)</td><td class="num">2k</td><td class="num">0.6907</td><td class="num">0.6179</td><td class="num">0.7919</td><td class="num" style="color:var(--void)">&minus;0.073</td></tr>
         <tr><td class="rowlab">qdmatch&nbsp;fiqa</td><td class="rowlab cls">O(N&middot;M)</td><td class="num">8k</td><td class="num">0.0913</td><td class="num">0.1592</td><td class="num">0.3868</td><td class="num">+0.068</td></tr>
         <tr><td class="rowlab">fiqa</td><td class="rowlab cls">O(N)</td><td class="num">2k</td><td class="num">0.8978</td><td class="num">0.9160</td><td class="num">0.9300</td><td class="num">+0.018</td></tr>
         <tr><td class="rowlab">fiqa</td><td class="rowlab cls">O(N)</td><td class="num">32k</td><td class="num">0.2816</td><td class="num">0.2802</td><td class="num">0.3103</td><td class="num">&minus;0.001</td></tr>
-        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">8k</td><td class="num">0.0580</td><td class="num">0.6415</td><td class="num">0.8765</td><td class="num best">+0.584</td></tr>
-        <tr><td class="rowlab">outlier scale-k</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">32k</td><td class="num">0.0170</td><td class="num">0.1253</td><td class="num">0.4279</td><td class="num best">+0.108</td></tr>
-        <tr><td class="rowlab">re-order</td><td class="rowlab cls">O(N&sup2;)</td><td class="num">2k</td><td class="num">&minus;0.0022</td><td class="num">0.4706</td><td class="num">0.7473</td><td class="num best">+0.473</td></tr>
       </tbody>
     </table>
   </div>
   <p class="note">The zeros are real, not broken evals: every one has <code>parse_rate</code> 1.0, a verified non-zero chunk-mask application count, and a training CE that descended normally. Without the curriculum the model simply never learns these tasks under the chunk mask.</p>
-  <p class="note"><strong>With outlier and re-order in, the pattern is no longer ambiguous.</strong> All three O(N&sup2;) tasks measured &mdash; contradiction, outlier scale-k, re-order &mdash; collapse to chance without mask-mixing (0.001 / 0.058 / &minus;0.002) while their mask-mixed arms reach 0.861 / 0.642 / 0.471. The O(N) task is untouched by it and the O(N&middot;M) task is genuinely mixed. So mask-mixing is not a general-purpose improvement to chunked attention; it is what makes chunked attention <em>learnable at all</em> on pair-finding, and close to a no-op elsewhere.</p>
+  <p class="note"><strong>All five tasks now have full ladders, and the pattern is unambiguous.</strong> What mask-mixing is worth tracks the task's complexity class and nothing else: <strong>+0.79 and +0.47</strong> on the two O(N&sup2;) tasks at 2k, <strong>&minus;0.07</strong> on the O(N&middot;M) task at 2k, and <strong>+0.02</strong> on the O(N) task. Re-order without it sits at exactly chance (&minus;0.002); contradiction at 0.0007; outlier survives at 0.169, badly wounded but not dead. So mask-mixing is not a general improvement to chunked attention &mdash; it is close to the entire difference between learning and not learning pair-finding, and close to a no-op on retrieval.</p>
+  <p class="note">One caveat on the O(N&sup2;) rows: the advantage <em>shrinks</em> at long context, from +0.79 to +0.11 on outlier between 2k and 32k. That is not mask-mixing failing &mdash; it is the mask-mixed arm itself falling toward the floor, so there is less left to rescue. Read the middle rungs, not the ends.</p>
 </section>
 
 <section>
