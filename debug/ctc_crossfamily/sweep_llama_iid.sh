@@ -31,7 +31,14 @@ mkdir -p "$OUTROOT"
 PORT=29400
 for ARM in full chunked-mix; do
   case "$ARM" in
-    full)        VARIANT=dense;   CK="$CKPT_ROOT/llama32-3b-contra-full" ;;
+    # ⚠ THE -s1 SUFFIX IS LOAD-BEARING. `llama32-3b-contra-full` (no suffix) also exists on cubbins
+    # and is a DIFFERENT, bad checkpoint: pointed at it, the dense arm scored 0.0027/0.0000/0.0000
+    # on contradiction_iid while the chunked arm scored 0.718 -- an inverted ladder that reads as a
+    # modelling result and is a wrong-checkpoint error. The published Llama numbers come from -s1,
+    # which is recorded in results/ctc_suite_llama*/contradiction/llama3.2-3b_full/rung_*.raw.json
+    # under `model_path`. Read provenance from a prior result rather than picking the name that
+    # looks right.
+    full)        VARIANT=dense;   CK="$CKPT_ROOT/llama32-3b-contra-full-s1" ;;
     chunked-mix) VARIANT=chunked; CK="$CKPT_ROOT/llama32-3b-contra-chunked-mix" ;;
   esac
   for RUNG in 2560 4096 8192 16384; do
