@@ -211,13 +211,13 @@
 <div class="wrap">
 
 <header>
-  <p class="stamp">Corpus-task-complexity suite &middot; snapshot 2026-08-15 03:25 PT</p>
+  <p class="stamp">Corpus-task-complexity suite &middot; snapshot 2026-08-15 07:05 PT</p>
   <h1>Chunked Attention Ledger</h1>
   <p class="standfirst">What the document-chunked attention ablations currently measure, which cells are still empty, and which published-looking numbers are artifacts rather than results. Every figure here is read from a grade JSON, not carried forward in prose.</p>
   <p class="standfirst">Two results firmed up overnight: the chunked-vs-dense gap now narrows monotonically across three model sizes, and mask-mixing turns out to be what makes chunked attention learnable on every O(N&sup2;) task measured &mdash; while doing essentially nothing on retrieval.</p>
   <div class="chips">
     <div class="chip is-measured"><b>79</b><span>cells measured</span></div>
-    <div class="chip is-measured"><b>2/3</b><span>controls passed</span></div>
+    <div class="chip is-measured"><b>3/3</b><span>controls passed</span></div>
     <div class="chip is-pending"><b>21</b><span>evals in flight</span></div>
     <div class="chip is-pending"><b>4</b><span>hybrid runs training</span></div>
     <div class="chip is-void"><b>3</b><span>cell groups void</span></div>
@@ -236,7 +236,7 @@
       </thead>
       <tbody>
         <tr><td class="rowlab">0.8B <span class="arm">dense</span></td><td class="num">0.9623</td><td class="num">0.9540</td><td class="num">0.9451</td><td class="num">0.9160</td><td class="num">0.8612</td><td class="num" rowspan="2">0.3071</td></tr>
-        <tr><td class="rowlab">0.8B <span class="arm">chunked-mix</span></td><td class="num">0.7980</td><td class="num">0.7547</td><td class="num">0.6871</td><td class="num">0.6089</td><td class="num"><span class="pill pending">running</span></td></tr>
+        <tr><td class="rowlab">0.8B <span class="arm">chunked-mix</span></td><td class="num">0.7980</td><td class="num">0.7547</td><td class="num">0.6871</td><td class="num">0.6089</td><td class="num">0.5199</td></tr>
         <tr><td class="rowlab">2B <span class="arm">dense</span></td><td class="num">0.9757</td><td class="num">0.9779</td><td class="num">0.9687</td><td class="num">0.9487</td><td class="num">0.9100</td><td class="num" rowspan="2">0.2814</td></tr>
         <tr><td class="rowlab">2B <span class="arm">chunked-mix</span></td><td class="num">0.8365</td><td class="num">0.8003</td><td class="num">0.7391</td><td class="num">0.6673</td><td class="num">0.5887</td></tr>
         <tr><td class="rowlab">4B <span class="arm">dense</span></td><td class="num best">0.9895</td><td class="num best">0.9843</td><td class="num best">0.9760</td><td class="num best">0.9652</td><td class="num best">0.9463</td><td class="num" rowspan="2">0.2066</td></tr>
@@ -244,7 +244,7 @@
       </tbody>
     </table>
   </div>
-  <p class="note">The 0.8B chunked row landed, and it <strong>confirms the trend rather than breaking it</strong>. The chunked-vs-dense gap at 16k narrows monotonically with scale: <strong>0.307 &rarr; 0.281 &rarr; 0.207</strong> at 0.8B / 2B / 4B. Three points, all moving the same direction, each well outside the &plusmn;0.02 noise floor &mdash; so "scale pushes back chunked degradation" is now a measured trend and not an extrapolation from two points. Note the dense arms barely move across scale (0.916 &rarr; 0.949 &rarr; 0.965 at 16k); nearly all of the scale benefit accrues to the chunked arm.</p>
+  <p class="note">The 0.8B chunked row is now complete, and it <strong>confirms the trend rather than breaking it</strong>. The chunked-vs-dense gap narrows monotonically with scale at both ends of the ladder: <strong>0.307 &rarr; 0.281 &rarr; 0.207</strong> at 16k and <strong>0.341 &rarr; 0.321 &rarr; 0.247</strong> at 32k, across 0.8B / 2B / 4B. Three points, all moving the same direction, each well outside the &plusmn;0.02 noise floor &mdash; so "scale pushes back chunked degradation" is now a measured trend and not an extrapolation from two points. Note the dense arms barely move across scale (0.916 &rarr; 0.949 &rarr; 0.965 at 16k); nearly all of the scale benefit accrues to the chunked arm.</p>
 </section>
 
 <section>
@@ -325,7 +325,7 @@
     </table>
   </div>
   <p class="lede">Across the whole contradiction ladder the chunked-mix checkpoint scored densely reads <span class="num">0.9876 / 0.9827 / 0.9636 / 0.9525 / 0.9109</span> against a dense-trained <span class="num">0.9895 / 0.9843 / 0.9760 / 0.9652 / 0.9463</span> &mdash; near-parity at every length.</p>
-  <p class="note"><strong>Two of three controls have now passed.</strong> Each dense column needs a control rung proving the checkpoint reproduces its published chunked baseline before the dense number means anything. fiqa returned <span class="num">0.9168</span> against a published <span class="num">0.9160</span>, and qdmatch&nbsp;fiqa <span class="num">0.6123</span> against <span class="num">0.6179</span> &mdash; both within the &plusmn;0.021 binomial SE at 500 examples, both with the chunk mask verifiably applied (609 and 1,319 calls). The contradiction control is still running, so that row alone remains provisional.</p>
+  <p class="note"><strong>All three controls have now passed, so this section is confirmed.</strong> Each dense column needed a control rung proving the checkpoint reproduces its published chunked baseline before the dense number meant anything: fiqa <span class="num">0.9168</span> vs <span class="num">0.9160</span>, qdmatch&nbsp;fiqa <span class="num">0.6123</span> vs <span class="num">0.6179</span>, contradiction <span class="num">0.8620</span> vs <span class="num">0.8613</span> &mdash; every one inside the &plusmn;0.021 binomial SE at 500 examples, every one with the chunk mask verifiably applied (609 / 1,319 / 16,258 calls). The recovery figures below are results, not signals.</p>
 </section>
 
 <section>
