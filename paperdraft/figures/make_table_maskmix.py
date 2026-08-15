@@ -168,22 +168,23 @@ def main():
     L.append(r"\centering")
     L.append(r"\small")
     L.append(r"\setlength{\tabcolsep}{5pt}")
-    # One row per task, carrying only the two requested quantities. The per-rung arm scores that
-    # used to sit here are still in data/ctc_maskmix_data.csv; the floor caveat they made visible
-    # is now carried by the ddagger marker and the caption instead.
-    L.append(r"\begin{tabular}{llcrr}")
+    # One row per task, one number each. Everything trimmed from this table -- per-rung arm scores,
+    # the deepest-rung gain, the rung count -- is still in data/ctc_maskmix_data.csv.
+    #
+    # ⚠ THE \ddagger FLOOR MARKER WAS DROPPED WITH THE "At deepest" COLUMN, NOT FORGOTTEN. It
+    # existed to warn that reorder's +0.000 and qdmatch's +0.006 at the deepest rung were
+    # floor artefacts (the full-attention arm is itself under FLOOR there, so no arm has headroom).
+    # With that column gone there is no number left for it to qualify. The underlying fact still
+    # shapes how the MEAN should be read -- both tasks earn their whole gain at the shallow rungs --
+    # so it moves into the caption rather than disappearing. `floored` is still computed and still
+    # printed to stdout.
+    L.append(r"\begin{tabular}{llr}")
     L.append(r"\toprule")
-    L.append(r"& & & \multicolumn{2}{c}{Mask-mixing gain} \\")
-    L.append(r"\cmidrule(lr){4-5}")
-    L.append(r"Task & CTC & Rungs & Mean & At deepest \\")
+    L.append(r"Task & CTC & Mask-mixing gain \\")
     L.append(r"\midrule")
     for r in rows:
         star = r"$^{\dagger}$" if r["flag"] else ""
-        dag = r"$^{\ddagger}$" if r["floored"] else ""
-        L.append(
-            f"{r['name']}{star}{dag} & {r['cls']} & {r['n_rungs']} & "
-            f"\\textbf{{{fmt(r['avg'], True)}}} & {fmt(r['deep_gain'], True)} \\\\"
-        )
+        L.append(f"{r['name']}{star} & {r['cls']} & \\textbf{{{fmt(r['avg'], True)}}} \\\\")
     L.append(r"\bottomrule")
     L.append(r"\end{tabular}")
     by = {r["name"]: r for r in rows}
@@ -200,26 +201,25 @@ def main():
     L.append(r"step. \emph{Gain} is $(\text{+Mix}) - (\text{Chunked})$. Qwen3.5-4B, identical")
     L.append(r"shards, identical ladders, matched hyperparameters; \emph{eval\_size}~$=500$ per")
     L.append(r"rung, so a gain under $\sim\!0.04$ is within noise.")
-    # The deepest rung is no longer a column, so name it here -- reordering's ladder stops at 16k
-    # by rung policy and a reader would otherwise assume 32k throughout.
-    L.append(rf"\emph{{Mean}} averages the per-rung gain over the ladder; the deepest rung is 32k")
-    L.append(rf"for every task except reordering, whose ladder ends at 16k.")
-    L.append(rf"Mixing is worth nothing on $O_T(N)$ retrieval (FiQA, {fiqa_avg} mean) and is the")
+    # The rung count is no longer a column, so state the ladder coverage here -- reordering's
+    # ladder stops at 16k by rung policy, so its mean is over 4 rungs and everything else over 5.
+    L.append(r"Each figure is the mean per-rung gain over the 2k--32k ladder (5 rungs; reordering")
+    L.append(r"stops at 16k, 4 rungs).")
+    L.append(rf"Mixing is worth nothing on $O_T(N)$ retrieval (FiQA, {fiqa_avg}) and is the")
     L.append(rf"difference between learning the task and not learning it at all on contradiction")
     L.append(rf"({contra_avg}) and outlier detection ({out_avg}).")
-    L.append(r"\emph{The two quantities answer different questions and disagree where the task")
-    L.append(r"itself has collapsed}: reordering and QDmatch both lose their gain at depth only")
-    L.append(rf"because every arm has hit the floor there -- at 2k the same gains are {reo_sh} and")
-    L.append(rf"{qd_sh}.")
+    # Without the deepest-rung column a reader cannot see that two of these means are front-loaded,
+    # which changes what the mean means for those rows. State it.
+    L.append(r"\emph{Reordering and QDmatch earn their entire gain at the shallow rungs}: by the")
+    L.append(rf"deepest rung the full-attention arm has itself fallen below {FLOOR}, leaving no")
+    L.append(rf"headroom for either chunked arm, so their gains run {reo_sh} and {qd_sh} at 2k but")
+    L.append(r"$+0.000$ and $+0.006$ at the bottom of the ladder.")
     L.append(r"$^{\dagger}$Pure-chunked training cross-entropy never descended on these two tasks")
     L.append(r"(contradiction: $1.175\!\to\!1.071$, flat across the whole run), while FiQA and")
     L.append(r"QDmatch on the identical recipe converged normally -- so the collapse is")
     L.append(r"task-specific rather than an infrastructure failure, but it reflects a failure to")
     L.append(r"fit the training set and is not by itself a statement about what the mask can")
-    L.append(r"represent.")
-    L.append(rf"$^{{\ddagger}}$Floor-limited: the \emph{{full-attention}} arm is itself below")
-    L.append(rf"{FLOOR} at this rung, so neither chunked arm has headroom and the gain is")
-    L.append(r"uninformative.}")
+    L.append(r"represent.}")
     L.append(r"\label{tab:maskmix}")
     L.append(r"\end{table}")
 
