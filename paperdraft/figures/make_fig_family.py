@@ -50,8 +50,8 @@ _spec.loader.exec_module(_fam)
 SERIES, RUNG_LABEL = _fam.SERIES, _fam.RUNG_LABEL
 
 PANELS = [
-    ("contradiction", "Contradiction", r"set-F1", r"high CTC  $O_T(N^2)$", _fam.RUNGS),
-    ("hotpotqa", "HotpotQA", r"gold-ID F1", r"low CTC  $O_T(N)$", _fam.HPQA_RUNGS),
+    ("contradiction", "Contradiction", r"set-F1", r"(high CTC, $O_T(N^2)$)", _fam.RUNGS),
+    ("hotpotqa", "HotpotQA", r"gold-ID F1", r"(low CTC, $O_T(N)$)", _fam.HPQA_RUNGS),
 ]
 
 # One hue per family, held across both panels so a reader tracks a model by colour alone. Blue and
@@ -84,11 +84,22 @@ plt.rcParams.update({
     "axes.facecolor": "white",
 })
 
-fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.6))
+# ⚠ THE Y-AXIS IS CUT, AND THE LIMITS ARE SHARED ACROSS BOTH PANELS ON PURPOSE.
+# Starting at 0 wasted the bottom half of both panels -- nothing plots below 0.53. But letting each
+# panel autoscale to its own data would be worse than the wasted space: HotpotQA spans roughly
+# 0.87-1.00 and contradiction 0.54-0.99, so independent limits would stretch a 0.09 retrieval drop
+# to look exactly as steep as a 0.34 pair-finding collapse, and the figure's entire argument is
+# that those two are different in magnitude. One shared window keeps the slopes comparable by eye.
+# Computed from the data rather than hardcoded so the floor cannot silently clip a future series.
+_vals = [v for task, *_ in PANELS for d in _fam.SERIES[task].values() for v in d.values()]
+YMIN = min(0.95, (int(min(_vals) * 20) / 20) - 0.05)   # round down to a 0.05 tick, then pad
+YMAX = 1.02
+
+fig, axes = plt.subplots(1, 2, figsize=(13.0, 4.3))
 # top leaves room for three stacked bands above the axes: the figure legend, the panel title, and
 # the CTC-class line under it. The title pad is what separates the latter two -- at the default the
 # class label lands on top of the title.
-fig.subplots_adjust(left=0.06, right=0.985, top=0.765, bottom=0.145, wspace=0.17)
+fig.subplots_adjust(left=0.06, right=0.985, top=0.735, bottom=0.175, wspace=0.17)
 
 summary = []
 for ax, (task, title, metric, cls, rungs) in zip(axes, PANELS):
@@ -112,7 +123,7 @@ for ax, (task, title, metric, cls, rungs) in zip(axes, PANELS):
     ax.set_xticks(xs)
     ax.set_xticklabels([RUNG_LABEL[r] for r in rungs])
     ax.set_xlim(-0.16, len(rungs) - 0.84)
-    ax.set_ylim(0.0, 1.035)
+    ax.set_ylim(YMIN, YMAX)
     ax.set_xlabel("Context Length")
     ax.grid(axis="y", color="#e8e8e8", linewidth=0.8, zorder=0)
     ax.set_axisbelow(True)
@@ -135,7 +146,7 @@ handles += [Line2D([], [], color=TXT, linewidth=2.0, linestyle="-", marker="o",
                    markersize=5.4, label="Full attention"),
             Line2D([], [], color=TXT, linewidth=2.0, linestyle="--", marker="s",
                    markersize=5.4, label="Chunked attention")]
-fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.005),
+fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.055, 1.005),
            ncol=6, frameon=False, handlelength=2.5, columnspacing=1.5,
            fontsize=13.5, labelcolor=TXT)
 
