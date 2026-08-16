@@ -266,6 +266,10 @@ class SummaryTokenAttention(Attention):
         # Transient per-forward state, stashed by ``forward`` for ``sdpa`` to read.
         self._summary_roles: Optional[torch.Tensor] = None
         self._causal_example: Optional[torch.Tensor] = None
+        # Set when EVERY example in the batch is on the causal arm, in which case the summary mask is
+        # exactly plain causal attention and the block-sparse machinery is pure overhead. See
+        # ``_sdpa_masked``.
+        self._all_causal: bool = False
         # Per-layer decode state. This is only one bool per cached token (rather than retaining the
         # four-field roles tensor): generated tokens are all in the trailing QUERY span, so the set
         # of prompt keys visible to every decode query is constant and each generated key is visible.
@@ -293,11 +297,16 @@ class SummaryTokenAttention(Attention):
         """
         self._summary_roles = summary_roles
         self._causal_example = causal_example
+        # An all-causal batch means the mask adds nothing over plain causal attention, so the whole
+        # block-sparse path can be skipped. This is the common case at inference, where the eval-time
+        # arm is a single setting for the run rather than a per-example coin.
+        self._all_causal = causal_example is not None and bool(causal_example.all())
         try:
             return super().forward(x, **kwargs)
         finally:
             self._summary_roles = None
             self._causal_example = None
+            self._all_causal = False
 
     def sdpa(
         self,
@@ -396,13 +405,17 @@ class SummaryTokenAttention(Attention):
                 "SummaryTokenAttention generation requires batch_size=1 / no left-padding."
             )
         if q.shape[0] != 1:
-            raise NotImplementedError("SummaryTokenAttention generation currently requires batch_size=1.")
+            raise NotImplementedError(
+                "SummaryTokenAttention generation currently requires batch_size=1."
+            )
 
         pos = int(kvm.current_position())
         T_new = q.shape[1]
         if T_new > 1:
             if pos != 0:
-                raise NotImplementedError("Only a single prefill from cache position 0 is supported.")
+                raise NotImplementedError(
+                    "Only a single prefill from cache position 0 is supported."
+                )
             roles = self._prepared_roles(T_new, q.device, q.shape[0])
             self._decode_key_allowed = self._decode_prompt_key_mask(roles)
             kvm.record_leftpad(cache_leftpad)
@@ -413,7 +426,9 @@ class SummaryTokenAttention(Attention):
             return out
 
         if self._decode_key_allowed is None or self._decode_key_allowed.shape[1] != pos:
-            raise RuntimeError("SummaryTokenAttention decode cache is missing or out of sync with K/V.")
+            raise RuntimeError(
+                "SummaryTokenAttention decode cache is missing or out of sync with K/V."
+            )
         kvm.k_cache[:, pos : pos + 1].copy_(k)
         kvm.v_cache[:, pos : pos + 1].copy_(v)
         total = pos + 1
@@ -494,8 +509,11 @@ class SummaryTokenAttention(Attention):
     def _sdpa_masked(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         B, T, n_heads, _ = q.shape
 
-        if self._summary_roles is None:
-            # No roles -> plain causal attention (GQA expanded, as the torch backend does).
+        if self._summary_roles is None or self._all_causal:
+            # No roles, or every example on the causal arm -> plain causal attention (GQA expanded,
+            # as the torch backend does). Taking this path when the batch is all-causal is not just an
+            # optimization: it keeps a long all-causal prefill off the block-sparse path, which cannot
+            # build a mask past the dense fallback ceiling.
             n_rep = n_heads // k.shape[2]
             out = F.scaled_dot_product_attention(
                 q.transpose(1, 2),

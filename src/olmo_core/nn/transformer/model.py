@@ -145,6 +145,8 @@ class Transformer(nn.Module):
         # ``causal_example`` arm and forwards both to every block (for
         # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`).
         self._summary_token_attention: Optional[Dict[str, Any]] = None
+        # Which arm of the mask mixture to serve at INFERENCE; see ``set_summary_eval_mask_mode``.
+        self._summary_eval_mask_mode: str = "causal"
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -415,6 +417,41 @@ class Transformer(nn.Module):
             "n_sequence_mixers": n_mixers,
             "mix": mix,
         }
+
+    def set_summary_eval_mask_mode(self, mode: str) -> str:
+        """
+        Choose which arm of the summary-token mask mixture is served at **inference**.
+
+        The mixture coin in :meth:`forward` is drawn during training only, so at inference the arm is
+        not a per-example random variable but a single decision about how to serve the model -- and it
+        has to be made explicitly, because the two arms are different masks:
+
+        - ``"causal"`` (default): every example is on the causal arm, i.e. plain causal attention with
+          the ``<|summ|>`` tokens present as ordinary tokens. This is the arm that models trained with
+          ``standard_mix_prob=1.0``, or with a curriculum ending at ``mix_end_p=1.0``, actually saw.
+        - ``"restricted"``: no example is on the causal arm, so the summary mask applies in full and
+          the trailing query reads only summaries and its own document (subject to the layer's
+          :class:`~olmo_core.nn.attention.summary_token.SummaryMaskSpec`). This measures what the
+          summary tokens compressed, and is the condition to use when the question is whether the
+          model can answer from summaries alone.
+
+        Defaulting to ``"causal"`` makes the served mask match the trained one for the arms that end
+        up fully causal; serving ``"restricted"`` to those is a train/test mismatch that reads as a
+        capability result. Training is unaffected either way -- this is consulted only when
+        ``self.training`` is ``False``.
+
+        :param mode: ``"causal"`` or ``"restricted"``.
+
+        :returns: The mode that was set.
+
+        :raises OLMoConfigurationError: If ``mode`` is not one of the two arms.
+        """
+        if mode not in ("causal", "restricted"):
+            raise OLMoConfigurationError(
+                f"Unknown summary eval mask mode {mode!r}; expected 'causal' or 'restricted'."
+            )
+        self._summary_eval_mask_mode = mode
+        return mode
 
     def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
         """
@@ -714,6 +751,14 @@ class Transformer(nn.Module):
                         f"causal_this_batch={int(flags.sum())}/{flags.numel()} examples "
                         f"({input_ids.shape[0]} instances x {n_examples})"
                     )
+            elif not self.training and self._summary_eval_mask_mode == "causal":
+                # Inference: the arm is a serving decision, not a coin. Mark every token causal so the
+                # mask reduces to plain causal attention (see ``set_summary_eval_mask_mode``). Leaving
+                # this None -- as every forward did before the mode existed -- silently served the
+                # fully restricted mask to models that trained entirely on the causal arm.
+                causal_example = torch.ones(
+                    input_ids.shape, dtype=torch.bool, device=input_ids.device
+                )
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:

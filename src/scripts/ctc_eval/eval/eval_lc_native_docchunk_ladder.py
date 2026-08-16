@@ -138,13 +138,18 @@ def build_ladders(args):
     # v1 ladders are DISABLED (2026-07-29). Each v1 rung drew its OWN questions, so every
     # rung-to-rung delta carried eval-set resampling noise on top of the length effect it was
     # meant to isolate. v2 fixes the question set across rungs and varies only the distractors.
-    if args.ladder_version != "v2":
+    if args.ladder_version not in ("v2", "v3"):
         raise NotImplementedError(
-            f"--ladder-version {args.ladder_version!r} is no longer supported: v2 is the only "
-            "ladder. Build what you need as v2 (build_v2_eval_ladders.py for 2k-32k, "
-            "build_xlong_rungs.py for 64k-2M) and point EVAL500_ROOT at a v2 bundle."
+            f"--ladder-version {args.ladder_version!r} is no longer supported: v2 and v3 are the "
+            "ladders. Build what you need as v2 (build_v2_eval_ladders.py for 2k-32k, "
+            "build_xlong_rungs.py for 64k-2M) and point EVAL500_ROOT at a v2 or v3 bundle."
         )
-    if args.ladder_version == "v2":
+    if args.ladder_version in ("v2", "v3"):
+        # v3 shares v2's relative layout, so the same table serves both -- the bundle root is what
+        # differs (contra + outlier are rebuilt, nq/rerank/oolong are symlinks back to v2_clean, and
+        # the OOD BEIR sets have no v3 build at all). Rungs whose file is absent under the selected
+        # root are skipped with a `MISSING` line rather than faked, which is how a v3 run drops the
+        # tasks v3 does not have.
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
         ladders_v2 = {
@@ -279,9 +284,17 @@ def main():
     ap.add_argument("--num-summary-tokens", type=int, default=5,
                     help="summary variant only: <|summ|> tokens appended after every document; "
                          "must match the training shards and checkpoint config.")
-    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
+    ap.add_argument("--ladder-version", choices=["v2", "v3"], default="v2",
                     help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
-                         "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).")
+                         "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT). "
+                         "v3: same layout, contradiction rebuilt in `realistic` mode; v3 contradiction "
+                         "numbers are NOT comparable to v2 ones.")
+    ap.add_argument("--summary-mask-mode", choices=["causal", "restricted"], default="causal",
+                    help="summary variant only: which arm of the mask mixture to serve. causal "
+                         "(DEFAULT) = plain causal attention with <|summ|> tokens present as ordinary "
+                         "tokens, which is the arm a standard_mix_prob=1.0 or mix_end_p=1.0 model "
+                         "trained on. restricted = the full summary mask, where the query reads only "
+                         "summaries and its own document.")
     ap.add_argument("--mem-freq", type=int, default=63,
                     help="landmark variant: a landmark token every mem_freq content tokens (window=64).")
     ap.add_argument("--max-test-samples", type=int, default=400)
@@ -423,6 +436,10 @@ def main():
         )
     print(f"[docchunk-ladder-{args.variant}] built from {args.model_path} in {time.time()-t0:.1f}s",
           flush=True)
+
+    if args.variant == "summary":
+        mode = gm.model.set_summary_eval_mask_mode(args.summary_mask_mode)
+        print(f"[summary-mask] serving the '{mode}' arm of the mask mixture", flush=True)
 
     if is_landmark and args.landmark_top_k_blocks is not None:
         n_set = gm.model.set_landmark_eval_top_k(args.landmark_top_k_blocks)

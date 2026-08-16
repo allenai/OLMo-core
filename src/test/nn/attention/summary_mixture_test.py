@@ -145,6 +145,7 @@ def test_roles_reach_the_attention_layers_and_change_the_output():
     model = _build_model(standard_mix_prob=0.0)
     x = torch.tensor([_example_ids()])
     model.eval()
+    model.set_summary_eval_mask_mode("restricted")
     with torch.no_grad():
         masked = model(x)
     # Disabling role construction leaves plain causal attention, which must differ.
@@ -152,6 +153,35 @@ def test_roles_reach_the_attention_layers_and_change_the_output():
     with torch.no_grad():
         causal = model(x)
     assert not torch.allclose(masked, causal)
+
+
+@pytest.mark.parametrize("mode, same_as_causal", [("causal", True), ("restricted", False)])
+def test_eval_mask_mode_selects_the_served_arm(mode, same_as_causal):
+    """
+    At inference the mixture coin is not drawn, so the arm comes from the eval mode. ``"causal"``
+    must reproduce plain causal attention exactly -- that is the whole point of the default, since
+    the arms that train at ``standard_mix_prob=1.0`` never saw the restricted mask.
+    """
+    model = _build_model(standard_mix_prob=0.0)
+    x = torch.tensor([_example_ids()])
+    model.eval()
+
+    model.set_summary_eval_mask_mode(mode)
+    with torch.no_grad():
+        served = model(x)
+
+    model._summary_token_attention = None  # plain causal reference
+    with torch.no_grad():
+        reference = model(x)
+
+    assert torch.allclose(served, reference) == same_as_causal
+
+
+def test_eval_mask_mode_defaults_to_causal_and_rejects_unknown_modes():
+    model = _build_model(standard_mix_prob=0.0)
+    assert model._summary_eval_mask_mode == "causal"
+    with pytest.raises(OLMoConfigurationError):
+        model.set_summary_eval_mask_mode("unmasked")
 
 
 def test_mixture_is_training_only_and_advances_the_counter():

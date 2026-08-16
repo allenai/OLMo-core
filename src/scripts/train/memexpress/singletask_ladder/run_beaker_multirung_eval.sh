@@ -33,6 +33,13 @@ MAX_LENGTH="${MAX_LENGTH:-40960}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
 NUM_SUMMARY_TOKENS="${NUM_SUMMARY_TOKENS:-5}"
+# Which arm of the summary mask mixture to SERVE. The mixture coin is drawn during training only, so
+# at eval the arm is a serving decision -- and before this existed the eval always served the fully
+# restricted mask, including to the arms that trained 100% causal (standard_mix_prob=1.0, or a
+# curriculum ending at mix_end_p=1.0). That is a train/test mismatch that reads as a capability
+# result. causal (DEFAULT) = plain causal attention with <|summ|> present as ordinary tokens;
+# restricted = the full mask, query reads only summaries and its own document.
+SUMMARY_MASK_MODE="${SUMMARY_MASK_MODE:-causal}"
 RUNGS_OVERRIDE="${RUNGS_OVERRIDE:-}"
 # TOKENIZER is resolved AFTER the checkpoint is known (see "infer from the checkpoint" below) --
 # deliberately NOT defaulted here. The old `${TOKENIZER:-Qwen/Qwen3-4B}` silently mis-tokenized
@@ -348,6 +355,24 @@ if [ "$LADDER_XLONG" = "1" ]; then
     *) echo "    [xlong] no xlong rungs for TASK=$TASK; base ladder unchanged." ;;
   esac
 fi
+# The summary layout appends NUM_SUMMARY_TOKENS <|summ|> tokens after EVERY document, so a summary
+# prompt is materially longer than the dense prompt the MAX_LENGTH table above was calibrated on, and
+# the table's ~10% dense margin does not cover it. Measured on the 2026-08-15 sweep, where the
+# evaluator correctly ABORTED rather than score a truncated prompt: contra@16k built 59,487 tokens
+# against the 40,960 base cap, contra_fever@32k 56,951, and contra@128k built 153,965 against 146,227.
+# The base cap is one fixed value spanning 2k-32k so it needs the bigger raise; the xlong caps are
+# per-rung and only ran ~5% short. Both are deliberately NOT scaled further than measured: MAX_LENGTH
+# sizes the K/V cache, so an over-generous cap buys truncation safety with memory the long rungs do
+# not have.
+if [ "$VARIANT" = "summary" ]; then
+  if [ "$LADDER_XLONG" = "1" ]; then
+    SUMMARY_LEN_SCALE="${SUMMARY_LEN_SCALE:-1.15}"
+  else
+    SUMMARY_LEN_SCALE="${SUMMARY_LEN_SCALE:-1.60}"
+  fi
+  MAX_LENGTH=$(awk -v m="$MAX_LENGTH" -v s="$SUMMARY_LEN_SCALE" 'BEGIN{printf "%d", m*s}')
+  echo "    [summary] MAX_LENGTH x$SUMMARY_LEN_SCALE -> $MAX_LENGTH (<|summ|> tokens lengthen the prompt)"
+fi
 # The result filename must encode the LADDER, because the ladder decides what was measured. It used
 # to be ${TASK}_multirung.json regardless, so a v3 contra run overwrote the v2 contra result in
 # place -- same run dir, same task, silently different eval set, and the two are NOT comparable
@@ -390,7 +415,8 @@ elif [ "$VARIANT" = "summary" ]; then
     --variant summary --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
     --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS \
-    --tokenizer-family qwen3_5 --num-summary-tokens "$NUM_SUMMARY_TOKENS"
+    --tokenizer-family qwen3_5 --num-summary-tokens "$NUM_SUMMARY_TOKENS" \
+    --summary-mask-mode "$SUMMARY_MASK_MODE"
   rc=$?
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
