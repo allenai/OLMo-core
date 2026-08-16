@@ -333,15 +333,22 @@ What's necessary to handle high-\cname tasks, and does it differ from low-\cname
 % environments"; the figure then ran past the bottom of the text block on page 5. It now sits at a
 % paragraph boundary, immediately before the paragraph that first cites it.
 %
-% ⚠ DO NOT WIDEN THIS. trim=300 .. 300 keeps only a ~123pt-wide strip of a 723pt-wide image, so
-% what is drawn is nearly 3x taller than it is wide -- at 0.94\linewidth it ran clean off the
-% bottom of the page. 0.45 (from the author's 0.5) is a ~10% shrink purely to lift the caption
-% clear of the folio; the figure was otherwise sitting on the bottom margin.
-% \par\vspace{1em} after \end{wrapfigure} was also dropped -- it injected vertical space into the
-% very paragraph wrapfig was wrapping, which pushed the caption past the bottom of the text block.
+% ⚠ THE TRIM WAS WRONG IN TWO WAYS AT ONCE, AND THEY MASKED EACH OTHER.
+% attn_v2.pdf is a 720 x 404.88pt page whose actual ink sits at x in [243.5, 484.0] and
+% y in [13.0, 392.1] -- i.e. 240.5 x 379.1pt of content floating in wide white margins.
+%   1. trim=300 30 300 20 keeps only x in [300, 420]. That is a 120pt window INSIDE the content,
+%      not around it: it cuts 56pt of row labels off the left and 64pt of matrix off the right.
+%   2. There was no `clip`, so the cut material was still painted. LaTeX therefore reserved a box
+%      for a 120pt-wide crop while drawing 240pt of ink -- the figure came out at exactly TWICE
+%      the width it had reserved, overhanging ~60pt on each side and running into the column.
+% Both together are why scaling it looked erratic: `width` controls the 120pt phantom box, and the
+% visible figure was always 2x whatever you asked for.
+% Correct margins, measured from the rendered page: trim=244 13 236 13 with `clip`. Now the box
+% and the ink are the same object, and `width` finally means what it says. 0.85\linewidth is then
+% just a fit choice -- \linewidth fills the column but pushes the caption onto the page number.
 \begin{wrapfigure}{r}{0.5\textwidth}
     \centering
-    \includegraphics[width=0.45\linewidth, trim=300 30 300 20]{figures/attn_v2.pdf}
+    \includegraphics[width=0.85\linewidth, trim=244 13 236 13, clip]{figures/attn_v2.pdf}
     \caption{\textbf{Document-Chunked Attention} Compared to standard full attention, in document-chunked attention documents only attend to themselves.}
     \label{fig:attention_types}
     \vspace{-1em}
