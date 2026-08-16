@@ -66,3 +66,18 @@ def test_validation_mixtures_v10_keys():
     assert "image-only-v10" in merged
     assert merged["finevision"] == FINEVISION_V10_DATASET_NAMES
     assert merged["dynamath"] == DYNAMATH_TRAINING_VARIANTS
+
+
+def test_image_only_v10_new_dataset_names():
+    import sys
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parents[3] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from compare_sft_example import image_only_v10_new_dataset_names
+
+    names = image_only_v10_new_dataset_names()
+    assert len(names) == 11
+    assert names[0].startswith("finevision_")
+    assert any(name.startswith("dynamath_") for name in names)
