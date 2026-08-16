@@ -17,6 +17,12 @@ packer), this carries variable-shape image tensors alongside the token sequence.
 
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
+from .dynamath import (
+    DYNAMATH_TRAINING_VARIANTS,
+    DynaMathDataset,
+    DynaMathDatasetConfig,
+    dynamath_variant_from_name,
+)
 from .finevision import (
     FINEVISION_HUB_REPO,
     FINEVISION_ROOT,
@@ -52,6 +58,7 @@ from .sequence_builder import (
 from .paths import (
     ACADEMIC_DATASETS,
     MOLMO_DATA_DIR,
+    MOLMO_EXPERIMENT_DATA_DIR,
     PIXMO_DATASETS,
     TORCH_DATASETS,
     TULU4_DATA,
@@ -65,6 +72,10 @@ from .sft_formatter import SftFormatter
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
+    "DynaMathDataset",
+    "DynaMathDatasetConfig",
+    "DYNAMATH_TRAINING_VARIANTS",
+    "dynamath_variant_from_name",
     "FineVisionDataset",
     "FineVisionDatasetConfig",
     "VisualWebInstructDataset",
@@ -103,6 +114,7 @@ __all__ = [
     "TULU4_DATA",
     "ACADEMIC_DATASETS",
     "MOLMO_DATA_DIR",
+    "MOLMO_EXPERIMENT_DATA_DIR",
     "TORCH_DATASETS",
     "MultimodalCollator",
     "MultimodalCollatorConfig",

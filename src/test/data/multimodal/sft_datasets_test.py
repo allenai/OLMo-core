@@ -753,3 +753,72 @@ def test_finevision_uses_hub_requires_no_dataset_path():
     )
     assert FineVisionDatasetConfig(dataset_path="/local", hub_repo=FINEVISION_HUB_REPO).uses_hub() is False
     assert FineVisionDatasetConfig(config_name="arxivqa").uses_hub() is False
+
+
+# ---------------------------------------------------------------------------
+# DynaMath
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dynamath_data(tmp_path, monkeypatch):
+    import datasets
+    from PIL import Image as PILImage
+
+    image = PILImage.new("RGB", (4, 3), color=(10, 20, 30))
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format="PNG")
+
+    features = datasets.Features(
+        {
+            "image": datasets.Image(decode=False),
+            "question": datasets.Value("string"),
+            "answer": datasets.Value("string"),
+            "answer_type": datasets.Value("string"),
+            "subject": datasets.Value("string"),
+            "level": datasets.Value("string"),
+            "question_id": datasets.Value("string"),
+        }
+    )
+    fixture = datasets.Dataset.from_dict(
+        {
+            "image": [{"bytes": image_bytes.getvalue(), "path": None}],
+            "question": ["What is 2 + 2?"],
+            "answer": ["4"],
+            "answer_type": ["float"],
+            "subject": ["arithmetic"],
+            "level": ["elementary school"],
+            "question_id": ["1"],
+        },
+        features=features,
+    )
+
+    data_root = tmp_path / "experiment-data"
+    variant_path = data_root / "dynamath" / "seed_42_999"
+    fixture.save_to_disk(str(variant_path))
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(data_root))
+    return variant_path
+
+
+def test_dynamath_loads_local_data_and_formats_examples(dynamath_data):
+    from olmo_core.data.multimodal import DynaMathDatasetConfig
+
+    ds = DynaMathDatasetConfig(variant="seed_42_999").build(_FakeTokenizer())
+    assert len(ds) == 1
+    ex = ds[0]
+    n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
+    assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
+    # "4" -> 1 word token + EOS
+    assert float(ex["loss_masks"].sum()) == 2.0
+
+
+def test_dynamath_variant_from_name_and_missing_path(tmp_path, monkeypatch):
+    from olmo_core.data.multimodal import DynaMathDatasetConfig, dynamath_variant_from_name
+
+    assert dynamath_variant_from_name("dynamath_seed_42_999") == "seed_42_999"
+    with pytest.raises(ValueError, match="Not a DynaMath"):
+        dynamath_variant_from_name("pixmo_cap")
+
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="DynaMath variant not found"):
+        DynaMathDatasetConfig(variant="seed_42_999").build(_FakeTokenizer())
