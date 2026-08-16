@@ -74,15 +74,23 @@ We use existing or i.i.d generated train sets where applicable, though for the O
 %\amandanote{maybe drop this (sentence about mask mixing) now that mask mixing is explained earlier? it no longer needs to be in this figure too imo}
 
 
-\subsection{Length Generalization} \begin{wrapfigure}{r}{0.5\textwidth}
+\subsection{Length Generalization}
+
+So far, our experiments are relatively small-scale, going up to only 32k---the most tractable scale to train at within our compute constraints. Even at this small scale, we notice strong trends, but in the realistic setting, corpus reasoning tasks can apply to corpora of millions of tokens. In a related vein, there's a wide body of literature interested in extending context lengths (cite YaRN et al) and length generalization of language models. To understand the implication of our analysis for these settings, for our 32k-trained models we evaluate at 128k and 256k on several settings. Note that this doesn't require context extension as Qwen3.5-4B's native context is roughly 256k tokens.
+
+% ⚠ MOVED, NOT EDITED (no words changed). This wrapfigure was attached to the \subsection heading
+% on the same line. wrapfig cannot wrap text that has not started yet, so it printed "Stationary
+% wrapfigure forced to float", shipped the figure elsewhere and LEFT ITS RESERVED COLUMN BLANK --
+% that was the large white gap in the right half of page 7. A wrapfigure has to sit at a paragraph
+% boundary inside running text, so it now sits between the two paragraphs and wraps into the one
+% that actually discusses it.
+\begin{wrapfigure}{r}{0.5\textwidth}
     \centering
-    \includegraphics[width=0.5\textwidth]{figures/ctc_lengthgen_retention.pdf}
+    \includegraphics[width=0.48\textwidth]{figures/ctc_lengthgen_retention.pdf}
     \caption{\emph{Length generalization} For 64k and 128k context eval sets (longer than train maximum of 32k), we plot percentage of 32k task performance with dense attention (Qwen3.5-4B). \textbf{High-CTC tasks are harder for length generalization.}}
     \label{fig:length_generalization}
     \vspace{-1em}
 \end{wrapfigure}
-
-So far, our experiments are relatively small-scale, going up to only 32k---the most tractable scale to train at within our compute constraints. Even at this small scale, we notice strong trends, but in the realistic setting, corpus reasoning tasks can apply to corpora of millions of tokens. In a related vein, there's a wide body of literature interested in extending context lengths (cite YaRN et al) and length generalization of language models. To understand the implication of our analysis for these settings, for our 32k-trained models we evaluate at 128k and 256k on several settings. Note that this doesn't require context extension as Qwen3.5-4B's native context is roughly 256k tokens.
 
 \paragraph{High-\cname Tasks May Generalize Worse to Longer Contexts} We plot results in Figure~\ref{fig:length_generalization} with full attention, showing percentage of 32k performance retained on the y-axis to increase comparability. Strikingly, while low-\cname tasks enjoy reasonable length generalization even in our naive setting, Contradiction and QDMatch suffer rapid drops in performance outside of trained context lengths. Beyond even the challenges we investigate, getting models to scale to 128k+ token corpora will likely pose even greater challenges.
 
@@ -140,15 +148,19 @@ So far, we've largely considered tasks at the \cname class granularity. While th
 
 To test this hypothesis, we start with 4 retrieval tasks varying on a spectrum of difficulty (Contra-NIAH, HotpotQA, NQ, FiQA in ascending order of difficulty), where we difficulty as average performance. We then leverage 4 ``matching'' \ctc{N^2} tasks (QDMatch settings, Contradiction), such that the oracle operation is the same within each task pair (e.g. QDMatch NQ has the same oracle opoeration as NQ). For each task, we then get a measure of how much ``harder'' the \ctc{N^2} version is than the \ctc{N} version by simply looking at the ratio of task-performance at matching context lengths. Note that since retrieval NQ, HotpotQA, and FiQA include hard negatives and the QDmatch settings don't, they're not exactly comparable (hard negatives typically increase retrieval difficulty at lower contexts, and will influence naturally harder tasks like FiQA less).
 
-\paragraph{Tasks With Harder Oracle Difficulty Compound Faster and Predictably} We plot results using chunked attention in Figure~\ref{fig:atomic_difficulty}, the y-axis is \ctc{N^2} task version performance (e.g. QDmatch NQ) divided by \ctc{N} task performance (e.g. NQ). Strikingly, the increase in relative difficulty seems predictable, and strongly supports our \cname hypothesis. For the 2 tasks less affected by hard negatives (FiQA, contra), the difficulty increase seems to be in fact linear. This has exciting implications: given knowledge about the atomic operations of a task, and corpus structure, it may be possible to predict ``scaling laws'' for the outcomes of extremely long-context, high-complexity training runs from only small-context, low-complexity training runs. This would be invaluable for long-term development of general corpus reasoning systems.
-
+% ⚠ MOVED, NOT EDITED (no words changed). This wrapfigure sat AFTER the paragraph that cites it,
+% with nothing but \begin{figure} floats following it, so there was no running text left to wrap
+% around -- wrapfig reported "Stationary wrapfigure forced to float". Placed before that paragraph,
+% it now wraps into the text that actually discusses it.
 \begin{wrapfigure}{r}{0.5\textwidth}
     \centering
-    \includegraphics[width=0.5\textwidth]{figures/ctc_qdmatch_compact.pdf}
+    \includegraphics[width=0.48\textwidth]{figures/ctc_qdmatch_compact.pdf}
     \caption{\emph{Oracle Difficulty} For 4 setting pairs (using chunk attention) with matched atomic operations (e.g. NQ vs QDmatch NQ), measure ratio of \ctc{N^2} to \ctc{N} task performance. \textbf{Tasks with harder base operations (darker) see gap grow much faster}}
     \label{fig:atomic_difficulty}
     \vspace{-1em}
 \end{wrapfigure}
+
+\paragraph{Tasks With Harder Oracle Difficulty Compound Faster and Predictably} We plot results using chunked attention in Figure~\ref{fig:atomic_difficulty}, the y-axis is \ctc{N^2} task version performance (e.g. QDmatch NQ) divided by \ctc{N} task performance (e.g. NQ). Strikingly, the increase in relative difficulty seems predictable, and strongly supports our \cname hypothesis. For the 2 tasks less affected by hard negatives (FiQA, contra), the difficulty increase seems to be in fact linear. This has exciting implications: given knowledge about the atomic operations of a task, and corpus structure, it may be possible to predict ``scaling laws'' for the outcomes of extremely long-context, high-complexity training runs from only small-context, low-complexity training runs. This would be invaluable for long-term development of general corpus reasoning systems.
 
 
 

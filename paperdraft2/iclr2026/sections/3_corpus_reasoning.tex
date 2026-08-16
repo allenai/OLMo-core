@@ -7,7 +7,6 @@
     \label{fig:ctcexplanation}
 \end{figure}
 
-\label{sec:definitioncomp}
 
 % \prasannnote{todo get a good figure}
 
@@ -26,6 +25,12 @@ Our corpus task complexity definition is central to the rest of this work. We he
 
 
 \subsection{Corpus Task Complexity}
+% ⚠ THIS IS THE ONLY \label{sec:definitioncomp}. There were two, and BOTH were misplaced: one sat
+% just after \end{figure} (so it anchored to figure.2, not a section) and one sat just BEFORE
+% \subsection{Connecting Common Tasks...} (a \label binds to the last counter STEPPED, so it took
+% the preceding subsection). The refs all mean "the subsection where CTC is defined", which is this
+% one, and it still renders as 2.1 -- the number does not change, only what it points at.
+\label{sec:definitioncomp}
 % \sewonnote{First of all, I think this section is going to the right direction: defining complexity as a function of the task rather than the model, and grounding it in a clear functional formulation!
 % Suggestion: how about we define the atomic interaction as a pairwise interaction (either between query-document, or document-document), and define task complexity as the number of atomic interactions required to perform the task? I think that's kind of how your paragraph is describing already, but currently the definition of atomic operation isnt' pairwise.} 
 % \prasannnote{Tried sewon's suggestion out. It's a bit simpler though I guess formally less clean / general?}
@@ -71,7 +76,6 @@ Complexity of tasks can be diverse, from \ctc{1} tasks (e.g. common knowledge qu
 % By separating higher \cname tasks from commonly studied \ctc{N} tasks, we can more clearly identify their differing evaluation and methodological needs.
 
 
-\label{sec:definitioncomp}
 
 \subsection{Connecting Common Tasks to \cname}
 % ---------------------------------------------------------------------------
@@ -226,7 +230,12 @@ The above tasks constitute a recent, diverse, and representative sample of corpu
 
 \emph{Contradiction}, which plants LLM-generated contradictions to pubmed abstract claims, is as discussed earlier \ctc{N^2} (Example 2, Section~\ref{sec:definitioncomp}). So is \emph{X-Absence}, which, reminiscent of work comparing differences in text distributions (cite), aims to find the documents not shared between two near-identical corpora---the atomic operation is whether two documents are the same, but across corpora. To compare more closely against retrieval settings, and further study cross-corpus comparison, we include 3 query-document matching \emph{(QDmatch)} settings, where across two same-sized corpora---one of random queries and one of documents---one must find the 3 query-document pairs that match---these are also \ctc{N^2} similar to X-Absence.
 
-\cname isn't always necessarily a factor of $N$. Our wikipedia outlier setting, which shuffles chunks from $M$ pages, requires identifying the chunks belonging to the least commonly featured page. Unlike OOLONG, which has fixed classes, possible classes (source page topics) are too large, and so this requires cross-chunk comparison, but given an atomic operation of $\mathrm{samecategory(d_i, d_j)}$, one exemplar per category is enough to figure out groups, thus making the task \ctc{NM}. To test this categorization we include a setting where $M$ stays constant and one where $M$ grows proportional to $N$. We include a grouping task which dynamically must group abstracts, and is also \ctc{NM}.  \begin{wraptable}{r}{0.4\textwidth}
+\cname isn't always necessarily a factor of $N$. Our wikipedia outlier setting, which shuffles chunks from $M$ pages, requires identifying the chunks belonging to the least commonly featured page. Unlike OOLONG, which has fixed classes, possible classes (source page topics) are too large, and so this requires cross-chunk comparison, but given an atomic operation of $\mathrm{samecategory(d_i, d_j)}$, one exemplar per category is enough to figure out groups, thus making the task \ctc{NM}. To test this categorization we include a setting where $M$ stays constant and one where $M$ grows proportional to $N$. We include a grouping task which dynamically must group abstracts, and is also \ctc{NM}.
+
+% ⚠ MOVED, NOT EDITED (no words changed). This wraptable opened mid-sentence, appended to the end
+% of the preceding paragraph's last line. wrapfig requires a paragraph boundary; from inside a
+% paragraph it cannot reserve the column and falls back to floating.
+\begin{wraptable}{r}{0.4\textwidth}
 \centering
 \small
 \setlength{\tabcolsep}{5pt}
@@ -309,17 +318,6 @@ Lastly we include some more challenging (albeit synthetic) tasks---for example a
 
 
 
-\begin{wrapfigure}{r}{0.5\textwidth}
-    \centering
-    \includegraphics[width=0.5\linewidth, trim=300 30 300 20]{figures/attn_v2.pdf}
-
-    \caption{\textbf{Document-Chunked Attention} Compared to standard full attention, in document-chunked attention documents only attend to themselves.}
-    \label{fig:attention_types}
-    \vspace{-1em}
-\end{wrapfigure}
-\par\vspace{1em}
-
-
 % \begin{figure*}[t]
 % \centering
 % % \vspace{-.2em}
@@ -329,6 +327,25 @@ Lastly we include some more challenging (albeit synthetic) tasks---for example a
 % \end{figure*}
 
 What's necessary to handle high-\cname tasks, and does it differ from low-\cname tasks? Our analysis explores a variety of modeling decisions. This includes different model scales and several model families, such as Olmo3 and Qwen3.5, but, in line with \cname's emphasis on requirements at scale, we take particular interest in attention.
+
+% ⚠ MOVED, NOT EDITED (no words changed). This sat directly under \section{Modeling Decisions}, so
+% wrapfig had no started paragraph to wrap into and reported "Collision between wrapping
+% environments"; the figure then ran past the bottom of the text block on page 5. It now sits at a
+% paragraph boundary, immediately before the paragraph that first cites it.
+%
+% ⚠ DO NOT WIDEN THIS. trim=300 .. 300 keeps only a ~123pt-wide strip of a 723pt-wide image, so
+% what is drawn is nearly 3x taller than it is wide -- at 0.94\linewidth it ran clean off the
+% bottom of the page. 0.45 (from the author's 0.5) is a ~10% shrink purely to lift the caption
+% clear of the folio; the figure was otherwise sitting on the bottom margin.
+% \par\vspace{1em} after \end{wrapfigure} was also dropped -- it injected vertical space into the
+% very paragraph wrapfig was wrapping, which pushed the caption past the bottom of the text block.
+\begin{wrapfigure}{r}{0.5\textwidth}
+    \centering
+    \includegraphics[width=0.45\linewidth, trim=300 30 300 20]{figures/attn_v2.pdf}
+    \caption{\textbf{Document-Chunked Attention} Compared to standard full attention, in document-chunked attention documents only attend to themselves.}
+    \label{fig:attention_types}
+    \vspace{-1em}
+\end{wrapfigure}
 
 Due to the prohibitive quadratic cost of \textbf{full attention} (Figure~\ref{fig:attention_types}), attention complexity of transformers has been heavily studied. In one line of work, alternative architectures such as state-space-models (SSMs) \citep{Katharopoulos2020TransformersAR, Gu2023MambaLS} and adjacent approaches like \emph{gated delta net (GDN)} \citep{Yang2024GatedDN} have also enabled linear attention. While this has shown promise, pure-GDN has, even at low-\cname, proven insufficient, and modern language models like Qwen3.5 (CITE) have only mixed, rather than replaced full attention with GDN. For our investigation, we study both hybrid and standard models.
 

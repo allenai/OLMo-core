@@ -32,7 +32,7 @@
 \item {\bf Claims}
     \item[] Question: Do the main claims made in the abstract and introduction accurately reflect the paper's contributions and scope?
     \item[] Answer: \answerYes{} % Replace by \answerYes{}, \answerNo{}, or \answerNA{}.
-    \item[] Justification: Yes, we claim that higher \cname tasks require more computation, and have experimental suggesting approaches with lower computational complexity (Section~\ref{sec:taskcompresults}) indeed degrade much faster on tasks with higher complexity per our definition. Our mask mixing approach also, in Table~\ref{tab:mask-mix-suite}, is shown to be quite effective. 
+    \item[] Justification: Yes, we claim that higher \cname tasks require more computation, and have experimental suggesting approaches with lower computational complexity (Section~\ref{sec:taskcompresults}) indeed degrade much faster on tasks with higher complexity per our definition. Our mask mixing approach also, in Table~\claude{\ref{tab:maskmix}}, is shown to be quite effective. 
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the abstract and introduction do not include the claims made in the paper.
@@ -44,7 +44,7 @@
 \item {\bf Limitations}
     \item[] Question: Does the paper discuss the limitations of the work performed by the authors?
     \item[] Answer: \answerYes{} % Replace by \answerYes{}, \answerNo{}, or \answerNA{}.
-    \item[] Justification: Yes, this work does discuss limitations, we acknowledge that there are classes of \cname that we don't cover in the scope of the work (see Section~\ref{sec:methodcomp}). We also acknowledge several times in the work that while our mask mixing approach, while effective, isn't a permanent scalable solution to corpus reasoning (see Figure~\ref{fig:sec5-cross-task}), and in fact encourage future work to try to improve upon our initial approaches in this area of research. 
+    \item[] Justification: Yes, this work does discuss limitations, we acknowledge that there are classes of \cname that we don't cover in the scope of the work (see Section~\ref{sec:methodcomp}). We also acknowledge several times in the work that while our mask mixing approach, while effective, isn't a permanent scalable solution to corpus reasoning (see Figure~\claude{\ref{fig:multitask_fig4}}), and in fact encourage future work to try to improve upon our initial approaches in this area of research. 
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the paper has no limitation while the answer \answerNo{} means that the paper has limitations, but those are not discussed in the paper. 
@@ -74,7 +74,7 @@
     \item {\bf Experimental result reproducibility}
     \item[] Question: Does the paper fully disclose all the information needed to reproduce the main experimental results of the paper to the extent that it affects the main claims and/or conclusions of the paper (regardless of whether the code and data are provided or not)?
     \item[] Answer: \answerYes{} % Replace by \answerYes{}, \answerNo{}, or \answerNA{}.
-    \item[] Justification: Yes, we include detailed descriptions of the way that our attention masks are implemented (Figure~\ref{fig:masks}), task construction (Section~\ref{sec:definitioncomp}), examples of data in the appendix, and all our data statistics and hyper-parameters also in the Appendix. We also plan to release our data / models in public versions of the paper to further improve reproducibility. 
+    \item[] Justification: Yes, we include detailed descriptions of the way that our attention masks are implemented (Figure~\claude{\ref{fig:attention_types}}), task construction (Section~\ref{sec:definitioncomp}), examples of data in the appendix, and all our data statistics and hyper-parameters also in the Appendix. We also plan to release our data / models in public versions of the paper to further improve reproducibility. 
     \item[] Guidelines:
     \begin{itemize}
         \item The answer \answerNA{} means that the paper does not include experiments.

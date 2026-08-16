@@ -119,7 +119,7 @@ instruction, the surrounding corpus and the distractor types.
 
 \subsection{Tasks: Overview}
 
-\subsubsection{\ctc{N} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO, the ms-marco cross-encoder and GovReport are named in prose with no \texttt{\textbackslash citep} --- I had added six .bib entries for them and have now stripped them, since only you add citations. These are the spots that want one. 11 tasks, 9 of them new to the
+\subsubsection{\texorpdfstring{\ctc{N}}{OT(N)} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO, the ms-marco cross-encoder and GovReport are named in prose with no \texttt{\textbackslash citep} --- I had added six .bib entries for them and have now stripped them, since only you add citations. These are the spots that want one. 11 tasks, 9 of them new to the
 paper. The NQ and HotpotQA paragraphs are edited versions of the old blurbs --- NQ now records that
 current data caps hard negatives at $\sim$10\% via the CE filter, which the old text did not.}
 
@@ -144,7 +144,7 @@ These tasks decompose into per-document oracle calls $\mathrm{isrelevant}(d_i, q
 \textbf{Absence.} \emph{Set-F1 over removed IDs.} The inverse of needle-in-a-haystack, following AbsenceBench (arXiv:2506.11440): the model sees the full numbered corpus, then a second copy with some elements deleted, and must name what is missing. We derive it over our own corpora: each document is deleted independently with probability $p$, scattered single deletions being the hard regime. Establishing that item $i$ is absent requires checking it against the second corpus, hence \ctc{N^2}.
 
 
-\subsubsection{\ctc{NM} tasks: categorization}\autonote{Both remaining tasks are edited old blurbs. Two claims changed on purpose: the old text
+\subsubsection{\texorpdfstring{\ctc{NM}}{OT(NM)} tasks: categorization}\autonote{Both remaining tasks are edited old blurbs. Two claims changed on purpose: the old text
 said the wiki outlier task ``resembles OOLONG'', which read as if it were the same task --- it is now
 stated as the contrast (open vs.\ fixed category set) --- and the scale-$k$ vs.\ fixed-$M$ control is
 named explicitly. Grouping now describes the labeled variant, since the unlabeled one was cut.}
@@ -161,7 +161,7 @@ Here the oracle operation compares a document against a \emph{category} rather t
 
 \textbf{Query-document matching (qdmatch).} \emph{Pair set-F1.} The retrieval analogue of contradiction, and our sharpest test that the \emph{same} substrate changes class when the query structure changes. An example interleaves $M$ queries and $N$ documents under one shared numbering; only $k$ of the queries are relevant, and each of those maps to all of its gold documents. Pools are drawn so that relevant queries, distractor queries (gold withheld) and distractor documents (query withheld) are disjoint, which guarantees the only true matches are the planted ones. The model must find the sparse gold pairs among $M \times N$ combinations. We build three versions from three retrieval sources --- NQ (1 gold/query), HotpotQA bridge (2 golds/query), and OBLIQ (long abstracts) --- so difficulty from the underlying retrieval problem varies while the search structure is fixed. A layout ablation presents the items either as a query block followed by a document block, or fully interleaved.
 
-\subsubsection{\ctc{N^2} tasks: all-pairs search}\autonote{8 tasks, 6 new. Contradiction and
+\subsubsection{\texorpdfstring{\ctc{N^2}}{OT(N2)} tasks: all-pairs search}\autonote{8 tasks, 6 new. Contradiction and
 reorder are edited old blurbs (contradiction now names both perturbation modes and the
 one-LLM-sentence-per-pair property). Metric wording fixed: contradiction was labelled ``EM'' only,
 but is reported as pair set-F1 with EM alongside.}
@@ -177,7 +177,7 @@ but is reported as pair set-F1 with EM alongside.}
 
 \textbf{Reordering.} \emph{Kendall-$\tau$.} $N$ consecutive segments of a single Project Gutenberg book, presented in random order, with the task of recovering the original ordering as a permutation of document IDs --- a harder version of the reconstruction tasks in \citet{Chen2026LongBenchPA}. Chapter headings are stripped so the model cannot shortcut via ``Chapter 3''. Because sorting requires comparisons between arbitrary pairs of segments, we label it \ctc{N^2}. A Wikipedia variant (consecutive 100-word chunks from one article) exists as a harder, less narrative-sequential control.
 
-\subsubsection{Beyond \ctc{N^2}}\autonote{Entirely new: cycle, groups-of-4, textgroups. These
+\subsubsection{Beyond \texorpdfstring{\ctc{N^2}}{OT(N2)}}\autonote{Entirely new: cycle, groups-of-4, textgroups. These
 were listed by name only (``groups of 4 / cycles (higher than \$n\^{}2\$)'') in the old draft.}
 
 % Three tasks require joint consideration of triples or longer chains, which no pairwise sweep can produce. They are deliberately short in tokens: the point is that difficulty scales with the number of \emph{items}, not the raw context length.

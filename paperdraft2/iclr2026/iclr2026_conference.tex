@@ -67,6 +67,23 @@
 \newcommand{\auto}[1]{\textcolor{autocolor}{#1}}
 % Kill switch: uncomment to drop every AUTO bubble from the build.
 \newcommand{\autonotesoff}{\renewcommand{\autonote}[1]{}}
+
+% ---- Assistant edits ------------------------------------------------------
+% EVERY change to paper text made by Claude is wrapped in one of these two, so the whole of it
+% reads brown on the page and can be approved or reverted span by span. Nothing brown has been
+% signed off yet. Figure/float REPOSITIONING is exempt -- it changes no words, and colouring
+% placement would mark text that did not change.
+%
+% \claude{...}                 inline, for a phrase or a sentence.
+% \begin{claudeblock}...\end{claudeblock}   for multi-paragraph runs, list items, whole tables --
+%                              \textcolor takes a single argument and does not reliably span
+%                              paragraph breaks or \item boundaries, so those need the environment.
+\definecolor{claudecolor}{RGB}{124,74,32}       % brown
+\newcommand{\claude}[1]{\textcolor{claudecolor}{#1}}
+\newenvironment{claudeblock}{\color{claudecolor}}{}
+% Accept-all switch: uncomment to render every assistant edit as ordinary black body text,
+% for a clean read-through or the camera-ready. It keeps the text and drops only the colour.
+% \renewcommand{\claude}[1]{#1}\renewenvironment{claudeblock}{}{}
 % --------------------------------------------------------------------------
 % Taken
 % Pay More Attention

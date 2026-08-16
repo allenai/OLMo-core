@@ -8,7 +8,8 @@
 % therefore show different examples than before --- they are marked individually below. The Amazon-outlier,
 % redundancy, official-absence and mathmatch examples were removed with their tasks.}
 
-We show one real example for every task in the suite (Table~\ref{tab:suite}), in the order of that
+% tab:suite is commented out along with its float; the live suite overview is tab:eval-datasets.
+We show one real example for every task in the suite (Table~\claude{\ref{tab:eval-datasets}}), in the order of that
 table. All content is verbatim from the eval splits. To keep each example readable we display only
 3--5 documents (the gold ones plus a few representative fillers), truncate document text to
 $\sim$190 characters, and elide the rest of the corpus with a
@@ -17,7 +18,7 @@ Document IDs are 1-indexed, exactly as the model sees them. Each example also st
 instruction, which is fixed per task and is what determines the output format the grader parses.
 
 % =====================================================================
-\subsection{\ctc{N} tasks}
+\subsection{\texorpdfstring{\ctc{N}}{OT(N)} tasks}
 
 \subsubsection{NQ (factoid retrieval)}\autonote{Existed before; different example now (was
 ``who played bat masterson in the movie tombstone'').}
@@ -59,7 +60,7 @@ degree in elementary education, she and Rex moved to Arizona $\dots$''\\
 \end{quote}
 \textbf{Gold doc IDs:} \texttt{[8, 9]}\quad\textbf{Answer string:} \emph{``Aloe Vera of America''}
 
-\subsubsection{NIAH-contradiction (\ctc{N} control for contradiction)}
+\subsubsection{NIAH-contradiction (\texorpdfstring{\ctc{N}}{OT(N)} control for contradiction)}
 
 \textbf{Instruction:} \emph{single-document retrieval, as in NQ.}\\
 \textbf{Query:} \emph{``Find the document that directly contradicts the following claim: A hypertonic
@@ -200,7 +201,7 @@ requirements, including food labels, securities registrations, and disclosures a
 drugs in direct-to-consumer advertising $\dots$}''
 
 % =====================================================================
-\subsection{\ctc{NM} tasks}
+\subsection{\texorpdfstring{\ctc{NM}}{OT(NM)} tasks}
 
 \subsubsection{Outlier detection (Wikipedia 100w)}
 
@@ -262,7 +263,7 @@ Fabrication, Task analysis, Nomological network, Object detection}.
 
 
 % =====================================================================
-\subsection{\ctc{N^2} tasks}
+\subsection{\texorpdfstring{\ctc{N^2}}{OT(N2)} tasks}
 
 \subsubsection{Contradiction (PubMed)}
 
@@ -435,7 +436,7 @@ $\dots$''\\
 26, 5, 38, 11, 8, 17]}\quad(scored by Kendall-$\tau$ against the true permutation).
 
 % =====================================================================
-\subsection{\ctc{N^3} tasks and beyond}
+\subsection{\texorpdfstring{\ctc{N^3}}{OT(N3)} tasks and beyond}
 
 \subsubsection{Cycle detection}
 

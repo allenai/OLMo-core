@@ -3,7 +3,7 @@
 
 Table~\ref{tab:data-stats} lists the train and eval sizes for every dataset used in the main paper. All datasets follow the unified structured-JSONL format introduced in \S\ref{sec:definitioncomp}: each example carries \texttt{documents} (a list of \{title, text\}), \texttt{queries}, \texttt{answers}, and \texttt{gold\_doc\_indices}. We report doc length in tokens (Qwen tokenizer, mean over a 200-example sample) and the per-example total context length (sum of doc tokens).
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \small
 \setlength{\tabcolsep}{4pt}
@@ -49,7 +49,9 @@ Outlier (Amazon)               & Reviews 2023    & $N{=}30$  & 5{,}000 & 500 & $
 \begin{itemize}
 \item \textbf{NQ / HotpotQA:} both use the 100-word DPR Wikipedia corpus \citep{Karpukhin2020DensePR}. Negatives are mined by BM25 with simple text-overlap filters to avoid spurious near-duplicates of the gold passage. HotpotQA uses the bridge subset; the natural-language CoT for HotpotQA is generated with gemini-2.5-flash, grounded in the gold paragraphs and answer.
 \item \textbf{Outlier (wiki):} 100-word Wikipedia chunks. Each context contains $\sim$5 chunks per source article on average; the answer is the IDs of the chunks from the article with the fewest chunks (typically 2 outliers). The \emph{in-distribution-$k$} variant fixes the article count, while the \emph{scale-$k$} variant lets the article count grow with $N$.
-\item \textbf{Outlier (Amazon Reviews):} see Appendix~\ref{app:amazon-reviews}.
+% app:amazon-reviews was never defined anywhere. The Amazon outlier task is described in the
+% "Task Suite Data Details" appendix, whose label is app:data-details.
+\item \textbf{Outlier (Amazon Reviews):} see Appendix~\claude{\ref{app:data-details}}.
 \item \textbf{Grouping:} each abstract document is $\sim$200 tokens. We pick a level $L\in\{0,1,2,3\}$ in the OpenAlex concept hierarchy per example, which determines the number of groups $k$.
 \item \textbf{Contradiction:} sentences drawn from PubMed abstracts. Each example contains $K{=}3$ contradictory pairs $(d, d')$ where $d'$ is a minimally-perturbed LLM-generated contradiction (gemini-2.5-flash) of $d$. Filler documents come from disjoint abstracts to minimize unintended contradictions.
 \item \textbf{Reorder:} consecutive 100-word segments from a single Project Gutenberg book are presented in a random permutation; the answer recovers the original ordering.

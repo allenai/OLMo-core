@@ -23,7 +23,7 @@ We believe that if systems which can handle such tasks become more scalable, giv
 \section{Mask-Mixing Ratio Ablation}
 \label{app:mask-mix-ablation}
 
-To get a clearer picture of the mask-mixing technique introduced in Table~\ref{tab:mask-mix-suite}, we ablate the mix ratio $p$ -- the fraction of training steps that use the unmasked (full-attention) forward pass, with the remaining $1-p$ steps using the chunked mask -- on the contradiction task at $N{=}50$ with Qwen-3.5-0.8B-Base. Results are in Table~\ref{tab:mask-mix-ablation}. Pure chunked ($p=0$) lands well below full attention as expected, and pure full attention ($p=1$) is the upper bound. $p=0.1$ seems to do the best, likely as a good trade-off between the additional learning signal and avoiding OOD full attention training steps.
+To get a clearer picture of the mask-mixing technique introduced in Table~\claude{\ref{tab:maskmix}}, we ablate the mix ratio $p$ -- the fraction of training steps that use the unmasked (full-attention) forward pass, with the remaining $1-p$ steps using the chunked mask -- on the contradiction task at $N{=}50$ with Qwen-3.5-0.8B-Base. Results are in Table~\ref{tab:mask-mix-ablation}. Pure chunked ($p=0$) lands well below full attention as expected, and pure full attention ($p=1$) is the upper bound. $p=0.1$ seems to do the best, likely as a good trade-off between the additional learning signal and avoiding OOD full attention training steps.
 
 \begin{table}[ht]
 \centering
