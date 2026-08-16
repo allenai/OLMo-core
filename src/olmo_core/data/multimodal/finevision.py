@@ -76,8 +76,10 @@ __all__ = [
     "FINEVISION_ROOT",
     "FINEVISION_HUB_REPO",
     "FINEVISION_V10_CONFIGS",
+    "FINEVISION_V10_DATASET_NAMES",
     "FINEVISION_V10_SHUFFLE_SEED",
     "build_finevision_v10_config",
+    "finevision_v10_hub_name",
 ]
 
 log = logging.getLogger(__name__)
@@ -100,12 +102,33 @@ FINEVISION_V10_CONFIGS: Dict[str, int] = {
     "DoclingMatix": 100_000,
 }
 
+# Mixture dataset name (``finevision_*``) -> hub config name.
+FINEVISION_V10_HUB_ALIASES: Dict[str, str] = {
+    "finevision_densefusion_1m": "densefusion_1m",
+    "finevision_objects365_qa": "objects365_qa",
+    "finevision_arxivqa": "arxivqa",
+    "finevision_geomverse": "geomverse",
+    "finevision_doclingmatix": "DoclingMatix",
+}
+
+FINEVISION_V10_DATASET_NAMES: Tuple[str, ...] = tuple(FINEVISION_V10_HUB_ALIASES)
+
 _QUALITY_COLUMNS = {
     "min_formatting": "formatting_min",
     "min_visual_dependency": "visual_dependency_min",
     "min_image_correspondence": "image_correspondence_min",
     "min_relevance": "relevance_min",
 }
+
+
+def finevision_v10_hub_name(dataset_name: str) -> str:
+    """Map a mixture source name (``finevision_densefusion_1m``) to a hub config."""
+    if dataset_name not in FINEVISION_V10_HUB_ALIASES:
+        raise KeyError(
+            f"Unknown FineVision v10 dataset {dataset_name!r}; "
+            f"expected one of: {', '.join(FINEVISION_V10_DATASET_NAMES)}"
+        )
+    return FINEVISION_V10_HUB_ALIASES[dataset_name]
 
 
 def build_finevision_v10_config(
