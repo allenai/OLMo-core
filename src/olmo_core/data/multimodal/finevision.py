@@ -15,10 +15,11 @@ one EOS target at the end) by
 qwen3 layout as every other stage-2 source: no BOS, the image token block(s) inside the
 first user turn, ``Image {i+1}`` prefixes when a row carries several images.
 
-**Loading.** By default configs resolve to parquet shards under :data:`FINEVISION_ROOT`.
-Set :attr:`FineVisionDatasetConfig.hub_repo` to load directly from the HuggingFace hub
-(``HuggingFaceM4/FineVision``) instead; rows are cached under ``HF_DATASETS_CACHE`` /
-:attr:`cache_dir` as a memory-mapped Arrow table suitable for map-style random access.
+**Loading.** Configs resolve to parquet shards or ``save_to_disk`` directories under
+:data:`FINEVISION_ROOT`. image-only-v10 subsets are symlinked from mm_olmo's prepared
+copies at ``$MOLMO_EXPERIMENT_DATA_DIR/finevision/<config>`` (see
+``launch_scripts/donovan/env/setup-finevision-v10-symlinks.sh``). Set
+:attr:`FineVisionDatasetConfig.hub_repo` only when you explicitly want a hub fetch.
 
 Configs verified against local parquet copies on weka (see :data:`FINEVISION_ROOT`):
 
@@ -134,11 +135,14 @@ def finevision_v10_hub_name(dataset_name: str) -> str:
 def build_finevision_v10_config(
     config_name: str,
     *,
-    hub_repo: str = FINEVISION_HUB_REPO,
-    cache_dir: Optional[str] = None,
+    root: str = FINEVISION_ROOT,
     **kwargs,
 ) -> FineVisionDatasetConfig:
-    """Return a hub-backed config for one image-only-v10 FineVision subset.
+    """Return a config for one image-only-v10 FineVision subset.
+
+    Reads from :data:`FINEVISION_ROOT` / ``root`` (local parquet or ``save_to_disk``
+    directory). v10 subsets are symlinked from mm_olmo's prepared copies under
+    ``$MOLMO_EXPERIMENT_DATA_DIR/finevision/<config>``.
 
     Applies mm_olmo v10 defaults: single-image rows only, shuffle seed
     :data:`FINEVISION_V10_SHUFFLE_SEED`, and the per-config row cap from
@@ -152,9 +156,8 @@ def build_finevision_v10_config(
             f"Unknown FineVision v10 config {config_name!r}; expected one of: {available}"
         )
     return FineVisionDatasetConfig(
-        hub_repo=hub_repo,
         config_name=config_name,
-        cache_dir=cache_dir,
+        root=root,
         max_rows=FINEVISION_V10_CONFIGS[config_name],
         require_single_image=True,
         shuffle_seed=FINEVISION_V10_SHUFFLE_SEED,

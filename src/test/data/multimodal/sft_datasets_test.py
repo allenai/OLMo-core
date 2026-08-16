@@ -725,19 +725,21 @@ def test_finevision_hub_load(monkeypatch, tmp_path):
 def test_build_finevision_v10_config():
     from olmo_core.data.multimodal import build_finevision_v10_config
     from olmo_core.data.multimodal.finevision import (
-        FINEVISION_HUB_REPO,
+        FINEVISION_ROOT,
         FINEVISION_V10_CONFIGS,
         FINEVISION_V10_SHUFFLE_SEED,
     )
 
     cfg = build_finevision_v10_config("arxivqa", max_crops=4)
-    assert cfg.hub_repo == FINEVISION_HUB_REPO
+    assert cfg.hub_repo is None
+    assert cfg.root == FINEVISION_ROOT
     assert cfg.config_name == "arxivqa"
     assert cfg.max_rows == FINEVISION_V10_CONFIGS["arxivqa"]
     assert cfg.require_single_image is True
     assert cfg.shuffle_seed == FINEVISION_V10_SHUFFLE_SEED
     assert cfg.max_crops == 4
-    assert cfg.uses_hub() is True
+    assert cfg.uses_hub() is False
+    assert cfg.resolved_path() == f"{FINEVISION_ROOT}/arxivqa"
 
     with pytest.raises(KeyError, match="unknown_config"):
         build_finevision_v10_config("unknown_config")
