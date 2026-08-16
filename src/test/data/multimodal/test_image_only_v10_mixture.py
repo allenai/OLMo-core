@@ -11,6 +11,7 @@ from olmo_core.data.multimodal.mixtures.image_only_v10 import (
     FINEVISION_V10_RATE,
     IMAGE_ONLY_V10_BASE_SCALE,
     IMAGE_ONLY_V10_SUBMIXTURES,
+    VALIDATION_MIXTURES_V10,
     image_only_v10_dataset_names,
 )
 from olmo_core.data.multimodal.mixtures.image_only_v9 import IMAGE_ONLY_V9_SUBMIXTURES
@@ -56,3 +57,12 @@ def test_image_only_v10_extends_v9_with_finevision_and_dynamath():
 def test_image_only_v10_dataset_name_count():
     # v9 has 43 sources; +5 finevision +6 dynamath
     assert len(image_only_v10_dataset_names()) == 54
+
+
+def test_validation_mixtures_v10_keys():
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import VALIDATION_MIXTURES
+
+    merged = {**VALIDATION_MIXTURES, **VALIDATION_MIXTURES_V10}
+    assert "image-only-v10" in merged
+    assert merged["finevision"] == FINEVISION_V10_DATASET_NAMES
+    assert merged["dynamath"] == DYNAMATH_TRAINING_VARIANTS

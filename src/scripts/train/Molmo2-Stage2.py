@@ -1,10 +1,10 @@
 """
 Molmo2 "stage 2" SFT (reproduction of ``mm_olmo``'s ``image-only-v9`` mixture).
 
-Fine-tunes connector + ViT + LLM on the image-only-v9 mixture with 16k sequence packing.
-Defaults to a 3-dataset debug subset (``tulu4``, ``text_vqa``, ``chart_qa_weighted``) for
-smoke tests; set ``--mixture=image-only-v9`` for the full 32-source mixture once parity
-is green.
+Fine-tunes connector + ViT + LLM on the image-only-v9 or image-only-v10 mixture with
+16k sequence packing. Defaults to a 3-dataset debug subset (``tulu4``, ``text_vqa``,
+``chart_qa_weighted``) for smoke tests; set ``--mixture=image-only-v9`` for the full
+v9 mixture or ``--mixture=image-only-v10`` for v9 + hub FineVision + DynaMath.
 
 Quick local smoke test (1 GPU, debug mixture, 5 steps)::
 
@@ -29,6 +29,10 @@ from typing import List, Optional, Sequence, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfig
+from olmo_core.data.multimodal.mixtures.image_only_v10 import (
+    VALIDATION_MIXTURES_V10,
+    build_image_only_v10_mixture,
+)
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     VALIDATION_MIXTURES,
     build_image_only_v9_mixture,
@@ -170,7 +174,7 @@ class ExperimentConfig(Config):
     init_seed: int = 6198
     global_batch_size: int = GLOBAL_BATCH_SIZE
     mixture: str = "debug"
-    """Mixture tier — see ``VALIDATION_MIXTURES`` in ``image_only_v9.py``."""
+    """Mixture tier — see ``VALIDATION_MIXTURES`` / ``VALIDATION_MIXTURES_V10``."""
     pack_sequences: bool = PACK_SEQUENCES
     pack_max_crops: int = PACK_MAX_CROPS
     mmfinereason_rate: float = MMFINEREASON_RATE
@@ -198,11 +202,16 @@ def _build_model_config() -> MultimodalLMConfig:
     return config
 
 
+def _all_validation_mixtures():
+    return {**VALIDATION_MIXTURES, **VALIDATION_MIXTURES_V10}
+
+
 def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
-    if mixture not in VALIDATION_MIXTURES:
-        known = ", ".join(sorted(VALIDATION_MIXTURES))
+    all_mixtures = _all_validation_mixtures()
+    if mixture not in all_mixtures:
+        known = ", ".join(sorted(all_mixtures))
         raise ValueError(f"Unknown mixture {mixture!r}; use one of: {known}")
-    return VALIDATION_MIXTURES[mixture]
+    return all_mixtures[mixture]
 
 
 def _full_image_only_v9_names(tokenizer, seed: int) -> List[str]:
@@ -217,6 +226,21 @@ def _full_image_only_v9_names(tokenizer, seed: int) -> List[str]:
     )
     lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
     flat = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
+    return [name for name, _ in flat]
+
+
+def _full_image_only_v10_names(tokenizer, seed: int) -> List[str]:
+    from olmo_core.data.multimodal.mixtures.image_only_v10 import (
+        IMAGE_ONLY_V10_SUBMIXTURES,
+        build_image_only_v10_datasets,
+        compute_flat_mixture_weights,
+    )
+
+    datasets_map = build_image_only_v10_datasets(
+        tokenizer, seed, max_sequence_length=SEQUENCE_LENGTH
+    )
+    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
+    flat = compute_flat_mixture_weights(IMAGE_ONLY_V10_SUBMIXTURES, lengths)
     return [name for name, _ in flat]
 
 
@@ -368,18 +392,33 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
 
 def _build_mixture(tokenizer, config: ExperimentConfig):
     names_filter = _mixture_dataset_names(config.mixture)
-    datasets, weights = build_image_only_v9_mixture(
-        tokenizer,
-        seed=config.data_seed,
-        dataset_names=names_filter,
-        max_sequence_length=SEQUENCE_LENGTH,
-    )
-    names = (
-        _full_image_only_v9_names(tokenizer, config.data_seed)
-        if names_filter is None
-        else list(names_filter)
-    )
-    datasets, weights, names = _append_extra_sft_sources(config, tokenizer, datasets, weights, names)
+    if config.mixture in VALIDATION_MIXTURES_V10:
+        datasets, weights = build_image_only_v10_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+        names = (
+            _full_image_only_v10_names(tokenizer, config.data_seed)
+            if names_filter is None
+            else list(names_filter)
+        )
+    else:
+        datasets, weights = build_image_only_v9_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+        names = (
+            _full_image_only_v9_names(tokenizer, config.data_seed)
+            if names_filter is None
+            else list(names_filter)
+        )
+        datasets, weights, names = _append_extra_sft_sources(
+            config, tokenizer, datasets, weights, names
+        )
     log.info(
         "Mixture %s sources / weights: %s",
         config.mixture,
@@ -521,6 +560,9 @@ Print the config:
 
 Full image-only-v9 mixture:
 › torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=image-only-v9
+
+Full image-only-v10 mixture (richer v9 + hub FineVision + DynaMath):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=image-only-v10
 
 Init from HF instead of stage-1 checkpoint:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke --trainer.load_path=null
