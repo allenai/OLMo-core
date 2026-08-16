@@ -1,0 +1,195 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{neurips_2026,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{wrapfig}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{bm}
+\usepackage[textsize=footnotesize,textwidth=1.1in,shadow,loadshadowlibrary]{todonotes}
+\setlength{\marginparwidth}{1.1in}
+\usepackage{array}
+
+
+% ---- Per-author edit commands --------------------------------------------
+% For each author we define two macros:
+%   \<name>{...}      inline colored edit
+%   \<name>note{...}  side bubble (margin todo) in matching color
+% Wrap the whole block in \newcommand{\hideedits}{} and redefine the macros
+% to \relax/\gobble if you want a clean camera-ready pass.
+\definecolor{prasanncolor}{RGB}{192,57,43}     % red
+\definecolor{amandacolor}{RGB}{39,110,170}     % blue
+\definecolor{jacobcolor}{RGB}{39,140,65}       % green
+\definecolor{sewoncolor}{RGB}{142,68,173}      % purple
+
+\newcommand{\prasann}[1]{ \textcolor{prasanncolor}{Prasann: #1}}
+
+\newcommand{\ctc}[1]{ \textcolor{amandacolor}{$O_{T}(#1)$}}
+\newcommand{\cmc}[1]{ \textcolor{prasanncolor}{$O_{A}(#1)$}}
+
+
+\newcommand{\prasannnote}[1]{%
+  \todo[color=prasanncolor!25,bordercolor=prasanncolor,linecolor=prasanncolor!60]%
+    {\textbf{PS:} #1}}
+
+\newcommand{\amanda}[1]{\textcolor{Amanda: amandacolor}{#1}}
+\newcommand{\amandanote}[1]{%
+  \todo[color=amandacolor!25,bordercolor=amandacolor,linecolor=amandacolor!60]%
+    {\textbf{AB:} #1}}
+
+\newcommand{\jacob}[1]{\textcolor{Jacob: jacobcolor}{#1}}
+\newcommand{\jacobnote}[1]{%
+  \todo[color=jacobcolor!25,bordercolor=jacobcolor,linecolor=jacobcolor!60]%
+    {\textbf{JS:} #1}}
+\newcommand{\jsnote}[1]{%
+  \todo[color=jacobcolor!25,bordercolor=jacobcolor,linecolor=jacobcolor!60]%
+    {\textbf{JS:} #1}}
+
+\newcommand{\sewon}[1]{\textcolor{Sewon: sewoncolor}{#1}}
+\newcommand{\sewonnote}[1]{%
+  \todo[color=sewoncolor!25,bordercolor=sewoncolor,linecolor=sewoncolor!60]%
+    {\textbf{SM:} #1}}
+
+\definecolor{autocolor}{RGB}{200,110,20}        % orange
+\newcommand{\autonote}[1]{%
+  \todo[color=autocolor!25,bordercolor=autocolor,linecolor=autocolor!60]%
+    {\textbf{AUTO:} #1}}
+% Inline variant, for marking a short span rather than a whole passage.
+\newcommand{\auto}[1]{\textcolor{autocolor}{#1}}
+% Kill switch: uncomment to drop every AUTO bubble from the build.
+\newcommand{\autonotesoff}{\renewcommand{\autonote}[1]{}}
+% --------------------------------------------------------------------------
+% Taken
+% Pay More Attention
+% Paying More Attention to Attention
+% You Need to Pay Better Attention
+% Attention Please
+
+% Title N-Grams
+
+% Time to Pay Attention! -> 
+% Make Things Complicated -> 
+% It's Complicated ->
+% -> Complex Corpus Reasoning Requires Computationally Complex Attention
+% -> Time to Pay Attention 
+% -> Corpus Reasoning Tasks Have Diverse Computational Complexity Requirements
+% O({\boldmath$N^2$}) Corpus Reasoning
+
+% -> O(N^2) Corpus Reasoning Tasks Deserve More Attention
+
+% O({\boldmath$N^2$}) Corpus Reasoning Deserves More Attention
+
+\title{Time To Pay Attention! No Free Lunch on High Complexity Corpus Reasoning}
+
+
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{People!}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\newcommand{\cname}{CTC }
+\newcommand{\bench}{CTC Suite}
+
+\newcommand{\newmethod}{Cool New Method }
+
+%\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+\maketitle
+
+
+
+\begin{abstract}
+
+
+% Abstract 1: 
+% Large language models (LLMs) have shown great promise with sophisticated textual analysis and reasoning. 
+
+% Abstract 2:
+
+% Our pitch: We identify and analyse high-CTC tasks, an underexplored class of LCLM tasks which have very different architectural and scaling properties from more commonly used simpler tasks, and we should study them more.
+
+% The range of such analyses are vast, from well-studied problems like search (e.g. \emph{``Find articles on which year Ralph Lauren was founded''}), to many others (e.g. \emph{``Order these historical documents in the order they likely occurred in'', ``Find all undocumented contradictions in sociolinguistics literature''}), but such tasks are typically studied in isolation without a unified understanding of what's needed to solve them, especially at scale.
+
+Corpus reasoning tasks require extracting and integrating information from large collections of documents (e.g. scientific literature, LLM agent traces), ranging from factoid question answering (e.g. “When was Ralph Lauren founded?”), to underexplored queries like “What conflicting claims appear in this literature?” Different types of tasks often yield different empirical trends, but the reasons remain poorly understood. We introduce a unified definition of corpus task complexity (CTC), which characterizes tasks by how suboperations needed to handle tasks grow with corpus size. Under this definition, we find most existing benchmarks to be \emph{low} CTC with only linear suboperation growth in corpus size, and we identify 10 diverse, understudied tasks belonging to a new class of \emph{high} CTC. Consistent with growing computational demand, we find that on higher CTC tasks, across long context language models, performance degrades more rapidly at larger corpora—even with iid training. These tasks frequently change modeling decisions, and there’s no free lunch: linear-cost chunk-attention methods scale well on low-CTC tasks but struggle on high-CTC tasks, and methods capable of handling high-CTC tasks demand quadratic cost in corpus size. Across diverse findings---from attention to  length generalization---our analysis reveals limitations obscured by solely relying on low-CTC evaluations. We present scalable high CTC reasoning as a new open problem and release our code, eval suite (\bench), and data up to 10M-token scale to support future work.
+
+
+% V0:  Computational systems to analyze and process large text corpora (e.g. scientific literature, LLM agent traces...) are invaluable \prasann{a bit more}. In this work, we propose a unified view---corpus task complexity (\cname)---that systematically characterizes corpus tasks in terms of how the smaller operations needed to solve them scale with corpus size. For example, we posit that tasks requiring comparing all possible documents pairs are more ``complex'', and thus much harder to solve at scale, than tasks requiring a single search pass over documents. Across a comprehensive suite of 25 \prasann{21?} real and synthetic tasks, we connect \cname to \emph{attention complexity}, finding that there is no free lunch: (i) O(N) attention methods scale well on low-\cname tasks, but \textbf{do poorly when \cname is high}, and (ii) \textbf{methods that \emph{could viably} handle these tasks scale quadratically} in cost with corpus size. Our analysis identifies and greatly encourages more LCLM work on an underexplored class of high-CTC tasks, clarifies limits of existing methods, and offers a new task-centric perspective on architecture design. We release our diverse task suite and code to support further work in this space. \prasann{Make a bit more crisp somehow? Not sure if core pitch shines through}
+
+
+%Our analysis identifies and greatly encourages more LCLM work on an underexplored class of high-CTC tasks, clarifies limits of existing methods, and offers a new task-centric perspective on architecture design. We release our diverse task suite and code to support further work in this space. \prasann{Make a bit more crisp somehow? Not sure if core pitch shines through}
+
+% We analyze long-context language models (LCLMs), the most general and expressive systems applicable for such tasks. 
+
+% Abstract 3: 
+
+
+% High Level Threads 
+%   -> We're an analysis work, not a dataset work.
+%   -> Focused on LCLM work
+%   -> Be direct
+
+% Corpus reasoning tasks, which require extracting and integrating information from large collections of documents (e.g. scientific literature, LLM agent traces), range from well-studied tasks such as factoid question answering (e.g. \emph{``When was Ralph Lauren founded?''}), to more complex, underexplored queries like \emph{``What are all the conflicting claims in this literature?''}. We observe that on these ``complex'' tasks, efficient architectures can scale much worse than they do on more well-explored tasks.  We develop a unified view---corpus task complexity (CTC)---to systematically distinguish complex tasks from simpler ones in terms of the smaller operations needed to solve them (and how such operations scale with corpus size): for example, we classify tasks which compare all possible document pairs as ``more complex'' than factoid retrieval. We first investigate new long-context language model (LCLM) training dynamics challenges on these tasks, and propose an effective new mask mixing technique that improves O(N) attention approaches on high \cname tasks, but at larger corpus scale we ultimately find that there is no free lunch: (i) methods that scale efficiently with corpus size \textbf{do poorly when \cname is high}, and (ii) \textbf{methods that \emph{can} handle these tasks scale quadratically in cost with corpus size}. We identify high-\cname tasks as a long-term open problem and encourage more future work investigating new methods to overcome these limitations. 
+
+
+\end{abstract}
+
+
+
+
+\input{iclr2026/sections/1_introduction}
+
+% \input{iclr2026/sections/2_related_work}
+
+\input{iclr2026/sections/3_corpus_reasoning}
+
+
+\input{iclr2026/sections/6_learning}
+
+\input{iclr2026/sections/4_contradiction_case_study}
+
+
+% \input{iclr2026/sections/5_scaling_task_computation}
+
+
+\input{iclr2026/sections/7_related_work}
+
+\input{iclr2026/sections/8_conclusion}
+
+
+\bibliography{iclr2026/iclr2026_conference}
+\bibliographystyle{plainnat}
+
+\appendix
+\input{iclr2026/sections/appendix_mask_mixing}
+\input{iclr2026/sections/appendix_amazon_reviews}
+\input{iclr2026/sections/appendix_data_stats}
+\input{iclr2026/sections/appendix_hyperparameters}
+\input{iclr2026/sections/appendix_examples}
+
+\input{iclr2026/checklist}
+
+
+\end{document}

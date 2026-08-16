@@ -1,0 +1,494 @@
+\section{Task Examples}
+\label{app:examples}
+
+% \autonote{File REWRITTEN: 7 examples $\to$ 24, one per suite task, ordered as
+% Table~\ref{tab:suite}. Every example is pulled from a real eval JSONL by
+% \texttt{debug/paper\_examples/dump\_for\_paper.py} (OLMo-core), so the quoted text, IDs and gold
+% sets are the actual data rather than illustrations. The 5 pre-existing entries that survive the task cuts were re-derived and
+% therefore show different examples than before --- they are marked individually below. The Amazon-outlier,
+% redundancy, official-absence and mathmatch examples were removed with their tasks.}
+
+We show one real example for every task in the suite (Table~\ref{tab:suite}), in the order of that
+table. All content is verbatim from the eval splits. To keep each example readable we display only
+3--5 documents (the gold ones plus a few representative fillers), truncate document text to
+$\sim$190 characters, and elide the rest of the corpus with a
+\texttt{[$\cdot$ more documents omitted]} marker; the real corpus sizes are stated per example.
+Document IDs are 1-indexed, exactly as the model sees them. Each example also states the task
+instruction, which is fixed per task and is what determines the output format the grader parses.
+
+% =====================================================================
+\subsection{\ctc{N} tasks}
+
+\subsubsection{NQ (factoid retrieval)}\autonote{Existed before; different example now (was
+``who played bat masterson in the movie tombstone'').}
+
+\textbf{Instruction:} \emph{``Use the given documents to identify which document is most relevant to
+answering the question. Write your answer in the following format: Relevant Document: [id]''}\\
+\textbf{Query:} \emph{``who sold out jesus for 30 pieces of silver''}\\
+\textbf{Context (3 of 20 documents shown):}
+\begin{quote}\small
+\texttt{[1]} \emph{(gold)} ``Thirty pieces of silver was the price for which Judas Iscariot betrayed
+Jesus, according to an account in the Gospel of Matthew 26:15 $\dots$''\\
+\texttt{[2]} \emph{(BM25 hard negative)} ``Butuan Silver Paleograph. The Butuan Silver Palaeograph,
+also known as the `Butuan Silver Strip', is a piece of metal with inscriptions $\dots$''\\
+\texttt{[3]} \emph{(BM25 hard negative)} ``Phantom Stranger $\dots$ of betraying him. As the Spectre
+is about to attack the Stranger, a Mysterious Voice sends him off $\dots$ As payment for what
+occurred $\dots$''\\
+\texttt{[$\cdot$ 17 more documents omitted]}
+\end{quote}
+\textbf{Gold doc ID:} \texttt{1}\quad\textbf{Answer string (not the target):} \emph{``Judas Iscariot''}
+
+\subsubsection{HotpotQA (bridge, multi-hop retrieval)}
+
+\textbf{Instruction:} \emph{``$\dots$identify which documents are relevant $\dots$ Relevant
+Documents: [id1], [id2]''}\\
+\textbf{Query:} \emph{``What company did Rex Maughan aquire?''} \emph{(question text verbatim,
+including the source typo)}\\
+\textbf{Context (4 of 20 documents shown):}
+\begin{quote}\small
+\texttt{[8]} \emph{(gold-1)} ``Forever Living Products International, Inc.\ (FLPI) is an American
+privately-held multi-level marketing (MLM) company based in Scottsdale, Arizona $\dots$''\\
+\texttt{[9]} \emph{(gold-2)} ``Rex G. Maughan is an American businessman. He is the founder,
+president, and chief executive officer of Forever Living Products $\dots$''\\
+\texttt{[1]} \emph{(hard negative --- name collision)} ``Alex Maughan (born April 24, 1995) is an
+American rugby union player who plays in the front row for the United States men's national team
+$\dots$''\\
+\texttt{[2]} \emph{(hard negative --- same article, wrong chunk)} ``Ruth graduated from BYU with a
+degree in elementary education, she and Rex moved to Arizona $\dots$''\\
+\texttt{[$\cdot$ 16 more documents omitted]}
+\end{quote}
+\textbf{Gold doc IDs:} \texttt{[8, 9]}\quad\textbf{Answer string:} \emph{``Aloe Vera of America''}
+
+\subsubsection{NIAH-contradiction (\ctc{N} control for contradiction)}
+
+\textbf{Instruction:} \emph{single-document retrieval, as in NQ.}\\
+\textbf{Query:} \emph{``Find the document that directly contradicts the following claim: A hypertonic
+solution of 14.4\% has an irreversible ciliostatic effect.''}\\
+\textbf{Context (3 of 99 documents shown):}
+\begin{quote}\small
+\texttt{[20]} \emph{(needle)} ``A hypertonic solution of 14.4\% has a reversible ciliostatic
+effect.''\\
+\texttt{[1]} \emph{(filler)} ``The data was retrieved from the Cardiovascular and Metabolic Disease
+Etiology Research Center --- High Risk Cohort (CMERC-HI, NCT02003781).''\\
+\texttt{[2]} \emph{(filler)} ``In men, the presence of both reflux symptoms and GER (`presumed' NERD
+group) was associated with the serum triglyceride levels.''\\
+\texttt{[$\cdot$ 96 more documents omitted, including the other gold pairs of the source example,
+which do \emph{not} contradict this query claim]}
+\end{quote}
+\textbf{Gold doc ID:} \texttt{20}
+
+\subsubsection{BEIR SciFact}
+
+\textbf{Instruction:} \emph{single/multi-document retrieval.}\\
+\textbf{Query (a scientific claim):} \emph{``0-dimensional biomaterials show inductive
+properties.''}\\
+\textbf{Context (3 of 22 abstracts shown):}
+\begin{quote}\small
+\texttt{[1]} \emph{(gold)} ``New opportunities: the use of nanotechnologies to manipulate and track
+stem cells. Nanotechnologies are emerging platforms that could be useful in measuring,
+understanding, and manipulating $\dots$''\\
+\texttt{[2]} \emph{(BM25 negative)} ``The spectrum of retinopathy in adults with Plasmodium
+falciparum malaria $\dots$''\\
+\texttt{[3]} \emph{(BM25 negative)} ``Inheritance of coronary artery disease in men: an analysis of
+the role of the Y chromosome $\dots$''\\
+\texttt{[$\cdot$ 19 more documents omitted]}
+\end{quote}
+\textbf{Gold doc ID:} \texttt{1}
+
+\subsubsection{BEIR FiQA (cross-encoder--cleaned negatives)}
+
+\textbf{Instruction:} \emph{multi-document retrieval.}\\
+\textbf{Query:} \emph{``Where should I park my rainy-day / emergency fund?''}\\
+\textbf{Context (3 of 20 documents shown; 5 golds in this example):}
+\begin{quote}\small
+\texttt{[2]} \emph{(gold)} ``I would suggest your local credit union or local bank for security and
+liquidity. Liquidity is probably the most important issue for a emergency fund.''\\
+\texttt{[8]} \emph{(gold)} ``This is probably a good time to note that credit is not a liquid asset,
+and not an emergency fund. Credit can be revoked or denied at any time $\dots$''\\
+\texttt{[10]} \emph{(gold)} ``First off, you generally want to park your emergency fund somewhere
+that is `safe', meaning something that is not subject to market fluctuations $\dots$''\\
+\texttt{[$\cdot$ 17 more documents omitted: cross-encoder-surviving hard negatives ($\sim$10\% of
+slots) plus random real corpus documents]}
+\end{quote}
+\textbf{Gold doc IDs:} \texttt{[2, 8, 10, 12, 19]}. FiQA is sparsely judged, so candidates scoring
+close to the gold under the cross-encoder are dropped rather than used as negatives --- they are
+likely unlabeled positives.
+
+\subsubsection{MS MARCO (retrieval)}
+
+\textbf{Instruction:} \emph{single-document retrieval.}\\
+\textbf{Query:} \emph{``what is the difference between fables and folktales? for kids''}\\
+\textbf{Context (3 of 20 passages shown):}
+\begin{quote}\small
+\texttt{[2]} \emph{(gold)} ``Folktale vs Fable. Folktales and fables can be understood as two
+different types of stories that show a difference between them $\dots$''\\
+\texttt{[1]} \emph{(hard negative)} ``Your job is to make sense of the fact or example in the context
+of the overall main idea that is being conveyed $\dots$''\\
+\texttt{[3]} \emph{(random fill)} ``Cascamite is a waterproof glue and is probably the must effective
+glue of all $\dots$''\\
+\texttt{[$\cdot$ 17 more documents omitted]}
+\end{quote}
+\textbf{Gold doc ID:} \texttt{2}. Hard and random passages are drawn from the same index, so they are
+format-identical: there is no stylistic cue distinguishing a mined negative from a random one.
+
+\subsubsection{MS MARCO reranking}
+
+\textbf{Instruction:} \emph{``Rank the documents by how relevant each is to the question, from most to
+least relevant $\dots$ Ranking: [id1], [id2], [id3], \dots''}\\
+The pool is identical to the retrieval example above; what changes is the target. Every document
+carries a real cross-encoder relevance score, so the gold order is defined for the entire pool
+rather than only for the judged documents.\\
+\textbf{Target:} the full ranking, scored by MRR@10. A HELMET-format variant renders the pool as
+\texttt{[ID: n] Document: $\dots$}, asks for a \texttt{Ranking: ID3 > ID1 > \dots} permutation, and
+is scored by graded NDCG@10 against cross-encoder scores bucketed to 0--3.
+
+\subsubsection{OBLIQ (subjective retrieval)}
+
+\textbf{Instruction:} \emph{multi-document retrieval.}\\
+\textbf{Query (truncated; queries in this task are full passages):} \emph{``Find a document written
+in a similar style and voice to the following writing passage: The slowness and calmness of the
+lodge came with genuine inquisitiveness. I talked to people without subtly judging who they were
+$\dots$''}\\
+\textbf{Context (3 of 30 documents shown):}
+\begin{quote}\small
+\texttt{[14]} \emph{(gold)} ``Health is no big deal until it's the only thing that matters. It's
+cliche because it's real. I started feeling really exhausted this March $\dots$''\\
+\texttt{[23]} \emph{(gold)} ``Mental health stuff often doesn't have linear solutions. Getting
+professional support meant waiting weeks and opening up to therapists $\dots$''\\
+\texttt{[29]} \emph{(gold)} ``Ryan C --- You have a charm that makes friends stay in your life. We
+never had a bad conversation, whether that was after 1 month or 1 year $\dots$''\\
+\texttt{[$\cdot$ 27 more documents omitted, BM25-mined from the same subset]}
+\end{quote}
+\textbf{Gold doc IDs:} \texttt{[14, 23, 29]}
+
+\subsubsection{Oolong (aggregation over labeled items)}
+
+\textbf{Instruction:} \emph{``Read the data below and answer the question. Compute the exact answer by
+analyzing every item; do not guess or approximate.''}\\
+\textbf{Context (rendered verbatim, not as numbered documents; \texttt{ctx}=1024 rung shown):}
+\begin{quote}\small
+``The following lines contain 10 pairs of sentences, one per line. On each line, the first sentence
+contains a metaphorical statement and the second sentence (separated by \texttt{<-->}) contains a
+$\dots$'' \emph{[items follow; the ladder runs from 1K to 4.2M tokens]}
+\end{quote}
+\textbf{Query:} \emph{``In the above data, which of the labels is the most common? Give your final
+answer in the form `Label: answer' where answer is one of the labels: incorrect, correct.''}\\
+\textbf{Answer:} \texttt{incorrect}\quad(task group: \emph{counting}; the other groups are
+\emph{user} and \emph{timeline}). The model must classify every item and then aggregate --- the
+labels are not given.
+
+\subsubsection{HELMET NarrativeQA}
+
+\textbf{Instruction:} \emph{``Use the given documents to write a concise and short answer to the
+question. Answer: [answer]''}\\
+\textbf{Context (1 document, end-truncated to the target length; L=8000 rung shown):} an IMSDb movie
+script, beginning ``\emph{<html> <head><title>Tourist, The Script at IMSDb.</title> $\dots$}''\\
+\textbf{Query:} \emph{``At the beginning of the story, how has Pearce hidden himself from the
+police?''}\\
+\textbf{Reference answers:} \emph{``He has had plastic surgery to change his face.''} /
+\emph{``by having a plastic surgery''} (token-F1 against both).
+
+\subsubsection{HELMET GovReport (summarization)}
+
+\textbf{Instruction:} \emph{``Write a concise, faithful summary of the document(s) below. Cover the
+key facts and findings; do not add information that is not in the document(s).''}\\
+\textbf{Context (1 document, L=16000 rung shown):} ``\emph{Disclosure provisions that require
+commercial actors to convey specified information to consumers occupy an uneasy and shifting space in
+First Amendment jurisprudence $\dots$}''\\
+\textbf{Reference summary (ROUGE target):} ``\emph{Federal law contains a wide variety of disclosure
+requirements, including food labels, securities registrations, and disclosures about prescription
+drugs in direct-to-consumer advertising $\dots$}''
+
+% =====================================================================
+\subsection{\ctc{NM} tasks}
+
+\subsubsection{Outlier detection (Wikipedia 100w)}
+
+\textbf{Instruction:} \emph{``$\dots$First state what the majority attribute is and what the outlier
+attribute is, then list the 1-indexed document IDs of the outliers. Outliers: [id1], [id2], \dots''}\\
+\textbf{Query:} \emph{``Can you find passages that are about a different topic than the rest of these
+passages?''}\\
+\textbf{Context (4 of 55 chunks shown; article titles are withheld from the model):}
+\begin{quote}\small
+\texttt{[26]} \emph{(\textbf{outlier})} ``$\dots$inaugural Interactive Agency of the Year award
+(2006), it gave it to AKQA, recognising the agency's `global culture, creative hires and
+technological muscle' $\dots$''\\
+\texttt{[41]} \emph{(\textbf{outlier})} ``$\dots$Year for the second year running at the Revolution
+Awards and Agency of the Year awards from New Media Age and the Interactive Advertising Bureau
+$\dots$''\\
+\texttt{[42]} \emph{(\textbf{outlier})} ``In 2014, AKQA won Queen's Award for Enterprise: Innovation,
+and was named Most Innovative Agency at 2014 Digiday Awards $\dots$''\\
+\texttt{[1]} \emph{(majority)} ``$\dots$teach and children learn. It will offer a continuing look at
+how new technology such as wikis, blogs, vlogs, RSS, podcasts, social networking sites $\dots$''\\
+\texttt{[$\cdot$ 51 more documents omitted]}
+\end{quote}
+\textbf{Article distribution ($M{=}10$ articles):} \texttt{Jos\'e Holebas}: 9, \texttt{Andy Carvin}:
+7, \texttt{Devi Ahilya Vishwavidyalaya}: 7, \texttt{SMS Bl\"ucher}: 6, \texttt{Iraqi insurgency}: 5,
+\texttt{La Baie, Quebec}: 5, \texttt{Terra (mythology)}: 5, \texttt{Mane people}: 4, \texttt{Peter
+Sloterdijk}: 4, \texttt{James Hilton (designer)}: \textbf{3} (outlier).\quad
+\textbf{Gold doc IDs:} \texttt{[26, 41, 42]}\\
+Note that $M$ grows with $N$ in the \emph{scale-$k$} variant shown here; the fixed-$M$ control holds
+the article count constant as $N$ grows.
+
+\subsubsection{Grouping (OpenAlex)}
+
+\textbf{Instruction:} \emph{``$\dots$Group them into the requested number of categories based on what
+they are about. Output a JSON object of the form \{``groups'': [\{``doc\_ids'': [\dots]\}, \dots]\}.
+Every document must appear in exactly one group.''}\\
+\textbf{Query:} \emph{``Cluster these 20 papers into 15 groups.''} (concept level $L{=}3$, the finest
+granularity; the query states $k$ but never states the axis)\\
+\textbf{Context (4 of 20 abstracts shown):}
+\begin{quote}\small
+\texttt{[1]} \emph{``Microneedles' Device: Design, Fabrication, and Applications''} --- ``The
+delivery of therapeutical molecules through the skin, particularly to its deeper layers, is impaired
+due to the stratum corneum layer $\dots$''\\
+\texttt{[2]} \emph{``Identifying Resilient Communities in Road Networks: A Path-Based Embedding
+Approach''} --- ``Effective resilience analysis of road networks is fundamental to building
+sustainable and disaster prepared cities $\dots$''\\
+\texttt{[3]} \emph{``Role of zinc in health and disease''} --- ``This review provides a concise
+overview of the cellular and clinical aspects of the role of zinc $\dots$''\\
+\texttt{[4]} \emph{``Unveiling Cutting-Edge Developments in Electrocatalytic Nitrate-to-Ammonia
+Conversion''} --- ``The excessive enrichment of nitrate in the environment can be converted into
+ammonia $\dots$''\\
+\texttt{[$\cdot$ 16 more documents omitted]}
+\end{quote}
+\textbf{Target:} the labeled partition, \texttt{\{``groups'': [\{``label'': ``Ammonia
+production'', ``doc\_ids'': [4, 5, 12]\}, \dots]\}} --- only the IDs are scored.\\
+\textbf{Gold partition (15 clusters over 20 documents):} \texttt{\{[4, 5, 12], [2, 9], [3, 15],
+[14, 20], [19], [6], [10], [8], [17], [16], [18], [1], [11], [7], [13]\}}, whose OpenAlex L3 concepts
+are \emph{Ammonia production, Autoencoder, Zinc deficiency, Macrophage, Elliptic PDE, Moxidectin,
+Pancreatic cancer, Routing protocol, Stock market, Environmental management system, Formate,
+Fabrication, Task analysis, Nomological network, Object detection}.
+
+
+% =====================================================================
+\subsection{\ctc{N^2} tasks}
+
+\subsubsection{Contradiction (PubMed)}
+
+\textbf{Instruction:} \emph{``$\dots$identify all pairs of claims that contradict each other. A pair
+of claims is contradictory if they cannot both be true at the same time. Output your answer as a JSON
+list of pairs $\dots$ For example: [[1, 4], [3, 7]]''}\\
+\textbf{Context (5 of 20 claims shown; $N{=}20$, $K{=}3$ gold pairs):}
+\begin{quote}\small
+\texttt{[2]} \emph{(gold pair with \texttt{[12]})} ``A hypertonic solution of 14.4\% has a reversible
+ciliostatic effect.''\\
+\texttt{[12]} \emph{(perturbed --- obvious mode)} ``A hypertonic solution of 14.4\% has an
+irreversible ciliostatic effect.''\\
+\texttt{[8]} \emph{(gold pair with \texttt{[11]})} ``ROS production was increased in diabetic rats
+when compared to that of control rats (P $<$ 0.05), the effect of apocynin was a reduction in the ROS
+production in diabetic rats (P $<$ 0.05).''\\
+\texttt{[11]} \emph{(perturbed --- subtle mode)} ``In diabetic animal models, apocynin exhibited no
+significant impact on the heightened reactive oxygen species generation observed relative to
+non-diabetic controls (P $>$ 0.05).''\\
+\texttt{[13]} \emph{(gold pair with \texttt{[17]})} ``Modulation of cell viability was assessed
+exclusively through the application of exogenous IL-12 and IFN-gamma.''\\
+\texttt{[$\cdot$ 15 more documents omitted; fillers come from PubMed abstracts disjoint from every
+gold-source abstract in this example]}
+\end{quote}
+\textbf{Gold pairs:} \texttt{[[2, 12], [8, 11], [13, 17]]}. Only one sentence of each pair is
+LLM-written, so writing style does not identify the planted item.
+
+\subsubsection{Absence (derived over our corpora)}
+
+\textbf{Instruction:} \emph{``The numbered claims above are the original corpus. The text below is a
+second version of that corpus with some claims removed. Identify which of the numbered claims are
+MISSING $\dots$ Missing: [id1], [id2], \dots''}\\
+\textbf{Original corpus (2 of 20 claims shown):}
+\begin{quote}\small
+\texttt{[1]} ``The ORs decreased substantially after adjusting for socio-economic score and
+integration score.''\\
+\texttt{[2]} \emph{(\textbf{removed})} ``Activation of the NLRP1 and NLRP3 inflammasomes in AD was
+confirmed by confocal microscopy proteins co-localization $\dots$''\\
+\texttt{[$\cdot$ 18 more documents omitted]}
+\end{quote}
+\textbf{Second version (in the query slot; kept claims in original order):}
+\begin{quote}\small
+``The ORs decreased substantially after adjusting for socio-economic score and integration
+score.\textbackslash n Case series study.\textbackslash n Absolute changes in HbA1c independently
+predicted magnesium changes $\dots$'' \emph{(claim 2 is gone)}
+\end{quote}
+\textbf{Gold (removed) IDs:} \texttt{[2, 8, 20]} at deletion rate $p{=}0.1$. Scattered single
+deletions are the hard regime; large contiguous gaps are easy.
+
+\subsubsection{xabsence (cross-corpus absence)}
+
+\textbf{Instruction:} \emph{``Below are two corpora of numbered claims, A and B. Almost every claim
+has a paraphrase $\dots$ somewhere in the OTHER corpus. A few claims are UNMATCHED $\dots$ Unmatched:
+[id1], [id2], \dots''}\\
+\textbf{Context (5 of 19 claims shown; $P{=}8$ matched pairs, $k{=}3$ unmatched):}
+\begin{quote}\small
+\texttt{[1]} \emph{(corpus A, \textbf{unmatched})} ``Recently, we found that Kupffer cells isolated
+from rats treated only once with ethanol were sensitized to endotoxin 24 hr later.''\\
+\texttt{[3]} \emph{(corpus A, \textbf{unmatched})} ``Since all residents promptly passed the ABS
+examinations, it was not possible to discern factors associated with Board performances $\dots$''\\
+\texttt{[2]} \emph{(corpus A, matched)} ``Clinical and biochemical data and the alterations in livers
+resected at transplantation (n=7) or at autopsy (n=2) were gathered $\dots$''\\
+\texttt{[4]} \emph{(corpus A, matched)} ``Twelve infants less than 3 months of age, with severe
+respiratory distress.''\\
+\texttt{[14]} \emph{(corpus B, \textbf{unmatched})} ``RD2 also correlated with neuropsychological
+outcome 1 year after aSAH.''\\
+\texttt{[$\cdot$ 14 more documents omitted; the B block holds a low-overlap paraphrase of each
+matched A claim]}
+\end{quote}
+\textbf{Gold (unmatched) IDs:} \texttt{[1, 3, 14]}. Paraphrase twins are filtered to word-Jaccard
+$\leq 0.3$, so surface string matching cannot find the orphans.
+
+\subsubsection{strmatch}
+
+\textbf{Instruction:} \emph{``$\dots$identify all pairs of strings matching the criterion below
+$\dots$ JSON list of pairs.''}\\
+\textbf{Criterion (in the query):} \emph{``Find all pairs of strings that contain a run of at least 3
+consecutive words in common (the same 3 words, in the same order, appearing contiguously in both
+strings).''}\\
+\textbf{Context (4 of 20 strings shown; $L{=}10$ words each):}
+\begin{quote}\small
+\texttt{[1]} \emph{(gold pair with \texttt{[11]})} ``diasporas \textbf{kossuth westward taco}
+recipes bakr cease panels neotype niddastausee''\\
+\texttt{[11]} ``hermitage wass \textbf{kossuth westward taco} bolsheviks iryna epiphany allon
+garabet''\\
+\texttt{[2]} \emph{(gold pair with \texttt{[8]})} ``drown traditionalists eateries visconti broadband
+\textbf{amberdeep chisago kindergartens} taglish portraitist''\\
+\texttt{[8]} ``kannada utama likert mollusk budge \textbf{amberdeep chisago kindergartens} modifying
+martingale''\\
+\texttt{[$\cdot$ 16 more strings omitted, including 3 hard-negative pairs sharing a run of exactly 2
+words]}
+\end{quote}
+\textbf{Gold pairs:} \texttt{[[1, 11], [2, 8], [15, 19]]}. Every word not part of a planted run is
+globally unique in the example, so these are provably the only qualifying pairs.
+
+\subsubsection{qdmatch (NQ source)}
+
+\textbf{Instruction:} \emph{``Below is a numbered list of items. Each item is labeled either `Query:'
+or `Document:'. A few query-document pairs are relevant: the document answers the query. Identify
+every relevant pair $\dots$ [[query\_id, document\_id], \dots]''}\\
+\textbf{Context ($M{=}20$ queries and $N{=}20$ documents under one shared numbering, 5 of 40 items
+shown; \texttt{separate} layout = query block then document block):}
+\begin{quote}\small
+\texttt{[7]} \emph{Query} ``when did 10 shilling note go out of circulation'' \emph{(relevant)}\\
+\texttt{[14]} \emph{Query} ``who played the original steve mcgarrett on hawaii five-o''
+\emph{(relevant)}\\
+\texttt{[19]} \emph{Query} ``bosnia and herzegovina croatia macedonia and slovenia all used to be
+parts of'' \emph{(relevant)}\\
+\texttt{[28]} \emph{Document} ``Steve McGarrett is a fictional character who is the protagonist of
+CBS' `Hawaii Five-O'. McGarrett is a former United States Navy officer $\dots$''\\
+\texttt{[29]} \emph{Document} ``Banknotes of the pound sterling $\dots$ 10 shilling note was
+designed, featuring Sir Walter Raleigh, which would become the 50 pence note upon decimalisation
+$\dots$''\\
+\texttt{[$\cdot$ 35 more items omitted: 17 distractor queries whose gold documents were withheld, and
+17 distractor documents whose queries were withheld]}
+\end{quote}
+\textbf{Gold pairs:} \texttt{[[7, 29], [14, 28], [19, 40]]} --- 3 relevant pairs among
+$20 \times 20 = 400$ combinations. Because query pools and document pools are drawn disjointly, the
+planted pairs are the only true matches.
+
+\subsubsection{qdmatch (HotpotQA source)}
+
+Same format; each relevant query is a bridge question with \emph{two} gold documents, so $k{=}3$
+relevant queries yield 6 gold pairs:
+\begin{quote}\small
+\texttt{[8]} \emph{Query} ``\,`Lost!' is a song by a British rock band formed in what year?''\\
+\texttt{[25]} \emph{Document} ``\,`Lost!' is a song by the British rock band Coldplay. The band
+co-produced it with Brian Eno and Markus Dravs for their fourth album $\dots$''\\
+\texttt{[3]} \emph{Query} ``Which team's 2013-2014 season had players including a Slovenian who plays
+at both the point guard and shooting guard positions?''\\
+\texttt{[26]} \emph{Document} ``Goran Dragic (born 6 May 1986) is a Slovenian professional
+basketball[er] for the Miami Heat $\dots$ He plays at both the point guard and shooting guard
+positions $\dots$''\\
+\texttt{[$\cdot$ 36 more items omitted]}
+\end{quote}
+\textbf{Gold pairs:} \texttt{[[2, 29], [2, 36], [3, 26], [3, 39], [8, 25], [8, 34]]}
+
+\subsubsection{qdmatch (OBLIQ source)}
+
+Same format over OBLIQ, where both queries and documents are long passages --- the hardest of the
+three variants:
+\begin{quote}\small
+\texttt{[6]} \emph{Query} ``One of the lessons we have seen in language modeling is the power of
+scale. The original GPT paper of Radford et al.\ noted that at some point during training, the model
+`acquired' the abilit[y] $\dots$''\\
+\texttt{[28]} \emph{Document} ``While it is not surprising that models improve over time, the main
+reason this graph is remarkable is because the Y axis is on a log scale $\dots$''\\
+\texttt{[$\cdot$ 38 more items omitted]}
+\end{quote}
+\textbf{Gold pairs:} \texttt{[[3, 35], [6, 28], [9, 40]]}
+
+\subsubsection{Reorder (Gutenberg)}
+
+\textbf{Instruction:} \emph{``You are given a list of text passages presented in a random order. They
+were originally consecutive segments of a single document. Output the permutation that restores them
+to their original order, as a JSON array of the passage IDs.''}\\
+\textbf{Context (3 of 50 segments shown, all from one book --- here \emph{Flatland} --- in shuffled
+order; chapter headings are stripped):}
+\begin{quote}\small
+\texttt{[1]} ``Polygon of two or three hundred sides sometimes --- by no means always, for the process
+is attended with serious risk --- but sometimes overleaps two or three hundred generations $\dots$''\\
+\texttt{[2]} ``I had but one voice, and that I had not been aware that his Royal Highness had two.
+`That confirms my impression,' said the King, `that you are not a Man, but a feminine Monstrosity'
+$\dots$''\\
+\texttt{[3]} ``Linelander. Only by the sound of the voice could sex or age be distinguished
+$\dots$''\\
+\texttt{[$\cdot$ 47 more segments omitted]}
+\end{quote}
+\textbf{Gold ordering:} \texttt{[31, 19, 12, 22, 37, 21, 32, 14, 33, 48, 41, 46, 4, 25, 36, 20, 42,
+18, 15, 23, 1, 40, 6, 7, 35, 16, 50, 28, 27, 39, 9, 30, 43, 3, 34, 2, 24, 47, 49, 45, 13, 29, 44, 10,
+26, 5, 38, 11, 8, 17]}\quad(scored by Kendall-$\tau$ against the true permutation).
+
+% =====================================================================
+\subsection{\ctc{N^3} tasks and beyond}
+
+\subsubsection{Cycle detection}
+
+\textbf{Query:} \emph{``Each claim asserts a strict comparison (the first person ranks strictly above
+the second). Find every set of claims that forms a cycle --- an impossible loop where the ranking
+comes back to where it started.''}\\
+\textbf{Context (5 of 20 claims shown; one predicate throughout: ``\emph{X scored higher on the exam
+than Y}''):}
+\begin{quote}\small
+\texttt{[2]} \emph{(gold)} ``Gita scored higher on the exam than Hugo''\\
+\texttt{[16]} \emph{(gold)} ``Bruno scored higher on the exam than Gita''\\
+\texttt{[19]} \emph{(gold)} ``Hugo scored higher on the exam than Bruno''\\
+\texttt{[1]} \emph{(background)} ``Zara scored higher on the exam than Dina''\\
+\texttt{[3]} \emph{(background)} ``Kane scored higher on the exam than Bea''\\
+\texttt{[$\cdot$ 15 more claims omitted; all background edges point forward in one global entity
+ranking, so the background graph is acyclic]}
+\end{quote}
+\textbf{Gold cycle:} \texttt{[[2, 16, 19]]} --- Gita $>$ Hugo $>$ Bruno $>$ Gita. Cycle entities also
+appear in background claims, so gold claims cannot be spotted by entity frequency.
+
+\subsubsection{Groups-of-four}
+
+\textbf{Query:} \emph{``Find every group of 4 expressions whose answers are all within 5 of each other
+(every pair in the group differs by at most 5).''}\\
+\textbf{Context (5 of 20 expressions shown):}
+\begin{quote}\small
+\texttt{[6]} \emph{(gold)} ``-92 - 51 - 76 + 115'' \emph{($=-104$)}\\
+\texttt{[10]} \emph{(gold)} ``98 - 6 - 19 - 69 - 107'' \emph{($=-103$)}\\
+\texttt{[12]} \emph{(gold)} ``-90 + 30 + 18 - 66'' \emph{($=-108$)}\\
+\texttt{[19]} \emph{(gold)} ``47 + 20 - 7 + 75 - 240'' \emph{($=-105$)}\\
+\texttt{[1]} \emph{(distractor)} ``19 - 72 - 29 + 8''\\
+\texttt{[$\cdot$ 15 more expressions omitted; distractors may sit within $X$ of up to two others, so
+incidental close pairs and triples exist, but no run of four ever forms outside the planted group]}
+\end{quote}
+\textbf{Gold group:} \texttt{[[6, 10, 12, 19]]} (values $-108 \dots -103$, spread 5).
+
+\subsubsection{Textgroups}
+
+\textbf{Query:} \emph{``Each passage has a value: the number of nouns. Find every group of 3 passages
+whose values add up to 70 (exactly 70).''}\\
+\textbf{Context (3 of 20 passages shown; the value is a property of the prose, never printed):}
+\begin{quote}\small
+\texttt{[1]} \emph{(gold; 34 nouns)} ``The castle and the scholar arrived calmly. The river gathered
+restlessly. The teacher whispered calmly. The saddle whispered calmly. The meadow and the bridge and
+the garden waited abruptly $\dots$''\\
+\texttt{[11]} \emph{(gold; 31 nouns)} ``The valley explored softly. The beacon watched slowly. The
+beacon and the harvester and the telescope studied suddenly. The baker guarded wearily $\dots$''\\
+\texttt{[2]} \emph{(gold of the second triple; 13 nouns)} ``The forest and the tower and the compass
+circled suddenly. The teacher and the bridge faltered bravely. The weaver collapsed wearily
+$\dots$''\\
+\texttt{[$\cdot$ 17 more passages omitted]}
+\end{quote}
+\textbf{Gold groups:} \texttt{[[1, 11, 12], [2, 14, 17]]} --- noun counts $34{+}31{+}5 = 70$ and
+$13{+}17{+}40 = 70$. The noun / verb / adjective lexicons are closed and pairwise disjoint, so each
+passage's count is unambiguous, and sentence structure is varied so the count is not a proxy for
+passage length.

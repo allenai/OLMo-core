@@ -1,0 +1,189 @@
+\section{Task Suite Data Details}
+\label{app:data-details}
+
+
+\providecommand{\ctc}[1]{\ensuremath{\mathcal{O}_T(#1)}}
+% A query, then the answer it should produce.
+\providecommand{\ex}[2]{#1~$\rightarrow$~\texttt{#2}}
+% A class block header spanning the table.
+\providecommand{\exblk}[1]{\multicolumn{2}{@{}l}{#1} \\}
+
+\begin{table}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.12}
+
+\begin{tabular}{@{}
+  >{\raggedright\arraybackslash}p{0.20\linewidth}
+  >{\raggedright\arraybackslash}p{0.78\linewidth}
+@{}}
+\toprule
+\textbf{Dataset} & \textbf{Example} \\
+\midrule
+\exblk{\textbf{\(\mathbf{O}(N)\): One-pass tasks}}
+\midrule
+
+NQ
+  & \ex{\emph{``who sold out jesus for 30 pieces of silver''}}{[1]} \\
+HotpotQA (bridge)
+  & \ex{\emph{``What company did Rex Maughan aquire?''}}{[8, 9]} \\
+NIAH-contra
+  & \ex{\emph{``$\dots$a hypertonic solution of 14.4\% has an \textbf{ir}reversible ciliostatic
+    effect''}}{[20]}, the one claim saying \emph{reversible} \\
+BEIR SciFact
+  & \ex{\emph{``0-dimensional biomaterials show inductive properties.''}}{[1]} \\
+BEIR FiQA
+  & \ex{\emph{``Where should I park my rainy-day / emergency fund?''}}{[2, 8, 10, 12, 19]} \\
+MS MARCO
+  & \ex{\emph{``what is the difference between fables and folktales? for kids''}}{[2]} \\
+MS MARCO rerank
+  & the same 20-passage pool, every passage scored $\rightarrow$
+    \texttt{Ranking: [2], [1], [3], \dots} \\
+OBLIQ
+  & \ex{\emph{``$\dots$written in a similar style and voice to: The slowness and calmness of the
+    lodge came with genuine inquisitiveness$\dots$''}}{[14, 23, 29]} \\
+Oolong
+  & 10 labelled sentence pairs; \ex{\emph{``which of the labels is the most
+    common?''}}{Label: incorrect} \\
+Outlier (Amazon)
+  & 20 reviews, 16 rated 4-star and 4 rated 5-star $\rightarrow$ \texttt{Outliers: 4, 7, 11, 17} \\
+Outlier (wiki, fixed \(M\))
+  & 57 chunks from 3 articles (43 / 11 / \textbf{3}) $\rightarrow$ \texttt{Outliers: 5, 17, 54} \\
+Absence
+  & 90 numbered sentences, 3 deleted from the copy $\rightarrow$ \texttt{["The interior is what",
+    "In opposite chapels are", \dots]} \\
+
+\midrule
+\exblk{\textbf{Higher-complexity tasks}}
+\midrule
+
+Outlier (wiki, scale-\(k\))
+  & 55 chunks from 10 articles (9 / 7 / 7 / $\dots$ / \textbf{3}) $\rightarrow$
+    \texttt{Outliers: 26, 41, 42} \\
+Grouping (OpenAlex)
+  & \ex{\emph{``Cluster these 20 papers into 15 groups.''}}{\{"groups": [\{"doc\_ids":
+    [4, 5, 12]\}, \dots]\}} \\
+Contradiction
+  & \texttt{[2]} \emph{``$\dots$has a reversible ciliostatic effect''} vs.\ \texttt{[12]}
+    \emph{``$\dots$has an irreversible ciliostatic effect''} $\rightarrow$
+    \texttt{[[2,12], [8,11], [13,17]]} \\
+xabsence
+  & 19 claims, 8 matched pairs, 3 with no twin in the other corpus $\rightarrow$
+    \texttt{Unmatched: 1, 3, 14} \\
+strmatch
+  & \texttt{[1]} and \texttt{[11]} share \emph{``kossuth westward taco''} $\rightarrow$
+    \texttt{[[1,11], [2,8], [15,19]]} \\
+qdmatch (NQ)
+  & \texttt{[7]} \emph{``when did 10 shilling note go out of circulation''} $\leftrightarrow$
+    \texttt{[29]} $\rightarrow$ \texttt{[[7,29], [14,28], [19,40]]} \\
+qdmatch (HPQA)
+  & \texttt{[8]} \emph{``\,`Lost!' is a song by a British rock band formed in what year?''}
+    $\leftrightarrow$ \texttt{[25]} and \texttt{[34]} \\
+qdmatch (FiQA)
+  & \texttt{[25]} \emph{``Pay off credit card debt or earn employer 401(k) match?''}
+    $\leftrightarrow$ \texttt{[55]} \\
+Reorder
+  & 50 shuffled segments of \emph{Flatland} $\rightarrow$ \texttt{[31, 19, 12, 22, 37, \dots]} \\
+Textgroups
+  & noun counts $34{+}31{+}5 = 70$ and $13{+}17{+}40 = 70$ $\rightarrow$
+    \texttt{[[1,11,12], [2,14,17]]} \\
+
+\bottomrule
+\end{tabular}
+
+\caption{\textbf{One real example per task.} All content is verbatim from the evaluation sets,
+elided with \texttt{\dots} where a passage is too long to show; document IDs are 1-indexed exactly
+as the model sees them. Appendix~\ref{app:examples} shows each example in full, with the task
+instruction, the surrounding corpus and the distractor types.
+}
+\label{tab:task-examples}
+\end{table}
+
+\prasann{TODO this is a starter Claude generation from suite docs, need to add more detail / clean up}
+% The CoT ablation in Table~\ref{tab:cot-ablation} uses a smaller-scale variant of the outlier task built from the Amazon Reviews 2023 corpus \citep{Hou2024BridgingLA}, distinct from the wiki-100w outlier data used for the cross-task scaling figure (Figure~\ref{fig:sec5-cross-task}).
+
+% \paragraph{Construction.} Each example contains $N{=}30$ short review documents (review title + body, no rating or category metadata visible to the model). Examples are one of two types, mixed 50/50 in the dataset via the \texttt{--rating-ratio} flag of \texttt{generate\_review\_outlier\_data.py}:
+
+% \begin{itemize}
+% \item \textbf{Rating outlier:} a majority of reviews share one star rating (1--5) and 3 outlier reviews carry a different rating. Query: \emph{``Can you find outliers with the least common rating in this data?''}
+% \item \textbf{Category outlier:} a majority of reviews come from one product category and 3 outliers come from a different category. Categories are drawn from the HF config names of the Amazon-Reviews-2023 dump (e.g.\ \texttt{Books}, \texttt{Electronics}, \texttt{Beauty\_and\_Personal\_Care}, \texttt{Home\_and\_Kitchen}). Query: \emph{``Can you find outliers from the least common category?''}
+% \end{itemize}
+
+% Ground truth is derived from the structured metadata (star rating field, HF config name) and \emph{not} from any LLM labeling---the model must read the review content to identify outliers because the visible text strips both fields.
+
+% \paragraph{Splits used in Table~\ref{tab:cot-ablation}.} 5{,}000 train examples, 500 eval examples, all with $N{=}30$, 3 outliers each. CoT targets are computed deterministically from the same metadata: the \emph{faithful} target names the majority and minority labels (e.g.\ ``Most reviews are 4-star ratings and the outliers are 5-star reviews.''); \emph{repeat-IDs} emits the gold outlier doc IDs before the answer; \emph{mislabeled} uses a randomly-permuted (wrong) majority/minority pair while keeping the template; \emph{dummy} is a content-less template phrase; \emph{random words} samples 50 content words from the input documents. All targets share the same answer format (a comma-separated list of outlier doc IDs).
+
+% \paragraph{Why a separate dataset.} The wiki-100w outlier task involves grouping 100-word Wikipedia chunks by their source article, which gives the model a strong topical-similarity prior. The Amazon Reviews variant intentionally weakens that prior---ratings and categories often produce reviews of similar surface style---which makes the task harder to learn without natural-language guidance, and making the CoT ablation more informative.
+
+
+\subsection{Tasks: Overview}
+
+\subsubsection{\ctc{N} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO, the ms-marco cross-encoder and GovReport are named in prose with no \texttt{\textbackslash citep} --- I had added six .bib entries for them and have now stripped them, since only you add citations. These are the spots that want one. 11 tasks, 9 of them new to the
+paper. The NQ and HotpotQA paragraphs are edited versions of the old blurbs --- NQ now records that
+current data caps hard negatives at $\sim$10\% via the CE filter, which the old text did not.}
+
+These tasks decompose into per-document oracle calls $\mathrm{isrelevant}(d_i, q)$: a single sweep suffices, and nothing about the answer depends on how two fillers relate to each other.
+
+\textbf{Factoid QA (NQ).} \emph{Gold-ID F1.} NaturalQuestions-open \citep{izacardNQ}, with all documents --- gold, hard negative and filler --- drawn from the 100-word Wikipedia DPR corpus \citep{Karpukhin2020DensePR} served by pyserini \citep{Lin2021PyseriniAP}, so every document shares one surface format. For each question we BM25-search \citep{Robertson1976RelevanceWOBM25} for a passage containing an answer string (that becomes the gold), take top BM25 hits that do \emph{not} contain the answer as hard negatives, and fill the remaining slots with random corpus passages. Recent versions of this data hold hard negatives to $\sim$10\% of the pool with the cross-encoder filter described above; earlier all-hard-negative pools made the task an adversarial ranking problem rather than a retrieval one.
+
+\textbf{Multi-hop QA (HotpotQA).} \emph{Gold-ID F1.} The bridge subset of HotpotQA \citep{Yang2018HotpotQAAD}, where answering requires composing two gold passages; the corpus is again wikipedia-100w with BM25 hard negatives. Because the answer needs a fixed (two) number of retrieval steps, this remains \ctc{N}. We include a short natural-language chain of thought generated with gemini-2.5-flash, grounded in the gold paragraphs and the answer.
+
+\textbf{Needle contradiction (NIAH-contra).} \emph{Set-F1.} An \ctc{N} control derived from the \ctc{N^2} contradiction task, holding the substrate fixed while dropping the complexity class: one member of a gold contradiction pair is promoted to the query (``\emph{find the document that contradicts this claim}'') and the other stays in the corpus as the needle. Every other claim, including the other gold pairs, is a distractor. Comparing this against contradiction isolates the effect of all-pairs search from the effect of PubMed claim text.
+
+\textbf{BEIR SciFact / FiQA.} \emph{Set-F1.} Two BEIR tasks framed in-context: SciFact (scientific claim $\to$ abstract, single-gold) and FiQA (financial opinion QA, median 2 golds/query, 648 queries). Both mine distractors by BM25 from the dataset's own corpus. FiQA is sparsely judged, so plain BM25 distractors are riddled with unlabeled positives; we score (query, candidate) pairs with a cross-encoder and keep a candidate only if it scores at least a margin below the gold, then fill the rest of the pool with random real corpus documents.
+
+\textbf{MS MARCO retrieval and reranking.} \emph{Set-F1; MRR@10 (NDCG@10 for the HELMET-format variant).} Passages come from the \texttt{msmarco-v1-passage} index. Hard negatives are taken from SentenceTransformers' precomputed BM25+dense mining and filtered by a margin on precomputed cross-encoder scores, so removing false negatives requires no model run; random fill is sampled as random pids from the 8.8M collection, which are byte-identical in format to gold and hard passages. The rerank variant reuses the identical pool but asks for the documents in ranked order, with every document carrying a real cross-encoder relevance score --- so the target order is defined for the whole pool, not just the judged part.
+
+\textbf{OBLIQ retrieval.} \emph{Set-F1.} OBLIQ-Bench (\texttt{dianetc/OBLIQ-Bench}) poses subjective, long-form queries (``\emph{find a document written in a similar style to this passage}'') over its own corpora; we port it in-context by forcing all qrel positives into the example and filling with BM25-mined distractors from the same subset. Its queries are long and its documents are full posts, making it the longest-per-document retrieval task in the suite.
+
+\textbf{Oolong.} \emph{Partial-credit score.} A port of Oolong \citep{Bertsch2025OolongEL}: a long context of labeled classification items, each tagged with a date and a user id, and a distributional question --- most/least common label, most frequent user, when label A overtook label B. We use the \emph{unlabeled} context variant, so the model must classify each item and then aggregate. Because the label set is fixed and each item is judged independently before a single aggregation step, this is \ctc{N} --- which is exactly what makes it a useful contrast with our outlier tasks below, which look superficially similar but have an unbounded category set.
+
+\textbf{NarrativeQA and GovReport (HELMET ports).} \emph{Token-F1; ROUGE.} Two HELMET \citep{Yen2024HELMETHT} long-document tasks kept in their native form: question answering over a single book or screenplay \citep{Kocisk2017TheNR}, and summarization of a government report. Both are single-document tasks --- there is no cross-document structure to exploit --- and serve as the ``long context is not the same as many documents'' anchor of the suite. These are the two tasks whose metrics are not ID-based, and we do not use them for headline gap-growth claims.
+
+\textbf{Absence.} \emph{Set-F1 over removed IDs.} The inverse of needle-in-a-haystack, following AbsenceBench (arXiv:2506.11440): the model sees the full numbered corpus, then a second copy with some elements deleted, and must name what is missing. We derive it over our own corpora: each document is deleted independently with probability $p$, scattered single deletions being the hard regime. Establishing that item $i$ is absent requires checking it against the second corpus, hence \ctc{N^2}.
+
+
+\subsubsection{\ctc{NM} tasks: categorization}\autonote{Both remaining tasks are edited old blurbs. Two claims changed on purpose: the old text
+said the wiki outlier task ``resembles OOLONG'', which read as if it were the same task --- it is now
+stated as the contrast (open vs.\ fixed category set) --- and the scale-$k$ vs.\ fixed-$M$ control is
+named explicitly. Grouping now describes the labeled variant, since the unlabeled one was cut.}
+
+Here the oracle operation compares a document against a \emph{category} rather than a query, and the number of categories $M$ is not fixed by the task definition --- it is a property of the particular corpus, which the model must itself infer. A naive algorithm compares each document against each discovered category, giving \ctc{NM}.
+
+\textbf{Outlier detection (Wikipedia).} \emph{Set-F1.} Each context is filled with 100-word chunks from a handful of Wikipedia articles with imbalanced counts; the answer is the ID list of chunks belonging to the article with the fewest chunks. Article titles are withheld from the model (they would trivially leak the outlier), so the grouping signal has to come from the body text. We run two variants: \emph{scale-$k$}, where the number of source articles grows with $N$ (so $M$ grows, and the task is genuinely \ctc{NM}), and a \emph{fixed-$M$} control where the article count stays constant as $N$ grows --- the control that separates ``the gap widens because of $N$'' from ``the gap widens because of $M$''. This differs from Oolong precisely in that the category set is open: there is no fixed label vocabulary to aggregate over.
+
+\textbf{Grouping (OpenAlex).} \emph{Pairwise-F1 / ARI.} Given $N$ scientific abstracts and an integer $k$, partition them into $k$ groups. Gold partitions come from the OpenAlex \citep{Priem2022OpenAlexAF} concept hierarchy: we sample only papers annotated down to level L3, then per example pick a level $L \in \{L0,\ldots,L3\}$ and sample $k$ distinct concept values at that level. The level sets the granularity --- L0 gives 2--3 coarse groups, L3 gives 6--10 fine ones --- and, crucially, \textbf{the query states $k$ but never states the axis}, so the model must infer from the corpus and $k$ what granularity is being asked for. This makes grouping harder than outlier detection: the number of categories is a per-example variable rather than something to be discovered as ``one minority''. The instruction also asks for a short topic label per group before its IDs; only the IDs are scored, but we find that naming the group improves the partition itself.
+
+
+\textbf{Cross-corpus absence (xabsence).} \emph{Set-F1.} Two corpora $A$ and $B$ share one context. Almost every claim in one has a paraphrase twin in the other; exactly $k$ claims are unmatched, and the model names those orphans. The twins are LLM paraphrases filtered to \emph{low} word-overlap (Jaccard $\leq 0.3$), so unlike plain absence this cannot be solved by string matching --- it needs a semantic comparison of every $A$ claim against every $B$ claim. The paraphrase pool is built once and reused, so any $N$ or $k$ can be assembled cheaply.
+
+
+\textbf{Query-document matching (qdmatch).} \emph{Pair set-F1.} The retrieval analogue of contradiction, and our sharpest test that the \emph{same} substrate changes class when the query structure changes. An example interleaves $M$ queries and $N$ documents under one shared numbering; only $k$ of the queries are relevant, and each of those maps to all of its gold documents. Pools are drawn so that relevant queries, distractor queries (gold withheld) and distractor documents (query withheld) are disjoint, which guarantees the only true matches are the planted ones. The model must find the sparse gold pairs among $M \times N$ combinations. We build three versions from three retrieval sources --- NQ (1 gold/query), HotpotQA bridge (2 golds/query), and OBLIQ (long abstracts) --- so difficulty from the underlying retrieval problem varies while the search structure is fixed. A layout ablation presents the items either as a query block followed by a document block, or fully interleaved.
+
+\subsubsection{\ctc{N^2} tasks: all-pairs search}\autonote{8 tasks, 6 new. Contradiction and
+reorder are edited old blurbs (contradiction now names both perturbation modes and the
+one-LLM-sentence-per-pair property). Metric wording fixed: contradiction was labelled ``EM'' only,
+but is reported as pair set-F1 with EM alongside.}
+
+% The oracle operation here relates two arbitrary documents, $a(d_i, d_j)$, and any of the $\binom{N}{2}$ pairs could be gold, so a naive solution is a nested loop. This is the regime we expect \cmc{N} attention to fail in, and most of these tasks do not exist in prior benchmarks.
+
+\textbf{Contradiction search (PubMed).} \emph{Pair set-F1; EM = did the model find all gold pairs.} Each document is a single claim sentence from a PubMed abstract \citep{Jin2019PubMedQAAD}. Among $N$ documents, $K{=}3$ gold pairs $(d, d')$ are hidden: $d$ is a real PubMed sentence and $d'$ is a minimally-perturbed version, produced by an LLM, that factually contradicts it --- either an obvious polarity flip (``\emph{reduced} MI risk by 23\%'' $\to$ ``\emph{increased} MI risk by 23\%'') or a subtle numeric/scope edit (``30\% reduction'' $\to$ ``3\% reduction''); we mix both. \textbf{Only one sentence per pair is LLM-written}, which avoids the usual pitfall where the planted item is identifiable by writing style alone. Candidate sentences are filtered to be self-contained and claim-bearing (no leading anaphora, no dangling citations), and fillers come from abstracts disjoint from every gold-source abstract in that example.
+
+
+\textbf{String matching (strmatch).} \emph{Pair set-F1.} A synthetic-substrate control for the same computation: $N$ strings of $L$ words drawn from a Wikipedia vocabulary, and the task is to find every pair sharing a contiguous run of $\geq k$ words. Gold pairs share exactly one $k$-word run; hard negatives share a $(k{-}1)$-word run, so the model must count run length rather than notice overlap. Every non-planted word is globally unique in the example, which makes the gold set provably exhaustive. This task has no semantic content at all, so the only thing that scales is the number of comparisons.
+
+
+
+\textbf{Reordering.} \emph{Kendall-$\tau$.} $N$ consecutive segments of a single Project Gutenberg book, presented in random order, with the task of recovering the original ordering as a permutation of document IDs --- a harder version of the reconstruction tasks in \citet{Chen2026LongBenchPA}. Chapter headings are stripped so the model cannot shortcut via ``Chapter 3''. Because sorting requires comparisons between arbitrary pairs of segments, we label it \ctc{N^2}. A Wikipedia variant (consecutive 100-word chunks from one article) exists as a harder, less narrative-sequential control.
+
+\subsubsection{Beyond \ctc{N^2}}\autonote{Entirely new: cycle, groups-of-4, textgroups. These
+were listed by name only (``groups of 4 / cycles (higher than \$n\^{}2\$)'') in the old draft.}
+
+% Three tasks require joint consideration of triples or longer chains, which no pairwise sweep can produce. They are deliberately short in tokens: the point is that difficulty scales with the number of \emph{items}, not the raw context length.
+
+% \textbf{Cycle detection.} \emph{Group set-F1.} $N$ comparative claims (``\emph{A scored higher than B}'') over named entities, all with the same predicate, so the corpus defines one directed graph. A strict order admits no directed cycle, so any cycle is an inconsistency; the task is to name the claims forming each one. The construction gives every entity a single global rank and makes every background edge point forward in that rank, so the background graph is a DAG and each planted cycle is provably the unique one closing its backward edge. Cycle entities participate in background edges like any other entity, so gold claims are not identifiable by frequency --- an earlier version failed this and was rebuilt. Finding a length-$L$ cycle naively is \ctc{N^L}.
+
+% \textbf{Groups-of-four.} \emph{Group set-F1.} $N$ arithmetic expressions; find every group of $G{=}4$ whose values are all within $X$ of each other. Distractors are drawn to be in-distribution --- a distractor may lie within $X$ of up to $G{-}2$ others, so incidental close pairs and triples occur --- but the construction never lets a run of $G$ mutually-close values form outside the planted groups, so the gold group stays unique while close pairs stop being a giveaway.
+
+\textbf{Textgroups.} \emph{Group set-F1.} The textual analogue: $N$ short passages, each carrying a feature the model must read off the prose (how many nouns / verbs / adjectives it contains, or how often a chosen connective appears), and the task is to find every triple whose feature values sum to a target $T$. The lexicons are closed and pairwise disjoint so the count is unambiguous, and sentence structure is varied so the feature is decoupled from passage length. Because $G{=}3$, the construction can both plant exactly $K$ triples and verify by brute force that no others exist. This is the one task in the suite where the per-document oracle operation is itself nontrivial (counting) \emph{and} the combination is super-quadratic.

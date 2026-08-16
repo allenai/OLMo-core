@@ -1,0 +1,56 @@
+\section{Dataset Statistics}
+\label{app:data-stats}
+
+Table~\ref{tab:data-stats} lists the train and eval sizes for every dataset used in the main paper. All datasets follow the unified structured-JSONL format introduced in \S\ref{sec:definitioncomp}: each example carries \texttt{documents} (a list of \{title, text\}), \texttt{queries}, \texttt{answers}, and \texttt{gold\_doc\_indices}. We report doc length in tokens (Qwen tokenizer, mean over a 200-example sample) and the per-example total context length (sum of doc tokens).
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l c c c c c}
+\toprule
+\textbf{Task} & \textbf{Source} & $\bm{N}$ (or $k$) & \textbf{Train} & \textbf{Eval} & \textbf{Per-doc tokens} & \textbf{Total tokens} \\
+\midrule
+\multirow{4}{*}{NQ}            & Wikipedia (DPR) & $k{=}20$  & 2{,}500 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $k{=}50$  & 2{,}500 & 500 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $k{=}100$ & 2{,}500 & 500 & $\sim$130 & $\sim$13k  \\
+                               &                 & $k{=}200$ & 2{,}500 & 500 & $\sim$130 & $\sim$26k  \\
+\midrule
+\multirow{4}{*}{HotpotQA}      & Wikipedia (DPR) & $k{=}20$  & 2{,}000 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $k{=}50$  & 2{,}000 & 500 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $k{=}100$ & 2{,}000 & 500 & $\sim$130 & $\sim$13k  \\
+                               &                 & $k{=}200$ & 2{,}000 & 500 & $\sim$130 & $\sim$26k  \\
+\midrule
+\multirow{3}{*}{Outlier (wiki)}& Wikipedia 100w  & $N{=}20$  & 4{,}000 & 400 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $N{=}50$  & 4{,}000 & 400 & $\sim$130 & $\sim$6.5k \\
+                               &                 & $N{=}100$ & 4{,}000 & 400 & $\sim$130 & $\sim$13k  \\
+\midrule
+Outlier (Amazon)               & Reviews 2023    & $N{=}30$  & 5{,}000 & 500 & $\sim$80  & $\sim$2.4k \\
+\midrule
+\multirow{2}{*}{Grouping}      & OpenAlex L0--L3 & $N{=}20$  & 5{,}000 & 500 & $\sim$200 & $\sim$4k   \\
+                               & abstracts       & $N{=}100$ & 1{,}000 & 200 & $\sim$200 & $\sim$20k  \\
+\midrule
+\multirow{4}{*}{Contradiction} & PubMed claims   & $N{=}20$  & 2{,}000 & 488 & $\sim$45  & $\sim$0.9k \\
+                               & ($K{=}3$ pairs) & $N{=}50$  & 2{,}000 & 488 & $\sim$45  & $\sim$2.3k \\
+                               &                 & $N{=}100$ & 2{,}000 & 488 & $\sim$45  & $\sim$4.5k \\
+                               &                 & $N{=}500$ & 2{,}000 & 488 & $\sim$45  & $\sim$23k  \\
+\midrule
+\multirow{3}{*}{Reorder}       & Gutenberg       & $N{=}5$   & 1{,}995 & 500 & $\sim$130 & $\sim$0.7k \\
+                               & 100w segments   & $N{=}20$  & 1{,}995 & 500 & $\sim$130 & $\sim$2.6k \\
+                               &                 & $N{=}50$  & 1{,}995 & 500 & $\sim$130 & $\sim$6.5k \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Train/eval sizes for all corpus-reasoning datasets used in this paper.} Per-doc tokens are computed with the Qwen-2.5/3.5 tokenizer; total tokens are the sum of doc tokens (excluding query/CoT/answer overhead, which adds another 100--400 tokens depending on task). For NQ, the standard variant uses $hn_{k-1}$ BM25 hard negatives; HotpotQA uses $hn_{k-2}$ (since two of the $k$ documents are gold). For grouping the eval set at $N{=}50$ is a 500-example subsample of the $N{=}20$ schema applied to 50-doc contexts.}
+\label{tab:data-stats}
+\end{table}
+
+\paragraph{Notes on data construction.}
+
+\begin{itemize}
+\item \textbf{NQ / HotpotQA:} both use the 100-word DPR Wikipedia corpus \citep{Karpukhin2020DensePR}. Negatives are mined by BM25 with simple text-overlap filters to avoid spurious near-duplicates of the gold passage. HotpotQA uses the bridge subset; the natural-language CoT for HotpotQA is generated with gemini-2.5-flash, grounded in the gold paragraphs and answer.
+\item \textbf{Outlier (wiki):} 100-word Wikipedia chunks. Each context contains $\sim$5 chunks per source article on average; the answer is the IDs of the chunks from the article with the fewest chunks (typically 2 outliers). The \emph{in-distribution-$k$} variant fixes the article count, while the \emph{scale-$k$} variant lets the article count grow with $N$.
+\item \textbf{Outlier (Amazon Reviews):} see Appendix~\ref{app:amazon-reviews}.
+\item \textbf{Grouping:} each abstract document is $\sim$200 tokens. We pick a level $L\in\{0,1,2,3\}$ in the OpenAlex concept hierarchy per example, which determines the number of groups $k$.
+\item \textbf{Contradiction:} sentences drawn from PubMed abstracts. Each example contains $K{=}3$ contradictory pairs $(d, d')$ where $d'$ is a minimally-perturbed LLM-generated contradiction (gemini-2.5-flash) of $d$. Filler documents come from disjoint abstracts to minimize unintended contradictions.
+\item \textbf{Reorder:} consecutive 100-word segments from a single Project Gutenberg book are presented in a random permutation; the answer recovers the original ordering.
+\end{itemize}

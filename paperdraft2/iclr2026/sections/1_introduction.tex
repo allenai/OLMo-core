@@ -1,0 +1,57 @@
+\section{Introduction}
+
+% important threads
+%   -> We're an analysis paper (with synthetic and real tasks)
+%   -> Focused on LCLMs
+
+We have access to numerous growing digital \emph{corpora} of unstructured data containing valuable information, from email records and literature to rapidly produced large language model (LLM) agent traces. Consequently, years of computer science effort have studied tasks involving analysis or extraction of corpus information, which we'll refer to with the blanket term \emph{corpus reasoning}. 
+
+Commonly studied ``corpus reasoning'' tasks include search / information retrieval \citep{TREC2021, Hou2025CLERCAD}, summarization \citep{Kocisk2017TheNR}, code repository analysis \citep{Bai2024LongBenchVT}, and multi-hop question answering \citep{Yang2018HotpotQAAD}, but there are many other interesting queries not captured by these commonly evaluated tasks: for example \emph{``What are all the contradicting claims?''} given a biology corpus, or \emph{``What user interactions in the corpus from this year are most different from last year's?''} given a human LLM interaction corpus. 
+
+Long-context language models (LCLMs)---large language models adapted to process large-scale (e.g. 8k or more tokens) inputs----are promising here: they handle general inputs, and with softmax attention are well-suited to directly retrieving from and comparing various parts of context. Consequently, much LCLM work is concerned with scaling LCLMs, and in particular softmax attention, to longer context lengths. Yet while great progress has been made in making LCLMs efficient (cites) this investigation has only focused on a subset of corpus reasoning tasks \cite{Yen2024HELMETHT, Bai2024LongBenchVT, Chen2026LongBenchPA}.% Prior work has made great progress towards efficient systems to handle these without performance degradation \cite{Beltagy2020LongformerTL}, but this work has focused largely on the more ``common'' tasks we describe earlier.
+
+We question an implicit assumption: \emph{Do all corpus reasoning tasks have the same architectural requirements at scale?} Across a comprehensive set of 22 realistic and synthetic corpus reasoning tasks, we find the answer to be \emph{no}. We show average comparisons in Figure~\ref{fig:motivatingtask}, where we find behavior to split cleanly across two groups: (A) In one group (blue), model performance degrades more gently with longer contexts, and performance remains near-identical even when swapping full attention out for a simple chunked attention approach (with linear complexity). (B) In the other group (orange) there's no such free lunch---performance drops rapidly at larger contexts, and expensive full attention becomes increasingly necessary for larger scale corpora. 
+
+What distinguishes these tasks? We propose a new definition of \emph{corpus task complexity} (CTC), characterizing tasks by how suboperations needed to handle them grow with corpus size---for example, a task like ``Find all contradicting claims in the literature'' may require comparing all possible claims. The blue tasks fall into the \emph{Low \cname} class, with their difficulty only scaling linearly with corpus size. Incidentally, the blue tasks \emph{also} cover a representative sample of 12 tasks most commonly used to evaluate LCLMs. The orange group, on the other hand, consists a set of 10 understudied tasks we identify as \emph{High CTC}, often scaling quadratically or more in difficulty with corpus size.
+
+% \prasann{Paragraph kind of clarifying the vision and also that this is an analysis paper (not)} \prasann{Some things missing: CTC is a new "difficulty factor". }
+
+% \prasann{talk about fact that prior work is task-agnostic}
+
+% Not only are these tasks understudied, we observe that they may behave fundamentally differently (Figure~\ref{fig:motivatingtask}): using long-context-language models (LCLM), we find that \emph{on a well-studied multi-hop retrieval task}, the performance gap between a scalable chunked attention approach with $O(N)$ complexity (which we refer to as \cmc{N}, where A is for attention) and an expensive full attention \cmc{N^2} approach remains small, even as corpus size grows. On the other hand, \emph{on a less-studied task} involving searching for contradicting claims, \emph{the gap between cheap and expensive attention grows by over 3x with the same increase in context size}. This is concerning because efficient architectures are necessary to doing corpus reasoning at scale: \cmc{N^2} attention is intractable over large corpora.
+
+% Why do tasks scale so differently with corpus size? We propose a new conceptual framework---\emph{corpus task complexity} (CTC)---that allows us to, independent of methods, characterize more challenging tasks as those which require a greater complexity of basic oracle ``operations'' with respect to corpus size $N$. We use this to categorize tasks as, for example \ctc{N} (a retrieval task where an oracle would only need to check each document once to see if they're relevant to queries), \ctc{N^2} (a task looking for a certain kind of cross-document relation, like contradiction, will need to check all possible pairs).  We assemble a diverse suite of 25 existing and synthetically constructed tasks to capture a variety of settings and covering different complexities. % We illustrate this in Figure~\ref{fig:motivatingtask}: for factoid QA, as $N$ grows to 100, we still only need 100 operations where we check \emph{``does doc i discuss Ralph Lauren?''} for each document. However, on tasks which need to check all possible document pairs, for example \emph{``What are all contradicting claims in retrieval literature?''}, this grows to 4950 operations (corresponding to number of possible pairs) to solve the task! 
+
+\begin{figure}[t]
+    \centering
+    \begin{minipage}[b]{0.95\textwidth}
+        \includegraphics[width=\textwidth]{figures/ctc_figure2.pdf}\\
+    \end{minipage}
+    \caption{Performance gap between in-domain trained models with full and efficient attention on our 22 task suite. (left) even with iid data, high complexity tasks degrade faster than low complexity ones (right) using chunked attention has low to no degradation for low complexity tasks, but large degradation on higher complexity ones}
+    
+    \label{fig:motivatingtask}
+\end{figure}
+
+
+
+
+% \prasannnote{Sewon / Amanda: Orange bars and green bars, try to do some sort of averaging maybe? Stars make things confusing. People normally think models are}
+
+% \prasannnote{High-CTC tasks are maybe just harder in general}
+
+
+% Across the large-scale corpus reasoning task suite we assemble, we find empirically that \cname greatly explains the relationship between attention-complexity and performance with larger corpus sizes. On low complexity tasks, extremely efficient and expensive standard attention approaches are largely comparable. Meanwhile, high complexity tasks consistently correspond to performance gaps emerging and growing between efficient and expensive attention methods. This is despite using Qwen-3.5, with a hybrid architecture we found most effective for chunked attention, and a new mask-mixing technique which we also empirically find to greatly improve chunked attention performance. These trends occur even at relatively small (under 32k token) context lengths, with evidence they would become even stronger at scale.
+
+This work investigates the consequences of these core findings, and throughout our extended analysis we reveal limitations obscured by relying on low-CTC evaluations. Unlike low-\cname tasks, we find evidence that high-\cname tasks are sensitive and degrade with variety of modeling decisions related to reducing computation---from model scale, to hybrid vs full models, to length generalization. For tasks with more realistic and challenging operations, these trends only magnify. 
+
+Taken together, our work identifies scalable high CTC corpus reasoning as an open research problem for LCLMs. Our comprehensive task suite, detailed analysis, and new mask-mixing approach (which increases train-time computation for better chunked inference), help provide initial paths forward. We release our task suite, code, and data to support future research in this area. 
+
+% To further expand the relationship between task complexity and their computational requirements, we conduct several further analyses, finding that (a) even within attention complexity, sparser quadratic approaches may do worse than dense ones (b) much larger models with chunked attention degrade more slowly but can still scale worse on high-\cname tasks than smaller quadratic attention models, and (c) increasing the difficulty of atomic operations within the task can increase these gaps. 
+
+% We first investigate how LCLM \emph{learning signal} is affected by more complex settings, and investigate solutions. We find LCLM gradients to be quite sparse over context, and consequently, especially on more challenging tasks and with efficient chunked \cmc{N} inference, to face issues during training. In some settings we find faithful CoTs surprisingly effective to enable more effective and stable learning, but chunked attention still often fails to learn. We propose a new approach---mask mixing---that improves chunked inference by mixing training of standard and chunked attention.
+
+% To determine whether our learning dynamics solutions solve the issue of more complex tasks, we then perform a larger suite of experiments at scale. The result---even with mask-mixing, the gap between chunked and standard attention grows rapidly at larger corpus sizes for understudied complex tasks like contradiction search. Our results align with our \cname framework: higher \cname tasks correspond to larger gaps between chunked and standard attention, suggesting that the computational needs of these tasks grow faster than \cmc{N} attention can keep up with. Further supporting this, we find that even smaller models with full attention can outperform larger chunked models. 
+
+ % Taken together, \textbf{our work helps identify an understudied class of \boldmath high \cname corpus reasoning tasks, and makes a case for more LCLM research to handle them at scale}. Our new task-centric perspective demonstrates that efficient methods that work for low-\cname tasks are insufficient at high-\cname, and that development of systems to handle such tasks at realistic 10M+ token scale may be a long-term open problem. Our comprehensive task suite, detailed analysis, and new methods like mask-mixing which increase train-time complexity for better inference, help provide initial paths forward. We release our task suite, code, and data to support future research in this area. 
+
+% \prasannnote{Do we need to be worried about openai graphwalks? Do we also need to be worried about efficient attention stuff like NSA and MoBA}
