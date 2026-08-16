@@ -1,0 +1,88 @@
+version: v2
+budget: ai2/oe-other
+description: >-
+  Descriptive historical-reference evaluation of the canonical completed pre-alignment s002
+  Stage-1 step32000 checkpoint on the exact frozen joint-v1 512-example-per-task external-
+  academic panel, including correct, geometry-matched shuffled, and blank image controls.
+tasks:
+  - name: legacy-stage1-step32000-external-academic
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/vision_alignment_external_academic_legacy_stage1.py
+      - evaluate
+      - --manifest
+      - /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/joint-v1-external-academic-v1/manifest-6ff70cf8.json
+      - --checkpoint
+      - /weka/oe-training-default/rustin/experiments/vision-moe/checkpoints/s002-stage1-corrected-clean-32k-b300-20260807/step32000
+      - --output
+      - /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/evals/joint-v1-external-academic-v1/legacy-stage1-step32000-3fa95608.json
+      - --hf-cache
+      - /weka/oe-training-default/rustin/hf-cache
+      - --max-sequence-length
+      - "8192"
+      - --max-crops
+      - "8"
+      - --max-new-tokens
+      - "24"
+      - --sequence-bucket-size
+      - "128"
+      - --checkpoint-load-threads
+      - "8"
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: 3fa95608f853bdff06c66ba013eb2bd8d7a1b5e8}
+      - {name: GANTRY_TASK_NAME, value: legacy-stage1-step32000-external-academic}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_USE_TORCHRUN, value: "1"}
+      - {name: GIT_BRANCH, value: vision-moe}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_PRE_SETUP_CMD
+        value: uv pip install --system datasets==3.6.0 pyarrow==19.0.1
+      - name: GANTRY_POST_SETUP_CMD
+        value: python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace --backend cmake
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /weka/oe-training-default/rustin/.cache/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: PYTHONPATH, value: /gantry-runtime/src}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: NCCL_DEBUG, value: INFO}
+      - {name: LOG_FILTER_TYPE, value: local_rank0_only}
+      - {name: OLMO_USE_OWN_SYMM_MEM, value: "1"}
+      - {name: OLMO_EP_MP_HIGH_PRIORITY_GROUP, value: "1"}
+      - {name: OLMO_OWN_SYMM_PREWARM, value: "1"}
+      - {name: OLMO_SYMM_VDEV2D_AUTO_BUILD, value: "1"}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 10 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: false
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 36h0m0s
