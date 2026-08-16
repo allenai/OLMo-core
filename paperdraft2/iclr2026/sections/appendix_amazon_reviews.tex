@@ -117,6 +117,67 @@ instruction, the surrounding corpus and the distractor types.
 % \paragraph{Why a separate dataset.} The wiki-100w outlier task involves grouping 100-word Wikipedia chunks by their source article, which gives the model a strong topical-similarity prior. The Amazon Reviews variant intentionally weakens that prior---ratings and categories often produce reviews of similar surface style---which makes the task harder to learn without natural-language guidance, and making the CoT ablation more informative.
 
 
+\begin{claudeblock}
+% Full-width [t] floats: 10 and 12 panels do not fit a column, and both are reference figures the
+% reader jumps to rather than reads in sequence.
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/ctc_suite_high.pdf}
+\caption{\textbf{Every high-CTC task, full versus chunked attention.} The ten $O_T(NM)$,
+$O_T(N^2)$ and $O_T(N^3)$ tasks of the suite, Qwen3.5-4B, solid = full attention and dashed =
+document-chunked with mask mixing. The panels share one axis so the \emph{gaps} are comparable by
+eye; the absolute scores are not, since each task uses its own metric. Re-ordering has no 32k rung
+(never evaluated, not a measured zero). These are the individual tasks behind the high-CTC average
+in Figure~\ref{fig:multitask_fig4}.}
+\label{fig:suite-high}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/ctc_suite_low.pdf}
+\caption{\textbf{Every low-CTC task, full versus chunked attention.} The twelve $O_T(N)$ tasks,
+drawn on the same axes and with the same conventions as Figure~\ref{fig:suite-high}. The two arms
+are close to indistinguishable on almost every panel --- which is the contrast the paper rests on:
+the same mask, the same models and the same ladders cost little here and a great deal in
+Figure~\ref{fig:suite-high}. Outlier fix-$k$ and absence have no 32k rung.}
+\label{fig:suite-low}
+\end{figure}
+\end{claudeblock}
+\begin{claudeblock}
+
+\subsection{Shared construction protocol}
+\label{app:construction}
+
+Two things are common to every task in the suite, and both matter for reproducing the numbers.
+
+\paragraph{The length ladders vary only the distractors.} Each task is evaluated at five context
+budgets (2k, 4k, 8k, 16k, 32k tokens). These are \emph{not} five independently sampled datasets.
+For each task we fix one canonical question set --- the largest existing rung, which already carries
+every gold document and the deepest distractor pool --- and derive every shorter rung from it by a
+nested prefix: the gold documents, the query and the answer are held byte-identical, a single
+deterministic shuffled order is imposed on the distractor pool, and rung $n$ keeps the golds plus
+the first $n - |\text{gold}|$ distractors. The combined list is then shuffled and every index field
+(gold document indices, hard-negative indices, and any answer string derived from position) is
+remapped.
+
+The consequence is that a shorter rung's distractor set is a strict subset of a longer rung's, so
+context length is the only variable that changes along a ladder and rung-to-rung comparisons are
+not confounded by question difficulty. Every rung holds at least 500 examples. Where a task's
+documents are too long for a budget to be met by document count alone --- OBLIQ, whose median
+example has seven long multi-gold posts --- the rung is built by a gold-preserving per-example
+token budget instead, and its 2k rung is omitted rather than truncated, because truncating it
+silently drops gold documents and scores the task at zero.
+
+\paragraph{Training data is i.i.d.\ with evaluation but disjoint from it.} Unless stated otherwise,
+each task is trained for one epoch on 20{,}000 examples split evenly across the same five context
+budgets used at evaluation, so the training distribution matches the ladder rather than a single
+length. Training examples are drawn from the same generator as the evaluation examples for that
+task, with source documents held disjoint --- fillers are sampled from abstracts, articles or
+passages that supply no gold in that example, and, for the tasks with a published split, the
+benchmark's own train/test division is respected. OBLIQ is the sole exception: it has no usable
+training split and its training data is synthesized, under a clean-room guard described above.
+\end{claudeblock}
+
 \subsection{Tasks: Overview}
 
 \subsubsection{\texorpdfstring{\ctc{N}}{OT(N)} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO, the ms-marco cross-encoder and GovReport are named in prose with no \texttt{\textbackslash citep} --- I had added six .bib entries for them and have now stripped them, since only you add citations. These are the spots that want one. 11 tasks, 9 of them new to the
@@ -127,7 +188,14 @@ These tasks decompose into per-document oracle calls $\mathrm{isrelevant}(d_i, q
 
 \textbf{Factoid QA (NQ).} \emph{Gold-ID F1.} NaturalQuestions-open \citep{izacardNQ}, with all documents --- gold, hard negative and filler --- drawn from the 100-word Wikipedia DPR corpus \citep{Karpukhin2020DensePR} served by pyserini \citep{Lin2021PyseriniAP}, so every document shares one surface format. For each question we BM25-search \citep{Robertson1976RelevanceWOBM25} for a passage containing an answer string (that becomes the gold), take top BM25 hits that do \emph{not} contain the answer as hard negatives, and fill the remaining slots with random corpus passages. Recent versions of this data hold hard negatives to $\sim$10\% of the pool with the cross-encoder filter described above; earlier all-hard-negative pools made the task an adversarial ranking problem rather than a retrieval one.
 
-\textbf{Multi-hop QA (HotpotQA).} \emph{Gold-ID F1.} The bridge subset of HotpotQA \citep{Yang2018HotpotQAAD}, where answering requires composing two gold passages; the corpus is again wikipedia-100w with BM25 hard negatives. Because the answer needs a fixed (two) number of retrieval steps, this remains \ctc{N}. We include a short natural-language chain of thought generated with gemini-2.5-flash, grounded in the gold paragraphs and the answer.
+\textbf{Multi-hop QA (HotpotQA).} \emph{Gold-ID F1.} The bridge subset of HotpotQA \citep{Yang2018HotpotQAAD}, where answering requires composing two gold passages; the corpus is again wikipedia-100w with BM25 hard negatives. Because the answer needs a fixed (two) number of retrieval steps, this remains \ctc{N}.
+\claude{The suite runs use no chain of thought for this task: the target is the gold document ID
+set and the metric is gold-ID F1, so the model retrieves rather than answers.}
+% ⚠ CORRECTED: this said "We include a short natural-language chain of thought generated with
+% gemini-2.5-flash, grounded in the gold paragraphs and the answer." The current HotpotQA ladder
+% carries no CoT field at all (eval JSONL keys are answers / documents / gold_doc_indices /
+% hard_neg_indices / queries / source) and every harvested grade JSON has cot_mode unset. The
+% gemini CoT belongs to the earlier per-N HotpotQA data, not the suite ladders.
 
 \textbf{Needle contradiction (NIAH-contra).} \emph{Set-F1.} An \ctc{N} control derived from the \ctc{N^2} contradiction task, holding the substrate fixed while dropping the complexity class: one member of a gold contradiction pair is promoted to the query (``\emph{find the document that contradicts this claim}'') and the other stays in the corpus as the needle. Every other claim, including the other gold pairs, is a distractor. Comparing this against contradiction isolates the effect of all-pairs search from the effect of PubMed claim text.
 
@@ -136,6 +204,46 @@ These tasks decompose into per-document oracle calls $\mathrm{isrelevant}(d_i, q
 \textbf{MS MARCO retrieval and reranking.} \emph{Set-F1; MRR@10 (NDCG@10 for the HELMET-format variant).} Passages come from the \texttt{msmarco-v1-passage} index. Hard negatives are taken from SentenceTransformers' precomputed BM25+dense mining and filtered by a margin on precomputed cross-encoder scores, so removing false negatives requires no model run; random fill is sampled as random pids from the 8.8M collection, which are byte-identical in format to gold and hard passages. The rerank variant reuses the identical pool but asks for the documents in ranked order, with every document carrying a real cross-encoder relevance score --- so the target order is defined for the whole pool, not just the judged part.
 
 \textbf{OBLIQ retrieval.} \emph{Set-F1.} OBLIQ-Bench (\texttt{dianetc/OBLIQ-Bench}) poses subjective, long-form queries (``\emph{find a document written in a similar style to this passage}'') over its own corpora; we port it in-context by forcing all qrel positives into the example and filling with BM25-mined distractors from the same subset. Its queries are long and its documents are full posts, making it the longest-per-document retrieval task in the suite.
+
+\begin{claudeblock}
+\emph{Synthetic training data.} OBLIQ is the one task with no usable training split: the benchmark
+ships only a few hundred real queries per subset, which yields fewer than 2{,}000 in-context
+training examples and leaves the model badly undertrained (in an early run, roughly 70\% of its
+predictions at $N{=}30$ were one of two canned strings). The bottleneck is \emph{query} poverty, not
+document poverty --- each subset corpus holds thousands of documents --- so we synthesize only the
+scarce element and keep the real corpus. For each seed document $D$:
+
+\begin{enumerate}
+\item An LLM (Qwen3-8B) writes an oblique query $Q$ that $D$ satisfies, few-shot primed with real
+(document, query) pairs so the synthetic queries match the benchmark's register --- the real queries
+turn out to be multi-gold descriptions of a property or theme, not ``find the one document that
+$\dots$''.
+\item An \emph{obliqueness} filter rejects any $Q$ with word-Jaccard overlap against $D$ above a
+per-subset cap (0.55 for the writing subset, 0.35 elsewhere), so a keyword shortcut cannot separate
+the golds --- matching real OBLIQ, whose queries are deliberately non-lexical.
+\item BM25 retrieves candidate documents for $Q$ from the same subset.
+\item A \emph{multi-gold judge} asks, for each top candidate, whether it \emph{also} satisfies $Q$.
+A yes becomes an additional gold; a no becomes a hard distractor. This is the step that matters: it
+both matches the multi-gold eval distribution and removes false negatives by labelling them rather
+than discarding them.
+\item The judged example is emitted through the same unified-format path as the real data.
+\end{enumerate}
+
+Two properties are worth stating explicitly. \textbf{Only training data is synthetic} --- the
+held-out evaluation set remains the real 488-example OBLIQ test set, since synthesizing the
+evaluation would confound the capability question with generator bias. And the generator runs
+\textbf{clean-room}: every document appearing anywhere in the evaluation file, as a gold
+\emph{or} as a distractor, is removed from the corpus before any seeding or BM25 retrieval, so no
+evaluation document can enter training as a seed, a gold or a distractor. Only the few-shot
+\emph{query} exemplars come from the evaluation set.
+
+Scaling this to roughly 15{,}000 examples improved a matched 0.8B run over the $\sim$1{,}800-example
+real-query baseline on the real test set (gold-ID F1 $0.317 \to 0.339$, exact match $0.049 \to
+0.090$). The F1 gain is about one standard error at this evaluation size and is suggestive rather
+than conclusive; the exact-match gain is larger. Notably, more data does not lift OBLIQ off its
+$\sim$0.33 floor, which we read as the task being genuinely hard rather than merely
+data-starved.
+\end{claudeblock}
 
 \textbf{Oolong.} \emph{Partial-credit score.} A port of Oolong \citep{Bertsch2025OolongEL}: a long context of labeled classification items, each tagged with a date and a user id, and a distributional question --- most/least common label, most frequent user, when label A overtook label B. We use the \emph{unlabeled} context variant, so the model must classify each item and then aggregate. Because the label set is fixed and each item is judged independently before a single aggregation step, this is \ctc{N} --- which is exactly what makes it a useful contrast with our outlier tasks below, which look superficially similar but have an unbounded category set.
 
@@ -153,13 +261,53 @@ Here the oracle operation compares a document against a \emph{category} rather t
 
 \textbf{Outlier detection (Wikipedia).} \emph{Set-F1.} Each context is filled with 100-word chunks from a handful of Wikipedia articles with imbalanced counts; the answer is the ID list of chunks belonging to the article with the fewest chunks. Article titles are withheld from the model (they would trivially leak the outlier), so the grouping signal has to come from the body text. We run two variants: \emph{scale-$k$}, where the number of source articles grows with $N$ (so $M$ grows, and the task is genuinely \ctc{NM}), and a \emph{fixed-$M$} control where the article count stays constant as $N$ grows --- the control that separates ``the gap widens because of $N$'' from ``the gap widens because of $M$''. This differs from Oolong precisely in that the category set is open: there is no fixed label vocabulary to aggregate over.
 
+\begin{claudeblock}
+\textbf{Outlier detection (Amazon Reviews).} \emph{Set-F1.} The same outlier structure on a
+different substrate: each example is $N{=}30$ customer reviews from the Amazon Reviews 2023 corpus,
+shown as review title and body only. Examples are mixed 50/50 between two variants. In the
+\emph{rating} variant a majority of reviews share one star rating and 3 outliers carry a different
+one (\emph{``find the outliers with the least common rating''}); in the \emph{category} variant the
+majority share one product category and 3 outliers come from another (\emph{``find the outliers
+from the least common category''}), with categories taken from the corpus's own product-category
+labels. Ground truth comes from the structured metadata --- the star-rating field and the category
+label --- and never from LLM labelling; since both fields are stripped from the visible text, the
+model has to read the review content to recover them.
+
+Because the label vocabulary here is \emph{fixed and small}, one labelling pass over the corpus
+suffices and the task is \ctc{N} --- which is why it groups with Oolong rather than with the
+Wikipedia outlier variants, whose category set is open. That contrast is the point of including
+it. It also weakens the topical-similarity prior the Wikipedia variant enjoys, since reviews
+sharing a rating often read alike, which makes it the harder of the two to learn without a
+natural-language chain of thought. Reviews are short ($\sim$80 tokens), making this the densest
+task in the suite in documents per token; we use 5{,}000 training and 500 evaluation examples.
+\end{claudeblock}
+
 \textbf{Grouping (OpenAlex).} \emph{Pairwise-F1 / ARI.} Given $N$ scientific abstracts and an integer $k$, partition them into $k$ groups. Gold partitions come from the OpenAlex \citep{Priem2022OpenAlexAF} concept hierarchy: we sample only papers annotated down to level L3, then per example pick a level $L \in \{L0,\ldots,L3\}$ and sample $k$ distinct concept values at that level. The level sets the granularity --- L0 gives 2--3 coarse groups, L3 gives 6--10 fine ones --- and, crucially, \textbf{the query states $k$ but never states the axis}, so the model must infer from the corpus and $k$ what granularity is being asked for. This makes grouping harder than outlier detection: the number of categories is a per-example variable rather than something to be discovered as ``one minority''. The instruction also asks for a short topic label per group before its IDs; only the IDs are scored, but we find that naming the group improves the partition itself.
 
 
-\textbf{Cross-corpus absence (xabsence).} \emph{Set-F1.} Two corpora $A$ and $B$ share one context. Almost every claim in one has a paraphrase twin in the other; exactly $k$ claims are unmatched, and the model names those orphans. The twins are LLM paraphrases filtered to \emph{low} word-overlap (Jaccard $\leq 0.3$), so unlike plain absence this cannot be solved by string matching --- it needs a semantic comparison of every $A$ claim against every $B$ claim. The paraphrase pool is built once and reused, so any $N$ or $k$ can be assembled cheaply.
+\textbf{Cross-corpus absence (xabsence).} \emph{Set-F1.} Two corpora $A$ and $B$ share one context. Almost every document in one has a twin in the other; exactly $k$ are unmatched, and the model names those orphans.
+\begin{claudeblock}
+The suite uses the \textbf{exact-copy} variant: a twin is a byte-identical copy of its partner, and
+documents are full PubMed abstracts rather than single sentences.
+
+This replaces an earlier paraphrase variant, and the reason is a leak worth recording. In that
+version a twin was a low-overlap LLM paraphrase, so corpus $B$ consisted almost entirely of
+LLM-written text --- while an orphan inserted into $B$ was in original claim form. The orphan could
+therefore be spotted from the style of that \emph{one} document, with no cross-corpus comparison at
+all, and the asymmetry shows up plainly in the scores: a trained 4B model reached 0.98 recall on
+$B$-side orphans against 0.08 on $A$-side ones. Making the twin an exact copy removes every
+per-document cue by construction --- a matched document and an orphan are drawn from the same
+distribution and are individually indistinguishable --- so the orphan can only be found by
+comparing documents across the two corpora, which is the \ctc{N^2} computation the task is meant to
+require. Using full abstracts also makes each document self-contained, at the cost that a
+token-budgeted rung holds far fewer documents than the sentence variant did.
+\end{claudeblock}
 
 
-\textbf{Query-document matching (qdmatch).} \emph{Pair set-F1.} The retrieval analogue of contradiction, and our sharpest test that the \emph{same} substrate changes class when the query structure changes. An example interleaves $M$ queries and $N$ documents under one shared numbering; only $k$ of the queries are relevant, and each of those maps to all of its gold documents. Pools are drawn so that relevant queries, distractor queries (gold withheld) and distractor documents (query withheld) are disjoint, which guarantees the only true matches are the planted ones. The model must find the sparse gold pairs among $M \times N$ combinations. We build three versions from three retrieval sources --- NQ (1 gold/query), HotpotQA bridge (2 golds/query), and OBLIQ (long abstracts) --- so difficulty from the underlying retrieval problem varies while the search structure is fixed. A layout ablation presents the items either as a query block followed by a document block, or fully interleaved.
+\textbf{Query-document matching (qdmatch).} \emph{Pair set-F1.} The retrieval analogue of contradiction, and our sharpest test that the \emph{same} substrate changes class when the query structure changes. An example interleaves $M$ queries and $N$ documents under one shared numbering; only $k$ of the queries are relevant, and each of those maps to all of its gold documents. Pools are drawn so that relevant queries, distractor queries (gold withheld) and distractor documents (query withheld) are disjoint, which guarantees the only true matches are the planted ones. The model must find the sparse gold pairs among $M \times N$ combinations. We build three versions from three retrieval sources --- NQ (1 gold/query), HotpotQA bridge (2 golds/query), and \claude{FiQA (median 2 golds/query, sparsely judged)} --- so difficulty from the underlying retrieval problem varies while the search structure is fixed.
+% ⚠ CORRECTED: this said OBLIQ. The suite's three qdmatch tasks are qdmatch_nq, qdmatch_hpqa and
+% qdmatch_fiqa -- there is no qdmatch_obliq anywhere in the data or the result tables, and the
+% CTC-QDMATCH figure in the main paper plots NQ / HotpotQA / FiQA. A layout ablation presents the items either as a query block followed by a document block, or fully interleaved.
 
 \subsubsection{\texorpdfstring{\ctc{N^2}}{OT(N2)} tasks: all-pairs search}\autonote{8 tasks, 6 new. Contradiction and
 reorder are edited old blurbs (contradiction now names both perturbation modes and the
