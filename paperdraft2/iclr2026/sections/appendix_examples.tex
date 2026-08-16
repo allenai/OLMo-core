@@ -178,29 +178,32 @@ answer in the form `Label: answer' where answer is one of the labels: incorrect,
 \emph{user} and \emph{timeline}). The model must classify every item and then aggregate --- the
 labels are not given.
 
-\subsubsection{HELMET NarrativeQA}
-
-\textbf{Instruction:} \emph{``Use the given documents to write a concise and short answer to the
-question. Answer: [answer]''}\\
-\textbf{Context (1 document, end-truncated to the target length; L=8000 rung shown):} an IMSDb movie
-script, beginning ``\emph{<html> <head><title>Tourist, The Script at IMSDb.</title> $\dots$}''\\
-\textbf{Query:} \emph{``At the beginning of the story, how has Pearce hidden himself from the
-police?''}\\
-\textbf{Reference answers:} \emph{``He has had plastic surgery to change his face.''} /
-\emph{``by having a plastic surgery''} (token-F1 against both).
-
-\subsubsection{HELMET GovReport (summarization)}
-
-\textbf{Instruction:} \emph{``Write a concise, faithful summary of the document(s) below. Cover the
-key facts and findings; do not add information that is not in the document(s).''}\\
-\textbf{Context (1 document, L=16000 rung shown):} ``\emph{Disclosure provisions that require
-commercial actors to convey specified information to consumers occupy an uneasy and shifting space in
-First Amendment jurisprudence $\dots$}''\\
-\textbf{Reference summary (ROUGE target):} ``\emph{Federal law contains a wide variety of disclosure
-requirements, including food labels, securities registrations, and disclosures about prescription
-drugs in direct-to-consumer advertising $\dots$}''
-
-% =====================================================================
+% ⚠ REMOVED FROM THE SUITE: HELMET NarrativeQA + GovReport -- not among the 22 tasks in the roster,
+% so the example no longer corresponds to anything the paper reports. Commented rather than
+% deleted; uncomment if the task returns.
+% \subsubsection{HELMET NarrativeQA}
+%
+% \textbf{Instruction:} \emph{``Use the given documents to write a concise and short answer to the
+% question. Answer: [answer]''}\\
+% \textbf{Context (1 document, end-truncated to the target length; L=8000 rung shown):} an IMSDb movie
+% script, beginning ``\emph{<html> <head><title>Tourist, The Script at IMSDb.</title> $\dots$}''\\
+% \textbf{Query:} \emph{``At the beginning of the story, how has Pearce hidden himself from the
+% police?''}\\
+% \textbf{Reference answers:} \emph{``He has had plastic surgery to change his face.''} /
+% \emph{``by having a plastic surgery''} (token-F1 against both).
+%
+% \subsubsection{HELMET GovReport (summarization)}
+%
+% \textbf{Instruction:} \emph{``Write a concise, faithful summary of the document(s) below. Cover the
+% key facts and findings; do not add information that is not in the document(s).''}\\
+% \textbf{Context (1 document, L=16000 rung shown):} ``\emph{Disclosure provisions that require
+% commercial actors to convey specified information to consumers occupy an uneasy and shifting space in
+% First Amendment jurisprudence $\dots$}''\\
+% \textbf{Reference summary (ROUGE target):} ``\emph{Federal law contains a wide variety of disclosure
+% requirements, including food labels, securities registrations, and disclosures about prescription
+% drugs in direct-to-consumer advertising $\dots$}''
+%
+% % =====================================================================
 \subsection{\texorpdfstring{\ctc{NM}}{OT(NM)} tasks}
 
 \subsubsection{Outlier detection (Wikipedia 100w)}
@@ -438,41 +441,44 @@ $\dots$''\\
 % =====================================================================
 \subsection{\texorpdfstring{\ctc{N^3}}{OT(N3)} tasks and beyond}
 
-\subsubsection{Cycle detection}
-
-\textbf{Query:} \emph{``Each claim asserts a strict comparison (the first person ranks strictly above
-the second). Find every set of claims that forms a cycle --- an impossible loop where the ranking
-comes back to where it started.''}\\
-\textbf{Context (5 of 20 claims shown; one predicate throughout: ``\emph{X scored higher on the exam
-than Y}''):}
-\begin{quote}\small
-\texttt{[2]} \emph{(gold)} ``Gita scored higher on the exam than Hugo''\\
-\texttt{[16]} \emph{(gold)} ``Bruno scored higher on the exam than Gita''\\
-\texttt{[19]} \emph{(gold)} ``Hugo scored higher on the exam than Bruno''\\
-\texttt{[1]} \emph{(background)} ``Zara scored higher on the exam than Dina''\\
-\texttt{[3]} \emph{(background)} ``Kane scored higher on the exam than Bea''\\
-\texttt{[$\cdot$ 15 more claims omitted; all background edges point forward in one global entity
-ranking, so the background graph is acyclic]}
-\end{quote}
-\textbf{Gold cycle:} \texttt{[[2, 16, 19]]} --- Gita $>$ Hugo $>$ Bruno $>$ Gita. Cycle entities also
-appear in background claims, so gold claims cannot be spotted by entity frequency.
-
-\subsubsection{Groups-of-four}
-
-\textbf{Query:} \emph{``Find every group of 4 expressions whose answers are all within 5 of each other
-(every pair in the group differs by at most 5).''}\\
-\textbf{Context (5 of 20 expressions shown):}
-\begin{quote}\small
-\texttt{[6]} \emph{(gold)} ``-92 - 51 - 76 + 115'' \emph{($=-104$)}\\
-\texttt{[10]} \emph{(gold)} ``98 - 6 - 19 - 69 - 107'' \emph{($=-103$)}\\
-\texttt{[12]} \emph{(gold)} ``-90 + 30 + 18 - 66'' \emph{($=-108$)}\\
-\texttt{[19]} \emph{(gold)} ``47 + 20 - 7 + 75 - 240'' \emph{($=-105$)}\\
-\texttt{[1]} \emph{(distractor)} ``19 - 72 - 29 + 8''\\
-\texttt{[$\cdot$ 15 more expressions omitted; distractors may sit within $X$ of up to two others, so
-incidental close pairs and triples exist, but no run of four ever forms outside the planted group]}
-\end{quote}
-\textbf{Gold group:} \texttt{[[6, 10, 12, 19]]} (values $-108 \dots -103$, spread 5).
-
+% ⚠ REMOVED FROM THE SUITE: Cycle detection + Groups-of-four -- not among the 22 tasks in the roster,
+% so the example no longer corresponds to anything the paper reports. Commented rather than
+% deleted; uncomment if the task returns.
+% \subsubsection{Cycle detection}
+%
+% \textbf{Query:} \emph{``Each claim asserts a strict comparison (the first person ranks strictly above
+% the second). Find every set of claims that forms a cycle --- an impossible loop where the ranking
+% comes back to where it started.''}\\
+% \textbf{Context (5 of 20 claims shown; one predicate throughout: ``\emph{X scored higher on the exam
+% than Y}''):}
+% \begin{quote}\small
+% \texttt{[2]} \emph{(gold)} ``Gita scored higher on the exam than Hugo''\\
+% \texttt{[16]} \emph{(gold)} ``Bruno scored higher on the exam than Gita''\\
+% \texttt{[19]} \emph{(gold)} ``Hugo scored higher on the exam than Bruno''\\
+% \texttt{[1]} \emph{(background)} ``Zara scored higher on the exam than Dina''\\
+% \texttt{[3]} \emph{(background)} ``Kane scored higher on the exam than Bea''\\
+% \texttt{[$\cdot$ 15 more claims omitted; all background edges point forward in one global entity
+% ranking, so the background graph is acyclic]}
+% \end{quote}
+% \textbf{Gold cycle:} \texttt{[[2, 16, 19]]} --- Gita $>$ Hugo $>$ Bruno $>$ Gita. Cycle entities also
+% appear in background claims, so gold claims cannot be spotted by entity frequency.
+%
+% \subsubsection{Groups-of-four}
+%
+% \textbf{Query:} \emph{``Find every group of 4 expressions whose answers are all within 5 of each other
+% (every pair in the group differs by at most 5).''}\\
+% \textbf{Context (5 of 20 expressions shown):}
+% \begin{quote}\small
+% \texttt{[6]} \emph{(gold)} ``-92 - 51 - 76 + 115'' \emph{($=-104$)}\\
+% \texttt{[10]} \emph{(gold)} ``98 - 6 - 19 - 69 - 107'' \emph{($=-103$)}\\
+% \texttt{[12]} \emph{(gold)} ``-90 + 30 + 18 - 66'' \emph{($=-108$)}\\
+% \texttt{[19]} \emph{(gold)} ``47 + 20 - 7 + 75 - 240'' \emph{($=-105$)}\\
+% \texttt{[1]} \emph{(distractor)} ``19 - 72 - 29 + 8''\\
+% \texttt{[$\cdot$ 15 more expressions omitted; distractors may sit within $X$ of up to two others, so
+% incidental close pairs and triples exist, but no run of four ever forms outside the planted group]}
+% \end{quote}
+% \textbf{Gold group:} \texttt{[[6, 10, 12, 19]]} (values $-108 \dots -103$, spread 5).
+%
 \subsubsection{Textgroups}
 
 \textbf{Query:} \emph{``Each passage has a value: the number of nouns. Find every group of 3 passages

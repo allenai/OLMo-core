@@ -180,9 +180,7 @@ training split and its training data is synthesized, under a clean-room guard de
 
 \subsection{Tasks: Overview}
 
-\subsubsection{\texorpdfstring{\ctc{N}}{OT(N)} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO, the ms-marco cross-encoder and GovReport are named in prose with no \texttt{\textbackslash citep} --- I had added six .bib entries for them and have now stripped them, since only you add citations. These are the spots that want one. 11 tasks, 9 of them new to the
-paper. The NQ and HotpotQA paragraphs are edited versions of the old blurbs --- NQ now records that
-current data caps hard negatives at $\sim$10\% via the CE filter, which the old text did not.}
+\subsubsection{\texorpdfstring{\ctc{N}}{OT(N)} tasks: one pass over the corpus}\autonote{UNCITED ON PURPOSE: BEIR, SciFact, FiQA, MS MARCO and the ms-marco cross-encoder are named in prose with no \texttt{\textbackslash citep} --- these are the spots that want one, since only you add citations. GovReport was in this list and has been dropped with the NarrativeQA/GovReport paragraph. The NQ and HotpotQA paragraphs are edited versions of the old blurbs --- NQ now records that current data caps hard negatives at $\sim$10\% via the CE filter, which the old text did not.}
 
 These tasks decompose into per-document oracle calls $\mathrm{isrelevant}(d_i, q)$: a single sweep suffices, and nothing about the answer depends on how two fillers relate to each other.
 
@@ -247,7 +245,9 @@ data-starved.
 
 \textbf{Oolong.} \emph{Partial-credit score.} A port of Oolong \citep{Bertsch2025OolongEL}: a long context of labeled classification items, each tagged with a date and a user id, and a distributional question --- most/least common label, most frequent user, when label A overtook label B. We use the \emph{unlabeled} context variant, so the model must classify each item and then aggregate. Because the label set is fixed and each item is judged independently before a single aggregation step, this is \ctc{N} --- which is exactly what makes it a useful contrast with our outlier tasks below, which look superficially similar but have an unbounded category set.
 
-\textbf{NarrativeQA and GovReport (HELMET ports).} \emph{Token-F1; ROUGE.} Two HELMET \citep{Yen2024HELMETHT} long-document tasks kept in their native form: question answering over a single book or screenplay \citep{Kocisk2017TheNR}, and summarization of a government report. Both are single-document tasks --- there is no cross-document structure to exploit --- and serve as the ``long context is not the same as many documents'' anchor of the suite. These are the two tasks whose metrics are not ID-based, and we do not use them for headline gap-growth claims.
+% ⚠ REMOVED FROM THE SUITE: NarrativeQA and GovReport are not among the 22 roster tasks
+% (they are single-document HELMET ports with non-ID metrics). Commented, not deleted.
+% \textbf{NarrativeQA and GovReport (HELMET ports).} \emph{Token-F1; ROUGE.} Two HELMET \citep{Yen2024HELMETHT} long-document tasks kept in their native form: question answering over a single book or screenplay \citep{Kocisk2017TheNR}, and summarization of a government report. Both are single-document tasks --- there is no cross-document structure to exploit --- and serve as the ``long context is not the same as many documents'' anchor of the suite. These are the two tasks whose metrics are not ID-based, and we do not use them for headline gap-growth claims.
 
 \textbf{Absence.} \emph{Set-F1 over removed IDs.} The inverse of needle-in-a-haystack, following AbsenceBench (arXiv:2506.11440): the model sees the full numbered corpus, then a second copy with some elements deleted, and must name what is missing. We derive it over our own corpora: each document is deleted independently with probability $p$, scattered single deletions being the hard regime. Establishing that item $i$ is absent requires checking it against the second corpus, hence \ctc{N^2}.
 
@@ -325,8 +325,10 @@ but is reported as pair set-F1 with EM alongside.}
 
 \textbf{Reordering.} \emph{Kendall-$\tau$.} $N$ consecutive segments of a single Project Gutenberg book, presented in random order, with the task of recovering the original ordering as a permutation of document IDs --- a harder version of the reconstruction tasks in \citet{Chen2026LongBenchPA}. Chapter headings are stripped so the model cannot shortcut via ``Chapter 3''. Because sorting requires comparisons between arbitrary pairs of segments, we label it \ctc{N^2}. A Wikipedia variant (consecutive 100-word chunks from one article) exists as a harder, less narrative-sequential control.
 
-\subsubsection{Beyond \texorpdfstring{\ctc{N^2}}{OT(N2)}}\autonote{Entirely new: cycle, groups-of-4, textgroups. These
-were listed by name only (``groups of 4 / cycles (higher than \$n\^{}2\$)'') in the old draft.}
+\subsubsection{Beyond \texorpdfstring{\ctc{N^2}}{OT(N2)}}
+% The \autonote here named cycle and groups-of-4 alongside textgroups. Both of those were cut from
+% the roster and their descriptions are already commented out below, so the note pointed at text
+% that no longer exists. Textgroups is the only surviving task in this class.
 
 % Three tasks require joint consideration of triples or longer chains, which no pairwise sweep can produce. They are deliberately short in tokens: the point is that difficulty scales with the number of \emph{items}, not the raw context length.
 
