@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Iterator, Optional
 
 import torch
 import torch.distributed as dist
@@ -56,3 +56,30 @@ class MultimodalLMEvaluator(Evaluator):
 
     def reset_metrics(self) -> None:
         self.ce_loss.reset()
+
+
+class MultimodalBlankImageEvaluator(MultimodalLMEvaluator):
+    """Evaluate response loss after replacing normalized image patches with zeros.
+
+    The token sequence, response labels, crop geometry, and image-placement indices remain
+    unchanged. Because image preprocessing normalizes pixel channels, zeros represent a
+    mean-color blank control without introducing crop-count or padding mismatches. Comparing its
+    CE against the ordinary evaluator is a content-reliance diagnostic; it is not by itself a
+    complete measure of visual understanding.
+
+    :param args: Positional arguments forwarded to :class:`MultimodalLMEvaluator`.
+    :param kwargs: Keyword arguments forwarded to :class:`MultimodalLMEvaluator`.
+
+    :raises OLMoConfigurationError: If a batch lacks an image tensor.
+    """
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        for batch in super().__iter__():
+            images = batch.get("images")
+            if not isinstance(images, torch.Tensor):
+                raise OLMoConfigurationError(
+                    "Image-ablation evaluation requires a tensor-valued 'images' batch field"
+                )
+            transformed = dict(batch)
+            transformed["images"] = torch.zeros_like(images)
+            yield transformed

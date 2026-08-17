@@ -160,6 +160,7 @@ class OLMoDDPTrainModule(TrainModule):
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
+        self._frozen_ep_checkpoint_mesh: Optional[DeviceMesh] = None
         self.pp_group = None
         self.dp_group = None
         self.tp_group = None
@@ -1198,9 +1199,16 @@ class OLMoDDPTrainModule(TrainModule):
 
         metadata = reader.read_metadata()
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
+        frozen_checkpoint_model_params = self._frozen_checkpoint_model_param_state_dict_for_load(
+            checkpoint_keys
+        )
         frozen_checkpoint_params = self._frozen_checkpoint_param_state_dict_for_load(
             checkpoint_keys
         )
+        if frozen_checkpoint_params.keys() != frozen_checkpoint_model_params.keys():
+            raise RuntimeError(
+                "Frozen checkpoint tensor and model-parameter mappings contain different keys"
+            )
 
         if self.eval_only:
             sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
@@ -1295,7 +1303,7 @@ class OLMoDDPTrainModule(TrainModule):
                             sd_to_load.pop(key)
 
             if not loaded_model_directly:
-                frozen_param_ids = {id(param) for param in frozen_checkpoint_params.values()}
+                frozen_param_ids = {id(param) for param in frozen_checkpoint_model_params.values()}
                 allowed_missing_keys = {
                     f"{name}.main"
                     for group in optim.param_groups
@@ -1316,11 +1324,20 @@ class OLMoDDPTrainModule(TrainModule):
                     # planner=FlatLoadPlanner(),
                 )
 
-                sd_to_load = {
+                loaded_optimizer_state = {
                     current_key: checkpoint_sd[checkpoint_key]
                     for checkpoint_key, current_key in checkpoint_to_current.items()
                 }
-                optim.load_state_dict(sd_to_load)
+                # A model-only phase transition can unfreeze parameters that were stored under
+                # ``frozen_model.*`` in the parent checkpoint. Their fresh optimizer masters are
+                # intentionally absent from that checkpoint, but OLMo's EP optimizer requires a
+                # main tensor for every expert parameter during ``load_state_dict``. Preserve the
+                # freshly initialized main tensors until the frozen-model load below restores the
+                # model weights and copies them into those masters.
+                for current_key in allowed_missing_keys:
+                    if current_key not in loaded_optimizer_state and current_key in sd_to_load:
+                        loaded_optimizer_state[current_key] = sd_to_load[current_key]
+                optim.load_state_dict(loaded_optimizer_state)
 
                 # load into model params
                 optim._copy_main_params_to_model_params()
@@ -1358,7 +1375,7 @@ class OLMoDDPTrainModule(TrainModule):
             )
             if not self.eval_only:
                 optim = self._require_optimizer()
-                frozen_param_ids = {id(param) for param in frozen_checkpoint_params.values()}
+                frozen_param_ids = {id(param) for param in frozen_checkpoint_model_params.values()}
                 param_names = {
                     name
                     for group in optim.param_groups
@@ -1482,9 +1499,11 @@ class OLMoDDPTrainModule(TrainModule):
 
     def _frozen_model_param_state_dict(self) -> Dict[str, torch.Tensor]:
         frozen_state: Dict[str, torch.Tensor] = {}
+        ep_param_ids = self._ep_sharded_model_param_ids()
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
         for model_part in self.model_parts:
             for name, param in model_part.named_parameters():
-                if param.requires_grad:
+                if param.requires_grad or id(param) in optimizer_owned_anchor_ids:
                     continue
                 key = self._FROZEN_MODEL_PARAM_KEY_PREFIX + self._strip_wrapper_prefixes(name)
                 if key in frozen_state:
@@ -1492,8 +1511,104 @@ class OLMoDDPTrainModule(TrainModule):
                         f"Duplicate frozen parameter checkpoint key '{key}'; parameter names "
                         "collide across model parts."
                     )
-                frozen_state[key] = param
+                frozen_state[key] = (
+                    self._ep_model_param_checkpoint_view(param)
+                    if id(param) in ep_param_ids
+                    else param
+                )
         return frozen_state
+
+    def _ep_sharded_model_param_ids(self) -> set[int]:
+        """Return the identities of parameters owned by expert-parallel modules."""
+        param_ids: set[int] = set()
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
+        for model_part in self.model_parts:
+            for module in model_part.modules():
+                if not getattr(module, "_ep_sharded", False):
+                    continue
+                param_ids.update(
+                    id(param)
+                    for param in module.parameters(recurse=True)
+                    if id(param) not in optimizer_owned_anchor_ids
+                )
+        return param_ids
+
+    def _optimizer_owned_anchor_param_ids(self) -> set[int]:
+        """Return model-anchor identities whose authoritative weights live in optimizer stores."""
+        anchor_ids: set[int] = set()
+        for model_part in self.model_parts:
+            for module in model_part.modules():
+                named_weight_stores = getattr(module, "named_fp8_weight_stores", None)
+                if named_weight_stores is None:
+                    named_weight_stores = getattr(module, "named_mxfp8_expert_weights", None)
+                if named_weight_stores is None:
+                    continue
+                for _, store in named_weight_stores():
+                    if not getattr(store, "optimizer_enabled", False):
+                        continue
+                    anchor = getattr(store, "anchor_param", None)
+                    if anchor is not None:
+                        anchor_ids.add(id(anchor))
+        return anchor_ids
+
+    def _ep_model_param_checkpoint_view(self, param: torch.nn.Parameter) -> DTensor:
+        """Expose an EP-local model parameter as a topology-neutral checkpoint tensor.
+
+        Expert weights are replicated over EP-DP and sharded over EP-MP. Flattening them on a
+        mesh ordered as ``(ep_mp, ep_dp)`` gives distributed checkpoint the same logical layout
+        used for expert optimizer state: one shard per expert rank, with duplicate EP-DP copies
+        safely deduplicated by the save planner.
+        """
+        moe_mesh = self.world_mesh.get("moe")
+        if moe_mesh is None:
+            raise RuntimeError("Cannot checkpoint an EP-sharded parameter without an MoE mesh")
+
+        checkpoint_mesh = self._frozen_ep_checkpoint_mesh
+        if checkpoint_mesh is None:
+            ep_mesh = moe_mesh["ep_dp", "ep_mp"]
+            checkpoint_mesh = DeviceMesh(
+                ep_mesh.device_type,
+                ep_mesh.mesh.permute(1, 0).contiguous(),
+                mesh_dim_names=("ep_mp", "ep_dp"),
+                _init_backend=False,
+            )
+            self._frozen_ep_checkpoint_mesh = checkpoint_mesh
+
+        flat_local = param.data.view(-1)
+        return DTensor.from_local(
+            flat_local,
+            device_mesh=checkpoint_mesh,
+            placements=[Shard(0), Replicate()],
+            shape=(flat_local.numel() * moe_mesh["ep_mp"].size(),),
+            stride=(1,),
+            run_check=False,
+        )
+
+    def _frozen_checkpoint_model_param_state_dict_for_load(
+        self, checkpoint_keys: Collection[str]
+    ) -> Dict[str, torch.nn.Parameter]:
+        """Map stable frozen checkpoint keys to their actual model parameters."""
+        state: Dict[str, torch.nn.Parameter] = {}
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                if id(param) in optimizer_owned_anchor_ids:
+                    continue
+                key = self._FROZEN_MODEL_PARAM_KEY_PREFIX + self._strip_wrapper_prefixes(name)
+                if key not in checkpoint_keys:
+                    continue
+                optimizer_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
+                if optimizer_key is not None and optimizer_key.endswith(".main"):
+                    # Prefer the authoritative optimizer master when a legacy FP8-only
+                    # checkpoint contains both it and a placeholder frozen anchor.
+                    continue
+                if key in state:
+                    raise RuntimeError(
+                        f"Duplicate frozen parameter checkpoint key '{key}'; parameter names "
+                        "collide across model parts."
+                    )
+                state[key] = param
+        return state
 
     def _frozen_checkpoint_param_state_dict_for_load(
         self, checkpoint_keys: Collection[str]
@@ -1504,19 +1619,18 @@ class OLMoDDPTrainModule(TrainModule):
         loaded (for example, the vision tower between multimodal pretraining and SFT).
         Match by stable model name rather than the current ``requires_grad`` value.
         """
-        state: Dict[str, torch.Tensor] = {}
-        for model_part in self.model_parts:
-            for name, param in model_part.named_parameters():
-                key = self._FROZEN_MODEL_PARAM_KEY_PREFIX + self._strip_wrapper_prefixes(name)
-                if key not in checkpoint_keys:
-                    continue
-                if key in state:
-                    raise RuntimeError(
-                        f"Duplicate frozen parameter checkpoint key '{key}'; parameter names "
-                        "collide across model parts."
-                    )
-                state[key] = param
-        return state
+        model_params = self._frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys)
+        ep_param_ids = self._ep_sharded_model_param_ids()
+        return {
+            key: (
+                self._ep_model_param_checkpoint_view(param)
+                if id(param) in ep_param_ids
+                else param.data.view(-1)
+                if key.endswith(".main")
+                else param
+            )
+            for key, param in model_params.items()
+        }
 
     def _resolve_optimizer_checkpoint_key(
         self, state_key: str, checkpoint_keys: Collection[str]
@@ -2424,12 +2538,12 @@ class OLMoDDPTrainModule(TrainModule):
             "labels": None if labels is None else self._debug_tensor_payload(labels),
             "loss": self._debug_tensor_payload(lm_output.loss),
             "ce_loss": self._debug_tensor_payload(lm_output.ce_loss),
-            "z_loss": None
-            if lm_output.z_loss is None
-            else self._debug_tensor_payload(lm_output.z_loss),
-            "logits": None
-            if lm_output.logits is None
-            else self._debug_tensor_payload(lm_output.logits),
+            "z_loss": (
+                None if lm_output.z_loss is None else self._debug_tensor_payload(lm_output.z_loss)
+            ),
+            "logits": (
+                None if lm_output.logits is None else self._debug_tensor_payload(lm_output.logits)
+            ),
         }
         torch.save(payload, self._debug_dump_path("logits", f"mb{micro_batch_idx:03d}"))
 

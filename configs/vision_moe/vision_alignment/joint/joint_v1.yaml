@@ -1,0 +1,50 @@
+version: 1
+name: vision-alignment-joint-v1
+description: >-
+  Production joint continued-pretraining phase from the exact perception treatment
+  checkpoint, with the pinned 8,192-token visual projection and exact native OLMo-mix-0925
+  train/holdout replay.
+phase: joint
+launch:
+  cluster: ai2/holmes
+  workspace: ai2/molmofication
+  budget: ai2/oe-other
+  num_nodes: 2
+  num_gpus: 8
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --data.pixmo_cap_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/pixmo-cap-content-disjoint-v1/dataset
+  - --data.joint_visual_projection_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/joint-visual-projection-v1/vision-alignment-joint-visual-projection.json
+  - --data.joint_visual_projection_sha256=11c1df56d7fbc270a9eff999193476c0c578c6964017d217a320b3d39305a730
+  - --data.source_audit_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/joint-source-audit-v1.json
+  - --data.source_audit_fingerprint=434ea76205bca8361f3291d90665af1cd36713ef238b18b1c450ff33ceab4b14
+  - --data.mixture.mean_loss_weight.audited_alignment=18.266647445358103
+  - --data.mixture.mean_loss_weight.cosyn_point=20.201689065172104
+  - --data.mixture.mean_loss_weight.count_numeric=3.464101552963257
+  - --data.mixture.mean_loss_weight.native_text_replay=8191
+  - --data.mixture.mean_loss_weight.ocr_document=4.189212302095257
+  - --data.mixture.mean_loss_weight.pixmo_caption=29.160138869367074
+  - --data.mixture.mean_loss_weight.pixmo_points_basic=33.28980797799886
+  - --data.mixture.mean_loss_weight.pixmo_points_high_frequency=28.820370947258198
+  - --data.mixture.mean_loss_weight.pixmo_transcript=29.65188992714684
+  - >-
+    --data.native_text_replay={manifest_path: /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/s002-compact-replay-v3/native-text-replay-train.json, expected_fingerprint: 9e4396179f003d858126da9c631622622c175635ac05f7db6c277de2eac3dc26, expected_parent_checkpoint: /weka/oe-training-default/robertb/s002-step125500, expected_parent_mix: OLMo-mix-0925, expected_parent_paths_sha256: f1155957f4f249fc17e1c7067512e7d881ce6675c6b854d5ce089c649cec1c2d, verification_receipt_path: /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/s002-compact-replay-v3/native-text-replay-verification.json, expected_verification_receipt_sha256: cc94a2387059a83221075cd48b74ad9703e9763eed800a0bdf3445221793f62d, validate_source_files: true, verify_source_hashes: false, validate_token_ids: true, max_open_files: 8}
+  - >-
+    --evaluation.native_text_holdout={manifest_path: /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/s002-compact-replay-v3/native-text-replay-holdout.json, expected_fingerprint: 6418aa4e1c1652ff4a9c504a9eed883fd5d346bdbccbda3ceae2575da29a2766, expected_parent_checkpoint: /weka/oe-training-default/robertb/s002-step125500, expected_parent_mix: OLMo-mix-0925, expected_parent_paths_sha256: f1155957f4f249fc17e1c7067512e7d881ce6675c6b854d5ce089c649cec1c2d, verification_receipt_path: /weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/s002-compact-replay-v3/native-text-replay-verification.json, expected_verification_receipt_sha256: cc94a2387059a83221075cd48b74ad9703e9763eed800a0bdf3445221793f62d, validate_source_files: true, verify_source_hashes: false, validate_token_ids: true, max_open_files: 8}
+  - --initialization.checkpoint=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/checkpoints/vision-alignment-perception-treatment-v1/step4000
+  - --initialization.parent_config_sha256=6e6da90df7048d74fe611c45032b8c7b5c9846725a2029492b82353589ceca23
+  - --evaluation.interval=500
+  - --evaluation.examples_per_source=512
+  - --evaluation.eval_on_startup=true
+  - --evaluation.eval_on_finish=true
+  - --trainer.max_duration.value=16000
+  - --trainer.callbacks.checkpointer.save_interval=4000
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=1600
+  - --trainer.callbacks.checkpointer.fixed_steps=null
+  - --trainer.callbacks.checkpointer.max_checkpoints=6
+  - --global_batch_size=1048576
+  - --data_seed=95818
+  - --init_seed=6198
+  - --checkpoint_load_threads=8
+  - --router_lb_loss_weight=0.015

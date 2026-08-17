@@ -1,4 +1,4 @@
-"""Train module for Molmo2 :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training.
+"""Train module for :class:`~olmo_core.nn.vision.MultimodalLM` training.
 
 :class:`MultimodalTransformerTrainModule` extends :class:`TransformerTrainModule` for a
 :class:`~olmo_core.nn.vision.MultimodalLM` (a plain ``nn.Module``, *not* a
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -579,6 +580,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         response_logits_only: bool = False,
         diagnostics_interval: Optional[int] = None,
         train_embedding_rows: Optional[List[int]] = None,
+        source_loss_mass_targets: Optional[Dict[str, float]] = None,
         **kwargs,
     ):
         from olmo_core.nn.vision import MultimodalOLMoDDPModel
@@ -625,6 +627,15 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             log.info("Applied activation checkpointing to the vision connector")
         self.response_logits_only = response_logits_only
         self.diagnostics_interval = diagnostics_interval
+        self.source_loss_mass_targets = dict(source_loss_mass_targets or {})
+        if self.source_loss_mass_targets and (
+            any(
+                not math.isfinite(value) or value <= 0
+                for value in self.source_loss_mass_targets.values()
+            )
+            or abs(sum(self.source_loss_mass_targets.values()) - 1.0) > 1e-6
+        ):
+            raise OLMoConfigurationError("source_loss_mass_targets must be positive and sum to one")
         super().__init__(model, *args, **kwargs)
 
         # OLMoDDP materializes meta-device weights inside ``super().__init__`` with ``to_empty``,
@@ -756,6 +767,10 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         token_mask = batch.get("router_token_mask")
         if token_mask is None:
             return
+        if getattr(self, "source_loss_mass_targets", None) and (
+            getattr(self, "_trainer", None) is None or self._diagnostics_enabled_for_step()
+        ):
+            self._record_source_data_metrics(batch, token_mask)
         self.record_metric(
             "packing fill",
             token_mask.float().mean(),
@@ -814,6 +829,99 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             self.record_metric(
                 "pooled image tokens per sequence",
                 pooled_counts.float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+
+    def _record_source_data_metrics(self, batch: Dict[str, Any], token_mask: torch.Tensor) -> None:
+        """Record globally summed examples, tokens, and weighted loss mass by source.
+
+        The configured mixture targets are expressed in *global supervised-loss mass*.
+        Computing a ratio on each DP rank and averaging those ratios is not equivalent to
+        dividing globally summed source weights by the globally summed total, especially when
+        dense native-text rows and short response-only visual rows land on different ranks.
+        This method therefore performs one stacked DP reduction at the diagnostics cadence and
+        derives every reported share from those global sums.
+        """
+        packed_sources = batch.get("pack_source_names")
+        example_ids = batch.get("example_ids")
+        loss_masks = batch.get("loss_masks")
+        labels = batch.get("labels")
+        if packed_sources is None or example_ids is None or loss_masks is None or labels is None:
+            raise OLMoConfigurationError(
+                "Per-source telemetry requires packed source names, example IDs, labels, "
+                "and loss masks"
+            )
+        if len(packed_sources) != int(example_ids.shape[0]):
+            raise OLMoConfigurationError("Packed source metadata does not match the rank batch")
+        metric_names = (
+            "examples",
+            "tokens",
+            "positive_tokens",
+            "loss_weight",
+            "active_loss_weight",
+        )
+        stats: Dict[str, Dict[str, torch.Tensor]] = {
+            source_name: {name: loss_masks.new_zeros(()) for name in metric_names}
+            for source_name in self.source_loss_mass_targets
+        }
+        label_ignore_index = getattr(self, "label_ignore_index", -100)
+        for row, source_names in enumerate(packed_sources):
+            for example_id, source_name in enumerate(source_names):
+                if source_name not in self.source_loss_mass_targets:
+                    raise OLMoConfigurationError(
+                        f"Observed unconfigured source {source_name!r} in packed telemetry"
+                    )
+                positions = (example_ids[row] == example_id) & token_mask[row]
+                observed_stats = stats[source_name]
+                active_positions = positions & (labels[row] != label_ignore_index)
+                observed_stats["examples"] += 1
+                observed_stats["tokens"] += positions.sum()
+                observed_stats["positive_tokens"] += (
+                    (loss_masks[row] > 0) & active_positions
+                ).sum()
+                observed_stats["loss_weight"] += (loss_masks[row] * positions).sum()
+                observed_stats["active_loss_weight"] += (loss_masks[row] * active_positions).sum()
+
+        source_names = tuple(self.source_loss_mass_targets)
+        global_stats = torch.stack(
+            [stats[source_name][name] for source_name in source_names for name in metric_names]
+        )
+        if is_distributed():
+            global_stats = move_to_device(global_stats, self.device)
+            dist.all_reduce(global_stats, group=self.dp_process_group)
+        global_stats = global_stats.reshape(len(source_names), len(metric_names))
+        stats = {
+            source_name: {
+                name: global_stats[source_index, metric_index]
+                for metric_index, name in enumerate(metric_names)
+            }
+            for source_index, source_name in enumerate(source_names)
+        }
+        total_loss_weight = sum(
+            (source_stats["loss_weight"] for source_stats in stats.values()),
+            start=global_stats.new_zeros(()),
+        ).clamp_min(1.0)
+        for source_name, target in self.source_loss_mass_targets.items():
+            metric_stats = stats[source_name]
+            for metric_name, value in metric_stats.items():
+                self.record_metric(
+                    f"source/{source_name}/{metric_name}",
+                    value,
+                    # Every DP rank holds the identical already-summed tensor.
+                    ReduceType.mean,
+                    namespace="data",
+                )
+            realized_share = metric_stats["loss_weight"] / total_loss_weight
+            self.record_metric(
+                f"source/{source_name}/loss_mass_share",
+                realized_share,
+                ReduceType.mean,
+                namespace="data",
+            )
+            self.record_metric(
+                f"source/{source_name}/loss_mass_target_abs_error",
+                (realized_share - target).abs(),
                 ReduceType.mean,
                 namespace="data",
             )
@@ -1163,7 +1271,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             )
         return None
 
-    def _frozen_checkpoint_param_state_dict_for_load(self, checkpoint_keys):
+    def _frozen_checkpoint_model_param_state_dict_for_load(self, checkpoint_keys):
         """Load frozen multimodal parameters from stable or native optimizer-main keys.
 
         Native s002 checkpoints predate ``frozen_model.*`` entries and store every model tensor
@@ -1171,18 +1279,23 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         recipe is absent from the current optimizer state, so explicitly map that native tensor
         onto the frozen model parameter without routing trainable masters through BF16.
         """
-        state = super()._frozen_checkpoint_param_state_dict_for_load(checkpoint_keys)
+        state = super()._frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys)
         stable_prefix = self._FROZEN_MODEL_PARAM_KEY_PREFIX
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
         for model_part in self.model_parts:
             for name, param in model_part.named_parameters():
-                if param.requires_grad:
+                if param.requires_grad or id(param) in optimizer_owned_anchor_ids:
                     continue
                 stable_key = stable_prefix + self._strip_wrapper_prefixes(name)
                 if stable_key in state:
                     continue
                 checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
                 if checkpoint_key is not None and checkpoint_key.endswith(".main"):
-                    state[checkpoint_key] = param.data.view(-1)
+                    if checkpoint_key in state:
+                        raise RuntimeError(
+                            f"Multiple frozen parameters map to checkpoint key '{checkpoint_key}'"
+                        )
+                    state[checkpoint_key] = param
         return state
 
     def _resolve_optimizer_checkpoint_key(self, state_key: str, checkpoint_keys) -> Optional[str]:
@@ -1217,6 +1330,8 @@ class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
     diagnostics_interval: Optional[int] = None
     train_embedding_rows: Optional[List[int]] = None
     """Embedding rows allowed to receive gradients; all other rows are held fixed."""
+    source_loss_mass_targets: Optional[Dict[str, float]] = None
+    """Optional expected source loss-mass shares that enable online delivery telemetry."""
 
     def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
         return MultimodalOLMoDDPTrainModule(**kwargs)

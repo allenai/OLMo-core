@@ -1,0 +1,24 @@
+version: 1
+name: vision-alignment-bridge-synthetic-smoke-v2
+description: >-
+  Synthetic one-step smoke for the separate vision-alignment connector bridge. This is not a
+  data-quality or model-quality experiment.
+phase: bridge
+launch:
+  cluster: ai2/holmes
+  workspace: ai2/molmofication
+  budget: ai2/oe-other
+  num_nodes: 2
+  num_gpus: 8
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --data.pixmo_cap_path=synthetic
+  - --data.allow_unpinned_synthetic_smoke=true
+  - --data.mixture.mean_loss_weight.pixmo_caption=11.17857351899147
+  - --data.mixture.mean_loss_weight.pixmo_transcript=11.178573459386826
+  - --trainer.max_duration.value=1
+  - --trainer.callbacks.checkpointer.save_interval=1
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=null
+  - --evaluation.interval=null
+  - --data.prefetch_workers=0

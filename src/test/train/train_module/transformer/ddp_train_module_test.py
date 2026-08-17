@@ -5,8 +5,11 @@ from typing import Optional
 import pytest
 import torch
 import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 
+import olmo_core.train.train_module.transformer.multimodal_train_module as multimodal_train_module
 from olmo_core.config import DType
+from olmo_core.distributed.checkpoint import RemoteFileSystemReader
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
@@ -371,6 +374,36 @@ def test_multimodal_checkpoint_frozen_params_can_become_trainable():
     assert checkpoint_to_current == {"lm.weight.main": "lm.weight.main"}
 
 
+def test_frozen_checkpoint_skips_optimizer_owned_fp8_anchors():
+    class _WeightStore:
+        optimizer_enabled = True
+
+        def __init__(self, anchor_param):
+            self.anchor_param = anchor_param
+
+    class _Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.anchor = torch.nn.Parameter(torch.ones(4), requires_grad=False)
+            self.store = _WeightStore(self.anchor)
+
+        def named_fp8_weight_stores(self):
+            return [("anchor", self.store)]
+
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    model = _Model()
+    object.__setattr__(train_module, "model_parts", [model])
+
+    assert train_module._optimizer_owned_anchor_param_ids() == {id(model.anchor)}
+    assert train_module._frozen_model_param_state_dict() == {}
+    assert (
+        train_module._frozen_checkpoint_model_param_state_dict_for_load(
+            {"frozen_model.anchor", "anchor.main"}
+        )
+        == {}
+    )
+
+
 def test_multimodal_loss_divisor_uses_float_weights():
     train_module = object.__new__(MultimodalOLMoDDPTrainModule)
     train_module.label_ignore_index = -100
@@ -425,6 +458,86 @@ def test_multimodal_data_metrics_report_packing_and_token_density():
     torch.testing.assert_close(recorded["data/image token density"][0], torch.tensor(2 / 8))
     torch.testing.assert_close(recorded["data/examples per sequence"][0], torch.tensor(1.5))
     assert all(reduction == ReduceType.mean for _, reduction in recorded.values())
+
+
+def test_multimodal_source_metrics_report_realized_loss_mass():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.source_loss_mass_targets = {"caption": 0.75, "native": 0.25}
+    recorded = {}
+
+    def record_metric(name, value, reduce_type=None, namespace=None, **kwargs):
+        del kwargs
+        recorded[f"{namespace}/{name}"] = (value, reduce_type)
+
+    train_module.record_metric = record_metric
+    train_module._record_data_metrics(
+        {
+            "router_token_mask": torch.tensor([[True, True, True, True, True, False]]),
+            "loss_masks": torch.tensor([[1.0, 1.0, 1.0, 0.5, 0.5, 0.0]]),
+            "labels": torch.tensor([[10, 11, 12, 13, -100, -100]]),
+            "token_type_ids": torch.zeros((1, 6), dtype=torch.long),
+            "example_ids": torch.tensor([[0, 0, 0, 1, 1, -1]]),
+            "pack_source_names": [["caption", "native"]],
+        }
+    )
+
+    torch.testing.assert_close(recorded["data/source/caption/examples"][0], torch.tensor(1.0))
+    torch.testing.assert_close(recorded["data/source/caption/tokens"][0], torch.tensor(3.0))
+    torch.testing.assert_close(recorded["data/source/caption/loss_weight"][0], torch.tensor(3.0))
+    torch.testing.assert_close(
+        recorded["data/source/native/active_loss_weight"][0], torch.tensor(0.5)
+    )
+    torch.testing.assert_close(recorded["data/source/native/positive_tokens"][0], torch.tensor(1.0))
+    torch.testing.assert_close(
+        recorded["data/source/caption/loss_mass_share"][0], torch.tensor(0.75)
+    )
+    torch.testing.assert_close(
+        recorded["data/source/native/loss_mass_target_abs_error"][0], torch.tensor(0.0)
+    )
+    assert recorded["data/source/caption/examples"][1] == ReduceType.mean
+    assert recorded["data/source/caption/loss_mass_share"][1] == ReduceType.mean
+
+
+def test_multimodal_source_loss_mass_share_uses_global_sums(monkeypatch):
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    train_module.source_loss_mass_targets = {"caption": 0.5, "native": 0.5}
+    train_module.device = torch.device("cpu")
+    train_module.dp_group = object()
+    recorded = {}
+
+    def record_metric(name, value, reduce_type=None, namespace=None, **kwargs):
+        del kwargs
+        recorded[f"{namespace}/{name}"] = (value, reduce_type)
+
+    def all_reduce(value, group=None):
+        assert group is train_module.dp_process_group
+        # The local rank contributes caption=3/native=1 loss weight. Model a second
+        # rank with caption=1/native=7; the correct global share is 4 / 12, whereas
+        # averaging the rank-local shares would incorrectly produce 0.4375.
+        remote = torch.zeros_like(value)
+        remote[3] = 1.0
+        remote[8] = 7.0
+        value += remote
+
+    train_module.record_metric = record_metric
+    monkeypatch.setattr(multimodal_train_module, "is_distributed", lambda: True)
+    monkeypatch.setattr(multimodal_train_module.dist, "all_reduce", all_reduce)
+    train_module._record_source_data_metrics(
+        {
+            "loss_masks": torch.tensor([[1.0, 1.0, 1.0, 0.5, 0.5]]),
+            "labels": torch.tensor([[10, 11, 12, 13, 14]]),
+            "example_ids": torch.tensor([[0, 0, 0, 1, 1]]),
+            "pack_source_names": [["caption", "native"]],
+        },
+        torch.ones((1, 5), dtype=torch.bool),
+    )
+
+    torch.testing.assert_close(
+        recorded["data/source/caption/loss_mass_share"][0], torch.tensor(1 / 3)
+    )
+    torch.testing.assert_close(
+        recorded["data/source/native/loss_mass_share"][0], torch.tensor(2 / 3)
+    )
 
 
 def test_multimodal_router_loss_divisor_requires_explicit_token_mask():
@@ -770,7 +883,10 @@ def test_multimodal_olmo_ddp_ep_padding_compile_and_checkpoint_step():
 
 
 def _build_multimodal_ddp_train_module_for_checkpoint(
-    *, freeze_vision: bool = True, freeze_lm_head: bool = False
+    *,
+    freeze_vision: bool = True,
+    freeze_lm_head: bool = False,
+    freeze_lm_blocks: bool = False,
 ):
     model = _tiny_multimodal_model_config(dtype=DType.bfloat16).build(init_device="meta")
     freeze_params = []
@@ -778,6 +894,8 @@ def _build_multimodal_ddp_train_module_for_checkpoint(
         freeze_params.append("vision.*")
     if freeze_lm_head:
         freeze_params.append("lm.lm_head.w_out.weight")
+    if freeze_lm_blocks:
+        freeze_params.append("lm.blocks.*")
     config = MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=8,
         max_sequence_length=8,
@@ -792,6 +910,21 @@ def _build_multimodal_ddp_train_module_for_checkpoint(
 def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     native = _build_ddp_train_module_for_checkpoint(ep_degree=2)
     native_model = getattr(native.model_parts[0], "module", native.model_parts[0])
+    native_optim = native._require_optimizer()
+    assert native.moe_mesh is not None
+    ep_mp_rank = native.moe_mesh["ep_mp"].get_local_rank()
+    mutated_expert_names = set()
+    expert_idx = 0
+    with torch.no_grad():
+        for group in native_optim.param_groups:
+            for name, param in group["named_params"].items():
+                if ".routed_experts.w_" not in name:
+                    continue
+                param.fill_(100 * (ep_mp_rank + 1) + expert_idx)
+                expert_idx += 1
+                mutated_expert_names.add(name)
+    assert mutated_expert_names
+    native_optim._copy_model_params_to_main_params(mutated_expert_names)
     expected_lm = {name: param.detach().clone() for name, param in native_model.named_parameters()}
     native.save_state_dict_direct(native_dir)
 
@@ -812,8 +945,17 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, unfrozen_connector_before[name], rtol=0, atol=0)
     unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
-    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_lm_head=True)
+    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(
+        freeze_lm_head=True,
+        freeze_lm_blocks=True,
+    )
     multimodal = hybrid.multimodal_model
+    assert all(not param.requires_grad for param in multimodal.lm.blocks.parameters())
+    assert not any(
+        "lm.blocks." in name
+        for group in hybrid._require_optimizer().param_groups
+        for name in group["named_params"]
+    )
     connector_before = {
         name: param.detach().clone() for name, param in multimodal.connector.named_parameters()
     }
@@ -826,6 +968,19 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, expected_lm[name], rtol=0, atol=0)
     for name, param in multimodal.connector.named_parameters():
         torch.testing.assert_close(param, connector_before[name], rtol=0, atol=0)
+
+    frozen_state = hybrid._frozen_model_param_state_dict()
+    frozen_expert_keys = []
+    for name, param in multimodal.lm.named_parameters():
+        if ".routed_experts.w_" not in name:
+            continue
+        key = f"frozen_model.lm.{name}"
+        checkpoint_view = frozen_state[key]
+        assert isinstance(checkpoint_view, DTensor)
+        assert checkpoint_view.numel() == 2 * param.numel()
+        assert checkpoint_view.to_local().data_ptr() == param.data.data_ptr()
+        frozen_expert_keys.append(key)
+    assert frozen_expert_keys
 
     optim = hybrid._require_optimizer()
     embedding_name = next(
@@ -884,6 +1039,10 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     saved_lm = {name: param.detach().clone() for name, param in multimodal.lm.named_parameters()}
     hybrid.save_state_dict_direct(hybrid_dir)
 
+    metadata = RemoteFileSystemReader(hybrid_dir).read_metadata()
+    for key in frozen_expert_keys:
+        assert metadata.state_dict_metadata[key].size.numel() == frozen_state[key].numel()
+
     with torch.no_grad():
         for param in multimodal.parameters():
             param.fill_(-0.75)
@@ -921,6 +1080,19 @@ def test_native_checkpoint_loads_into_multimodal_and_roundtrips(tmp_path):
     run_distributed_test(
         _run_native_checkpoint_into_multimodal,
         world_size=2,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "native"), str(tmp_path / "hybrid")),
+    )
+
+
+@requires_multi_gpu
+def test_native_checkpoint_roundtrip_with_replicated_ep_dp_shards(tmp_path):
+    if torch.cuda.device_count() < 4:
+        pytest.skip("requires at least four GPUs to cover EP-DP replication")
+    run_distributed_test(
+        _run_native_checkpoint_into_multimodal,
+        world_size=4,
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "native"), str(tmp_path / "hybrid")),

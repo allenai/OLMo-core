@@ -14,6 +14,43 @@ from olmo_core.testing import (
 )
 
 
+class _FakeEPMesh:
+    def __getitem__(self, key):
+        if key in (("ep_dp", "ep_mp"), "ep_mp"):
+            return self
+        raise KeyError(key)
+
+    def size(self) -> int:
+        return 2
+
+    def get_local_rank(self) -> int:
+        return 0
+
+
+def test_apply_ep_preserves_parameter_requires_grad():
+    module = RoutedExperts(
+        d_model=8,
+        hidden_size=16,
+        num_experts=4,
+        bias=True,
+        dtype=DType.float32,
+    )
+    assert module.b_up_gate is not None and module.b_down is not None
+    expected = {
+        "w_up_gate": False,
+        "w_down": True,
+        "b_up_gate": False,
+        "b_down": True,
+    }
+    for name, requires_grad in expected.items():
+        getattr(module, name).requires_grad_(requires_grad)
+
+    module.apply_ep(_FakeEPMesh())  # type: ignore[arg-type]
+
+    for name, requires_grad in expected.items():
+        assert getattr(module, name).requires_grad is requires_grad
+
+
 def _batch_sizes_for_runtime(
     batch_sizes: list[int], device: torch.device, *, dtype: torch.dtype = torch.long
 ) -> torch.Tensor:
