@@ -5,8 +5,8 @@ example construction from a synthetic parquet shard.
 These sources assemble through the shared stage-2 encode path
 (:func:`~olmo_core.data.multimodal.message_sequence.encode_sft_example`), so the
 sequence layout matches the rest of the mixture: no BOS, the image token block inside
-the first user turn, and multi-turn rows as ONE sequential branch with no loss at
-intermediate turn ends (mm_olmo semantics).
+the first user turn. FineVision multi-turn rows use one branch per message_list entry
+(mm_olmo DataFormatter semantics), with shared image prefix tokens.
 """
 
 import io
@@ -380,18 +380,17 @@ def test_finevision_dataset_end_to_end(tmp_path):
     ex = ds[0]
     n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
     assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
-    # "A triangle ABC." -> 3 word tokens + EOS
-    assert float(ex["loss_masks"].sum()) == 4.0
+    # "A triangle ABC." -> 3 word tokens + EOS; root_subsegments_root_tokens gives 1.0 each.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(4.0)
 
     two = ds[1]
     # both images spliced in, invariant still holds, and both replies are supervised
     assert two["images"].shape[0] == 2 * ex["images"].shape[0]
     n_patch2 = int((two["input_ids"] == IM_PATCH_ID).sum())
     assert n_patch2 == int((two["pooled_patches_idx"] >= 0).any(axis=-1).sum()) == 2 * n_patch
-    # One sequential conversation branch, mm_olmo turn semantics: "They differ." (2)
-    # + "Because of colour." (3) + final EOS (1); the intermediate turn end carries no
-    # loss (its <|im_end|> belongs to the next turn's user context).
-    assert float(two["loss_masks"].sum()) == 6.0
+    # mm_olmo message_list -> one branch per turn (shared image prefix): branch weights
+    # 1/sqrt(2) plus root_subsegments_root_tokens on each reply.
+    assert float(two["loss_masks"].sum()) == pytest.approx(6.265986, rel=1e-5)
     # multi-image rows get "Image 1"/"Image 2" text prefixes before each block
     image_1_ids = _FakeTokenizer().encode("Image 1")
     assert two["input_ids"].tolist()[1 : 1 + len(image_1_ids)] == image_1_ids
@@ -559,7 +558,7 @@ def test_finevision_without_image_placeholder(tmp_path):
     for ex in (no_marker, with_marker):
         n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
         assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
-        assert float(ex["loss_masks"].sum()) == 3.0  # "Yes, A." -> 2 word tokens + EOS
+        assert float(ex["loss_masks"].sum()) == pytest.approx(2 * (3**0.5))  # "Yes, A." + EOS
     # stripping the marker makes the two rows byte-identical
     for key in ("input_ids", "labels", "loss_masks", "position_ids", "token_type_ids"):
         np.testing.assert_array_equal(no_marker[key], with_marker[key], err_msg=key)
@@ -719,7 +718,7 @@ def test_finevision_hub_load(monkeypatch, tmp_path):
         cache_dir="/tmp/hf-cache",
     ).build(_FakeTokenizer())
     assert len(ds) == 1
-    assert float(ds[0]["loss_masks"].sum()) == 3.0  # "hub a" -> 2 tokens + EOS
+    assert float(ds[0]["loss_masks"].sum()) == pytest.approx(2 * (3**0.5))  # "hub a" + EOS
 
 
 def test_build_finevision_v10_config():
@@ -810,8 +809,8 @@ def test_dynamath_loads_local_data_and_formats_examples(dynamath_data):
     ex = ds[0]
     n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
     assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
-    # "4" -> 1 word token + EOS
-    assert float(ex["loss_masks"].sum()) == 2.0
+    # "4" -> 1 word token + EOS; root_subsegments_root_tokens -> sqrt(2) each.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(2 * (2**0.5))
 
 
 def test_dynamath_variant_from_name_and_missing_path(tmp_path, monkeypatch):

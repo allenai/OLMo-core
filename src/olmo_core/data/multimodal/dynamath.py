@@ -77,7 +77,7 @@ class DynaMathDatasetConfig(Config):
 
     max_crops: int = 8
     max_sequence_length: int = 4096
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "root_subsegments_root_tokens"
     seed: int = 0
 
     @property

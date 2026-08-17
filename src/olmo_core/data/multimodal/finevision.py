@@ -225,7 +225,7 @@ class FineVisionDatasetConfig(Config):
     """Max images per row (extra images are dropped, matching the stage-2 budget)."""
 
     max_sequence_length: int = 4096
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "root_subsegments_root_tokens"
     seed: int = 0
 
     def uses_hub(self) -> bool:
@@ -402,11 +402,12 @@ class FineVisionDataset:
         raw_images = row.get(cfg.images_column) or []
         pil_images = [decode_pil_image(im) for im in raw_images if im is not None]
 
-        # One sequential conversation branch (turn k attends earlier turns).
+        # mm_olmo DataFormatter puts each message_list row in its own branch (shared image
+        # prefix); pass flat turns so encode_sft_example splits into [[(q,a)], ...].
         seq = encode_sft_example(
             self.tokenizer,
             pil_images,
-            [turns],
+            turns,
             max_crops=cfg.max_crops,
             max_images=cfg.max_images,
             loss_token_weighting=cfg.loss_token_weighting,
