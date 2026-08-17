@@ -32,6 +32,17 @@ TORCH_MASTER_PORT_ENV_VAR = "MASTER_PORT"
 log = logging.getLogger(__name__)
 
 
+def fsdp_reshard_after_forward(*, pp_enabled: bool = False) -> bool:
+    """Whether FSDP should reshard parameters after each forward.
+
+    Set ``MM_FSDP_RESHARD_AFTER_FORWARD=0`` to keep parameters unsharded across
+    microbatches within a step (ship-stack default for stage-2 throughput).
+    """
+    if os.environ.get("MM_FSDP_RESHARD_AFTER_FORWARD", "1").lower() in ("0", "false", "no"):
+        return False
+    return not pp_enabled
+
+
 def _find_free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

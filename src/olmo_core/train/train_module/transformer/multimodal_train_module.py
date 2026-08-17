@@ -36,6 +36,7 @@ from olmo_core.distributed.parallel import (
     get_dp_model_mesh,
 )
 from olmo_core.distributed.utils import (
+    fsdp_reshard_after_forward,
     get_local_tensor,
     get_rank,
     get_world_size,
@@ -216,6 +217,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             )
             reduce_dtype = dp_config.reduce_dtype.as_pt()
+            raf = fsdp_reshard_after_forward()
             # Shard the language model with its own (per-block) FSDP wrapping.
             self.model.lm.apply_fsdp(
                 dp_mesh=dp_mesh,
@@ -227,9 +229,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             # Shard the vision encoder + connector, then the root so ``self.model`` is an
             # FSDPModule (the inherited micro-batch / gradient-sync handling keys off this).
             mp = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
-            fully_shard(self.model.vision, mesh=dp_mesh, mp_policy=mp)
-            fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp)
-            fully_shard(self.model, mesh=dp_mesh, mp_policy=mp)
+            fully_shard(self.model.vision, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            fully_shard(self.model, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
@@ -294,6 +296,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._set_model_mode("train")
+        self._multimodal.clear_embedding_step_cache()
 
         # Global loss-weight divisor (mm_olmo BatchDivisor.global_batch): the sum of
         # positive loss weights over the whole global batch, divided by DP world size.
@@ -442,6 +445,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if dry_run:
             if hasattr(self._lm, "reset_auxiliary_metrics"):
                 self._lm.reset_auxiliary_metrics()
+            self._multimodal.clear_embedding_step_cache()
             return
 
         # Record a per-weighted-token CE loss (comparable across steps).
@@ -464,6 +468,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 get_rank(),
                 float(local_weight.item()),
             )
+        self._multimodal.clear_embedding_step_cache()
 
     def optim_step(self):
         if self.max_grad_norm is not None:
