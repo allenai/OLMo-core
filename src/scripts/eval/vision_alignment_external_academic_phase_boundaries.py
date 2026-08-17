@@ -406,7 +406,12 @@ BOUNDARIES: dict[str, dict[str, Any]] = {
             "checkpoint_key_count": 2_065,
             "complete": True,
             "eval_state_key_count": 415,
-            "frozen_state_key_count": 403,
+            # The frozen-load surface is determined by the current academic eval topology,
+            # not only by stable ``frozen_model.*`` keys in the checkpoint.  The evaluator
+            # freezes ``vision.*``, so the multimodal loader adds all 403 vision ``*.main``
+            # keys to the 403 stable frozen LM keys.  These 403 vision keys overlap the 415-key
+            # eval state, leaving the prepared union at exactly 818 model tensors.
+            "frozen_state_key_count": 806,
             "load_completed": True,
             "model_parameter_assignments_sha256": (
                 "cc29d766e9364fc47d8f7ed105c4e5c8a212fa07536a2a21a42b0ae6bc58eb25"
@@ -422,7 +427,7 @@ BOUNDARIES: dict[str, dict[str, Any]] = {
             "shadowed_frozen_key_count": 0,
             "shadowed_frozen_keys_sha256": EMPTY_LIST_SHA256,
             "unused_model_bearing_key_count": 0,
-            "sha256": "1ec73fb616f78488909865216526d3bf94bdc144e93271682ce69a2d7c4df177",
+            "sha256": "6ec333ddba34dce5dd512448a1c235883ee9739c311ec505275144efe44e47c2",
         },
     },
 }
@@ -1414,8 +1419,17 @@ def _model_load_payload(
     coverage["sha256"] = academic._canonical_sha256(
         {field: value for field, value in coverage.items() if field != "sha256"}
     )
-    if coverage != spec["load_coverage"]:
-        raise RuntimeError("Phase-boundary native checkpoint-load coverage differs")
+    expected_coverage = spec["load_coverage"]
+    if coverage != expected_coverage:
+        differences = []
+        for field in sorted(set(coverage) | set(expected_coverage)):
+            expected = repr(expected_coverage[field]) if field in expected_coverage else "<missing>"
+            actual = repr(coverage[field]) if field in coverage else "<missing>"
+            if expected != actual:
+                differences.append(f"{field}: expected={expected}, actual={actual}")
+        raise RuntimeError(
+            "Phase-boundary native checkpoint-load coverage differs; " + "; ".join(differences)
+        )
     local = {
         "rank": dist.get_rank(),
         "coverage_sha256": coverage["sha256"],

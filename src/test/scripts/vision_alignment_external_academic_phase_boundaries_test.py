@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import torch
+from torch.distributed.checkpoint.metadata import TensorProperties
 
 
 def _load_module():
@@ -80,7 +82,7 @@ def test_wrapper_preserves_frozen_evaluator_and_full_identity_scope(boundaries):
         "full-file SHA-256 for every rank plus safe progress projection"
     )
     assert implementation["wrapper_files"]["wrapper"]["sha256"] == (
-        "fdc9d914494c69b72b442b6fad0ef3fef60897d7206bd16a40643a451bc9993e"
+        "d3d2be012b8d5fc9df7252337b6ca61a44b0822a516593f0a4f02453c38cf4e5"
     )
 
 
@@ -245,6 +247,114 @@ def _valid_model_load(boundaries, spec):
             for rank in range(boundaries.academic.EP_DEGREE)
         ],
     }
+
+
+def test_perception_eval_freeze_topology_has_403_key_overlap(boundaries):
+    spec = boundaries.BOUNDARIES["perception_step4000"]
+    metadata = boundaries.FileSystemReader(spec["checkpoint"] / "model_and_optim").read_metadata()
+    checkpoint_keys = set(metadata.state_dict_metadata)
+    stable_frozen_lm = {key for key in checkpoint_keys if key.startswith("frozen_model.lm.")}
+    vision_optimizer_main = {
+        key for key in checkpoint_keys if key.startswith("module.vision.") and key.endswith(".main")
+    }
+    all_optimizer_main = {key for key in checkpoint_keys if key.endswith(".main")}
+    coverage = spec["load_coverage"]
+    assert len(stable_frozen_lm) == 403
+    assert len(vision_optimizer_main) == 403
+    assert len(all_optimizer_main) == coverage["eval_state_key_count"] == 415
+    assert (
+        coverage["frozen_state_key_count"]
+        == (len(stable_frozen_lm) + len(vision_optimizer_main))
+        == 806
+    )
+    assert coverage["eval_state_key_count"] + coverage["frozen_state_key_count"] - coverage[
+        "prepared_load_key_count"
+    ] == len(vision_optimizer_main)
+    assert coverage["prepared_load_key_count"] == coverage["model_parameter_count"] == 818
+    assert coverage["sha256"] == (
+        "6ec333ddba34dce5dd512448a1c235883ee9739c311ec505275144efe44e47c2"
+    )
+
+
+def test_native_coverage_models_eval_frozen_main_key_overlap(boundaries, monkeypatch):
+    model_part = torch.nn.Module()
+    for name in ("vision", "connector", "lm"):
+        model_part.register_parameter(name, torch.nn.Parameter(torch.zeros(1)))
+    parameters = dict(model_part.named_parameters())
+    keys = {
+        "vision": "module.vision.main",
+        "connector": "module.connector.main",
+        "lm": "frozen_model.lm",
+    }
+    tensor_metadata = boundaries.TensorStorageMetadata(
+        properties=TensorProperties(dtype=torch.float32),
+        size=torch.Size([1]),
+        chunks=[],
+    )
+    metadata = SimpleNamespace(state_dict_metadata={key: tensor_metadata for key in keys.values()})
+    monkeypatch.setattr(
+        boundaries,
+        "FileSystemReader",
+        lambda state_dir: SimpleNamespace(read_metadata=lambda: metadata),
+    )
+
+    class EvalFrozenVisionModule:
+        model_parts = [model_part]
+
+        @staticmethod
+        def _get_model_state_dict_for_eval_load(metadata):
+            return {
+                keys["vision"]: parameters["vision"],
+                keys["connector"]: parameters["connector"],
+            }
+
+        @staticmethod
+        def _resolve_model_checkpoint_key(name, checkpoint_keys):
+            return keys.get(name)
+
+        @staticmethod
+        def _frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys):
+            # Stable frozen LM plus the optimizer-main vision key added because the current
+            # academic eval module freezes vision.*.
+            return {
+                keys["vision"]: parameters["vision"],
+                keys["lm"]: parameters["lm"],
+            }
+
+        @staticmethod
+        def _frozen_checkpoint_param_state_dict_for_load(checkpoint_keys):
+            return {
+                keys["vision"]: parameters["vision"],
+                keys["lm"]: parameters["lm"],
+            }
+
+        @staticmethod
+        def _persistent_model_buffer_state_dict():
+            return {}
+
+    report = boundaries._native_checkpoint_load_coverage(EvalFrozenVisionModule(), Path("/unused"))
+    assert report["eval_state_key_count"] == 2
+    assert report["frozen_state_key_count"] == 2
+    assert report["prepared_load_key_count"] == 3
+    assert report["model_parameter_checkpoint_key_count"] == 3
+
+
+def test_runtime_coverage_mismatch_reports_exact_fields(boundaries):
+    spec = boundaries.BOUNDARIES["perception_step4000"]
+    wrong = copy.deepcopy(spec["load_coverage"])
+    wrong["frozen_state_key_count"] = 403
+    with pytest.raises(RuntimeError) as error:
+        boundaries._model_load_payload(
+            wrong,
+            SimpleNamespace(model_parts=[]),
+            spec["checkpoint"] / "model_and_optim",
+            spec,
+            checkpoint_load_threads=8,
+        )
+    message = str(error.value)
+    assert "frozen_state_key_count: expected=806, actual=403" in message
+    assert "sha256: expected='6ec333dd" in message
+    assert "actual='1ec73fb" in message
 
 
 @pytest.mark.parametrize("boundary_key", ["bridge_step500", "perception_step4000"])
