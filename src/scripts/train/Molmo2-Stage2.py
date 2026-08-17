@@ -304,11 +304,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             weight_decay=0.0,
             group_overrides=[
                 OptimGroupOverride(
-                    params=["connector.*"],
+                    params=["vision_backbone.connector.*"],
                     opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
                 ),
                 OptimGroupOverride(
-                    params=["vision.*"],
+                    params=["vision_backbone.vision.*"],
                     opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
                 ),
             ],
