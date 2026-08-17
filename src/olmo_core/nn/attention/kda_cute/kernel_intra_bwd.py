@@ -7,18 +7,20 @@ work, each k-tile re-reading the SAME fp32 dAqk/dAkk [16,16] tiles (NK=4 multipl
 12.6ms = 49.8% of the whole backward to it, ~5x over its ~2.5ms traffic floor — it is
 latency/SIMT-bound, not bandwidth-bound.
 
-This kernel computes the identical math with three structural changes, nothing else:
+This kernel computes the identical math with two structural changes, nothing else:
   1. BK = K (one k-tile): grid (NC, NT, B·HV), 4x fewer/8x fatter CTAs, every dA/g/q/k/dq/
      dk/dg byte read once per consumer instead of NK times.
-  2. The two diagonal-block scalar loops become tl.dot with the gate factor split around
-     the sub-chunk MIDPOINT row: exp2(g_i - g_j) = exp2(g_i - g_mid) · exp2(g_mid - g_j).
-     This is exactly fla's own SAFE_GATE path (which it only enables with a lower-bounded
-     gate activation); at BC=16 the exponent spans ±8 rows of logsigmoid-scale gates —
-     tens of log2 in the worst tail, nowhere near fp32's ±127. The off-diagonal loops keep
-     fla's first/last-row references, which are one-sided (decay ⇒ exponent ≤ 0) and safe
-     at any magnitude.
-  3. db's NK-slab reduction disappears (NK=1): the kernel adds the incoming db in-place
+  2. db's NK-slab reduction disappears (NK=1): the kernel adds the incoming db in-place
      to its contribution and writes one output row.
+The diagonal blocks keep fla's default scalar loops (safe_gate=False): the direct factor
+exp2(g_i - g_j) with i ≥ j is one-sided (decay ⇒ exponent ≤ 0), safe at any gate
+magnitude. An earlier revision used fla's SAFE_GATE dot form instead — the gate factor
+split around the sub-chunk midpoint, exp2(g_i - g_mid) · exp2(g_mid - g_j) — but that
+factorization is only bounded for lower-bounded gate activations (which is why fla gates
+it behind safe_gate). KDA initializes exp(A_log) in [1, 16], so per-step decays reach
+~16 log2 units per channel and ±8 rows around the midpoint overspill fp32 exp2's ±127:
+e_pos/e_neg hit inf, inf · 0 = nan, and the whole backward NaNs on the first real step.
+The off-diagonal loops keep fla's first/last-row references, one-sided and safe.
 
 Everything numeric mirrors fla expression for expression (same load dtypes, same cast
 points, same accumulation order within each loop) so dbg_intra can hold a tight line
@@ -95,9 +97,9 @@ def kda_bwd_intra_kernel(
     o_i = tl.arange(0, BC)
     o_c = i_ti + o_i
     m_c = o_c < T
-    m_ck = m_c[:, None] & (o_k[None, :] < K)
+    m_k = o_k < K
+    m_ck = m_c[:, None] & m_k[None, :]
     m_dAf = m_c[:, None] & (o_i[None, :] < BT)
-    m_dAt = (o_i[:, None] < BT) & m_c[None, :]
 
     p_g = g + o_c[:, None] * (HV * K) + o_k[None, :]
     b_g = tl.load(p_g, mask=m_ck, other=0.0).to(tl.float32)
@@ -107,14 +109,6 @@ def kda_bwd_intra_kernel(
     p_k = k + o_c[:, None] * (H * K) + o_k[None, :]
     b_q = tl.load(p_q, mask=m_ck, other=0.0)
     b_k = tl.load(p_k, mask=m_ck, other=0.0)
-
-    # The diagonal blocks' two-sided gate reference: the sub-chunk midpoint row, fla's
-    # SAFE_GATE choice (half the exponent range of an endpoint reference).
-    p_gm = g + (i_ti + min(BC // 2, T - i_ti - 1)) * (HV * K) + o_k
-    b_gm = tl.load(p_gm, mask=o_k < K, other=0.0).to(tl.float32)[None, :]
-    b_gmr = tl.where(m_c[:, None], b_g - b_gm, 0.0)
-    e_pos = tl.where(m_c[:, None], exp2(b_gmr), 0.0)  # exp2(g - g_mid)
-    e_neg = tl.where(m_c[:, None], exp2(-b_gmr), 0.0)  # exp2(g_mid - g)
 
     # ---- rows i, columns j <= i: dq2/dk2 = sum_j dA[i,j] · k_j · exp2(g_i - g_j) ----
     b_dq2 = tl.zeros([BC, BK], dtype=tl.float32)
@@ -140,15 +134,22 @@ def kda_bwd_intra_kernel(
         b_dq2 *= b_gqn
         b_dk2 *= b_gqn
 
-    # diagonal block, dot form (fla's SAFE_GATE structure)
-    p_dAqk = dAqk + o_c[:, None] * (HV * BT) + (i_i * BC + o_i)[None, :]
-    p_dAkk = dAkk + o_c[:, None] * (HV * BT) + (i_i * BC + o_i)[None, :]
-    m_tril = (o_i[:, None] >= o_i[None, :]) & m_c[:, None] & ((i_ti + o_i[None, :]) < T)
-    b_dAqk_d = tl.where(m_tril, tl.load(p_dAqk, mask=m_dAf, other=0.0).to(tl.float32), 0.0)
-    b_dAkk_d = tl.where(m_tril, tl.load(p_dAkk, mask=m_dAf, other=0.0).to(tl.float32), 0.0)
-    b_k_neg = b_k * e_neg
-    b_dq2 += tl.dot(b_dAqk_d, b_k_neg) * e_pos
-    b_dk2 += tl.dot(b_dAkk_d, b_k_neg) * e_pos
+    # diagonal block, scalar-loop form (fla's default safe_gate=False path): the direct
+    # exp2(g_i - g_j), i >= j, is one-sided so it cannot overflow — see module docstring.
+    o_dA = o_c * (HV * BT) + i_i * BC
+    p_kj = k + i_ti * (H * K) + o_k
+    p_gkj = g + i_ti * (HV * K) + o_k
+    for j in range(0, min(BC, T - i_ti)):
+        b_dAqk_j = tl.load(dAqk + o_dA + j, mask=m_c, other=0.0)
+        b_dAkk_j = tl.load(dAkk + o_dA + j, mask=m_c, other=0.0)
+        b_kj = tl.load(p_kj, mask=m_k, other=0.0).to(tl.float32)
+        b_gkj = tl.load(p_gkj, mask=m_k, other=0.0).to(tl.float32)
+        m_ij = o_i[:, None] >= j
+        b_gqk = exp2(b_g - b_gkj[None, :])
+        b_dq2 += tl.where(m_ij, b_dAqk_j[:, None] * b_kj[None, :] * b_gqk, 0.0)
+        b_dk2 += tl.where(m_ij, b_dAkk_j[:, None] * b_kj[None, :] * b_gqk, 0.0)
+        p_kj += H * K
+        p_gkj += HV * K
 
     b_db = tl.sum(b_dk2 * b_k, 1)
     b_dk2 *= b_b[:, None]
@@ -194,16 +195,26 @@ def kda_bwd_intra_kernel(
             b_dkt += tl.dot(b_dAkk, b_kbg)
         b_dkt *= exp2(b_gn - b_g)
 
-    # transposed diagonal block, dot form
-    p_dAqk = dAqk + (i_i * BC + o_i)[:, None] + o_c[None, :] * (HV * BT)
-    p_dAkk = dAkk + (i_i * BC + o_i)[:, None] + o_c[None, :] * (HV * BT)
-    m_triu = (o_i[:, None] <= o_i[None, :]) & ((i_ti + o_i[:, None]) < T) & m_c[None, :]
-    b_dAqk_t = tl.where(m_triu, tl.load(p_dAqk, mask=m_dAt, other=0.0).to(tl.float32), 0.0)
-    b_dAkk_t = tl.where(m_triu, tl.load(p_dAkk, mask=m_dAt, other=0.0).to(tl.float32), 0.0)
-    b_q_pos = b_q * e_pos
-    b_kb_pos = b_k * b_b[:, None] * e_pos
-    b_dkt += tl.dot(b_dAqk_t, b_q_pos) * e_neg
-    b_dkt += tl.dot(b_dAkk_t, b_kb_pos) * e_neg
+    # transposed diagonal block, scalar-loop form (same one-sided-exponent argument)
+    o_dA_t = i_ti * (HV * BT) + i_i * BC + o_i
+    p_qj = q + i_ti * (H * K) + o_k
+    p_kj = k + i_ti * (H * K) + o_k
+    p_gkj = g + i_ti * (HV * K) + o_k
+    p_bj = beta + i_ti * HV
+    for j in range(0, min(BC, T - i_ti)):
+        b_dAqk_j = tl.load(dAqk + o_dA_t + j * (HV * BT))
+        b_dAkk_j = tl.load(dAkk + o_dA_t + j * (HV * BT))
+        b_qj = tl.load(p_qj, mask=m_k, other=0.0).to(tl.float32)
+        b_kbj = tl.load(p_kj, mask=m_k, other=0.0).to(tl.float32) * tl.load(p_bj)
+        b_gkj = tl.load(p_gkj, mask=m_k, other=0.0).to(tl.float32)
+        m_ij = o_i[:, None] <= j
+        b_gkq = exp2(b_gkj[None, :] - b_g)
+        b_dkt += tl.where(m_ij, b_dAqk_j[:, None] * b_qj[None, :] * b_gkq, 0.0)
+        b_dkt += tl.where(m_ij, b_dAkk_j[:, None] * b_kbj[None, :] * b_gkq, 0.0)
+        p_qj += H * K
+        p_kj += H * K
+        p_gkj += HV * K
+        p_bj += HV
 
     p_dk = dk + o_c[:, None] * (HV * K) + o_k[None, :]
     p_dk2 = dk2 + o_c[:, None] * (HV * K) + o_k[None, :]
@@ -257,6 +268,13 @@ def kda_bwd_intra_v2_kernel(
     upper triangles explicitly zeroed — the data enforces the triangle, no masks.
     BK=64 keeps the four [BT,BK] fp32 accumulators at ~16 regs/thread each (a BK=K=128
     first cut validated but spilled at prod: 7.30ms vs v1's 5.04).
+
+    WARNING — NOT SAFE under KDA's real initialization, DO NOT WIRE IN as-is: the
+    in-block row factors below (exp2(g_r - gLAST_j) / exp2(gLAST_j - g_r)) span up to
+    16 gate steps; with exp(A_log) in [1, 16] a step reaches ~16 log2 units, the factor
+    overflows fp32 exp2's ±127 and the inf · underflowed-0 products emit NaN. The
+    default v1 kernel handles the diagonal blocks with fla's one-sided scalar loops
+    instead. Kept for reference only (falsified on perf at prod anyway).
 
     Gate factorization per source sub-chunk j — the operand factor is <= 1, the row
     factor is <= 1 outside the 16-row block and bounded by 16 gate steps inside it

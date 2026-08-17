@@ -6,6 +6,24 @@ from olmo_core.testing import requires_gpu
 from olmo_core.testing.utils import requires_fla
 
 
+def _init_real_weights(module, d_model: int, seed: int = 777) -> None:
+    """Apply the real init: exp(A_log) in [1, 16] gives per-step decays of ~16 log2
+    units per channel — the strong-decay regime where unbounded exp2 factorizations
+    in the kernels overflow. config.build() alone leaves A_log as torch.empty garbage
+    (typically tiny, i.e. weak decay), which masks that whole failure class."""
+    from olmo_core.nn.transformer.init import InitMethod
+
+    generator = torch.Generator(device=module.A_log.device).manual_seed(seed)
+    with torch.no_grad():
+        module.init_weights(
+            init_method=InitMethod.normal,
+            d_model=d_model,
+            block_idx=0,
+            num_blocks=12,
+            generator=generator,
+        )
+
+
 @requires_fla
 @pytest.mark.parametrize(
     "config",
@@ -58,6 +76,7 @@ def test_kimi_delta_attention_cute_under_torch_compile():
     torch.manual_seed(0)
     config = KimiDeltaAttentionConfig(n_heads=2, head_dim=128, use_cute_kernel=True)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    _init_real_weights(module, d_model)
     compiled = torch.compile(module)
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
 
@@ -87,6 +106,7 @@ def test_kimi_delta_attention_cute_matches_fla():
     torch.manual_seed(0)
     config = KimiDeltaAttentionConfig(n_heads=16, head_dim=128, expand_v=2.0, allow_neg_eigval=True)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    _init_real_weights(module, d_model)
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
 
     results = {}
