@@ -19,6 +19,9 @@ capability and shape so callers can fall back to ``fla.ops.kda.chunk_kda``.
 Set ``OLMO_CUTE_KDA_ALLFLA=1`` to keep this staged decomposition but force every stage
 back to fla's kernels — the backward is then bit-identical to fla's monolith, which
 isolates any numerics question to the CuTe/Triton stage swaps.
+``OLMO_CUTE_KDA_STAGES=a,b`` swaps in only the named stages (bisect).
+``OLMO_CUTE_KDA_CHECK=1`` asserts each backward stage's outputs are finite so a bad
+kernel fails at the guilty stage — set it on smoke runs.
 """
 
 from __future__ import annotations
@@ -123,6 +126,18 @@ def _stages() -> dict:
     return _STAGES
 
 
+def _check_finite(stage: str, **tensors: torch.Tensor | None) -> None:
+    """OLMO_CUTE_KDA_CHECK=1: assert stage outputs are finite, so a bad kernel fails at
+    the guilty stage instead of surfacing steps later as a nan loss. Syncs per stage —
+    debug/smoke runs only."""
+    for name, t in tensors.items():
+        if t is not None and not torch.isfinite(t).all():
+            raise RuntimeError(
+                f"cute-kda backward stage '{stage}' produced non-finite '{name}' "
+                f"(shape {tuple(t.shape)}); rerun with OLMO_CUTE_KDA_STAGES/ALLFLA to bisect"
+            )
+
+
 @torch.compiler.disable  # keeps compiled autograd off the cute/ctypes host code too
 def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
     """fla's ``chunk_kda_bwd`` (recompute path, fixed-length) as explicit stages.
@@ -131,8 +146,11 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
     exactly; with ``OLMO_CUTE_KDA_ALLFLA=1`` this is bit-identical to that function.
     """
     S = _stages()
+    check = os.environ.get("OLMO_CUTE_KDA_CHECK", "0") == "1"
 
     w, u, qg, kg = S["recompute_w_u"](k=k, v=v, beta=beta, A=Akk, gk=g2, q=q)
+    if check:
+        _check_finite("recompute_w_u", w=w, u=u, qg=qg, kg=kg)
     h, v_new, _ = S["fwd_h"](
         k=kg,
         w=w,
@@ -142,6 +160,8 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
         output_final_state=False,
         chunk_size=chunk_size,
     )
+    if check:
+        _check_finite("fwd_h", h=h, v_new=v_new)
     dAqk, dv = S["dAv"](
         q=q,
         k=k,
@@ -151,6 +171,8 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
         scale=scale,
         chunk_size=chunk_size,
     )
+    if check:
+        _check_finite("dAv", dAqk=dAqk, dv=dv)
     dh, dh0, dv = S["bwd_dhu"](
         q=qg,
         k=kg,
@@ -163,6 +185,8 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
         scale=scale,
         chunk_size=chunk_size,
     )
+    if check:
+        _check_finite("bwd_dhu", dh=dh, dh0=dh0, dv=dv)
     dq, dk, dv, db, dg, dAkk = S["wy_dqkg"](
         q=q,
         k=k,
@@ -178,6 +202,8 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
         scale=scale,
         chunk_size=chunk_size,
     )
+    if check:
+        _check_finite("wy_dqkg", dq=dq, dk=dk, dv=dv, db=db, dg=dg, dAkk=dAkk)
     dq, dk, db, dg = S["bwd_intra"](
         q=q,
         k=k,
@@ -191,6 +217,8 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
         dg=dg,
         chunk_size=chunk_size,
     )
+    if check:
+        _check_finite("bwd_intra", dq=dq, dk=dk, db=db, dg=dg)
     dg = S["cumsum_rev"](dg, chunk_size=chunk_size, reverse=True)
     H, HV = q.shape[2], v.shape[2]
     if HV > H:

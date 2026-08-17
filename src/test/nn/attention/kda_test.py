@@ -90,6 +90,57 @@ def test_kimi_delta_attention_cute_under_torch_compile():
 
 @requires_fla
 @requires_gpu
+def test_kimi_delta_attention_cute_extreme_decay():
+    """Deterministic worst case for the gate exponents: A_log at its init maximum
+    (log 16) and large softplus inputs give per-step decays of ~90 log2 units per
+    channel. Any two-sided exp2 factorization in a kernel overflows fp32 here and
+    NaNs — this regime is what the 30m ladder hit on its first optimizer step. The
+    overflow depends only on decay-per-step and the BC=16 sub-chunk, so this small
+    shape covers it."""
+    from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda
+    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
+
+    if torch.cuda.get_device_capability()[0] < 10:
+        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
+    if not _has_cute():
+        pytest.skip("CUTLASS CuTe DSL is not installed")
+
+    device, dtype = "cuda", torch.bfloat16
+    B, T, H, K, V = 2, 256, 4, 128, 256
+    torch.manual_seed(0)
+    q = torch.randn(B, T, H, K, device=device, dtype=dtype)
+    k = torch.randn(B, T, H, K, device=device, dtype=dtype)
+    v = torch.randn(B, T, H, V, device=device, dtype=dtype)
+    g_raw = torch.randn(B, T, H, K, device=device, dtype=torch.float32) + 4.0
+    beta = torch.rand(B, T, H, device=device, dtype=torch.float32) * 2
+    A_log = torch.full((H,), 16.0, device=device).log()
+    dt_bias = torch.zeros(H * K, device=device)
+    do = torch.randn(B, T, H, V, device=device, dtype=dtype)
+
+    results = {}
+    for use_cute in (False, True):
+        leaves = [t.detach().clone().requires_grad_(True) for t in (q, k, v, g_raw, beta, A_log)]
+        o, _ = dispatch_chunk_kda(
+            q=leaves[0], k=leaves[1], v=leaves[2], g=leaves[3], beta=leaves[4],
+            A_log=leaves[5], dt_bias=dt_bias, scale=K**-0.5,
+            use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+            use_cute_kernel=use_cute,
+        )
+        (o.float() * do.float()).sum().backward()
+        grads = [t.grad for t in leaves]
+        for gr in [o, *grads]:
+            assert gr is not None and torch.isfinite(gr).all()
+        results[use_cute] = (o.detach(), grads)
+
+    o_fla, g_fla = results[False]
+    o_cute, g_cute = results[True]
+    torch.testing.assert_close(o_cute, o_fla, atol=5e-3, rtol=5e-3)
+    for gc, gf in zip(g_cute, g_fla):
+        torch.testing.assert_close(gc.float(), gf.float(), atol=2e-2, rtol=2e-2)
+
+
+@requires_fla
+@requires_gpu
 def test_kimi_delta_attention_cute_matches_fla():
     from olmo_core.nn.attention.kda_cute.chunk import _has_cute
 
