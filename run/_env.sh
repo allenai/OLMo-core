@@ -91,6 +91,12 @@ esac
 CTC_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export CTC_REPO
 
+# THIS checkout first, always. At least one conda env's editable olmo_core install points at the
+# pre-migration repo, so a bare `import olmo_core` (or `import ctc`) can silently resolve to
+# months-old code -- verified, not hypothetical. Putting the checkout's source trees ahead of
+# everything makes the code you are looking at the code that runs, whichever interpreter was found.
+export PYTHONPATH="$CTC_REPO/ctc/src:$CTC_REPO/src${PYTHONPATH:+:$PYTHONPATH}"
+
 if [[ -n "${CTC_VERBOSE:-}" ]]; then
   echo "[ctc] python=$CTC_PYTHON"
   echo "[ctc] repo=$CTC_REPO  local=$CTC_LOCAL"

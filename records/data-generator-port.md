@@ -1,5 +1,20 @@
 # Data-generator port: `corpus_reasoning/data/` → `ctc.data`
 
+**Status 2026-08-17: the port is COMPLETE — 22 generators build from this repo, and rungs are
+open-ended up to 10M+ tokens per example.** The only specs still without a generator are `qa` and
+`summarization`, both dropped from the final suite roster (their HELMET v1 data is defective at
+the source — trap 15 — and the 22-row olmo-eval roster carries neither). The port landed in three
+waves: `8ad00aa77` (the 5 main + 4 held-out corpus generators), `510a18be6` (hotpotqa, absence,
+xabsence, strmatch, redundancy), and `2fcc0fb57` (reorder, qdmatch, grouping_labeled — the last
+three). `164dcb3a7` then made the rung ladder open-ended: labels past the calibrated 2k–32k table
+extrapolate the task's own least-squares fit, `ladders.CEILINGS` refuses rungs a corpus provably
+cannot supply, and the O(N²) hot spots that made a 10M-token example take hours (mathmatch and
+textgroups placement, the closest-pair audit probe) are O(N)/O(N log N) with byte-identical
+output. §2 below is the *original* gap list, kept for the trap notes each row carried; every row
+in it except `qa`/`summarization` has since landed.
+
+The paragraph below is the 2026-08-11 snapshot the section numbering was written against.
+
 **Status, verified against the tree on 2026-08-11: 13 ladders build from this repo; 9 of the 18
 registered task specs still have no generator.** The port landed in `8ad00aa77` ("data: port the 5
 main + 4 held-out corpus generators"). Everything below was re-checked by reading the code and
