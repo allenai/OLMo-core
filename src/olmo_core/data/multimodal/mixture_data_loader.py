@@ -59,6 +59,7 @@ class MixtureDataLoader(DataLoaderBase):
         pack_max_crops: Optional[int] = None,
         pack_buffer_size: int = 48,
         pack_image_weight: float = 30.0,
+        pack_shortcut_max_len_images: bool = False,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
@@ -101,6 +102,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.pack_max_crops = pack_max_crops
         self.pack_buffer_size = pack_buffer_size
         self.pack_image_weight = pack_image_weight
+        self.pack_shortcut_max_len_images = pack_shortcut_max_len_images
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
         self.max_consecutive_data_errors = max_consecutive_data_errors
@@ -205,6 +207,7 @@ class MixtureDataLoader(DataLoaderBase):
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
                 image_weight=self.pack_image_weight,
+                shortcut_max_len_images=self.pack_shortcut_max_len_images,
                 flush=False,
             )
         return iter_packs(stream, self.seq_len)

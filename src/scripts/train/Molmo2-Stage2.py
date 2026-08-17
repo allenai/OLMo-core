@@ -32,10 +32,16 @@ from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfi
 from olmo_core.data.multimodal.mixtures.image_only_v10 import (
     VALIDATION_MIXTURES_V10,
     build_image_only_v10_mixture,
+    build_single_image_only_v10_mixture,
 )
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     VALIDATION_MIXTURES,
     build_image_only_v9_mixture,
+    build_single_image_only_v9_mixture,
+)
+from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
+    MULTI_IMAGE_PACK_MAX_CROPS,
+    get_mixture_pack_profile,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
@@ -84,13 +90,10 @@ COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 4
 MAX_CROPS = 8
-# Per-pack crop capacity for the 2D-knapsack packer. mm_olmo derives this from the
-# preprocessor's max per-example output; with multi-image enabled that is
-# max_images * (1 global + max(MAX_CROPS, high_res_max_crops=24) local crops) =
-# 5 * 25 = 125. In practice the 16k token budget binds first; the crop capacity
-# mainly bounds worst-case collator/ViT memory. Setting it below a single example's
-# crop count would force that example into its own mostly-padding 16k pack.
-PACK_MAX_CROPS = 5 * (1 + 24)
+# Per-pack crop capacity for the 2D-knapsack packer. Defaults below are overridden per
+# mixture tier in ``mixture_pack_profiles`` (see ``get_mixture_pack_profile``).
+PACK_MAX_CROPS = MULTI_IMAGE_PACK_MAX_CROPS
+PACK_SHORTCUT_MAX_LEN_IMAGES = False
 EST_TOKENS_PER_EXAMPLE = 1500  # packed 16k sequences; tune if batch counts look off
 
 # mm_olmo train_image_video_sft.py (image-only-v9): global 128, microbatch 2 per GPU.
@@ -177,6 +180,7 @@ class ExperimentConfig(Config):
     """Mixture tier — see ``VALIDATION_MIXTURES`` / ``VALIDATION_MIXTURES_V10``."""
     pack_sequences: bool = PACK_SEQUENCES
     pack_max_crops: int = PACK_MAX_CROPS
+    pack_shortcut_max_len_images: bool = PACK_SHORTCUT_MAX_LEN_IMAGES
     mmfinereason_rate: float = MMFINEREASON_RATE
     """Mixture fraction for MMFineReason-SFT (0 disables). The official image-only-v9
     sources are scaled by ``1 - (mmfinereason_rate + finevision_rate)``."""
@@ -214,6 +218,36 @@ def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
     return all_mixtures[mixture]
 
 
+def _full_single_image_only_v9_names(tokenizer, seed: int) -> List[str]:
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+        SINGLE_IMAGE_ONLY_V9_SUBMIXTURES,
+        build_image_only_v9_datasets,
+        compute_flat_mixture_weights,
+    )
+
+    datasets_map = build_image_only_v9_datasets(
+        tokenizer, seed, max_sequence_length=SEQUENCE_LENGTH
+    )
+    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
+    flat = compute_flat_mixture_weights(SINGLE_IMAGE_ONLY_V9_SUBMIXTURES, lengths)
+    return [name for name, _ in flat]
+
+
+def _full_single_image_only_v10_names(tokenizer, seed: int) -> List[str]:
+    from olmo_core.data.multimodal.mixtures.image_only_v10 import (
+        SINGLE_IMAGE_ONLY_V10_SUBMIXTURES,
+        build_image_only_v10_datasets,
+        compute_flat_mixture_weights,
+    )
+
+    datasets_map = build_image_only_v10_datasets(
+        tokenizer, seed, max_sequence_length=SEQUENCE_LENGTH
+    )
+    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
+    flat = compute_flat_mixture_weights(SINGLE_IMAGE_ONLY_V10_SUBMIXTURES, lengths)
+    return [name for name, _ in flat]
+
+
 def _full_image_only_v9_names(tokenizer, seed: int) -> List[str]:
     from olmo_core.data.multimodal.mixtures.image_only_v9 import (
         IMAGE_ONLY_V9_SUBMIXTURES,
@@ -242,6 +276,28 @@ def _full_image_only_v10_names(tokenizer, seed: int) -> List[str]:
     lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
     flat = compute_flat_mixture_weights(IMAGE_ONLY_V10_SUBMIXTURES, lengths)
     return [name for name, _ in flat]
+
+
+def _override_sets(overrides: List[str], field: str) -> bool:
+    prefix = f"--{field}="
+    return any(item.startswith(prefix) for item in overrides)
+
+
+def _apply_mixture_pack_profile(config: ExperimentConfig, overrides: List[str]) -> ExperimentConfig:
+    profile = get_mixture_pack_profile(config.mixture)
+    if not _override_sets(overrides, "pack_max_crops"):
+        config.pack_max_crops = profile.pack_max_crops
+    if not _override_sets(overrides, "pack_shortcut_max_len_images"):
+        config.pack_shortcut_max_len_images = profile.pack_shortcut_max_len_images
+    if profile.description:
+        log.info(
+            "Mixture %s pack profile: pack_max_crops=%d shortcut_max_len_images=%s (%s)",
+            config.mixture,
+            config.pack_max_crops,
+            config.pack_shortcut_max_len_images,
+            profile.description,
+        )
+    return config
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
@@ -351,13 +407,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
         ]
 
-    return ExperimentConfig(
+    return _apply_mixture_pack_profile(
+        ExperimentConfig(
         model=model_config,
         collator=collator_config,
         train_module=train_module_config,
         trainer=trainer_config,
         launch=launch_config,
-    ).merge(overrides)
+        ).merge(overrides),
+        overrides,
+    )
 
 
 def _load_tokenizer():
@@ -392,7 +451,19 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
 
 def _build_mixture(tokenizer, config: ExperimentConfig):
     names_filter = _mixture_dataset_names(config.mixture)
-    if config.mixture in VALIDATION_MIXTURES_V10:
+    if config.mixture == "single-image-only-v10":
+        datasets, weights = build_single_image_only_v10_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+        names = (
+            _full_single_image_only_v10_names(tokenizer, config.data_seed)
+            if names_filter is None
+            else list(names_filter)
+        )
+    elif config.mixture in VALIDATION_MIXTURES_V10:
         datasets, weights = build_image_only_v10_mixture(
             tokenizer,
             seed=config.data_seed,
@@ -401,6 +472,18 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
         )
         names = (
             _full_image_only_v10_names(tokenizer, config.data_seed)
+            if names_filter is None
+            else list(names_filter)
+        )
+    elif config.mixture == "single-image-only-v9":
+        datasets, weights = build_single_image_only_v9_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+        names = (
+            _full_single_image_only_v9_names(tokenizer, config.data_seed)
             if names_filter is None
             else list(names_filter)
         )
@@ -503,9 +586,10 @@ def train(config: ExperimentConfig):
 
     datasets, weights, dataset_names = _build_mixture(tokenizer, config)
     log.info(
-        "Stage 2 packing: pack=%s pack_max_crops=%d vit_crop_microbatch=%s",
+        "Stage 2 packing: pack=%s pack_max_crops=%d shortcut_max_len_images=%s vit_crop_microbatch=%s",
         config.pack_sequences,
         config.pack_max_crops,
+        config.pack_shortcut_max_len_images,
         os.environ.get("VIT_CROP_MICROBATCH", "16"),
     )
     data_loader = MixtureDataLoader(
@@ -517,6 +601,7 @@ def train(config: ExperimentConfig):
         seed=config.data_seed,
         pack=config.pack_sequences,
         pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
+        pack_shortcut_max_len_images=config.pack_shortcut_max_len_images,
         est_tokens_per_example=EST_TOKENS_PER_EXAMPLE,
         prefetch_workers=DATA_PREFETCH_WORKERS,
         dp_world_size=dp_world_size,
@@ -561,8 +646,14 @@ Print the config:
 Full image-only-v9 mixture:
 › torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=image-only-v9
 
+Single-image-only-v9 (multi-image sources removed; mm_olmo-like pack settings):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=single-image-only-v9
+
 Full image-only-v10 mixture (richer v9 + hub FineVision + DynaMath):
 › torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=image-only-v10
+
+Single-image-only-v10 (v10 without multi-image v9 sources):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=single-image-only-v10
 
 Init from HF instead of stage-1 checkpoint:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke --trainer.load_path=null

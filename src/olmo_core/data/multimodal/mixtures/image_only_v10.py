@@ -27,15 +27,18 @@ from olmo_core.data.multimodal.mixture_weights import (
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     IMAGE_ONLY_V9_SUBMIXTURES,
     build_image_only_v9_dataset,
+    filter_submixtures_single_image,
 )
 
 __all__ = [
     "IMAGE_ONLY_V10_BASE_SCALE",
     "IMAGE_ONLY_V10_SUBMIXTURES",
+    "SINGLE_IMAGE_ONLY_V10_SUBMIXTURES",
     "VALIDATION_MIXTURES_V10",
     "build_image_only_v10_dataset",
     "build_image_only_v10_datasets",
     "build_image_only_v10_mixture",
+    "build_single_image_only_v10_mixture",
     "image_only_v10_dataset_names",
 ]
 
@@ -65,8 +68,13 @@ IMAGE_ONLY_V10_SUBMIXTURES: List[SubMixture] = [
     ),
 ]
 
+SINGLE_IMAGE_ONLY_V10_SUBMIXTURES: List[SubMixture] = filter_submixtures_single_image(
+    IMAGE_ONLY_V10_SUBMIXTURES
+)
+
 VALIDATION_MIXTURES_V10: Dict[str, Optional[Tuple[str, ...]]] = {
     "image-only-v10": None,
+    "single-image-only-v10": None,
     "finevision": FINEVISION_V10_DATASET_NAMES,
     "dynamath": DYNAMATH_TRAINING_VARIANTS,
     "finevision-dynamath": FINEVISION_V10_DATASET_NAMES + DYNAMATH_TRAINING_VARIANTS,
@@ -175,8 +183,10 @@ def build_image_only_v10_mixture(
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
     finevision_cache_dir: Optional[str] = None,
+    submixtures: Optional[Sequence[SubMixture]] = None,
 ) -> Tuple[List, List[float]]:
     """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`."""
+    groups = list(IMAGE_ONLY_V10_SUBMIXTURES if submixtures is None else submixtures)
     datasets_map = build_image_only_v10_datasets(
         tokenizer,
         seed,
@@ -184,7 +194,7 @@ def build_image_only_v10_mixture(
         finevision_cache_dir=finevision_cache_dir,
     )
     lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
-    flat = compute_flat_mixture_weights(IMAGE_ONLY_V10_SUBMIXTURES, lengths)
+    flat = compute_flat_mixture_weights(groups, lengths)
 
     if dataset_names is not None:
         allowed = set(dataset_names)
@@ -197,3 +207,22 @@ def build_image_only_v10_mixture(
     out_datasets = [datasets_map[name] for name, _ in flat]
     out_weights = [w for _, w in flat]
     return out_datasets, out_weights
+
+
+def build_single_image_only_v10_mixture(
+    tokenizer,
+    seed: int = 0,
+    *,
+    dataset_names: Optional[Sequence[str]] = None,
+    max_sequence_length: int = 16384,
+    finevision_cache_dir: Optional[str] = None,
+) -> Tuple[List, List[float]]:
+    """Build image-only-v10 with multi-image v9 sources removed."""
+    return build_image_only_v10_mixture(
+        tokenizer,
+        seed,
+        dataset_names=dataset_names,
+        max_sequence_length=max_sequence_length,
+        finevision_cache_dir=finevision_cache_dir,
+        submixtures=SINGLE_IMAGE_ONLY_V10_SUBMIXTURES,
+    )
