@@ -43,6 +43,7 @@ def _has_cute() -> bool:
     return True
 
 
+@torch.compiler.disable
 def cute_kda_supported(
     q: torch.Tensor,
     v: torch.Tensor,
@@ -115,6 +116,7 @@ def _stages() -> dict:
     return _STAGES
 
 
+@torch.compiler.disable  # keeps compiled autograd off the cute/ctypes host code too
 def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
     """fla's ``chunk_kda_bwd`` (recompute path, fixed-length) as explicit stages.
 
@@ -267,6 +269,11 @@ def _make_autograd_fn() -> type[torch.autograd.Function]:
     return ChunkKDACuteFunction
 
 
+# Never let dynamo trace the cute host path: it drives the kernels through ctypes
+# pointer pokes and per-layout call caches, and under tracing torch.cuda.current_stream()
+# proxies to a device-agnostic torch.Stream with no .cuda_stream. In a compiled block this
+# takes a graph break instead, same as fla's own Triton wrappers.
+@torch.compiler.disable
 def cute_chunk_kda(
     q: torch.Tensor,
     k: torch.Tensor,
