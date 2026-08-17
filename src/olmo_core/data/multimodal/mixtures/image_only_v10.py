@@ -184,7 +184,7 @@ def build_image_only_v10_mixture(
     max_sequence_length: int = 16384,
     finevision_cache_dir: Optional[str] = None,
     submixtures: Optional[Sequence[SubMixture]] = None,
-) -> Tuple[List, List[float]]:
+) -> Tuple[List, List[float], List[str]]:
     """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`."""
     groups = list(IMAGE_ONLY_V10_SUBMIXTURES if submixtures is None else submixtures)
     datasets_map = build_image_only_v10_datasets(
@@ -193,7 +193,8 @@ def build_image_only_v10_mixture(
         max_sequence_length=max_sequence_length,
         finevision_cache_dir=finevision_cache_dir,
     )
-    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
+    needed = {src.name for group in groups for src in group.datasets}
+    lengths = {name: len(datasets_map[name]) for name in needed}
     flat = compute_flat_mixture_weights(groups, lengths)
 
     if dataset_names is not None:
@@ -204,9 +205,10 @@ def build_image_only_v10_mixture(
         norm = sum(w for _, w in flat)
         flat = [(name, w / norm) for name, w in flat]
 
-    out_datasets = [datasets_map[name] for name, _ in flat]
+    out_names = [name for name, _ in flat]
+    out_datasets = [datasets_map[name] for name in out_names]
     out_weights = [w for _, w in flat]
-    return out_datasets, out_weights
+    return out_datasets, out_weights, out_names
 
 
 def build_single_image_only_v10_mixture(
@@ -216,7 +218,7 @@ def build_single_image_only_v10_mixture(
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
     finevision_cache_dir: Optional[str] = None,
-) -> Tuple[List, List[float]]:
+) -> Tuple[List, List[float], List[str]]:
     """Build image-only-v10 with multi-image v9 sources removed."""
     return build_image_only_v10_mixture(
         tokenizer,

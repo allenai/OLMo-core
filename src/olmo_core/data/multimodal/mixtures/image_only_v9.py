@@ -348,7 +348,7 @@ def build_image_only_v9_mixture(
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
     submixtures: Optional[Sequence[SubMixture]] = None,
-) -> Tuple[List, List[float]]:
+) -> Tuple[List, List[float], List[str]]:
     """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`.
 
     Flattens ``IMAGE_ONLY_V9_SUBMIXTURES`` with mm_olmo SubMixture rate math, optionally
@@ -358,7 +358,8 @@ def build_image_only_v9_mixture(
     datasets_map = build_image_only_v9_datasets(
         tokenizer, seed, max_sequence_length=max_sequence_length
     )
-    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
+    needed = {src.name for group in groups for src in group.datasets}
+    lengths = {name: len(datasets_map[name]) for name in needed}
     flat = compute_flat_mixture_weights(groups, lengths)
 
     if dataset_names is not None:
@@ -369,9 +370,10 @@ def build_image_only_v9_mixture(
         norm = sum(w for _, w in flat)
         flat = [(name, w / norm) for name, w in flat]
 
-    out_datasets = [datasets_map[name] for name, _ in flat]
+    out_names = [name for name, _ in flat]
+    out_datasets = [datasets_map[name] for name in out_names]
     out_weights = [w for _, w in flat]
-    return out_datasets, out_weights
+    return out_datasets, out_weights, out_names
 
 
 def build_single_image_only_v9_mixture(
@@ -380,7 +382,7 @@ def build_single_image_only_v9_mixture(
     *,
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
-) -> Tuple[List, List[float]]:
+) -> Tuple[List, List[float], List[str]]:
     """Build image-only-v9 with multi-image sources removed (rates renormalized)."""
     return build_image_only_v9_mixture(
         tokenizer,

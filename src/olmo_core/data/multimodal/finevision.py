@@ -51,6 +51,8 @@ stripped so it is never tokenized as literal text).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -81,6 +83,9 @@ __all__ = [
     "FINEVISION_V10_SHUFFLE_SEED",
     "build_finevision_v10_config",
     "finevision_v10_hub_name",
+    "finevision_index_cache_path",
+    "load_finevision_index_cache",
+    "save_finevision_index_cache",
 ]
 
 log = logging.getLogger(__name__)
@@ -130,6 +135,118 @@ def finevision_v10_hub_name(dataset_name: str) -> str:
             f"expected one of: {', '.join(FINEVISION_V10_DATASET_NAMES)}"
         )
     return FINEVISION_V10_HUB_ALIASES[dataset_name]
+
+
+def _finevision_index_cache_dir(config: "FineVisionDatasetConfig") -> Optional[str]:
+    if config.index_cache_dir == "":
+        return None
+    if config.index_cache_dir is not None:
+        return config.index_cache_dir
+    return os.environ.get(
+        "FINEVISION_INDEX_CACHE_DIR",
+        os.path.join(FINEVISION_ROOT, ".index_cache"),
+    )
+
+
+def _finevision_index_source_key(config: "FineVisionDatasetConfig") -> str:
+    if config.dataset_path is not None:
+        source = config.dataset_path
+    elif config.uses_hub():
+        cache = config.cache_dir or os.environ.get("HF_DATASETS_CACHE", "")
+        source = f"hub:{config.hub_repo}:{config.config_name}:{config.split}:{cache}"
+    else:
+        source = config.resolved_path()
+    return hashlib.sha256(source.encode()).hexdigest()[:16]
+
+
+def _finevision_index_filter_key(config: "FineVisionDatasetConfig") -> str:
+    payload = {
+        "split": config.split,
+        "texts_column": config.texts_column,
+        "images_column": config.images_column,
+        "quality": {
+            attr: getattr(config, attr)
+            for attr in _QUALITY_COLUMNS
+        },
+        "require_single_image": config.require_single_image,
+        "max_rows": config.max_rows,
+        "shuffle_seed": config.shuffle_seed,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return digest[:16]
+
+
+def finevision_index_cache_path(config: "FineVisionDatasetConfig", table_rows: int) -> Optional[str]:
+    """Return the on-disk cache path for a filtered row index, if caching is enabled."""
+    cache_dir = _finevision_index_cache_dir(config)
+    if cache_dir is None:
+        return None
+    fname = (
+        f"{config.config_name}__{_finevision_index_source_key(config)}"
+        f"__{_finevision_index_filter_key(config)}__rows{table_rows}.npz"
+    )
+    return os.path.join(cache_dir, fname)
+
+
+def load_finevision_index_cache(
+    config: "FineVisionDatasetConfig", table_rows: int
+) -> tuple[bool, Optional[np.ndarray]]:
+    """Load a cached filtered index.
+
+    :returns: ``(hit, index)`` where ``index`` is ``None`` when all rows are kept.
+    """
+    path = finevision_index_cache_path(config, table_rows)
+    if path is None or not os.path.isfile(path):
+        return False, None
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            cached_rows = int(data["table_rows"])
+            use_full = bool(int(data["use_full"]))
+            if cached_rows != table_rows:
+                return False, None
+            if use_full:
+                log.info("FineVision[%s]: loaded cached full-table index (%d rows)", config.config_name, table_rows)
+                return True, None
+            positions = np.asarray(data["positions"], dtype=np.int64)
+            log.info(
+                "FineVision[%s]: loaded cached filtered index (%d / %d rows)",
+                config.config_name,
+                len(positions),
+                table_rows,
+            )
+            return True, positions
+    except (OSError, KeyError, ValueError) as exc:
+        log.warning("FineVision[%s]: ignoring corrupt index cache %s (%s)", config.config_name, path, exc)
+        return False, None
+
+
+def save_finevision_index_cache(
+    config: "FineVisionDatasetConfig", table_rows: int, index: Optional[np.ndarray]
+) -> None:
+    """Persist a filtered row index to disk."""
+    path = finevision_index_cache_path(config, table_rows)
+    if path is None:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    use_full = index is None or len(index) == table_rows
+    tmp_base = path.removesuffix(".npz") + ".tmp"
+    if use_full:
+        np.savez_compressed(tmp_base, table_rows=table_rows, use_full=1, positions=np.array([], dtype=np.int64))
+    else:
+        np.savez_compressed(
+            tmp_base,
+            table_rows=table_rows,
+            use_full=0,
+            positions=np.asarray(index, dtype=np.int64),
+        )
+    os.replace(tmp_base + ".npz", path)
+    log.info(
+        "FineVision[%s]: wrote index cache (%d / %d rows) to %s",
+        config.config_name,
+        table_rows if use_full else len(index),
+        table_rows,
+        path,
+    )
 
 
 def build_finevision_v10_config(
@@ -186,6 +303,10 @@ class FineVisionDatasetConfig(Config):
 
     cache_dir: Optional[str] = None
     """HuggingFace datasets cache directory for hub loads (defaults to ``HF_DATASETS_CACHE``)."""
+
+    index_cache_dir: Optional[str] = None
+    """Directory for cached row-filter indexes. Defaults to ``FINEVISION_INDEX_CACHE_DIR``
+    or ``$FINEVISION_ROOT/.index_cache``. Set to ``""`` to disable caching."""
 
     split: str = "train"
 
@@ -267,52 +388,18 @@ class FineVisionDataset:
         self._index = self._build_index()
         self._warned = 0
 
-    @staticmethod
-    def _load_table(config: FineVisionDatasetConfig):
-        keep_columns = [config.texts_column, config.images_column] + list(
-            _QUALITY_COLUMNS.values()
-        )
-
-        if config.dataset_path is not None:
-            return load_hf_dataset(
-                config.dataset_path,
-                config.split,
-                keep_columns=keep_columns,
-            )
-
-        if config.uses_hub():
-            from datasets import load_dataset
-
-            load_kwargs = {}
-            if config.cache_dir is not None:
-                load_kwargs["cache_dir"] = config.cache_dir
-            log.info(
-                "FineVision[%s]: loading from hub %s (cache_dir=%s)",
-                config.config_name,
-                config.hub_repo,
-                config.cache_dir or os.environ.get("HF_DATASETS_CACHE", "(default)"),
-            )
-            ds = load_dataset(
-                config.hub_repo,
-                name=config.config_name,
-                split=config.split,
-                **load_kwargs,
-            )
-            extra = [c for c in ds.column_names if c not in keep_columns]
-            if extra:
-                ds = ds.remove_columns(extra)
-            return ds
-
-        return load_hf_dataset(
-            config.resolved_path(),
-            config.split,
-            keep_columns=keep_columns,
-        )
-
     def _build_index(self) -> Optional[np.ndarray]:
+        n = len(self._data)
+        hit, cached = load_finevision_index_cache(self.config, n)
+        if hit:
+            return cached
+        index = self._compute_index(n)
+        save_finevision_index_cache(self.config, n, index)
+        return index
+
+    def _compute_index(self, n: int) -> Optional[np.ndarray]:
         """Row positions kept after quality / single-image filters and optional subsampling."""
         cfg = self.config
-        n = len(self._data)
         keep = np.ones(n, dtype=bool)
 
         active_quality = {
@@ -373,6 +460,48 @@ class FineVisionDataset:
         if len(positions) == n:
             return None
         return positions
+
+    @staticmethod
+    def _load_table(config: FineVisionDatasetConfig):
+        keep_columns = [config.texts_column, config.images_column] + list(
+            _QUALITY_COLUMNS.values()
+        )
+
+        if config.dataset_path is not None:
+            return load_hf_dataset(
+                config.dataset_path,
+                config.split,
+                keep_columns=keep_columns,
+            )
+
+        if config.uses_hub():
+            from datasets import load_dataset
+
+            load_kwargs = {}
+            if config.cache_dir is not None:
+                load_kwargs["cache_dir"] = config.cache_dir
+            log.info(
+                "FineVision[%s]: loading from hub %s (cache_dir=%s)",
+                config.config_name,
+                config.hub_repo,
+                config.cache_dir or os.environ.get("HF_DATASETS_CACHE", "(default)"),
+            )
+            ds = load_dataset(
+                config.hub_repo,
+                name=config.config_name,
+                split=config.split,
+                **load_kwargs,
+            )
+            extra = [c for c in ds.column_names if c not in keep_columns]
+            if extra:
+                ds = ds.remove_columns(extra)
+            return ds
+
+        return load_hf_dataset(
+            config.resolved_path(),
+            config.split,
+            keep_columns=keep_columns,
+        )
 
     def __len__(self) -> int:
         return len(self._data) if self._index is None else len(self._index)
