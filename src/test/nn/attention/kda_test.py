@@ -38,3 +38,41 @@ def test_kimi_delta_attention_fwd_bwd():
         y.square().mean().backward()
     assert x.grad is not None
     assert torch.isfinite(x.grad).all()
+
+
+@requires_fla
+@requires_gpu
+def test_kimi_delta_attention_cute_matches_fla():
+    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
+
+    if torch.cuda.get_device_capability()[0] < 10:
+        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
+    if not _has_cute():
+        pytest.skip("CUTLASS CuTe DSL is not installed")
+
+    device = "cuda"
+    dtype = torch.bfloat16
+    # B * HV * (V / 64) = 4 * 16 * 4 = 256 CTAs, enough that the CuTe backward scans
+    # engage instead of taking their small-grid fla fallback (_MIN_CTAS = 256).
+    d_model, seq_len, batch_size = 256, 256, 4
+    torch.manual_seed(0)
+    config = KimiDeltaAttentionConfig(n_heads=16, head_dim=128, expand_v=2.0, allow_neg_eigval=True)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
+
+    results = {}
+    for use_cute in (False, True):
+        module.use_cute_kernel = use_cute
+        module.zero_grad(set_to_none=True)
+        xi = x.clone().requires_grad_(True)
+        with torch.autocast(device_type=device, dtype=dtype):
+            y = module(xi)
+            y.square().mean().backward()
+        assert xi.grad is not None
+        results[use_cute] = (y.detach(), xi.grad, module.A_log.grad.clone())
+
+    y_fla, dx_fla, dA_fla = results[False]
+    y_cute, dx_cute, dA_cute = results[True]
+    torch.testing.assert_close(y_cute, y_fla, atol=5e-3, rtol=5e-3)
+    torch.testing.assert_close(dx_cute, dx_fla, atol=1e-2, rtol=1e-2)
+    torch.testing.assert_close(dA_cute, dA_fla, atol=1e-2, rtol=1e-2)
