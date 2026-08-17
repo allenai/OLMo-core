@@ -137,19 +137,19 @@ def kda_bwd_intra_kernel(
     # diagonal block, scalar-loop form (fla's default safe_gate=False path): the direct
     # exp2(g_i - g_j), i >= j, is one-sided so it cannot overflow — see module docstring.
     o_dA = o_c * (HV * BT) + i_i * BC
-    p_kj = k + i_ti * (H * K) + o_k
-    p_gkj = g + i_ti * (HV * K) + o_k
+    p_kd = k + i_ti * (H * K) + o_k
+    p_gd = g + i_ti * (HV * K) + o_k
     for j in range(0, min(BC, T - i_ti)):
-        b_dAqk_j = tl.load(dAqk + o_dA + j, mask=m_c, other=0.0)
-        b_dAkk_j = tl.load(dAkk + o_dA + j, mask=m_c, other=0.0)
-        b_kj = tl.load(p_kj, mask=m_k, other=0.0).to(tl.float32)
-        b_gkj = tl.load(p_gkj, mask=m_k, other=0.0).to(tl.float32)
+        b_dAqk_d = tl.load(dAqk + o_dA + j, mask=m_c, other=0.0)
+        b_dAkk_d = tl.load(dAkk + o_dA + j, mask=m_c, other=0.0)
+        b_kd = tl.load(p_kd, mask=m_k, other=0.0).to(tl.float32)
+        b_gd = tl.load(p_gd, mask=m_k, other=0.0).to(tl.float32)
         m_ij = o_i[:, None] >= j
-        b_gqk = exp2(b_g - b_gkj[None, :])
-        b_dq2 += tl.where(m_ij, b_dAqk_j[:, None] * b_kj[None, :] * b_gqk, 0.0)
-        b_dk2 += tl.where(m_ij, b_dAkk_j[:, None] * b_kj[None, :] * b_gqk, 0.0)
-        p_kj += H * K
-        p_gkj += HV * K
+        b_gqk = exp2(b_g - b_gd[None, :])
+        b_dq2 += tl.where(m_ij, b_dAqk_d[:, None] * b_kd[None, :] * b_gqk, 0.0)
+        b_dk2 += tl.where(m_ij, b_dAkk_d[:, None] * b_kd[None, :] * b_gqk, 0.0)
+        p_kd += H * K
+        p_gd += HV * K
 
     b_db = tl.sum(b_dk2 * b_k, 1)
     b_dk2 *= b_b[:, None]
@@ -197,24 +197,24 @@ def kda_bwd_intra_kernel(
 
     # transposed diagonal block, scalar-loop form (same one-sided-exponent argument)
     o_dA_t = i_ti * (HV * BT) + i_i * BC + o_i
-    p_qj = q + i_ti * (H * K) + o_k
-    p_kj = k + i_ti * (H * K) + o_k
-    p_gkj = g + i_ti * (HV * K) + o_k
-    p_bj = beta + i_ti * HV
+    p_qt = q + i_ti * (H * K) + o_k
+    p_kt = k + i_ti * (H * K) + o_k
+    p_gt = g + i_ti * (HV * K) + o_k
+    p_bt = beta + i_ti * HV
     for j in range(0, min(BC, T - i_ti)):
-        b_dAqk_j = tl.load(dAqk + o_dA_t + j * (HV * BT))
-        b_dAkk_j = tl.load(dAkk + o_dA_t + j * (HV * BT))
-        b_qj = tl.load(p_qj, mask=m_k, other=0.0).to(tl.float32)
-        b_kbj = tl.load(p_kj, mask=m_k, other=0.0).to(tl.float32) * tl.load(p_bj)
-        b_gkj = tl.load(p_gkj, mask=m_k, other=0.0).to(tl.float32)
+        b_dAqk_t = tl.load(dAqk + o_dA_t + j * (HV * BT))
+        b_dAkk_t = tl.load(dAkk + o_dA_t + j * (HV * BT))
+        b_qt = tl.load(p_qt, mask=m_k, other=0.0).to(tl.float32)
+        b_kbt = tl.load(p_kt, mask=m_k, other=0.0).to(tl.float32) * tl.load(p_bt)
+        b_gt = tl.load(p_gt, mask=m_k, other=0.0).to(tl.float32)
         m_ij = o_i[:, None] <= j
-        b_gkq = exp2(b_gkj[None, :] - b_g)
-        b_dkt += tl.where(m_ij, b_dAqk_j[:, None] * b_qj[None, :] * b_gkq, 0.0)
-        b_dkt += tl.where(m_ij, b_dAkk_j[:, None] * b_kbj[None, :] * b_gkq, 0.0)
-        p_qj += H * K
-        p_kj += H * K
-        p_gkj += HV * K
-        p_bj += HV
+        b_gkq = exp2(b_gt[None, :] - b_g)
+        b_dkt += tl.where(m_ij, b_dAqk_t[:, None] * b_qt[None, :] * b_gkq, 0.0)
+        b_dkt += tl.where(m_ij, b_dAkk_t[:, None] * b_kbt[None, :] * b_gkq, 0.0)
+        p_qt += H * K
+        p_kt += H * K
+        p_gt += HV * K
+        p_bt += HV
 
     p_dk = dk + o_c[:, None] * (HV * K) + o_k[None, :]
     p_dk2 = dk2 + o_c[:, None] * (HV * K) + o_k[None, :]
