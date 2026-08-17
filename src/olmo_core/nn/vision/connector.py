@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
@@ -355,18 +357,29 @@ class VisionConnector(nn.Module):
             self.pooling = checkpoint_wrapper(self.pooling)
         self.projector = checkpoint_wrapper(self.projector)
 
-    def apply_compile(self) -> None:
-        """``torch.compile`` pooling + projector (mm_olmo ``compile_connector: dynamic``).
-
-        Compiled with ``dynamic=True``: the number of pooled groups varies per batch (it
-        follows the crop count), so a static compile would recompile on every new shape.
-
-        .. warning::
-            Call after :meth:`apply_activation_checkpointing` and before FSDP wrapping.
-        """
+    def apply_compile(self, *, dynamic: bool = True) -> None:
+        """Compile pooling + projector (mm_olmo ``compile_connector='dynamic'``)."""
+        compile_kwargs = {"fullgraph": False}
+        if dynamic:
+            compile_kwargs["dynamic"] = True
         if self.pooling is not None:
-            self.pooling = torch.compile(self.pooling, dynamic=True)  # type: ignore[assignment]
-        self.projector = torch.compile(self.projector, dynamic=True)  # type: ignore[assignment]
+            self.pooling.compile(**compile_kwargs)
+        self.projector.compile(**compile_kwargs)
+
+    def apply_fsdp(
+        self,
+        *,
+        dp_mesh: Optional[DeviceMesh] = None,
+        mp_policy: Optional[MixedPrecisionPolicy] = None,
+        reshard_after_forward: bool = True,
+    ) -> None:
+        """Shard pooling and projector separately (mm_olmo ``image_pooling_2d`` / ``image_projector``)."""
+        fsdp_kwargs = {"mesh": dp_mesh, "reshard_after_forward": reshard_after_forward}
+        if mp_policy is not None:
+            fsdp_kwargs["mp_policy"] = mp_policy
+        if self.pooling is not None:
+            fully_shard(self.pooling, **fsdp_kwargs)
+        fully_shard(self.projector, **fsdp_kwargs)
 
     def forward(
         self,

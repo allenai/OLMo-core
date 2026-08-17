@@ -36,11 +36,13 @@ from olmo_core.distributed.parallel import (
     get_dp_model_mesh,
 )
 from olmo_core.distributed.utils import (
+    fsdp_nest_connector,
     fsdp_reshard_after_forward,
     get_local_tensor,
     get_rank,
     get_world_size,
     is_distributed,
+    log_fsdp_topology,
     reduce_distributed_failure_flag,
 )
 from olmo_core.exceptions import OLMoConfigurationError
@@ -226,12 +228,23 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 wrapping_strategy=dp_config.wrapping_strategy,
                 prefetch_factor=dp_config.prefetch_factor,
             )
-            # Shard the vision encoder + connector, then the root so ``self.model`` is an
-            # FSDPModule (the inherited micro-batch / gradient-sync handling keys off this).
+            # Match mm_olmo's FSDP2 topology: each ViT block is its own FSDP
+            # unit before sharding the remaining encoder parameters.
             mp = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
-            fully_shard(self.model.vision, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
-            fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            vb = self.model.vision_backbone
+            if fsdp_nest_connector():
+                vb.apply_fsdp(dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            else:
+                if hasattr(vb.vision, "apply_fsdp"):
+                    vb.vision.apply_fsdp(
+                        dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf
+                    )
+                else:
+                    fully_shard(vb.vision, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+                fully_shard(vb.connector, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
             fully_shard(self.model, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            if os.environ.get("MM_FSDP_LOG_TOPOLOGY", "1").lower() not in ("0", "false", "no"):
+                log_fsdp_topology(self.model, label="multimodal")
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
@@ -423,18 +436,18 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                         f"Training failed on another rank (rank {get_rank()} had finite CE)"
                     )
 
-                if dry_run:
-                    continue
-
                 loss = ce_loss / div_factor
                 if z_loss is not None:
                     loss = loss + z_loss / div_factor
 
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-                weight_total += get_local_tensor((flat_weights > 0).sum().detach()).float()
-                if z_batch_loss is not None and z_loss is not None:
-                    z_batch_loss += get_local_tensor(z_loss.detach())
+                if not dry_run:
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+                    weight_total += get_local_tensor((flat_weights > 0).sum().detach()).float()
+                    if z_batch_loss is not None and z_loss is not None:
+                        z_batch_loss += get_local_tensor(z_loss.detach())
 
+                # Run backward even during the trainer dry-run so FSDP reshards between
+                # microbatches and peak memory reflects a real training step.
                 loss.backward()
 
         del batch

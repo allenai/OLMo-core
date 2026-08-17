@@ -18,9 +18,12 @@ from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import (
     ImagePoolingType,
     ImageProjectorType,
+    VisionConnector,
     VisionConnectorConfig,
 )
+from olmo_core.nn.vision.image_vit import VisionTransformer
 from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
+from olmo_core.nn.vision.vision_backbone import VisionBackbone
 
 
 def _mm_emb_full_tensor() -> bool:
@@ -296,9 +299,47 @@ class MultimodalLM(nn.Module):
         self.lm = cfg.lm.build(init_device=init_device)
         # Cached so `forward` only builds a drop mask when some block will consume it.
         self._masked_residual_dropout = float(getattr(cfg.lm.block, "masked_dropout", 0.0) or 0.0)
-        self.vision = cfg.vision.build(init_device=init_device)
-        self.connector = cfg.connector.build(init_device=init_device)
+        self.vision_backbone = VisionBackbone(
+            cfg.vision, cfg.connector, init_device=init_device
+        )
         self._emb_weight_step_cache: Optional[torch.Tensor] = None
+
+    @property
+    def vision(self) -> VisionTransformer:
+        return self.vision_backbone.vision
+
+    @property
+    def connector(self) -> VisionConnector:
+        return self.vision_backbone.connector
+
+    def _remap_legacy_state_dict_keys(
+        self, state_dict: dict[str, torch.Tensor], *, to_internal: bool
+    ) -> dict[str, torch.Tensor]:
+        """Map ``vision.*`` / ``connector.*`` ↔ ``vision_backbone.vision.*`` / ``...connector.*``."""
+        prefix = "vision_backbone."
+        remapped: dict[str, torch.Tensor] = {}
+        for key, value in state_dict.items():
+            if to_internal:
+                if key.startswith("vision.") or key.startswith("connector."):
+                    remapped[prefix + key] = value
+                else:
+                    remapped[key] = value
+            elif key.startswith(prefix):
+                remapped[key[len(prefix) :]] = value
+            else:
+                remapped[key] = value
+        return remapped
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):  # type: ignore[override]
+        return super().load_state_dict(
+            self._remap_legacy_state_dict_keys(state_dict, to_internal=True),
+            strict=strict,
+            assign=assign,
+        )
+
+    def state_dict(self, *args, destination=None, prefix="", keep_vars=False):  # type: ignore[override]
+        sd = super().state_dict(*args, destination=destination, prefix=prefix, keep_vars=keep_vars)
+        return self._remap_legacy_state_dict_keys(sd, to_internal=False)
 
     def clear_embedding_step_cache(self) -> None:
         """Drop the per-step gathered embedding table (call once per optimizer step)."""
