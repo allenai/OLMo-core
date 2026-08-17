@@ -109,10 +109,17 @@ def _stages() -> dict:
             from .kernel_intra_bwd import chunk_kda_bwd_intra_wide
             from .kernel_wy_dqkg import chunk_kda_bwd_wy_dqkg_wide
 
-            _STAGES["fwd_h"] = chunk_gated_delta_rule_fwd_h_cute
-            _STAGES["bwd_dhu"] = chunk_gated_delta_rule_bwd_dhu_cute
-            _STAGES["bwd_intra"] = chunk_kda_bwd_intra_wide
-            _STAGES["wy_dqkg"] = chunk_kda_bwd_wy_dqkg_wide
+            swaps = {
+                "fwd_h": chunk_gated_delta_rule_fwd_h_cute,
+                "bwd_dhu": chunk_gated_delta_rule_bwd_dhu_cute,
+                "bwd_intra": chunk_kda_bwd_intra_wide,
+                "wy_dqkg": chunk_kda_bwd_wy_dqkg_wide,
+            }
+            # Debug bisect knob: comma-separated stage names to swap in (default: all).
+            only = os.environ.get("OLMO_CUTE_KDA_STAGES")
+            if only is not None:
+                swaps = {k: v for k, v in swaps.items() if k in only.split(",")}
+            _STAGES.update(swaps)
     return _STAGES
 
 
