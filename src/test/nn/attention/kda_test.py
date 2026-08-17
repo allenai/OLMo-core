@@ -42,6 +42,35 @@ def test_kimi_delta_attention_fwd_bwd():
 
 @requires_fla
 @requires_gpu
+def test_kimi_delta_attention_cute_under_torch_compile():
+    """The train module compiles each block; the cute host path must graph-break cleanly
+    (dynamo tracing it used to die on torch.cuda.current_stream().cuda_stream)."""
+    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
+
+    if torch.cuda.get_device_capability()[0] < 10:
+        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
+    if not _has_cute():
+        pytest.skip("CUTLASS CuTe DSL is not installed")
+
+    device = "cuda"
+    dtype = torch.bfloat16
+    d_model, seq_len, batch_size = 256, 128, 2
+    torch.manual_seed(0)
+    config = KimiDeltaAttentionConfig(n_heads=2, head_dim=128, use_cute_kernel=True)
+    module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
+    compiled = torch.compile(module)
+    x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype, requires_grad=True)
+
+    with torch.autocast(device_type=device, dtype=dtype):
+        y = compiled(x)
+        assert y.shape == x.shape
+        y.square().mean().backward()
+    assert x.grad is not None
+    assert torch.isfinite(x.grad).all()
+
+
+@requires_fla
+@requires_gpu
 def test_kimi_delta_attention_cute_matches_fla():
     from olmo_core.nn.attention.kda_cute.chunk import _has_cute
 
