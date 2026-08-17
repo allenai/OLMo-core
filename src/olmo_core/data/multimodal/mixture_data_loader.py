@@ -23,6 +23,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase
 from .collator import MultimodalCollator
+from .packed_mixture_iterable import PackedMixtureIterableDataset, worker_init_fn
 from .packing import iter_dynamic_packs, iter_packs
 from .prefetch import prefetch_map
 
@@ -62,6 +63,10 @@ class MixtureDataLoader(DataLoaderBase):
         pack_shortcut_max_len_images: bool = False,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
+        dl_num_workers: int = 0,
+        dl_prefetch_factor: int = 4,
+        dl_persistent_workers: bool = True,
+        dl_pin_memory: bool = True,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
         max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS,
         dp_world_size: int = 1,
@@ -104,7 +109,25 @@ class MixtureDataLoader(DataLoaderBase):
         self.pack_image_weight = pack_image_weight
         self.pack_shortcut_max_len_images = pack_shortcut_max_len_images
         self.est_tokens_per_example = est_tokens_per_example
+        if dl_num_workers > 0 and not pack:
+            raise OLMoConfigurationError(
+                "dl_num_workers > 0 requires pack=True (multiprocess workers run dynamic packing)."
+            )
+        if dl_num_workers > 0 and pack_max_crops is None:
+            raise OLMoConfigurationError(
+                "dl_num_workers > 0 requires pack_max_crops (dynamic 2D knapsack packer)."
+            )
+        if dl_num_workers > 0 and prefetch_workers > 0:
+            log.info(
+                "dl_num_workers=%d: disabling thread prefetch_workers (packing runs in worker processes)",
+                dl_num_workers,
+            )
+            prefetch_workers = 0
         self.prefetch_workers = prefetch_workers
+        self.dl_num_workers = dl_num_workers
+        self.dl_prefetch_factor = dl_prefetch_factor
+        self.dl_persistent_workers = dl_persistent_workers
+        self.dl_pin_memory = dl_pin_memory
         self.max_consecutive_data_errors = max_consecutive_data_errors
         self.max_total_data_errors = max_total_data_errors
         self._consecutive_data_errors = 0
@@ -169,11 +192,14 @@ class MixtureDataLoader(DataLoaderBase):
         n_batches = self.total_batches or 0
         if self.pack:
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            gen = self._pack_stream(rank_refs)
-            for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
-                next(gen)
-            for _ in range(self.batches_processed, n_batches):
-                yield self.collator([next(gen) for _ in range(ri)])
+            if self.dl_num_workers > 0:
+                yield from self._iter_multiprocess_packed_batches(n_batches)
+            else:
+                gen = self._pack_stream(rank_refs)
+                for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
+                    next(gen)
+                for _ in range(self.batches_processed, n_batches):
+                    yield self.collator([next(gen) for _ in range(ri)])
             return
         gi = self._global_instances
         for b in range(self.batches_processed, n_batches):
@@ -189,6 +215,62 @@ class MixtureDataLoader(DataLoaderBase):
         out = dict(ex)
         out["_source_name"] = self.dataset_names[src_idx]
         return out
+
+    def _iter_multiprocess_packed_batches(self, n_batches: int) -> Iterable[Dict[str, Any]]:
+        """mm_olmo parity: preprocess + pack + collate in DataLoader worker processes."""
+        import torch.utils.data
+
+        dataset = PackedMixtureIterableDataset(
+            self.datasets,
+            self.dataset_names,
+            mixture_seed=self.seed,
+            mixture_epoch=self._epoch if self._epoch is not None else 1,
+            mixture_weights=self.weights,
+            mixture_sizes=self._sizes,
+            dp_rank=self.dp_rank,
+            dp_world_size=self.dp_world_size,
+            epoch_instances=self.epoch_instances,
+            seq_len=self.seq_len,
+            pack_max_crops=self.pack_max_crops,
+            pack_buffer_size=self.pack_buffer_size,
+            pack_image_weight=self.pack_image_weight,
+            pack_shortcut_max_len_images=self.pack_shortcut_max_len_images,
+            max_consecutive_data_errors=self.max_consecutive_data_errors,
+            max_total_data_errors=self.max_total_data_errors,
+        )
+        ri = self._rank_instances
+        dl_kwargs: Dict[str, Any] = dict(
+            batch_size=ri,
+            collate_fn=self.collator,
+            num_workers=self.dl_num_workers,
+            pin_memory=self.dl_pin_memory,
+            worker_init_fn=worker_init_fn,
+        )
+        if self.dl_num_workers > 0:
+            import torch.multiprocessing as mp
+
+            # Must use spawn, not fork: workers are created after the trainer's CUDA dry-run.
+            dl_kwargs["multiprocessing_context"] = mp.get_context("spawn")
+            dl_kwargs["prefetch_factor"] = self.dl_prefetch_factor
+            dl_kwargs["persistent_workers"] = self.dl_persistent_workers
+        inner_dl = torch.utils.data.DataLoader(dataset, **dl_kwargs)
+        log.info(
+            "Starting multiprocess packed DataLoader: workers=%d batch_packs=%d refs=on-the-fly(epoch=%s)",
+            self.dl_num_workers,
+            ri,
+            self._epoch if self._epoch is not None else 1,
+        )
+        it = iter(inner_dl)
+        try:
+            for _ in range(self.batches_processed):
+                next(it)
+            for _ in range(self.batches_processed, n_batches):
+                yield next(it)
+        finally:
+            # Drop the iterator so worker processes exit if the epoch ends early.
+            if hasattr(inner_dl, "_iterator") and inner_dl._iterator is not None:
+                inner_dl._iterator._shutdown_workers()
+            del it
 
     def _pack_stream(self, refs: Sequence) -> Iterator[Dict[str, Any]]:
         """Packed-example stream over cycled ``refs``.

@@ -18,6 +18,7 @@ from olmo_core.data.multimodal.packing import (
     iter_packs,
     pack_examples,
 )
+from olmo_core.data.multimodal.packed_mixture_iterable import iter_rank_mixture_refs
 from olmo_core.data.multimodal.prefetch import prefetch_map
 
 _SEQ = 8
@@ -281,6 +282,66 @@ def test_mixture_data_loader_packs(tmp_path):
     # _FakeDataset emits length-6 text-only examples; with _SEQ=8 only one fits per pack.
     assert tuple(batch["input_ids"].shape) == (2, _SEQ)
     assert "example_ids" in batch  # packing marks example membership
+
+
+def test_mixture_data_loader_multiprocess_packs(tmp_path):
+    ds = [_FakeDataset(200, 10), _FakeDataset(100, 20)]
+    coll = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    dl = MixtureDataLoader(
+        ds,
+        [0.5, 0.5],
+        coll,
+        work_dir=str(tmp_path),
+        global_batch_size=2 * _SEQ,
+        seed=0,
+        pack=True,
+        pack_max_crops=8,
+        pack_buffer_size=4,
+        dl_num_workers=2,
+        dl_prefetch_factor=2,
+        dl_persistent_workers=False,
+        dl_pin_memory=False,
+    )
+    dl.reshuffle(epoch=1)
+    it = iter(dl)
+    batch = next(it)
+    assert tuple(batch["input_ids"].shape) == (2, _SEQ)
+    assert "example_ids" in batch
+    batch2 = next(it)
+    assert tuple(batch2["input_ids"].shape) == (2, _SEQ)
+
+
+def test_iter_rank_mixture_refs_matches_reshuffle(tmp_path):
+    ds = [_FakeDataset(200, 10), _FakeDataset(100, 20)]
+    coll = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    dl = MixtureDataLoader(
+        ds,
+        [0.5, 0.5],
+        coll,
+        work_dir=str(tmp_path),
+        global_batch_size=2 * _SEQ,
+        seed=7,
+        pack=True,
+        pack_max_crops=8,
+        epoch_instances=64,
+        dp_world_size=4,
+        dp_rank=2,
+    )
+    dl.reshuffle(epoch=3)
+    assert dl._order is not None
+    expected = dl._order[dl.dp_rank :: dl.dp_world_size]
+    actual = list(
+        iter_rank_mixture_refs(
+            dl.seed,
+            3,
+            dl.weights,
+            dl._sizes,
+            dl.dp_rank,
+            dl.dp_world_size,
+            dl.epoch_instances,
+        )
+    )
+    assert actual == expected
 
 
 def test_mixture_data_loader_normalizes_weights(tmp_path):

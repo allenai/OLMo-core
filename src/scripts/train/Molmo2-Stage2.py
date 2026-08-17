@@ -88,7 +88,11 @@ USE_FLEX_ATTN = True
 PACK_SEQUENCES = True
 COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
-DATA_PREFETCH_WORKERS = 4
+DATA_PREFETCH_WORKERS = 0
+DL_NUM_WORKERS = 2
+"""Process workers for packed mixture DataLoader (0 = sync pack+collate on iterator thread)."""
+DL_PREFETCH_FACTOR = 2
+DL_PERSISTENT_WORKERS = True
 MAX_CROPS = 8
 # Per-pack crop capacity for the 2D-knapsack packer. Defaults below are overridden per
 # mixture tier in ``mixture_pack_profiles`` (see ``get_mixture_pack_profile``).
@@ -181,6 +185,12 @@ class ExperimentConfig(Config):
     pack_sequences: bool = PACK_SEQUENCES
     pack_max_crops: int = PACK_MAX_CROPS
     pack_shortcut_max_len_images: bool = PACK_SHORTCUT_MAX_LEN_IMAGES
+    prefetch_workers: int = DATA_PREFETCH_WORKERS
+    """Background threads for example preprocessing (0 = synchronous). Ignored when ``dl_num_workers > 0``."""
+    dl_num_workers: int = DL_NUM_WORKERS
+    """PyTorch DataLoader process workers for packed stage-2 mixtures (mm_olmo parity)."""
+    dl_prefetch_factor: int = DL_PREFETCH_FACTOR
+    dl_persistent_workers: bool = DL_PERSISTENT_WORKERS
     mmfinereason_rate: float = MMFINEREASON_RATE
     """Mixture fraction for MMFineReason-SFT (0 disables). The official image-only-v9
     sources are scaled by ``1 - (mmfinereason_rate + finevision_rate)``."""
@@ -506,12 +516,16 @@ def train(config: ExperimentConfig):
 
     datasets, weights, dataset_names = _build_mixture(tokenizer, config)
     log.info(
-        "Stage 2 packing: pack=%s pack_max_crops=%d shortcut_max_len_images=%s vit_crop_microbatch=%s",
+        "Stage 2 packing: pack=%s pack_max_crops=%d shortcut_max_len_images=%s vit_crop_microbatch=%s dl_num_workers=%d",
         config.pack_sequences,
         config.pack_max_crops,
         config.pack_shortcut_max_len_images,
-        os.environ.get("VIT_CROP_MICROBATCH", "16"),
+        os.environ.get("VIT_CROP_MICROBATCH", "0"),
+        config.dl_num_workers,
     )
+    prefetch_workers = config.prefetch_workers
+    if config.dl_num_workers > 0:
+        prefetch_workers = 0
     data_loader = MixtureDataLoader(
         datasets,
         weights,
@@ -523,7 +537,10 @@ def train(config: ExperimentConfig):
         pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
         pack_shortcut_max_len_images=config.pack_shortcut_max_len_images,
         est_tokens_per_example=EST_TOKENS_PER_EXAMPLE,
-        prefetch_workers=DATA_PREFETCH_WORKERS,
+        prefetch_workers=prefetch_workers,
+        dl_num_workers=config.dl_num_workers,
+        dl_prefetch_factor=config.dl_prefetch_factor,
+        dl_persistent_workers=config.dl_persistent_workers,
         dp_world_size=dp_world_size,
         dp_rank=dp_rank,
         dataset_names=dataset_names,
