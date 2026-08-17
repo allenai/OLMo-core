@@ -17,6 +17,8 @@ ctc-eval --ckpt CKPT --task contradiction --rungs 2k --backend vllm
 ctc-data list
 ctc-data build --task contradiction --rungs 2k,4k,8k --out /data/ctc/v3
 ctc-data build --task fiqa --split eval --out /data/ctc/v3    # held-out ladders are eval-only
+ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
+    --eval-size 125 --allow-small-eval --out /data/ctc/xlong  # rungs are open-ended past 32k
 
 ctc-fingerprint show CKPT           # what format was this checkpoint trained on?
 ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
@@ -25,8 +27,9 @@ ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
 `--task` means the same thing to both `ctc-data` and `ctc-eval`. The per-task command table, and
 what each task's corpus needs, is in `src/ctc/data/README.md`.
 
-From inside the repo, `run/eval.sh` and `run/data.sh` wrap these and resolve the cluster
-environment first (node-local interpreter and caches; see `run/_env.sh`).
+From inside the repo, `run/data.sh` → `run/convert.sh` → `run/train.sh` → `run/eval.sh` cover the
+whole pipeline and resolve the cluster environment first (node-local interpreter, caches, and this
+checkout at the front of `PYTHONPATH`; see `run/_env.sh`).
 
 ## Why this is a separate package
 

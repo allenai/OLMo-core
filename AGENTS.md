@@ -6,6 +6,55 @@ This file provides guidance to agents like Claude Code (claude.ai/code) and Code
 
 OLMo-core is AI2's training library for the Open Language Model (OLMo) series. It provides modular components for transformer architectures, distributed training, data loading, and evaluation.
 
+## This branch: `prasann/ctc` — the CTC long-context suite
+
+This branch carries the corpus-tracking-capacity (CTC) suite on top of upstream OLMo-core: ~22
+long-context tasks whose difficulty scales with how much of an in-prompt corpus must be tracked
+simultaneously, with context ladders from 2k to 10M+ tokens. Upstream `main` tracks
+`origin/main`, so upstream merges stay real merges; everything suite-specific is additive.
+
+### Layout
+
+| where | what |
+|---|---|
+| `ctc/` | A **self-contained pip package** (`pip install ./ctc`): task specs + prompt/parse/metric contract (`ctc/format`), data generation (`ctc/data`), evaluation (`ctc/eval`). Imports **no olmo-core** except behind the `native` extra. Task JSONL is the boundary. |
+| `src/scripts/ctc/` | The training side — everything that reads or writes olmo-core's formats: `convert_to_shards.py` (JSONL → shards + format fingerprint), `fix_marker_embeddings.py` (run on every fresh base), `train/` (SFT + CPT, one recipe, local or Beaker), `eval_beaker.py` (one-command cluster eval), `build_fast_bundle.py`. |
+| `run/` | Entry points that resolve the cluster environment first: `data.sh` → `convert.sh` → `train.sh` → `eval.sh`, all thin wrappers over the same Python the tests exercise. `_env.sh` encodes the NFS/cache/CUDA traps once. |
+| `records/` | Standalone writeups (port records, trap indexes, diagnoses). See `records/README.md` for the index; new writeups of this kind go there. |
+| `debug/` | One-off validation evidence, one topic per directory, each with a README. Not a scratch space. |
+
+The **olmo-eval integration** lives in the separate `olmo-eval` repo, branch `prasann/ctc-suite`
+(`src/olmo_eval/evals/tasks/ctc_suite/`): the 22-row roster vendored byte-faithful from `ctc`,
+scoring the public HF dataset `PrasannSinghal/ctc-suite-eval` (`-t ctc:figure`, `-t ctc:xlong`,
+...). Fix things upstream here and re-vendor; never edit its `_vendor/`.
+
+### Commands
+
+```bash
+pytest ctc/tests                      # the suite's own tests: no GPU, no network, ~90 s
+ctc-data list                         # every generator, its ladder, its parameters
+ctc-data build --task contradiction --out DIR
+ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
+    --eval-size 125 --allow-small-eval --out DIR    # rungs are open-ended past 32k
+ctc-eval --ckpt CKPT --tasks main --attn chunked    # grade a checkpoint
+```
+
+### Things that bite
+
+- **PYTHONPATH:** at least one conda env's editable `olmo_core` install points at the
+  *pre-migration* repo. Run through `run/*.sh` (which puts this checkout first) or set
+  `PYTHONPATH=src:ctc/src` explicitly. `ctc/tests/conftest.py` and the `src/scripts/ctc` entry
+  points already guard themselves.
+- **The format fingerprint is the thread through the whole pipeline** (convert → train → eval);
+  eval refuses to grade a checkpoint against a format it was not trained on. Don't disable it.
+- **Golden fixtures under `ctc/tests/` are evidence, not snapshots** — they were captured from the
+  pre-migration tree *before* the port. Regenerating one to make a test pass destroys the
+  evidence; the fix is the code.
+- **Marker embeddings:** any fresh Qwen base needs `src/scripts/ctc/fix_marker_embeddings.py`
+  before document-chunked/landmark training (`--check-only` gates a launcher).
+- Eval-set floors and reporting conventions (`eval_size`, error bars inline, `n` = corpus size
+  only) are enforced by the build tools; don't route around them.
+
 ## Commands
 
 ```bash
