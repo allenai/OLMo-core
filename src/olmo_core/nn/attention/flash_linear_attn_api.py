@@ -56,9 +56,34 @@ def dispatch_chunk_kda(
     use_qk_l2norm_in_kernel: bool = True,
     use_gate_in_kernel: bool = True,
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+    use_cute_kernel: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Dispatch Moonshot's pinned Triton KDA training kernel lazily."""
+    """Dispatch Moonshot's pinned Triton KDA training kernel lazily.
+
+    With ``use_cute_kernel=True``, calls the CuTe/Triton kernels from
+    :mod:`olmo_core.nn.attention.kda_cute` instead whenever they support the call
+    (fixed-length, chunk-size-64, Blackwell), falling back to FLA otherwise.
+    """
     assert has_fla()
+    if use_cute_kernel:
+        from olmo_core.nn.attention.kda_cute import cute_chunk_kda, cute_kda_supported
+
+        if cute_kda_supported(q=q, v=v, cu_seqlens=cu_seqlens):
+            return cute_chunk_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                A_log=A_log,
+                dt_bias=dt_bias,
+                scale=scale,
+                initial_state=initial_state,
+                output_final_state=output_final_state,
+                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+                use_gate_in_kernel=use_gate_in_kernel,
+            )
+
     from fla.ops.kda import chunk_kda
 
     return chunk_kda(

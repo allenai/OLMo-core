@@ -44,6 +44,7 @@ class KimiDeltaAttention(SequenceMixer):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
+        use_cute_kernel: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ) -> None:
@@ -61,6 +62,7 @@ class KimiDeltaAttention(SequenceMixer):
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
+        self.use_cute_kernel = use_cute_kernel
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * expand_v)
@@ -168,6 +170,7 @@ class KimiDeltaAttention(SequenceMixer):
             use_qk_l2norm_in_kernel=True,
             use_gate_in_kernel=True,
             cu_seqlens=cu_doc_lens,
+            use_cute_kernel=self.use_cute_kernel,
         )
         output_gate = self.g_proj_2(self.g_proj_1(x)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
@@ -283,6 +286,11 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
+    :param use_cute_kernel: Whether to use the CuTe/Triton KDA kernels from
+        :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
+        Only takes effect on hardware/shapes those kernels support (Blackwell,
+        chunk-size-64, no packed-document ``cu_seqlens``); otherwise the layer
+        silently falls back to FLA's kernel.
     :param dtype: The parameter dtype.
     """
 
@@ -294,6 +302,7 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     conv_size: int = 4
     conv_bias: bool = False
     norm_eps: float = 1e-5
+    use_cute_kernel: bool = False
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
@@ -338,6 +347,7 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
             conv_size=self.conv_size,
             conv_bias=self.conv_bias,
             norm_eps=self.norm_eps,
+            use_cute_kernel=self.use_cute_kernel,
             dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
