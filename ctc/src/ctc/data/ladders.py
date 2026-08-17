@@ -18,15 +18,34 @@ before quoting a length. The authority for un-ported tasks remains
 generators do. This module is the single source: contradiction's spec derives its
 ``CLAIMS_PER_RUNG`` -- and hence its ``extra["claims_per_rung"]`` -- from the row below rather than
 declaring a copy. That ladder has already been wrong once, and two copies of it drift.
+
+**Rungs are open-ended, not a closed set.** The table stops at 32k because that is what has been
+tokenizer-measured, but any parseable rung label (``64k``, ``256k``, ``1m``, ``10m``, ...) resolves
+to a document count by extrapolating the least-squares line through the task's own table
+(:func:`fit_for`). An extrapolated count has, by definition, never been measured against the real
+tokenizer at that length, so the build report flags it and the flag should follow the number. Two
+hard limits survive extrapolation: :data:`CEILINGS`, for a corpus that arithmetic says cannot
+supply the documents, and the generator itself, which fails loudly when its pool runs dry
+(``50 consecutive rejections``) rather than quietly recycling material.
 """
 
 from __future__ import annotations
 
-from typing import Dict, List
+from functools import lru_cache
+from typing import Dict, List, Tuple
 
 from ..format import rungs as rung_util
 
-__all__ = ["LADDERS", "docs_for_rung", "rungs_for", "max_rung"]
+__all__ = [
+    "LADDERS",
+    "CEILINGS",
+    "SUPPLY_BOUNDED",
+    "docs_for_rung",
+    "fit_for",
+    "is_extrapolated",
+    "rungs_for",
+    "max_rung",
+]
 
 #: task -> {rung label: documents per example}. Synthetic tasks tokenize 1.5-3x higher per
 #: character than natural text, which is why their per-document estimates are so much lower than
@@ -192,6 +211,96 @@ CALIBRATION: Dict[str, str] = {
 }
 
 
+#: Tasks whose corpus arithmetic FORBIDS a rung, however patient the build: ``task -> (highest
+#: buildable rung, why)``. These are refusals, not warnings, because the generator would otherwise
+#: spin through its pool and die on the rejection limit with a message that reads like a transient
+#: problem. Tasks merely *likely* to exhaust supply at some unmeasured point belong in
+#: :data:`SUPPLY_BOUNDED` instead.
+CEILINGS: Dict[str, Tuple[str, str]] = {
+    # The frozen-suite roster (olmo-eval ctc_suite) documents this cap: 4,000 recoverable HotpotQA
+    # units are the whole labeled universe, and a 512k example needs ~7k distinct units.
+    "qdmatch_hpqa": ("256k", "4,000 labeled HotpotQA units exist and a 512k example needs ~7k"),
+    # The BEIR SciFact corpus is 5,183 abstracts at ~365 tok each; a 2m example needs ~5.7k
+    # distinct documents, more than exist.
+    "scifact": ("1m", "the BEIR SciFact corpus is 5,183 abstracts and a 2m example needs ~5.7k"),
+    # Measured against the generator: every document consumes ~9.8 distinct words from the frozen
+    # 20,045-word vocabulary (planting rejects reuse), and n=2131 (56k) asks for 20,976.
+    "strmatch": (
+        "48k",
+        "the frozen 20,045-word vocabulary caps ~1.9k documents at ~9.8 words each",
+    ),
+}
+
+#: Tasks whose supply is bounded by a structure no table can price: ``task -> what bounds it``.
+#: Unlike :data:`CEILINGS` these are not refused up front, because the bound depends on what the
+#: corpus happens to contain -- the build instead fails loudly when the generator cannot draw. The
+#: note is surfaced by ``ctc-data list`` so the failure is expected rather than diagnosed.
+SUPPLY_BOUNDED: Dict[str, str] = {
+    "absence": (
+        "an example is one contiguous run of sentences from a single Gutenberg book, so the "
+        "longest book in the pool bounds the rung"
+    ),
+    "reorder": (
+        "an example is consecutive ~100-word passages of a single Gutenberg book, so the longest "
+        "book in the pool bounds the rung"
+    ),
+    "rerank": (
+        "every document must carry a cross-encoder score, so the per-query scored fill drawn at "
+        "load time bounds the rung; raise the loader's fill size to go longer"
+    ),
+    "qdmatch_nq": "bounded by the ~79k labeled NQ-open queries (two items each); ~10m is the limit",
+    "hotpotqa": "bounded by the benchmark's own 10-paragraph distractor sets plus mined negatives",
+}
+
+#: Structural constraints an extrapolated count must respect, applied after rounding. ``xabsence``
+#: is the only current case: an example is 2P+k documents (k=3 by default), so an even count would
+#: silently round the ladder down one pair below its label.
+_CONSTRAIN: Dict[str, str] = {"xabsence": "odd"}
+
+
+@lru_cache(maxsize=None)
+def fit_for(task: str) -> Tuple[float, float]:
+    """
+    The least-squares line ``tokens = a + b * docs`` through the task's calibrated table rows.
+
+    Fitted over the table rather than declared beside it so the two can never disagree: the fit
+    IS the table, extended. For ``oolong``, whose rung values are already token budgets, the fit
+    degenerates to the identity, which is exactly right.
+
+    :param task: Task name.
+
+    :returns: ``(a, b)`` -- intercept and tokens per document.
+
+    :raises KeyError: If the task has no ladder.
+    """
+    if task not in LADDERS:
+        raise KeyError(
+            f"no rung ladder for {task!r}; have {', '.join(sorted(LADDERS))}. Un-ported tasks keep "
+            "their ladder in the pre-migration BUILD_MATRIX.md."
+        )
+    points = [(docs, rung_util.parse_rung(label)) for label, docs in LADDERS[task].items()]
+    n = len(points)
+    mean_docs = sum(d for d, _ in points) / n
+    mean_tokens = sum(t for _, t in points) / n
+    slope = sum((d - mean_docs) * (t - mean_tokens) for d, t in points) / sum(
+        (d - mean_docs) ** 2 for d, _ in points
+    )
+    return mean_tokens - slope * mean_docs, slope
+
+
+def is_extrapolated(task: str, rung: str) -> bool:
+    """
+    :param task: Task name.
+    :param rung: Rung label.
+
+    :returns: True when the count for this rung comes from the fit rather than a calibrated table
+        row -- i.e. when it has never been measured against the tokenizer and the build report
+        should say so.
+    """
+    ladder = {rung_util.normalize(k) for k in LADDERS[task]}
+    return rung_util.normalize(rung) not in ladder
+
+
 def rungs_for(task: str) -> List[str]:
     """
     :param task: Task name.
@@ -210,18 +319,61 @@ def rungs_for(task: str) -> List[str]:
 
 def docs_for_rung(task: str, rung: str) -> int:
     """
+    Documents per example at a rung -- calibrated where the table has a row, extrapolated from
+    :func:`fit_for` anywhere else.
+
+    Extrapolation is deliberate, not a fallback: the ladder must reach any budget a corpus can
+    supply (the shipped suite runs to 1M, and the synthetics arbitrarily far), and a closed rung
+    set would make every new length a code change. The cost is that an extrapolated count was
+    never measured against the tokenizer, which is why :func:`is_extrapolated` exists and the
+    build report flags such rungs.
+
     :param task: Task name.
-    :param rung: Rung label, in any accepted spelling (``"32k"``, ``"32768"``).
+    :param rung: Rung label, in any accepted spelling (``"32k"``, ``"32768"``, ``"10m"``).
 
-    :returns: Documents per example at that rung.
+    :returns: Documents per example at that rung (for ``oolong``: the token budget itself).
 
-    :raises KeyError: If the task or rung is unknown.
+    :raises KeyError: If the task is unknown.
+    :raises ValueError: If the label does not parse, the rung is above the task's
+        :data:`CEILINGS` entry, or it extrapolates below one document.
     """
+    if task not in LADDERS:
+        raise KeyError(
+            f"no rung ladder for {task!r}; have {', '.join(sorted(LADDERS))}. Un-ported tasks keep "
+            "their ladder in the pre-migration BUILD_MATRIX.md."
+        )
     ladder = {rung_util.normalize(k): v for k, v in LADDERS[task].items()}
     label = rung_util.normalize(rung)
-    if label not in ladder:
-        raise KeyError(f"{task} has no rung {label!r}; has {', '.join(rungs_for(task))}")
-    return ladder[label]
+    if label in ladder:
+        return ladder[label]
+
+    tokens = rung_util.parse_rung(label)
+    if task in CEILINGS:
+        top, reason = CEILINGS[task]
+        if tokens > rung_util.parse_rung(top):
+            raise ValueError(
+                f"{task} cannot be built past {top}: {reason}. Requested rung {label} is a "
+                "request the corpus arithmetic cannot honour, not a missing table row."
+            )
+    intercept, slope = fit_for(task)
+    docs = round((tokens - intercept) / slope)
+    if _CONSTRAIN.get(task) == "odd" and docs % 2 == 0:
+        docs -= 1
+    if docs < 1:
+        raise ValueError(
+            f"rung {label} extrapolates to {docs} document(s) for {task}; the smallest useful "
+            f"rung is around {format_min_rung(task)}"
+        )
+    return docs
+
+
+def format_min_rung(task: str) -> str:
+    """
+    :param task: Task name.
+
+    :returns: The task's shortest calibrated rung label, for error messages.
+    """
+    return rungs_for(task)[0]
 
 
 def max_rung(task: str) -> str:

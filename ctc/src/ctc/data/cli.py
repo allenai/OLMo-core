@@ -45,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  ctc-data build --task nq --split eval --out /data/ctc/v3\n"
             "  ctc-data build --task groups4 --rungs 2k,4k --train 5000 --out /data/ctc/pilot\n"
             "  ctc-data build --task contradiction -C pairs_path=pairs.jsonl --out /data/ctc/v3\n"
+            "  ctc-data build --task cycle --split eval --rungs 64k,1m,10m \\\n"
+            "      --eval-size 125 --allow-small-eval --out /data/ctc/xlong\n"
             "  ctc-data audit --task cycle --dir /data/ctc/v3\n"
         ),
     )
@@ -60,9 +62,26 @@ def build_parser() -> argparse.ArgumentParser:
         default="both",
         help="what to build (default: both; held-out ladders are eval-only)",
     )
-    p.add_argument("--rungs", default="all", help="'all' (default) or e.g. '2k,4k,8k'")
+    p.add_argument(
+        "--rungs",
+        default="all",
+        help=(
+            "'all' (default: the calibrated 2k-32k ladder) or e.g. '2k,4k,8k'. Rungs beyond the "
+            "table ('64k', '1m', '10m', ...) extrapolate their document count from the task's own "
+            "calibration fit; the build report flags them"
+        ),
+    )
     p.add_argument("--train", type=int, default=20_000, help="training examples (default: 20000)")
     p.add_argument("--eval-size", type=int, default=500, help="examples per rung (default: 500)")
+    p.add_argument(
+        "--allow-small-eval",
+        action="store_true",
+        help=(
+            "permit --eval-size below the 500 floor -- for ultra-long rungs where 500 examples "
+            "is gigabytes of JSONL (the shipped suite holds 125 at >=256k). The report and every "
+            "quoted number must carry the size and its error bar"
+        ),
+    )
     p.add_argument("--seed", type=int, default=42, help="train seed (default: 42)")
     p.add_argument("--eval-seed", type=int, default=7, help="eval seed (default: 7)")
     p.add_argument(
@@ -155,7 +174,12 @@ def _list() -> int:
             tags.append("rungs built independently")
         suffix = f"  [{'; '.join(tags)}]" if tags else ""
         print(f"  {name:<15} graded by `{gen.task}` -- {gen.notes}{suffix}")
-        print(f"  {'':<15} {unit} per rung: {ladder}")
+        print(f"  {'':<15} {unit} per rung: {ladder} (labels past 32k extrapolate the fit)")
+        if name in ladders.CEILINGS:
+            top, reason = ladders.CEILINGS[name]
+            print(f"  {'':<15} CEILING {top}: {reason}")
+        if name in ladders.SUPPLY_BOUNDED:
+            print(f"  {'':<15} supply-bounded: {ladders.SUPPLY_BOUNDED[name]}")
         print(f"  {'':<15} -C build:  {', '.join(sorted(gen.defaults)) or '(none)'}")
         if gen.corpus_defaults:
             print(f"  {'':<15} -C corpus: {', '.join(sorted(gen.corpus_defaults))}")
@@ -204,6 +228,7 @@ def _build(args: argparse.Namespace) -> int:
             rungs=rungs,
             config=build_overrides,
             corpus=corpus,
+            allow_small=args.allow_small_eval,
         )
         print(eval_report.summary())
 

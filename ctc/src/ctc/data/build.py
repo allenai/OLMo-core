@@ -349,6 +349,7 @@ def build_eval(
     rungs: Optional[Sequence[str]] = None,
     config: Optional[Mapping[str, Any]] = None,
     corpus: Any = None,
+    allow_small: bool = False,
 ) -> Tuple[Dict[str, List[Dict]], BuildReport]:
     """
     Build an eval ladder, nested wherever the task allows it.
@@ -374,23 +375,35 @@ def build_eval(
     :param config: Generator parameter overrides.
     :param corpus: A loaded pool for corpus-backed generators. Defaults to loading one, which is
         the only step that touches the network.
+    :param allow_small: Permit ``size`` below the 500 floor. The escape hatch exists for the
+        ultra-long rungs, where 500 examples of a 1M-token corpus is gigabytes of JSONL and the
+        shipped suite itself holds 125 -- but the report then carries the size and its error bar,
+        and both must follow every number quoted from the files.
 
     :returns: ``({rung label: examples}, report)``. The report carries the rejection counts,
         which are the guard's output -- a build that discards a third of its draws to contamination
         is not the same build as one that discards none, even though the files look identical.
 
-    :raises ValueError: If ``size`` is below 500.
+    :raises ValueError: If ``size`` is below 500 and ``allow_small`` was not passed.
     """
     generator = generators.get(task)
-    if size < 500:
+    if size < 500 and not allow_small:
         raise ValueError(
-            f"eval_size={size} is below the suite floor of 500. A smaller eval inflates noise into "
-            "apparent findings; if you need it, build it explicitly and flag the size and its "
+            f"eval_size={size} is below the suite floor of 500. A smaller eval inflates noise "
+            "into apparent findings; if you mean it (e.g. an ultra-long rung, where the shipped "
+            "suite holds 125), pass allow_small / --allow-small-eval and quote the size and its "
             "error bar next to every number."
         )
     labels = list(rungs) if rungs else ladders.rungs_for(task)
     longest = labels[-1]
     report = BuildReport(task=task, split="eval")
+    if size < 500:
+        se = (0.7 * 0.3 / size) ** 0.5
+        report.notes.append(
+            f"eval_size={size} is below the 500 floor (SE ~ +/-{se:.3f} at f1~0.7); quote the "
+            "size and error bar inline next to every number from these files"
+        )
+    _note_extrapolated(task, labels, report)
     if corpus is None:
         corpus = generator.load_corpus()
     resolved = _resolve(generator, config, corpus, "eval")
@@ -421,14 +434,34 @@ def build_eval(
             )
         )
         out = {longest: canonical}
-        for label in labels[:-1]:
+        # Chained, not parallel: each rung shrinks the NEXT-LONGER rung's rows, so every rung's
+        # documents are a subset of the next one's by construction. Shrinking each rung from the
+        # canonical set independently -- the obvious parallel form -- makes each a subset of the
+        # longest only, and adjacent rungs then fail the nesting audit (and the nesting *claim*
+        # this module's docstring makes). The chain does mean the rung set itself is part of the
+        # draw: building 2k,8k and building 2k,4k,8k give different 2k files, which is why a
+        # ladder should be built in one command rather than extended file by file.
+        previous = canonical
+        for label in reversed(labels[:-1]):
             n_docs = ladders.docs_for_rung(task, label)
-            # One stream per rung, keyed by the rung, so adding a rung never perturbs the others.
             shrink_rng = random.Random(f"{seed}:eval:shrink:{label}")
-            out[label] = [shrink(ex, n_docs, spec, shrink_rng) for ex in canonical]
+            previous = [shrink(ex, n_docs, spec, shrink_rng) for ex in previous]
+            out[label] = previous
 
     report.counts = {label: len(out[label]) for label in labels}
     return {label: out[label] for label in labels}, report
+
+
+def _note_extrapolated(task: str, labels: Sequence[str], report: BuildReport) -> None:
+    """Flag any requested rung whose document count comes from the fit, not a calibrated row."""
+    extrapolated = [label for label in labels if ladders.is_extrapolated(task, label)]
+    if extrapolated:
+        report.notes.append(
+            f"rung(s) {', '.join(extrapolated)} are beyond the calibrated table: document counts "
+            "are extrapolated from the task's <=32k fit and have never been measured against the "
+            "tokenizer at that length -- measure the built prompts before quoting them as "
+            "context lengths"
+        )
 
 
 def _draw_independent(
@@ -551,6 +584,7 @@ def build_train(
     forbidden = {gold_fingerprint(ex, spec) for ex in eval_examples}
 
     report = BuildReport(task=task, split="train")
+    _note_extrapolated(task, labels, report)
     if corpus is None:
         corpus = generator.load_corpus()
     base = _resolve(generator, config, corpus, "train")

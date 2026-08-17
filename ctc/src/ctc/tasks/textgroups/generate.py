@@ -237,8 +237,15 @@ def sample_values(
     if n_distract < 0:
         raise ValueError(f"num_docs={n_docs} too small for {K} groups of {G}")
 
-    def forbid(chosen: Sequence[int], new_v: int, forbidden: Set[int]) -> None:
-        """Block every value completing a near-target triple with ``(new_v, y)``."""
+    def forbid(chosen: Set[int], new_v: int, forbidden: Set[int]) -> None:
+        """
+        Block every value completing a near-target triple with ``(new_v, y)``.
+
+        ``chosen`` holds *distinct* values, not every placement: the forbidden set is a union over
+        pairs, so a value chosen twice contributes nothing new, and iterating distinct values keeps
+        this O(range) per acceptance instead of O(N) -- the difference between seconds and hours at
+        the ultra-long rungs, with an identical resulting set.
+        """
         for y in chosen:
             center = T - (new_v + y)
             forbidden.update(range(center - margin, center + margin + 1))
@@ -268,11 +275,11 @@ def sample_values(
         if _near_target_triples(gold_values, T, margin) != K:
             continue
 
-        chosen: List[int] = []
+        chosen: Set[int] = set()
         forbidden: Set[int] = set()
         for v in gold_values:
             forbid(chosen, v, forbidden)
-            chosen.append(v)
+            chosen.add(v)
 
         distractors: List[int] = []
         for _attempt in range(n_distract * 300 + 5000):
@@ -282,7 +289,7 @@ def sample_values(
             if c in forbidden:
                 continue
             forbid(chosen, c, forbidden)
-            chosen.append(c)
+            chosen.add(c)
             distractors.append(c)
         if len(distractors) < n_distract:
             continue

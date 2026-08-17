@@ -84,9 +84,16 @@ def sample_answers(
         distractors: List[int] = []
         pool = list(range(ans_min, ans_max + 1))
         rng.shuffle(pool)
+        # "further than tol from everything placed" as a window lookup: values are integers, so the
+        # linear scan over paired + distractors is exactly "is any of v-tol..v+tol occupied". The
+        # set form makes the same accept/reject decisions from the same RNG stream (the golden
+        # fixtures pin this) but turns the placement from O(N^2) into O(N) -- the scan put a 1M-
+        # token example at minutes and a 10M one at hours.
+        occupied = set(paired)
         for v in pool:
-            if all(abs(v - other) > tol for other in paired + distractors):
+            if all(v + d not in occupied for d in range(-tol, tol + 1)):
                 distractors.append(v)
+                occupied.add(v)
                 if len(distractors) == n_docs - 2 * n_pairs:
                     break
         if len(distractors) < n_docs - 2 * n_pairs:

@@ -80,8 +80,9 @@ def build_prompt(example: Dict, **opts) -> str:
 def _ce_top_k(example: Dict, k: int) -> List[int]:
     """The ``k`` highest-CE document ids (1-based), CE=None (pooled-foreign docs) excluded."""
     ce = example.get("ce_scores") or []
-    ranked = sorted((i for i, v in enumerate(ce) if v is not None),
-                    key=lambda i: ce[i], reverse=True)
+    ranked = sorted(
+        (i for i, v in enumerate(ce) if v is not None), key=lambda i: ce[i], reverse=True
+    )
     return [i + 1 for i in ranked[:k]]
 
 
@@ -96,8 +97,9 @@ def _ce_pos_ref(example: Dict, k: int) -> List[int]:
     ceiling on the top-10-recall variant this metric replaces (2026-08-14, measured before the
     first repriced number was ever produced)."""
     ce = example.get("ce_scores") or []
-    pos = sorted((i for i, v in enumerate(ce) if v is not None and v > 0),
-                 key=lambda i: ce[i], reverse=True)
+    pos = sorted(
+        (i for i, v in enumerate(ce) if v is not None and v > 0), key=lambda i: ce[i], reverse=True
+    )
     return [i + 1 for i in pos[:k]]
 
 
@@ -164,8 +166,13 @@ def score(parsed: Optional[List[int]], gold, k: int = TOP_K) -> Dict[str, float]
     gold_ids = {int(g) + 1 for g in indices}
     ce_ref = set(_ce_pos_ref(example, k)) if example else set()
 
-    out: Dict[str, float] = {f"mrr@{k}": 0.0, f"recall@{k}": 0.0, "ce_pos_recall": 0.0,
-                             "ce_ref_available": 1.0 if ce_ref else 0.0, "parsed": 0.0}
+    out: Dict[str, float] = {
+        f"mrr@{k}": 0.0,
+        f"recall@{k}": 0.0,
+        "ce_pos_recall": 0.0,
+        "ce_ref_available": 1.0 if ce_ref else 0.0,
+        "parsed": 0.0,
+    }
     if not parsed:
         return out
 

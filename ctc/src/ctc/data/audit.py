@@ -256,12 +256,21 @@ def closest_pair_is_gold(examples: Sequence[Mapping], spec: TaskSpec) -> ProbeRe
         gold = set(_gold_positions(example, spec))
         if not values or not gold or len(values) < 3:
             continue
-        pairs = list(combinations(range(len(values)), 2))
-        i, j = min(pairs, key=lambda p: abs(values[p[0]] - values[p[1]]))
+        # The closest pair of scalars is always adjacent in value order, so sorting replaces the
+        # C(N,2) enumeration -- hundreds of millions of materialised tuples at the ultra-long
+        # rungs, which dominated the whole audit. Sorting by (value, index) and breaking distance
+        # ties on the smaller (i, j) reproduces the enumeration's first-minimum exactly.
+        order = sorted(range(len(values)), key=lambda i: (values[i], i))
+        i, j = min(
+            ((min(a, b), max(a, b)) for a, b in zip(order, order[1:])),
+            key=lambda p: (abs(values[p[0]] - values[p[1]]), p),
+        )
         hits += {i, j} <= gold
         total += 1
-        # A random pair being gold-contained -- the rate this probe would hit with no signal.
-        chance_sum += sum(1 for p in pairs if set(p) <= gold) / len(pairs)
+        # A random pair being gold-contained -- the rate this probe would hit with no signal:
+        # C(gold, 2) / C(N, 2), which needs no enumeration either.
+        n, g = len(values), len(gold)
+        chance_sum += (g * (g - 1)) / (n * (n - 1))
     score = hits / total if total else 0.0
     chance = chance_sum / total if total else 0.0
     return ProbeResult("closest_pair_is_gold", score, chance, f"{hits}/{total} examples")

@@ -79,6 +79,37 @@ deduplication, auditing — is shared, because those are the decisions that must
 per task. The pre-migration tree let each generator own its `main()` and ended up with five
 train/eval splitters using two different eval fractions and two different roundings.
 
+## Rungs beyond 32k — up to 10M+ tokens per example
+
+The calibrated table stops at 32k, but the ladder does not: **any parseable rung label works**
+(`64k`, `256k`, `1m`, `10m`, ...). A label past the table resolves its document count by
+extrapolating the least-squares line through the task's own calibrated rows — the same
+calibration that produced the shipped 64k–1M suite ladders (the fit gives contradiction 1528
+documents at 64k against the independently shipped file's 1525).
+
+```bash
+# a 5-rung ultra-long eval ladder, one command, ~a minute for a synthetic task
+ctc-data build --task cycle --split eval --rungs 64k,256k,1m,4m,10m \
+    --eval-size 125 --allow-small-eval --out /data/ctc/xlong
+```
+
+Four things to know at this scale:
+
+- **Extrapolated rungs are flagged in the build report** and have never been measured against the
+  tokenizer at that length. Measure the built prompts before quoting one as a context length.
+- **500 examples of a 10M-token corpus is ~65 GB of JSONL per rung.** The shipped suite holds 125
+  examples at ≥256k for exactly this reason; `--eval-size 125 --allow-small-eval` is the intended
+  spelling, and the size + error bar must follow every number quoted from such a file.
+- **Corpora run out, and the failure is loud.** `ladders.CEILINGS` refuses rungs the corpus
+  arithmetic provably cannot honour (`qdmatch_hpqa` past 256k, `scifact` past 1m, `strmatch` past
+  48k — its frozen vocabulary caps ~1.9k documents). Tasks in `ladders.SUPPLY_BOUNDED` (absence,
+  reorder, rerank, ...) are bounded by what their corpus happens to contain — a single book's
+  length, the per-query scored fill — and fail at draw time with the rejection-limit error rather
+  than up front. The four pure synthetics (`cycle`, `groups4`, `mathmatch`, `textgroups`) scale
+  arbitrarily; all are O(N) per example (~10–20 s per 10M-token example).
+- **Two tasks' answers grow with the rung** (`reorder`, `grouping_labeled`) — see below; at 1m a
+  reorder target alone is ~30k tokens, which is a decode-budget problem before it is a data one.
+
 ## Things worth knowing before you build
 
 **Rung labels are token budgets; the table is per task.** A contradiction claim is ~43 tokens and a
@@ -88,7 +119,13 @@ before quoting one as a context length. Contradiction's row is the *corrected* o
 the pre-migration ladder was fit against a filler pool that turned out to be 92–99.6 % FEVER/wiki
 rather than PubMed and overshoots every rung by ~1.8×.
 
-**Eval ladders are nested, and four tasks reach that differently.** Most shrink one canonical set
+**Eval ladders are nested, and a ladder is one build, not an accretion of files.** The shrink is
+chained — each rung drops distractors from the next-longer rung's rows, which is what makes every
+rung's documents a subset of the next one's (the audit checks it). The chain means the rung *set*
+is part of the draw: building `2k,8k` and building `2k,4k,8k` give different `2k` files. Build the
+whole ladder you want in one command; don't extend it file by file.
+
+**Four tasks reach nesting differently.** Most shrink one canonical set
 built at the longest rung. `outlier` cannot — dropping random distractors can shrink a majority
 topic below the outlier count, and then the question has two correct answers and one label — so it
 builds every rung of a row at once, fixing the outlier and growing the majority. `xabsence` cannot
