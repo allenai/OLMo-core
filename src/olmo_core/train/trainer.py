@@ -124,10 +124,24 @@ class AsyncCheckpointFuture(Future[AsyncCheckpointCompletion]):
         self._finalize = finalize
         self._finalize_lock = threading.Lock()
         self._finalized = False
+        self._completion: Optional[AsyncCheckpointCompletion] = None
+
+    def set_completion(self, completion: AsyncCheckpointCompletion) -> None:
+        """Complete this future with the checkpoint result."""
+        self._completion = completion
+        if completion.error is not None:
+            self.set_exception(completion.error)
+        else:
+            self.set_result(completion)
 
     def completion(self, timeout: Optional[float] = None) -> AsyncCheckpointCompletion:
         """Return and finalize the completion record without re-raising a write error."""
-        completion = super().result(timeout)
+        try:
+            completion = super().result(timeout)
+        except BaseException:
+            if self._completion is None:
+                raise
+            completion = self._completion
         with self._finalize_lock:
             if not self._finalized:
                 self._finalize()
@@ -1109,7 +1123,7 @@ class Trainer:
                 self._async_checkpoint_completions[str(path)] = completion
             # Set this only after publishing the record. A caller that observes the returned
             # future as done can therefore finalize the checkpoint without racing this callback.
-            completion_future.set_result(completion)
+            completion_future.set_completion(completion)
 
         write_future.add_done_callback(publish_completion)
 

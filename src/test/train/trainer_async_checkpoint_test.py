@@ -72,9 +72,13 @@ def test_async_checkpoint_writer_publishes_failure_without_finalization():
     _, completion_future = trainer.save_checkpoint_async()
 
     error = RuntimeError("checkpoint write failed")
+    observed_errors = []
+    completion_future.add_done_callback(lambda future: observed_errors.append(future.exception()))
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(writer_future.set_exception, error).result()
 
+    assert completion_future.exception() is error
+    assert observed_errors == [error]
     with pytest.raises(RuntimeError, match="checkpoint write failed"):
         completion_future.result()
     completion = completion_future.completion()
