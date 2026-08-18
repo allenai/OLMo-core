@@ -153,6 +153,34 @@ def test_fresh_transition_and_same_folder_resume_contract(smoke_config, vision_m
     assert trainer.save_folder.endswith("/vision-midtraining-synthetic-smoke-v1")
 
 
+def test_pilot_hard_stop_preserves_full_learning_rate_horizon(smoke_config, vision_midtraining):
+    config = copy.deepcopy(smoke_config)
+    config.max_tokens = 10 * config.global_batch_size
+    config.hard_stop_tokens = 2 * config.global_batch_size
+    config.trainer = vision_midtraining._build_trainer_config(
+        config, "vision-midtraining-synthetic-smoke-v1"
+    )
+    config.vision_midtraining.run_contract_sha256 = vision_midtraining._run_contract_sha256(config)
+
+    vision_midtraining._validate_contract(
+        config, "vision-midtraining-synthetic-smoke-v1", "dry_run"
+    )
+    assert config.trainer.max_duration == Duration.tokens(10 * config.global_batch_size)
+    assert config.trainer.hard_stop == Duration.tokens(2 * config.global_batch_size)
+
+
+def test_pilot_hard_stop_must_precede_full_horizon(smoke_config, vision_midtraining):
+    config = copy.deepcopy(smoke_config)
+    config.hard_stop_tokens = config.max_tokens
+    config.trainer.hard_stop = Duration.tokens(config.hard_stop_tokens)
+    config.vision_midtraining.run_contract_sha256 = vision_midtraining._run_contract_sha256(config)
+
+    with pytest.raises(ValueError, match="Hard stop"):
+        vision_midtraining._validate_contract(
+            config, "vision-midtraining-synthetic-smoke-v1", "dry_run"
+        )
+
+
 def test_trainability_is_frozen_vision_full_lm_and_connector(vision_midtraining):
     config = vision_midtraining._build_train_module_config(
         vision_midtraining.OptimizationConfig(), sequence_length=8192
@@ -209,7 +237,9 @@ def test_real_source_configs_use_official_text_and_all_stage1_visual_adapters(
     config.data.synthetic_smoke = False
     sources = vision_midtraining._build_source_configs(config, Molmo2TokenIds())
 
-    assert tuple(sorted(sources)) == vision_midtraining.SOURCE_NAMES
+    assert tuple(sorted(sources)) == tuple(
+        sorted((*vision_midtraining.VISUAL_SOURCE_NAMES, vision_midtraining.TEXT_SOURCE_NAME))
+    )
     assert isinstance(sources["text_midtraining"], NumpyFSLTextDatasetConfig)
     assert (
         sources["text_midtraining"].dataset.mix
@@ -221,7 +251,6 @@ def test_real_source_configs_use_official_text_and_all_stage1_visual_adapters(
     assert isinstance(sources["pixmo_points_high_frequency"], PixMoPointsDatasetConfig)
     assert isinstance(sources["pixmo_count"], PixMoCountDatasetConfig)
     assert isinstance(sources["cosyn_point"], CoSynPointDatasetConfig)
-    assert all("tulu" not in name.lower() for name in sources)
     assert all(
         source.message_format == "document"
         for name, source in sources.items()
@@ -245,28 +274,137 @@ def test_reviewed_pilot_science_is_explicit_in_config_defaults(vision_midtrainin
     assert experiment_fields["global_batch_size"].default == 1_048_576
     assert optimization.lm_lr == pytest.approx(1e-5)
     assert optimization.connector_lr == pytest.approx(2e-5)
-    assert data.target_loss_mass["text_midtraining"] == pytest.approx(0.50)
-    assert sum(data.target_loss_mass.values()) == pytest.approx(1.0)
+    assert data.mixture_arm is vision_midtraining.VisionMidtrainingArm.vt50
+    targets = vision_midtraining._target_loss_mass(data.mixture_arm)
+    assert targets["text_midtraining"] == pytest.approx(0.50)
+    assert sum(targets.values()) == pytest.approx(1.0)
     assert data.max_crops == 8
     assert data.pack_max_crops == 16
 
 
 def test_loss_mass_calibration_reconstructs_targets(vision_midtraining, smoke_config):
     weights = vision_midtraining._sampling_weights(smoke_config)
-    means = {name: 1.0 for name in vision_midtraining.SOURCE_NAMES}
+    source_names = vision_midtraining._active_source_names(smoke_config.data.mixture_arm)
+    means = {name: 1.0 for name in source_names}
     delivered = vision_midtraining.expected_loss_mass(weights, means)
-    targets = vision_midtraining._normalized(smoke_config.data.target_loss_mass)
+    targets = vision_midtraining._target_loss_mass(smoke_config.data.mixture_arm)
 
-    assert set(weights) == set(vision_midtraining.SOURCE_NAMES)
+    assert set(weights) == set(source_names)
     assert delivered == pytest.approx(targets)
 
 
-def test_loss_mass_contract_rejects_non_unit_targets(vision_midtraining, smoke_config):
-    config = copy.deepcopy(smoke_config)
-    config.data.target_loss_mass["text_midtraining"] = 0.49
-    config.train_module.source_loss_mass_targets = dict(config.data.target_loss_mass)
+@pytest.mark.parametrize(
+    ("arm", "expected"),
+    [
+        (
+            "v100",
+            {
+                "pixmo_caption": 0.50,
+                "pixmo_transcript": 0.20,
+                "pixmo_points_basic": 0.10,
+                "pixmo_points_high_frequency": 0.04,
+                "pixmo_count": 0.10,
+                "cosyn_point": 0.06,
+            },
+        ),
+        (
+            "vt50",
+            {
+                "text_midtraining": 0.50,
+                "pixmo_caption": 0.25,
+                "pixmo_transcript": 0.10,
+                "pixmo_points_basic": 0.05,
+                "pixmo_points_high_frequency": 0.02,
+                "pixmo_count": 0.05,
+                "cosyn_point": 0.03,
+            },
+        ),
+        (
+            "vt80",
+            {
+                "text_midtraining": 0.80,
+                "pixmo_caption": 0.10,
+                "pixmo_transcript": 0.04,
+                "pixmo_points_basic": 0.02,
+                "pixmo_points_high_frequency": 0.008,
+                "pixmo_count": 0.02,
+                "cosyn_point": 0.012,
+            },
+        ),
+        (
+            "vt90",
+            {
+                "text_midtraining": 0.90,
+                "pixmo_caption": 0.05,
+                "pixmo_transcript": 0.02,
+                "pixmo_points_basic": 0.01,
+                "pixmo_points_high_frequency": 0.004,
+                "pixmo_count": 0.01,
+                "cosyn_point": 0.006,
+            },
+        ),
+    ],
+)
+def test_mixture_arms_have_exact_loss_mass(vision_midtraining, arm, expected):
+    value = vision_midtraining.VisionMidtrainingArm(arm)
 
-    with pytest.raises(ValueError, match="sum to one"):
+    assert vision_midtraining._target_loss_mass(value) == expected
+    assert sum(vision_midtraining._target_loss_mass(value).values()) == pytest.approx(1.0)
+
+
+def test_vision_only_omits_text_while_text_arms_share_source_contract(
+    vision_midtraining, smoke_config
+):
+    token_ids = Molmo2TokenIds()
+    contracts = {}
+    for arm in vision_midtraining.VisionMidtrainingArm:
+        config = copy.deepcopy(smoke_config)
+        config.data.mixture_arm = arm
+        config.train_module.source_loss_mass_targets = vision_midtraining._target_loss_mass(arm)
+        sources = vision_midtraining._build_source_configs(config, token_ids)
+        contracts[arm] = vision_midtraining._source_contract_sha256(config, token_ids)
+        assert set(sources) == set(vision_midtraining._active_source_names(arm))
+
+    assert vision_midtraining.TEXT_SOURCE_NAME not in vision_midtraining._active_source_names(
+        vision_midtraining.VisionMidtrainingArm.v100
+    )
+    assert (
+        contracts[vision_midtraining.VisionMidtrainingArm.v100]
+        != contracts[vision_midtraining.VisionMidtrainingArm.vt50]
+    )
+    assert (
+        len(
+            {
+                contracts[vision_midtraining.VisionMidtrainingArm.vt50],
+                contracts[vision_midtraining.VisionMidtrainingArm.vt80],
+                contracts[vision_midtraining.VisionMidtrainingArm.vt90],
+            }
+        )
+        == 1
+    )
+
+
+def test_all_mixture_arms_have_distinct_run_contracts(vision_midtraining, smoke_config):
+    token_ids = Molmo2TokenIds()
+    hashes = set()
+    for arm in vision_midtraining.VisionMidtrainingArm:
+        config = copy.deepcopy(smoke_config)
+        config.data.mixture_arm = arm
+        config.train_module.source_loss_mass_targets = vision_midtraining._target_loss_mass(arm)
+        config.vision_midtraining.source_contract_sha256 = (
+            vision_midtraining._source_contract_sha256(config, token_ids)
+        )
+        hashes.add(vision_midtraining._run_contract_sha256(config))
+
+    assert len(hashes) == len(vision_midtraining.VisionMidtrainingArm)
+
+
+@pytest.mark.parametrize("num_nodes", [1, 3])
+def test_launch_topology_requires_exactly_16_gpus(num_nodes, vision_midtraining, smoke_config):
+    config = copy.deepcopy(smoke_config)
+    config.launch.num_nodes = num_nodes
+
+    with pytest.raises(ValueError, match="exactly two"):
         vision_midtraining._validate_contract(
             config, "vision-midtraining-synthetic-smoke-v1", "dry_run"
         )
@@ -327,11 +465,18 @@ def test_real_run_loads_means_from_matching_audit_summary(
     config.data.synthetic_smoke = False
     sources = {
         name: {"mean_loss_weight": float(index + 1)}
-        for index, name in enumerate(vision_midtraining.SOURCE_NAMES)
+        for index, name in enumerate(
+            vision_midtraining._active_source_names(config.data.mixture_arm)
+        )
     }
     receipt = {
         "version": 1,
+        "algorithm": vision_midtraining._AUDIT_ALGORITHM,
         "source_contract_sha256": config.vision_midtraining.source_contract_sha256,
+        "sequence_length": config.data.sequence_length,
+        "tokenizer_fingerprint": vision_midtraining.TOKENIZER_FINGERPRINT,
+        "audit_seed": config.data.audit_seed,
+        "samples_per_source": config.data.audit_samples_per_source,
         "sources": sources,
     }
     path = tmp_path / "means.json"
@@ -342,8 +487,101 @@ def test_real_run_loads_means_from_matching_audit_summary(
     assert vision_midtraining._validated_mean_receipt(config) == {
         name: value["mean_loss_weight"] for name, value in sources.items()
     }
+    receipt["sources"]["malformed_extra"] = {}
+    path.write_text(json.dumps(receipt, sort_keys=True))
+    config.data.mean_loss_weight_receipt_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="wrong experiment sources"):
+        vision_midtraining._validated_mean_receipt(config)
+    del receipt["sources"]["malformed_extra"]
     receipt["source_contract_sha256"] = "0" * 64
     path.write_text(json.dumps(receipt, sort_keys=True))
     config.data.mean_loss_weight_receipt_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     with pytest.raises(ValueError, match="different data contract"):
         vision_midtraining._validated_mean_receipt(config)
+
+
+def test_audit_receipt_metadata_must_match_config(tmp_path, vision_midtraining, smoke_config):
+    config = copy.deepcopy(smoke_config)
+    config.data.synthetic_smoke = False
+    receipt = {
+        "version": 1,
+        "algorithm": vision_midtraining._AUDIT_ALGORITHM,
+        "source_contract_sha256": config.vision_midtraining.source_contract_sha256,
+        "sequence_length": config.data.sequence_length,
+        "tokenizer_fingerprint": vision_midtraining.TOKENIZER_FINGERPRINT,
+        "audit_seed": config.data.audit_seed,
+        "samples_per_source": config.data.audit_samples_per_source,
+        "sources": {
+            name: {"mean_loss_weight": 1.0}
+            for name in vision_midtraining._active_source_names(config.data.mixture_arm)
+        },
+    }
+    path = tmp_path / "means.json"
+    receipt["audit_seed"] += 1
+    path.write_text(json.dumps(receipt, sort_keys=True))
+    config.data.mean_loss_weight_receipt = str(path)
+    config.data.mean_loss_weight_receipt_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with pytest.raises(ValueError, match="metadata differs"):
+        vision_midtraining._validated_mean_receipt(config)
+
+
+def test_text_arms_share_one_receipt_and_vision_only_requires_its_own(
+    tmp_path, vision_midtraining, smoke_config
+):
+    token_ids = Molmo2TokenIds()
+
+    def arm_config(arm):
+        config = copy.deepcopy(smoke_config)
+        config.data.synthetic_smoke = False
+        config.data.mixture_arm = arm
+        config.train_module.source_loss_mass_targets = vision_midtraining._target_loss_mass(arm)
+        config.vision_midtraining.source_contract_sha256 = (
+            vision_midtraining._source_contract_sha256(config, token_ids)
+        )
+        return config
+
+    def write_receipt(path, config):
+        receipt = {
+            "version": 1,
+            "algorithm": vision_midtraining._AUDIT_ALGORITHM,
+            "source_contract_sha256": config.vision_midtraining.source_contract_sha256,
+            "sequence_length": config.data.sequence_length,
+            "tokenizer_fingerprint": vision_midtraining.TOKENIZER_FINGERPRINT,
+            "audit_seed": config.data.audit_seed,
+            "samples_per_source": config.data.audit_samples_per_source,
+            "sources": {
+                name: {"mean_loss_weight": 1.0}
+                for name in vision_midtraining._active_source_names(config.data.mixture_arm)
+            },
+        }
+        path.write_text(json.dumps(receipt, sort_keys=True))
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    text_config = arm_config(vision_midtraining.VisionMidtrainingArm.vt50)
+    text_path = tmp_path / "text-means.json"
+    text_digest = write_receipt(text_path, text_config)
+    for arm in (
+        vision_midtraining.VisionMidtrainingArm.vt50,
+        vision_midtraining.VisionMidtrainingArm.vt80,
+        vision_midtraining.VisionMidtrainingArm.vt90,
+    ):
+        config = arm_config(arm)
+        config.data.mean_loss_weight_receipt = str(text_path)
+        config.data.mean_loss_weight_receipt_sha256 = text_digest
+        assert set(vision_midtraining._validated_mean_receipt(config)) == set(
+            vision_midtraining._active_source_names(arm)
+        )
+
+    vision_config = arm_config(vision_midtraining.VisionMidtrainingArm.v100)
+    vision_config.data.mean_loss_weight_receipt = str(text_path)
+    vision_config.data.mean_loss_weight_receipt_sha256 = text_digest
+    with pytest.raises(ValueError, match="different data contract"):
+        vision_midtraining._validated_mean_receipt(vision_config)
+
+    vision_path = tmp_path / "vision-means.json"
+    vision_config.data.mean_loss_weight_receipt_sha256 = write_receipt(vision_path, vision_config)
+    vision_config.data.mean_loss_weight_receipt = str(vision_path)
+    assert set(vision_midtraining._validated_mean_receipt(vision_config)) == set(
+        vision_midtraining.VISUAL_SOURCE_NAMES
+    )

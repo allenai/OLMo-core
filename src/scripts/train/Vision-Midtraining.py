@@ -3,7 +3,8 @@
 This recipe is deliberately separate from ``Molmo2-Stage1.py`` and
 ``Vision-Alignment.py``. It model-only loads the permanent vision-alignment treatment
 checkpoint, keeps the vision encoder frozen, and trains the complete language model plus
-connector on an official OLMo midtraining mix and the original Stage-1 visual sources.
+connector on the original Stage-1 visual sources, optionally mixed with the official OLMo
+midtraining mix.
 
 The deterministic ``audit`` command measures mean supervised loss weight for every source.
 Real training requires that SHA-pinned receipt; synthetic smoke uses unit means. Existing
@@ -29,7 +30,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from olmo_core.config import Config, DType
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import (
     DataMix,
     InstanceFilterConfig,
@@ -141,29 +142,62 @@ MODEL_Z_LOSS_MULTIPLIER = 1e-4
 TEXT_MIX = DataMix.OLMo_midtraining_mix_0925_ingredient1_100B
 TEXT_MIX_BASE_DIR = "gs://ai2-llm"
 TEXT_WORK_DIR = f"{VISION_MIDTRAINING_ROOT}/data"
-SOURCE_NAMES = (
+VISUAL_SOURCE_NAMES = (
     "cosyn_point",
     "pixmo_caption",
     "pixmo_count",
     "pixmo_points_basic",
     "pixmo_points_high_frequency",
     "pixmo_transcript",
-    "text_midtraining",
 )
+TEXT_SOURCE_NAME = "text_midtraining"
 _RUN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
 _AUDIT_ALGORITHM = "affine-coprime-v1"
 
 
-def _default_target_loss_mass() -> dict[str, float]:
-    return {
-        "text_midtraining": 0.50,
-        "pixmo_caption": 0.25,
-        "pixmo_transcript": 0.10,
-        "pixmo_points_basic": 0.05,
-        "pixmo_points_high_frequency": 0.02,
-        "pixmo_count": 0.05,
-        "cosyn_point": 0.03,
+class VisionMidtrainingArm(StrEnum):
+    """Top-level text-to-vision supervised-loss-mass treatments."""
+
+    v100 = "v100"
+    vt50 = "vt50"
+    vt80 = "vt80"
+    vt90 = "vt90"
+
+
+_TEXT_LOSS_MASS = {
+    VisionMidtrainingArm.v100: 0.0,
+    VisionMidtrainingArm.vt50: 0.5,
+    VisionMidtrainingArm.vt80: 0.8,
+    VisionMidtrainingArm.vt90: 0.9,
+}
+_VISUAL_LOSS_MASS = {
+    "pixmo_caption": 0.50,
+    "pixmo_transcript": 0.20,
+    "pixmo_points_basic": 0.10,
+    "pixmo_points_high_frequency": 0.04,
+    "pixmo_count": 0.10,
+    "cosyn_point": 0.06,
+}
+
+
+def _target_loss_mass(arm: VisionMidtrainingArm) -> dict[str, float]:
+    """Derive the exact source loss-mass targets for an experiment arm."""
+    text_mass = _TEXT_LOSS_MASS[arm]
+    targets = {
+        name: round(visual_mass * (1.0 - text_mass), 12)
+        for name, visual_mass in _VISUAL_LOSS_MASS.items()
     }
+    if text_mass > 0:
+        targets[TEXT_SOURCE_NAME] = text_mass
+    return targets
+
+
+def _active_source_names(arm: VisionMidtrainingArm) -> tuple[str, ...]:
+    """Return the exact sources materialized by an experiment arm."""
+    names: tuple[str, ...] = VISUAL_SOURCE_NAMES
+    if _TEXT_LOSS_MASS[arm] > 0:
+        names = (*names, TEXT_SOURCE_NAME)
+    return names
 
 
 @dataclass
@@ -201,7 +235,6 @@ class VisionMidtrainingDataConfig(Config):
     message_format: str = "document"
     loss_token_weighting: str = "none"
     max_crops: int = MAX_CROPS
-    target_loss_mass: dict[str, float] = field(default_factory=_default_target_loss_mass)
     mean_loss_weight_receipt: str | None = None
     mean_loss_weight_receipt_sha256: str | None = None
     audit_output_path: str | None = None
@@ -213,6 +246,7 @@ class VisionMidtrainingDataConfig(Config):
     pack_buffer_size: int = PACK_BUFFER_SIZE
     pack_max_crops: int = PACK_MAX_CROPS
     prefetch_workers: int = PREFETCH_WORKERS
+    mixture_arm: VisionMidtrainingArm = VisionMidtrainingArm("vt50")
 
 
 @dataclass
@@ -244,6 +278,7 @@ class ExperimentConfig(Config):
     )
     global_batch_size: int = GLOBAL_BATCH_SIZE
     max_tokens: int = MAX_TOKENS
+    hard_stop_tokens: int | None = None
     data_seed: int = DATA_SEED
     init_seed: int = INIT_SEED
     checkpoint_interval: int = 2500
@@ -424,8 +459,9 @@ def _build_train_module_config(
 
 
 def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -> dict[str, Any]:
-    """Build the seven named source configs without materializing their datasets."""
+    """Build the active named source configs without materializing their datasets."""
     data = config.data
+    active_names = _active_source_names(data.mixture_arm)
     if data.synthetic_smoke:
         return {
             name: PixMoCapDatasetConfig(
@@ -439,7 +475,7 @@ def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -
                 seed=index,
                 synthetic_size=data.synthetic_size,
             )
-            for index, name in enumerate(SOURCE_NAMES)
+            for index, name in enumerate(active_names)
         }
 
     shared = {
@@ -452,7 +488,7 @@ def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -
         "message_format": data.message_format,
         "seed": 0,
     }
-    return {
+    sources = {
         "cosyn_point": CoSynPointDatasetConfig(**shared),
         "pixmo_caption": PixMoCapDatasetConfig(
             dataset_path=data.pixmo_cap_path,
@@ -482,8 +518,10 @@ def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -
             require_transcript=True,
             **shared,
         ),
-        "text_midtraining": config.text_dataset,
     }
+    if TEXT_SOURCE_NAME in active_names:
+        sources[TEXT_SOURCE_NAME] = config.text_dataset
+    return sources
 
 
 def _source_contract_sha256(config: ExperimentConfig, token_ids: Molmo2TokenIds) -> str:
@@ -578,6 +616,11 @@ def _build_trainer_config(config: ExperimentConfig, run_name: str) -> TrainerCon
             metrics_collect_interval=5,
             cancel_check_interval=5,
             max_duration=Duration.tokens(config.max_tokens),
+            hard_stop=(
+                Duration.tokens(config.hard_stop_tokens)
+                if config.hard_stop_tokens is not None
+                else None
+            ),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
@@ -649,18 +692,30 @@ def _validated_mean_receipt(config: ExperimentConfig) -> dict[str, float]:
         raise ValueError(f"Invalid source-mean audit summary {path}: {error}") from error
     if not isinstance(receipt, Mapping) or receipt.get("version") != 1:
         raise ValueError("Source-mean audit summary must use version 1")
+    expected_metadata = {
+        "algorithm": _AUDIT_ALGORITHM,
+        "sequence_length": config.data.sequence_length,
+        "tokenizer_fingerprint": TOKENIZER_FINGERPRINT,
+        "audit_seed": config.data.audit_seed,
+        "samples_per_source": config.data.audit_samples_per_source,
+    }
+    if any(receipt.get(key) != value for key, value in expected_metadata.items()):
+        raise ValueError("Source-mean audit summary metadata differs from the data contract")
     if receipt.get("source_contract_sha256") != config.vision_midtraining.source_contract_sha256:
         raise ValueError("Source-mean audit summary belongs to a different data contract")
     sources = receipt.get("sources")
     if not isinstance(sources, Mapping):
         raise TypeError("Source-mean audit summary lacks source measurements")
+    expected_sources = set(_active_source_names(config.data.mixture_arm))
+    if set(sources) != expected_sources:
+        raise ValueError("Source-mean audit summary measures the wrong experiment sources")
     measured = {
         name: float(value["mean_loss_weight"])
         for name, value in sources.items()
         if isinstance(name, str) and isinstance(value, Mapping) and "mean_loss_weight" in value
     }
-    if set(measured) != set(SOURCE_NAMES):
-        raise ValueError("Source-mean audit summary must measure all seven recipe sources")
+    if set(measured) != expected_sources:
+        raise ValueError("Source-mean audit summary contains malformed source measurements")
     if any(value <= 0 or not math.isfinite(value) for value in measured.values()):
         raise ValueError("Source-mean audit summary contains an invalid mean loss weight")
     return measured
@@ -668,9 +723,10 @@ def _validated_mean_receipt(config: ExperimentConfig) -> dict[str, float]:
 
 def _sampling_weights(config: ExperimentConfig) -> dict[str, float]:
     """Return calibrated example sampling probabilities and verify reconstructed mass."""
-    target = config.data.target_loss_mass
+    target = _target_loss_mass(config.data.mixture_arm)
+    source_names = _active_source_names(config.data.mixture_arm)
     means = (
-        {name: 1.0 for name in SOURCE_NAMES}
+        {name: 1.0 for name in source_names}
         if config.data.synthetic_smoke
         else _validated_mean_receipt(config)
     )
@@ -708,8 +764,21 @@ def _validate_contract(
         raise ValueError("Global batch must be a positive multiple of sequence length")
     if config.max_tokens <= 0 or config.max_tokens % config.global_batch_size:
         raise ValueError("Token duration must be a positive whole number of global batches")
+    if config.hard_stop_tokens is not None and (
+        config.hard_stop_tokens <= 0
+        or config.hard_stop_tokens >= config.max_tokens
+        or config.hard_stop_tokens % config.global_batch_size
+    ):
+        raise ValueError(
+            "Hard stop must be a positive whole number of global batches below max tokens"
+        )
     if config.trainer.max_duration != Duration.tokens(config.max_tokens):
         raise ValueError("Vision midtraining duration must use token units")
+    expected_hard_stop = (
+        Duration.tokens(config.hard_stop_tokens) if config.hard_stop_tokens is not None else None
+    )
+    if config.trainer.hard_stop != expected_hard_stop:
+        raise ValueError("Trainer hard stop differs from the configured pilot boundary")
     if config.trainer.load_path != config.parent.checkpoint:
         raise ValueError("Fresh midtraining must model-load the exact parent")
     if config.trainer.load_strategy is not LoadStrategy.always:
@@ -748,21 +817,18 @@ def _validate_contract(
     if groups.get(("*connector.*",), {}).get("lr") != config.optimization.connector_lr:
         raise ValueError("Connector group must use its configured learning rate")
 
-    if set(config.data.target_loss_mass) != set(SOURCE_NAMES):
-        raise ValueError("Target loss mass must name exactly the six visual sources plus text")
-    if any(
-        value <= 0 or not math.isfinite(value) for value in config.data.target_loss_mass.values()
-    ):
-        raise ValueError("Every target loss mass must be finite and positive")
-    if not math.isclose(sum(config.data.target_loss_mass.values()), 1.0, abs_tol=1e-12):
-        raise ValueError("Target loss mass must sum to one")
+    target_loss_mass = _target_loss_mass(config.data.mixture_arm)
+    if any(value <= 0 or not math.isfinite(value) for value in target_loss_mass.values()):
+        raise ValueError("Every active target loss mass must be finite and positive")
+    if not math.isclose(sum(target_loss_mass.values()), 1.0, abs_tol=1e-12):
+        raise ValueError("Derived target loss mass must sum to one")
     if config.data.text_mix != TEXT_MIX.value and not config.data.synthetic_smoke:
         raise ValueError("Real midtraining requires the official ingredient-1 text mix")
     if config.data.message_format != "document" or config.data.loss_token_weighting != "none":
         raise ValueError("Visual data must retain the Stage-1 formatter and loss weighting")
     if not config.data.pack_sequences:
         raise ValueError("Vision midtraining requires multimodal buffered packing")
-    if train_module.source_loss_mass_targets != config.data.target_loss_mass:
+    if train_module.source_loss_mass_targets != target_loss_mass:
         raise ValueError("Train-module source telemetry differs from the data target")
 
     receipt_fields = (
@@ -784,8 +850,8 @@ def _validate_contract(
         raise ValueError("Vision midtraining may target the Holmes cluster, not exact hosts")
     if config.launch.workspace != BEAKER_WORKSPACE or config.launch.budget != BEAKER_BUDGET:
         raise ValueError("Vision midtraining workspace and budget are pinned")
-    if config.launch.num_gpus != 8 or config.launch.num_nodes < 1:
-        raise ValueError("Vision midtraining requires complete 8-GPU Holmes nodes")
+    if config.launch.num_gpus != 8 or config.launch.num_nodes != 2:
+        raise ValueError("Vision midtraining requires exactly two complete 8-GPU Holmes nodes")
     if metadata.run_contract_sha256 != _run_contract_sha256(config):
         raise ValueError("Derived run contract fingerprint is inconsistent")
     _validate_output_resume_contract(config)
@@ -858,7 +924,7 @@ def build_config(
     config.train_module = _build_train_module_config(
         config.optimization, sequence_length=config.data.sequence_length
     )
-    config.train_module.source_loss_mass_targets = dict(config.data.target_loss_mass)
+    config.train_module.source_loss_mass_targets = _target_loss_mass(config.data.mixture_arm)
     config.trainer = _build_trainer_config(config, run_name)
     config.vision_midtraining.parent_checkpoint = config.parent.checkpoint
     config.vision_midtraining.parent_config_sha256 = config.parent.config_sha256
