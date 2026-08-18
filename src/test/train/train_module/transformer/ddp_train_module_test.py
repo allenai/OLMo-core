@@ -211,6 +211,32 @@ def test_multimodal_olmo_ddp_model_materializes_all_components():
     assert not model.vision.training
 
 
+def test_multimodal_olmo_ddp_frozen_vision_stays_in_eval_mode():
+    model = torch.nn.Module()
+    model.vision = torch.nn.Linear(2, 2)
+    model.connector = torch.nn.Linear(2, 2)
+    model.lm = torch.nn.Linear(2, 2)
+    model.vision.requires_grad_(False)
+    model.eval()
+
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+    object.__setattr__(train_module, "model_parts", [model])
+    train_module.freeze_params = ["vision.*"]
+
+    train_module._set_model_mode("train")
+
+    assert model.training
+    assert model.connector.training
+    assert model.lm.training
+    assert not model.vision.training
+
+    train_module._set_model_mode("eval")
+    assert not model.training
+    assert not model.connector.training
+    assert not model.lm.training
+    assert not model.vision.training
+
+
 def test_multimodal_olmo_ddp_prewarms_forward_only_rowwise_scratch(monkeypatch):
     model = _tiny_multimodal_model_config().build(init_device="meta")
     assert isinstance(model, MultimodalOLMoDDPModel)

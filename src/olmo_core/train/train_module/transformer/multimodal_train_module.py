@@ -677,6 +677,11 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         model = self.model_parts[0]
         return getattr(model, "module", model)
 
+    def _set_model_mode(self, mode: Literal["train", "eval"]) -> None:
+        super()._set_model_mode(mode)
+        if mode == "train" and any(fnmatch(name, "vision.*") for name in self.freeze_params):
+            self.multimodal_model.vision.eval()
+
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
@@ -1087,8 +1092,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         if labels is None:
             raise OLMoConfigurationError("Multimodal evaluation batches require labels")
 
-        for model_part in self.model_parts:
-            model_part.eval()
+        self._set_model_mode("eval")
 
         try:
             with self._multimodal_eval_batch_context():

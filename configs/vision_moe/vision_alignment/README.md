@@ -21,6 +21,7 @@ scripts:
 | `bridge` | bare s002 + pinned SigLIP2 | connector and six image-token input rows | 2,560 | 1,000 steps |
 | `perception` | permanent bridge checkpoint | connector, vision tower, image-token rows | 2,560 | 4,000 steps |
 | `joint` | permanent perception checkpoint | connector, vision tower, LM blocks/norms/routers, image-token rows | 8,192 | 16,000 steps |
+| `joint` frozen-vision control | frozen-vision perception checkpoint | connector, LM blocks/norms/routers, image-token rows | 8,192 | 16,000 steps |
 
 The joint phase still freezes the ordinary lexical embedding rows and the untied output
 projection. Phase changes are model-only forks: they load model parameters from the pinned
@@ -36,6 +37,12 @@ The active profiles are:
 - `bridge/real_bridge_v1.yaml`: production connector-only bridge;
 - `perception/treatment_v1.yaml`: production vision-unfrozen perception phase;
 - `joint/joint_v1.yaml`: production joint phase with native text replay.
+- `joint/frozen_vision_control_v1.yaml`: joint control with identical data and the vision encoder
+  frozen throughout the complete alignment lineage.
+
+The joint trainability arm changes only the parent and vision-encoder trainability. The original
+joint treatment remains the default, and its data and trainable contract hashes remain compatible
+with the completed checkpoints.
 
 Profiles use strict YAML parsing, may not repeat override destinations, and own their phase
 selector. Production perception and joint profiles must be checked-in files directly under

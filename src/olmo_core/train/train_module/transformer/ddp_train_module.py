@@ -14,6 +14,7 @@ from typing import (
     Dict,
     Generator,
     List,
+    Literal,
     Optional,
     Sequence,
     Tuple,
@@ -1794,6 +1795,16 @@ class OLMoDDPTrainModule(TrainModule):
         del batch
         return {}
 
+    def _set_model_mode(self, mode: Literal["train", "eval"]) -> None:
+        if mode == "train":
+            for model_part in self.model_parts:
+                model_part.train()
+        elif mode == "eval":
+            for model_part in self.model_parts:
+                model_part.eval()
+        else:
+            raise ValueError(f"Invalid model mode: {mode}")
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
@@ -1801,8 +1812,7 @@ class OLMoDDPTrainModule(TrainModule):
             self._reset_dry_run_progress_timer()
 
         # Set model to train mode if it isn't already.
-        for m in self.model_parts:
-            m.train()
+        self._set_model_mode("train")
 
         # Generate labels.
         if "labels" not in batch:
@@ -2137,8 +2147,7 @@ class OLMoDDPTrainModule(TrainModule):
 
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
-        for m in self.model_parts:
-            m.eval()
+        self._set_model_mode("eval")
 
         with self._eval_batch_context():
             if not self.pp_enabled:

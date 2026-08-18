@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+import yaml
 
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.vision import Molmo2TokenIds
@@ -39,6 +40,7 @@ def _optimizer_config(vision_alignment, phase="bridge", *, train_module=None):
     policy = vision_alignment._PHASE_POLICIES[phase]
     return SimpleNamespace(
         phase=phase,
+        joint_trainability_arm=vision_alignment.JointTrainabilityArm.treatment,
         train_module=(
             train_module
             if train_module is not None
@@ -182,6 +184,7 @@ def _contract_config(vision_alignment, phase="bridge"):
     policy = vision_alignment._PHASE_POLICIES[phase]
     return SimpleNamespace(
         phase=phase,
+        joint_trainability_arm=vision_alignment.JointTrainabilityArm.treatment,
         data=vision_alignment.VisionAlignmentDataConfig(),
         evaluation=vision_alignment.VisionAlignmentEvalConfig(),
         collator=_dict_config(pad_sequence_length=policy.sequence_length),
@@ -395,6 +398,43 @@ def test_optimizer_scheduler_contract_rejects_drift(vision_alignment, mutation):
         vision_alignment._validate_optimizer_scheduler_contract(config, policy)
 
 
+def test_joint_frozen_vision_control_changes_only_vision_trainability(vision_alignment):
+    policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase.joint]
+    treatment = _optimizer_config(vision_alignment, "joint")
+    frozen = _optimizer_config(vision_alignment, "joint")
+    frozen.joint_trainability_arm = vision_alignment.JointTrainabilityArm.frozen_vision_control
+
+    vision_alignment._apply_joint_trainability_arm(frozen)
+    vision_alignment._validate_optimizer_scheduler_contract(treatment, policy)
+    vision_alignment._validate_optimizer_scheduler_contract(frozen, policy)
+
+    treatment_groups = treatment.train_module.optim.group_overrides
+    frozen_groups = frozen.train_module.optim.group_overrides
+    assert treatment.train_module.freeze_params == ["lm.lm_head.w_out.weight"]
+    assert frozen.train_module.freeze_params == ["vision.*", "lm.lm_head.w_out.weight"]
+    assert treatment.train_module.optim.lr == frozen.train_module.optim.lr == policy.lm_lr
+    assert [group.opts["lr"] for group in treatment_groups] == [
+        policy.connector_lr,
+        policy.connector_lr,
+        policy.vision_lr,
+    ]
+    assert [group.opts["lr"] for group in frozen_groups] == [
+        policy.connector_lr,
+        policy.connector_lr,
+        0.0,
+    ]
+
+
+def test_joint_trainability_arm_is_forbidden_outside_joint(vision_alignment):
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        joint_trainability_arm=vision_alignment.JointTrainabilityArm.frozen_vision_control,
+    )
+
+    with pytest.raises(ValueError, match="only for the joint phase"):
+        vision_alignment._validate_joint_trainability_arm(config)
+
+
 def test_profile_owns_phase_and_forbids_second_selector(tmp_path, vision_alignment):
     profile = tmp_path / "profile.yaml"
     profile.write_text(
@@ -441,6 +481,46 @@ def test_profile_rejects_duplicate_keys(tmp_path, vision_alignment, contents, me
 
     with pytest.raises(ValueError, match=message):
         vision_alignment._load_profile([f"--profile={profile}"])
+
+
+def test_frozen_joint_profile_changes_only_parent_and_trainability_arm(vision_alignment):
+    root = Path(vision_alignment.__file__).resolve().parents[3]
+    treatment_path = root / "configs/vision_moe/vision_alignment/joint/joint_v1.yaml"
+    frozen_path = root / "configs/vision_moe/vision_alignment/joint/frozen_vision_control_v1.yaml"
+    treatment = yaml.safe_load(treatment_path.read_text())
+    frozen = yaml.safe_load(frozen_path.read_text())
+
+    def overrides(profile):
+        return {
+            value[2:].split("=", 1)[0]: value.split("=", 1)[1] for value in profile["overrides"]
+        }
+
+    treatment_overrides = overrides(treatment)
+    frozen_overrides = overrides(frozen)
+    changed = {
+        key
+        for key in set(treatment_overrides) | set(frozen_overrides)
+        if treatment_overrides.get(key) != frozen_overrides.get(key)
+    }
+    assert treatment["phase"] == frozen["phase"] == "joint"
+    assert treatment["launch"] == frozen["launch"]
+    assert changed == {
+        "initialization.checkpoint",
+        "initialization.parent_config_sha256",
+        "joint_trainability_arm",
+    }
+    assert frozen_overrides["initialization.checkpoint"].endswith(
+        "/vision-alignment-perception-frozen-vision-control-v1/step4000"
+    )
+    assert frozen_overrides["initialization.parent_config_sha256"] == (
+        "32d4baa68a9363b1ead672bbee737aa3f51fd712ec3ca28584cbde5416d2da5c"
+    )
+    assert frozen_overrides["joint_trainability_arm"] == "frozen_vision_control"
+
+    loaded, parsed = vision_alignment._load_profile([f"--profile={frozen_path}"])
+    assert loaded is not None
+    assert loaded["name"] == "vision-alignment-joint-frozen-vision-control-v1"
+    assert parsed[0] == "--phase=joint"
 
 
 def test_same_phase_resume_requires_saved_full_state_contract(monkeypatch, vision_alignment):
@@ -535,6 +615,113 @@ def test_joint_transition_rejects_incompatible_parent_recipe(
     )
 
     with pytest.raises(ValueError, match="incompatible recipe version"):
+        vision_alignment._validate_parent_or_resume(config)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "treatment_arm", "missing_vision_freeze", "nonzero_vision_lr"],
+)
+def test_joint_frozen_vision_parent_trainability_contract(vision_alignment, mutation):
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        joint_trainability_arm=vision_alignment.JointTrainabilityArm.frozen_vision_control,
+    )
+    parent = {
+        "perception_trainability_arm": "frozen_vision_control",
+        "train_module": {
+            "freeze_params": [
+                "vision.*",
+                "lm.embedding_norm.*",
+                "lm.blocks.*",
+                "lm.lm_head.*",
+            ],
+            "optim": {
+                "group_overrides": [
+                    {
+                        "params": ["*vision.*"],
+                        "opts": {"lr": 0.0},
+                    }
+                ]
+            },
+        },
+    }
+    if mutation == "treatment_arm":
+        parent["perception_trainability_arm"] = "treatment"
+    elif mutation == "missing_vision_freeze":
+        parent["train_module"]["freeze_params"].remove("vision.*")
+    elif mutation == "nonzero_vision_lr":
+        parent["train_module"]["optim"]["group_overrides"][0]["opts"]["lr"] = 3e-6
+
+    if mutation is None:
+        vision_alignment._validate_joint_parent_trainability_lineage(config, parent)
+    else:
+        with pytest.raises(ValueError, match="[Ff]rozen-vision"):
+            vision_alignment._validate_joint_parent_trainability_lineage(config, parent)
+
+    config.joint_trainability_arm = vision_alignment.JointTrainabilityArm.treatment
+    vision_alignment._validate_joint_parent_trainability_lineage(config, {})
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_joint_frozen_vision_parent_is_rechecked_on_transition_and_resume(
+    tmp_path, monkeypatch, vision_alignment, resume
+):
+    parent = str((tmp_path / "step4000").resolve())
+    Path(parent).mkdir()
+    (Path(parent) / ".metadata.json").write_text(json.dumps({"ephemeral": False}))
+    parent_sha = "a" * 64
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        joint_trainability_arm=vision_alignment.JointTrainabilityArm.frozen_vision_control,
+        initialization=vision_alignment.InitializationConfig(
+            mode=vision_alignment.InitializationMode.checkpoint,
+            checkpoint=parent,
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.perception,
+            parent_config_sha256=parent_sha,
+        ),
+        vision_alignment=vision_alignment.VisionAlignmentMetadataConfig(
+            phase=vision_alignment.VisionAlignmentPhase.joint,
+            lineage_id="joint-frozen-run",
+            parent_checkpoint=parent,
+            parent_config_sha256=parent_sha,
+            data_contract_sha256="b" * 64,
+            trainable_contract_sha256="c" * 64,
+        ),
+    )
+    parent_config = {
+        "perception_trainability_arm": "treatment",
+        "vision_alignment": {
+            "phase": "perception",
+            "recipe_version": vision_alignment.RECIPE_VERSION,
+        },
+    }
+    existing = "/checkpoints/joint-frozen-run/step100" if resume else None
+    saved = {
+        "vision_alignment": {
+            "recipe_version": vision_alignment.RECIPE_VERSION,
+            "formatter_version": vision_alignment.FORMATTER_VERSION,
+            "phase": "joint",
+            "lineage_id": "joint-frozen-run",
+            "parent_checkpoint": parent,
+            "parent_config_sha256": parent_sha,
+            "data_contract_sha256": "b" * 64,
+            "trainable_contract_sha256": "c" * 64,
+        }
+    }
+    monkeypatch.setattr(vision_alignment, "_latest_output_checkpoint", lambda unused: existing)
+
+    def checkpoint_config(checkpoint):
+        return (saved, "d" * 64) if checkpoint == existing else (parent_config, parent_sha)
+
+    monkeypatch.setattr(vision_alignment, "_checkpoint_config", checkpoint_config)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_validate_joint_parent_projection_lineage",
+        lambda config_arg, parent_arg: None,
+    )
+
+    with pytest.raises(ValueError, match="frozen-vision perception parent"):
         vision_alignment._validate_parent_or_resume(config)
 
 
@@ -956,6 +1143,38 @@ def test_trainable_contract_preserves_phase_specific_checkpoint_schema(
         payload["perception_trainability_arm"] = "treatment"
     assert config.vision_alignment.trainable_contract_sha256 == (
         vision_alignment._canonical_sha256(payload)
+    )
+
+
+def test_joint_frozen_arm_preserves_treatment_hash_schema_and_data_identity(vision_alignment):
+    treatment = _contract_config(vision_alignment, "joint")
+    frozen = _contract_config(vision_alignment, "joint")
+    frozen.joint_trainability_arm = vision_alignment.JointTrainabilityArm.frozen_vision_control
+    vision_alignment._apply_joint_trainability_arm(frozen)
+
+    vision_alignment._set_contract_hashes(treatment)
+    vision_alignment._set_contract_hashes(frozen)
+
+    legacy_treatment_payload = {
+        "model": treatment.model.as_config_dict(),
+        "train_module": treatment.train_module.as_config_dict(),
+        "router_lb_loss_weight": treatment.router_lb_loss_weight,
+        "max_duration": {
+            "value": treatment.trainer.max_duration.value,
+            "unit": treatment.trainer.max_duration.unit.value,
+        },
+        "perception_trainability_arm": "treatment",
+    }
+    assert treatment.vision_alignment.trainable_contract_sha256 == (
+        vision_alignment._canonical_sha256(legacy_treatment_payload)
+    )
+    assert (
+        frozen.vision_alignment.data_contract_sha256
+        == treatment.vision_alignment.data_contract_sha256
+    )
+    assert (
+        frozen.vision_alignment.trainable_contract_sha256
+        != treatment.vision_alignment.trainable_contract_sha256
     )
 
 

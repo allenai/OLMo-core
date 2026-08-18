@@ -196,6 +196,13 @@ class InitializationMode(StrEnum):
     checkpoint = "checkpoint"
 
 
+class JointTrainabilityArm(StrEnum):
+    """Vision-encoder trainability choices for the joint phase."""
+
+    treatment = "treatment"
+    frozen_vision_control = "frozen_vision_control"
+
+
 @dataclass(frozen=True)
 class _PhasePolicy:
     phase: VisionAlignmentPhase
@@ -385,11 +392,52 @@ class ExperimentConfig(Config):
     evaluation: VisionAlignmentEvalConfig
     vision_alignment: VisionAlignmentMetadataConfig
     global_batch_size: int
+    joint_trainability_arm: JointTrainabilityArm = JointTrainabilityArm.treatment
     data_seed: int = DATA_SEED
     init_seed: int = INIT_SEED
     checkpoint_load_threads: int = 8
     router_lb_loss_weight: Optional[float] = 0.015
     required_run_name: str = ""
+
+
+def _joint_vision_is_frozen(config: Any) -> bool:
+    """Return whether this config selects the joint frozen-vision control."""
+    return (
+        config.phase is VisionAlignmentPhase.joint
+        and getattr(
+            config,
+            "joint_trainability_arm",
+            JointTrainabilityArm.treatment,
+        )
+        is JointTrainabilityArm.frozen_vision_control
+    )
+
+
+def _apply_joint_trainability_arm(config: ExperimentConfig) -> None:
+    """Derive frozen-vision train-module fields from the selected joint arm."""
+    if not _joint_vision_is_frozen(config):
+        return
+    config.train_module.freeze_params = [
+        "vision.*",
+        *(config.train_module.freeze_params or []),
+    ]
+    vision_groups = [
+        group
+        for group in (config.train_module.optim.group_overrides or [])
+        if group.params == ["*vision.*"]
+    ]
+    if len(vision_groups) != 1:
+        raise ValueError("Joint frozen-vision control requires one exact vision optimizer group")
+    vision_groups[0].opts["lr"] = 0.0
+
+
+def _validate_joint_trainability_arm(config: ExperimentConfig) -> None:
+    """Reject a joint-only trainability arm on another data phase."""
+    if (
+        config.phase is not VisionAlignmentPhase.joint
+        and config.joint_trainability_arm is not JointTrainabilityArm.treatment
+    ):
+        raise ValueError("Joint trainability arms are defined only for the joint phase")
 
 
 def _sha256_file(path: Path) -> str:
@@ -1484,9 +1532,12 @@ def _set_contract_hashes(config: ExperimentConfig) -> None:
         },
     }
     if config.phase is not VisionAlignmentPhase.bridge:
-        # Preserve the completed perception/joint checkpoints' contract identity while
-        # keeping the unsupported frozen-vision experiment out of the active recipe surface.
+        # Preserve the completed perception/joint checkpoints' legacy contract identity.
         trainable_contract["perception_trainability_arm"] = "treatment"
+    if _joint_vision_is_frozen(config):
+        # Keep the completed treatment checkpoint's hash byte-for-byte compatible while giving
+        # the new, non-default arm an explicit identity in addition to its derived train module.
+        trainable_contract["joint_trainability_arm"] = config.joint_trainability_arm.value
     config.vision_alignment.trainable_contract_sha256 = _canonical_sha256(trainable_contract)
 
 
@@ -1694,6 +1745,43 @@ def _validate_joint_parent_projection_lineage(
         )
 
 
+def _validate_joint_parent_trainability_lineage(
+    config: ExperimentConfig, parent_config: Mapping[str, Any]
+) -> None:
+    """Prove that a frozen-vision joint arm never inherited an unfrozen vision encoder."""
+    if not _joint_vision_is_frozen(config):
+        return
+    if parent_config.get("perception_trainability_arm") != "frozen_vision_control":
+        raise ValueError("Joint frozen-vision control requires the frozen-vision perception parent")
+    train_module = parent_config.get("train_module")
+    if not isinstance(train_module, Mapping):
+        raise ValueError("Frozen-vision perception parent lacks its train-module config")
+    freeze_params = train_module.get("freeze_params")
+    if not isinstance(freeze_params, list) or "vision.*" not in freeze_params:
+        raise ValueError("Frozen-vision perception parent did not freeze the vision encoder")
+    optim = train_module.get("optim")
+    groups = optim.get("group_overrides") if isinstance(optim, Mapping) else None
+    if not isinstance(groups, list):
+        raise ValueError("Frozen-vision perception parent lacks optimizer-group config")
+    vision_groups = [
+        group
+        for group in groups
+        if isinstance(group, Mapping) and group.get("params") == ["*vision.*"]
+    ]
+    if len(vision_groups) != 1:
+        raise ValueError(
+            "Frozen-vision perception parent must contain one exact vision optimizer group"
+        )
+    opts = vision_groups[0].get("opts")
+    vision_lr = opts.get("lr") if isinstance(opts, Mapping) else None
+    if (
+        isinstance(vision_lr, bool)
+        or not isinstance(vision_lr, (int, float))
+        or not math.isclose(float(vision_lr), 0.0, abs_tol=0.0)
+    ):
+        raise ValueError("Frozen-vision perception parent must use zero vision learning rate")
+
+
 def _validate_parent_or_resume(config: ExperimentConfig) -> None:
     existing = _latest_output_checkpoint(config)
     if existing is not None:
@@ -1745,6 +1833,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
                     "Joint resume perception parent config differs from its saved lineage SHA"
                 )
             _validate_joint_parent_projection_lineage(config, parent_config)
+            _validate_joint_parent_trainability_lineage(config, parent_config)
         return
 
     if config.phase is VisionAlignmentPhase.bridge:
@@ -1772,6 +1861,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
     config.vision_alignment.parent_config_sha256 = parent_sha
     _validate_permanent_checkpoint(parent)
     _validate_joint_parent_projection_lineage(config, parent_config)
+    _validate_joint_parent_trainability_lineage(config, parent_config)
 
 
 def _validate_canonical_data_policy(config: ExperimentConfig) -> None:
@@ -1831,10 +1921,11 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
     ):
         raise ValueError("Vision alignment requires the pinned distributed optimizer safeguards")
 
+    effective_vision_lr = 0.0 if _joint_vision_is_frozen(config) else policy.vision_lr
     expected_groups = (
         ("*lm.embeddings.weight", policy.connector_lr, "connector"),
         ("*connector.*", policy.connector_lr, "connector"),
-        ("*vision.*", policy.vision_lr, "vision"),
+        ("*vision.*", effective_vision_lr, "vision"),
     )
     groups = optim.group_overrides or []
     if len(groups) != len(expected_groups):
@@ -1853,7 +1944,9 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
         ):
             raise ValueError("Vision-alignment optimizer LR or scheduler routing was overridden")
     if policy.connector_lr <= 0 or (
-        policy.phase is not VisionAlignmentPhase.bridge and policy.vision_lr <= 0
+        policy.phase is not VisionAlignmentPhase.bridge
+        and not _joint_vision_is_frozen(config)
+        and effective_vision_lr <= 0
     ):
         raise ValueError("Every trainable visual component requires a positive LR")
     if (policy.phase is VisionAlignmentPhase.joint) != (policy.lm_lr > 0):
@@ -1885,7 +1978,7 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
     if duration.unit.value != "steps" or duration.value <= 0:
         raise ValueError("Vision-alignment phase duration must be a positive step count")
     active_warmups = [policy.connector_warmup]
-    if policy.phase is not VisionAlignmentPhase.bridge:
+    if policy.phase is not VisionAlignmentPhase.bridge and not _joint_vision_is_frozen(config):
         active_warmups.append(policy.vision_warmup)
     if policy.phase is VisionAlignmentPhase.joint:
         active_warmups.append(policy.lm_warmup)
@@ -1999,7 +2092,11 @@ def _validate_phase_contract(config: ExperimentConfig, run_name: str) -> None:
         )
     if config.initialization.expected_parent_phase is not policy.expected_parent_phase:
         raise ValueError("Initialization parent-phase contract was overridden")
-    if list(policy.freeze_params) != (config.train_module.freeze_params or []):
+    _validate_joint_trainability_arm(config)
+    expected_freeze_params = list(policy.freeze_params)
+    if _joint_vision_is_frozen(config):
+        expected_freeze_params.insert(0, "vision.*")
+    if expected_freeze_params != (config.train_module.freeze_params or []):
         raise ValueError("Phase freeze patterns are derived and may not be overridden")
     if (
         config.train_module.train_embedding_rows is None
@@ -2265,8 +2362,10 @@ def build_config(
             parent_checkpoint=initialization.checkpoint,
         ),
         global_batch_size=GLOBAL_BATCH_INSTANCES * policy.sequence_length,
+        joint_trainability_arm=JointTrainabilityArm.treatment,
         required_run_name=run_name,
     ).merge(overrides)
+    _apply_joint_trainability_arm(config)
     if (
         config.phase is not VisionAlignmentPhase.bridge
         and config.trainer.load_path is None
