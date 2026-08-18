@@ -36,6 +36,7 @@ from .mmfinereason import (
     extract_answer_text,
 )
 from .native_text_replay import NativeTextReplayDataset, NativeTextReplayDatasetConfig
+from .numpy_fsl_text import NumpyFSLTextDataset, NumpyFSLTextDatasetConfig
 from .packing import pack_examples
 from .paths import (
     ACADEMIC_DATASETS,
@@ -105,6 +106,8 @@ __all__ = [
     "MixtureDataLoader",
     "NativeTextReplayDataset",
     "NativeTextReplayDatasetConfig",
+    "NumpyFSLTextDataset",
+    "NumpyFSLTextDatasetConfig",
     "build_packed_sequence",
     "build_branched_sequence",
     "ATTEND_ALL_SUBSEGMENT_ID",

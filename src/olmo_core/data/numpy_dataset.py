@@ -506,6 +506,20 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
         return self._sequence_length
 
     @property
+    def label_mask_paths(self) -> Optional[Tuple[PathOrStr, ...]]:
+        """
+        The resolved label-mask paths, when label masking is enabled.
+
+        :returns: The label-mask paths in the same order as :attr:`paths`, or ``None``.
+        """
+        return None if self._label_mask_paths is None else tuple(self._label_mask_paths)
+
+    @property
+    def generate_doc_lengths(self) -> bool:
+        """Whether instances include document lengths for intra-document masking."""
+        return self._generate_doc_lengths
+
+    @property
     def max_sequence_length(self) -> int:
         return self.sequence_length
 
