@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import math
 import signal
+import threading
 import time
 import uuid
 import warnings
@@ -33,6 +34,7 @@ import torch.distributed as dist
 from ..aliases import PathOrStr
 from ..data import DataLoaderBase
 from ..distributed.utils import (
+    all_gather_object,
     all_reduce_value,
     backend_supports_cpu,
     barrier,
@@ -76,7 +78,7 @@ from .common import (
     TrainingProgress,
 )
 from .train_module import TrainModule
-from .utils import EnvRngStates, check_metrics_consistent, move_metrics, reduce_metrics
+from .utils import EnvRngStates, move_metrics, reduce_metrics
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +96,63 @@ class TrainerStateDict(TypedDict):
     world_size: int
     rng: Dict[str, Any]
     callbacks: Dict[str, Dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class AsyncCheckpointCompletion:
+    """The result of an async checkpoint write, published by the writer thread."""
+
+    step: int
+    path: PathOrStr
+    duration: float
+    error: Optional[BaseException] = None
+
+
+@dataclass(frozen=True)
+class AsyncCheckpointReconciliation:
+    """Cross-rank checkpoint results collected at a metrics boundary."""
+
+    completed_durations: Dict[str, float]
+    failures: Dict[str, str]
+
+
+class AsyncCheckpointFuture(Future[AsyncCheckpointCompletion]):
+    """A checkpoint future that finalizes trainer state on the thread awaiting its result."""
+
+    def __init__(self, finalize: Callable[[], AsyncCheckpointCompletion]):
+        super().__init__()
+        self._finalize = finalize
+        self._finalize_lock = threading.Lock()
+        self._finalized = False
+        self._completion: Optional[AsyncCheckpointCompletion] = None
+
+    def set_completion(self, completion: AsyncCheckpointCompletion) -> None:
+        """Complete this future with the checkpoint result."""
+        self._completion = completion
+        if completion.error is not None:
+            self.set_exception(completion.error)
+        else:
+            self.set_result(completion)
+
+    def completion(self, timeout: Optional[float] = None) -> AsyncCheckpointCompletion:
+        """Return and finalize the completion record without re-raising a write error."""
+        try:
+            completion = super().result(timeout)
+        except BaseException:
+            if self._completion is None:
+                raise
+            completion = self._completion
+        with self._finalize_lock:
+            if not self._finalized:
+                self._finalize()
+                self._finalized = True
+        return completion
+
+    def result(self, timeout: Optional[float] = None) -> AsyncCheckpointCompletion:
+        completion = self.completion(timeout)
+        if completion.error is not None:
+            raise completion.error
+        return completion
 
 
 @dataclass
@@ -293,6 +352,7 @@ class Trainer:
 
     _metrics: Dict[int, Dict[str, torch.Tensor]] = field(default_factory=OrderedDict)
     _metrics_reduce_type: Dict[str, Optional[ReduceType]] = field(default_factory=dict)
+    _metrics_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _canceled: bool = False
     _cancel_reason: Optional[str] = None
     _canceling_rank: Optional[int] = None
@@ -308,7 +368,22 @@ class Trainer:
     _blocking_ephemeral_checkpoints: Set[str] = field(repr=False, default_factory=set)
     """Callbacks that are blocking ephemeral checkpoints."""
     _checkpoint_loaded: bool = False
-    _metrics_consistent: Optional[bool] = None
+    _async_checkpoint_completions: Dict[str, AsyncCheckpointCompletion] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _async_checkpoint_completion_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
+    _completed_async_checkpoint_durations: Dict[str, float] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _completed_async_checkpoint_errors: Dict[str, BaseException] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _pending_async_checkpoint_paths: Set[str] = field(default_factory=set, init=False, repr=False)
+    _async_checkpoint_reconciliation_future: Optional[Future] = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self):
         self.save_folder = normalize_path(self.save_folder)
@@ -767,6 +842,10 @@ class Trainer:
         if gracefully:
             self._log_metrics()
             self._join_bookkeeping_ops()
+            # The first join may finish async-checkpoint duration reconciliation. Consume its
+            # result and flush the resulting metric before closing the bookkeeping process group.
+            self._log_metrics()
+            self._join_bookkeeping_ops()
             if self._multi_thread_pool is not None:
                 self._multi_thread_pool.shutdown(wait=True, cancel_futures=False)
                 self._multi_thread_pool = None
@@ -990,7 +1069,9 @@ class Trainer:
         log.info("Checkpoint saved")
         return path
 
-    def save_checkpoint_async(self, ephemeral: bool = False) -> Tuple[PathOrStr, Future]:
+    def save_checkpoint_async(
+        self, ephemeral: bool = False
+    ) -> Tuple[PathOrStr, Future[AsyncCheckpointCompletion]]:
         """
         Save a checkpoint for the current step to the :data:`save_folder` asynchronously.
 
@@ -1012,27 +1093,148 @@ class Trainer:
         self._log_metrics()
         self._join_bookkeeping_ops()
 
-        fut = self.checkpointer.save_async(
+        write_future = self.checkpointer.save_async(
             path,
             self.train_module,
             cast(Dict[str, Any], self.state_dict()),
             ephemeral=ephemeral,
         )
+        completion_future = AsyncCheckpointFuture(lambda: self.finalize_async_checkpoint(path))
+        with self._async_checkpoint_completion_lock:
+            self._pending_async_checkpoint_paths.add(str(path))
 
-        def callback(future: Future):
-            future.result()  # ensure it finished successfully
+        def publish_completion(future: Future):
+            try:
+                future.result()
+            except BaseException as exc:
+                completion = AsyncCheckpointCompletion(
+                    step=step,
+                    path=path,
+                    duration=time.perf_counter() - save_start,
+                    error=exc,
+                )
+            else:
+                completion = AsyncCheckpointCompletion(
+                    step=step,
+                    path=path,
+                    duration=time.perf_counter() - save_start,
+                )
+            with self._async_checkpoint_completion_lock:
+                self._async_checkpoint_completions[str(path)] = completion
+            # Set this only after publishing the record. A caller that observes the returned
+            # future as done can therefore finalize the checkpoint without racing this callback.
+            completion_future.set_completion(completion)
+
+        write_future.add_done_callback(publish_completion)
+
+        return path, completion_future
+
+    def finalize_async_checkpoint(self, path: PathOrStr) -> AsyncCheckpointCompletion:
+        """
+        Finalize a completed asynchronous checkpoint from the trainer's main thread.
+
+        The checkpoint writer only publishes an :class:`AsyncCheckpointCompletion`. Callback
+        state, logging, and distributed metric publication are deliberately kept out of the writer
+        thread.
+        """
+        with self._async_checkpoint_completion_lock:
+            completion = self._async_checkpoint_completions.pop(str(path))
+
+        if completion.error is not None:
+            with self._async_checkpoint_completion_lock:
+                self._completed_async_checkpoint_errors[str(path)] = completion.error
+            return completion
+
+        with self._async_checkpoint_completion_lock:
+            self._completed_async_checkpoint_durations[str(path)] = completion.duration
+        for callback in self._iter_callbacks():
+            callback.post_checkpoint_saved(path)
+        log.info(f"Checkpoint for step {completion.step} saved successfully")
+        return completion
+
+    @property
+    def async_checkpoint_finalization_pending(self) -> bool:
+        """Whether an async checkpoint still needs cross-rank completion reconciliation."""
+        with self._async_checkpoint_completion_lock:
+            return bool(self._pending_async_checkpoint_paths)
+
+    def async_checkpoint_finalization_pending_for(self, path: PathOrStr) -> bool:
+        """Whether an async checkpoint path still needs completion reconciliation."""
+        with self._async_checkpoint_completion_lock:
+            return str(path) in self._pending_async_checkpoint_paths
+
+    def _reconcile_async_checkpoint_durations(
+        self, local_status: Dict[str, Tuple[Optional[float], Optional[str]]]
+    ) -> AsyncCheckpointReconciliation:
+        all_statuses = all_gather_object(local_status, group=self.bookkeeping_pg)
+        completed: Dict[str, float] = {}
+        failures: Dict[str, str] = {}
+        for path, (local_duration, _) in local_status.items():
+            rank_errors = [
+                rank_status[path][1]
+                for rank_status in all_statuses
+                if path in rank_status and rank_status[path][1] is not None
+            ]
+            if rank_errors:
+                failures[path] = cast(str, rank_errors[0])
+                continue
+            if local_duration is not None and all(
+                rank_status.get(path, (None, None))[0] is not None for rank_status in all_statuses
+            ):
+                completed[path] = local_duration
+        return AsyncCheckpointReconciliation(completed, failures)
+
+    def _update_async_checkpoint_metrics(self) -> None:
+        """Reconcile completed checkpoint durations at an existing metrics boundary."""
+        if (future := self._async_checkpoint_reconciliation_future) is not None:
+            # This only waits for the small reconciliation collective submitted at the previous
+            # metrics boundary; it never waits for checkpoint I/O.
+            reconciliation = future.result()
+            self._async_checkpoint_reconciliation_future = None
+            self._apply_async_checkpoint_reconciliation(reconciliation)
+
+        with self._async_checkpoint_completion_lock:
+            local_status = {
+                path: (
+                    self._completed_async_checkpoint_durations.get(path),
+                    repr(error)
+                    if (error := self._completed_async_checkpoint_errors.get(path))
+                    else None,
+                )
+                for path in self._pending_async_checkpoint_paths
+            }
+        if local_status:
+            if self.async_bookkeeping and self.bookkeeping_pg is not None:
+                self._async_checkpoint_reconciliation_future = self.run_bookkeeping_op(
+                    self._reconcile_async_checkpoint_durations,
+                    local_status,
+                    op_name="reconcile async checkpoint durations",
+                )
+            else:
+                self._apply_async_checkpoint_reconciliation(
+                    self._reconcile_async_checkpoint_durations(local_status)
+                )
+
+    def _apply_async_checkpoint_reconciliation(
+        self, reconciliation: AsyncCheckpointReconciliation
+    ) -> None:
+        for path, duration in reconciliation.completed_durations.items():
             self.record_metric(
-                "checkpoint/save_async_duration_s",
-                time.perf_counter() - save_start,
-                reduce_type=ReduceType.max,
+                "checkpoint/save_async_duration_s", duration, reduce_type=ReduceType.max
             )
-            for callback in self._iter_callbacks():
-                callback.post_checkpoint_saved(path)
-            log.info(f"Checkpoint for step {step} saved successfully")
-
-        fut.add_done_callback(callback)
-
-        return path, fut
+            with self._async_checkpoint_completion_lock:
+                self._pending_async_checkpoint_paths.discard(path)
+                self._completed_async_checkpoint_durations.pop(path, None)
+        if reconciliation.failures:
+            with self._async_checkpoint_completion_lock:
+                for path in reconciliation.failures:
+                    self._pending_async_checkpoint_paths.discard(path)
+                    self._completed_async_checkpoint_durations.pop(path, None)
+                    self._completed_async_checkpoint_errors.pop(path, None)
+            details = "; ".join(
+                f"'{path}': {error}" for path, error in reconciliation.failures.items()
+            )
+            raise RuntimeError(f"Async checkpointing failed on at least one rank: {details}")
 
     def record_metric(
         self,
@@ -1063,38 +1265,44 @@ class Trainer:
         else:
             value = get_local_tensor(value.detach()).float()
 
-        if self.global_step not in self._metrics:
-            self._metrics[self.global_step] = OrderedDict()
+        with self._metrics_lock:
+            if self.global_step not in self._metrics:
+                self._metrics[self.global_step] = OrderedDict()
 
-        step_metrics = self._metrics[self.global_step]
+            step_metrics = self._metrics[self.global_step]
 
-        if name not in step_metrics or merge_strategy == MetricMergeStrategy.latest:
-            step_metrics[name] = value
-        elif merge_strategy == MetricMergeStrategy.sum:
-            step_metrics[name] = step_metrics[name] + value
-        elif merge_strategy == MetricMergeStrategy.mean:
-            step_metrics[name] = (step_metrics[name] + value) / 2
-        elif merge_strategy == MetricMergeStrategy.max:
-            step_metrics[name] = torch.max(step_metrics[name], value.to(step_metrics[name].device))
-        elif merge_strategy == MetricMergeStrategy.min:
-            step_metrics[name] = torch.min(step_metrics[name], value.to(step_metrics[name].device))
-        elif merge_strategy == MetricMergeStrategy.warn:
-            log.warning(
-                f"Attempting to log duplicate metric '{name}' for step {(self.global_step)}. "
-                "The latest value will be ignored."
-            )
-        elif merge_strategy == MetricMergeStrategy.oldest:
-            pass
-        else:
-            raise NotImplementedError(merge_strategy)
+            if name not in step_metrics or merge_strategy == MetricMergeStrategy.latest:
+                step_metrics[name] = value
+            elif merge_strategy == MetricMergeStrategy.sum:
+                step_metrics[name] = step_metrics[name] + value
+            elif merge_strategy == MetricMergeStrategy.mean:
+                step_metrics[name] = (step_metrics[name] + value) / 2
+            elif merge_strategy == MetricMergeStrategy.max:
+                step_metrics[name] = torch.max(
+                    step_metrics[name], value.to(step_metrics[name].device)
+                )
+            elif merge_strategy == MetricMergeStrategy.min:
+                step_metrics[name] = torch.min(
+                    step_metrics[name], value.to(step_metrics[name].device)
+                )
+            elif merge_strategy == MetricMergeStrategy.warn:
+                log.warning(
+                    f"Attempting to log duplicate metric '{name}' for step {(self.global_step)}. "
+                    "The latest value will be ignored."
+                )
+            elif merge_strategy == MetricMergeStrategy.oldest:
+                pass
+            else:
+                raise NotImplementedError(merge_strategy)
 
-        # reduce type must be consistent to avoid issues
-        if name in self._metrics_reduce_type and self._metrics_reduce_type[name] != reduce_type:
-            raise RuntimeError(
-                f"expected '{self._metrics_reduce_type[name]}' reduce type for metric '{name}' "
-                f"based on last record, but got '{reduce_type}' this time"
-            )
-        self._metrics_reduce_type[name] = reduce_type
+            # Reduce type must be consistent to avoid issues.
+            if name in self._metrics_reduce_type:
+                if self._metrics_reduce_type[name] != reduce_type:
+                    raise RuntimeError(
+                        f"expected '{self._metrics_reduce_type[name]}' reduce type for metric "
+                        f"'{name}' based on last record, but got '{reduce_type}' this time"
+                    )
+            self._metrics_reduce_type[name] = reduce_type
 
     def record_ce_loss(
         self, value: Union[float, torch.Tensor], reduce_type: Optional[ReduceType] = None
@@ -1118,11 +1326,12 @@ class Trainer:
 
         :param name: The name of the metric.
         """
-        if self.global_step not in self._metrics:
-            return None
-        if namespace is not None:
-            name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
-        return self._metrics[self.global_step].get(name)
+        with self._metrics_lock:
+            if self.global_step not in self._metrics:
+                return None
+            if namespace is not None:
+                name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
+            return self._metrics[self.global_step].get(name)
 
     def write_file(
         self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
@@ -1260,7 +1469,7 @@ class Trainer:
         soft_timeout: Optional[int] = None,
         distributed: bool = True,
         **kwargs,
-    ):
+    ) -> Optional[Future[T]]:
         """
         Run a bookkeeping operation, potentially in a background thread.
 
@@ -1327,7 +1536,7 @@ class Trainer:
                             "If you see this message frequently, the op in question may be taking longer than expected or is "
                             "being submitted too often."
                         )
-                        return
+                        return None
 
             if distributed:
                 future = self.single_thread_pool.submit(wrapped_op, *args, **kwargs)
@@ -1349,8 +1558,10 @@ class Trainer:
                     self._bookkeeping_queue[op_name].pop(op_id, None)
 
             future.add_done_callback(callback)
+            return future
         else:
             wrapped_op(*args, **kwargs)
+            return None
 
     def _join_bookkeeping_ops(self, timeout: Optional[float] = None):
         """
@@ -1392,40 +1603,40 @@ class Trainer:
                 log.warning(f"Run canceled from rank {canceling_rank}. Reason: {cancel_reason}")
 
     def _log_metrics(self):
-        if not self._metrics:
+        self._update_async_checkpoint_metrics()
+        snapshot = self._take_metrics_snapshot()
+        if snapshot is None:
             return
+        metrics, metrics_reduce_type = snapshot
 
         # Prep metrics to reduce by moving to bookkeeping device all at once.
         # NOTE: if training on GPU and `bookkeeping_device` is CPU, this triggers
         # host-device sync. It's unavoidable to have a host-device at some point, but we
         # prefer to do that early and then finish processing the metrics in a separate thread
         # so CUDA training can continue.
-        metrics_to_reduce = move_metrics(self._metrics, self.bookkeeping_device)
-        self._metrics.clear()
-
-        if self._metrics_consistent is None:
-            self._metrics_consistent = check_metrics_consistent(
-                self._metrics_reduce_type,
-                process_group=self.bookkeeping_pg,
-            )
-            if not self._metrics_consistent:
-                msg = (
-                    "Detected inconsistent metrics between ranks. This is expected in some cases "
-                    "(like with pipeline parallelism)."
-                )
-                if not self.async_bookkeeping:
-                    msg += " This may result in slower training speeds since you don't have async bookkeeping enabled."
-                log.warning(msg)
+        metrics_to_reduce = move_metrics(metrics, self.bookkeeping_device)
 
         self.run_bookkeeping_op(
             reduce_metrics,
             metrics_to_reduce,
-            self._metrics_reduce_type,
+            metrics_reduce_type,
             self.bookkeeping_device,
             process_group=self.bookkeeping_pg,
-            metrics_consistent=self._metrics_consistent,
+            metrics_consistent=None,
             cb=self._check_and_pass_on_metrics,
         )
+
+    def _take_metrics_snapshot(
+        self,
+    ) -> Optional[Tuple[Dict[int, Dict[str, torch.Tensor]], Dict[str, Optional[ReduceType]]]]:
+        """Atomically detach the metrics accumulated by producer threads."""
+        with self._metrics_lock:
+            if not self._metrics:
+                return None
+            metrics = self._metrics
+            self._metrics = OrderedDict()
+            metrics_reduce_type = self._metrics_reduce_type.copy()
+        return metrics, metrics_reduce_type
 
     def _check_and_pass_on_metrics(self, metrics: Dict[int, Dict[str, float]]):
         for step in sorted(metrics.keys()):

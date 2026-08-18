@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Fixed async checkpointing race conditions by finalizing trainer-visible state on the main thread, synchronizing completion across ranks before distributed bookkeeping, and making metric reduction robust to rank-local step and metric schemas.
+
 ## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
 
 ### Added

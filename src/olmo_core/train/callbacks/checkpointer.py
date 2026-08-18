@@ -154,8 +154,8 @@ class CheckpointerCallback(Callback):
         if (fut := self._future) is not None:
             # Wait for last async checkpoint to finish.
             if blocking or fut.done():
-                fut.result()
-                if get_rank() == 0:
+                completion = fut.completion()
+                if completion.error is None and get_rank() == 0:
                     # Just to be safe, make sure the checkpointer has finalized the checkpoint.
                     wait_for(
                         lambda: self.checkpointer.dir_is_checkpoint(self._latest_checkpoint_path),
@@ -204,9 +204,13 @@ class CheckpointerCallback(Callback):
         self._checkpoints_to_remove.append(path)
 
     def _remove_old_checkpoints(self):
+        still_pending = []
         for path in self._checkpoints_to_remove:
-            self._remove_checkpoint(path)
-        self._checkpoints_to_remove.clear()
+            if self.trainer.async_checkpoint_finalization_pending_for(path):
+                still_pending.append(path)
+            else:
+                self._remove_checkpoint(path)
+        self._checkpoints_to_remove = still_pending
 
     def _trim_checkpoints(self):
         if self.max_checkpoints is not None:
