@@ -495,14 +495,16 @@ def dispatch_flash_attn_4(
     varlen = all(x is not None for x in (cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k))
 
     if varlen:
+        # NOTE: pass these by keyword since flash-attn 4 has inserted new positional args
+        # (e.g. 'qv') after q/k/v across beta releases.
         return flash_attn_4.flash_attn_varlen_func(
             _flatten_batch_dim(q),
             _flatten_batch_dim(k),
             _flatten_batch_dim(v),
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
