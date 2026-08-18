@@ -1,163 +1,190 @@
-# What fla 0.5.2's chunked KDA *backward* computes
+# KDA — the math these kernels implement
 
-Read from `fla/ops/kda/{chunk_bwd.py,wy_fast.py,chunk_intra.py}` and
-`fla/ops/common/chunk_delta_h.py` at the pinned 0.5.2 — the same reading 001's ALGORITHM.md
-did for the forward; read that one first for `BT=64`, log2-space `g2`, the WY factors and the
-shapes. gdn 003's ALGORITHM.md is the scalar-gate ancestor of this file; the diff tables below
-are against it.
+Everything below is fla 0.5.2's own decomposition (`fla/ops/kda/{chunk_fwd.py,chunk_bwd.py,
+chunk_intra.py,wy_fast.py}` and `fla/ops/common/chunk_delta_h.py`), stated precisely so each
+port has one written contract. All logs are base-2 (fla multiplies the raw log-space gate by
+`RCP_LN2 = 1/ln2` in the cumsum), all gates are ≤ 0 and decreasing down a chunk, and `BT` is
+the chunk size (64), `BC = 16` the sub-chunk. Per (batch b, value-head hv); q/k live at head
+`h = hv // (HV//H)`. `scale = K^-0.5`.
 
-Notation, per `(b, hv)` and per chunk `c`: `g2[i,d]` the chunk-local inclusive cumsum of `g`
-over ln2 (fp32 `[B,T,HV,K]` — a K-vector per row where gdn had a scalar), `G[d] = g2[BT-1,d]`
-the per-chunk total decay, `Akk` the bf16 unit-lower-triangular WY inverse, `Aqk` the bf16
-gate-weighted lower-triangular `q k^T` (scale folded in), `h_c` the forward state entering
-chunk `c`, `v_new = v'` the post-`w@h` values. `scale = K^-0.5`.
+This package ports two things out of fla: the forward scan+readout (`kernel_fwd.py`) and the
+backward's `bwd_intra` stage (`kernel_intra_cute.py`, with `kernel_intra.py` as the Triton
+fallback). Everything else is fla's, called stage by stage from `chunk.py`.
 
-Saved tensors are `(q, k, v, g2, beta, Aqk, Akk, h0)`; everything else is recomputed.
+---
 
-## The six launches
+# Forward
 
-fla's gdn backward was seven launches; kda restructures the tail: gdn's `dqkwg` and
-`wy_repr_bwd` merge into ONE fused kernel (stage 5), and a new `intra` backward (stage 6)
-consumes `dAqk`/`dAkk` — the per-dim gate sits inside those dot products, which forces the
-same BC=16 sub-chunk decomposition the forward's intra stage needed.
+## Stage 1 — cumsum (fla, stays Triton)
 
-| # | stage | kernel | grid | what |
-|---|---|---|---|---|
-| 1 | `recompute_w_u_fwd` (kda) | `recompute_w_u_fwd_kda_kernel` | NT × B·HV | w, u **and qg, kg** |
-| 2 | `fwd_h` | common `..._fwd_kernel_h_blockdim64`, USE_GK | V/BV × B·HV, serial NT | h checkpoints + v_new |
-| 3 | `chunk_kda_bwd_dAv` | `chunk_kda_bwd_kernel_dAv` | NT × B·HV | dAqk + intra dv |
-| 4 | `bwd_dhu` | common `..._bwd_kernel_dhu_blockdim64`, USE_GK | V/BV × B·HV, serial NT rev | dh checkpoints, dh0, dv2 |
-| 5 | `wy_dqkg_fused` | `chunk_kda_bwd_kernel_wy_dqkg_fused` | NT × B·HV | dq, dk, dw-folded, dg, dv, db, dAkk |
-| 6 | `bwd_intra` | `chunk_kda_bwd_kernel_intra` | NK·NC × NT × B·HV | dAqk/dAkk → dq, dk, dg, db |
-| 7 | reverse `chunk_local_cumsum(dg)` + GVA head-sum of dq/dk | | | |
+    g2[t, d] = (1/ln2) * sum_{s <= t, s in chunk(t)} g[s, d]        fp32 [B, T, HV, K]
 
-## The math, stage by stage
+Chunk-local inclusive cumsum, per dimension. `G[c, d] = g2[last row of chunk c, d]` is the
+per-chunk total decay — a K-vector, where a scalar-gate op (gdn) would have a scalar.
 
-**1. `recompute_w_u_fwd`** — from the saved `Akk`, all bf16 out:
-```
-u  = Akk @ (v · beta)                          [B,T,HV,V]
-w  = Akk @ (k · beta · exp2(g2))               [B,T,HV,K]
-qg = q · exp2(g2)                              [B,T,HV,K]   (kda only — gdn had no qg/kg here)
-kg = k · exp2(G - g2)                          [B,T,HV,K]
-```
-`qg`/`kg` are the pre-scaled scan operands: they are why the per-dim gate largely vanishes
-from stages 2 and 4, exactly as it vanished from 001's fused forward.
+## Stage 2 — intra / WY (fla, stays Triton)
 
-**2. `fwd_h`** — the forward scan re-run (USE_GK path), `output_final_state=False`:
-```
-store h checkpoint h_c (bf16)
-v'  = u - w @ h_c                 -> v_new (bf16, saved BEFORE any gating — none is applied)
-h  += kg^T @ v'   after   h[d,:] *= exp2(G[d])
-```
-vs gdn's USE_G path: **no** `v' *= exp2(G - g2_i)` rescale before the state dot (kg carries
-it), and the decay is a K-vector on the state's rows, not a scalar.
+`chunk_kda_fwd_intra` produces, per chunk (row indices i, j within the chunk):
 
-**3. `chunk_kda_bwd_dAv`** — chunk-parallel, the analog of gdn's `dv_local`:
-```
-dv   = Aqk^T @ do                              (Aqk loaded transposed, masked i <= j)
-dAqk = tril(do @ v_new^T) · scale              (fp32 [B,T,HV,BT])
-```
-Note it also emits `dAqk` — gdn rebuilt the equivalent inside `dqkwg` (its `ds`); kda cannot
-(the per-dim gate factor `exp2(g2_i - g2_j)` is unbounded outside sub-chunks), so the raw
-product is handed to stage 6.
+    Aqk[i, j] = scale * sum_d q[i,d] * k[j,d] * exp2(g2[i,d] - g2[j,d])     for i >= j, else 0
+    Akk       = the solved lower-triangular WY inverse, beta folded in
+    w[i, :]   = (Akk @ (beta * exp2(g2) * k))[i, :]                         bf16 [B, T, HV, K]
+    u[i, :]   = (Akk @ (beta * v))[i, :]                                    bf16 [B, T, HV, V]
+    kg[i, d]  = k[i,d] * exp2(G[d] - g2[i,d])                               bf16 [B, T, HV, K]
+    qg        = q * exp2(g2)   (only materialized when disable_recompute; None on our path)
 
-**4. `bwd_dhu`** — reverse scan (USE_GK path), `dh` starts at `dht`, chunks `NT-1 … 0`:
-```
-store dh checkpoint dh_c (bf16, PRE-update — the gradient flowing out of chunk c)
-dv2 = kg @ dh_c + dv                           (completes stage 3's dv; NO gate factor)
-dh  = exp2(G[d]) · dh  +  scale · qg^T @ do  -  w^T @ dv2
-after chunk 0: dh0 = dh (fp32)
-```
-vs gdn: `q·exp2(g2)` and the `exp2(G-g2)` on the k-side both live in the pre-scaled operands;
-the decay is per-dim.
+Two things to internalize:
 
-**5. `chunk_kda_bwd_wy_dqkg_fused`** — chunk-parallel, K-tiled outer loop with a V-tile
-reduction reading `h_c`/`dh_c` back from HBM. One kernel doing gdn's stages 5 AND 6, minus
-what moved to stage 6. Per k-tile:
-```
-per v-tile:  dq  += do @ h_c          dk += v_new @ dh_c       dw += dv @ h_c
-             dgk += sum_v(h_c · dh_c)                          (K-vector now, was scalar)
-  (i_k==0):  dA  += dv @ v^T          dvb = Akk @ dv
-             dv2 = dvb · beta         db += sum(dvb · v)       (the WY du-backward, inlined)
-then:        dq  = dq · exp2(g2) · scale
-             dk  = dk · exp2(G - g2)
-             dgk = dgk · exp2(G) + sum_i(k · dk)
-             kgw = k · exp2(g2)                                 (fla's b_kg — NOT stage-1 kg!)
-             dw  = -dw;   dA += dw @ kgw^T;   dkgb = Akk @ dw;  db += sum(dkgb · kgw)
-             dg  = q·dq - k·dk + [i==last]·dgk + kgw·dkgb·beta  (per-dim rows)
-             dk += dkgb · exp2(g2) · beta
-finally:     dAkk = -tril_strict(Akk^T @ (tril_strict(dA) · beta_j) @ Akk^T)
-```
-The `Akk^T (…) Akk^T` triangular sandwich is gdn's `wy_bwd` dA path; the `exp2(g2_i - g2_j)`
-factor that gdn applied to dA is *deferred* — it lands inside stage 6's sub-chunk loops.
+- **`scale` ships inside Aqk** (the intra kernels multiply it in), while the `q @ h` readout
+  term gets `scale` applied in the o stage. Don't apply it twice.
+- **The per-dim gate sits INSIDE Aqk's dot product.** `exp2(g2_i - g2_j)` would be a scalar
+  under a per-head gate, so it could be factored out of one MMA and applied afterwards in
+  SIMT. Per-dim, that factorization needs `exp2(+g2_j)` on one operand — unbounded — so fla
+  computes Aqk in sub-chunks (BC=16) where relative gates stay bounded. That is Triton work
+  worth keeping: the CuTe kernel LOADS Aqk instead of computing it.
 
-**6. `chunk_kda_bwd_intra`** — sub-chunk (BC=16) decomposed, grid `(NK·NC, NT, B·HV)`:
-```
-dq += (dAqk @ (k·exp2(gn - g2_j))) · exp2(g2_i - gn)            (lower blocks + diag loop)
-dkt = (dAqk^T @ (q·exp2(g2_j - gn)) + dAkk^T @ (k·beta·exp2(g2_j - gn))) · exp2(gn - g2_i)
-dk += dAkk-analog of dq's path, · beta;    db += sum(that · k)
-dg += q·dq_contrib - k·dkt + …                                   (row/col asymmetric)
-```
-This is the backward of the forward intra's bounded-relative-gate trick; it is as awkward as
-the forward version and stays fla for the same reason (001 kept the forward intra).
+## Stage 3+4 — scan + o (`kernel_fwd.py`, fused)
 
-**7.** `dg` (fp32 `[B,T,HV,K]`) gets a **reverse** chunk-local cumsum; GVA reduces dq/dk from
-HV to H heads by summing groups.
+Serial over chunks c, state h [K, V] fp32:
 
-## Cost at prod8192, and where the ms are
+    v'_c = u_c - w_c @ h_c                                  (MMA "WH" + subtract)
+    o_c  = scale * (q_c * exp2(g2_c)) @ h_c + Aqk_c @ v'_c  (MMAs "OH" + "OI")
+    h_{c+1}[d, :] = exp2(G_c[d]) * h_c[d, :] + (kg_c^T @ v'_c)[d, :]    (MMA "DH" + decay)
 
-Not yet measured stage-by-stage (dbg_perf.py's backward table produces it — run on the
-B300 before porting anything beyond the scans). What is known from the bench: the whole
-backward is `35.18 - 7.56 ≈ 27.6ms` against gdn's 14.3ms at the identical shape — the
-per-dim gate roughly doubles fla's backward. The scans (stages 2+4) carry gdn's costs plus
-a full fp32 `[BT,K]` g2 read per chunk-step that our port deletes (kg/qg carry it); stage 5
-reads both 2.15GB checkpoint tensors back like gdn's dqkwg, plus the fp32 g2 stream.
+after the last chunk, `ht = h` (fp32, TMA store). fla stores v' (`v_new`) and per-chunk h to
+HBM between its two kernels; the fusion keeps both in smem/tmem — that traffic is the win.
 
-## Rounding contract (match it or the tolerances will not hold)
+Notes that cost time to rediscover: the state decay multiply indexes the tmem fragment's row
+(Ld16x256b lanes span rows r and r+8), and OH's q operand must be pre-gated in SIMT
+(`qg = q·exp2(g2)`, per-dim) from the q tile plus a g2 tile (fp32 [BT,K], 32KB/stage smem).
 
-- `Aqk`, `Akk` are read as the saved **bf16**; `w/u/qg/kg/v_new` and both checkpoint tensors
-  are bf16 with fp32 accumulation. `dh0` is fp32.
-- `beta`, `g2`, `dAqk`, `dq/dk/dg/db` intermediates are **fp32** throughout.
-- `dv` is written three times: stage 3 (intra part), stage 4 (`dv2`, + state part), stage 5
-  (the WY `du`-backward overwrite). The returned `dv` is stage 5's.
-- One deliberate divergence in the cute dhu port: fla computes `dot(qg_bf16, do_bf16)` in fp32
-  and multiplies `scale` afterwards; the port folds `scale` into `do` and rounds `do·scale`
-  to bf16 (the UPD MMA's A operand). Same order of error as gdn 003's `dog` note; measured
-  there at dh 3.8e-5, well inside the stage tolerances.
+---
 
-## Diff vs gdn 003's kernels
+# Backward
 
-### `kernel_fwdh.py` (gdn USE_G → kda USE_GK)
+Residuals from the forward: `(q, k, v, g2, beta, Aqk, Akk, h0)` — exactly what fla's own
+autograd Function saves when `disable_recompute=False`. The forward must preserve that
+rounding contract: Aqk/Akk stored bf16 by intra, g2 the fla cumsum, v_new/h recomputed by
+the backward itself.
 
-| gdn 003 | kda 002 |
-|---|---|
-| `k` `[B,T,H,K]`, mn-major B of UPD | **`kg`** `[B,T,HV,K]` — fla pre-scales `k·exp2(G-g2)`; per-VALUE-head, `h_idx` gone |
-| `v~ = v'·exp2(G-g2_i)` built in SIMT from a `[BT]` g2 row | **deleted** — UPD's A operand is `v'` itself; the vta and v_new stores hold the same value |
-| `g2` staged as `[BT]` scalars/stage | **`gd`** staged as `[K]` fp32 chunk-decay vectors (g2's last row, sliced host-side, 001's `gdc` pattern) |
-| `h ← exp2(G)·h + UPD`, one scalar | `h[d,:] ← exp2(gd[d])·h[d,:] + UPD` — `coordUPD`'s `kk` indexes a broadcast view of sGd, per-element exp2 (001's state-decay pattern, same fragment geometry) |
+## The seven launches
 
-### `kernel_dhu.py` (gdn USE_G → kda USE_GK)
+1. **recompute** (`recompute_w_u_fwd`): w = Akk @ (β·exp2(g2)·k), u = Akk @ (β·v),
+   qg = q·exp2(g2), kg = k·exp2(G−g2). All bf16 [B,T,HV,K/V].
+2. **re-scan** (`chunk_gated_delta_rule_fwd_h`): the forward recurrence again, this time
+   materializing every per-chunk state: h_c [K,V] checkpoints (bf16, [B,NT,HV,K,V]) and
+   v'_c = u_c − w_c @ h_c (`v_new`). Serial over chunks.
+3. **dAv** (`chunk_kda_bwd_dAv`): dAqk[r,s] = scale·Σ_v do[r,v]·v'[s,v] (lower tri, fp32
+   [B,T,HV,BT]); dv[r,:] = Σ_{s≥r} Aqk[s,r]·do[s,:] (Aqk^T @ do, upper-masked).
+4. **dhu** (`chunk_gated_delta_rule_bwd_dhu`): the reverse scan. State dh [K,V] fp32; fla
+   folds the per-chunk decay on the K axis, updates dv (dv2 = dv + w-side term) per chunk,
+   and emits dh checkpoints (bf16 [B,NT,HV,K,V]) + dh0. Serial, reverse.
+5. **wy_dqkg** (`chunk_kda_bwd_wy_dqkg_fused`), per chunk, consuming h_c and dh_c:
+   - dq[r,d] = scale·exp2(g2[r,d])·Σ_v do[r,v]·h_c[d,v]                    (h consumer)
+   - dk[r,d] = exp2(G[d]−g2[r,d])·Σ_v v'[r,v]·dh_c[d,v] + WY corrections   (dh consumer)
+   - dw[r,d] = −Σ_v dv[r,v]·h_c[d,v]; folded via Akk into dk/db/dAkk       (h consumer)
+   - dgk[d] += exp2(G[d])·Σ_v h_c[d,v]·dh_c[d,v] (last row of chunk)       (both)
+   - dv2 = β·(Akk^T @ dv); db += rowsum terms; dAkk (strict lower, fp32)
+   - dg[r,d] = q·dq − k·dk + last-row dgk + kg·(Akk@dw)·β  (the inter-chunk part)
+6. **intra** (`chunk_kda_bwd_intra`): the intra-chunk dAqk/dAkk consumers — **this is the
+   stage this package replaces**; see below.
+7. **dg cumsum**: dg = chunk-local REVERSE cumsum of dg (fp32).
 
-| gdn 003 | kda 002 |
-|---|---|
-| `q`,`k` `[B,T,H,K]` | **`qg`,`kg`** `[B,T,HV,K]` pre-scaled, per-value-head |
-| `dog = do·exp2(g2_i)·scale` in SIMT | `dos = do·scale` — the gate lives in qg; see the rounding note above |
-| `dv2 = DV·exp2(G-g2_i) + dv` | `dv2 = DV + dv` — kg carries the factor |
-| `dh ← exp2(G)·dh + …`, scalar | `dh[d,:] ← exp2(gd[d])·dh[d,:] + …` per-dim |
-| `g2` `[BT]` staging, row-broadcast views | **`gd`** `[K]` staging, one broadcast view for the decay only |
+GVA (HV > H): dq/dk are produced at HV and reduced to H after stage 6.
 
-Net effect in both scans: LESS in-kernel work than gdn's (two exp2-multiply passes deleted,
-one added), identical pipeline structure, identical MMA shapes — only operand sources and the
-decay geometry change. Keep gdn 006's two TMA-store deferrals exactly as they are; they were
-worth 0.5ms/stage.
+## Where the time and bytes go (prod8192 = B16 × T8192 × H16, K128/V256, b300)
 
-### Stage 5 (NOT ported yet — the sketch for when the profile justifies it)
+Stage times measured 2026-08-18: 25.3ms total — intra 12.62, wy_dqkg 6.15, dhu 2.22,
+fwd_h 1.88, recompute 1.18, dAv 0.77, dg cumsum 0.51. Inter-stage HBM: h 2.1GB + dh 2.1GB
++ v_new 1.1GB + w/u/qg/kg 2.7GB + dv 2×1.1GB + fp32 dq/dk/dg 3.2GB + dAqk/dAkk 1.1GB.
 
-`kernel_dqkwg.py` + `kernel_wy_bwd.py` in this folder are gdn's kernels, kept verbatim as the
-raw material. The kda fused kernel is their union with three structural changes: (a) `ds` is
-gone (arrives as `dAqk` from stage 3 / leaves as `dAkk` for stage 6 — no in-kernel segsum
-mask, which was dqkwg's SIMT hot spot); (b) all the row scalings widen to per-dim `[BT,BK]`
-exp2 factors built from a g2 tile; (c) wy_bwd's `dA · exp2(g2_i-g2_j)` and the `dA@k`-family
-second-pass products move out (to stage 6). Port only after dbg_perf shows stages 5+6
-dominating the post-scan backward, and consider whether fusing stage 3 into it (both are
-NT × B·HV readers of do) pays first.
+## Stage 6, bwd_intra — half the backward
+
+### What it computes
+
+Adds the intra-chunk gradient parts, given dAqk and dAkk (both fp32, strictly-masked). With
+r, s chunk-local rows, all per (b, hv, chunk), and every gate factor per-dim d:
+
+    dq[r,d]  += Σ_{s ≤ r} dAqk[r,s] · k[s,d] · exp2(g2[r,d] − g2[s,d])
+    dwk[r,d]  = Σ_{s ≤ r} dAkk[r,s] · k[s,d] · exp2(g2[r,d] − g2[s,d])
+    db[r]    += Σ_d dwk[r,d] · k[r,d]
+    dk[s,d]  += Σ_{r ≥ s} (dAqk[r,s]·q[r,d] + dAkk[r,s]·β_r·k[r,d]) · exp2(g2[r,d] − g2[s,d])
+                + β_s · dwk[s,d]
+    dg[r,d]  += q[r,d]·dq_intra[r,d] + β_r·dwk[r,d]·k[r,d] − dkt[r,d]·k[r,d]
+                (dkt = the Σ_{r ≥ s} term above, i.e. the column-side accumulation)
+
+### The numerics law (do not relitigate)
+
+Every exp2 argument above is `g2[r,d] − g2[s,d]` with r ≥ s — one-sided, ≤ 0, safe at any
+gate magnitude. KDA's real init makes decay ~16 log2 units PER STEP (`exp(A_log) ∈ [1,16]`),
+so any factorization through a reference row m — `exp2(g_r − g_m)·exp2(g_m − g_s)` — has one
+factor of the pair unbounded unless m sits between r and s. On a diagonal block no single m
+does, which is why fla's diagonals are scalar j-loops and why the SAFE_GATE midpoint trick
+carries a bounded-gate contract this op does not satisfy. Cross-sub-chunk blocks ARE safe
+(any boundary between the blocks separates all (r,s) pairs) — fla already exploits that with
+MMAs there. Falsified before: two-sided midpoint/binary-tree diagonal forms — they overflow
+(a production NaN, 2026-08-17) or don't win. `test_kimi_delta_attention_cute_extreme_decay`
+in `src/test/nn/attention/kda_test.py` is the guard for exactly this class.
+
+### Why fla's version costs 12.6ms
+
+Grid (NK·NC, NT, B·HV) = (16, 128, 256) → **524k CTAs of [BC=16, BK=32] work**:
+
+- **Stream multiplicity.** Each of the NK=4 K-slabs re-reads the same [BC,BC] dAqk/dAkk
+  tiles (fp32 → 4× the 1.1GB), and each of the NC=4 sub-chunk owners re-reads its j-loop
+  partners' q/k/g tiles. db is written as an NK-slab and reduced afterwards.
+- **exp2 volume.** ~1.1e10 exp2 at prod8192 → ~2.5ms of pure SFU even at perfect
+  utilization, and utilization is poor at [16,32] granularity. The *inherent* one-sided
+  minimum is ~4× smaller (~2.3e9, ~0.5–0.6ms) IF each factor is computed once and shared
+  between the dAqk/dAkk products AND between the row-side (dq) and column-side (dk/dg)
+  passes. fla shares the first pair but recomputes across passes — they live in different
+  CTAs.
+- **Latency.** 16-iteration serial scalar loops of tiny loads with nothing to overlap them.
+
+Floors: traffic ~7.5GB at one-read-one-write → ~1.1ms; exp2 ~0.6ms (overlappable). The
+honest target is ~2.5–3ms; fla is 5× above it.
+
+### What `kernel_intra_cute.py` does instead (6.34ms)
+
+One CTA per (chunk, b·hv), 512 threads as (32 d-lanes) × (16 row-lanes) — one warp spans a
+full row. Each thread walks one row per 16-block with mirror pairing (even blocks r0+rlane,
+odd blocks r0+15−rlane) so diagonal work is uniform per thread, and owns 4 **strided**
+columns d = lane + 32c (consecutive-column ownership was 4-way bank-conflicted on every
+scalar load — 27ms). q/k/g2/dq/dk/dg and the [64,64] dA tiles are read once, dq2/dk2/dg2
+written once, db completed in-CTA: the 4× multiplicities are gone.
+
+Cross-block pairs factor through the **s-block end** boundary e(s) = 16(j+1):
+`exp2(g_r − g_s) = exp2(g_r − g_e)·exp2(g_e − g_s)`, both exponents ≤ 0 at any gate
+magnitude (r ≥ e > s on a decreasing g) — the same safety class as fla's own `kg` operand.
+Diagonal pairs (same 16-block) keep exactly one one-sided exp2 per (r,s,d): nothing inside a
+diagonal block is ever factorized. All three prescale arrays (kb, qb, kbb) are built in one
+phase up front, so the two sweeps fuse per block with no inter-sweep barrier.
+
+Outputs land ~1e-7..2e-6 abs of a fp64 reference, where fla's tf32 `tl.dot`s land 3e-4..1.3e-3.
+
+Constraints: K=128, BT=64, fixed-length, no `safe_gate`, and a grid of at least 1024 CTAs
+(smaller grids underfill a 148-SM box and the per-call marshaling isn't amortized — T512
+regressed to 0.90× without the gate). Off that box the wrapper falls back to
+`kernel_intra.py` (the same math restructured in Triton, 9.26ms, K ≤ 128), which falls back
+to fla's kernel for varlen/`safe_gate`.
+
+### Register-pressure notes for whoever edits the CuTe kernel
+
+ptxas left alone targets 64 registers (dynamic smem hides the 1-CTA/SM cap from it) and
+spills 1–2KB/thread. `min_blocks_per_mp=1` plus `--maxrregcount=128` (`KDA002C_MAXREG`) and
+*un*-unrolling the inner 16-iteration loops (`cutlass.range(unroll=4..8)`; full unroll lets
+ptxas hoist whole load batches) gets `LOCAL_SIZE_BYTES=0`. The incoming-grad gmem reads cost
+3.25ms read-at-use; prefetching them a compute-section ahead is worth ~3ms. 1024 threads was
+falsified twice (0.45×, 64-reg spills), as was holding P1/P2 in smem (27.5ms).
+
+## Not ported (the standing headroom)
+
+- **B1, forward sweep**: rerun the forward scan pipeline in the backward, storing h
+  checkpoints (TMA store off the critical path) + v_new, and computing
+  `dq = scale·exp2(g2)⊙(do @ h^T)` while h is tmem-resident — dq's only h dependence.
+  Replaces stage 2 and the dq part of stage 5.
+- **B2, reverse sweep**: the dhu scan fused with wy_dqkg's dh consumers (dk, dw, the h⊙dh dg
+  term, dv2) so the 2.1GB dh tensor is never materialized. The open design question: dh is
+  both scan state and MMA operand, so it needs a tmem residency plan.
+- Remaining intra headroom is ~4ms (latency-bound loads/prescale/epilogue at 16 warps/SM).
+- `recompute_w_u`/`dAv`/cumsum (2.4ms combined) are near their traffic floor — leave them.

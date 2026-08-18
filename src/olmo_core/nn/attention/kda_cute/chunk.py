@@ -1,27 +1,36 @@
 """A ``chunk_kda``-compatible entry point backed by the cute-kda kernels.
 
-The kernels come from the ``kernel-fun-2`` harness (kda idea ``002-gdn-parity``) and are
-copied verbatim into this package:
+The kernels come from the ``kernel-fun-2`` harness (kda ideas ``001-cute-fwd`` and
+``002-cute-bwd``) and are copied verbatim into this package:
 
 - Forward: fla's chunk-local cumsum + intra stage (Triton, unchanged), then a fused CuTe
   scan+readout (:mod:`.kernel_fwd`) that keeps the recurrent state in registers.
-- Backward: fla's own six-stage decomposition of ``chunk_kda_bwd``, with the two serial
-  scans ported to CuTe (:mod:`.kernel_fwdh`, :mod:`.kernel_dhu`) and the two dominant
-  chunk-parallel stages restructured in Triton (:mod:`.kernel_intra_bwd`,
-  :mod:`.kernel_wy_dqkg`). The remaining stages stay fla's.
+- Backward: fla's own seven-stage decomposition of ``chunk_kda_bwd``, with the single
+  dominant stage — ``bwd_intra``, half the backward — swapped for a pure-SIMT CuTe kernel
+  (:mod:`.kernel_intra_cute`). That kernel falls back to a restructured Triton kernel
+  (:mod:`.kernel_intra`) on small grids and off its supported box, and that one falls back
+  to fla's. Every other backward stage is fla's, unchanged.
 
 At the kda harness's production shape (B16 x T8192 x H16, K128/V256, chunk 64 on B300)
-this measured 1.26x on the forward and 1.47x on the training step over fla's monolith.
+this measured 1.26x on the forward and 1.288x on the training step over fla's monolith.
+The bwd_intra stage itself went 12.62ms (fla) -> 9.26 (the Triton restructure) -> 6.34
+(the CuTe SIMT kernel).
 
-The CuTe kernels target Blackwell (tcgen05); :func:`cute_kda_supported` gates on device
-capability and shape so callers can fall back to ``fla.ops.kda.chunk_kda``.
+The CuTe kernels target Blackwell (tcgen05 in the forward, plain SIMT in the intra
+backward); :func:`cute_kda_supported` gates on device capability and shape so callers can
+fall back to ``fla.ops.kda.chunk_kda``.
 
 Set ``OLMO_CUTE_KDA_ALLFLA=1`` to keep this staged decomposition but force every stage
 back to fla's kernels — the backward is then bit-identical to fla's monolith, which
 isolates any numerics question to the CuTe/Triton stage swaps.
-``OLMO_CUTE_KDA_STAGES=a,b`` swaps in only the named stages (bisect).
+``OLMO_CUTE_KDA_STAGES=bwd_intra`` swaps in only the named stages (bisect).
 ``OLMO_CUTE_KDA_CHECK=1`` asserts each backward stage's outputs are finite so a bad
 kernel fails at the guilty stage — set it on smoke runs.
+
+The kernel files keep the harness's own knobs, which bisect one level deeper:
+``KDA002_INTRA=triton`` (or ``fla``) forces the intra stage off the CuTe kernel;
+``KDA002_INTRA=cutedsl`` forces it past the small-grid gate; ``KDA002C_MAXREG`` and
+``KDA002C_SKIP`` are the CuTe kernel's register-cap and stage-attribution probes.
 """
 
 from __future__ import annotations
@@ -100,24 +109,19 @@ _STAGES: dict | None = None
 def _stages() -> dict:
     """The backward stage table, built lazily so importing this module stays cheap.
 
-    Each CuTe wrapper falls back to fla's kernel on shapes it does not support (small
-    grids below its ``_MIN_CTAS``), so the table is always safe to call.
+    Only ``bwd_intra`` is ours: it was 50% of fla's backward (12.62ms of 25.3 at prod8192)
+    and is now a CuTe SIMT kernel at 6.34ms. Its wrapper falls back to the Triton
+    restructure on shapes it does not support and on grids under 1024 CTAs (where a
+    one-CTA-per-(chunk, b*hv) kernel underfills the SMs), and that one falls back to fla's
+    kernel, so the table is always safe to call.
     """
     global _STAGES
     if _STAGES is None:
         _STAGES = _fla_stages()
         if os.environ.get("OLMO_CUTE_KDA_ALLFLA", "0") != "1":
-            from .kernel_dhu import chunk_gated_delta_rule_bwd_dhu_cute
-            from .kernel_fwdh import chunk_gated_delta_rule_fwd_h_cute
-            from .kernel_intra_bwd import chunk_kda_bwd_intra_wide
-            from .kernel_wy_dqkg import chunk_kda_bwd_wy_dqkg_wide
+            from .kernel_intra_cute import chunk_kda_bwd_intra_cutedsl
 
-            swaps = {
-                "fwd_h": chunk_gated_delta_rule_fwd_h_cute,
-                "bwd_dhu": chunk_gated_delta_rule_bwd_dhu_cute,
-                "bwd_intra": chunk_kda_bwd_intra_wide,
-                "wy_dqkg": chunk_kda_bwd_wy_dqkg_wide,
-            }
+            swaps = {"bwd_intra": chunk_kda_bwd_intra_cutedsl}
             # Debug bisect knob: comma-separated stage names to swap in (default: all).
             only = os.environ.get("OLMO_CUTE_KDA_STAGES")
             if only is not None:
@@ -219,12 +223,14 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
     )
     if check:
         _check_finite("bwd_intra", dq=dq, dk=dk, db=db, dg=dg)
-    dg = S["cumsum_rev"](dg, chunk_size=chunk_size, reverse=True)
+    # The GVA (HV > H) reduction sits where fla puts it: after intra, before the reverse
+    # cumsum. dg stays at HV, so the two are order-independent, but keep fla's order.
     H, HV = q.shape[2], v.shape[2]
     if HV > H:
         G = HV // H
         dq = dq.view(*dq.shape[:2], H, G, dq.shape[-1]).sum(dim=3)
         dk = dk.view(*dk.shape[:2], H, G, dk.shape[-1]).sum(dim=3)
+    dg = S["cumsum_rev"](dg, chunk_size=chunk_size, reverse=True)
     return dq, dk, dv, db, dg, dh0
 
 

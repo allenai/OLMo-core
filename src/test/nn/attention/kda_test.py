@@ -90,13 +90,15 @@ def test_kimi_delta_attention_cute_under_torch_compile():
 
 @requires_fla
 @requires_gpu
-def test_kimi_delta_attention_cute_extreme_decay():
+def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
     """Deterministic worst case for the gate exponents: A_log at its init maximum
     (log 16) and large softplus inputs give per-step decays of ~90 log2 units per
     channel. Any two-sided exp2 factorization in a kernel overflows fp32 here and
     NaNs — this regime is what the 30m ladder hit on its first optimizer step. The
     overflow depends only on decay-per-step and the BC=16 sub-chunk, so this small
-    shape covers it."""
+    shape covers it. KDA002_INTRA=cutedsl forces the CuTe bwd_intra kernel past its
+    small-grid gate, which this shape is well under — without it the arm would only
+    exercise the Triton fallback."""
     from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda
     from olmo_core.nn.attention.kda_cute.chunk import _has_cute
 
@@ -104,6 +106,7 @@ def test_kimi_delta_attention_cute_extreme_decay():
         pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
     if not _has_cute():
         pytest.skip("CUTLASS CuTe DSL is not installed")
+    monkeypatch.setenv("KDA002_INTRA", "cutedsl")
 
     device, dtype = "cuda", torch.bfloat16
     B, T, H, K, V = 2, 256, 4, 128, 256
@@ -151,9 +154,9 @@ def test_kimi_delta_attention_cute_matches_fla():
 
     device = "cuda"
     dtype = torch.bfloat16
-    # B * HV * (V / 64) = 4 * 16 * 4 = 256 CTAs, enough that the CuTe backward scans
-    # engage instead of taking their small-grid fla fallback (_MIN_CTAS = 256).
-    d_model, seq_len, batch_size = 256, 256, 4
+    # The CuTe bwd_intra kernel runs one CTA per (chunk, b * hv) and hands grids under
+    # 1024 CTAs to its Triton fallback; B * (T / 64) * HV = 4 * 16 * 16 = 1024 engages it.
+    d_model, seq_len, batch_size = 256, 1024, 4
     torch.manual_seed(0)
     config = KimiDeltaAttentionConfig(n_heads=16, head_dim=128, expand_v=2.0, allow_neg_eigval=True)
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
