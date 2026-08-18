@@ -791,6 +791,9 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
     A ``path_offset_index`` is used to determine the number of instances to retain from a path when constructing the local indices.
     """
 
+    source_mixture_selection_version = "contiguous-prefix-chunks-v1"
+    """Version of the fixed-length token-selection behavior used by this dataset."""
+
     def __init__(
         self,
         *paths: PathOrStr,
@@ -836,6 +839,18 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         self._instances_per_bucket: Optional[Tuple[Tuple[int, int], ...]] = None
         self._path_offset_index = path_offset_index
         self._seed = seed
+
+    @property
+    def source_mixture_seed(self) -> int:
+        """Return the configured source-mixture sampling seed."""
+        return self._seed
+
+    @property
+    def source_mixture_token_limits(self) -> Tuple[int, ...]:
+        """Return each path occurrence's selected token quota in dataset order."""
+        return tuple(
+            self._path_offset_index[(str(path), idx)] for idx, path in enumerate(self.paths)
+        )
 
     @property
     def indices_dtype(

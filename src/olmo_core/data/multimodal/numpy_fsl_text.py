@@ -21,8 +21,8 @@ from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, P
 
 __all__ = ["NumpyFSLTextDataset", "NumpyFSLTextDatasetConfig"]
 
-_CONTENT_FINGERPRINT_VERSION = "numpy-fsl-text-adapter-v1"
-_CONTENT_FINGERPRINT_DOMAIN = b"olmo-core-numpy-fsl-text-adapter-v1\0"
+_CONTENT_FINGERPRINT_VERSION = "numpy-fsl-text-adapter-v2"
+_CONTENT_FINGERPRINT_DOMAIN = b"olmo-core-numpy-fsl-text-adapter-v2\0"
 
 
 @dataclass
@@ -36,11 +36,6 @@ class NumpyFSLTextDatasetConfig(Config):
 
     def build(self) -> "NumpyFSLTextDataset":
         """Build the child dataset and wrap it for multimodal collation."""
-        if self.dataset.source_mixture_config is not None:
-            raise ValueError(
-                "NumpyFSLTextDatasetConfig does not support source_mixture_config; "
-                "use paths or an official DataMix"
-            )
         if self.dataset.generate_doc_lengths:
             raise ValueError("NumpyFSLTextDatasetConfig does not support generate_doc_lengths=True")
         dataset = self.dataset.build()
@@ -57,8 +52,8 @@ class NumpyFSLTextDataset:
 
     The adapter applies the same next-token shift and target masking as
     :func:`olmo_core.data.utils.get_labels`. Repetition-filtered instances have all labels
-    ignored while retaining ``sequence_length - 1`` loss weight, matching the standard OLMo
-    DDP loss divisor. No tokens are added, removed, or retokenized.
+    ignored while retaining ``sequence_length - 1`` loss weight, matching the OLMoDDP
+    next-token loss divisor. No tokens are added, removed, or retokenized.
 
     :param dataset: The fixed-length numpy dataset to adapt.
     """
@@ -67,11 +62,6 @@ class NumpyFSLTextDataset:
     """Version of :attr:`content_fingerprint` and the adapter's output semantics."""
 
     def __init__(self, dataset: NumpyFSLDatasetBase):
-        if isinstance(dataset, NumpyFSLDatasetMixture):
-            raise TypeError(
-                "NumpyFSLTextDataset does not support NumpyFSLDatasetMixture because that "
-                "child does not yet advertise a complete semantic fingerprint"
-            )
         if dataset.generate_doc_lengths:
             raise ValueError("NumpyFSLTextDataset does not support children that generate doc_lens")
         self.dataset = dataset
@@ -104,6 +94,18 @@ class NumpyFSLTextDataset:
             # NumpyFSLDataset's fingerprint does not currently include this property.
             "sequence_length": self.sequence_length,
         }
+        if isinstance(self.dataset, NumpyFSLDatasetMixture):
+            payload["source_mixture"] = {
+                "selection_version": self.dataset.source_mixture_selection_version,
+                "seed": self.dataset.source_mixture_seed,
+                "path_token_limits": [
+                    {"path": str(path), "tokens": tokens}
+                    for path, tokens in zip(
+                        self.dataset.paths,
+                        self.dataset.source_mixture_token_limits,
+                    )
+                ],
+            }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(_CONTENT_FINGERPRINT_DOMAIN + encoded).hexdigest()
 
@@ -119,7 +121,13 @@ class NumpyFSLTextDataset:
 
     def prepare(self) -> None:
         """Delegate all dataset preparation to the wrapped numpy dataset."""
-        self.dataset.prepare()
+        if isinstance(self.dataset, NumpyFSLDatasetMixture):
+            # NumpyFSLDatasetMixture currently reads fixed-length contiguous prefix chunks.
+            # Its generic prepare() still writes sampled document indices that are not read;
+            # deliberately avoid generating those costly artifacts for this adapter.
+            len(self.dataset)
+        else:
+            self.dataset.prepare()
 
     def __len__(self) -> int:
         """Return the number of fixed-length child instances."""
@@ -167,7 +175,7 @@ class NumpyFSLTextDataset:
             labels[:-1] = np.where(label_mask[1:], input_ids[1:], -100)
             loss_masks[:-1] = label_mask[1:]
         else:
-            # The standard OLMo DDP path ignores every label but adds L-1 back to the
+            # OLMoDDP ignores every label but adds the L-1 next-token positions back to the
             # divisor for a repetition-filtered instance, irrespective of label_mask.
             loss_masks[:-1] = 1.0
 

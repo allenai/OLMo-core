@@ -3,11 +3,12 @@
 `Vision-Midtraining.py` model-only loads the permanent
 `vision-alignment-joint-v1/step12000` treatment checkpoint, then trains the complete LM and
 connector while keeping `vision.*` frozen and in eval mode. It uses native Stage-1 `document`
-serialization, the six separate Stage-1 visual sources, and the official OLMo 0925 ingredient-1
-NumpyFSL text mix. That official text manifest is retained unchanged and includes its curated web,
-science, code, math, reasoning, and instruction/SFT leaf sources. Same-folder restarts require the
-exact saved run contract before OLMo-core resumes full model, optimizer, trainer, and data-loader
-state.
+serialization, the six separate Stage-1 visual sources, and the historical OLMo 3 7B midtraining
+source mixture. The exact source-list blob is restored at its original path and pinned to SHA-256
+`15ee181c199bb89b118672737340153093ace8b5765fd87f760aa944669e2cff`; it includes the
+curated web, science, code, math, reasoning, and instruction/SFT sources. Same-folder restarts
+require the exact saved run contract before OLMo-core resumes full model, optimizer, trainer, and
+data-loader state.
 
 Every arm uses 2 Holmes nodes with 8 B300 GPUs each, a 10.48576B-token learning-rate horizon,
 1,048,576-token global batches, sequence length 8192, LM LR `1e-5`, and connector LR `2e-5`.
@@ -47,4 +48,7 @@ python src/scripts/train/Vision-Midtraining.py dry_run vision-midtraining-va12k-
 Real `train` and `launch` commands fail closed without both receipt fields. A topology-only smoke
 uses `--data.synthetic_smoke=true --max_tokens=1048576 --data.prefetch_workers=0`. The audit and
 training contract assumes the configured Weka visual datasets are immutable; several raw PixMo
-adapters do not currently expose independent content fingerprints.
+adapters do not currently expose independent content fingerprints. The vision-only `v100` arm and
+synthetic smoke jobs launch without Google credentials. Real text-bearing arms require the
+`GOOGLE_CREDENTIALS` Beaker secret in the pinned workspace; the recipe never creates or copies
+that secret.

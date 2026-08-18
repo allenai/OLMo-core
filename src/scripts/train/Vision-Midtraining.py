@@ -3,8 +3,8 @@
 This recipe is deliberately separate from ``Molmo2-Stage1.py`` and
 ``Vision-Alignment.py``. It model-only loads the permanent vision-alignment treatment
 checkpoint, keeps the vision encoder frozen, and trains the complete language model plus
-connector on the original Stage-1 visual sources, optionally mixed with the official OLMo
-midtraining mix.
+connector on the original Stage-1 visual sources, optionally mixed with the historical OLMo 3
+7B midtraining source mixture.
 
 The deterministic ``audit`` command measures mean supervised loss weight for every source.
 Real training requires that SHA-pinned receipt; synthetic smoke uses unit means. Existing
@@ -31,12 +31,7 @@ from typing import Any, cast
 import numpy as np
 
 from olmo_core.config import Config, DType, StrEnum
-from olmo_core.data import (
-    DataMix,
-    InstanceFilterConfig,
-    NumpyFSLDatasetConfig,
-    TokenizerConfig,
-)
+from olmo_core.data import InstanceFilterConfig, NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.data_loader import DataLoaderBase
 from olmo_core.data.multimodal import (
     CoSynPointDatasetConfig,
@@ -58,6 +53,7 @@ from olmo_core.data.multimodal.vision_alignment_sources import (
     VISION_ALIGNMENT_TOKENIZER_REVISION,
     load_pinned_vision_alignment_tokenizer,
 )
+from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.common import build_launch_config, get_root_dir
@@ -98,7 +94,7 @@ from olmo_core.utils import seed_all
 
 log = logging.getLogger(__name__)
 
-RECIPE_VERSION = 1
+RECIPE_VERSION = 2
 PARENT_CHECKPOINT = (
     "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/"
     "checkpoints/vision-alignment-joint-v1/step12000"
@@ -139,8 +135,10 @@ ROUTER_LB_LOSS_WEIGHT = 0.015
 ROUTER_Z_LOSS_WEIGHT = 1e-4
 MODEL_Z_LOSS_MULTIPLIER = 1e-4
 
-TEXT_MIX = DataMix.OLMo_midtraining_mix_0925_ingredient1_100B
-TEXT_MIX_BASE_DIR = "gs://ai2-llm"
+TEXT_SOURCE_MIX_PATH = "src/olmo_core/data/source_mixtures/OLMo3-7B-midtraining.yaml"
+TEXT_SOURCE_MIX_SHA256 = "15ee181c199bb89b118672737340153093ace8b5765fd87f760aa944669e2cff"
+TEXT_SOURCE_MIX_SEED = 1337
+TEXT_SOURCE_MIX_PROCESSES = 16
 TEXT_WORK_DIR = f"{VISION_MIDTRAINING_ROOT}/data"
 VISUAL_SOURCE_NAMES = (
     "cosyn_point",
@@ -225,12 +223,12 @@ class OptimizationConfig(Config):
 
 @dataclass
 class VisionMidtrainingDataConfig(Config):
-    """Stage-1 visual sources plus one official fixed-sequence text source."""
+    """Stage-1 visual sources plus the pinned OLMo 3 7B midtraining source list."""
 
     sequence_length: int = SEQUENCE_LENGTH
     pixmo_cap_path: str = f"{PIXMO_DATASETS}/cap"
-    text_mix: str = TEXT_MIX.value
-    text_mix_base_dir: str = TEXT_MIX_BASE_DIR
+    text_source_mix_path: str = TEXT_SOURCE_MIX_PATH
+    text_source_mix_sha256: str = TEXT_SOURCE_MIX_SHA256
     text_work_dir: str = TEXT_WORK_DIR
     message_format: str = "document"
     loss_token_weighting: str = "none"
@@ -363,13 +361,39 @@ def _load_tokenizer():
     )
 
 
-def _build_text_dataset_config(data: VisionMidtrainingDataConfig) -> NumpyFSLTextDatasetConfig:
-    """Wrap the official ingredient-1 NumpyFSL midtraining mix for multimodal collation."""
+def _load_text_source_list(data: VisionMidtrainingDataConfig) -> SourceMixtureList:
+    """Load the exact historical OLMo 3 7B midtraining source list."""
+    if data.text_source_mix_path != TEXT_SOURCE_MIX_PATH:
+        raise ValueError("The pinned OLMo 3 7B text source-list path may not be overridden")
+    if data.text_source_mix_sha256 != TEXT_SOURCE_MIX_SHA256:
+        raise ValueError("The pinned OLMo 3 7B text source-list SHA-256 may not be overridden")
+    path = Path(data.text_source_mix_path)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[3] / path
+    if not path.is_file() or _sha256_file(path) != data.text_source_mix_sha256:
+        raise ValueError(f"Text source-list fingerprint mismatch for {path}")
+    source_list = SourceMixtureList.from_yaml(path)
+    source_list.validate()
+    return source_list
+
+
+def _build_text_dataset_config(
+    data: VisionMidtrainingDataConfig,
+    *,
+    requested_tokens: int,
+    global_batch_size: int,
+) -> NumpyFSLTextDatasetConfig:
+    """Wrap the pinned OLMo 3 7B NumpyFSL source mixture for multimodal collation."""
     tokenizer = TokenizerConfig.dolma2()
-    dataset = NumpyFSLDatasetConfig.from_data_mix(
-        DataMix(data.text_mix),
+    dataset = NumpyFSLDatasetConfig.from_src_mix(
+        SourceMixtureDatasetConfig(
+            source_list=_load_text_source_list(data),
+            requested_tokens=requested_tokens,
+            global_batch_size=global_batch_size,
+            processes=TEXT_SOURCE_MIX_PROCESSES,
+            seed=TEXT_SOURCE_MIX_SEED,
+        ),
         tokenizer=tokenizer,
-        mix_base_dir=data.text_mix_base_dir,
         work_dir=data.text_work_dir,
         sequence_length=data.sequence_length,
         max_target_sequence_length=data.sequence_length,
@@ -672,6 +696,18 @@ def _configure_launch_runtime(launch_config: BeakerLaunchConfig) -> None:
     launch_config.post_setup = preset.post_setup
 
 
+def _configure_launch_data_credentials(
+    launch_config: BeakerLaunchConfig,
+    data: VisionMidtrainingDataConfig,
+) -> None:
+    """Derive the narrow cloud-credential surface from the selected data arm."""
+    launch_config.google_credentials_secret = (
+        "GOOGLE_CREDENTIALS"
+        if not data.synthetic_smoke and TEXT_SOURCE_NAME in _active_source_names(data.mixture_arm)
+        else None
+    )
+
+
 def _normalized(values: Mapping[str, float]) -> dict[str, float]:
     total = float(sum(values.values()))
     return {name: float(value) / total for name, value in values.items()}
@@ -822,8 +858,8 @@ def _validate_contract(
         raise ValueError("Every active target loss mass must be finite and positive")
     if not math.isclose(sum(target_loss_mass.values()), 1.0, abs_tol=1e-12):
         raise ValueError("Derived target loss mass must sum to one")
-    if config.data.text_mix != TEXT_MIX.value and not config.data.synthetic_smoke:
-        raise ValueError("Real midtraining requires the official ingredient-1 text mix")
+    if not config.data.synthetic_smoke:
+        _load_text_source_list(config.data)
     if config.data.message_format != "document" or config.data.loss_token_weighting != "none":
         raise ValueError("Visual data must retain the Stage-1 formatter and loss weighting")
     if not config.data.pack_sequences:
@@ -852,6 +888,19 @@ def _validate_contract(
         raise ValueError("Vision midtraining workspace and budget are pinned")
     if config.launch.num_gpus != 8 or config.launch.num_nodes != 2:
         raise ValueError("Vision midtraining requires exactly two complete 8-GPU Holmes nodes")
+    expected_google_secret = (
+        "GOOGLE_CREDENTIALS"
+        if not config.data.synthetic_smoke
+        and TEXT_SOURCE_NAME in _active_source_names(config.data.mixture_arm)
+        else None
+    )
+    if config.launch.google_credentials_secret != expected_google_secret:
+        raise ValueError("Google credentials must be derived from the selected data arm")
+    if {secret.name for secret in config.launch.env_secrets} != {
+        "BEAKER_TOKEN",
+        "WANDB_API_KEY",
+    }:
+        raise ValueError("Vision midtraining launch has an unexpected environment-secret surface")
     if metadata.run_contract_sha256 != _run_contract_sha256(config):
         raise ValueError("Derived run contract fingerprint is inconsistent")
     _validate_output_resume_contract(config)
@@ -872,7 +921,11 @@ def build_config(
         raise ValueError(f"Tokenizer {TOKENIZER_ID!r} has no pad token")
     data = VisionMidtrainingDataConfig()
     optimization = OptimizationConfig()
-    text_dataset = _build_text_dataset_config(data)
+    text_dataset = _build_text_dataset_config(
+        data,
+        requested_tokens=MAX_TOKENS,
+        global_batch_size=GLOBAL_BATCH_SIZE,
+    )
     collator = MultimodalCollatorConfig(
         pad_token_id=int(tokenizer.pad_token_id),
         label_ignore_index=-100,
@@ -903,9 +956,7 @@ def build_config(
     launch.aws_config_secret = None
     launch.aws_credentials_secret = None
     launch.env_secrets = [
-        secret
-        for secret in launch.env_secrets
-        if secret.name in ("BEAKER_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "WANDB_API_KEY")
+        secret for secret in launch.env_secrets if secret.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
     ]
     _configure_launch_runtime(launch)
     placeholder.launch = launch
@@ -915,7 +966,12 @@ def build_config(
         raise ValueError("Pinned parent artifact identities may not be overridden")
     if config.model != parent_model:
         raise ValueError("The exact deserialized parent model config may not be overridden")
-    config.text_dataset = _build_text_dataset_config(config.data)
+    _configure_launch_data_credentials(config.launch, config.data)
+    config.text_dataset = _build_text_dataset_config(
+        config.data,
+        requested_tokens=config.max_tokens,
+        global_batch_size=config.global_batch_size,
+    )
     config.collator = MultimodalCollatorConfig(
         pad_token_id=int(tokenizer.pad_token_id),
         label_ignore_index=-100,

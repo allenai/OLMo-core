@@ -19,6 +19,11 @@ from olmo_core.data.multimodal import (
     NumpyFSLTextDatasetConfig,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetMixture
+from olmo_core.data.source_mixture import (
+    SourceMixtureConfig,
+    SourceMixtureDatasetConfig,
+    SourceMixtureList,
+)
 from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
 
 
@@ -129,7 +134,7 @@ def test_numpy_fsl_text_dataset_fingerprint_combines_adapter_and_child():
     )
     dataset = NumpyFSLTextDataset(child)
 
-    assert dataset.content_fingerprint_version == "numpy-fsl-text-adapter-v1"
+    assert dataset.content_fingerprint_version == "numpy-fsl-text-adapter-v2"
     assert dataset.fingerprint_version == dataset.content_fingerprint_version
     assert dataset.fingerprint == dataset.content_fingerprint
     assert len(dataset.content_fingerprint) == 64
@@ -221,9 +226,9 @@ def test_numpy_fsl_text_dataset_config_and_prepare_delegate(tmp_path: Path):
     assert len(dataset) == 1
 
 
-def test_numpy_fsl_text_dataset_rejects_source_mixture_child(tmp_path: Path):
+def test_numpy_fsl_text_dataset_supports_fingerprinted_source_mixture(tmp_path: Path):
     token_path = tmp_path / "tokens.npy"
-    _write_mmap(token_path, [10, 11, 12, 13], np.uint16)
+    _write_mmap(token_path, [10, 11, 12, 13, 14, 15, 16, 17], np.uint16)
     child = NumpyFSLDatasetMixture(
         token_path,
         path_offset_index={(str(token_path), 0): 4},
@@ -233,13 +238,69 @@ def test_numpy_fsl_text_dataset_rejects_source_mixture_child(tmp_path: Path):
         eos_token_id=1,
         vocab_size=32_000,
     )
+    dataset = NumpyFSLTextDataset(child)
 
-    with pytest.raises(TypeError, match="complete semantic fingerprint"):
-        NumpyFSLTextDataset(child)
+    np.testing.assert_array_equal(dataset[0]["input_ids"], [10, 11, 12, 13])
+    with patch.object(child, "prepare", wraps=child.prepare) as prepare:
+        dataset.prepare()
+    prepare.assert_not_called()
 
-    config = NumpyFSLTextDatasetConfig(dataset=Mock(source_mixture_config=object()))
-    with pytest.raises(ValueError, match="does not support source_mixture_config"):
-        config.build()
+    changed_seed = NumpyFSLTextDataset(
+        NumpyFSLDatasetMixture(
+            token_path,
+            path_offset_index={(str(token_path), 0): 4},
+            seed=2,
+            sequence_length=4,
+            pad_token_id=0,
+            eos_token_id=1,
+            vocab_size=32_000,
+        )
+    )
+    changed_limit = NumpyFSLTextDataset(
+        NumpyFSLDatasetMixture(
+            token_path,
+            path_offset_index={(str(token_path), 0): 8},
+            seed=1,
+            sequence_length=4,
+            pad_token_id=0,
+            eos_token_id=1,
+            vocab_size=32_000,
+        )
+    )
+    assert dataset.content_fingerprint != changed_seed.content_fingerprint
+    assert dataset.content_fingerprint != changed_limit.content_fingerprint
+
+
+def test_numpy_fsl_text_dataset_config_builds_source_mixture(tmp_path: Path):
+    token_path = tmp_path / "tokens.npy"
+    _write_mmap(token_path, [10, 11, 12, 13, 14, 15, 16, 17], np.uint16)
+    config = NumpyFSLTextDatasetConfig(
+        dataset=NumpyFSLDatasetConfig.from_src_mix(
+            SourceMixtureDatasetConfig(
+                source_list=SourceMixtureList(
+                    sources=[
+                        SourceMixtureConfig(
+                            source_name="text",
+                            target_ratio=1.0,
+                            paths=[str(token_path)],
+                        )
+                    ]
+                ),
+                requested_tokens=4,
+                global_batch_size=4,
+                seed=1,
+                render_tables=False,
+            ),
+            sequence_length=4,
+            tokenizer=TokenizerConfig(vocab_size=32_000, eos_token_id=1, pad_token_id=0),
+            work_dir=str(tmp_path / "work"),
+        )
+    )
+
+    dataset = config.build()
+    dataset.prepare()
+    assert len(dataset) == 1
+    np.testing.assert_array_equal(dataset[0]["input_ids"], [10, 11, 12, 13])
 
 
 def test_numpy_fsl_text_dataset_rejects_document_lengths(tmp_path: Path):

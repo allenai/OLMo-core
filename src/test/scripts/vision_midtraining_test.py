@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 from torch import nn
 
-from olmo_core.data import DataMix
 from olmo_core.data.multimodal import (
     CoSynPointDatasetConfig,
     NumpyFSLTextDatasetConfig,
@@ -230,7 +229,7 @@ def test_optimizer_groups_cover_output_head_embeddings_and_connector(vision_midt
     assert "lm.blocks.0.body.weight" in grouped
 
 
-def test_real_source_configs_use_official_text_and_all_stage1_visual_adapters(
+def test_real_source_configs_use_pinned_olmo3_text_and_all_stage1_visual_adapters(
     vision_midtraining, smoke_config
 ):
     config = copy.deepcopy(smoke_config)
@@ -241,9 +240,19 @@ def test_real_source_configs_use_official_text_and_all_stage1_visual_adapters(
         sorted((*vision_midtraining.VISUAL_SOURCE_NAMES, vision_midtraining.TEXT_SOURCE_NAME))
     )
     assert isinstance(sources["text_midtraining"], NumpyFSLTextDatasetConfig)
-    assert (
-        sources["text_midtraining"].dataset.mix
-        == DataMix.OLMo_midtraining_mix_0925_ingredient1_100B
+    text_config = sources["text_midtraining"].dataset.source_mixture_config
+    assert text_config is not None
+    assert text_config.requested_tokens == smoke_config.max_tokens
+    assert text_config.global_batch_size == smoke_config.global_batch_size
+    assert text_config.seed == 1337
+    assert text_config.processes == 16
+    assert [source.source_name for source in text_config.source_list.sources[:3]] == [
+        "sponge",
+        "code_fim",
+        "swallowcode",
+    ]
+    assert sum(source.target_ratio for source in text_config.source_list.sources) == pytest.approx(
+        1.0
     )
     assert isinstance(sources["pixmo_caption"], PixMoCapDatasetConfig)
     assert isinstance(sources["pixmo_transcript"], PixMoCapDatasetConfig)
@@ -384,6 +393,33 @@ def test_vision_only_omits_text_while_text_arms_share_source_contract(
     )
 
 
+def test_real_source_contract_goldens_preserve_v100_receipt(vision_midtraining, smoke_config):
+    _, token_ids = vision_midtraining._load_tokenizer()
+    config = copy.deepcopy(smoke_config)
+    config.data.synthetic_smoke = False
+    config.text_dataset = vision_midtraining._build_text_dataset_config(
+        config.data,
+        requested_tokens=vision_midtraining.MAX_TOKENS,
+        global_batch_size=vision_midtraining.GLOBAL_BATCH_SIZE,
+    )
+
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.v100
+    assert vision_midtraining._source_contract_sha256(config, token_ids) == (
+        "570e38662ee22e92a5cb2c6323ee29091f6fd424d0e324dc5527741018c7f70a"
+    )
+
+    expected_text_contract = "9f7eaffc83b0f9c2ff725af1e1a0319a4175a7b3af75cc905ae1d70b83a358fb"
+    for arm in (
+        vision_midtraining.VisionMidtrainingArm.vt50,
+        vision_midtraining.VisionMidtrainingArm.vt80,
+        vision_midtraining.VisionMidtrainingArm.vt90,
+    ):
+        config.data.mixture_arm = arm
+        assert vision_midtraining._source_contract_sha256(config, token_ids) == (
+            expected_text_contract
+        )
+
+
 def test_all_mixture_arms_have_distinct_run_contracts(vision_midtraining, smoke_config):
     token_ids = Molmo2TokenIds()
     hashes = set()
@@ -408,6 +444,47 @@ def test_launch_topology_requires_exactly_16_gpus(num_nodes, vision_midtraining,
         vision_midtraining._validate_contract(
             config, "vision-midtraining-synthetic-smoke-v1", "dry_run"
         )
+
+
+def test_launch_google_credentials_follow_data_arm(vision_midtraining, smoke_config):
+    assert smoke_config.launch.google_credentials_secret is None
+    assert {secret.name for secret in smoke_config.launch.env_secrets} == {
+        "BEAKER_TOKEN",
+        "WANDB_API_KEY",
+    }
+
+    vision_only = copy.deepcopy(smoke_config.launch)
+    vision_only_data = copy.deepcopy(smoke_config.data)
+    vision_only_data.synthetic_smoke = False
+    vision_only_data.mixture_arm = vision_midtraining.VisionMidtrainingArm.v100
+    vision_midtraining._configure_launch_data_credentials(
+        vision_only,
+        vision_only_data,
+    )
+    assert vision_only.google_credentials_secret is None
+
+    text = copy.deepcopy(smoke_config.launch)
+    text_data = copy.deepcopy(smoke_config.data)
+    text_data.synthetic_smoke = False
+    vision_midtraining._configure_launch_data_credentials(text, text_data)
+    assert text.google_credentials_secret == "GOOGLE_CREDENTIALS"
+
+    tampered = copy.deepcopy(smoke_config)
+    tampered.launch.google_credentials_secret = "GOOGLE_CREDENTIALS"
+    with pytest.raises(ValueError, match="Google credentials"):
+        vision_midtraining._validate_contract(
+            tampered, "vision-midtraining-synthetic-smoke-v1", "dry_run"
+        )
+
+
+def test_text_source_list_is_sha_pinned(vision_midtraining):
+    data = vision_midtraining.VisionMidtrainingDataConfig()
+    source_list = vision_midtraining._load_text_source_list(data)
+
+    assert source_list.sources[0].source_name == "sponge"
+    data.text_source_mix_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="SHA-256 may not be overridden"):
+        vision_midtraining._load_text_source_list(data)
 
 
 def test_launch_replays_overrides_and_real_training_requires_receipt(
