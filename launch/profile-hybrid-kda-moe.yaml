@@ -17,7 +17,8 @@ tasks:
         export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
         export OLMO_SHARED_FS=1
 
-        NSYS_BIN=$(find /opt/nvidia/nsight-systems -type f -name nsys -perm /111 | head -n 1)
+        dpkg-query -W 'nsight-systems*' | tee /results/nsight-packages.txt
+        NSYS_BIN=$(find / -type f -name nsys -perm /111 2>/dev/null | head -n 1)
         test -n "${NSYS_BIN}"
         export PATH="$(dirname "${NSYS_BIN}"):${PATH}"
         printf '%s\n' "${NSYS_BIN}" | tee /results/nsys-path.txt
