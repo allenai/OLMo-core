@@ -1,6 +1,7 @@
 """Run a short, random-init Nsight profile of an Olmo hybrid KDA/MoE model."""
 
 import argparse
+import json
 from pathlib import Path
 
 from olmo_core.data import NumpyDataLoaderConfig, NumpyFSLDatasetConfig
@@ -32,9 +33,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _build_config(args: argparse.Namespace) -> ExperimentConfig:
-    config = ExperimentConfig.from_json(args.config)
+    with args.config.open() as config_file:
+        config_dict = json.load(config_file)
+    # Historical experiment configs include launch-only fields that are unrelated to
+    # model construction and may no longer decode against the current launch schema.
+    config_dict["launch"] = None
+    config = ExperimentConfig.from_dict(config_dict)
     config.run_name = "profile-hybrid-kda-moe-random-init"
-    config.launch = None
 
     if not isinstance(config.dataset, NumpyFSLDatasetConfig):
         raise TypeError(f"Expected NumpyFSLDatasetConfig, got {type(config.dataset).__name__}")
