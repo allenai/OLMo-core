@@ -160,6 +160,7 @@ class VisionMidtrainingArm(StrEnum):
     vt50 = "vt50"
     vt80 = "vt80"
     vt90 = "vt90"
+    t100 = "t100"
 
 
 _TEXT_LOSS_MASS = {
@@ -167,6 +168,7 @@ _TEXT_LOSS_MASS = {
     VisionMidtrainingArm.vt50: 0.5,
     VisionMidtrainingArm.vt80: 0.8,
     VisionMidtrainingArm.vt90: 0.9,
+    VisionMidtrainingArm.t100: 1.0,
 }
 _VISUAL_LOSS_MASS = {
     "pixmo_caption": 0.50,
@@ -181,10 +183,14 @@ _VISUAL_LOSS_MASS = {
 def _target_loss_mass(arm: VisionMidtrainingArm) -> dict[str, float]:
     """Derive the exact source loss-mass targets for an experiment arm."""
     text_mass = _TEXT_LOSS_MASS[arm]
-    targets = {
-        name: round(visual_mass * (1.0 - text_mass), 12)
-        for name, visual_mass in _VISUAL_LOSS_MASS.items()
-    }
+    targets = (
+        {
+            name: round(visual_mass * (1.0 - text_mass), 12)
+            for name, visual_mass in _VISUAL_LOSS_MASS.items()
+        }
+        if text_mass < 1.0
+        else {}
+    )
     if text_mass > 0:
         targets[TEXT_SOURCE_NAME] = text_mass
     return targets
@@ -192,7 +198,7 @@ def _target_loss_mass(arm: VisionMidtrainingArm) -> dict[str, float]:
 
 def _active_source_names(arm: VisionMidtrainingArm) -> tuple[str, ...]:
     """Return the exact sources materialized by an experiment arm."""
-    names: tuple[str, ...] = VISUAL_SOURCE_NAMES
+    names: tuple[str, ...] = () if _TEXT_LOSS_MASS[arm] == 1.0 else VISUAL_SOURCE_NAMES
     if _TEXT_LOSS_MASS[arm] > 0:
         names = (*names, TEXT_SOURCE_NAME)
     return names
@@ -486,6 +492,10 @@ def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -
     """Build the active named source configs without materializing their datasets."""
     data = config.data
     active_names = _active_source_names(data.mixture_arm)
+    if data.synthetic_smoke and active_names == (TEXT_SOURCE_NAME,):
+        raise ValueError("The text-only arm requires the real pinned text source")
+    if active_names == (TEXT_SOURCE_NAME,):
+        return {TEXT_SOURCE_NAME: config.text_dataset}
     if data.synthetic_smoke:
         return {
             name: PixMoCapDatasetConfig(
@@ -546,6 +556,30 @@ def _build_source_configs(config: ExperimentConfig, token_ids: Molmo2TokenIds) -
     if TEXT_SOURCE_NAME in active_names:
         sources[TEXT_SOURCE_NAME] = config.text_dataset
     return sources
+
+
+class _TextOnlyCollator:
+    """Remove the mixed-arm dummy image after validating a globally text-only batch."""
+
+    def __init__(self, collator: Any):
+        self.collator = collator
+        self.pad_sequence_length = collator.pad_sequence_length
+
+    def __call__(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+        batch = self.collator(examples)
+        if bool(batch["image_crop_counts"].any()) or bool(batch["pooled_token_counts"].any()):
+            raise ValueError("The text-only arm received an example with visual inputs")
+        batch.pop("images")
+        batch.pop("pooled_patches_idx")
+        return batch
+
+
+def _build_collator(config: ExperimentConfig):
+    """Build the shared collator, skipping its dummy vision forward for the text-only arm."""
+    collator = config.collator.build()
+    if config.data.mixture_arm is VisionMidtrainingArm.t100:
+        return _TextOnlyCollator(collator)
+    return collator
 
 
 def _source_contract_sha256(config: ExperimentConfig, token_ids: Molmo2TokenIds) -> str:
@@ -1107,7 +1141,7 @@ def train(config: ExperimentConfig) -> None:
     data_loader: DataLoaderBase = MixtureDataLoader(
         datasets,
         weights,
-        config.collator.build(),
+        _build_collator(config),
         work_dir=config.trainer.save_folder,
         global_batch_size=config.global_batch_size,
         seed=config.data_seed,

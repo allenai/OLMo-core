@@ -9,11 +9,13 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from torch import nn
 
 from olmo_core.data.multimodal import (
     CoSynPointDatasetConfig,
+    MixtureDataLoader,
     NumpyFSLTextDatasetConfig,
     PixMoCapDatasetConfig,
     PixMoCountDatasetConfig,
@@ -274,6 +276,81 @@ def test_real_source_configs_use_pinned_olmo3_text_and_all_stage1_visual_adapter
     assert config.data.pack_max_crops == 16
 
 
+def test_t100_builds_and_materializes_only_the_text_source(
+    monkeypatch, vision_midtraining, smoke_config
+):
+    config = copy.deepcopy(smoke_config)
+    config.data.synthetic_smoke = False
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.t100
+    token_ids = Molmo2TokenIds()
+
+    sources = vision_midtraining._build_source_configs(config, token_ids)
+
+    assert sources == {vision_midtraining.TEXT_SOURCE_NAME: config.text_dataset}
+    sentinel_dataset = object()
+    monkeypatch.setattr(
+        NumpyFSLTextDatasetConfig,
+        "build",
+        lambda self: sentinel_dataset,
+    )
+    datasets, names = vision_midtraining._materialize_sources(None, token_ids, config)
+    assert datasets == [sentinel_dataset]
+    assert names == [vision_midtraining.TEXT_SOURCE_NAME]
+
+
+def test_t100_synthetic_smoke_fails_closed(vision_midtraining, smoke_config):
+    config = copy.deepcopy(smoke_config)
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.t100
+
+    with pytest.raises(ValueError, match="requires the real pinned text source"):
+        vision_midtraining._build_source_configs(config, Molmo2TokenIds())
+
+
+def test_t100_skips_dummy_vision_forward_without_changing_trainability(
+    tmp_path, vision_midtraining, smoke_config
+):
+    config = copy.deepcopy(smoke_config)
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.t100
+    example = {
+        "input_ids": np.array([1, 2, 3], dtype=np.int64),
+        "labels": np.array([2, 3, -100], dtype=np.int64),
+        "loss_masks": np.array([1.0, 1.0, 0.0], dtype=np.float32),
+        "position_ids": np.arange(3, dtype=np.int64),
+        "token_type_ids": np.zeros(3, dtype=np.int64),
+        "images": np.zeros((0, 4, 3), dtype=np.float32),
+        "pooled_patches_idx": np.full((0, 2), -1, dtype=np.int64),
+    }
+
+    batch = vision_midtraining._build_collator(config)([example])
+
+    assert "images" not in batch
+    assert "pooled_patches_idx" not in batch
+    assert config.train_module.freeze_params == ["vision.*"]
+    assert config.train_module.connector_activation_checkpointing
+    groups = {
+        tuple(group.params): group.opts for group in config.train_module.optim.group_overrides
+    }
+    assert groups[("*connector.*",)]["lr"] == pytest.approx(2e-5)
+
+    class _Dataset:
+        def __len__(self):
+            return 1
+
+    loader = MixtureDataLoader(
+        [_Dataset()],
+        [1.0],
+        vision_midtraining._build_collator(config),
+        work_dir=tmp_path,
+        global_batch_size=config.data.sequence_length,
+    )
+    assert loader.seq_len == config.data.sequence_length
+
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.vt90
+    mixed_batch = vision_midtraining._build_collator(config)([example])
+    assert "images" in mixed_batch
+    assert "pooled_patches_idx" in mixed_batch
+
+
 def test_reviewed_pilot_science_is_explicit_in_config_defaults(vision_midtraining):
     experiment_fields = vision_midtraining.ExperimentConfig.__dataclass_fields__
     optimization = vision_midtraining.OptimizationConfig()
@@ -352,6 +429,7 @@ def test_loss_mass_calibration_reconstructs_targets(vision_midtraining, smoke_co
                 "cosyn_point": 0.006,
             },
         ),
+        ("t100", {"text_midtraining": 1.0}),
     ],
 )
 def test_mixture_arms_have_exact_loss_mass(vision_midtraining, arm, expected):
@@ -361,13 +439,14 @@ def test_mixture_arms_have_exact_loss_mass(vision_midtraining, arm, expected):
     assert sum(vision_midtraining._target_loss_mass(value).values()) == pytest.approx(1.0)
 
 
-def test_vision_only_omits_text_while_text_arms_share_source_contract(
+def test_single_modality_arms_omit_inactive_sources_while_mixed_arms_share_contract(
     vision_midtraining, smoke_config
 ):
     token_ids = Molmo2TokenIds()
     contracts = {}
     for arm in vision_midtraining.VisionMidtrainingArm:
         config = copy.deepcopy(smoke_config)
+        config.data.synthetic_smoke = False
         config.data.mixture_arm = arm
         config.train_module.source_loss_mass_targets = vision_midtraining._target_loss_mass(arm)
         sources = vision_midtraining._build_source_configs(config, token_ids)
@@ -377,6 +456,9 @@ def test_vision_only_omits_text_while_text_arms_share_source_contract(
     assert vision_midtraining.TEXT_SOURCE_NAME not in vision_midtraining._active_source_names(
         vision_midtraining.VisionMidtrainingArm.v100
     )
+    assert vision_midtraining._active_source_names(
+        vision_midtraining.VisionMidtrainingArm.t100
+    ) == (vision_midtraining.TEXT_SOURCE_NAME,)
     assert (
         contracts[vision_midtraining.VisionMidtrainingArm.v100]
         != contracts[vision_midtraining.VisionMidtrainingArm.vt50]
@@ -391,6 +473,10 @@ def test_vision_only_omits_text_while_text_arms_share_source_contract(
         )
         == 1
     )
+    assert contracts[vision_midtraining.VisionMidtrainingArm.t100] not in {
+        contracts[vision_midtraining.VisionMidtrainingArm.v100],
+        contracts[vision_midtraining.VisionMidtrainingArm.vt50],
+    }
 
 
 def test_real_source_contract_goldens_preserve_v100_receipt(vision_midtraining, smoke_config):
@@ -419,20 +505,32 @@ def test_real_source_contract_goldens_preserve_v100_receipt(vision_midtraining, 
             expected_text_contract
         )
 
+    config.data.mixture_arm = vision_midtraining.VisionMidtrainingArm.t100
+    assert vision_midtraining._source_contract_sha256(config, token_ids) == (
+        "d619f5376c2a2ad038b25b18742d667e2f15d64a2c70160ed24a0dd455f726c1"
+    )
+
 
 def test_all_mixture_arms_have_distinct_run_contracts(vision_midtraining, smoke_config):
     token_ids = Molmo2TokenIds()
-    hashes = set()
+    hashes = {}
     for arm in vision_midtraining.VisionMidtrainingArm:
         config = copy.deepcopy(smoke_config)
+        config.data.synthetic_smoke = False
         config.data.mixture_arm = arm
         config.train_module.source_loss_mass_targets = vision_midtraining._target_loss_mass(arm)
         config.vision_midtraining.source_contract_sha256 = (
             vision_midtraining._source_contract_sha256(config, token_ids)
         )
-        hashes.add(vision_midtraining._run_contract_sha256(config))
+        hashes[arm] = vision_midtraining._run_contract_sha256(config)
 
-    assert len(hashes) == len(vision_midtraining.VisionMidtrainingArm)
+    assert len(set(hashes.values())) == len(vision_midtraining.VisionMidtrainingArm)
+    assert hashes[vision_midtraining.VisionMidtrainingArm.t100] not in {
+        hashes[vision_midtraining.VisionMidtrainingArm.v100],
+        hashes[vision_midtraining.VisionMidtrainingArm.vt50],
+        hashes[vision_midtraining.VisionMidtrainingArm.vt80],
+        hashes[vision_midtraining.VisionMidtrainingArm.vt90],
+    }
 
 
 @pytest.mark.parametrize("num_nodes", [1, 3])
@@ -468,6 +566,12 @@ def test_launch_google_credentials_follow_data_arm(vision_midtraining, smoke_con
     text_data.synthetic_smoke = False
     vision_midtraining._configure_launch_data_credentials(text, text_data)
     assert text.google_credentials_secret == "GOOGLE_CREDENTIALS"
+
+    text_only = copy.deepcopy(smoke_config.launch)
+    text_only_data = copy.deepcopy(text_data)
+    text_only_data.mixture_arm = vision_midtraining.VisionMidtrainingArm.t100
+    vision_midtraining._configure_launch_data_credentials(text_only, text_only_data)
+    assert text_only.google_credentials_secret == "GOOGLE_CREDENTIALS"
 
     tampered = copy.deepcopy(smoke_config)
     tampered.launch.google_credentials_secret = "GOOGLE_CREDENTIALS"
@@ -603,7 +707,7 @@ def test_audit_receipt_metadata_must_match_config(tmp_path, vision_midtraining, 
         vision_midtraining._validated_mean_receipt(config)
 
 
-def test_text_arms_share_one_receipt_and_vision_only_requires_its_own(
+def test_mixed_arms_share_one_receipt_and_single_modality_arms_require_their_own(
     tmp_path, vision_midtraining, smoke_config
 ):
     token_ids = Molmo2TokenIds()
@@ -662,3 +766,18 @@ def test_text_arms_share_one_receipt_and_vision_only_requires_its_own(
     assert set(vision_midtraining._validated_mean_receipt(vision_config)) == set(
         vision_midtraining.VISUAL_SOURCE_NAMES
     )
+
+    text_only_config = arm_config(vision_midtraining.VisionMidtrainingArm.t100)
+    text_only_config.data.mean_loss_weight_receipt = str(text_path)
+    text_only_config.data.mean_loss_weight_receipt_sha256 = text_digest
+    with pytest.raises(ValueError, match="different data contract"):
+        vision_midtraining._validated_mean_receipt(text_only_config)
+
+    text_only_path = tmp_path / "text-only-means.json"
+    text_only_config.data.mean_loss_weight_receipt_sha256 = write_receipt(
+        text_only_path, text_only_config
+    )
+    text_only_config.data.mean_loss_weight_receipt = str(text_only_path)
+    assert set(vision_midtraining._validated_mean_receipt(text_only_config)) == {
+        vision_midtraining.TEXT_SOURCE_NAME
+    }
