@@ -1,0 +1,105 @@
+version: v2
+description: Nsight Systems profile of random-init Olmo hybrid KDA/MoE training in OLMo-core
+budget: ai2/oe-other
+tasks:
+  - name: profile
+    image:
+      beaker: 01KZ5J4CKZPXY5X5AFBBRB5RX3
+    command: [bash, -lc]
+    arguments:
+      - |
+        set -euo pipefail
+        git clone \
+          --branch robertb/kda-nsys-profile --single-branch \
+          "https://x-access-token:${GITHUB_TOKEN}@github.com/allenai/OLMo-core.git" \
+          /src/OLMo-core
+        export PYTHONPATH="/src/OLMo-core/src:${PYTHONPATH:-}"
+        export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+        export OLMO_SHARED_FS=1
+
+        curl -fsSLO \
+          https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+        dpkg -i cuda-keyring_1.1-1_all.deb
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          nsight-systems-2026.1.3=2026.1.3.425-1
+        rm -f cuda-keyring_1.1-1_all.deb
+        rm -rf /var/lib/apt/lists/*
+
+        command -v nsys | tee /results/nsys-path.txt
+        nsys --version | tee /results/nsys-version.txt
+        git -C /src/OLMo-core rev-parse HEAD | tee /results/olmo-core-commit.txt
+        python - <<'PY' | tee /results/environment.txt
+        import fla
+        import nvtx
+        import torch
+
+        print("torch", torch.__version__)
+        print("fla", getattr(fla, "__version__", "unknown"))
+        print("nvtx", nvtx.__file__)
+        print("cuda", torch.version.cuda)
+        PY
+        python -m pytest -q /src/OLMo-core/src/test/nn/attention/kda_test.py \
+          | tee /results/kda-tests.txt
+
+        SOURCE_CONFIG=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-samebatch-lr1p6e-4-r1/step63802/config.json
+        RUN_DIR="/weka/oe-training-default/robertb/olmo-megatron/profile-olmo-core-${BEAKER_EXPERIMENT_ID}"
+        DATA_FILE="${RUN_DIR}/random-tokens.npy"
+        mkdir -p "${RUN_DIR}"
+        test -f "${SOURCE_CONFIG}"
+        python - "${DATA_FILE}" <<'PY'
+        import sys
+
+        import numpy as np
+
+        output = sys.argv[1]
+        tokens = np.random.default_rng(1234).integers(0, 100278, size=5_000_000, dtype=np.uint32)
+        np.save(output, tokens)
+        PY
+
+        nsys profile \
+          --sample=none \
+          --cpuctxsw=none \
+          --trace=cuda,nvtx,osrt,cublas \
+          --capture-range=cudaProfilerApi \
+          --capture-range-end=stop \
+          --cuda-memory-usage=true \
+          --force-overwrite=true \
+          --output=/results/olmo-core-hybrid-kda-moe \
+          torchrun --standalone --nproc-per-node=8 \
+            /src/OLMo-core/src/examples/olmo_ddp/profile_hybrid_kda_moe.py \
+            --config "${SOURCE_CONFIG}" \
+            --data "${DATA_FILE}" \
+            --output-dir "${RUN_DIR}" \
+            --steps 14 \
+            --profile-step-start 10 \
+            --profile-step-end 13 \
+            --sequence-length 8192 \
+            --micro-batch-size 3 \
+            --gradient-accumulation-steps 8 \
+            2>&1 | tee /results/train.log
+
+        nsys stats --report cuda_gpu_kern_sum,nvtx_sum,cuda_api_sum \
+          /results/olmo-core-hybrid-kda-moe.nsys-rep \
+          > /results/nsys-stats.txt
+        nsys export --type sqlite --force-overwrite=true \
+          --output /results/olmo-core-hybrid-kda-moe.sqlite \
+          /results/olmo-core-hybrid-kda-moe.nsys-rep
+        cp "${RUN_DIR}/config.json" /results/config.json
+    envVars:
+      - name: GITHUB_TOKEN
+        secret: robertb_GITHUB_TOKEN
+    datasets:
+      - mountPath: /weka/oe-training-default
+        source:
+          weka: oe-training-default
+    result:
+      path: /results
+    resources:
+      gpuCount: 8
+      sharedMemory: 100 GiB
+    context:
+      priority: urgent
+      preemptible: true
+    constraints:
+      cluster: [ai2/holmes]

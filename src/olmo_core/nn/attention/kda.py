@@ -11,6 +11,7 @@ from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import Placement
 
+from olmo_core._nvtx import maybe_nvtx_annotate
 from olmo_core.config import DType
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda, has_fla
@@ -127,6 +128,7 @@ class KimiDeltaAttention(SequenceMixer):
         )
         self.w_out = nn.Linear(self.value_dim, d_model, bias=False, **factory)
 
+    @maybe_nvtx_annotate("olmo_kda.forward")
     def forward(
         self,
         x: torch.Tensor,
@@ -136,11 +138,21 @@ class KimiDeltaAttention(SequenceMixer):
         del kwargs
         batch_size, seq_len, _ = x.shape
 
-        q = self.q_conv1d(x=self.w_q(x), cu_seqlens=cu_doc_lens)
-        k = self.k_conv1d(x=self.w_k(x), cu_seqlens=cu_doc_lens)
-        v = self.v_conv1d(x=self.w_v(x), cu_seqlens=cu_doc_lens)
-        raw_decay = self.f_proj_2(self.f_proj_1(x))
-        beta = self.w_b(x).float().sigmoid()
+        with maybe_nvtx_annotate("olmo_kda.input_projection"):
+            q = self.w_q(x)
+        with maybe_nvtx_annotate("olmo_kda.convolution"):
+            q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
+        with maybe_nvtx_annotate("olmo_kda.input_projection"):
+            k = self.w_k(x)
+        with maybe_nvtx_annotate("olmo_kda.convolution"):
+            k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
+        with maybe_nvtx_annotate("olmo_kda.input_projection"):
+            v = self.w_v(x)
+        with maybe_nvtx_annotate("olmo_kda.convolution"):
+            v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+        with maybe_nvtx_annotate("olmo_kda.input_projection"):
+            raw_decay = self.f_proj_2(self.f_proj_1(x))
+            beta = self.w_b(x).float().sigmoid()
         if self.allow_neg_eigval:
             beta = beta * 2.0
 
@@ -149,22 +161,27 @@ class KimiDeltaAttention(SequenceMixer):
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
 
-        o, _ = dispatch_chunk_kda(
-            q=q,
-            k=k,
-            v=v,
-            g=raw_decay,
-            beta=beta,
-            A_log=self.A_log,
-            dt_bias=self.dt_bias,
-            use_qk_l2norm_in_kernel=True,
-            use_gate_in_kernel=True,
-            cu_seqlens=cu_doc_lens,
-        )
-        output_gate = self.g_proj_2(self.g_proj_1(x)).view(
-            batch_size, seq_len, self.n_v_heads, self.head_v_dim
-        )
-        return self.w_out(self.o_norm(o, output_gate).view(batch_size, seq_len, -1))
+        with maybe_nvtx_annotate("olmo_kda.recurrence"):
+            o, _ = dispatch_chunk_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=raw_decay,
+                beta=beta,
+                A_log=self.A_log,
+                dt_bias=self.dt_bias,
+                use_qk_l2norm_in_kernel=True,
+                use_gate_in_kernel=True,
+                cu_seqlens=cu_doc_lens,
+            )
+        with maybe_nvtx_annotate("olmo_kda.input_projection"):
+            output_gate = self.g_proj_2(self.g_proj_1(x)).view(
+                batch_size, seq_len, self.n_v_heads, self.head_v_dim
+            )
+        with maybe_nvtx_annotate("olmo_kda.gated_norm"):
+            output = self.o_norm(o, output_gate).view(batch_size, seq_len, -1)
+        with maybe_nvtx_annotate("olmo_kda.output_projection"):
+            return self.w_out(output)
 
     def apply_tp(
         self,
