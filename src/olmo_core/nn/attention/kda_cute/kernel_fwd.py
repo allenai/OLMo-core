@@ -1,3 +1,6 @@
+# mypy: ignore-errors
+# The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking that mypy
+# cannot follow.
 """The CuTe DSL forward for KDA. See NOTES.md / ALGORITHM.md.
 
 Ported from gdn 002's pipelined fused fwd_h + fwd_o kernel (kernels/gdn/ideas/002-cute-pipeline/

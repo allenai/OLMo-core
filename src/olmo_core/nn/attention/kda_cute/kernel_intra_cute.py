@@ -1,3 +1,6 @@
+# mypy: ignore-errors
+# The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking that mypy
+# cannot follow.
 """bwd_intra in CuTe DSL — a pure-SIMT chunk-resident kernel (no MMA, no tmem, no pipes).
 
 Why this shape: the Triton restructure plateaued at 9.26ms (prod8192) with the diagonal

@@ -1,3 +1,6 @@
+# mypy: ignore-errors
+# The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking that mypy
+# cannot follow.
 """Phase 1: bwd_intra restructured — one CTA per (chunk, K-slab), sub-chunks internal.
 
 fla's `chunk_kda_bwd_intra` runs grid (NK*NC, NT, B*HV) = 524k CTAs of [BC=16, BK=32] work
