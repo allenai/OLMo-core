@@ -96,7 +96,7 @@ def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
     channel. Any two-sided exp2 factorization in a kernel overflows fp32 here and
     NaNs — this regime is what the 30m ladder hit on its first optimizer step. The
     overflow depends only on decay-per-step and the BC=16 sub-chunk, so this small
-    shape covers it. KDA002_INTRA=cutedsl forces the CuTe bwd_intra kernel past its
+    shape covers it. OLMO_CUTE_KDA_INTRA=cutedsl forces the CuTe bwd_intra kernel past its
     small-grid gate, which this shape is well under — without it the arm would only
     exercise the Triton fallback."""
     from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda
@@ -106,7 +106,7 @@ def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
         pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
     if not _has_cute():
         pytest.skip("CUTLASS CuTe DSL is not installed")
-    monkeypatch.setenv("KDA002_INTRA", "cutedsl")
+    monkeypatch.setenv("OLMO_CUTE_KDA_INTRA", "cutedsl")
 
     device, dtype = "cuda", torch.bfloat16
     B, T, H, K, V = 2, 256, 4, 128, 256
@@ -124,9 +124,16 @@ def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
     for use_cute in (False, True):
         leaves = [t.detach().clone().requires_grad_(True) for t in (q, k, v, g_raw, beta, A_log)]
         o, _ = dispatch_chunk_kda(
-            q=leaves[0], k=leaves[1], v=leaves[2], g=leaves[3], beta=leaves[4],
-            A_log=leaves[5], dt_bias=dt_bias, scale=K**-0.5,
-            use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True,
+            q=leaves[0],
+            k=leaves[1],
+            v=leaves[2],
+            g=leaves[3],
+            beta=leaves[4],
+            A_log=leaves[5],
+            dt_bias=dt_bias,
+            scale=K**-0.5,
+            use_qk_l2norm_in_kernel=True,
+            use_gate_in_kernel=True,
             use_cute_kernel=use_cute,
         )
         (o.float() * do.float()).sum().backward()

@@ -1,7 +1,6 @@
 """A ``chunk_kda``-compatible entry point backed by the cute-kda kernels.
 
-The kernels come from the ``kernel-fun-2`` harness (kda ideas ``001-cute-fwd`` and
-``002-cute-bwd``) and are copied verbatim into this package:
+This package replaces two of fla's stages and leaves the rest alone:
 
 - Forward: fla's chunk-local cumsum + intra stage (Triton, unchanged), then a fused CuTe
   scan+readout (:mod:`.kernel_fwd`) that keeps the recurrent state in registers.
@@ -11,10 +10,10 @@ The kernels come from the ``kernel-fun-2`` harness (kda ideas ``001-cute-fwd`` a
   (:mod:`.kernel_intra`) on small grids and off its supported box, and that one falls back
   to fla's. Every other backward stage is fla's, unchanged.
 
-At the kda harness's production shape (B16 x T8192 x H16, K128/V256, chunk 64 on B300)
-this measured 1.26x on the forward and 1.288x on the training step over fla's monolith.
-The bwd_intra stage itself went 12.62ms (fla) -> 9.26 (the Triton restructure) -> 6.34
-(the CuTe SIMT kernel).
+At the target production shape — ``prod8192`` throughout these files and ALGORITHM.md:
+B16 x T8192 x H16, K128/V256, chunk 64 on B300 — this measured 1.26x on the forward and
+1.288x on the training step over fla's monolith. The bwd_intra stage itself went 12.62ms
+(fla) -> 9.26 (the Triton restructure) -> 6.34 (the CuTe SIMT kernel).
 
 The CuTe kernels target Blackwell (tcgen05 in the forward, plain SIMT in the intra
 backward); :func:`cute_kda_supported` gates on device capability and shape so callers can
@@ -31,10 +30,12 @@ Two lines land in the training log, once per process, so a run can be checked fr
 output instead of assumed: which forward arm the shape resolved to (or why it fell back
 to fla), and which bwd_intra kernel actually ran. Neither says anything on later steps.
 
-The kernel files keep the harness's own knobs, which bisect one level deeper:
-``KDA002_INTRA=triton`` (or ``fla``) forces the intra stage off the CuTe kernel;
-``KDA002_INTRA=cutedsl`` forces it past the small-grid gate; ``KDA002C_MAXREG`` and
-``KDA002C_SKIP`` are the CuTe kernel's register-cap and stage-attribution probes.
+The kernel files carry knobs that bisect one level deeper:
+``OLMO_CUTE_KDA_INTRA=triton`` (or ``fla``) forces the intra stage off the CuTe kernel and
+``=cutedsl`` forces it past the small-grid gate; ``OLMO_CUTE_KDA_INTRA_BK`` A/Bs the Triton
+kernel's K-slab width; ``OLMO_CUTE_KDA_INTRA_MAXREG`` is the CuTe kernel's register cap.
+``OLMO_CUTE_KDA_INTRA_SKIP`` and ``OLMO_CUTE_KDA_INTRA_CUTE_SKIP`` delete half the work at
+compile time for timing attribution and give WRONG results — never set them on a real run.
 """
 
 from __future__ import annotations
@@ -119,7 +120,13 @@ def cute_kda_supported(
             f"(B={B} T={T} HV={HV} K={K} V={V} chunk={chunk_size})",
         )
     else:
-        log_once(log, f"cute-kda: DISABLED, falling back to fla's chunk_kda — {reason}")
+        # WARNING, not INFO: reaching here means the caller explicitly asked for the
+        # experimental kernels and is not getting them.
+        log_once(
+            log,
+            f"cute-kda: DISABLED, falling back to fla's chunk_kda — {reason}",
+            level=logging.WARNING,
+        )
     return reason is None
 
 

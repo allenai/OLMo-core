@@ -35,7 +35,8 @@ bank-conflicted on every scalar load (v2: 27ms); strided is conflict-free and ke
             live across the whole kernel and spilled 1008B/thread (2x slower than v1).
             Epilogue: dk2 = dk_in + P1 + dkt; dg2 = dg_in + P2 + (P1 - dkt)*k.
 
-Every exp2 argument in this file is <= 0. The gx16 arm of dbg_intra_cute.py is the guard.
+Every exp2 argument in this file is <= 0 — the strong-decay regime in
+``test_kimi_delta_attention_cute_extreme_decay`` is the guard against regressing that.
 
 Outputs match fla's chunk_kda_bwd_intra at the ~1e-6 abs level (different-but-valid
 boundary references and reduction orders; fla itself computes cross-block gate products in
@@ -72,10 +73,10 @@ def _exp2(x):
     return cute.math.exp2(x, fastmath=True)
 
 
-# compile-time attribution knobs (wrong numerics when set — timing only; ncu is blocked
-# on this box, so stage attribution goes through skip-variant compiles like the Triton
-# kernel's KDA002_INTRA_SKIP)
-_SKIP = os.environ.get("KDA002C_SKIP", "")
+# compile-time attribution knobs (wrong numerics when set — timing only). Stage
+# attribution goes through skip-variant compiles rather than a profiler, same as the
+# Triton kernel's OLMO_CUTE_KDA_INTRA_SKIP.
+_SKIP = os.environ.get("OLMO_CUTE_KDA_INTRA_CUTE_SKIP", "")
 SKIP_DIAG = _SKIP in ("diag", "both")
 SKIP_CROSS = _SKIP in ("cross", "both")
 SKIP_IO = _SKIP == "io"  # skip the incoming-grad gmem reads (epilogue latency probe)
@@ -519,7 +520,7 @@ def kda_cute_intra_call(
             kernel_obj = KdaIntraBwdKernel(io_dtype)
             # ptxas left alone targets 64 regs (an occupancy this smem footprint can
             # never reach) and spills 1-2KB/thread; cap at 128 (1 CTA x 512 thr fits).
-            maxreg = int(os.environ.get("KDA002C_MAXREG", "128"))
+            maxreg = int(os.environ.get("OLMO_CUTE_KDA_INTRA_MAXREG", "128"))
             compiled = cute.compile(
                 kernel_obj,
                 cq,
@@ -611,11 +612,12 @@ def chunk_kda_bwd_intra_cutedsl(
         or k.shape[1] % BT != 0
         # small grids underfill the SMs (1 CTA per (chunk, b*hv)) and the per-call
         # marshaling isn't amortized — T512 rows regressed 0.90x; the Triton kernel
-        # wins below a few waves of the 148-SM box. KDA002_INTRA=cutedsl forces the
-        # CuTe path anyway (dbg_intra_cute's small correctness arms need it).
+        # wins below a few waves of the 148-SM box. OLMO_CUTE_KDA_INTRA=cutedsl forces the
+        # CuTe path anyway, which small correctness checks such as
+        # test_kimi_delta_attention_cute_extreme_decay need.
         or (
             g.shape[0] * (k.shape[1] // BT) * g.shape[2] < 1024
-            and os.environ.get("KDA002_INTRA", "") != "cutedsl"
+            and os.environ.get("OLMO_CUTE_KDA_INTRA", "") != "cutedsl"
         )
     ):
         from .kernel_intra import chunk_kda_bwd_intra_cute

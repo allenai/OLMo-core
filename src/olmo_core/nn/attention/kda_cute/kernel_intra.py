@@ -7,7 +7,7 @@ fla's `chunk_kda_bwd_intra` runs grid (NK*NC, NT, B*HV) = 524k CTAs of [BC=16, B
 at prod8192 and costs 12.6ms, ~5x its floors (ALGORITHM.md). This kernel is the SAME math,
 expression for expression — including the one-sided exp2(g_i - g_j) scalar diagonal loops,
 which are the numerics law of this op and must never be refactored through a reference row
-(see ALGORITHM.md "the numerics law"; the gx16 dbg arm enforces it) — with two structural
+(see ALGORITHM.md "the numerics law") — with two structural
 changes only:
 
 1. The NC sub-chunk axis moves inside the CTA (tl.static_range unroll). Each CTA touches
@@ -15,17 +15,17 @@ changes only:
    hits are spread across 4 CTAs on different SMs (DRAM/L2 re-reads), here they are
    same-CTA L1/L2 hits, and the launch count drops 4x. (Measured alone: 12.62 -> 10.44ms
    at prod8192; widening BK past that measured flat, so it is pinned, not autotuned.)
-2. BK is pinned per call (default 64, KDA002_INTRA_BK to A/B) instead of autotuned: with
+2. BK is pinned per call (default 64, OLMO_CUTE_KDA_INTRA_BK to A/B) instead of autotuned: with
    one NK for every config, every autotune config writes every db slab, closing the
    staleness hazard measured as db abs-err up to 3.9 (fla's CachedAutotuner does not run
    reset_to_zero's pre_hook on cached-config launches). BK=128 (NK=1) measured 13.34ms —
    register pressure — so small-BK slabs stay.
 3. The diagonal [BC,BC] blocks are VECTORIZED: fla's two 16-iteration serial scalar
-   j-loops (attributed at ~7.2ms of the 10.4ms kernel via KDA002_INTRA_SKIP=diag) become
+   j-loops (attributed at ~7.2ms of the 10.4ms kernel via OLMO_CUTE_KDA_INTRA_SKIP=diag) become
    j-axis tensor reductions over [BC,BC,BK] elementwise products — still exactly one
    one-sided exp2(g_r - g_s) per (r,s,d) pair, nothing factorized; the dA diag tile loads
    once for both passes. Reduction-tree reassociation puts outputs at ~1e-6 abs of fla
-   instead of bit-exact; dbg_intra budgets 1e-5.
+   instead of bit-exact.
 
 Interface mirrors fla's wrapper (fresh dq2/dk2/dg2 outputs, incoming dq/dk/dg added
 in-kernel). Fixed-length only, BT=64, K <= 128; everything else (varlen, safe_gate)
@@ -85,9 +85,9 @@ def kda_cute_bwd_intra_kernel(
     SKIP_DIAG: tl.constexpr,
     SKIP_OFFDIAG: tl.constexpr,
 ):
-    # SKIP_* are timing-attribution knobs (KDA002_INTRA_SKIP=diag|offdiag): they delete one
+    # SKIP_* are timing-attribution knobs (OLMO_CUTE_KDA_INTRA_SKIP=diag|offdiag): they delete one
     # half of the work at compile time to see what the other half costs. Results are WRONG
-    # with either set; dbg_intra.py --time is the only intended caller.
+    # with either set, so nothing but a timing sweep may set them.
     i_k, i_t, i_bh = tl.program_id(0), tl.program_id(1).to(tl.int64), tl.program_id(2).to(tl.int64)
     i_b, i_hv = i_bh // HV, i_bh % HV
     i_h = i_hv // (HV // H)
@@ -286,7 +286,7 @@ def chunk_kda_bwd_intra_cute(
         or safe_gate
         or chunk_size != 64
         or k.shape[-1] > 128
-        or os.environ.get("KDA002_INTRA") == "fla"
+        or os.environ.get("OLMO_CUTE_KDA_INTRA") == "fla"
     ):
         from fla.ops.kda.chunk_intra import chunk_kda_bwd_intra
 
@@ -321,15 +321,15 @@ def chunk_kda_bwd_intra_cute(
     # and writes every db slab, so no benchmarked config can leave stale slab garbage —
     # the hazard only exists when configs differ in NK (fla's CachedAutotuner skips the
     # reset_to_zero pre_hook on cached-config launches). BK=128 measured 13.34ms vs 10.4
-    # at tuner-chosen BK (register pressure), so the default is 64; KDA002_INTRA_BK
+    # at tuner-chosen BK (register pressure), so the default is 64; OLMO_CUTE_KDA_INTRA_BK
     # selects for A/B timing.
     # BK sweep with the vectorized diagonal (prod8192): 64 -> 9.26ms, 32 -> 10.19,
     # 16 -> 11.56, 128 -> register pressure. 64 is the standing default.
-    BK = min(int(os.environ.get("KDA002_INTRA_BK", "64")), triton.next_power_of_2(K))
+    BK = min(int(os.environ.get("OLMO_CUTE_KDA_INTRA_BK", "64")), triton.next_power_of_2(K))
     NK = triton.cdiv(K, BK)
     db2 = beta.new_empty(NK, *beta.shape, dtype=torch.float)
 
-    skip = os.environ.get("KDA002_INTRA_SKIP", "")
+    skip = os.environ.get("OLMO_CUTE_KDA_INTRA_SKIP", "")
     kda_cute_bwd_intra_kernel[(NK, NT, B * HV)](
         q=q,
         k=k,

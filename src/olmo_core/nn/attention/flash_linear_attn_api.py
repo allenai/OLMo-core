@@ -60,9 +60,11 @@ def dispatch_chunk_kda(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Dispatch Moonshot's pinned Triton KDA training kernel lazily.
 
-    With ``use_cute_kernel=True``, calls the CuTe/Triton kernels from
+    With ``use_cute_kernel=True``, calls the **experimental** CuTe/Triton kernels from
     :mod:`olmo_core.nn.attention.kda_cute` instead whenever they support the call
-    (fixed-length, chunk-size-64, Blackwell), falling back to FLA otherwise.
+    (fixed-length, chunk-size-64, Blackwell), falling back to FLA otherwise. Those
+    kernels are not numerically identical to FLA's, so opt in only when you are
+    deliberately testing them.
     """
     assert has_fla()
     if use_cute_kernel:
