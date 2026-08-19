@@ -4,7 +4,7 @@ budget: ai2/oe-other
 tasks:
   - name: profile
     image:
-      beaker: 01KZ5J4CKZPXY5X5AFBBRB5RX3
+      beaker: akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24
     command: [bash, -lc]
     arguments:
       - |
@@ -16,11 +16,6 @@ tasks:
         export PYTHONPATH="/src/OLMo-core/src:${PYTHONPATH:-}"
         export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
         export OLMO_SHARED_FS=1
-        # CUDA 12.8 does not know B300's sm_103 target. Compile a generic
-        # sm_100 cubin, which is forward-compatible within Blackwell's 10.x
-        # compute-capability family; do not use architecture-specific sm_100a.
-        export CMAKE_CUDA_ARCHITECTURES=100
-
         NSYS_DEB=/tmp/nsight-systems.deb
         curl -fsSL \
           https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/nsight-systems-2026.1.3_2026.1.3.425-1_amd64.deb \
