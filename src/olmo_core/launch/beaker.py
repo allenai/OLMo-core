@@ -142,7 +142,7 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with the latest compatible stable version of PyTorch.
     """
-    stable_cu130 = "tylerr/olmo-core-tch291cu130-2025-11-25"
+    stable_cu130 = "akshitab/olmo-core-tch2110cu130-2026-07-28"
     """
     The stable image with CUDA pinned to 13.0.
     """
