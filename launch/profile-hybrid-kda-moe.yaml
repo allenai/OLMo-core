@@ -72,7 +72,7 @@ tasks:
             --config "${SOURCE_CONFIG}" \
             --data "${DATA_FILE}" \
             --output-dir "${RUN_DIR}" \
-            --steps 13 \
+            --steps 14 \
             --profile-step-start 10 \
             --profile-step-end 13 \
             --sequence-length 8192 \
