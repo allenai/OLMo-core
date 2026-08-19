@@ -171,7 +171,7 @@ to fla's kernel for varlen/`safe_gate`.
 ### Register-pressure notes for whoever edits the CuTe kernel
 
 ptxas left alone targets 64 registers (dynamic smem hides the 1-CTA/SM cap from it) and
-spills 1–2KB/thread. `min_blocks_per_mp=1` plus `--maxrregcount=128` (`KDA002C_MAXREG`) and
+spills 1–2KB/thread. `min_blocks_per_mp=1` plus `--maxrregcount=128` (`OLMO_CUTE_KDA_INTRA_MAXREG`) and
 *un*-unrolling the inner 16-iteration loops (`cutlass.range(unroll=4..8)`; full unroll lets
 ptxas hoist whole load batches) gets `LOCAL_SIZE_BYTES=0`. The incoming-grad gmem reads cost
 3.25ms read-at-use; prefetching them a compute-section ahead is worth ~3ms. 1024 threads was

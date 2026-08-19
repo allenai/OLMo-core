@@ -1,10 +1,10 @@
 # mypy: ignore-errors
 # The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking that mypy
 # cannot follow.
-"""The CuTe DSL forward for KDA. See NOTES.md / ALGORITHM.md.
+"""The CuTe DSL forward for KDA. See ALGORITHM.md.
 
-Ported from gdn 002's pipelined fused fwd_h + fwd_o kernel (kernels/gdn/ideas/002-cute-pipeline/
-kernel.py, copied and modified — see the ALGORITHM.md diff table). The per-dim gate mostly
+Adapted from a pipelined fused fwd_h + fwd_o kernel for GDN, whose scalar gate this op
+replaces with a per-dim one (see the ALGORITHM.md diff table). The per-dim gate mostly
 disappears from the kernel because fla's intra stage pre-scales the operands:
 
     qg = q * exp2(g2)                 (intra stores it, disable_recompute=True path)
@@ -480,7 +480,7 @@ class KdaFwdStateKernel:
         )
         # Not PipelineTmaAsync: its consumer_release only arrives from lane 0 of each
         # warp while the empty barrier expects the full consumer_group count, so
-        # producer_tail deadlocks. This is gdn 002's pipe; the MMA warp supplies the
+        # producer_tail deadlocks. This is the GDN kernel's pipe; the MMA warp supplies the
         # umma-side arrive even though it never reads u/gd.
         simtin_pipe = pipeline.PipelineTmaMultiConsumersAsync.create(
             num_stages=self.input_stages,

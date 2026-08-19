@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -21,9 +22,12 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.utils import log_once
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+
+log = logging.getLogger(__name__)
 
 
 class KimiDeltaAttention(SequenceMixer):
@@ -33,6 +37,10 @@ class KimiDeltaAttention(SequenceMixer):
     KDA uses a vector-valued decay for every key channel and a scalar delta
     gate for every value head. The surrounding OLMo-core adapter retains packed
     document convolutions, initialization, and sequence-mixer interfaces.
+
+    .. warning::
+        ``use_cute_kernel`` is **experimental**. See
+        :class:`KimiDeltaAttentionConfig` for what opting in entails.
     """
 
     def __init__(
@@ -66,6 +74,17 @@ class KimiDeltaAttention(SequenceMixer):
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
         self.use_cute_kernel = use_cute_kernel
+        if use_cute_kernel:
+            log_once(
+                log,
+                "KDA is running with the EXPERIMENTAL cute-kda kernels "
+                "(use_cute_kernel=True). These are new, are not numerically identical to "
+                "FLA's kernels, and only engage on Blackwell at chunk size 64 without "
+                "packed-document cu_seqlens; every other shape silently falls back to FLA. "
+                "See olmo_core.nn.attention.kda_cute for the supported box and its "
+                "OLMO_CUTE_KDA_* bisection knobs.",
+                level=logging.WARNING,
+            )
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * expand_v)
@@ -289,11 +308,19 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
-    :param use_cute_kernel: Whether to use the CuTe/Triton KDA kernels from
-        :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
+    :param use_cute_kernel: **Experimental.** Whether to use the CuTe/Triton KDA kernels
+        from :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
         Only takes effect on hardware/shapes those kernels support (Blackwell,
         chunk-size-64, no packed-document ``cu_seqlens``); otherwise the layer
         silently falls back to FLA's kernel.
+
+        These kernels are faster but newer and far less exercised than FLA's: they are
+        not bit-identical to FLA's monolith, so loss curves will not match a run with
+        this turned off, and only the fixed-length forward and the ``bwd_intra`` backward
+        stage are swapped. Leave this off unless you are deliberately testing the kernels,
+        and check the ``cute-kda`` lines in the training log to confirm which arms actually
+        ran. The module docstring of :mod:`olmo_core.nn.attention.kda_cute` documents the
+        ``OLMO_CUTE_KDA_*`` environment variables for isolating a suspect stage.
     :param dtype: The parameter dtype.
     """
 
