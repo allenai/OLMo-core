@@ -13,6 +13,7 @@ tasks:
           --branch robertb/kda-nsys-profile --single-branch \
           "https://x-access-token:${GITHUB_TOKEN}@github.com/allenai/OLMo-core.git" \
           /src/OLMo-core
+        python -m pip install --no-cache-dir nvtx
         export PYTHONPATH="/src/OLMo-core/src:${PYTHONPATH:-}"
         export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
         export OLMO_SHARED_FS=1
