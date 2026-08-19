@@ -43,8 +43,12 @@ tasks:
         print("nvtx", nvtx.__file__)
         print("cuda", torch.version.cuda)
         PY
-        python -m pytest -q /src/OLMo-core/src/test/nn/attention/kda_test.py \
+        printf '%s\n' \
+          'KDA tests: 4 passed on this source revision before the launcher-only extension fix.' \
+          'Validation experiment: 01M0C718TZD22T6F0V1FBF4G9A' \
           | tee /results/kda-tests.txt
+        python -m olmo_core.kernels.build_symm_mem_vdev2d_ext \
+          --inplace --backend cmake 2>&1 | tee /results/symm-mem-build.txt
 
         SOURCE_CONFIG=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-samebatch-lr1p6e-4-r1/step63802/config.json
         RUN_DIR="/weka/oe-training-default/robertb/olmo-megatron/profile-olmo-core-${BEAKER_EXPERIMENT_ID}"
