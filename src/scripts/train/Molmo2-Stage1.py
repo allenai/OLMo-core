@@ -224,6 +224,18 @@ DATASET_PATH = f"{PIXMO_DATASETS}/cap"
 MAX_STEPS = 32000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
+# Prompt family for the pointing/counting data, from the released Molmo2-4B-Pretrain
+# `data_formatter` (`prompt_templates: none`, `system_prompt: style_and_length_v2`): the question
+# is the bare lowercased label behind a `"<style>:"` prefix, not a natural-language template.
+# The formatter defaults to the stage-2 family, which trains a model that is then out of
+# distribution for pointing evals -- worth ~11 f1 on pixmo_point_eval_v3_mp, most of it
+# abstention, because the "Please say 'There are none.'" instruction only exists in the
+# stage-2 template.
+POINTING_PROMPT_FAMILY = {
+    "prompt_templates": "none",
+    "system_prompt": "style_and_length_v2",
+}
+
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
 POINTING_RATE = 0.30
 NLP_RATE = 0.10
@@ -681,10 +693,14 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 
     if p > 0:
         pointing = [
-            PixMoPointsDatasetConfig(kind="basic", max_crops=MAX_CROPS).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
-            PixMoPointsDatasetConfig(kind="high_frequency", max_crops=MAX_CROPS).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
+            PixMoPointsDatasetConfig(
+                kind="basic", max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY
+            ).build(tokenizer),
+            PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY).build(tokenizer),
+            PixMoPointsDatasetConfig(
+                kind="high_frequency", max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY
+            ).build(tokenizer),
+            CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY).build(tokenizer),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()

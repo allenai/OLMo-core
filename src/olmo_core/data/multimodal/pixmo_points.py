@@ -25,7 +25,7 @@ from olmo_core.config import Config
 
 from .grounding import normalize_points, pointing_answer
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import example_rng, build_branched_sequence
+from .sequence_builder import build_branched_sequence, example_rng
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -67,9 +67,7 @@ def _build_example(
         rng.shuffle(order)
         branches_text = [branches_text[i] for i in order]
 
-    preprocess_rng = (
-        shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
-    )
+    preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
         pil_image,
         dtype=torch.float32,
@@ -88,7 +86,9 @@ def _build_example(
         )
         for i, (q, a) in enumerate(branches_text)
     ]
-    from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
+    from olmo_core.data.multimodal.message_weight import (
+        apply_message_weight_to_loss_masks,
+    )
 
     seq = build_branched_sequence(
         prefix,
@@ -139,6 +139,10 @@ class PixMoPointsDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
         return PixMoPointsDataset(self, tokenizer)
@@ -153,7 +157,9 @@ class PixMoPointsDataset:
         )
         from datasets import concatenate_datasets
 
-        self._data = concatenate_datasets([_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub])
+        self._data = concatenate_datasets(
+            [_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub]
+        )
         # Pre-split each row's labels into sub-batches with <= max_total_points (mm_olmo).
         self._index = self._build_sub_index()
 
@@ -183,7 +189,11 @@ class PixMoPointsDataset:
         row_idx, label_idxs = self._index[i]
         rng = example_rng(self.config.seed, i)
         row = self._data[row_idx]
-        fmt = SftFormatter(seed=self.config.seed)
+        fmt = SftFormatter(
+            seed=self.config.seed,
+            prompt_templates=self.config.prompt_templates,
+            system_prompt=self.config.system_prompt,
+        )
         specs: List[Tuple[str, str, Any]] = []
         for li in label_idxs:
             label = row["label"][li]
@@ -227,6 +237,10 @@ class PixMoCountDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "PixMoCountDataset":
         return PixMoCountDataset(self, tokenizer)
@@ -253,7 +267,11 @@ class PixMoCountDataset:
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
         rng = example_rng(self.config.seed, i)
-        fmt = SftFormatter(seed=self.config.seed)
+        fmt = SftFormatter(
+            seed=self.config.seed,
+            prompt_templates=self.config.prompt_templates,
+            system_prompt=self.config.system_prompt,
+        )
         xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
         sub = {
             "style": style,
@@ -288,6 +306,10 @@ class CoSynPointDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)
