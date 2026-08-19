@@ -20,6 +20,11 @@ ctc-data build --task fiqa --split eval --out /data/ctc/v3    # held-out ladders
 ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
     --eval-size 125 --allow-small-eval --out /data/ctc/xlong  # rungs are open-ended past 32k
 
+ctc-data build --task nq --pool auto --out /data/ctc/v3   # seed pool from the Hub: no GPU, no
+                                                          # Lucene index, no LLM mining -- a
+                                                          # 20k-example build in about a minute
+ctc-data pool export --task nq --out seeds/               # publish side: the expensive load, once
+
 ctc-fingerprint show CKPT           # what format was this checkpoint trained on?
 ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
 ```

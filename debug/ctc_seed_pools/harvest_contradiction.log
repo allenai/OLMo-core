@@ -1,0 +1,31 @@
+  indexing abstract 1/211,269 (7s)
+  indexing abstract 2/211,269 (7s)
+  indexing abstract 5/211,269 (7s)
+  indexing abstract 10/211,269 (7s)
+  indexing abstract 10,000/211,269 (11s)
+  indexing abstract 100,000/211,269 (42s)
+indexed 1,943,217 sentences over 211,269 abstracts
+  row 0 (83s, 0 pairs)
+  row 1 (83s, 3 pairs)
+  row 4 (83s, 12 pairs)
+  row 9 (83s, 27 pairs)
+  row 99 (83s, 297 pairs)
+  row 999 (85s, 2,997 pairs)
+  row 2,000 (87s, 6,000 pairs)
+  row 4,000 (94s, 12,000 pairs)
+  row 6,000 (100s, 18,000 pairs)
+  row 8,000 (106s, 24,000 pairs)
+  row 10,000 (111s, 30,000 pairs)
+  row 12,000 (115s, 36,000 pairs)
+  row 14,000 (123s, 42,000 pairs)
+  row 16,000 (126s, 48,000 pairs)
+  row 18,000 (133s, 54,000 pairs)
+  row 20,000 (141s, 60,000 pairs)
+{
+  "rows": 20114,
+  "pairs_seen": 60342,
+  "both_real": 0,
+  "neither_real": 0,
+  "recovered": 60342
+}
+wrote /accounts/projects/berkeleynlp/prasann/projects/newolmocore/OLMo-core/debug/ctc_seed_pools/contradiction_pairs.jsonl

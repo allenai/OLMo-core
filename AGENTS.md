@@ -36,6 +36,8 @@ ctc-data list                         # every generator, its ladder, its paramet
 ctc-data build --task contradiction --out DIR
 ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
     --eval-size 125 --allow-small-eval --out DIR    # rungs are open-ended past 32k
+ctc-data build --task nq --pool auto --out DIR      # seed pool from the Hub: no GPU/index/LLM,
+                                                    # a 20k-example build in about a minute
 ctc-eval --ckpt CKPT --tasks main --attn chunked    # grade a checkpoint
 ```
 

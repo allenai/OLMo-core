@@ -16,6 +16,7 @@ olmo-core's format and belongs on the training side, in ``src/scripts/ctc/``.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -25,7 +26,7 @@ from ..format import rungs as rung_util
 from ..tasks import load_all
 from . import audit as audit_mod
 from . import build as build_mod
-from . import ladders
+from . import ladders, seeds
 from .generators import base as generators
 from .io import load_jsonl, save_jsonl
 
@@ -47,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  ctc-data build --task contradiction -C pairs_path=pairs.jsonl --out /data/ctc/v3\n"
             "  ctc-data build --task cycle --split eval --rungs 64k,1m,10m \\\n"
             "      --eval-size 125 --allow-small-eval --out /data/ctc/xlong\n"
+            "  ctc-data build --task nq --pool auto --out /data/ctc/v3   # no GPU, no index\n"
+            "  ctc-data pool export --task nq --out seeds/\n"
             "  ctc-data audit --task cycle --dir /data/ctc/v3\n"
         ),
     )
@@ -100,10 +103,52 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--force", action="store_true", help="write even if the audit fails (says so in the output)"
     )
+    p.add_argument(
+        "--pool",
+        default=None,
+        metavar="PATH|auto|hf://REPO",
+        help=(
+            "load the corpus from a seed pool instead of building it -- the expensive half "
+            "(GPU cross-encoder, Lucene index, LLM mining, big downloads) already ran at export "
+            "time, so the build needs nothing but this package. A local .seed.jsonl.gz, 'auto' "
+            f"(fetch the task's pool from {seeds.DEFAULT_REPO}, override with "
+            f"${seeds.REPO_ENV}), or hf://<repo-id>. Corpus -C parameters were baked in at "
+            "export and are refused here"
+        ),
+    )
 
     a = sub.add_parser("audit", help="re-run the integrity and shortcut checks over built data")
     a.add_argument("--task", required=True)
     a.add_argument("--dir", required=True)
+
+    s = sub.add_parser(
+        "pool",
+        help="export, inspect or fetch seed pools (the expensive corpus half, serialized)",
+    )
+    pool_sub = s.add_subparsers(dest="pool_command", metavar="action")
+    pe = pool_sub.add_parser(
+        "export",
+        help="run the expensive corpus load once and write <task>.seed.jsonl.gz",
+    )
+    pe.add_argument("--task", required=True, help=f"one of: {', '.join(sorted(seeds.LADDER_TAGS))}")
+    pe.add_argument("--out", required=True, help="output directory")
+    pe.add_argument(
+        "-C",
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="corpus-loader parameters only (e.g. -C pairs_path=pairs.jsonl); build-side "
+        "parameters belong on `ctc-data build`, which stays cheap and re-runnable",
+    )
+    pi = pool_sub.add_parser("info", help="print a seed pool's header (ladder, provenance, size)")
+    pi.add_argument("paths", nargs="+", help="seed-pool file(s)")
+    pf = pool_sub.add_parser(
+        "fetch", help="download a task's seed pool from the Hub and print its path"
+    )
+    pf.add_argument("--task", required=True)
+    pf.add_argument("--repo", default=None, help=f"HF dataset repo (default: {seeds.DEFAULT_REPO})")
     return ap
 
 
@@ -216,7 +261,21 @@ def _build(args: argparse.Namespace) -> int:
 
     # Loaded once and handed to both halves. Loading twice would re-shuffle the pool and silently
     # give train and eval overlapping views of it.
-    corpus = generator.load_corpus(**corpus_overrides)
+    if args.pool is not None:
+        if generator.corpus is None:
+            raise SystemExit(
+                f"{args.task} is synthetic: it has no corpus, so --pool does not apply"
+            )
+        if corpus_overrides:
+            raise SystemExit(
+                f"corpus parameter(s) {sorted(corpus_overrides)} were baked into the pool at "
+                "export time; to change them, re-run `ctc-data pool export` with the new values"
+            )
+        pool_path = seeds.resolve(args.pool, args.task)
+        corpus = seeds.load(pool_path, args.task)
+        print(f"corpus: seed pool {pool_path}")
+    else:
+        corpus = generator.load_corpus(**corpus_overrides)
 
     evalset: Dict[str, List[Dict[str, Any]]] = {}
     if split in ("both", "eval"):
@@ -290,6 +349,46 @@ def _audit(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def _pool(args: argparse.Namespace) -> int:
+    if args.pool_command == "export":
+        load_all()
+        generator = generators.get(args.task)
+        if generator.corpus is None:
+            print(f"{args.task} is synthetic: there is no corpus to export", file=sys.stderr)
+            return 1
+        build_overrides, corpus_overrides = _split_overrides(generator, args.overrides)
+        if build_overrides:
+            print(
+                f"{sorted(build_overrides)} are build parameters, not corpus parameters; a pool "
+                "bakes in only the corpus half -- pass them to `ctc-data build` instead",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"loading the {args.task} corpus (this is the expensive step the pool exists to cache)"
+        )
+        pool = generator.load_corpus(**corpus_overrides)
+        config = generator.corpus_config(**corpus_overrides)
+        path = seeds.save(
+            Path(args.out) / seeds.filename_for(args.task), args.task, pool, corpus_config=config
+        )
+        print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB)")
+        return 0
+    if args.pool_command == "info":
+        for spelled in args.paths:
+            header = seeds.read_header(Path(spelled))
+            print(f"{spelled}:")
+            print(json.dumps(header, indent=2))
+        return 0
+    if args.pool_command == "fetch":
+        spec = f"hf://{args.repo}" if args.repo else "auto"
+        path = seeds.resolve(spec, args.task)
+        print(path)
+        return 0
+    print("usage: ctc-data pool {export,info,fetch} ...", file=sys.stderr)
+    return 1
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """
     :param argv: Argument list; defaults to ``sys.argv[1:]``.
@@ -301,7 +400,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command is None:
         ap.print_help()
         return 0
-    return {"list": lambda a: _list(), "build": _build, "audit": _audit}[args.command](args)
+    return {"list": lambda a: _list(), "build": _build, "audit": _audit, "pool": _pool}[
+        args.command
+    ](args)
 
 
 if __name__ == "__main__":

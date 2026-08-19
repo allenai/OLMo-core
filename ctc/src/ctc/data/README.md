@@ -46,6 +46,41 @@ A build writes `DIR/<task>/train.jsonl` plus one `DIR/<task>/eval_<rung>.jsonl` 
 Corpus loading needs the extras: `pip install './ctc[sources]'` for the HF datasets,
 `./ctc[gen]` for the cross-encoder and the OOLONG tokenizer, plus `pyserini` for anything that
 mines BM25 negatives. A bare install still builds all four synthetic tasks and grades everything.
+**Or skip the extras entirely and build from a seed pool — see the next section.**
+
+## Seed pools: any build in about a minute, on a bare install
+
+Everything a build can need a GPU, a Lucene index, an LLM endpoint or a multi-gigabyte download
+*for* happens inside the corpus loader; everything after the pool — gold placement, distractor
+draws, rung laddering, the audit — is pure Python and fast. A **seed pool** is that loader's
+output, serialized (`ctc.data.seeds`, gzipped two-line JSONL, explicit per-pool codecs — loading
+one executes nothing but `json.loads` and whitelisted constructors). Build from one and the
+expensive half has already happened:
+
+```bash
+ctc-data build --task nq --pool auto --out DIR          # fetch the published pool from the Hub
+ctc-data build --task nq --pool nq.seed.jsonl.gz --out DIR       # or a local file
+ctc-data pool export --task nq --out seeds/             # publish side: the expensive load, once
+ctc-data pool info seeds/nq.seed.jsonl.gz               # ladder + provenance header
+```
+
+`--pool auto` fetches `<task>.seed.jsonl.gz` from the HF dataset repo named in
+`ctc.data.seeds.DEFAULT_REPO` (override with `$CTC_SEED_POOL_REPO`) and caches it locally, so
+repeat builds are offline. Three properties worth knowing:
+
+- **A seeded build is THE SAME build.** The pool is everything a generator reads, so the same
+  `(--seed, config)` produces identical examples from the live loader and from the file — the
+  tests assert example equality per ladder, not just schema validity.
+- **The rung ladder stays open-ended.** The seed fixes the corpus, not the ladder: any rung label
+  (`64k`, `1m`, `10m`, ...) still works, subject to the same `CEILINGS`/supply bounds as a live
+  build. A 20k-example train set or a laddered eval at any scale is minutes of pure assembly.
+- **Corpus `-C` parameters are refused alongside `--pool`** — they were consumed at export time
+  and accepting one here would label the output as built with a setting that had no effect.
+  Build-side `-C` parameters (`num_pairs`, `num_docs`, ...) still apply.
+
+The seed file records the ladder it was exported for, and `build` refuses a mismatch (an `nq`
+pool fed to the `fiqa` ladder would build plausible data for the wrong ladder). Export scripts
+and provenance for the published pools live in `debug/ctc_seed_pools/`.
 
 ### Changing a parameter
 
