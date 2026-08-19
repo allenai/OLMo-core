@@ -59,7 +59,7 @@ __all__ = [
 ]
 
 _LOCAL = threading.local()
-_DEFAULT_TORCH = "2.9.1".replace(".", "")
+_DEFAULT_TORCH = "2.10.0".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
 
 
@@ -138,15 +138,15 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-    stable = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2025-11-25"
+    stable = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-2026-07-28"
     """
     Built with the latest compatible stable version of PyTorch.
     """
-    stable_cu130 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu130-2025-11-25"
+    stable_cu130 = "tylerr/olmo-core-tch291cu130-2025-11-25"
     """
     The stable image with CUDA pinned to 13.0.
     """
-    stable_cu128 = f"tylerr/olmo-core-tch{_DEFAULT_TORCH}cu128-2025-11-25"
+    stable_cu128 = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu128-2026-07-28"
     """
     The stable image with CUDA pinned to 12.8.
     """
@@ -164,7 +164,7 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with torch 2.9.1 and CUDA 12.8. Comes with flash-attn 4 (CUTE implementation).
     """
-    tch2100_cu128 = "petew/olmo-core-tch2100cu128-2026-01-23"
+    tch2100_cu128 = "akshitab/olmo-core-tch2100cu128-2026-07-28"
     """
     Built with torch 2.10.0 and CUDA 12.8.
     """

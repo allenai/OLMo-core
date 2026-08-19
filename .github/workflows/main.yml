@@ -166,9 +166,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # TODO: Add GPU test coverage for PyTorch 2.12 with CUDA 13.0 once a compatible
+        # Beaker image is available.
         task:
           - name: Test (GPU)
-            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
+            image: &gpu_test_image akshitab/olmo-core-tch2100cu128-2026-07-28
+            gpus: 2
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
+                --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/optim*' \
+                src/test/
+
+          - name: Test (GPU, torch 2.11)
+            image: akshitab/olmo-core-tch2110cu128-2026-08-04
             gpus: 2
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
