@@ -193,16 +193,6 @@ disable_error_code = "has-type"
 module = "tests.*"
 strict_optional = false
 
-[[tool.mypy.overrides]]
-# The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking
-# that mypy cannot follow.
-module = [
-    "olmo_core.nn.attention.kda_cute.kernel_fwd",
-    "olmo_core.nn.attention.kda_cute.kernel_intra_cute",
-    "olmo_core.nn.attention.kda_cute.kernel_intra",
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 testpaths = "src/test/"
 python_classes = ["Test*", "*Test"]
