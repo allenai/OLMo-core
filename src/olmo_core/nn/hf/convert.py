@@ -460,6 +460,30 @@ def _apply_qwen3_5_norm_transform(state: Dict[str, Any]) -> Dict[str, Any]:
     return state
 
 
+def _apply_qwen3_5_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform regular Qwen3.5 norm weights from OLMo format back to HF format.
+
+    This is the inverse of :func:`_apply_qwen3_5_norm_transform`. The GDN output
+    norm (``linear_attn.norm``) is intentionally excluded because both implementations
+    store that gated norm's direct multiplicative weight.
+    """
+    norm_patterns = [
+        "input_layernorm.weight",
+        "post_attention_layernorm.weight",
+        "model.norm.weight",
+        "q_norm.weight",
+        "k_norm.weight",
+    ]
+
+    for key, value in state.items():
+        if any(pattern in key for pattern in norm_patterns):
+            if isinstance(value, torch.Tensor):
+                state[key] = value - 1.0
+
+    return state
+
+
 def _get_qwen3_5_text_config(config: PretrainedConfig) -> PretrainedConfig:
     text_config = getattr(config, "text_config", None)
     if text_config is not None:
@@ -669,6 +693,380 @@ def convert_qwen3_5_state_from_hf(
     return _apply_qwen3_5_norm_transform(olmo_state)
 
 
+def _get_qwen3_5_olmo_tensor(
+    olmo_state: Dict[str, Any],
+    key: str,
+    expected_shape: tuple[int, ...],
+    used_keys: set[str],
+) -> torch.Tensor:
+    try:
+        value = olmo_state[key]
+    except KeyError:
+        raise KeyError(f"Missing required Qwen3.5 OLMo-core state key: {key}") from None
+
+    if not isinstance(value, torch.Tensor):
+        raise TypeError(f"Expected {key!r} to be a tensor, found {type(value).__name__}")
+    if tuple(value.shape) != expected_shape:
+        raise ValueError(
+            f"Unexpected shape for {key!r}: expected {expected_shape}, found {tuple(value.shape)}"
+        )
+
+    used_keys.add(key)
+    return value
+
+
+QWEN3_5_SHARED_TO_HF_KEY_MAP: Dict[str, str] = {
+    "embeddings.weight": "model.embed_tokens.weight",
+    "lm_head.norm.weight": "model.norm.weight",
+    "lm_head.w_out.weight": "lm_head.weight",
+}
+
+QWEN3_5_COMMON_LAYER_TO_HF_KEY_MAP: Dict[str, str] = {
+    "attention_norm.weight": "input_layernorm.weight",
+    "feed_forward_norm.weight": "post_attention_layernorm.weight",
+    "feed_forward.w1.weight": "mlp.gate_proj.weight",
+    "feed_forward.w2.weight": "mlp.down_proj.weight",
+    "feed_forward.w3.weight": "mlp.up_proj.weight",
+}
+
+QWEN3_5_GDN_LAYER_TO_HF_KEY_MAP: Dict[str, str] = {
+    "attention.w_g.weight": "linear_attn.in_proj_z.weight",
+    "attention.w_a.weight": "linear_attn.in_proj_a.weight",
+    "attention.w_b.weight": "linear_attn.in_proj_b.weight",
+    "attention.w_out.weight": "linear_attn.out_proj.weight",
+    "attention.o_norm.weight": "linear_attn.norm.weight",
+    "attention.A_log": "linear_attn.A_log",
+    "attention.dt_bias": "linear_attn.dt_bias",
+}
+
+QWEN3_5_ATTN_LAYER_TO_HF_KEY_MAP: Dict[str, str] = {
+    "attention.w_k.weight": "self_attn.k_proj.weight",
+    "attention.w_v.weight": "self_attn.v_proj.weight",
+    "attention.w_out.weight": "self_attn.o_proj.weight",
+    "attention.q_norm.weight": "self_attn.q_norm.weight",
+    "attention.k_norm.weight": "self_attn.k_norm.weight",
+}
+
+
+def _map_qwen3_5_state_to_hf(
+    olmo_state: Dict[str, Any],
+    expected_shapes: Dict[str, tuple[int, ...]],
+    key_map: Dict[str, str],
+    used_keys: set[str],
+    *,
+    olmo_prefix: str = "",
+    hf_prefix: str = "",
+) -> Dict[str, torch.Tensor]:
+    mapped_state: Dict[str, torch.Tensor] = {}
+    for olmo_suffix, hf_suffix in key_map.items():
+        olmo_key = f"{olmo_prefix}{olmo_suffix}"
+        mapped_state[f"{hf_prefix}{hf_suffix}"] = _get_qwen3_5_olmo_tensor(
+            olmo_state,
+            olmo_key,
+            expected_shapes[olmo_key],
+            used_keys,
+        )
+    return mapped_state
+
+
+def _convert_qwen3_5_gdn_layer_to_hf(
+    olmo_state: Dict[str, Any],
+    layer_idx: int,
+    expected_shapes: Dict[str, tuple[int, ...]],
+    used_keys: set[str],
+) -> Dict[str, torch.Tensor]:
+    prefix = f"blocks.{layer_idx}."
+    hf_prefix = f"model.layers.{layer_idx}."
+    get_tensor = lambda suffix: _get_qwen3_5_olmo_tensor(  # noqa: E731
+        olmo_state,
+        f"{prefix}{suffix}",
+        expected_shapes[f"{prefix}{suffix}"],
+        used_keys,
+    )
+
+    state = _map_qwen3_5_state_to_hf(
+        olmo_state,
+        expected_shapes,
+        QWEN3_5_COMMON_LAYER_TO_HF_KEY_MAP,
+        used_keys,
+        olmo_prefix=prefix,
+        hf_prefix=hf_prefix,
+    )
+    state.update(
+        _map_qwen3_5_state_to_hf(
+            olmo_state,
+            expected_shapes,
+            QWEN3_5_GDN_LAYER_TO_HF_KEY_MAP,
+            used_keys,
+            olmo_prefix=prefix,
+            hf_prefix=hf_prefix,
+        )
+    )
+    state.update(
+        {
+            f"{hf_prefix}linear_attn.in_proj_qkv.weight": torch.cat(
+                [
+                    get_tensor("attention.w_q.weight"),
+                    get_tensor("attention.w_k.weight"),
+                    get_tensor("attention.w_v.weight"),
+                ],
+                dim=0,
+            ),
+            f"{hf_prefix}linear_attn.conv1d.weight": torch.cat(
+                [
+                    get_tensor("attention.q_conv1d.weight"),
+                    get_tensor("attention.k_conv1d.weight"),
+                    get_tensor("attention.v_conv1d.weight"),
+                ],
+                dim=0,
+            ),
+        }
+    )
+    return state
+
+
+def _merge_qwen3_5_q_proj(
+    w_q: torch.Tensor, w_g: torch.Tensor, n_heads: int, head_dim: int
+) -> torch.Tensor:
+    """
+    Interleave separate OLMo query and gate weights in HF's per-head layout.
+    """
+    hidden_size = w_q.shape[1]
+    q = w_q.reshape(n_heads, head_dim, hidden_size)
+    gate = w_g.reshape(n_heads, head_dim, hidden_size)
+    return torch.stack((q, gate), dim=1).reshape(2 * n_heads * head_dim, hidden_size)
+
+
+def _convert_qwen3_5_attn_layer_to_hf(
+    olmo_state: Dict[str, Any],
+    layer_idx: int,
+    n_heads: int,
+    head_dim: int,
+    expected_shapes: Dict[str, tuple[int, ...]],
+    used_keys: set[str],
+) -> Dict[str, torch.Tensor]:
+    prefix = f"blocks.{layer_idx}."
+    hf_prefix = f"model.layers.{layer_idx}."
+    get_tensor = lambda suffix: _get_qwen3_5_olmo_tensor(  # noqa: E731
+        olmo_state,
+        f"{prefix}{suffix}",
+        expected_shapes[f"{prefix}{suffix}"],
+        used_keys,
+    )
+
+    w_q = get_tensor("attention.w_q.weight")
+    w_g = get_tensor("attention.w_g.weight")
+    state = _map_qwen3_5_state_to_hf(
+        olmo_state,
+        expected_shapes,
+        QWEN3_5_COMMON_LAYER_TO_HF_KEY_MAP,
+        used_keys,
+        olmo_prefix=prefix,
+        hf_prefix=hf_prefix,
+    )
+    state.update(
+        _map_qwen3_5_state_to_hf(
+            olmo_state,
+            expected_shapes,
+            QWEN3_5_ATTN_LAYER_TO_HF_KEY_MAP,
+            used_keys,
+            olmo_prefix=prefix,
+            hf_prefix=hf_prefix,
+        )
+    )
+    state.update(
+        {
+            f"{hf_prefix}self_attn.q_proj.weight": _merge_qwen3_5_q_proj(
+                w_q, w_g, n_heads, head_dim
+            ),
+        }
+    )
+    return state
+
+
+def _get_qwen3_5_expected_olmo_shapes(
+    text_config: PretrainedConfig, layer_types: List[str]
+) -> Dict[str, tuple[int, ...]]:
+    hidden_size = int(text_config.hidden_size)
+    intermediate_size = int(text_config.intermediate_size)
+    vocab_size = int(text_config.vocab_size)
+    n_heads = int(text_config.num_attention_heads)
+    n_kv_heads = int(text_config.num_key_value_heads)
+    head_dim = int(text_config.head_dim)
+    n_key_heads = int(text_config.linear_num_key_heads)
+    n_value_heads = int(text_config.linear_num_value_heads)
+    key_head_dim = int(text_config.linear_key_head_dim)
+    value_head_dim = int(text_config.linear_value_head_dim)
+    conv_kernel_dim = int(text_config.linear_conv_kernel_dim)
+    key_dim = n_key_heads * key_head_dim
+    value_dim = n_value_heads * value_head_dim
+    query_dim = n_heads * head_dim
+    kv_dim = n_kv_heads * head_dim
+
+    shapes: Dict[str, tuple[int, ...]] = {
+        "embeddings.weight": (vocab_size, hidden_size),
+        "lm_head.norm.weight": (hidden_size,),
+        "lm_head.w_out.weight": (vocab_size, hidden_size),
+    }
+    for layer_idx, layer_type in enumerate(layer_types):
+        prefix = f"blocks.{layer_idx}."
+        shapes.update(
+            {
+                f"{prefix}attention_norm.weight": (hidden_size,),
+                f"{prefix}feed_forward_norm.weight": (hidden_size,),
+                f"{prefix}feed_forward.w1.weight": (intermediate_size, hidden_size),
+                f"{prefix}feed_forward.w2.weight": (hidden_size, intermediate_size),
+                f"{prefix}feed_forward.w3.weight": (intermediate_size, hidden_size),
+            }
+        )
+        if layer_type == "linear_attention":
+            shapes.update(
+                {
+                    f"{prefix}attention.w_q.weight": (key_dim, hidden_size),
+                    f"{prefix}attention.w_k.weight": (key_dim, hidden_size),
+                    f"{prefix}attention.w_v.weight": (value_dim, hidden_size),
+                    f"{prefix}attention.w_g.weight": (value_dim, hidden_size),
+                    f"{prefix}attention.w_a.weight": (n_value_heads, hidden_size),
+                    f"{prefix}attention.w_b.weight": (n_value_heads, hidden_size),
+                    f"{prefix}attention.w_out.weight": (hidden_size, value_dim),
+                    f"{prefix}attention.q_conv1d.weight": (
+                        key_dim,
+                        1,
+                        conv_kernel_dim,
+                    ),
+                    f"{prefix}attention.k_conv1d.weight": (
+                        key_dim,
+                        1,
+                        conv_kernel_dim,
+                    ),
+                    f"{prefix}attention.v_conv1d.weight": (
+                        value_dim,
+                        1,
+                        conv_kernel_dim,
+                    ),
+                    f"{prefix}attention.o_norm.weight": (value_head_dim,),
+                    f"{prefix}attention.A_log": (n_value_heads,),
+                    f"{prefix}attention.dt_bias": (n_value_heads,),
+                }
+            )
+        elif layer_type == "full_attention":
+            shapes.update(
+                {
+                    f"{prefix}attention.w_q.weight": (query_dim, hidden_size),
+                    f"{prefix}attention.w_g.weight": (query_dim, hidden_size),
+                    f"{prefix}attention.w_k.weight": (kv_dim, hidden_size),
+                    f"{prefix}attention.w_v.weight": (kv_dim, hidden_size),
+                    f"{prefix}attention.w_out.weight": (hidden_size, query_dim),
+                    f"{prefix}attention.q_norm.weight": (head_dim,),
+                    f"{prefix}attention.k_norm.weight": (head_dim,),
+                }
+            )
+        else:
+            raise ValueError(f"Unknown layer type {layer_type!r} at layer {layer_idx}")
+
+    return shapes
+
+
+@beta_feature
+def convert_qwen3_5_state_to_hf(
+    config: PretrainedConfig,
+    olmo_core_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Convert an unsharded OLMo-core Qwen3.5 text model state dict to official HF format.
+
+    The returned state is loadable by Hugging Face's ``Qwen3_5ForCausalLM``. Official
+    multimodal Qwen3.5 models include an additional vision tower and are outside this
+    converter's scope.
+
+    :param config: A Hugging Face ``Qwen3_5TextConfig``.
+    :param olmo_core_state: A complete canonical, unsharded OLMo-core model state dict.
+    """
+    if config.model_type != "qwen3_5_text":
+        raise ValueError("Qwen3.5 state export supports text models only; pass a Qwen3_5TextConfig")
+
+    layer_types = getattr(config, "layer_types", None)
+    n_layers = int(config.num_hidden_layers)
+    if layer_types is None or len(layer_types) != n_layers:
+        raise ValueError(
+            f"Expected one Qwen3.5 layer type per layer ({n_layers}), found {layer_types!r}"
+        )
+
+    wrapper_keys = sorted(
+        key for key in olmo_core_state if key == "model" or key.startswith(("model.", "module."))
+    )
+    if wrapper_keys:
+        raise ValueError(
+            "Qwen3.5 conversion expects canonical unwrapped OLMo-core state keys; "
+            f"found {wrapper_keys[:5]}"
+        )
+
+    n_heads = int(config.num_attention_heads)
+    head_dim = int(config.head_dim)
+
+    expected_shapes = _get_qwen3_5_expected_olmo_shapes(config, list(layer_types))
+    missing_keys = sorted(set(expected_shapes) - set(olmo_core_state))
+    if missing_keys:
+        raise KeyError(f"Missing required Qwen3.5 OLMo-core state keys: {missing_keys}")
+    unused_keys = sorted(set(olmo_core_state) - set(expected_shapes))
+    if unused_keys:
+        raise RuntimeError(f"Some state keys were not converted: {unused_keys}")
+
+    validated_keys: set[str] = set()
+    for key, shape in expected_shapes.items():
+        _get_qwen3_5_olmo_tensor(olmo_core_state, key, shape, validated_keys)
+
+    used_keys: set[str] = set()
+    hf_state: Dict[str, Any] = _map_qwen3_5_state_to_hf(
+        olmo_core_state,
+        expected_shapes,
+        QWEN3_5_SHARED_TO_HF_KEY_MAP,
+        used_keys,
+    )
+    embeddings = hf_state["model.embed_tokens.weight"]
+    lm_head = hf_state["lm_head.weight"]
+    if getattr(config, "tie_word_embeddings", False):
+        if embeddings.dtype != lm_head.dtype or embeddings.device != lm_head.device:
+            raise ValueError(
+                "Qwen3.5 config ties word embeddings, but embeddings.weight and "
+                "lm_head.w_out.weight have different dtype or device"
+            )
+        if not torch.equal(embeddings, lm_head):
+            raise ValueError(
+                "Qwen3.5 config ties word embeddings, but embeddings.weight and "
+                "lm_head.w_out.weight differ"
+            )
+
+    for layer_idx, layer_type in enumerate(layer_types):
+        if layer_type == "linear_attention":
+            hf_state.update(
+                _convert_qwen3_5_gdn_layer_to_hf(
+                    olmo_core_state,
+                    layer_idx,
+                    expected_shapes,
+                    used_keys,
+                )
+            )
+        elif layer_type == "full_attention":
+            hf_state.update(
+                _convert_qwen3_5_attn_layer_to_hf(
+                    olmo_core_state,
+                    layer_idx,
+                    n_heads,
+                    head_dim,
+                    expected_shapes,
+                    used_keys,
+                )
+            )
+        else:
+            raise ValueError(f"Unknown layer type {layer_type!r} at layer {layer_idx}")
+
+    if used_keys != set(expected_shapes):
+        raise RuntimeError("Internal error: not all validated Qwen3.5 state keys were converted")
+
+    return _apply_qwen3_5_norm_inverse_transform(hf_state)
+
+
 def _convert_state(
     config: PretrainedConfig,
     state: Dict[str, Any],
@@ -771,7 +1169,8 @@ def _apply_gemma3_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any
 
 @beta_feature
 def convert_state_to_hf(
-    config: PretrainedConfig, olmo_core_state: Dict[str, Any]
+    config: PretrainedConfig,
+    olmo_core_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     Converts an *unsharded* model state dict of OLMo Core format into Hugging Face transformers format.
@@ -780,6 +1179,14 @@ def convert_state_to_hf(
     :param olmo_core_state: An unsharded OLMo Core model state dict. None of the states can be
         :class:`DTensor` or :class:`ShardedTensor`
     """
+
+    if config.model_type == "qwen3_5":
+        raise ValueError(
+            "Official multimodal Qwen3.5 export is not supported; pass config.text_config "
+            "to export the text model"
+        )
+    if config.model_type == "qwen3_5_text":
+        return convert_qwen3_5_state_to_hf(config, olmo_core_state)
 
     converter = _get_converter_to_hf(config.model_type)
 

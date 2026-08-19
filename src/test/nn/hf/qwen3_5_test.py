@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.hf.convert import convert_state_from_hf
+from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing.utils import requires_fla, requires_gpu
 
@@ -88,3 +88,67 @@ def test_qwen3_5_matches_huggingface():
     print(f"Logits diff mean: {diff.mean().item():.2e}, max: {diff.max().item():.2e}")
 
     torch.testing.assert_close(hf_logits, olmo_logits, rtol=1e-3, atol=5e-3)
+
+
+@pytest.mark.skipif(not _has_qwen3_5_transformers(), reason="transformers lacks Qwen3.5 support")
+@requires_gpu
+@requires_fla
+def test_qwen3_5_state_export_matches_huggingface(tmp_path):
+    import transformers
+
+    torch.manual_seed(0)
+    device = torch.device("cuda")
+
+    hf_config = transformers.Qwen3_5TextConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=4,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        linear_num_key_heads=2,
+        linear_key_head_dim=4,
+        linear_num_value_heads=2,
+        linear_value_head_dim=4,
+        linear_conv_kernel_dim=4,
+        layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+        tie_word_embeddings=True,
+    )
+    hf_model = transformers.Qwen3_5ForCausalLM(hf_config).eval().to(device)
+
+    olmo_config = _get_qwen3_5_config(hf_model.config)
+    olmo_model = olmo_config.build(init_device="cpu").eval().to(device)
+    converted_state = convert_state_from_hf(
+        hf_model.config,
+        hf_model.state_dict(),
+        model_type="qwen3_5_text",
+    )
+    olmo_model.load_state_dict(converted_state, strict=True)
+
+    exported_state = convert_state_to_hf(hf_model.config, olmo_model.state_dict())
+    reference_state = hf_model.state_dict()
+    assert exported_state.keys() == reference_state.keys()
+    for key, value in exported_state.items():
+        assert value.shape == reference_state[key].shape
+        assert value.dtype == reference_state[key].dtype
+
+    exported_hf_model = transformers.Qwen3_5ForCausalLM(hf_config).eval()
+    incompatible = exported_hf_model.load_state_dict(exported_state, strict=True)
+    assert incompatible.missing_keys == []
+    assert incompatible.unexpected_keys == []
+
+    exported_hf_model.save_pretrained(tmp_path)
+    reloaded_hf_model = transformers.Qwen3_5ForCausalLM.from_pretrained(tmp_path).eval()
+    exported_hf_model.to(device)
+    reloaded_hf_model.to(device)
+
+    input_ids = torch.randint(0, hf_config.vocab_size, (2, 8), device=device)
+
+    with torch.no_grad():
+        olmo_logits = olmo_model(input_ids)
+        exported_hf_logits = exported_hf_model(input_ids=input_ids).logits
+        reloaded_hf_logits = reloaded_hf_model(input_ids=input_ids).logits
+
+    torch.testing.assert_close(olmo_logits, exported_hf_logits, rtol=1e-3, atol=5e-3)
+    torch.testing.assert_close(exported_hf_logits, reloaded_hf_logits, rtol=0, atol=0)
