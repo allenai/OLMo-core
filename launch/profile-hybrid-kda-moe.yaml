@@ -16,6 +16,10 @@ tasks:
         export PYTHONPATH="/src/OLMo-core/src:${PYTHONPATH:-}"
         export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
         export OLMO_SHARED_FS=1
+        # CUDA 12.8 does not know B300's sm_103 target. Compile a generic
+        # sm_100 cubin, which is forward-compatible within Blackwell's 10.x
+        # compute-capability family; do not use architecture-specific sm_100a.
+        export CMAKE_CUDA_ARCHITECTURES=100
 
         NSYS_DEB=/tmp/nsight-systems.deb
         curl -fsSL \
