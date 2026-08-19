@@ -77,6 +77,10 @@ repeat builds are offline. Three properties worth knowing:
 - **Corpus `-C` parameters are refused alongside `--pool`** — they were consumed at export time
   and accepting one here would label the output as built with a setting that had no effect.
   Build-side `-C` parameters (`num_pairs`, `num_docs`, ...) still apply.
+- **The published contradiction pool holds 60,342 pairs**, which at the default `num_pairs=3`
+  supplies ~18k train examples; `--train 20000` hits the rejection limit at the last rung. Pass
+  `--train 18000` (measured: 18k train + the 5-rung eval ladder in ~4 minutes; an eval-only
+  ladder in seconds).
 
 The seed file records the ladder it was exported for, and `build` refuses a mismatch (an `nq`
 pool fed to the `fiqa` ladder would build plausible data for the wrong ladder). Export scripts

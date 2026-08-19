@@ -72,6 +72,10 @@ gpu)
         fi
     done
     ;;
+rerank_only)
+    # Rerun slot: the first pass died on the _pool_scores fill-shadowing bug (fixed same day).
+    run rerank
+    ;;
 mooney_cpu)
     run outlier -C cache=/data/prasann/single_task_ladders_20k/wiki100w_article_pool.pkl -C build=false
     run oolong

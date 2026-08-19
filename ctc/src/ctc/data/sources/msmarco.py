@@ -213,13 +213,13 @@ def _pool_scores(gold, hard, fill, score_map, query, scorer) -> Dict[str, float]
             hard_values.append(float(value))
     known = [float(score_map[int(c.id)]) for c in gold if int(c.id) in score_map]
     if known:
-        fill = max(known)
+        pinned = max(known)
     elif hard_values:
-        fill = max(hard_values) + 1.0
+        pinned = max(hard_values) + 1.0
     else:
-        fill = 0.0
+        pinned = 0.0
     for candidate in gold:
-        scores[candidate.id] = float(score_map.get(int(candidate.id), fill))
+        scores[candidate.id] = float(score_map.get(int(candidate.id), pinned))
     if scorer is not None:
         missing = [c for c in list(gold) + list(hard) + list(fill) if c.id not in scores]
         if missing:
