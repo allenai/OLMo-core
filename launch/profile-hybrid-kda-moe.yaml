@@ -22,7 +22,7 @@ tasks:
         dpkg -i cuda-keyring_1.1-1_all.deb
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-          nsight-systems-2026.1.3=2026.1.3.425-1
+          nsight-systems-2026.1=2026.1.3.425-1
         rm -f cuda-keyring_1.1-1_all.deb
         rm -rf /var/lib/apt/lists/*
 
