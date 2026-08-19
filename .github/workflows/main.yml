@@ -277,6 +277,7 @@ jobs:
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
+            --pre-setup 'python -m pip uninstall -y torchaudio' \
             --budget ai2/oe-other \
             --priority low \
             --preemptible \
