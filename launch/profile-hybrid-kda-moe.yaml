@@ -65,17 +65,10 @@ tasks:
         np.save(output, tokens)
         PY
 
-        nsys profile \
-          --sample=none \
-          --cpuctxsw=none \
-          --trace=cuda,nvtx,osrt,cublas \
-          --capture-range=cudaProfilerApi \
-          --capture-range-end=stop \
-          --cuda-memory-usage=true \
-          --force-overwrite=true \
-          --output=/results/olmo-core-hybrid-kda-moe \
-          torchrun --standalone --nproc-per-node=8 \
-            /src/OLMo-core/src/examples/olmo_ddp/profile_hybrid_kda_moe.py \
+        torchrun --standalone --nproc-per-node=8 --no-python \
+          /src/OLMo-core/scripts/nsys-profile-rank.sh \
+            /results/olmo-core-hybrid-kda-moe \
+            python /src/OLMo-core/src/examples/olmo_ddp/profile_hybrid_kda_moe.py \
             --config "${SOURCE_CONFIG}" \
             --data "${DATA_FILE}" \
             --output-dir "${RUN_DIR}" \
@@ -88,11 +81,11 @@ tasks:
             2>&1 | tee /results/train.log
 
         nsys stats --report cuda_gpu_kern_sum,nvtx_sum,cuda_api_sum \
-          /results/olmo-core-hybrid-kda-moe.nsys-rep \
+          /results/olmo-core-hybrid-kda-moe-rank-0.nsys-rep \
           > /results/nsys-stats.txt
         nsys export --type sqlite --force-overwrite=true \
-          --output /results/olmo-core-hybrid-kda-moe.sqlite \
-          /results/olmo-core-hybrid-kda-moe.nsys-rep
+          --output /results/olmo-core-hybrid-kda-moe-rank-0.sqlite \
+          /results/olmo-core-hybrid-kda-moe-rank-0.nsys-rep
         cp "${RUN_DIR}/config.json" /results/config.json
     envVars:
       - name: GITHUB_TOKEN
