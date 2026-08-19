@@ -17,8 +17,17 @@ tasks:
         export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
         export OLMO_SHARED_FS=1
 
+        NSYS_DEB=/tmp/nsight-systems.deb
+        curl -fsSL \
+          https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/nsight-systems-2026.1.3_2026.1.3.425-1_amd64.deb \
+          -o "${NSYS_DEB}"
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${NSYS_DEB}"
+        rm -f "${NSYS_DEB}"
+        rm -rf /var/lib/apt/lists/*
+
         dpkg-query -W 'nsight-systems*' | tee /results/nsight-packages.txt
-        NSYS_BIN=$(find / -type f -name nsys -perm /111 2>/dev/null | head -n 1)
+        NSYS_BIN=$(find /opt -type f -name nsys -perm /111 2>/dev/null | head -n 1)
         test -n "${NSYS_BIN}"
         export PATH="$(dirname "${NSYS_BIN}"):${PATH}"
         printf '%s\n' "${NSYS_BIN}" | tee /results/nsys-path.txt
