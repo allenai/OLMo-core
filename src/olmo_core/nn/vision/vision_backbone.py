@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-import torch
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
