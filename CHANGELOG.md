@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Disabled z-loss no longer contributes to `fused_linear_cross_entropy_loss`.
+
 ## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
 
 ### Added
