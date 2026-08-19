@@ -12,7 +12,6 @@ from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     filter_submixtures_single_image,
 )
 from olmo_core.data.multimodal.mixtures.image_only_v10 import (
-    IMAGE_ONLY_V10_SUBMIXTURES,
     SINGLE_IMAGE_ONLY_V10_SUBMIXTURES,
     VALIDATION_MIXTURES_V10,
     image_only_v10_dataset_names,
