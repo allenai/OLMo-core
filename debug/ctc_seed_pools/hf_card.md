@@ -41,11 +41,11 @@ ladder, and `ctc-data pool info FILE` prints the header.
 
 | file | expensive part captured | notes |
 |---|---|---|
-| `contradiction.seed.jsonl.gz` | LLM-mined claim/contradiction pairs (60,342, recovered losslessly from the audited 20k train build) + PubMed filler abstracts | k=3 caps train at ~18k examples — pass `--train 18000` |
-| `redundancy.seed.jsonl.gz` | LLM-mined paraphrase pairs + LLM-judged same-abstract hard negatives + fillers | |
-| `nq.seed.jsonl.gz` | BM25 hard negatives from the 21M-passage `wikipedia-dpr-100w` Lucene index + GPU cross-encoder gold filter | 10% hard-negative regime, CE filter on |
-| `hotpotqa.seed.jsonl.gz` | GPU cross-encoder ranking of the benchmark's distractors | bridge questions, 2 gold each |
-| `rerank.seed.jsonl.gz` | MS MARCO mined hard negatives + a cross-encoder score for **every** document | the graded-ordering reference |
+| `contradiction.seed.jsonl.gz` | LLM-mined claim/contradiction pairs (60,342, recovered losslessly from the audited 20k train build) + PubMed filler abstracts | pairs are consumed, never reused: k=3 caps train at ~18k examples — pass `--train 18000` |
+| `redundancy.seed.jsonl.gz` | LLM-mined paraphrase pairs (4,477) + LLM-judged same-abstract hard negatives + fillers | supply-bounded like contradiction: ~1.3k train examples at the default k=3 |
+| `nq.seed.jsonl.gz` | BM25 hard negatives from the 21M-passage `wikipedia-dpr-100w` Lucene index + GPU cross-encoder gold filter | 10% hard-negative regime, CE filter on; 9,093 distinct queries — a 20k train build reuses queries with fresh distractor draws and says so ("pool wraps") in its report |
+| `hotpotqa.seed.jsonl.gz` | GPU cross-encoder ranking of the benchmark's distractors | bridge questions, 2 gold each; 25k queries |
+| `rerank.seed.jsonl.gz` | MS MARCO mined hard negatives + a cross-encoder score for **every** document (25k queries) | the graded-ordering reference. Cannot wrap: fill is pre-drawn and scored per query, so distinct examples need distinct queries |
 | `fiqa.seed.jsonl.gz` / `scifact.seed.jsonl.gz` | BEIR corpus + locally-built Lucene index + CE margin filter | **eval-only** ladders; `build` refuses `--split train` |
 | `outlier.seed.jsonl.gz` | full scan of the 21M-passage wiki100w index into an article pool (2.2 GB) | largest file; expect a slow first load |
 | `outlier_review.seed.jsonl.gz` | Amazon-Reviews-2023 streaming sample | eval-only |

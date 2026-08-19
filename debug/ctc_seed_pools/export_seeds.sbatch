@@ -73,8 +73,11 @@ gpu)
     done
     ;;
 rerank_only)
-    # Rerun slot: the first pass died on the _pool_scores fill-shadowing bug (fixed same day).
-    run rerank
+    # Rerun slot. First pass died on the _pool_scores fill-shadowing bug (fixed same day); the
+    # second exposed the default num_queries=5000 as unusable at suite scale -- one query per
+    # example means a 500-query eval split has ZERO slack for a 500-example eval, and train caps
+    # at 4.5k. 25k queries supports the standard 20k train + 500 eval with headroom.
+    run rerank -C num_queries=25000
     ;;
 mooney_cpu)
     run outlier -C cache=/data/prasann/single_task_ladders_20k/wiki100w_article_pool.pkl -C build=false

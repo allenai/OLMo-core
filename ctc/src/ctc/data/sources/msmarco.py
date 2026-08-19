@@ -147,7 +147,12 @@ def load_pool(
         gold_scores = [score_map[p] for p in positives if p in score_map]
         hard = margin_filter(gold_scores, candidates, candidate_scores, ce_margin)
         used = {c.id for c in gold} | {c.id for c in hard}
-        fill = _random_fill(searcher, max_docs - len(used), used, rng)
+        # Sized against the WORST case (hard_frac=0), not against the mined-negative count: the
+        # builder takes only a hard_frac prefix of `hard`, so a query with 93 mined negatives and
+        # fill = max_docs - gold - 93 cannot reach max_docs at any hard_frac below ~0.4 -- every
+        # query then rejects at the largest rung, which reads as "the pool is too small" when it
+        # is actually mis-shaped.
+        fill = _random_fill(searcher, max_docs - len(gold), used, rng)
         prepared.append(
             QueryPool(
                 query=text,
