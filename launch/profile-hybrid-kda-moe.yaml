@@ -52,7 +52,7 @@ tasks:
 
         SOURCE_CONFIG=/weka/oe-training-default/ai2-llm/checkpoints/jacobm/olmoe3/olmo-ddp/midtraining/mt-1p2b-kda-ev2-neg-nope-gated-latentmoe-l2-paper-cx8-samebatch-lr1p6e-4-r1/step63802/config.json
         RUN_DIR="/weka/oe-training-default/robertb/olmo-megatron/profile-olmo-core-${BEAKER_EXPERIMENT_ID}"
-        DATA_FILE="${RUN_DIR}/random-tokens.npy"
+        DATA_FILE="${RUN_DIR}/random-tokens.bin"
         mkdir -p "${RUN_DIR}"
         test -f "${SOURCE_CONFIG}"
         python - "${DATA_FILE}" <<'PY'
@@ -62,7 +62,9 @@ tasks:
 
         output = sys.argv[1]
         tokens = np.random.default_rng(1234).integers(0, 100278, size=5_000_000, dtype=np.uint32)
-        np.save(output, tokens)
+        # NumpyFSLDatasetConfig consumes a headerless uint32 token stream. np.save()
+        # would prepend a .npy header, whose bytes are then interpreted as token IDs.
+        tokens.tofile(output)
         PY
 
         torchrun --standalone --nproc-per-node=8 --no-python \
