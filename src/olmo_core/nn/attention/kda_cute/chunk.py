@@ -27,6 +27,10 @@ isolates any numerics question to the CuTe/Triton stage swaps.
 ``OLMO_CUTE_KDA_CHECK=1`` asserts each backward stage's outputs are finite so a bad
 kernel fails at the guilty stage — set it on smoke runs.
 
+Two lines land in the training log, once per process, so a run can be checked from its
+output instead of assumed: which forward arm the shape resolved to (or why it fell back
+to fla), and which bwd_intra kernel actually ran. Neither says anything on later steps.
+
 The kernel files keep the harness's own knobs, which bisect one level deeper:
 ``KDA002_INTRA=triton`` (or ``fla``) forces the intra stage off the CuTe kernel;
 ``KDA002_INTRA=cutedsl`` forces it past the small-grid gate; ``KDA002C_MAXREG`` and
@@ -35,13 +39,18 @@ The kernel files keep the harness's own knobs, which bisect one level deeper:
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import cache
 
 import torch
 import torch.nn.functional as F
 
+from olmo_core.utils import log_once
+
 __all__ = ["cute_chunk_kda", "cute_kda_supported"]
+
+log = logging.getLogger(__name__)
 
 
 @cache
@@ -55,6 +64,39 @@ def _has_cute() -> bool:
     return True
 
 
+def _unsupported_reason(
+    q: torch.Tensor,
+    v: torch.Tensor,
+    chunk_size: int,
+    cu_seqlens: torch.Tensor | None,
+) -> str | None:
+    """Why this call cannot use the CuTe kernels, or ``None`` if it can.
+
+    The CuTe forward/scan kernels implement the fixed-length, chunk-size-64 recompute
+    path on Blackwell (sm100+); anything else must go to fla.
+    """
+    if cu_seqlens is not None:
+        return "packed documents (cu_seqlens is set)"
+    if not q.is_cuda:
+        return "not a CUDA tensor"
+    if (cap := torch.cuda.get_device_capability(q.device))[0] < 10:
+        return f"device capability sm{cap[0]}{cap[1]} < sm100 (Blackwell)"
+    if q.dtype not in (torch.bfloat16, torch.float16):
+        return f"dtype {q.dtype} is not bf16/fp16"
+    T, K, V = q.shape[1], q.shape[-1], v.shape[-1]
+    if chunk_size != 64:
+        return f"chunk_size {chunk_size} != 64"
+    if T % 64 != 0:
+        return f"sequence length {T} is not a multiple of 64"
+    if K not in (64, 128):
+        return f"head dim K={K} is not 64 or 128"
+    if V % 64 != 0:
+        return f"value dim V={V} is not a multiple of 64"
+    if not _has_cute():
+        return "the CUTLASS CuTe DSL is not installed"
+    return None
+
+
 @torch.compiler.disable
 def cute_kda_supported(
     q: torch.Tensor,
@@ -64,21 +106,21 @@ def cute_kda_supported(
 ) -> bool:
     """Whether :func:`cute_chunk_kda` supports this call, else use fla's ``chunk_kda``.
 
-    The CuTe forward/scan kernels implement the fixed-length, chunk-size-64 recompute
-    path on Blackwell (sm100+); anything else must go to fla.
+    Logs the verdict once per process. Both arms are silent otherwise — a cluster
+    without Blackwell, or a packed-document batch, otherwise falls back to fla with
+    nothing in the training log to say the kernels never ran.
     """
-    if cu_seqlens is not None:
-        return False
-    if not q.is_cuda or torch.cuda.get_device_capability(q.device)[0] < 10:
-        return False
-    if q.dtype not in (torch.bfloat16, torch.float16):
-        return False
-    T, K, V = q.shape[1], q.shape[-1], v.shape[-1]
-    if chunk_size != 64 or T % 64 != 0:
-        return False
-    if K not in (64, 128) or V % 64 != 0:
-        return False
-    return _has_cute()
+    reason = _unsupported_reason(q, v, chunk_size, cu_seqlens)
+    if reason is None:
+        B, T, HV, K, V = q.shape[0], q.shape[1], v.shape[2], q.shape[-1], v.shape[-1]
+        log_once(
+            log,
+            f"cute-kda forward: CuTe scan+readout engaged "
+            f"(B={B} T={T} HV={HV} K={K} V={V} chunk={chunk_size})",
+        )
+    else:
+        log_once(log, f"cute-kda: DISABLED, falling back to fla's chunk_kda — {reason}")
+    return reason is None
 
 
 def _fla_stages() -> dict:
@@ -128,6 +170,38 @@ def _stages() -> dict:
                 swaps = {k: v for k, v in swaps.items() if k in only.split(",")}
             _STAGES.update(swaps)
     return _STAGES
+
+
+_INTRA_ARM_LOGGED = False
+
+
+def _log_bwd_intra_arm(n_ctas: int) -> None:
+    """Report which bwd_intra kernel actually ran, once per process.
+
+    Read after the first backward rather than predicted before it: the CuTe wrapper
+    owns its own fallbacks (grids under 1024 CTAs, K != 128, varlen, safe_gate), and a
+    gate re-implemented here would drift from the one that decides. A populated compile
+    cache means the CuTe kernel was compiled and launched.
+    """
+    global _INTRA_ARM_LOGGED
+    if _INTRA_ARM_LOGGED:  # this runs on every backward; keep it to one branch
+        return
+    _INTRA_ARM_LOGGED = True
+
+    stage = _stages()["bwd_intra"]
+    if getattr(stage, "__module__", "").rsplit(".", 1)[-1] != "kernel_intra_cute":
+        log_once(log, f"cute-kda backward: bwd_intra=fla (stage not swapped in), {n_ctas} CTAs")
+        return
+    from . import kernel_intra_cute
+
+    cache = getattr(kernel_intra_cute, "_COMPILE_CACHE", None)
+    if cache is None:  # the kernel module was reshaped and this probe went stale
+        arm = "unknown (could not read the kernel's compile cache)"
+    elif cache:
+        arm = "cutedsl (CuTe SIMT)"
+    else:
+        arm = "triton (the CuTe kernel declined this shape/grid)"
+    log_once(log, f"cute-kda backward: bwd_intra={arm}, {n_ctas} CTAs")
 
 
 def _check_finite(stage: str, **tensors: torch.Tensor | None) -> None:
@@ -223,6 +297,7 @@ def _kda_bwd(q, k, v, g2, beta, Aqk, Akk, h0, do, dht, scale, chunk_size):
     )
     if check:
         _check_finite("bwd_intra", dq=dq, dk=dk, db=db, dg=dg)
+    _log_bwd_intra_arm(q.shape[0] * (q.shape[1] // chunk_size) * v.shape[2])
     # The GVA (HV > H) reduction sits where fla puts it: after intra, before the reverse
     # cumsum. dg stays at HV, so the two are order-independent, but keep fla's order.
     H, HV = q.shape[2], v.shape[2]
