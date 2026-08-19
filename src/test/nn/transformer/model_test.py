@@ -686,6 +686,62 @@ def test_qwen3_builder_configs(config_builder, expected_d_model):
 
 
 @pytest.mark.parametrize(
+    "config_builder,expected_n_layers,expected_n_heads,expected_query_dim,expected_num_params",
+    [
+        pytest.param(
+            TransformerConfig.qwen3_14B,
+            40,
+            40,
+            5120,
+            14_768_307_200,
+            id="qwen3_14B",
+        ),
+        pytest.param(
+            TransformerConfig.qwen3_32B,
+            64,
+            64,
+            8192,
+            32_762_123_264,
+            id="qwen3_32B",
+        ),
+    ],
+)
+def test_qwen3_large_builder_default_dimensions(
+    config_builder,
+    expected_n_layers,
+    expected_n_heads,
+    expected_query_dim,
+    expected_num_params,
+):
+    config = config_builder(vocab_size=151936)
+
+    assert config.n_layers == expected_n_layers
+    assert len(config.resolved_block_configs) == expected_n_layers
+    assert config.num_params == expected_num_params
+
+    attention_config = config.block.sequence_mixer
+    assert isinstance(attention_config, AttentionConfig)
+    assert attention_config.n_heads == expected_n_heads
+    assert attention_config.n_kv_heads == 8
+    assert attention_config.head_dim == 128
+
+    attention = attention_config.build(
+        config.d_model,
+        layer_idx=0,
+        n_layers=config.n_layers,
+        init_device="meta",
+    )
+    expected_kv_dim = 8 * 128
+    assert attention.w_q.weight.shape == (expected_query_dim, config.d_model)
+    assert attention.w_k.weight.shape == (expected_kv_dim, config.d_model)
+    assert attention.w_v.weight.shape == (expected_kv_dim, config.d_model)
+    assert attention.w_out.weight.shape == (config.d_model, expected_query_dim)
+    assert sum(p.numel() for p in attention.parameters()) == attention_config.num_params(
+        config.d_model
+    )
+
+
+@pytest.mark.parametrize(
     "config_builder,expected_d_model,expected_n_heads,expected_gdn_v_heads",
     [
         pytest.param(TransformerConfig.qwen3_5_0_8B, 1024, 8, 16, id="qwen3_5_0_8B"),
