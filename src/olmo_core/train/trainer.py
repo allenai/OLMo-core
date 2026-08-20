@@ -1560,15 +1560,49 @@ class Trainer:
         """
         Block until all queued bookkeeping operations are done.
         """
+        if self._error is not None:
+            raise RuntimeError("An error occurred") from self._error
+
         futures: List[Future] = []
         for op_name, futures_dict in self._bookkeeping_queue.items():
-            if futures_dict:
+            # A future's done callback removes it from the queue. Copy each inner mapping while
+            # taking the snapshot so a concurrently finishing callback cannot mutate the mapping
+            # while we iterate over it.
+            queued_futures = list(futures_dict.copy().values())
+            if queued_futures:
                 log.info(
-                    f"Waiting for bookkeeping ops to finish: '{op_name}' ({len(futures_dict)} ops)..."
+                    f"Waiting for bookkeeping ops to finish: '{op_name}' "
+                    f"({len(queued_futures)} ops)..."
                 )
-                futures.extend(futures_dict.values())
-        concurrent.futures.wait(futures, timeout=timeout)
-        log.info("All bookkeeping ops complete")
+                futures.extend(queued_futures)
+
+        done, not_done = concurrent.futures.wait(futures, timeout=timeout)
+
+        # Future.wait() may return as soon as a future is marked done, before its done callback has
+        # stored an exception in ``self._error`` or removed it from the queue. Inspect the snapshot
+        # directly, in submission order, so operation and result-callback failures cannot race past
+        # this synchronization point. Do not inspect unfinished futures after a timed wait since
+        # Future.result() would block past the requested timeout.
+        error: Optional[BaseException] = None
+        for future in futures:
+            if future not in done:
+                continue
+            try:
+                future.result()
+            except BaseException as exc:
+                error = exc
+                break
+
+        if error is None:
+            error = self._error
+        if error is not None:
+            self._error = error
+            raise RuntimeError("An error occurred") from error
+
+        if not_done:
+            log.info(f"Timed out with {len(not_done)} bookkeeping ops still in progress")
+        else:
+            log.info("All bookkeeping ops complete")
 
     def _check_if_canceled(self):
         if self._canceled:

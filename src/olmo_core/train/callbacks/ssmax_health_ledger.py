@@ -18,6 +18,13 @@ SSMAX_HEALTH_LEDGER_VERSION = 2
 SSMAX_MODEL_VARIANTS = frozenset({"ssmax_head_qknorm", "ssmax_no_qknorm"})
 SSMAX_PHASES = frozenset({"bridge", "perception", "joint"})
 OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
+_TRAIN_HEALTH_METRICS = frozenset(
+    {
+        TRAIN_CE_LOSS_METRIC,
+        OPTIM_GRAD_NORM_METRIC,
+        OPTIM_STEP_SKIPPED_METRIC,
+    }
+)
 
 _EVENT_FIELDS = frozenset(
     {
@@ -303,15 +310,18 @@ class SSMaxHealthLedgerCallback(Callback):
         # strictly contiguous below.
         if step <= self._metrics_baseline_step:
             return
+        # OLMo can dispatch multiple disjoint metric batches for one global step. In particular,
+        # a synchronous checkpoint first flushes the train metrics needed by this ledger, then
+        # records checkpoint timing and other ancillary metrics under that same step for a later
+        # flush. Ignore only batches that contain none of the ledger's health contract. A duplicate
+        # or partial health batch still reaches the strict step/field checks below and fails closed.
+        if not (_TRAIN_HEALTH_METRICS & metrics.keys()):
+            return
         if step != self.last_step + 1:
             raise RuntimeError(
                 f"SSMax health ledger expected step {self.last_step + 1}, received step {step}"
             )
-        missing = {
-            TRAIN_CE_LOSS_METRIC,
-            OPTIM_GRAD_NORM_METRIC,
-            OPTIM_STEP_SKIPPED_METRIC,
-        } - set(metrics)
+        missing = _TRAIN_HEALTH_METRICS - set(metrics)
         if missing:
             raise RuntimeError(f"SSMax health ledger metrics are missing {sorted(missing)}")
         loss = float(metrics[TRAIN_CE_LOSS_METRIC])

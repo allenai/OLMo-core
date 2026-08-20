@@ -116,8 +116,29 @@ def test_ledger_ignores_only_run_segment_baseline_metrics() -> None:
     state = callback.state_dict()
     assert state["last_step"] == 1
     assert [event["global_step"] for event in state["events"]] == [1]
+
+
+def test_ledger_ignores_ancillary_batches_without_weakening_health_contract() -> None:
+    callback, trainer = _callback()
+    callback.pre_train()
+    trainer.global_step = 1
+
+    callback.log_metrics(1, {"gpu_memory/active": 1.0})
+    callback.log_metrics(1, _metrics())
+    callback.log_metrics(1, {"checkpoint/save_duration_s": 1.0})
+
+    state = callback.state_dict()
+    assert state["last_step"] == 1
+    assert [event["global_step"] for event in state["events"]] == [1]
     with pytest.raises(RuntimeError, match="expected step 2"):
         callback.log_metrics(1, _metrics())
+    with pytest.raises(RuntimeError, match="missing"):
+        callback.log_metrics(2, {"train/CE loss": 1.0})
+
+    trainer.global_step = 2
+    callback.log_metrics(2, {"checkpoint/save_duration_s": 1.0})
+    with pytest.raises(RuntimeError, match="has 1 events at trainer step 2"):
+        callback.state_dict()
 
 
 def test_ledger_rejects_missing_metrics_gaps_and_tampering() -> None:
