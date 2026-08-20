@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 __all__ = [
     "MixturePackProfile",
@@ -39,6 +39,11 @@ MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
         pack_shortcut_max_len_images=False,
         description="Full image-only-v10 (v9 + FineVision + DynaMath).",
     ),
+    "image-only-v11": MixturePackProfile(
+        pack_max_crops=MULTI_IMAGE_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=False,
+        description="Full image-only-v11 (v10 + ChartVerse + captions + web reasoning).",
+    ),
     # Single-image tiers match mm_olmo's effective SFT packing (≈25 crops + shortcut).
     "single-image-only-v9": MixturePackProfile(
         pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
@@ -49,6 +54,11 @@ MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
         pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
         pack_shortcut_max_len_images=True,
         description="image-only-v10 with multi-image v9 sources removed.",
+    ),
+    "single-image-only-v11": MixturePackProfile(
+        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=True,
+        description="image-only-v11 with multi-image v9 sources removed.",
     ),
     # Small debug/demo slices are single-image — use the throughput-friendly profile.
     "debug": MixturePackProfile(
@@ -84,6 +94,23 @@ MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
         pack_shortcut_max_len_images=True,
     ),
     "finevision-dynamath": MixturePackProfile(
+        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=True,
+    ),
+    # v11 sub-tiers: every v11-only source is single-image.
+    "chartverse": MixturePackProfile(
+        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=True,
+    ),
+    "figure-captions": MixturePackProfile(
+        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=True,
+    ),
+    "web-reasoning": MixturePackProfile(
+        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+        pack_shortcut_max_len_images=True,
+    ),
+    "v11-new": MixturePackProfile(
         pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
         pack_shortcut_max_len_images=True,
     ),

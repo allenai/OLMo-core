@@ -1,10 +1,12 @@
 """
 Molmo2 "stage 2" SFT (reproduction of ``mm_olmo``'s ``image-only-v9`` mixture).
 
-Fine-tunes connector + ViT + LLM on the image-only-v9 or image-only-v10 mixture with
-16k sequence packing. Defaults to a 3-dataset debug subset (``tulu4``, ``text_vqa``,
+Fine-tunes connector + ViT + LLM on an image-only-v9/v10/v11 mixture with 16k
+sequence packing. Defaults to a 3-dataset debug subset (``tulu4``, ``text_vqa``,
 ``chart_qa_weighted``) for smoke tests; set ``--mixture=image-only-v9`` for the full
-v9 mixture or ``--mixture=image-only-v10`` for v9 + hub FineVision + DynaMath.
+v9 mixture, ``--mixture=image-only-v10`` for v9 + hub FineVision + DynaMath, or
+``--mixture=image-only-v11`` for v10 + ChartVerse + figure captions + web reasoning
+(the CharXiv / MMMU-Pro targeted mixture).
 
 Quick local smoke test (1 GPU, debug mixture, 5 steps)::
 
@@ -33,6 +35,11 @@ from olmo_core.data.multimodal.mixtures.image_only_v10 import (
     VALIDATION_MIXTURES_V10,
     build_image_only_v10_mixture,
     build_single_image_only_v10_mixture,
+)
+from olmo_core.data.multimodal.mixtures.image_only_v11 import (
+    VALIDATION_MIXTURES_V11,
+    build_image_only_v11_mixture,
+    build_single_image_only_v11_mixture,
 )
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     VALIDATION_MIXTURES,
@@ -217,7 +224,7 @@ def _build_model_config() -> MultimodalLMConfig:
 
 
 def _all_validation_mixtures():
-    return {**VALIDATION_MIXTURES, **VALIDATION_MIXTURES_V10}
+    return {**VALIDATION_MIXTURES, **VALIDATION_MIXTURES_V10, **VALIDATION_MIXTURES_V11}
 
 
 def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
@@ -230,7 +237,24 @@ def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
 
 def _build_mixture(tokenizer, config: ExperimentConfig):
     names_filter = _mixture_dataset_names(config.mixture)
-    if config.mixture == "single-image-only-v10":
+    # Dispatch is by dict membership, not a name prefix, so v11 must be tested before
+    # v10: a v11 tier would otherwise fall through to the v10 builder and silently
+    # drop every v11-only source.
+    if config.mixture == "single-image-only-v11":
+        datasets, weights, names = build_single_image_only_v11_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+    elif config.mixture in VALIDATION_MIXTURES_V11:
+        datasets, weights, names = build_image_only_v11_mixture(
+            tokenizer,
+            seed=config.data_seed,
+            dataset_names=names_filter,
+            max_sequence_length=SEQUENCE_LENGTH,
+        )
+    elif config.mixture == "single-image-only-v10":
         datasets, weights, names = build_single_image_only_v10_mixture(
             tokenizer,
             seed=config.data_seed,
@@ -591,6 +615,15 @@ Full image-only-v10 mixture (richer v9 + hub FineVision + DynaMath):
 
 Single-image-only-v10 (v10 without multi-image v9 sources):
 › torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=single-image-only-v10
+
+Full image-only-v11 mixture (v10 + ChartVerse + figure captions + web reasoning):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=image-only-v11
+
+Single-image-only-v11 (v11 without multi-image v9 sources; the production tier):
+› torchrun --nproc-per-node=8 {sys.argv[0]} train my-sft-run --mixture=single-image-only-v11
+
+Just the v11-only sources (data-staging check):
+› torchrun --nproc-per-node=1 {sys.argv[0]} train smoke --mixture=v11-new
 
 Init from HF instead of stage-1 checkpoint:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke --trainer.load_path=null

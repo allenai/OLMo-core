@@ -57,6 +57,12 @@ def test_validation_mixtures_include_single_image_tiers():
         ("single-image-only-v9", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
         ("image-only-v10", MULTI_IMAGE_PACK_MAX_CROPS, False),
         ("single-image-only-v10", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("image-only-v11", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("single-image-only-v11", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("chartverse", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("figure-captions", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("web-reasoning", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("v11-new", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
         ("debug", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
     ],
 )
@@ -64,3 +70,14 @@ def test_mixture_pack_profiles(mixture, pack_max_crops, shortcut):
     profile = get_mixture_pack_profile(mixture)
     assert profile.pack_max_crops == pack_max_crops
     assert profile.pack_shortcut_max_len_images is shortcut
+
+
+def test_every_v11_tier_has_an_explicit_pack_profile():
+    """An unregistered tier silently falls back to the 125-crop default and runs slower."""
+    from olmo_core.data.multimodal.mixtures.image_only_v11 import VALIDATION_MIXTURES_V11
+    from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
+        MIXTURE_PACK_PROFILES,
+    )
+
+    missing = set(VALIDATION_MIXTURES_V11) - set(MIXTURE_PACK_PROFILES)
+    assert not missing, f"v11 tiers without a pack profile: {sorted(missing)}"

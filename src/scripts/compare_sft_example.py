@@ -88,6 +88,21 @@ def image_only_v10_new_dataset_names() -> list[str]:
     return [name for name in image_only_v10_dataset_names() if name not in v9]
 
 
+def image_only_v11_dataset_names() -> list[str]:
+    from olmo_core.data.multimodal.mixtures.image_only_v11 import image_only_v11_dataset_names as _names
+
+    return _names()
+
+
+def image_only_v11_new_dataset_names() -> list[str]:
+    """v11-only sources (ChartVerse + captions + web reasoning), excluding v10."""
+    from olmo_core.data.multimodal.mixtures.image_only_v11 import (
+        image_only_v11_new_dataset_names as _names,
+    )
+
+    return _names()
+
+
 def _artifact_stem(dataset: str, index: int, seed: int) -> str:
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in dataset)
     return f"{safe}-{index}-{seed}"
@@ -265,8 +280,14 @@ def _run_parity(args: argparse.Namespace) -> int:
         if args.sweep:
             raise SystemExit("--sweep and --sweep-v10 cannot be combined")
         datasets = image_only_v10_new_dataset_names()
+    if getattr(args, "sweep_v11", False):
+        if datasets:
+            raise SystemExit("--dataset and --sweep-v11 cannot be combined")
+        if args.sweep:
+            raise SystemExit("--sweep and --sweep-v11 cannot be combined")
+        datasets = image_only_v11_new_dataset_names()
     if not datasets:
-        raise SystemExit("Either --dataset, --sweep, or --sweep-v10 is required")
+        raise SystemExit("Either --dataset, --sweep, --sweep-v10, or --sweep-v11 is required")
 
     artifact_dir = Path(args.artifact_dir) if args.artifact_dir else Path(
         tempfile.mkdtemp(prefix="molmo2-parity.")
@@ -712,11 +733,14 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
         format_academic_example,
     )
     from olmo_core.data.multimodal.mixtures.image_only_v10 import build_image_only_v10_datasets
+    from olmo_core.data.multimodal.mixtures.image_only_v11 import build_image_only_v11_datasets
     from olmo_core.data.multimodal.mixtures.image_only_v9 import build_image_only_v9_datasets
     from olmo_core.data.multimodal.sft_formatter import SftFormatter
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/Molmo2-4B", trust_remote_code=True)
-    if args.dataset in image_only_v10_dataset_names():
+    if args.dataset in image_only_v11_new_dataset_names():
+        datasets = build_image_only_v11_datasets(tokenizer, seed=args.seed)
+    elif args.dataset in image_only_v10_dataset_names():
         datasets = build_image_only_v10_datasets(tokenizer, seed=args.seed)
     else:
         datasets = build_image_only_v9_datasets(tokenizer, seed=args.seed)
@@ -789,6 +813,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         "--sweep-v10",
         action="store_true",
         help="compare index 0 of v10-only datasets (FineVision + DynaMath)",
+    )
+    run_parser.add_argument(
+        "--sweep-v11",
+        action="store_true",
+        help="compare index 0 of v11-only datasets (ChartVerse + captions + web reasoning)",
     )
     run_parser.add_argument("--index", type=int, default=0)
     run_parser.add_argument("--seed", type=int, default=0)
