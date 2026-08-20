@@ -670,7 +670,14 @@ def _init_weights_from_scratch(
     missing, unexpected = model.load_state_dict(converted, strict=False)
     del converted
     # Everything except the connector must have been covered by the two base checkpoints.
-    non_connector_missing = [k for k in missing if not k.startswith("connector.")]
+    # `load_state_dict` reports missing keys under the model's *registered* names, which the
+    # legacy-key remap deliberately leaves alone (it only rewrites the dicts it is handed).
+    # So derive the connector's prefix from the module tree rather than assuming a layout.
+    connector_prefix = next(
+        (f"{name}." for name, mod in model.named_modules() if mod is model.connector),
+        "connector.",
+    )
+    non_connector_missing = [k for k in missing if not k.startswith(connector_prefix)]
     if non_connector_missing or unexpected:
         raise RuntimeError(
             f"[scratch init] unexpected state-dict coverage: missing={non_connector_missing[:8]} "
