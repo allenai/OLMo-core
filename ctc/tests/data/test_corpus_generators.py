@@ -35,7 +35,6 @@ from ctc.tasks import load_all
 #: without a fixture fails the coverage test below rather than silently going untested.
 POOLS = {
     "contradiction": pools.pubmed_pool,
-    "redundancy": pools.redundancy_pool,
     "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
     # 2 gold and a supply of only 8 hard negatives, both of which are corpus properties HotpotQA's
@@ -66,7 +65,6 @@ CORPUS_BACKED = sorted(POOLS)
 #: all -- the hard negatives are the task, not padding, so the generator refuses rather than
 #: dropping them.
 SMALL_CORPUS: dict = {
-    "redundancy": {"num_pairs": 1, "num_hardneg": 1},
     # A HotpotQA bridge query brings TWO gold documents, so the default k=3 needs 6 document slots
     # and an 8-item example only has 4. The generator returns None rather than dropping a hop --
     # a one-gold "multi-hop" example would silently select the single-doc instruction wording.

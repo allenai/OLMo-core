@@ -20,8 +20,10 @@ simultaneously, with context ladders from 2k to 10M+ tokens. Upstream `main` tra
 | `ctc/` | A **self-contained pip package** (`pip install ./ctc`): task specs + prompt/parse/metric contract (`ctc/format`), data generation (`ctc/data`), evaluation (`ctc/eval`). Imports **no olmo-core** except behind the `native` extra. Task JSONL is the boundary. |
 | `src/scripts/ctc/` | The training side — everything that reads or writes olmo-core's formats: `convert_to_shards.py` (JSONL → shards + format fingerprint), `fix_marker_embeddings.py` (run on every fresh base), `train/` (SFT + CPT, one recipe, local or Beaker), `eval_beaker.py` (one-command cluster eval), `build_fast_bundle.py`. |
 | `run/` | Entry points that resolve the cluster environment first: `data.sh` → `convert.sh` → `train.sh` → `eval.sh`, all thin wrappers over the same Python the tests exercise. `_env.sh` encodes the NFS/cache/CUDA traps once. |
-| `records/` | Standalone writeups (port records, trap indexes, diagnoses). See `records/README.md` for the index; new writeups of this kind go there. |
-| `debug/` | One-off validation evidence, one topic per directory, each with a README. Not a scratch space. |
+
+Some module docstrings cite `records/...` or `debug/...` — experiment writeups and one-off
+validation evidence kept on the **development branch `prasann/ctc`**, not here. This branch
+carries the polished code and the reproduction path only.
 
 The **olmo-eval integration** lives in the separate `olmo-eval` repo, branch `prasann/ctc-suite`
 (`src/olmo_eval/evals/tasks/ctc_suite/`): the 22-row roster vendored byte-faithful from `ctc`,
@@ -34,7 +36,7 @@ scoring the public HF dataset `PrasannSinghal/ctc-suite-eval` (`-t ctc:figure`, 
 pytest ctc/tests                      # the suite's own tests: no GPU, no network, ~90 s
 ctc-data list                         # every generator, its ladder, its parameters
 ctc-data build --task contradiction --out DIR
-ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
+ctc-data build --task textgroups --split eval --rungs 64k,1m,10m \
     --eval-size 125 --allow-small-eval --out DIR    # rungs are open-ended past 32k
 ctc-data build --task nq --pool auto --out DIR      # seed pool from the Hub: no GPU/index/LLM,
                                                     # a 20k-example build in about a minute

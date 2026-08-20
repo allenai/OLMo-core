@@ -23,9 +23,9 @@ Those axes are now arguments.
 ```bash
 # local: Berkeley H200, torchrun, no weka/Beaker
 PYTHONPATH=src:ctc/src torchrun --nproc-per-node=8 src/scripts/ctc/train/sft.py my-run \
-    --data /data/prasann/ctc/shards/contradiction:2 \
-    --data /data/prasann/ctc/shards/nq:1 \
-    --base /data/prasann/bases/q4b-dense-fixmark --arch chunked --max-steps 1100
+    --data /data/$USER/ctc/shards/contradiction:2 \
+    --data /data/$USER/ctc/shards/nq:1 \
+    --base /data/$USER/bases/qwen3-4b-fixmark --arch chunked --max-steps 1100
 
 # Beaker: same options, plus where to run
 PYTHONPATH=src:ctc/src python src/scripts/ctc/train/sft.py my-run \
@@ -51,26 +51,13 @@ Two defaults chosen to fail loudly rather than quietly:
 - **The format fingerprint is written by default.** Turning it off leaves a checkpoint whose eval
   format cannot be verified later.
 
-### Retired shards — do not pass these to `--data`
+### Shard hygiene
 
-A shard directory looks identical whether or not it is sound, and `--data` will happily read a bad
-one, so the known-bad ones are named here rather than left to be rediscovered.
-
-| shard | status |
-|---|---|
-| `/data/prasann/ctc_suite/shards/oolong_train` (2026-07-19) | **RETIRED — leaks.** Built with a bare `--item-regex '\|\|'`, which as a regex matches every line, so the instruction and header lines were wrapped as their own chunks and the blank lines between them left FREE, bridging chunks the mask is supposed to isolate. Measured 5.000 inter-chunk FREE gaps per example against 0.000 for a clean shard. Any oolong number measured on it needs a retrain. |
-| `/data/prasann/xlong5_qafter/shards_chunked/oolong_train` (2026-08-11, horton) | **Use this instead** — 19,972 instances, already `query-position after`, 0.000 FREE gaps. `shards_full/` is the no-marker arm. Also on weka as `prasanns/xlong5_2k256k_qwen35_qafter/`. |
-
-⚠ **Do not "fix" this by rebuilding oolong through `ctc-data build`.** A fresh build is clean but
-*narrower and differently split*: the ladder drops from 7 bands reaching 254k to 5 rungs capped at
-32k, and `OolongPool.for_split("train")` holds out 10% of items per sub-dataset, so it would draw
-from a different item substrate than the v2 eval — breaking a train/eval pairing that an audit
-confirmed good. Full evidence in `debug/oolong_regex_rebuild/`.
-
-The converter now records `item_regex` and `query_position` in each shard's `metadata.json`, so
-this class of defect is detectable from a shard's own metadata going forward. Shards built before
-that do not carry the field, and for those the only reliable check is to scan the token stream —
-`debug/oolong_regex_rebuild/scan_oolong_shard.py` does it.
+A shard directory looks identical whether or not it is sound, so the converter records
+`item_regex` and `query_position` in each shard's `metadata.json` — a mis-built shard is
+detectable from its own metadata rather than rediscovered from a chance-level training run.
+Rebuild shards with the converter in this tree rather than reusing directories of unknown
+provenance.
 
 ## The pipeline, end to end
 

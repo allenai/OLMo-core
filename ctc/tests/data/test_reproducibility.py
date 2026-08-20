@@ -62,7 +62,6 @@ def _module_file(target: str) -> Path:
 GENERATOR_FILES = sorted(
     {_module_file(target) for target in generators.GENERATORS.values()}
     | {
-        _SRC / "ctc" / "data" / "synthetic.py",
         _SRC / "ctc" / "tasks" / "contradiction" / "generate.py",
         _SRC / "ctc" / "tasks" / "retrieval" / "generate.py",
         _SRC / "ctc" / "tasks" / "outlier" / "generate.py",

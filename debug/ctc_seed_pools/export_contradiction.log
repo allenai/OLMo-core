@@ -1,2 +1,0 @@
-loading the contradiction corpus (this is the expensive step the pool exists to cache)
-wrote debug/ctc_seed_pools/seeds/contradiction.seed.jsonl.gz (16.5 MB)

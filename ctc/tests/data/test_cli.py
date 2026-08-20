@@ -21,7 +21,7 @@ from ctc.data.generators import base as generators
 @pytest.fixture(autouse=True)
 def _small_ladders(monkeypatch):
     """Two short rungs per task, so a CLI test is seconds rather than minutes."""
-    monkeypatch.setitem(ladders.LADDERS, "cycle", {"2k": 20, "4k": 40})
+    monkeypatch.setitem(ladders.LADDERS, "strmatch", {"2k": 20, "4k": 40})
     monkeypatch.setitem(ladders.LADDERS, "nq", {"2k": 11, "4k": 23})
     monkeypatch.setitem(ladders.LADDERS, "fiqa", {"2k": 6, "4k": 12})
 
@@ -67,8 +67,8 @@ def test_list_flags_the_held_out_ladders(capsys):
 
 
 def test_build_writes_a_train_file_and_one_file_per_rung(tmp_path):
-    assert cli.main(["build", "--task", "cycle", "--train", "20", "--out", str(tmp_path)]) == 0
-    root = tmp_path / "cycle"
+    assert cli.main(["build", "--task", "strmatch", "--train", "20", "--out", str(tmp_path)]) == 0
+    root = tmp_path / "strmatch"
     assert (root / "train.jsonl").exists()
     assert sorted(p.name for p in root.glob("eval_*.jsonl")) == ["eval_2k.jsonl", "eval_4k.jsonl"]
     rows = [json.loads(line) for line in (root / "eval_2k.jsonl").read_text().splitlines()]
@@ -77,8 +77,8 @@ def test_build_writes_a_train_file_and_one_file_per_rung(tmp_path):
 
 
 def test_split_eval_writes_no_training_data(tmp_path):
-    assert cli.main(["build", "--task", "cycle", "--split", "eval", "--out", str(tmp_path)]) == 0
-    root = tmp_path / "cycle"
+    assert cli.main(["build", "--task", "strmatch", "--split", "eval", "--out", str(tmp_path)]) == 0
+    root = tmp_path / "strmatch"
     assert not (root / "train.jsonl").exists()
     assert (root / "eval_2k.jsonl").exists()
 
@@ -89,7 +89,7 @@ def test_split_train_writes_no_eval_ladder(tmp_path):
             [
                 "build",
                 "--task",
-                "cycle",
+                "strmatch",
                 "--split",
                 "train",
                 "--train",
@@ -100,7 +100,7 @@ def test_split_train_writes_no_eval_ladder(tmp_path):
         )
         == 0
     )
-    root = tmp_path / "cycle"
+    root = tmp_path / "strmatch"
     assert (root / "train.jsonl").exists()
     assert not list(root.glob("eval_*.jsonl"))
 
@@ -127,10 +127,10 @@ def test_asking_a_held_out_ladder_for_training_data_is_an_error(tmp_path, fake_c
 
 def test_an_override_reaches_the_generator(tmp_path):
     cli.main(
-        ["build", "--task", "cycle", "--train", "20", "-C", "num_cycles=2", "--out", str(tmp_path)]
+        ["build", "--task", "strmatch", "--train", "20", "-C", "num_pairs=2", "--out", str(tmp_path)]
     )
     rows = [
-        json.loads(line) for line in (tmp_path / "cycle" / "eval_2k.jsonl").read_text().splitlines()
+        json.loads(line) for line in (tmp_path / "strmatch" / "eval_2k.jsonl").read_text().splitlines()
     ]
     assert all(len(r["gold_doc_indices"]) == 2 for r in rows)
 
@@ -141,21 +141,21 @@ def test_a_mistyped_override_is_rejected_rather_than_ignored(tmp_path):
     which is how a whole sweep ends up being one configuration measured five times.
     """
     with pytest.raises(SystemExit, match="no parameter"):
-        cli.main(["build", "--task", "cycle", "-C", "num_cyclez=2", "--out", str(tmp_path)])
+        cli.main(["build", "--task", "strmatch", "-C", "num_pairz=2", "--out", str(tmp_path)])
 
 
 def test_an_override_without_a_value_is_rejected(tmp_path):
     with pytest.raises(SystemExit, match="KEY=VALUE"):
-        cli.main(["build", "--task", "cycle", "-C", "num_cycles", "--out", str(tmp_path)])
+        cli.main(["build", "--task", "strmatch", "-C", "num_pairs", "--out", str(tmp_path)])
 
 
 def test_audit_reruns_over_written_files(tmp_path):
-    cli.main(["build", "--task", "cycle", "--train", "20", "--out", str(tmp_path)])
-    assert cli.main(["audit", "--task", "cycle", "--dir", str(tmp_path)]) == 0
+    cli.main(["build", "--task", "strmatch", "--train", "20", "--out", str(tmp_path)])
+    assert cli.main(["audit", "--task", "strmatch", "--dir", str(tmp_path)]) == 0
 
 
 def test_audit_on_an_empty_directory_says_so_rather_than_passing(tmp_path):
-    assert cli.main(["audit", "--task", "cycle", "--dir", str(tmp_path)]) == 1
+    assert cli.main(["audit", "--task", "strmatch", "--dir", str(tmp_path)]) == 1
 
 
 def test_the_task_names_are_the_ones_ctc_eval_takes():

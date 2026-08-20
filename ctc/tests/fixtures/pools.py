@@ -24,14 +24,12 @@ from ctc.data.sources import (
     openalex,
     paraphrase,
     pubmed,
-    pubmed_redundancy,
     wiki100w,
 )
 from ctc.data.sources.retrieval import Candidate, QueryPool, RetrievalPool
 
 __all__ = [
     "pubmed_pool",
-    "redundancy_pool",
     "fever_pool",
     "retrieval_pool",
     "rerank_pool",
@@ -72,65 +70,6 @@ def pubmed_pool(pairs: int = 40, abstracts: int = 60, per_abstract: int = 8) -> 
         for i in range(abstracts)
     }
     return pubmed.PubMedPool(pairs=claim_pairs, fillers=fillers, provenance={"pairs": "fixture"})
-
-
-def redundancy_pool(
-    pairs: int = 60, hardnegs: int = 60, abstracts: int = 120, per_abstract: int = 8
-) -> pubmed_redundancy.RedundancyPool:
-    """
-    :param pairs: Gold ``(claim, paraphrase)`` pairs.
-    :param hardnegs: Planted same-abstract non-redundant pairs.
-    :param abstracts: Filler abstracts. Includes the gold and hard-negative abstracts, so the
-        "fillers never come from an abstract this example already used" rule has something to
-        exclude.
-    :param per_abstract: Sentences per abstract.
-
-    :returns: A redundancy pool.
-    """
-    gold = tuple(
-        pubmed_redundancy.RedundantPair(
-            claim=f"Cohort {i} showed a {i + 3} percent drop in relapse over twelve months.",
-            paraphrase=f"Over one year, group {i} experienced {i + 3} percent fewer recurrences.",
-            abstract_id=f"g{i}",
-            mode="subtle",
-        )
-        for i in range(pairs)
-    )
-    hard = tuple(
-        pubmed_redundancy.HardNegativePair(
-            first=f"Study {i} enrolled {i + 20} participants across four sites.",
-            second=f"Study {i} reported a {i + 5} percent rise in adverse events.",
-            abstract_id=f"h{i}",
-            overlap=0.3,
-        )
-        for i in range(hardnegs)
-    )
-    fillers = {
-        f"g{i}": tuple(
-            f"Background note {i}.{j} from the gold abstract." for j in range(per_abstract)
-        )
-        for i in range(pairs)
-    }
-    fillers.update(
-        {
-            f"h{i}": tuple(
-                f"Background note h{i}.{j} from the hard-negative abstract."
-                for j in range(per_abstract)
-            )
-            for i in range(hardnegs)
-        }
-    )
-    fillers.update(
-        {
-            f"f{i}": tuple(
-                f"Unrelated finding {i}.{j} from another abstract." for j in range(per_abstract)
-            )
-            for i in range(abstracts)
-        }
-    )
-    return pubmed_redundancy.RedundancyPool(
-        pairs=gold, hardnegs=hard, fillers=fillers, provenance={"pairs": "fixture"}
-    )
 
 
 def fever_pool(pairs: int = 40, pages: int = 30, fillers: int = 400) -> fever.FeverPool:

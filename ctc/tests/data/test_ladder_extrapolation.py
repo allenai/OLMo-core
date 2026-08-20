@@ -61,7 +61,7 @@ def test_ten_million_token_rungs_resolve_for_every_unbounded_task():
 
 
 def test_extrapolated_counts_grow_monotonically():
-    for task in ("contradiction", "nq", "cycle", "mathmatch"):
+    for task in ("contradiction", "nq", "reorder", "textgroups"):
         counts = [ladders.docs_for_rung(task, r) for r in ("64k", "128k", "256k", "512k", "1m")]
         assert counts == sorted(counts) and len(set(counts)) == len(counts), (task, counts)
 
@@ -100,14 +100,14 @@ def test_absurdly_small_rung_raises():
 
 
 def test_build_eval_below_floor_requires_allow_small():
-    spec = registry.get("mathmatch")
+    spec = registry.get("textgroups")
     with pytest.raises(ValueError, match="allow_small"):
-        build.build_eval("mathmatch", spec, size=125, rungs=["2k"])
+        build.build_eval("textgroups", spec, size=125, rungs=["2k"])
 
 
 def test_build_eval_allow_small_flags_the_size():
-    spec = registry.get("mathmatch")
-    rungs, report = build.build_eval("mathmatch", spec, size=5, rungs=["2k"], allow_small=True)
+    spec = registry.get("textgroups")
+    rungs, report = build.build_eval("textgroups", spec, size=5, rungs=["2k"], allow_small=True)
     assert len(rungs["2k"]) == 5
     assert any("below the 500 floor" in note for note in report.notes)
 
@@ -115,24 +115,24 @@ def test_build_eval_allow_small_flags_the_size():
 def test_build_flags_extrapolated_rungs():
     """A rung past the table must be flagged in the report -- the flag is what tells a reader the
     x-coordinate is fitted, not measured."""
-    spec = registry.get("mathmatch")
-    _, train_report = build.build_train("mathmatch", spec, total=2, rungs=["64k"])
+    spec = registry.get("textgroups")
+    _, train_report = build.build_train("textgroups", spec, total=2, rungs=["64k"])
     assert any("extrapolated" in note for note in train_report.notes)
     rungs, eval_report = build.build_eval(
-        "mathmatch", spec, size=5, rungs=["8k", "64k"], allow_small=True
+        "textgroups", spec, size=5, rungs=["8k", "64k"], allow_small=True
     )
     assert any("64k" in note and "extrapolated" in note for note in eval_report.notes)
     # And the built example really is ~64k-rung sized, nested down to 8k.
-    n64 = ladders.docs_for_rung("mathmatch", "64k")
+    n64 = ladders.docs_for_rung("textgroups", "64k")
     assert all(len(ex["documents"]) == n64 for ex in rungs["64k"])
     assert all(
-        len(ex["documents"]) == ladders.docs_for_rung("mathmatch", "8k") for ex in rungs["8k"]
+        len(ex["documents"]) == ladders.docs_for_rung("textgroups", "8k") for ex in rungs["8k"]
     )
 
 
 def test_calibrated_build_carries_no_extrapolation_note():
-    spec = registry.get("mathmatch")
-    _, report = build.build_train("mathmatch", spec, total=2, rungs=["2k"])
+    spec = registry.get("textgroups")
+    _, report = build.build_train("textgroups", spec, total=2, rungs=["2k"])
     assert not any("extrapolated" in note for note in report.notes)
 
 
@@ -145,9 +145,9 @@ def test_shrink_ladder_nests_adjacent_rungs():
     """
     from ctc.data import audit as audit_mod
 
-    spec = registry.get("mathmatch")
+    spec = registry.get("textgroups")
     rungs, _ = build.build_eval(
-        "mathmatch", spec, size=8, rungs=["2k", "4k", "8k"], allow_small=True
+        "textgroups", spec, size=8, rungs=["2k", "4k", "8k"], allow_small=True
     )
     result = audit_mod.check_ladder_nesting(rungs, spec)
     assert not result.problems, result.problems

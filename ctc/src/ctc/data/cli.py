@@ -42,15 +42,15 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "examples:\n"
             "  ctc-data list\n"
-            "  ctc-data build --task cycle --out /data/ctc/v3\n"
+            "  ctc-data build --task textgroups --out /data/ctc/v3\n"
             "  ctc-data build --task nq --split eval --out /data/ctc/v3\n"
-            "  ctc-data build --task groups4 --rungs 2k,4k --train 5000 --out /data/ctc/pilot\n"
+            "  ctc-data build --task strmatch --rungs 2k,4k --train 5000 --out /data/ctc/pilot\n"
             "  ctc-data build --task contradiction -C pairs_path=pairs.jsonl --out /data/ctc/v3\n"
-            "  ctc-data build --task cycle --split eval --rungs 64k,1m,10m \\\n"
+            "  ctc-data build --task textgroups --split eval --rungs 64k,1m,10m \\\n"
             "      --eval-size 125 --allow-small-eval --out /data/ctc/xlong\n"
             "  ctc-data build --task nq --pool auto --out /data/ctc/v3   # no GPU, no index\n"
             "  ctc-data pool export --task nq --out seeds/\n"
-            "  ctc-data audit --task cycle --dir /data/ctc/v3\n"
+            "  ctc-data audit --task textgroups --dir /data/ctc/v3\n"
         ),
     )
     sub = ap.add_subparsers(dest="command", metavar="command")

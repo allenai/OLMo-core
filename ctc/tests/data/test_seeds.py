@@ -30,7 +30,6 @@ from ctc.tasks import load_all
 #: the registry.
 POOLS = {
     "contradiction": pools.pubmed_pool,
-    "redundancy": pools.redundancy_pool,
     "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
     "hotpotqa": lambda: pools.retrieval_pool(source="hotpotqa", gold=2, hard=8),
@@ -78,7 +77,7 @@ def test_every_seedable_ladder_is_round_trip_tested_here():
 
 def test_a_synthetic_ladder_is_refused_by_name():
     with pytest.raises(ValueError, match="synthetic"):
-        seeds.save("unused.seed.jsonl.gz", "cycle", None)
+        seeds.save("unused.seed.jsonl.gz", "strmatch", None)
 
 
 # ── the round trip itself ───────────────────────────────────────────────────────────────────────
@@ -181,7 +180,7 @@ def test_a_corpus_override_alongside_a_pool_is_refused(tmp_path):
 
 def test_a_pool_on_a_synthetic_task_is_refused(tmp_path):
     with pytest.raises(SystemExit, match="synthetic"):
-        cli.main(["build", "--task", "cycle", "--pool", "anything", "--out", str(tmp_path)])
+        cli.main(["build", "--task", "strmatch", "--pool", "anything", "--out", str(tmp_path)])
 
 
 def test_pool_export_then_info_then_build(tmp_path, monkeypatch, capsys):
@@ -224,5 +223,5 @@ def test_pool_export_refuses_build_parameters(tmp_path, capsys):
 
 
 def test_pool_export_refuses_a_synthetic_task(tmp_path, capsys):
-    assert cli.main(["pool", "export", "--task", "cycle", "--out", str(tmp_path)]) == 1
+    assert cli.main(["pool", "export", "--task", "strmatch", "--out", str(tmp_path)]) == 1
     assert "no corpus" in capsys.readouterr().err

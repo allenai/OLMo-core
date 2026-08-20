@@ -36,22 +36,16 @@ __all__ = ["TASK_MODULES", "load_all", "loaded", "import_errors"]
 #: Task packages to import, in registration order. Add a task by adding its name here.
 TASK_MODULES: tuple = (
     "contradiction",
-    "redundancy",
     "strmatch",
-    "mathmatch",
-    "cycle",
-    "groups4",
     "textgroups",
     "absence",
     "xabsence",
     "retrieval",
-    "qa",
     "grouping_labeled",
     "reorder",
     "outlier",
     "rerank",
     "oolong",
-    "summarization",
     "qdmatch",
 )
 

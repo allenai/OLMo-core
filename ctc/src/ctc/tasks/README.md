@@ -43,7 +43,7 @@ fingerprint would tell you *that* the format moved, but not which half moved it.
 
 ## What does NOT go in a task directory
 
-Anything two tasks share. Pair parsing alone is used by contradiction, redundancy, mathmatch,
+Anything two tasks share. Pair parsing alone is used by contradiction,
 matching_ngram and strmatch — and five copies of it is exactly how the copies drifted apart and
 produced the grading bugs recorded in `ctc/format/parsing.py`. Shared things live in `ctc/format/`
 and are referenced from the spec.
@@ -62,12 +62,8 @@ because a check of the whole repo found:
 - The pipeline that would have consumed CoT data (`build_combined_unified.py`, "24 of 184 files are
   CoT variants") was never written.
 
-**The builders were not entirely unused, though.** Three `*_cotmix_*` files were built on
-2026-06-13 and still sit in `/net/horton/data/prasann/corpus-reasoning/data/` — contradiction
-(`enumerate`), outlier (`template`) and reorder (`successor`), each row tagged `_task` /
-`_cot_mode`. Nothing in the reported results consumes them, so they read as an abandoned branch
-rather than live data, but rebuilding those specific files would need the builders back from git
-history.
+Rebuilding a CoT variant would mean recovering the dropped builders from the
+development branch's history.
 
 Results still carry a `cot_label` field, per the project's labelling convention. If a task needs CoT
 targets later, it is one builder in that task's own directory rather than a branch in shared code.

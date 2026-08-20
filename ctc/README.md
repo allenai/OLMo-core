@@ -17,7 +17,7 @@ ctc-eval --ckpt CKPT --task contradiction --rungs 2k --backend vllm
 ctc-data list
 ctc-data build --task contradiction --rungs 2k,4k,8k --out /data/ctc/v3
 ctc-data build --task fiqa --split eval --out /data/ctc/v3    # held-out ladders are eval-only
-ctc-data build --task cycle --split eval --rungs 64k,1m,10m \
+ctc-data build --task textgroups --split eval --rungs 64k,1m,10m \
     --eval-size 125 --allow-small-eval --out /data/ctc/xlong  # rungs are open-ended past 32k
 
 ctc-data build --task nq --pool auto --out /data/ctc/v3   # seed pool from the Hub: no GPU, no

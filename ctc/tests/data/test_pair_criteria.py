@@ -1,21 +1,18 @@
 """
-The two pair-family generators ported together: ``strmatch`` and ``redundancy``.
+``strmatch``: the pair-family generator whose criterion lives in the example.
 
-They are tested in one file on purpose. The pair family shares its answer format, parser, scorer and
-gold convention (:mod:`ctc.tasks._pairs`), so the only things left that distinguish its members are
-*what relation gold stands in* and *where the criterion is stated* -- and both are the kind of
-property a tidy-up can erase without breaking anything visible. A redundancy example that grew a
-``queries`` entry, or a strmatch example whose criterion stopped varying, would still validate,
-still score, and quietly be the other task.
+The pair family shares its answer format, parser, scorer and gold convention
+(:mod:`ctc.tasks._pairs`), so what distinguishes strmatch is *where its criterion is stated* --
+written into ``queries[0]``, varying per example -- and that is exactly the kind of property a
+tidy-up can erase without breaking anything visible: an example whose criterion stopped varying
+would still validate and still score.
 
 Each test below corresponds to a defect that reached data:
 
-* the criterion collapsing into a fixed instruction (or the reverse);
+* the criterion collapsing into a fixed instruction;
 * the bag-of-words shortcut that solved the shipped strmatch ladder outright (200/200 at 2k);
 * the generic shrink dissolving pair-shaped decoys, which restores that shortcut at every rung
   below the longest;
-* a filler drawn from an abstract that already contributed a planted sentence -- an unlabelled
-  second redundant pair, scored as a model error;
 * gold counted from the wrong base.
 """
 
@@ -25,16 +22,13 @@ import random
 from itertools import combinations
 
 import pytest
-from fixtures import pools
 
 from ctc.data import audit as audit_mod
 from ctc.data import ladders
 from ctc.data.generators import base as generators
 from ctc.data.gold import check_indices
-from ctc.data.sources import pubmed_redundancy
 from ctc.format import registry
 from ctc.tasks import load_all
-from ctc.tasks.redundancy.spec import build_query as redundancy_query
 from ctc.tasks.strmatch import generate as strmatch
 
 
@@ -85,34 +79,16 @@ def matching_pairs(example, relation, threshold):
     return found
 
 
-def redundancy_example(index=0, seed=0, **overrides):
+# ── the criterion lives in the example ──────────────────────────────────────────────────────────
+
+
+def test_strmatch_carries_its_criterion_per_example():
     """
-    :param index: Example counter.
-    :param seed: RNG seed.
-    :param overrides: Per-example config overrides.
-
-    :returns: One redundancy example built from the fixture pool.
-    """
-    generator = generators.get("redundancy")
-    config = generator.config(**overrides)
-    config["corpus"] = pools.redundancy_pool()
-    config["index"] = index
-    return generator.build_example(random.Random(seed), **config)
-
-
-# ── the distinction the two tasks exist to keep ─────────────────────────────────────────────────
-
-
-def test_strmatch_carries_its_criterion_per_example_and_redundancy_does_not():
-    """
-    THE load-bearing difference between the two ported tasks.
-
     strmatch's threshold is a property of the *example*: it is written into ``queries[0]`` and the
-    prompt is the instruction followed by that sentence. redundancy's criterion is fixed by the
-    instruction and its ``queries`` is empty. Collapsing either direction produces data that
-    validates and scores, and silently turns one task into the other.
+    prompt is the instruction followed by that sentence. A criterion that collapsed into the fixed
+    instruction would still validate and score, and quietly be a different task.
     """
-    strmatch_spec, redundancy_spec = registry.get("strmatch"), registry.get("redundancy")
+    strmatch_spec = registry.get("strmatch")
     three = strmatch.build_example(random.Random(0), num_docs=40, span_len=3)
     four = strmatch.build_example(random.Random(0), num_docs=40, span_len=4)
 
@@ -125,25 +101,13 @@ def test_strmatch_carries_its_criterion_per_example_and_redundancy_does_not():
     assert three["queries"][0] in prompt
     assert prompt.index(strmatch_spec.instruction) < prompt.index(three["queries"][0])
 
-    example = redundancy_example()
-    assert (
-        example["queries"] == []
-    ), "redundancy's ask is the instruction; a query would be new data"
-    assert redundancy_query(example) == redundancy_spec.instruction
-    # The proof it is *fixed*: an example with a query planted in it still asks the same question,
-    # and the planted text reaches neither the query builder nor the prompt.
-    planted = dict(example, queries=["Find all pairs sharing at least 9 words."])
-    assert redundancy_query(planted) == redundancy_spec.instruction
-    assert "at least 9 words" not in redundancy_spec.build_prompt(planted)
 
-
-def test_both_tasks_share_the_pair_family_contract():
-    """Same gold shape, same base, same primary metric -- which is what makes them comparable."""
-    for name in ("strmatch", "redundancy"):
-        spec = registry.get(name)
-        assert spec.gold_index_base == 1
-        assert spec.primary_metric == "f1"
-        assert spec.answer_is_set
+def test_strmatch_honours_the_pair_family_contract():
+    """Gold shape, base and primary metric come from the shared pair family."""
+    spec = registry.get("strmatch")
+    assert spec.gold_index_base == 1
+    assert spec.primary_metric == "f1"
+    assert spec.answer_is_set
 
 
 # ── strmatch: exactness and the shortcut ────────────────────────────────────────────────────────
@@ -218,20 +182,16 @@ def test_a_defaulted_decoy_count_shrinks_to_fit_but_an_explicit_one_does_not():
         strmatch.build_example(random.Random(0), num_docs=9, num_scattered=6)
 
 
-# ── ladders: the shrink these two tasks cannot use ──────────────────────────────────────────────
+# ── ladders: the shrink this task cannot use ────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("task", ["strmatch", "redundancy"])
-def test_the_ladder_is_nested_and_grades_the_same_gold_at_every_rung(task):
-    generator = generators.get(task)
-    assert generator.build_ladder is not None, f"{task} must not use the generic shrink"
+def test_the_ladder_is_nested_and_grades_the_same_gold_at_every_rung():
+    generator = generators.get("strmatch")
+    assert generator.build_ladder is not None, "strmatch must not use the generic shrink"
     assert not generator.shrink_safe
-    spec = registry.get(task)
-    sizes = {label: ladders.docs_for_rung(task, label) for label in ("2k", "4k", "8k")}
-    config = generator.config()
-    if generator.corpus is not None:
-        config["corpus"] = pools.redundancy_pool()
-    row = generator.build_ladder(random.Random(4), index=0, rungs=sizes, **config)
+    spec = registry.get("strmatch")
+    sizes = {label: ladders.docs_for_rung("strmatch", label) for label in ("2k", "4k", "8k")}
+    row = generator.build_ladder(random.Random(4), index=0, rungs=sizes, **generator.config())
 
     labels = list(sizes)
     for label in labels:
@@ -270,96 +230,3 @@ def test_every_strmatch_rung_keeps_its_contiguity_decoys():
             ex["_meta"]["num_scattered"] >= 2 * ex["_meta"].get("num_hardneg", 0) for ex in examples
         )
         assert audit_mod.overlap_pair_is_gold(examples, spec).score <= 0.1, label
-
-
-def test_every_redundancy_rung_keeps_all_of_its_hard_negatives():
-    """
-    The hard negatives ARE the task: without them "which two sentences are about one topic?" is a
-    sufficient answer. A random shrink halves them, so the shorter rungs would get *easier* for a
-    reason that is not context length.
-    """
-    generator = generators.get("redundancy")
-    sizes = {label: ladders.docs_for_rung("redundancy", label) for label in ("2k", "4k", "8k")}
-    config = dict(generator.config(), corpus=pools.redundancy_pool())
-    row = generator.build_ladder(random.Random(1), index=2, rungs=sizes, **config)
-    for label, example in row.items():
-        assert len(example["hard_neg_indices"]) == 2 * config["num_hardneg"], label
-        texts = {example["documents"][i - 1]["text"] for i in example["hard_neg_indices"]}
-        assert len(texts) == 2 * config["num_hardneg"]
-
-
-# ── redundancy: the false-negative control and the pool ─────────────────────────────────────────
-
-
-def test_redundancy_fillers_never_come_from_an_abstract_that_planted_a_sentence():
-    """
-    A filler from a gold pair's own abstract may restate the fact the pair states -- an unlabelled
-    second redundant pair, scored as a model error every time a model finds it. The control covers
-    the hard-negative abstracts too, which the pre-migration generator also did.
-    """
-    pool = pools.redundancy_pool()
-    generator = generators.get("redundancy")
-    for index in range(5):
-        example = generator.build_example(
-            random.Random(index), **generator.config(num_docs=60), corpus=pool, index=index
-        )
-        planted = {
-            *(p.claim for p in pool.pairs[index * 3 : index * 3 + 3]),
-            *(p.paraphrase for p in pool.pairs[index * 3 : index * 3 + 3]),
-            *(h.first for h in pool.hardnegs[index * 6 : index * 6 + 6]),
-            *(h.second for h in pool.hardnegs[index * 6 : index * 6 + 6]),
-        }
-        used = {p.abstract_id for p in pool.pairs[index * 3 : index * 3 + 3]}
-        used |= {h.abstract_id for h in pool.hardnegs[index * 6 : index * 6 + 6]}
-        banned = {text for aid in used for text in pool.fillers.get(aid, ())}
-        fillers = {doc["text"] for doc in example["documents"]} - planted
-        assert not (fillers & banned)
-
-
-def test_redundancy_hard_negative_indices_point_at_the_planted_pairs():
-    """They are 1-based, like gold: ``shrink`` renumbers them with the spec's own base."""
-    pool = pools.redundancy_pool()
-    generator = generators.get("redundancy")
-    example = generator.build_example(
-        random.Random(0), **generator.config(num_docs=40), corpus=pool, index=0
-    )
-    planted = {h.first for h in pool.hardnegs[:6]} | {h.second for h in pool.hardnegs[:6]}
-    assert min(example["hard_neg_indices"]) >= 1
-    assert {example["documents"][i - 1]["text"] for i in example["hard_neg_indices"]} == planted
-    gold_positions = {i for pair in example["gold_doc_indices"] for i in pair}
-    assert not gold_positions & set(example["hard_neg_indices"])
-
-
-def test_the_hard_negative_pool_takes_the_hardest_pair_each_abstract_offers():
-    """
-    The lever that narrows the lexical gap between gold (a paraphrase, high overlap) and the
-    decoys. ``order="random"`` is the pre-migration behaviour and must stay reachable.
-    """
-    fillers = {
-        "a": (
-            "Serum ferritin increased by 30 percent in treated patients.",
-            "Serum ferritin increased by 12 percent in treated patients.",
-            "Enrollment was greater than expected across the four centres.",
-        )
-    }
-    hardest = pubmed_redundancy.build_hardneg_pool(fillers, random.Random(0), order="overlap")
-    assert len(hardest) == 1
-    assert {hardest[0].first, hardest[0].second} == set(fillers["a"][:2])
-    assert hardest[0].overlap > 0.5
-
-    with pytest.raises(ValueError, match="order must be"):
-        pubmed_redundancy.build_hardneg_pool(fillers, random.Random(0), order="closest")
-
-
-def test_the_pool_splits_its_hard_negatives_as_well_as_its_gold():
-    """
-    A hard-negative pair is a question too. Sharing one between train and eval tells the model the
-    answer for that pair, and every surface contamination check still passes.
-    """
-    pool = pools.redundancy_pool()
-    train, evalset = pool.for_split("train"), pool.for_split("eval")
-    assert not set(train.pairs) & set(evalset.pairs)
-    assert not set(train.hardnegs) & set(evalset.hardnegs)
-    assert len(train.hardnegs) + len(evalset.hardnegs) == len(pool.hardnegs)
-    with pytest.raises(ValueError, match="split must be"):
-        pool.for_split("holdout")

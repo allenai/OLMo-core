@@ -64,7 +64,6 @@ REPO_ENV = "CTC_SEED_POOL_REPO"
 #: fed to the fiqa ladder would build data that grades, plausibly, as the wrong ladder.
 LADDER_TAGS: Dict[str, str] = {
     "contradiction": "pubmed",
-    "redundancy": "redundancy",
     "contra_fever": "fever",
     "nq": "retrieval",
     "hotpotqa": "retrieval",
@@ -123,42 +122,6 @@ def _decode_pubmed(payload: Dict[str, Any]) -> Any:
 
     return pubmed.PubMedPool(
         pairs=tuple(pubmed.ClaimPair(**p) for p in payload["pairs"]),
-        fillers={k: tuple(v) for k, v in payload["fillers"].items()},
-        provenance=payload.get("provenance", {}),
-    )
-
-
-def _encode_redundancy(pool: Any) -> Dict[str, Any]:
-    return {
-        "pairs": [
-            {
-                "claim": p.claim,
-                "paraphrase": p.paraphrase,
-                "abstract_id": p.abstract_id,
-                "mode": p.mode,
-            }
-            for p in pool.pairs
-        ],
-        "hardnegs": [
-            {
-                "first": h.first,
-                "second": h.second,
-                "abstract_id": h.abstract_id,
-                "overlap": h.overlap,
-            }
-            for h in pool.hardnegs
-        ],
-        "fillers": {k: list(v) for k, v in pool.fillers.items()},
-        "provenance": pool.provenance,
-    }
-
-
-def _decode_redundancy(payload: Dict[str, Any]) -> Any:
-    from .sources import pubmed_redundancy as red
-
-    return red.RedundancyPool(
-        pairs=tuple(red.RedundantPair(**p) for p in payload["pairs"]),
-        hardnegs=tuple(red.HardNegativePair(**h) for h in payload["hardnegs"]),
         fillers={k: tuple(v) for k, v in payload["fillers"].items()},
         provenance=payload.get("provenance", {}),
     )
@@ -436,7 +399,6 @@ def _decode_unit(payload: Dict[str, Any]) -> Any:
 
 _CODECS: Dict[str, Tuple[Callable[[Any], Dict[str, Any]], Callable[[Dict[str, Any]], Any]]] = {
     "pubmed": (_encode_pubmed, _decode_pubmed),
-    "redundancy": (_encode_redundancy, _decode_redundancy),
     "fever": (_encode_fever, _decode_fever),
     "retrieval": (_encode_retrieval, _decode_retrieval),
     "article": (_encode_article, _decode_article),

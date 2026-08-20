@@ -33,7 +33,7 @@
 > ~22 corpus-tracking tasks with context ladders from 2k to 10M+ tokens per example. Start at
 > [`ctc/README.md`](ctc/README.md) (the pip package: data generation + evaluation),
 > [`src/scripts/ctc/README.md`](src/scripts/ctc/README.md) (training), and
-> [`records/README.md`](records/README.md) (writeups). The `run/` scripts cover the whole pipeline:
+> [`REPRODUCING.md`](REPRODUCING.md) (the main experiments as standalone commands). The `run/` scripts cover the whole pipeline:
 > `data.sh` → `convert.sh` → `train.sh` → `eval.sh`. The olmo-eval integration lives on the
 > `olmo-eval` repo's `prasann/ctc-suite` branch, scoring the public HF dataset
 > `PrasannSinghal/ctc-suite-eval`. Everything below is upstream's README, unchanged.

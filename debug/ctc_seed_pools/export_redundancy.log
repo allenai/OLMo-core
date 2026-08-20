@@ -1,2 +1,0 @@
-loading the redundancy corpus (this is the expensive step the pool exists to cache)
-wrote debug/ctc_seed_pools/seeds/redundancy.seed.jsonl.gz (12.0 MB)

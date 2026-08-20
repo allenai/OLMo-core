@@ -35,9 +35,6 @@ ctc-data audit --task <task> --dir DIR                     # re-check data alrea
 | `outlier_review` | outlier | Amazon-Reviews-2023 | `ctc-data build --task outlier_review --split eval --out DIR` |
 | `contra_fever` | contradiction | FEVER (`copenlu/fever_gold_evidence`) | `ctc-data build --task contra_fever --split eval --out DIR` |
 | **pure synthetic** — no corpus, no network | | | |
-| `cycle` | cycle | — | `ctc-data build --task cycle --out DIR` |
-| `groups4` | groups4 | — | `ctc-data build --task groups4 --out DIR` |
-| `mathmatch` | mathmatch | — | `ctc-data build --task mathmatch --out DIR` |
 | `textgroups` | textgroups | — | `ctc-data build --task textgroups --out DIR` |
 
 A build writes `DIR/<task>/train.jsonl` plus one `DIR/<task>/eval_<rung>.jsonl` per rung, and
@@ -45,7 +42,7 @@ A build writes `DIR/<task>/train.jsonl` plus one `DIR/<task>/eval_<rung>.jsonl` 
 
 Corpus loading needs the extras: `pip install './ctc[sources]'` for the HF datasets,
 `./ctc[gen]` for the cross-encoder and the OOLONG tokenizer, plus `pyserini` for anything that
-mines BM25 negatives. A bare install still builds all four synthetic tasks and grades everything.
+mines BM25 negatives. A bare install still builds the synthetic tasks (`strmatch`, `textgroups`) and grades everything.
 **Or skip the extras entirely and build from a seed pool — see the next section.**
 
 ## Seed pools: any build in about a minute, on a bare install
@@ -83,8 +80,8 @@ repeat builds are offline. Three properties worth knowing:
   ladder in seconds).
 
 The seed file records the ladder it was exported for, and `build` refuses a mismatch (an `nq`
-pool fed to the `fiqa` ladder would build plausible data for the wrong ladder). Export scripts
-and provenance for the published pools live in `debug/ctc_seed_pools/`.
+pool fed to the `fiqa` ladder would build plausible data for the wrong ladder). Per-pool
+provenance is on the dataset card of the Hub repo itself.
 
 ### Changing a parameter
 
@@ -128,7 +125,7 @@ documents at 64k against the independently shipped file's 1525).
 
 ```bash
 # a 5-rung ultra-long eval ladder, one command, ~a minute for a synthetic task
-ctc-data build --task cycle --split eval --rungs 64k,256k,1m,4m,10m \
+ctc-data build --task textgroups --split eval --rungs 64k,256k,1m,4m,10m \
     --eval-size 125 --allow-small-eval --out /data/ctc/xlong
 ```
 

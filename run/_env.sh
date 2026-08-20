@@ -59,7 +59,7 @@ fi
 # /scratch for a torch/vLLM job -- see the NFS note above.
 CTC_PYTHON="${CTC_PYTHON:-}"
 if [[ -z "$CTC_PYTHON" ]]; then
-  for candidate in /data/prasann/ctc_vllm_venv/bin/python "$(command -v python3 || true)"; do
+  for candidate in /data/$USER/ctc_venv/bin/python "$(command -v python3 || true)"; do
     if [[ -n "$candidate" && -x "$candidate" ]]; then
       CTC_PYTHON="$candidate"
       break

@@ -16,7 +16,7 @@ from ctc.data.generators import base as _generators
 from ctc.format import registry
 from ctc.tasks import load_all
 
-TASK = "cycle"
+TASK = "textgroups"
 
 #: Ladders a test can build with no corpus. The corpus-backed ones get the same coverage in
 #: ``test_corpus_generators.py``, against fixture pools.

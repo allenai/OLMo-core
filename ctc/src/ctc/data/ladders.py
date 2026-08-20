@@ -54,10 +54,7 @@ __all__ = [
 LADDERS: Dict[str, Dict[str, int]] = {
     # ── pure synthetic ──
     # ~25-30 tok/claim. BUILD_MATRIX recommends capping at n1000 and letting 32k run slightly short.
-    "cycle": {"2k": 60, "4k": 130, "8k": 270, "16k": 550, "32k": 1100},
     # ~15-20 tok/expression -- the shortest documents in the suite, hence the largest counts.
-    "groups4": {"2k": 100, "4k": 210, "8k": 440, "16k": 900, "32k": 1800},
-    "mathmatch": {"2k": 48, "4k": 105, "8k": 220, "16k": 450, "32k": 900},
     # ~27 tok/string at str_len=10, tokenizer-MEASURED (2022/4080/8201/16459/33193 median prompt
     # tokens, every rung within 1.3% of its label). NOT the BUILD_MATRIX row-20 counts
     # (38/82/170/350/700), which that row itself flagged `synth x1.5-3 ... calibrate before
@@ -69,7 +66,7 @@ LADDERS: Dict[str, Dict[str, int]] = {
     # row is a recalibration, not a consequence of the vocabulary swap.
     "strmatch": {"2k": 72, "4k": 149, "8k": 301, "16k": 606, "32k": 1216},
     # ~150 tok/passage: the feature must be spread densely over several sentences, so a textgroups
-    # document is an order of magnitude longer than a groups4 one at the same task shape.
+    # document is an order of magnitude longer than a short synthetic one at the same task shape.
     "textgroups": {"2k": 11, "4k": 24, "8k": 50, "16k": 103, "32k": 210},
     # ── the five in-distribution CTC-suite ladders ──
     # ~43 tok/claim, tokenizer-MEASURED at 1925/3933/8052/16074/32397 median tokens against a
@@ -83,7 +80,6 @@ LADDERS: Dict[str, Dict[str, int]] = {
     # pre-migration ladder to inherit -- but the corpus is contradiction's, at the same document
     # shape, and the two fits agree to within 3% at every rung (46/95/193/390/784 vs 44/92/187/
     # 379/762), which is the cross-check that says the fit is measuring the corpus and not noise.
-    "redundancy": {"2k": 46, "4k": 95, "8k": 193, "16k": 390, "32k": 784},
     "nq": {"2k": 11, "4k": 23, "8k": 48, "16k": 100, "32k": 200},  # ~160 tok/passage
     # ~113 tok/paragraph, tokenizer-MEASURED. NOT the BUILD_MATRIX row-2 counts (11/24/50/100/205),
     # which the 2026-07-19 "FIX2" recalibration found undershooting their labels by 0.64-0.69x: a
@@ -159,19 +155,12 @@ LADDERS: Dict[str, Dict[str, int]] = {
 #: How each row was arrived at. ``estimated`` means an offline per-document token estimate, not a
 #: measurement against the real tokenizer -- re-measure before quoting a context length.
 CALIBRATION: Dict[str, str] = {
-    "cycle": "estimated",
-    "groups4": "estimated",
-    "mathmatch": "estimated",
     "strmatch": (
         "measured (Qwen3 tokenizer, frozen wordlist); REPLACES BUILD_MATRIX row 20, whose "
         "38/82/170/350/700 renders to ~0.56x of every rung label"
     ),
     "textgroups": "estimated",
     "contradiction": "measured (Qwen3 tokenizer, PubMed-only filler pool)",
-    "redundancy": (
-        "measured (Qwen3 tokenizer, PubMed pool); no pre-migration row -- the task was "
-        "dropped from the suite before its ladder was fit"
-    ),
     "nq": "estimated (BUILD_MATRIX row 1)",
     "hotpotqa": (
         "measured 2k/4k/8k (FIX2 recalibration, 1954/4124/8240 median tokens); 16k/32k from the "

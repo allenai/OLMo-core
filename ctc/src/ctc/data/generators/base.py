@@ -38,14 +38,10 @@ __all__ = ["Generator", "GENERATORS", "get", "names", "corpus_free_names"]
 #: quietly shorter results table.
 GENERATORS: Dict[str, str] = {
     # ── pure synthetic: no corpus, no network, byte-reproducible from a seed ──
-    "cycle": "ctc.tasks.cycle.generate",
-    "groups4": "ctc.tasks.groups4.generate",
-    "mathmatch": "ctc.tasks.mathmatch.generate",
     "strmatch": "ctc.tasks.strmatch.generate",
     "textgroups": "ctc.tasks.textgroups.generate",
     # ── the five in-distribution CTC-suite ladders ──
     "contradiction": "ctc.tasks.contradiction.sources.pubmed",
-    "redundancy": "ctc.tasks.redundancy.generate",
     "nq": "ctc.tasks.retrieval.sources.nq",
     "outlier": "ctc.tasks.outlier.sources.wiki100w",
     "rerank": "ctc.tasks.rerank.generate",
@@ -215,8 +211,7 @@ def get(task: str) -> Generator:
     """
     if task not in GENERATORS:
         raise KeyError(
-            f"no generator ported for {task!r}; have {', '.join(GENERATORS)}. "
-            "See records/data-generator-port.md for what remains un-ported."
+            f"no generator ported for {task!r}; have {', '.join(GENERATORS)}"
         )
     target = GENERATORS[task]
     module_path, _, attribute = target.partition(":")
