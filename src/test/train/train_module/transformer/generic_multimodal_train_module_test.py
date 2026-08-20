@@ -21,6 +21,7 @@ from olmo_core.optim import AdamWConfig, SkipStepAdamWConfig, SkipStepOptimizer
 from olmo_core.testing.distributed import run_distributed_test
 from olmo_core.train.train_module import (
     MultimodalTransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
 )
 
@@ -143,6 +144,57 @@ def test_generic_config_round_trip_and_selective_embedding_rows():
 def test_generic_config_rejects_ambiguous_diagnostics_contracts(kwargs, message):
     with pytest.raises(OLMoConfigurationError, match=message):
         _build_train_module(**kwargs)
+
+
+def test_multimodal_root_hides_activation_checkpoint_wrapper_names():
+    model = _multimodal_config().build(init_device="cpu")
+    model.lm.blocks["0"].register_buffer("logical_name_test_buffer", torch.ones(1))
+    parameters_before = dict(model.named_parameters())
+    buffers_before = dict(model.named_buffers())
+
+    model.lm.apply_activation_checkpointing(TransformerActivationCheckpointingConfig().mode)
+
+    parameters_after = dict(model.named_parameters())
+    buffers_after = dict(model.named_buffers())
+    assert parameters_after.keys() == parameters_before.keys()
+    assert buffers_after.keys() == buffers_before.keys()
+    assert all(parameters_after[name] is value for name, value in parameters_before.items())
+    assert all(buffers_after[name] is value for name, value in buffers_before.items())
+    assert not any(
+        "_checkpoint_wrapped_module" in name
+        for name in (*parameters_after.keys(), *buffers_after.keys())
+    )
+    assert "lm.blocks.0.logical_name_test_buffer" in model.state_dict()
+
+
+@pytest.mark.parametrize("init_device", ["cpu", "meta"])
+def test_activation_checkpointing_preserves_logical_names_and_trainability(init_device):
+    model = _multimodal_config().build(init_device=init_device)
+    initially_frozen_name = next(
+        name for name, _ in model.named_parameters() if name.startswith("connector.")
+    )
+    dict(model.named_parameters())[initially_frozen_name].requires_grad_(False)
+
+    train_module = MultimodalTransformerTrainModuleConfig(
+        rank_microbatch_size=SEQUENCE_LENGTH,
+        max_sequence_length=SEQUENCE_LENGTH,
+        optim=AdamWConfig(lr=1e-4),
+        freeze_params=["lm.blocks.0.attention.w_q.weight"],
+        ac_config=TransformerActivationCheckpointingConfig(),
+        compile_model=True,
+        vision_activation_checkpointing=False,
+        connector_activation_checkpointing=False,
+        new_component_init_seed=6198,
+    ).build(model, device=torch.device("cpu"))
+
+    parameters = dict(train_module.model.named_parameters())
+    state = train_module.state_dict(optim=False)["model"]
+    assert not any("_checkpoint_wrapped_module" in name for name in parameters)
+    assert set(parameters).issubset(state)
+    assert not any("_checkpoint_wrapped_module" in name for name in state)
+    assert not parameters["lm.blocks.0.attention.w_q.weight"].requires_grad
+    assert parameters["lm.blocks.0.attention.w_k.weight"].requires_grad
+    assert not parameters[initially_frozen_name].requires_grad
 
 
 def test_generic_multimodal_eval_returns_summed_weighted_loss_and_response_logits():
@@ -322,7 +374,10 @@ def test_meta_build_and_strict_model_only_parent_load(tmp_path):
         {"model": dist_cp_sd.get_model_state_dict(parent)},
     )
 
-    train_module = _build_train_module(init_device="meta")
+    train_module = _build_train_module(
+        init_device="meta",
+        ac_config=TransformerActivationCheckpointingConfig(),
+    )
     assert {param.device.type for param in train_module.model.parameters()} == {"cpu"}
     assert all(torch.isfinite(param).all() for param in train_module.model.parameters())
     before_vision = {
@@ -356,6 +411,9 @@ def test_meta_build_and_strict_model_only_parent_load(tmp_path):
         torch.testing.assert_close(value, before_vision[name], rtol=0, atol=0)
     assert train_module.optim.state == {}
     assert train_module.state_dict_load_opts.strict
+    assert not any(
+        "_checkpoint_wrapped_module" in name for name in receipt["loaded_parameter_keys"]
+    )
 
 
 def test_meta_new_component_seed_is_explicit_and_reproducible():
@@ -447,6 +505,7 @@ def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
         diagnostics_interval=1,
         vision_activation_checkpointing=False,
         connector_activation_checkpointing=False,
+        ac_config=TransformerActivationCheckpointingConfig(),
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.fsdp,
             param_dtype=DType.bfloat16,

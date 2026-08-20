@@ -29,6 +29,8 @@ _INPUT_DIAGNOSTIC_NAMES = (
     "spliced image embedding RMS",
 )
 
+_ACTIVATION_CHECKPOINT_WRAPPER_PREFIX = "_checkpoint_wrapped_module."
+
 
 @dataclass
 class MultimodalLMConfig(Config):
@@ -145,6 +147,52 @@ class MultimodalLM(nn.Module):
         self._collect_input_diagnostics = False
         self._input_diagnostic_sums: Dict[str, torch.Tensor] = {}
         self._input_diagnostic_counts: Dict[str, int] = {}
+
+    def named_parameters(
+        self,
+        prefix: str = "",
+        recurse: bool = True,
+        remove_duplicate: bool = True,
+    ) -> Iterator[Tuple[str, nn.Parameter]]:
+        """Iterate parameters using activation-checkpoint-transparent names.
+
+        PyTorch's activation-checkpoint wrapper hides its implementation prefix when queried
+        directly, but an ancestor module's recursive :meth:`named_parameters` traversal exposes
+        it. Keep the multimodal root in the same logical namespace as :meth:`state_dict` so
+        trainability policies, optimizer groups, and checkpoint inventories remain stable before
+        and after language-model activation checkpointing.
+
+        :param prefix: Prefix to prepend to every parameter name.
+        :param recurse: Recurse into child modules when ``True``.
+        :param remove_duplicate: Yield shared parameters only once when ``True``.
+        :returns: An iterator over logical parameter names and parameters.
+        """
+        for name, parameter in super().named_parameters(
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=remove_duplicate,
+        ):
+            yield name.replace(_ACTIVATION_CHECKPOINT_WRAPPER_PREFIX, ""), parameter
+
+    def named_buffers(
+        self,
+        prefix: str = "",
+        recurse: bool = True,
+        remove_duplicate: bool = True,
+    ) -> Iterator[Tuple[str, torch.Tensor]]:
+        """Iterate buffers using activation-checkpoint-transparent names.
+
+        :param prefix: Prefix to prepend to every buffer name.
+        :param recurse: Recurse into child modules when ``True``.
+        :param remove_duplicate: Yield shared buffers only once when ``True``.
+        :returns: An iterator over logical buffer names and buffers.
+        """
+        for name, buffer in super().named_buffers(
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=remove_duplicate,
+        ):
+            yield name.replace(_ACTIVATION_CHECKPOINT_WRAPPER_PREFIX, ""), buffer
 
     def set_input_diagnostics(self, enabled: bool) -> None:
         """Enable or disable detached embedding-scale diagnostics for the next forwards."""
