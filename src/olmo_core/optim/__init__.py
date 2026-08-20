@@ -22,6 +22,7 @@ from .scheduler import (
     HalfCosWithWarmup,
     InvSqrtWithWarmup,
     LinearWithWarmup,
+    PowerLR,
     Scheduler,
     SchedulerUnits,
     SequentialScheduler,
@@ -59,6 +60,7 @@ __all__ = [
     "SequentialScheduler",
     "WSD",
     "WSDS",
+    "PowerLR",
     "LR_FIELD",
     "INITIAL_LR_FIELD",
 ]

@@ -14,6 +14,38 @@ from olmo_core.testing import DEVICES, requires_flash_attn_2, requires_gpu
 
 
 @pytest.mark.parametrize("device", DEVICES)
+def test_partial_rotary_embedding(device):
+    """Partial RoPE rotates only the leading fraction of each head; trailing dims are unchanged."""
+    B, T, n_heads = 2, 8, 4
+    head_size = 256
+    partial_factor = 0.25
+    rotary_dim = int(head_size * partial_factor)
+
+    rope = RotaryEmbedding(head_size=head_size, partial_rotary_factor=partial_factor)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+        q_orig = q.clone()
+        k_orig = k.clone()
+
+        q_out, k_out = rope(q, k)
+
+        # Trailing (non-rotated) dimensions must be identical to the input.
+        torch.testing.assert_close(q_out[..., rotary_dim:], q_orig[..., rotary_dim:])
+        torch.testing.assert_close(k_out[..., rotary_dim:], k_orig[..., rotary_dim:])
+
+        # Leading rotated dimensions should differ from input (with high probability).
+        assert not torch.allclose(q_out[..., :rotary_dim], q_orig[..., :rotary_dim])
+        assert not torch.allclose(k_out[..., :rotary_dim], k_orig[..., :rotary_dim])
+
+        # Full RoPE (factor=1.0) should change all dimensions.
+        rope_full = RotaryEmbedding(head_size=head_size, partial_rotary_factor=1.0)
+        q_full, _ = rope_full(q_orig.clone(), k_orig.clone())
+        assert not torch.allclose(q_full, q_orig)
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_rope_head_first_vs_seq_first(device):
     B, T, d_model, n_heads = 2, 12, 16, 4
     rope = RotaryEmbedding(head_size=d_model // n_heads)
@@ -86,6 +118,68 @@ def test_fused_rope(dtype):
         q, k = rope(q, k, head_first=False)
         torch.testing.assert_close(q, qkv[:, :, 0, :])
         torch.testing.assert_close(k, qkv[:, :, 1, :])
+
+
+@pytest.mark.parametrize("device", DEVICES)
+@pytest.mark.parametrize(
+    "head_first",
+    [
+        pytest.param(True, id="head_first"),
+        pytest.param(False, id="seq_first"),
+    ],
+)
+def test_rope_with_cu_doc_lens_packed_batch(device, head_first):
+    """
+    Verify that intra-document RoPE via ``cu_doc_lens`` produces the same outputs
+    as applying RoPE independently to each document, for ``B > 1`` packed inputs
+    where documents differ across batch elements.
+    """
+    n_heads, head_size = 4, 8
+    doc_lens = [[3, 5, 4], [6, 2, 4]]
+    T = sum(doc_lens[0])
+    B = len(doc_lens)
+    assert all(sum(dl) == T for dl in doc_lens)
+
+    rope = RotaryEmbedding(head_size=head_size)
+
+    flat = []
+    for dl in doc_lens:
+        flat.extend(dl)
+    cu_doc_lens = torch.tensor(
+        [0] + list(torch.cumsum(torch.tensor(flat), dim=0).tolist()),
+        dtype=torch.int32,
+        device=device,
+    )
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+
+        if head_first:
+            q_in, k_in = q, k
+        else:
+            q_in, k_in = q.transpose(1, 2), k.transpose(1, 2)
+
+        q_packed, k_packed = rope(q_in, k_in, head_first=head_first, cu_doc_lens=cu_doc_lens)
+
+        if not head_first:
+            q_packed = q_packed.transpose(1, 2)
+            k_packed = k_packed.transpose(1, 2)
+
+        q_ref = torch.empty_like(q)
+        k_ref = torch.empty_like(k)
+        for b, dl in enumerate(doc_lens):
+            offset = 0
+            for length in dl:
+                qd = q[b : b + 1, :, offset : offset + length, :]
+                kd = k[b : b + 1, :, offset : offset + length, :]
+                qd_out, kd_out = rope(qd, kd, head_first=True)
+                q_ref[b : b + 1, :, offset : offset + length, :] = qd_out
+                k_ref[b : b + 1, :, offset : offset + length, :] = kd_out
+                offset += length
+
+        torch.testing.assert_close(q_packed, q_ref)
+        torch.testing.assert_close(k_packed, k_ref)
 
 
 @pytest.mark.parametrize("device", DEVICES)

@@ -7,7 +7,6 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-from examples.huggingface.convert_checkpoint_to_hf import convert_checkpoint_to_hf
 from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -16,6 +15,7 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.attention.flash_linear_attn_api import has_fla
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
+from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.hf.config import get_hybrid_hf_config, get_hybrid_layer_types
 from olmo_core.nn.hf.convert import (
     HYBRID_ATTN_LAYER_KEY_MAP,
@@ -82,7 +82,12 @@ def hybrid_model_config(tokenizer_config: TokenizerConfig) -> TransformerConfig:
 
 @pytest.fixture
 def hybrid_model(hybrid_model_config: TransformerConfig) -> Transformer:
-    return hybrid_model_config.build()
+    model = hybrid_model_config.build()
+    # Initialize weights so parameters hold real (finite) values. Without this, params are
+    # left as uninitialized `torch.empty` memory, which can contain NaNs (e.g. in `A_log`) and
+    # break the round-trip `torch.equal` checks, since `torch.equal` returns False on NaNs.
+    model.init_weights()
+    return model
 
 
 @pytest.fixture

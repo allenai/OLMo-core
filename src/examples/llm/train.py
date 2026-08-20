@@ -38,6 +38,7 @@ from olmo_core.train.callbacks import (
     CometCallback,
     ConfigSaverCallback,
     DownstreamEvaluatorCallbackConfig,
+    GAPMonitorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
     ProfilerCallback,
@@ -246,6 +247,10 @@ def build_config(opts, overrides: List[str]) -> ExperimentConfig:
                 tokenizer=tokenizer_config,
                 eval_interval=250,
             ),
+        )
+        .with_callback(
+            "gap_monitor",
+            GAPMonitorCallback(enabled=False, dump_gradients=False),
         )
     )
 

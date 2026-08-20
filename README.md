@@ -88,7 +88,7 @@ To continue annealing from a checkpoint, we use a separate script which can be l
 ```bash
 torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-anneal.py \
   --save-folder=/path/to/save/checkpoints \
-  --checkpoint=https://olmo-checkpoints.org/ai2-llm/peteish32/step721901
+  --checkpoint=https://storage.googleapis.com/ai2-llm/peteish32/step721901
 ```
 
 ### Available Training Scripts

@@ -99,6 +99,7 @@ def parallelize_model(
                 block_interval=ac_config.block_interval,
                 modules=ac_config.modules,
                 activation_memory_budget=ac_config.activation_memory_budget,
+                determinism_check=ac_config.determinism_check,
             )
         log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
@@ -145,12 +146,13 @@ def parallelize_model(
 
     # Materialize and init parameters.
     log.info("Initializing model weights...")
-    for m in model_parts:
+    for model_part_idx, m in enumerate(model_parts):
         m.init_weights(
             max_seq_len=max_sequence_length,
             max_local_microbatch_size=rank_microbatch_size,
             device=device,
             world_mesh=world_mesh,
+            model_part_idx=model_part_idx,
         )
 
     return model

@@ -30,6 +30,7 @@ from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThrea
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
 LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
+RICH_LOGGING_ENV_VAR = "OLMO_RICH_LOGGING"
 
 
 _log_extra_fields: Dict[str, Any] = {}
@@ -115,6 +116,7 @@ def move_to_device(o: T, device: torch.device, non_blocking: Optional[bool] = No
         return o
 
 
+@torch.compiler.disable
 def mark_dynamic(x: torch.Tensor, dim: Union[int, Sequence[int]], strict: bool = True):
     """
     Mark a tensor as having dynamic sizes for ``torch.compile()``.
@@ -311,12 +313,20 @@ def setup_logging(
     logging.setLogRecordFactory(log_record_factory)
 
     handler: logging.Handler
-    # NOTE: Beaker supports rich logging now.
-    if (
-        os.environ.get("OLMO_RICH_LOGGING") is None
-        and os.environ.get("BEAKER_EXPERIMENT_ID") is None
-        and (os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive" or not sys.stdout.isatty())
-    ):
+    rich_logging_env = os.environ.get(RICH_LOGGING_ENV_VAR)
+    if rich_logging_env is not None:
+        use_rich_logging = rich_logging_env.lower() not in ("0", "false", "no", "off")
+    else:
+        # NOTE: Beaker supports rich logging now.
+        use_rich_logging = not (
+            os.environ.get("BEAKER_EXPERIMENT_ID") is None
+            and (
+                os.environ.get("DEBIAN_FRONTEND", None) == "noninteractive"
+                or not sys.stdout.isatty()
+            )
+        )
+
+    if not use_rich_logging:
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
             "%(asctime)s\t%(hostname)s:%(local_rank)s\t%(name)s:%(lineno)s\t%(levelname)s\t%(message)s"
@@ -796,6 +806,9 @@ _CUDA_STREAMS: Dict[str, torch.cuda.Stream] = {}
 
 
 def get_or_init_stream(id: str, priority: int = 0) -> torch.cuda.Stream:
+    # NOTE: pri_idx = std::clamp(-priority, 0, max_stream_priorities - 1)
+    # pytorch/c10/cuda/CUDAStream.cpp
+    # it turns out priority>=0 is the same as default priority=0
     global _CUDA_STREAMS
     if id in _CUDA_STREAMS:
         return _CUDA_STREAMS[id]

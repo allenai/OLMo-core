@@ -4,6 +4,7 @@ import os
 import pickle
 import re
 import shutil
+import ssl
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -678,9 +679,15 @@ def _http_file_exists(url: str) -> bool:
 
 @cache
 def _get_gcs_client():
+    import google.auth
+    import google.auth.exceptions
     from google.cloud import storage as gcs
 
-    return gcs.Client()
+    try:
+        google.auth.default()
+        return gcs.Client()
+    except google.auth.exceptions.DefaultCredentialsError:
+        return gcs.Client.create_anonymous_client()
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
@@ -926,9 +933,18 @@ def _get_s3_endpoint_url(scheme: str) -> Optional[str]:
 
 def _s3_retry_condition(err: Exception) -> bool:
     import botocore.exceptions as boto_errors
+    import urllib3.exceptions as urllib3_errors
 
     return isinstance(
-        err, (boto_errors.ClientError, boto_errors.HTTPClientError, boto_errors.ConnectionError)
+        err,
+        (
+            boto_errors.ClientError,
+            boto_errors.HTTPClientError,
+            boto_errors.ConnectionError,
+            boto_errors.SSLError,
+            urllib3_errors.SSLError,
+            ssl.SSLError,
+        ),
     )
 
 

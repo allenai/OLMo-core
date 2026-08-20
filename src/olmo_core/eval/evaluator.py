@@ -20,6 +20,15 @@ class Evaluator(metaclass=ABCMeta):
     :param batches_factory: A callable that returns an iterable over batches. This is an
         alternative to providing the ``batches`` argument directly.
     :param device: The device to compute/reduce metrics on.
+    :param deterministic: When ``True`` and :data:`batches` is a
+        :class:`~olmo_core.data.data_loader.DataLoaderBase`, each evaluation pass resets the data
+        loader and reshuffles with ``epoch=1`` so repeated evals read the same batches in the same
+        order. This is useful when eval loops are truncated via
+        :class:`~olmo_core.train.common.Duration`. When ``False``, the data loader still resets to
+        batch 0 before each pass, but reshuffles without pinning the epoch so the batch order may
+        change between eval runs. This does not implement a moving window across evals; if an eval
+        is truncated, different reshuffles may result in different instances being evaluated each
+        time.
     """
 
     def __init__(
@@ -29,6 +38,7 @@ class Evaluator(metaclass=ABCMeta):
         batches: Optional[Iterable[Dict[str, Any]]] = None,
         batches_factory: Optional[Callable[[], Iterable[Dict[str, Any]]]] = None,
         device: Optional[torch.device] = None,
+        deterministic: bool = True,
     ):
         if batches is None:
             assert (
@@ -42,6 +52,7 @@ class Evaluator(metaclass=ABCMeta):
         self.batches = batches
         self.batches_factory = batches_factory
         self.device = device
+        self.deterministic = deterministic
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -51,7 +62,13 @@ class Evaluator(metaclass=ABCMeta):
             assert self.batches_factory is not None
             self.batches = self.batches_factory()
         if isinstance(self.batches, DataLoaderBase):
-            self.batches.reshuffle(in_memory=True)
+            # Reset bookkeeping before reshuffling so eval_duration-limited evals always restart
+            # from batch 0 instead of resuming from the previous partial pass.
+            self.batches.reset()
+            if self.deterministic:
+                self.batches.reshuffle(epoch=1, in_memory=True)
+            else:
+                self.batches.reshuffle(in_memory=True)
         for batch in self.batches:
             yield batch
         if isinstance(self.batches, DataLoaderBase):

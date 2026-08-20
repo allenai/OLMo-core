@@ -43,6 +43,7 @@ class ConsoleLoggerCallback(Callback):
             "optim/step skipped",
             "optim/LR*",
             "throughput/*",
+            "checkpoint/*",
         ]
     )
     """
