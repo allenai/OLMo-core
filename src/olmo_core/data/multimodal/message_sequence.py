@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 
@@ -22,7 +22,7 @@ __all__ = ["encode_sft_example"]
 def encode_sft_example(
     tokenizer,
     pil_image,
-    turns: Sequence[Tuple[str, str]],
+    turns: Union[Sequence[Tuple[str, str]], Sequence[Sequence[Tuple[str, str]]]],
     *,
     max_crops: int = 8,
     max_images: int = 5,
@@ -81,10 +81,14 @@ def encode_sft_example(
     def _is_turn(x) -> bool:
         return isinstance(x, tuple) and len(x) == 2 and isinstance(x[0], str)
 
+    # The casts just tell mypy which arm of the union `_is_turn` selected; it cannot
+    # narrow through a helper predicate.
     if turns and _is_turn(turns[0]):
-        branch_turns: List[List[Tuple[str, str]]] = [[t] for t in turns]
+        branch_turns: List[List[Tuple[str, str]]] = [
+            [t] for t in cast(Sequence[Tuple[str, str]], turns)
+        ]
     else:
-        branch_turns = [list(b) for b in turns]
+        branch_turns = [list(b) for b in cast(Sequence[Sequence[Tuple[str, str]]], turns)]
     branch_turns = [[(q, a) for q, a in b if a] for b in branch_turns]
     branch_turns = [b for b in branch_turns if b]
     if not branch_turns:
