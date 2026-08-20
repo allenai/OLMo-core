@@ -61,6 +61,12 @@ def load_beir(name: str, split: str = "test") -> Tuple[List[Candidate], List[Dic
     for row in corpus_ds:
         title = (row.get("title") or "").strip()
         text = row["text"]
+        # FiQA ships 38 corpus rows whose text is empty. They are undrawable -- the schema
+        # refuses an empty document -- and at the 2k-32k rungs (~80 of 57k docs per example)
+        # they were never sampled, so the failure surfaced only at the 10M rung, where one
+        # example draws half the corpus. A pool must not contain documents no example can hold.
+        if not text or not text.strip():
+            continue
         corpus.append(Candidate(str(row["_id"]), f"{title}. {text}" if title else text))
 
     qrels: Dict[str, List[str]] = {}
