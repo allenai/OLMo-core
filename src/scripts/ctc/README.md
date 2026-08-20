@@ -35,8 +35,13 @@ PYTHONPATH=src:ctc/src python src/scripts/ctc/train/sft.py my-run \
 ```
 
 `--data DIR[:WEIGHT[:LABEL]]` is repeatable and weights are ratios, so `a:2 b:1` mixes 2:1.
-`--arch` is one of `full` / `chunked` / `hierarchical` / `landmark`, and must match how the shards
+`--arch` is one of `full` / `chunked` / `chunked-mix` / `hierarchical` / `landmark`, and must match how the shards
 were converted — which the format fingerprint checks at step 0 rather than at checkpoint one.
+
+`chunked-mix` is `chunked` plus the mask-mixing curriculum the reference "chunked" numbers
+were trained with: each example collapses to plain causal with probability p, annealed
+`--mix-start-p` 0.80 → `--mix-end-p` 0.0 linearly over the run. Pure `chunked` (p=0 always)
+is a *different arm*, kept bit-identical to the bare mask.
 
 SFT and CPT expose the *same* options and differ in exactly three things: SFT pads one already
 chunked example per window and computes loss on answer tokens only, CPT packs documents and trains
