@@ -56,7 +56,7 @@ PRESET = get_preset("olmo-ddp")
 # Initial 64-GPU matrix. These all exactly divide the 1,024-sequence global
 # batch; no production training setting is changed by this qualification.
 SYSTEMS = {
-    "0p5b": {"ep": 1, "rank_microbatch_sequences": 16},
+    "0p5b": {"ep": 1, "rank_microbatch_sequences": 8},
     "0p9b": {"ep": 1, "rank_microbatch_sequences": 4},
     "2p0b": {"ep": 4, "rank_microbatch_sequences": 2},
     "3p8b": {"ep": 8, "rank_microbatch_sequences": 1},
