@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
 - Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
+- Added `min_runtime` to `BeakerLaunchConfig` (and `--min-runtime` to the launch CLI), which sets Beaker's `minRuntime` on the task. A non-zero duration makes the job allocated, so it is guaranteed its minimum runtime within a scheduling window instead of only running on idle cycles. Defaults to `None`, leaving existing launches unallocated as before.
 
 
 ### Fixed
