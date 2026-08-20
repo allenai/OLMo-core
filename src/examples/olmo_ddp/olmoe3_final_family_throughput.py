@@ -47,7 +47,8 @@ from olmo_core.train.train_module import (
 
 SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024
-MAX_STEPS = 50
+MAX_STEPS = int(os.environ.get("OLMOE3_THROUGHPUT_MAX_STEPS", "50"))
+EP_CAPACITY_FACTOR = float(os.environ.get("OLMOE3_TEST_EP_CAPACITY_FACTOR", "1.25"))
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_PROJECT = "olmoe3-final-family-throughput"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24"
@@ -155,6 +156,7 @@ def build_model_config_from_common(
             if block.routed_experts is not None:
                 block.ep.share_dispatch_out = True
                 block.ep.share_combine_out = True
+                block.ep.capacity_factor = EP_CAPACITY_FACTOR
     return model
 
 
@@ -214,6 +216,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
         f"size:{model_size}",
         f"ep:{system['ep']}",
         f"mb:{system['rank_microbatch_sequences']}",
+        f"ep-capacity:{EP_CAPACITY_FACTOR:g}",
         "gbs:8Mi",
     ]
     return (
