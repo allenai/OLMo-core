@@ -83,6 +83,11 @@ __all__ = [
     "FINEVISION_V10_SHUFFLE_SEED",
     "build_finevision_v10_config",
     "finevision_v10_hub_name",
+    "FINEVISION_V11_CONFIGS",
+    "FINEVISION_V11_DATASET_NAMES",
+    "FINEVISION_V11_SHUFFLE_SEED",
+    "build_finevision_v11_config",
+    "finevision_v11_hub_name",
     "finevision_index_cache_path",
     "load_finevision_index_cache",
     "save_finevision_index_cache",
@@ -119,6 +124,33 @@ FINEVISION_V10_HUB_ALIASES: Dict[str, str] = {
 
 FINEVISION_V10_DATASET_NAMES: Tuple[str, ...] = tuple(FINEVISION_V10_HUB_ALIASES)
 
+# image-only-v11 promotes five FineVision configs that were already downloaded under
+# FINEVISION_ROOT and already validated through the (dormant, rate-0) FINEVISION_RATES
+# path in Molmo2-Stage2.py. Row counts below are the post-filter sizes recorded there.
+FINEVISION_V11_SHUFFLE_SEED = 6198
+
+# Hub config name -> row cap. Caps sit at or just above the true row count: these are
+# bounds, not subsamples, since all five are already staged locally.
+FINEVISION_V11_CONFIGS: Dict[str, int] = {
+    "visualwebinstruct(filtered)": 150_000,  # of 263,581 -- capped, see image_only_v11
+    "mavis_math_rule_geo": 100_000,  # 99,986
+    "mavis_math_metagen": 90_000,  # 87,348
+    "geo170k(align)": 40_000,  # 35,297
+    "geo170k(qa)": 15_000,  # 12,101
+}
+
+# Mixture dataset name -> hub config name. The hub names contain parentheses, which
+# make awkward mixture source names, so the aliases flatten them.
+FINEVISION_V11_HUB_ALIASES: Dict[str, str] = {
+    "finevision_visualwebinstruct": "visualwebinstruct(filtered)",
+    "finevision_mavis_math_rule_geo": "mavis_math_rule_geo",
+    "finevision_mavis_math_metagen": "mavis_math_metagen",
+    "finevision_geo170k_align": "geo170k(align)",
+    "finevision_geo170k_qa": "geo170k(qa)",
+}
+
+FINEVISION_V11_DATASET_NAMES: Tuple[str, ...] = tuple(FINEVISION_V11_HUB_ALIASES)
+
 _QUALITY_COLUMNS = {
     "min_formatting": "formatting_min",
     "min_visual_dependency": "visual_dependency_min",
@@ -135,6 +167,16 @@ def finevision_v10_hub_name(dataset_name: str) -> str:
             f"expected one of: {', '.join(FINEVISION_V10_DATASET_NAMES)}"
         )
     return FINEVISION_V10_HUB_ALIASES[dataset_name]
+
+
+def finevision_v11_hub_name(dataset_name: str) -> str:
+    """Map a mixture source name (``finevision_visualwebinstruct``) to a hub config."""
+    if dataset_name not in FINEVISION_V11_HUB_ALIASES:
+        raise KeyError(
+            f"Unknown FineVision v11 dataset {dataset_name!r}; "
+            f"expected one of: {', '.join(FINEVISION_V11_DATASET_NAMES)}"
+        )
+    return FINEVISION_V11_HUB_ALIASES[dataset_name]
 
 
 def _finevision_index_cache_dir(config: "FineVisionDatasetConfig") -> Optional[str]:
@@ -285,6 +327,36 @@ def build_finevision_v10_config(
         max_rows=FINEVISION_V10_CONFIGS[config_name],
         require_single_image=True,
         shuffle_seed=FINEVISION_V10_SHUFFLE_SEED,
+        **kwargs,
+    )
+
+
+def build_finevision_v11_config(
+    config_name: str,
+    *,
+    root: str = FINEVISION_ROOT,
+    **kwargs,
+) -> FineVisionDatasetConfig:
+    """Return a config for one image-only-v11 FineVision subset.
+
+    Same defaults as :func:`build_finevision_v10_config` but keyed off
+    :data:`FINEVISION_V11_CONFIGS`. These five configs are real directories under
+    :data:`FINEVISION_ROOT` (not symlinks into the experimental dir), so no staging
+    step is needed.
+
+    :raises KeyError: If ``config_name`` is not in :data:`FINEVISION_V11_CONFIGS`.
+    """
+    if config_name not in FINEVISION_V11_CONFIGS:
+        available = ", ".join(sorted(FINEVISION_V11_CONFIGS))
+        raise KeyError(
+            f"Unknown FineVision v11 config {config_name!r}; expected one of: {available}"
+        )
+    return FineVisionDatasetConfig(
+        config_name=config_name,
+        root=root,
+        max_rows=FINEVISION_V11_CONFIGS[config_name],
+        require_single_image=True,
+        shuffle_seed=FINEVISION_V11_SHUFFLE_SEED,
         **kwargs,
     )
 

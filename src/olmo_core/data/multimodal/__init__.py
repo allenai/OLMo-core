@@ -15,6 +15,17 @@ Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
 """
 
+from .caption_datasets import (
+    CAPTION_DATASET_NAMES,
+    CAPTION_DATASET_STYLES,
+    CaptionDataset,
+    CaptionDatasetConfig,
+)
+from .chartverse import (
+    CHARTVERSE_DATASET_NAME,
+    ChartVerseDataset,
+    ChartVerseDatasetConfig,
+)
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
 from .dynamath import (
@@ -28,11 +39,14 @@ from .finevision import (
     FINEVISION_ROOT,
     FINEVISION_V10_CONFIGS,
     FINEVISION_V10_SHUFFLE_SEED,
+    FINEVISION_V11_CONFIGS,
+    FINEVISION_V11_SHUFFLE_SEED,
     FineVisionDataset,
     FineVisionDatasetConfig,
     VisualWebInstructDataset,
     VisualWebInstructDatasetConfig,
     build_finevision_v10_config,
+    build_finevision_v11_config,
 )
 from .mixture_data_loader import MixtureDataLoader
 from .mmfinereason import (
@@ -72,10 +86,20 @@ from .sft_formatter import SftFormatter
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
+    "CAPTION_DATASET_NAMES",
+    "CAPTION_DATASET_STYLES",
+    "CaptionDataset",
+    "CaptionDatasetConfig",
+    "CHARTVERSE_DATASET_NAME",
+    "ChartVerseDataset",
+    "ChartVerseDatasetConfig",
     "DynaMathDataset",
     "DynaMathDatasetConfig",
     "DYNAMATH_TRAINING_VARIANTS",
     "dynamath_variant_from_name",
+    "FINEVISION_V11_CONFIGS",
+    "FINEVISION_V11_SHUFFLE_SEED",
+    "build_finevision_v11_config",
     "FineVisionDataset",
     "FineVisionDatasetConfig",
     "VisualWebInstructDataset",

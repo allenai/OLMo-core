@@ -823,3 +823,154 @@ def test_dynamath_variant_from_name_and_missing_path(tmp_path, monkeypatch):
     monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(tmp_path / "missing"))
     with pytest.raises(FileNotFoundError, match="DynaMath variant not found"):
         DynaMathDatasetConfig(variant="seed_42_999").build(_FakeTokenizer())
+
+
+# ---------------------------------------------------------------------------
+# ChartVerse
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def chartverse_data(tmp_path, monkeypatch):
+    import datasets
+    from PIL import Image as PILImage
+
+    image = PILImage.new("RGB", (4, 3), color=(40, 50, 60))
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format="PNG")
+
+    features = datasets.Features(
+        {
+            "id": datasets.Value("string"),
+            "images": datasets.Sequence(datasets.Image(decode=False)),
+            "question": datasets.Value("string"),
+            "answer": datasets.Value("string"),
+            "code": datasets.Value("string"),
+            "code_solution": datasets.Value("string"),
+            "cot_solution": datasets.Value("string"),
+        }
+    )
+    fixture = datasets.Dataset.from_dict(
+        {
+            "id": ["abcd1234"],
+            "images": [[{"bytes": image_bytes.getvalue(), "path": None}]],
+            "question": ["<image>\nWhat is the peak value?"],
+            "answer": ["7"],
+            "code": ["import matplotlib"],
+            "code_solution": ["print(7)"],
+            # Deliberately long: the loader must not supervise on this.
+            "cot_solution": ["First " * 5000 + "so the answer is 7."],
+        },
+        features=features,
+    )
+
+    data_root = tmp_path / "experiment-data"
+    subset_path = data_root / "chartverse" / "sft_600k"
+    fixture.save_to_disk(str(subset_path))
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(data_root))
+    return subset_path
+
+
+def test_chartverse_supervises_short_answer_not_cot(chartverse_data):
+    from olmo_core.data.multimodal import ChartVerseDatasetConfig
+
+    ds = ChartVerseDatasetConfig().build(_FakeTokenizer())
+    assert len(ds) == 1
+    ex = ds[0]
+    n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
+    assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
+    # "7" -> 1 word token + EOS; root_subsegments_root_tokens -> sqrt(2) each. The 5k-word
+    # cot_solution would blow this up by orders of magnitude if it were supervised.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(2 * (2**0.5))
+
+
+def test_chartverse_strips_inline_image_placeholder(chartverse_data):
+    from olmo_core.data.multimodal import ChartVerseDatasetConfig
+
+    ds = ChartVerseDatasetConfig().build(_FakeTokenizer())
+    tok = _FakeTokenizer()
+    # The literal "<image>" marker must not survive into the prompt: the image is
+    # supplied as an explicit token block instead.
+    assert not set(tok.encode("<image>")) & set(ds[0]["input_ids"].tolist())
+
+
+def test_chartverse_missing_path_raises(tmp_path, monkeypatch):
+    from olmo_core.data.multimodal import ChartVerseDatasetConfig
+
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="ChartVerse subset not found"):
+        ChartVerseDatasetConfig().build(_FakeTokenizer())
+
+
+# ---------------------------------------------------------------------------
+# Caption datasets (ArxivCap / OmniScience / VisText / Chart2Text)
+# ---------------------------------------------------------------------------
+
+
+def _write_caption_subset(data_root, subset: str, caption: str, column: str = "caption"):
+    import datasets
+    from PIL import Image as PILImage
+
+    image = PILImage.new("RGB", (4, 3), color=(70, 80, 90))
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format="PNG")
+
+    features = datasets.Features(
+        {"image": datasets.Image(decode=False), column: datasets.Value("string")}
+    )
+    fixture = datasets.Dataset.from_dict(
+        {
+            "image": [{"bytes": image_bytes.getvalue(), "path": None}],
+            column: [caption],
+        },
+        features=features,
+    )
+    path = data_root / "captions" / subset
+    fixture.save_to_disk(str(path))
+    return path
+
+
+@pytest.fixture
+def caption_data(tmp_path, monkeypatch):
+    data_root = tmp_path / "experiment-data"
+    _write_caption_subset(data_root, "arxivcap", "A log log plot of runtime.")
+    # OmniScience ships its refined caption under a different column name.
+    _write_caption_subset(data_root, "omniscience", "A micrograph.", column="recaption")
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(data_root))
+    return data_root
+
+
+def test_caption_dataset_builds_example(caption_data):
+    from olmo_core.data.multimodal import CaptionDatasetConfig
+
+    ds = CaptionDatasetConfig(subset="arxivcap").build(_FakeTokenizer())
+    assert len(ds) == 1
+    ex = ds[0]
+    n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
+    assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
+    # 6 caption tokens + EOS = 7; root_subsegments_root_tokens -> 2/sqrt(7) each.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(7 * 2 / (7**0.5))
+
+
+def test_caption_dataset_falls_back_across_caption_columns(caption_data):
+    from olmo_core.data.multimodal import CaptionDatasetConfig
+
+    ds = CaptionDatasetConfig(subset="omniscience").build(_FakeTokenizer())
+    assert float(ds[0]["loss_masks"].sum()) > 0
+
+
+def test_caption_dataset_styles_are_demo_styles():
+    """A non-DEMO style would prepend a literal "style:" prefix to every prompt."""
+    from olmo_core.data.multimodal import CAPTION_DATASET_NAMES, CAPTION_DATASET_STYLES
+    from olmo_core.data.multimodal.sft_formatter import DEMO_STYLES
+
+    assert set(CAPTION_DATASET_STYLES) == set(CAPTION_DATASET_NAMES)
+    assert set(CAPTION_DATASET_STYLES.values()) <= DEMO_STYLES
+
+
+def test_caption_dataset_missing_path_raises(tmp_path, monkeypatch):
+    from olmo_core.data.multimodal import CaptionDatasetConfig
+
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="Caption subset 'vistext' not found"):
+        CaptionDatasetConfig(subset="vistext").build(_FakeTokenizer())
