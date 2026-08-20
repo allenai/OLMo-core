@@ -177,6 +177,10 @@ def _moe_block(
     g: Geometry,
     norm: LayerNormConfig,
     sequence_mixer: KimiDeltaAttentionConfig | AttentionConfig,
+    *,
+    num_experts: int = NUM_EXPERTS,
+    top_k: int = TOP_K,
+    expert_hidden_multiplier: int = 1,
 ) -> OLMoDDPTransformerBlockConfig:
     disabled_fp8 = MoERowwiseFP8Config(enabled=False)
     return OLMoDDPTransformerBlockConfig(
@@ -186,16 +190,16 @@ def _moe_block(
         shared_experts=_shared(g),
         routed_experts=RoutedExpertsConfig(
             d_model=g.latent_dim,
-            hidden_size=g.expert_hidden_size,
-            num_experts=NUM_EXPERTS,
+            hidden_size=g.expert_hidden_size * expert_hidden_multiplier,
+            num_experts=num_experts,
             bias=False,
             dtype=DType.float32,
             rowwise_fp8=disabled_fp8,
         ),
         routed_experts_router=MoERouterConfigV2(
             d_model=g.d_model,
-            num_experts=NUM_EXPERTS,
-            top_k=TOP_K,
+            num_experts=num_experts,
+            top_k=top_k,
             bias=False,
             normalize_expert_weights=1.0,
             gating_function=MoERouterGatingFunction.softmax,
@@ -234,13 +238,34 @@ def _dense_first(g: Geometry, norm: LayerNormConfig) -> OLMoDDPTransformerBlockC
     )
 
 
-def build_model_config(model_size: str, *, vocab_size: int = VOCAB_SIZE) -> OLMoDDPModelConfig:
+def build_model_config(
+    model_size: str,
+    *,
+    vocab_size: int = VOCAB_SIZE,
+    num_experts: int = NUM_EXPERTS,
+    top_k: int = TOP_K,
+    expert_hidden_multiplier: int = 1,
+) -> OLMoDDPModelConfig:
     """Build and strictly validate one provisional final-family model."""
 
     g = geometry(model_size)
     norm = _norm()
-    default_block = _moe_block(g, norm, _kda(g))
-    attention_block = _moe_block(g, norm, _attention(g, norm))
+    default_block = _moe_block(
+        g,
+        norm,
+        _kda(g),
+        num_experts=num_experts,
+        top_k=top_k,
+        expert_hidden_multiplier=expert_hidden_multiplier,
+    )
+    attention_block = _moe_block(
+        g,
+        norm,
+        _attention(g, norm),
+        num_experts=num_experts,
+        top_k=top_k,
+        expert_hidden_multiplier=expert_hidden_multiplier,
+    )
     model = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,
         d_model=g.d_model,
@@ -269,7 +294,12 @@ def build_model_config(model_size: str, *, vocab_size: int = VOCAB_SIZE) -> OLMo
     )
     model.validate()
 
-    if vocab_size == VOCAB_SIZE:
+    if (
+        vocab_size == VOCAB_SIZE
+        and num_experts == NUM_EXPERTS
+        and top_k == TOP_K
+        and expert_hidden_multiplier == 1
+    ):
         actual = (
             model.num_active_params,
             model.num_active_non_embedding_params,
@@ -283,4 +313,3 @@ def build_model_config(model_size: str, *, vocab_size: int = VOCAB_SIZE) -> OLMo
         if actual != expected:
             raise ValueError(f"{model_size} parameter-count drift: {actual=} != {expected=}")
     return model
-
