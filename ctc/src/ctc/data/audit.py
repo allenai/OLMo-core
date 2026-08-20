@@ -81,6 +81,13 @@ class AuditResult:
 #: less than this is not worth a build failure.
 MARGIN = 0.20
 
+#: Below this many probed examples a firing probe is reported but cannot fail the build. The
+#: probes are hit rates; at n=10 a single unlucky draw moves one by 0.1, MARGIN is barely one
+#: binomial standard error, and the false alarm teaches everyone to pass --force -- which is
+#: worse than having no probe. The floor keeps every >=500-example ladder exactly as strict
+#: as before; it exists for --allow-small-eval demo builds.
+MIN_PROBE_SAMPLES = 50
+
 
 @dataclass(frozen=True)
 class ProbeResult:
@@ -555,14 +562,22 @@ def run_probes(task: str, examples: Sequence[Mapping], spec: TaskSpec) -> List[P
     results = [gold_position_bias(examples, spec), gold_length_bias(examples, spec)]
     results += [probe(examples, spec) for probe in PROBES.get(task, [])]
     accepted = ACCEPTED.get(task, {})
-    return [
-        (
-            ProbeResult(r.name, r.score, r.chance, accepted[r.name], ceiling=1.01)
-            if r.name in accepted
-            else r
-        )
-        for r in results
-    ]
+    out: List[ProbeResult] = []
+    for r in results:
+        if r.name in accepted:
+            r = ProbeResult(r.name, r.score, r.chance, accepted[r.name], ceiling=1.01)
+        elif r.failed and len(examples) < MIN_PROBE_SAMPLES:
+            r = ProbeResult(
+                r.name,
+                r.score,
+                r.chance,
+                f"{r.detail}; ADVISORY: fired, but {len(examples)} example(s) is below the "
+                f"{MIN_PROBE_SAMPLES}-sample floor, so it cannot fail the build -- rebuild "
+                "larger before trusting either the data or this probe",
+                ceiling=1.01,
+            )
+        out.append(r)
+    return out
 
 
 # ── integrity checks ────────────────────────────────────────────────────────────────────────────
