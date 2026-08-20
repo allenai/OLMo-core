@@ -257,3 +257,37 @@ def test_every_task_builds_at_every_rung_of_its_own_ladder(task):
         config[gen.scaling_param] = ladders.docs_for_rung(task, rung)
         example = gen.build_example(random.Random(0), **config)
         assert len(example["documents"]) == config[gen.scaling_param], f"{task}@{rung}"
+
+
+def test_a_probe_firing_on_a_tiny_sample_is_advisory_not_fatal():
+    """
+    At n=10 a hit-rate probe moves 0.1 per example and MARGIN is ~one binomial SE, so a
+    --allow-small-eval demo build was refused on noise -- which teaches everyone to pass --force.
+    Below the sample floor a firing probe must still be REPORTED, but cannot fail the build; at or
+    above the floor it stays exactly as strict as before.
+    """
+    from ctc.data.audit import MIN_PROBE_SAMPLES, run_probes
+
+    spec = registry.get(TASK)
+
+    # Synthesize a blatant length shortcut: gold is always the single longest document.
+    def biased(i):
+        docs = [{"text": "w " * (30 if j == 0 else 10)} for j in range(6)]
+        return {
+            "documents": docs,
+            "queries": [],
+            "answers": [["x"]],
+            "gold_doc_indices": [1],
+            "source": TASK,
+        }
+
+    tiny = [biased(i) for i in range(10)]
+    results = {r.name: r for r in run_probes(TASK, tiny, spec)}
+    fired = results["gold_length_bias"]
+    assert fired.score > fired.chance + 0.2, "the fixture must actually trip the probe"
+    assert not fired.failed, "below the floor it must be advisory"
+    assert "ADVISORY" in fired.detail
+
+    big = [biased(i) for i in range(MIN_PROBE_SAMPLES)]
+    strict = {r.name: r for r in run_probes(TASK, big, spec)}
+    assert strict["gold_length_bias"].failed, "at the floor the probe must still fail the build"
