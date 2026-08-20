@@ -256,6 +256,7 @@ class SSMaxHealthLedgerCallback(Callback):
     enabled: bool = True
     _events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _loaded_data_errors: int = field(default=0, init=False, repr=False)
+    _metrics_baseline_step: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.enabled:
@@ -281,8 +282,26 @@ class SSMaxHealthLedgerCallback(Callback):
             raise RuntimeError("SSMax health ledger observed an invalid data-error counter")
         return value
 
+    def _set_metrics_baseline(self) -> None:
+        if self.last_step != self.step:
+            raise RuntimeError("SSMax health ledger step differs from trainer state")
+        self._metrics_baseline_step = self.step
+
+    def pre_train(self) -> None:
+        """Bind non-training startup and dry-run metrics to this run segment's baseline."""
+
+        if self.enabled:
+            self._set_metrics_baseline()
+
     def log_metrics(self, step: int, metrics: Dict[str, float]) -> None:
         if not self.enabled:
+            return
+        # Trainer startup and its compile/OOM dry-run emit ordinary metrics at the current
+        # checkpoint step. They are not optimizer-step outcomes and may be delivered more than
+        # once (for example after a pre-train save or checkpoint load), so exclude every metric
+        # batch at or before this run segment's immutable baseline. Newly trained steps remain
+        # strictly contiguous below.
+        if step <= self._metrics_baseline_step:
             return
         if step != self.last_step + 1:
             raise RuntimeError(
@@ -378,5 +397,5 @@ class SSMaxHealthLedgerCallback(Callback):
 
     def post_checkpoint_loaded(self, path: Any) -> None:
         del path
-        if self.enabled and self.last_step != self.step:
-            raise RuntimeError("Restored SSMax health ledger step differs from trainer state")
+        if self.enabled:
+            self._set_metrics_baseline()

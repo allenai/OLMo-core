@@ -94,9 +94,30 @@ def test_ledger_is_contiguous_checkpoint_bound_and_resume_safe() -> None:
     resumed_trainer.global_step = 2
     resumed.load_state_dict(state)
     resumed.post_checkpoint_loaded("step2")
+    resumed.pre_train()
+    resumed.log_metrics(2, {"checkpoint/load_duration_s": 1.0})
+    resumed.log_metrics(2, _metrics())
     resumed_trainer.global_step = 3
     resumed.log_metrics(3, _metrics())
     assert resumed.state_dict()["last_step"] == 3
+    with pytest.raises(RuntimeError, match="expected step 4"):
+        resumed.log_metrics(3, _metrics())
+
+
+def test_ledger_ignores_only_run_segment_baseline_metrics() -> None:
+    callback, trainer = _callback()
+    callback.pre_train()
+    trainer.global_step = 1
+
+    callback.log_metrics(0, {"checkpoint/save_duration_s": 1.0})
+    callback.log_metrics(0, _metrics())
+    callback.log_metrics(1, _metrics())
+
+    state = callback.state_dict()
+    assert state["last_step"] == 1
+    assert [event["global_step"] for event in state["events"]] == [1]
+    with pytest.raises(RuntimeError, match="expected step 2"):
+        callback.log_metrics(1, _metrics())
 
 
 def test_ledger_rejects_missing_metrics_gaps_and_tampering() -> None:
@@ -207,6 +228,8 @@ def test_trainer_checkpoint_flushes_ledger_before_serializing(tmp_path) -> None:
 
         def _log_metrics(self):
             order.append("log_metrics")
+            callback.log_metrics(0, {"checkpoint/save_duration_s": 1.0})
+            callback.log_metrics(0, _metrics())
             callback.log_metrics(1, _metrics())
 
         def _join_bookkeeping_ops(self):
@@ -224,5 +247,8 @@ def test_trainer_checkpoint_flushes_ledger_before_serializing(tmp_path) -> None:
 
     trainer = FakeTrainer()
     callback.trainer = trainer
+    trainer.global_step = 0
+    callback.pre_train()
+    trainer.global_step = 1
     Trainer.save_checkpoint(trainer)
     assert order == ["log_metrics", "join", "state_dict", "save"]
