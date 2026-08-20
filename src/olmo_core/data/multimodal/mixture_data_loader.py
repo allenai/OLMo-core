@@ -23,7 +23,11 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase
 from .collator import MultimodalCollator
-from .packed_mixture_iterable import PackedMixtureIterableDataset, worker_init_fn
+from .packed_mixture_iterable import (
+    PackedMixtureIterableDataset,
+    mixture_epoch_pairs,
+    worker_init_fn,
+)
 from .packing import iter_dynamic_packs, iter_packs
 from .prefetch import prefetch_map
 
@@ -159,7 +163,14 @@ class MixtureDataLoader(DataLoaderBase):
         if epoch is not None:
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
-        rng = np.random.RandomState(self.seed + epoch)
+        if self.pack and self.dl_num_workers > 0:
+            # The multiprocess packed path (PackedMixtureIterableDataset /
+            # iter_rank_mixture_refs) regenerates its own on-the-fly, per-worker,
+            # per-DP-rank ref stream in bounded chunks and never reads self._order.
+            # Materializing a full epoch here (millions of examples for the full v9/v10
+            # mixtures) would just be wasted parent-process memory at startup.
+            self._order = []
+            return
         # Number of example refs to draw. When packing, an epoch consumes ~all examples
         # (several per packed sequence), so draw a full epoch of examples; otherwise draw
         # exactly enough to fill ``total_batches`` of one-example-per-slot batches.
@@ -168,38 +179,29 @@ class MixtureDataLoader(DataLoaderBase):
             if self.pack
             else (self.total_batches or 0) * self._global_instances
         )
-        # Per-source shuffled cycles (sampling within a source without replacement until
-        # exhausted, then reshuffle — covers sources smaller than their sampled count).
-        perms = [rng.permutation(s) if s else np.array([], dtype=int) for s in self._sizes]
-        cursors = [0] * len(self.datasets)
-        src_choices = rng.choice(len(self.datasets), size=n, p=self.weights)
-        order: List = []
-        for src in src_choices:
-            size = self._sizes[src]
-            if size == 0:
-                continue
-            if cursors[src] >= size:
-                perms[src] = rng.permutation(size)
-                cursors[src] = 0
-            order.append((int(src), int(perms[src][cursors[src]])))
-            cursors[src] += 1
-        self._order = order
+        # Shares its chunked-choice / lazy-permutation implementation with
+        # iter_rank_mixture_refs (used by the multiprocess packed path) so both compute the
+        # same sequence and neither allocates a full-epoch choice array or every source's
+        # permutation up front.
+        self._order = list(mixture_epoch_pairs(self.seed, epoch, self.weights, self._sizes, n))
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
-        if self._order is None:
-            raise RuntimeError("call reshuffle() before iterating")
         ri = self._rank_instances
         n_batches = self.total_batches or 0
+        if self.pack and self.dl_num_workers > 0:
+            # Doesn't read self._order (see reshuffle()) — check before the None guard below,
+            # since reshuffle() deliberately leaves it empty in this mode.
+            yield from self._iter_multiprocess_packed_batches(n_batches)
+            return
+        if self._order is None:
+            raise RuntimeError("call reshuffle() before iterating")
         if self.pack:
             rank_refs = self._order[self.dp_rank :: self.dp_world_size]
-            if self.dl_num_workers > 0:
-                yield from self._iter_multiprocess_packed_batches(n_batches)
-            else:
-                gen = self._pack_stream(rank_refs)
-                for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
-                    next(gen)
-                for _ in range(self.batches_processed, n_batches):
-                    yield self.collator([next(gen) for _ in range(ri)])
+            gen = self._pack_stream(rank_refs)
+            for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
+                next(gen)
+            for _ in range(self.batches_processed, n_batches):
+                yield self.collator([next(gen) for _ in range(ri)])
             return
         gi = self._global_instances
         for b in range(self.batches_processed, n_batches):

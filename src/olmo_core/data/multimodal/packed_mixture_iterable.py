@@ -29,12 +29,61 @@ DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
 DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 DEFAULT_SLOW_LOAD_THRESHOLD_S = 5.0
 
-__all__ = ["PackedMixtureIterableDataset", "iter_rank_mixture_refs", "worker_init_fn"]
+__all__ = [
+    "PackedMixtureIterableDataset",
+    "iter_rank_mixture_refs",
+    "mixture_epoch_pairs",
+    "worker_init_fn",
+]
 
 
 def _slow_load_threshold_s() -> float:
     """Log example loads slower than this (seconds). Set ``MM_DL_SLOW_LOAD_S=0`` to disable."""
     return float(os.environ.get("MM_DL_SLOW_LOAD_S", str(DEFAULT_SLOW_LOAD_THRESHOLD_S)))
+
+
+_REF_CHUNK_SIZE = 8192
+"""Bounded batch size for the ``rng.choice`` draws in :func:`mixture_epoch_pairs` — keeps
+peak memory at O(chunk) instead of O(epoch_instances), which for full v9/v10 mixtures
+(millions of examples across ~50 sources) previously multiplied across every DP rank and,
+in the multiprocess packed path, every DataLoader worker, before the first batch."""
+
+
+def mixture_epoch_pairs(
+    seed: int,
+    epoch: int,
+    weights: Sequence[float],
+    sizes: Sequence[int],
+    n: int,
+    *,
+    chunk_size: int = _REF_CHUNK_SIZE,
+) -> Iterator[Tuple[int, int]]:
+    """Yield ``n`` ``(source_idx, example_idx)`` draws for one epoch (``seed + epoch`` fixes
+    the sequence), weighted by ``weights`` over ``sizes``.
+
+    Shared by :meth:`~olmo_core.data.multimodal.MixtureDataLoader.reshuffle` and
+    :func:`iter_rank_mixture_refs` so both compute the exact same sequence. Draws source
+    choices in bounded chunks and builds each source's permutation lazily, on first use,
+    rather than allocating a full ``n``-length choice array and every source's permutation
+    up front regardless of whether that source is ever drawn.
+    """
+    rng = np.random.RandomState(seed + epoch)
+    num_sources = len(sizes)
+    perms: List[Optional[np.ndarray]] = [None] * num_sources
+    cursors = [0] * num_sources
+    remaining = n
+    while remaining > 0:
+        m = min(chunk_size, remaining)
+        for src in rng.choice(num_sources, size=m, p=weights):
+            size = sizes[src]
+            if size == 0:
+                continue
+            if perms[src] is None or cursors[src] >= size:
+                perms[src] = rng.permutation(size)
+                cursors[src] = 0
+            yield (int(src), int(perms[src][cursors[src]]))
+            cursors[src] += 1
+        remaining -= m
 
 
 def iter_rank_mixture_refs(
@@ -46,26 +95,26 @@ def iter_rank_mixture_refs(
     dp_world_size: int,
     epoch_instances: int,
 ) -> Iterator[Tuple[int, int]]:
-    """Yield one DP rank's strided slice of the mixture order without materializing ``_order``.
+    """Yield one DP rank's strided slice of one epoch's mixture order, without
+    materializing the full epoch.
 
     Matches :meth:`~olmo_core.data.multimodal.MixtureDataLoader.reshuffle` followed by
-    ``rank_refs = order[dp_rank::dp_world_size]``.
+    ``rank_refs = order[dp_rank::dp_world_size]`` — both now share
+    :func:`mixture_epoch_pairs`, so peak memory stays bounded regardless of how many
+    ranks or DataLoader workers call this concurrently.
     """
-    rng = np.random.RandomState(seed + epoch)
-    perms = [rng.permutation(s) if s else np.array([], dtype=int) for s in sizes]
-    cursors = [0] * len(sizes)
-    src_choices = rng.choice(len(sizes), size=epoch_instances, p=weights)
-    for global_i, src in enumerate(src_choices):
-        size = sizes[src]
-        if size == 0:
-            continue
-        if cursors[src] >= size:
-            perms[src] = rng.permutation(size)
-            cursors[src] = 0
-        ref = (int(src), int(perms[src][cursors[src]]))
-        cursors[src] += 1
+    for global_i, ref in enumerate(
+        mixture_epoch_pairs(seed, epoch, weights, sizes, epoch_instances)
+    ):
         if global_i % dp_world_size == dp_rank:
             yield ref
+
+
+def _repeat_deterministic(factory) -> Iterator:
+    """Repeat a finite, deterministic generator forever by re-invoking its factory, instead
+    of caching every item it has ever yielded (as ``itertools.cycle`` does)."""
+    while True:
+        yield from factory()
 
 
 def worker_init_fn(worker_id: int) -> None:
@@ -177,10 +226,7 @@ class PackedMixtureIterableDataset(torch.utils.data.IterableDataset):
             self._total_data_errors += 1
             consecutive, total = self._consecutive_data_errors, self._total_data_errors
             src_idx, example_idx = ref
-            if (
-                consecutive > self.max_consecutive_data_errors
-                or total > self.max_total_data_errors
-            ):
+            if consecutive > self.max_consecutive_data_errors or total > self.max_total_data_errors:
                 e.add_note(
                     f"Exceeded data error tolerance loading "
                     f"{self.dataset_names[src_idx]}[{example_idx}] "
@@ -212,6 +258,7 @@ class PackedMixtureIterableDataset(torch.utils.data.IterableDataset):
 
     def _ref_stream(self) -> Iterator[Tuple[int, int]]:
         if self.rank_refs is not None:
+            # A finite, pre-supplied list — fine to cache/replay via itertools.cycle.
             return itertools.cycle(self.rank_refs)
         assert (
             self.mixture_seed is not None
@@ -220,17 +267,28 @@ class PackedMixtureIterableDataset(torch.utils.data.IterableDataset):
             and self.mixture_sizes is not None
             and self.epoch_instances is not None
         )
-        return itertools.cycle(
-            iter_rank_mixture_refs(
-                self.mixture_seed,
-                self.mixture_epoch,
-                self.mixture_weights,
-                self.mixture_sizes,
+        # iter_rank_mixture_refs is finite (one epoch). Repeat it by re-invoking rather
+        # than wrapping in itertools.cycle: cycle() caches every ref it has ever yielded to
+        # replay it, which for a full v9/v10 epoch (millions of examples) would reintroduce
+        # the same unbounded-memory-growth problem this generator exists to avoid. Since the
+        # sequence is fully determined by ``seed + epoch``, re-invoking regenerates the
+        # identical sequence each lap at the cost of some CPU instead of memory.
+        mixture_seed, mixture_epoch = self.mixture_seed, self.mixture_epoch
+        mixture_weights, mixture_sizes = self.mixture_weights, self.mixture_sizes
+        epoch_instances = self.epoch_instances
+
+        def factory() -> Iterator[Tuple[int, int]]:
+            return iter_rank_mixture_refs(
+                mixture_seed,
+                mixture_epoch,
+                mixture_weights,
+                mixture_sizes,
                 self.dp_rank,
                 self.dp_world_size,
-                self.epoch_instances,
+                epoch_instances,
             )
-        )
+
+        return _repeat_deterministic(factory)
 
     def _partitioned_ref_iter(self, worker_id: int, num_workers: int) -> Iterator[Tuple[int, int]]:
         for i, ref in enumerate(self._ref_stream()):
@@ -268,7 +326,5 @@ class PackedMixtureIterableDataset(torch.utils.data.IterableDataset):
         for pack in self._packed_stream(worker_id, num_workers):
             packs_yielded += 1
             if packs_yielded == 1:
-                log.info(
-                    "PackedMixtureIterableDataset worker=%d yielded first pack", worker_id
-                )
+                log.info("PackedMixtureIterableDataset worker=%d yielded first pack", worker_id)
             yield pack
