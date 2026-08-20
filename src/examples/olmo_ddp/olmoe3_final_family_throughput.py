@@ -141,10 +141,21 @@ def build_data_components(common: CommonComponents) -> DataComponents:
 def build_model_config_from_common(
     common: CommonComponents, model_size: str
 ):
-    return build_model_config(
+    model = build_model_config(
         model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
     )
+    # The 3.8B-active rung has 165.9 GB of static model/optimizer state per
+    # rank at EP=8. At 8K, even a one-sequence microbatch exceeds a B300 during
+    # backward without block recomputation. Keep this as a topology-specific
+    # training setting rather than baking it into the architecture definition.
+    if model_size == "3p8b":
+        model.recompute_each_block = True
+        for block in [model.block, *model.block_overrides.values()]:
+            if block.routed_experts is not None:
+                block.ep.share_dispatch_out = True
+                block.ep.share_combine_out = True
+    return model
 
 
 def build_train_module_config(
