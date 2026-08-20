@@ -353,7 +353,7 @@ jobs:
 
       - name: Publish package to PyPI
         run: |
-          twine upload -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
+          twine upload --verbose -u __token__ -p '${{ secrets.PYPI_TOKEN }}' dist/*
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2

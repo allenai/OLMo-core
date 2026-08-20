@@ -32,8 +32,9 @@ docs :
 
 .PHONY : build
 build :
-	rm -rf *.egg-info/
+	rm -rf *.egg-info/ dist/
 	python -m build
+	python src/scripts/release/check_dist_metadata.py dist/*
 
 ####################################################################################################
 # Docker build

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
+
 ### Added
 
 - Added the OLMoDDP fused Mixture-of-Experts training stack: the fused MoE transformer model and block (`OLMoDDPModel` / `OLMoDDPTransformerBlock` in `olmo_core.nn.ddp`, selected via `TransformerType.moe_fused_v2`), the `OLMoDDPTrainModule` train module with its fused distributed MoE optimizer (`OLMoDDPOptimizerConfig`) and `MultiGroupDistributedDataParallel` wrapper, and DP/EP/TP/CP/PP parallelism — including expert-parallel all-to-all over symmetric-memory / NCCL-RMA transports and a custom pipeline-parallel schedule (`CustomSchedule1F1BV` / `CustomScheduleInterleaved1F1B`) that reuses point-to-point buffers across micro-batches.
@@ -59,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
 
 ## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
+
+**This version was never published to PyPI.** The upload was rejected because the package
+metadata contained a direct URL requirement (the `dion` extra), which PyPI does not accept.
+The tag and GitHub release exist, but `pip install ai2-olmo-core==2.5.0` will not work — install
+from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 
 ### Added
 
