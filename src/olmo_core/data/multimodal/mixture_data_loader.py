@@ -268,8 +268,7 @@ class MixtureDataLoader(DataLoaderBase):
                 yield next(it)
         finally:
             # Drop the iterator so worker processes exit if the epoch ends early.
-            if hasattr(inner_dl, "_iterator") and inner_dl._iterator is not None:
-                inner_dl._iterator._shutdown_workers()
+            # PyTorch's DataLoader __del__ method handles cleanup of worker processes.
             del it
 
     def _pack_stream(self, refs: Sequence) -> Iterator[Dict[str, Any]]:

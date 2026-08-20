@@ -164,10 +164,7 @@ def _finevision_index_filter_key(config: "FineVisionDatasetConfig") -> str:
         "split": config.split,
         "texts_column": config.texts_column,
         "images_column": config.images_column,
-        "quality": {
-            attr: getattr(config, attr)
-            for attr in _QUALITY_COLUMNS
-        },
+        "quality": {attr: getattr(config, attr) for attr in _QUALITY_COLUMNS},
         "require_single_image": config.require_single_image,
         "max_rows": config.max_rows,
         "shuffle_seed": config.shuffle_seed,
@@ -176,7 +173,9 @@ def _finevision_index_filter_key(config: "FineVisionDatasetConfig") -> str:
     return digest[:16]
 
 
-def finevision_index_cache_path(config: "FineVisionDatasetConfig", table_rows: int) -> Optional[str]:
+def finevision_index_cache_path(
+    config: "FineVisionDatasetConfig", table_rows: int
+) -> Optional[str]:
     """Return the on-disk cache path for a filtered row index, if caching is enabled."""
     cache_dir = _finevision_index_cache_dir(config)
     if cache_dir is None:
@@ -205,7 +204,11 @@ def load_finevision_index_cache(
             if cached_rows != table_rows:
                 return False, None
             if use_full:
-                log.info("FineVision[%s]: loaded cached full-table index (%d rows)", config.config_name, table_rows)
+                log.info(
+                    "FineVision[%s]: loaded cached full-table index (%d rows)",
+                    config.config_name,
+                    table_rows,
+                )
                 return True, None
             positions = np.asarray(data["positions"], dtype=np.int64)
             log.info(
@@ -216,7 +219,9 @@ def load_finevision_index_cache(
             )
             return True, positions
     except (OSError, KeyError, ValueError) as exc:
-        log.warning("FineVision[%s]: ignoring corrupt index cache %s (%s)", config.config_name, path, exc)
+        log.warning(
+            "FineVision[%s]: ignoring corrupt index cache %s (%s)", config.config_name, path, exc
+        )
         return False, None
 
 
@@ -231,7 +236,9 @@ def save_finevision_index_cache(
     use_full = index is None or len(index) == table_rows
     tmp_base = path.removesuffix(".npz") + ".tmp"
     if use_full:
-        np.savez_compressed(tmp_base, table_rows=table_rows, use_full=1, positions=np.array([], dtype=np.int64))
+        np.savez_compressed(
+            tmp_base, table_rows=table_rows, use_full=1, positions=np.array([], dtype=np.int64)
+        )
     else:
         np.savez_compressed(
             tmp_base,
@@ -419,12 +426,10 @@ class FineVisionDataset:
 
         if cfg.require_single_image:
             img_col = cfg.images_column
-            for i in range(n):
-                if not keep[i]:
-                    continue
+            # Vectorized check: count images per row for kept rows only
+            for i in np.nonzero(keep)[0]:
                 images = self._data[i].get(img_col) or []
-                if len(images) != 1:
-                    keep[i] = False
+                keep[i] = len(images) == 1
 
         positions = np.nonzero(keep)[0]
         if active_quality:
@@ -463,9 +468,7 @@ class FineVisionDataset:
 
     @staticmethod
     def _load_table(config: FineVisionDatasetConfig):
-        keep_columns = [config.texts_column, config.images_column] + list(
-            _QUALITY_COLUMNS.values()
-        )
+        keep_columns = [config.texts_column, config.images_column] + list(_QUALITY_COLUMNS.values())
 
         if config.dataset_path is not None:
             return load_hf_dataset(

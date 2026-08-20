@@ -141,12 +141,13 @@ class _LazyDatasetMap:
         self._max_sequence_length = max_sequence_length
         self._finevision_cache_dir = finevision_cache_dir
         self._cache: Dict[str, object] = {}
+        self._source_map = _source_lookup()
 
     def keys(self):
-        return _source_lookup().keys()
+        return self._source_map.keys()
 
     def __contains__(self, name: str) -> bool:
-        return name in _source_lookup()
+        return name in self._source_map
 
     def __getitem__(self, name: str):
         if name not in self._cache:
