@@ -6,6 +6,7 @@ its status and verification date — trust the newest dated statement over anyth
 
 | record | what it is |
 |---|---|
+| [`reference-runs.md`](reference-runs.md) | The main experiments as node-local commands with internal paths: the 22-task per-task protocol, the model-scale sweep, the 5-task mix — plus the holes the config recovery surfaced (unaudited Qwen3-4B markers, unattested CPT long-text run). Public twin: `REPRODUCING.md` on `prasann/ctc_public`. |
 | [`ctc-data-generation.md`](ctc-data-generation.md) | The paper's data appendix: every task's construction, gold-uniqueness guarantee, and anti-shortcut controls. |
 | [`data-generator-port.md`](data-generator-port.md) | The port record for `ctc.data`: what crossed over, the 19-trap index, and the defect ledger. **Read §3–4 before any rebuild.** Port complete as of 2026-08-17. |
 | [`running-ctc-evals.md`](running-ctc-evals.md) | How anyone with a checkpoint gets its numbers: the Beaker one-liner, the bundles (`v2` / `v2_clean` / `fast`), ultra-long rungs, and the flags that must match training. |
