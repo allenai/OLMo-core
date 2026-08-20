@@ -100,6 +100,7 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         ]
         launch.aws_config_secret = f"{secret_prefix}_AWS_CONFIG"
         launch.aws_credentials_secret = f"{secret_prefix}_AWS_CREDENTIALS"
+        launch.google_credentials_secret = f"{secret_prefix}_GOOGLE_CREDENTIALS"
         launch.shared_memory = "128GiB"
         launch.follow = False
         launch.step_soft_timeout = None
@@ -275,4 +276,3 @@ if __name__ == "__main__":
         num_execution_units=1,
     )
     main(config_builder=config_builder)
-
