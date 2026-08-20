@@ -69,11 +69,16 @@ class BeakerCallback(Callback):
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
                     if callback.enabled and callback.run is not None:
+                        # On a resumed run, the config already has these keys set from the
+                        # previous (now-superseded) Beaker job — resuming after preemption or
+                        # failure means running under a new experiment id by design, so the
+                        # value legitimately changes across resumes and must be allowed to.
                         callback.run.config.update(
                             {
                                 "beaker_experiment_url": beaker_url,
                                 "beaker_experiment_id": self.experiment_id,
-                            }
+                            },
+                            allow_val_change=True,
                         )
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
                         log.info(f"Added beaker_experiment_id to W&B config: {self.experiment_id}")
