@@ -14,7 +14,7 @@ from functools import partial
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from olmoe3_final_family import MODEL_SIZES, build_model_config, geometry
+from olmoe3_final_family import MODEL_SIZES, build_model_config
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -49,6 +49,7 @@ SEQUENCE_LENGTH = 8192
 GLOBAL_BATCH_SIZE = 8 * 1024 * 1024
 MAX_STEPS = int(os.environ.get("OLMOE3_THROUGHPUT_MAX_STEPS", "50"))
 EP_CAPACITY_FACTOR = float(os.environ.get("OLMOE3_TEST_EP_CAPACITY_FACTOR", "1.25"))
+EXPERT_VARIANT = os.environ.get("OLMOE3_EXPERT_VARIANT", "n512-k16-h1")
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_PROJECT = "olmoe3-final-family-throughput"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24"
@@ -63,6 +64,31 @@ SYSTEMS = {
     "2p0b": {"ep": 4, "rank_microbatch_sequences": 2},
     "3p8b": {"ep": 8, "rank_microbatch_sequences": 1},
 }
+
+EXPERT_VARIANTS = {
+    "n512-k16-h1": {
+        "num_experts": 512,
+        "top_k": 16,
+        "expert_hidden_multiplier": 1,
+    },
+    "n256-k8-h2": {
+        "num_experts": 256,
+        "top_k": 8,
+        "expert_hidden_multiplier": 2,
+    },
+}
+
+
+def expert_variant() -> dict[str, int]:
+    """Return the selected routed-expert geometry."""
+
+    try:
+        return EXPERT_VARIANTS[EXPERT_VARIANT]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown OLMOE3_EXPERT_VARIANT={EXPERT_VARIANT!r}; "
+            f"choose from {tuple(EXPERT_VARIANTS)}"
+        ) from exc
 
 
 def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponents:
@@ -89,6 +115,7 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         for name in (
             "OLMOE3_THROUGHPUT_MAX_STEPS",
             "OLMOE3_TEST_EP_CAPACITY_FACTOR",
+            "OLMOE3_EXPERT_VARIANT",
         ):
             if value := os.environ.get(name):
                 env[name] = value
@@ -153,6 +180,7 @@ def build_model_config_from_common(
     model = build_model_config(
         model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
+        **expert_variant(),
     )
     # The 3.8B-active rung has 165.9 GB of static model/optimizer state per
     # rank at EP=8. At 8K, even a one-sequence microbatch exceeds a B300 during
@@ -217,14 +245,20 @@ def build_train_module_config(
 
 
 def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerConfig:
-    g = geometry(model_size)
     system = SYSTEMS[model_size]
+    variant = expert_variant()
+    model = build_model_config(
+        model_size,
+        vocab_size=common.tokenizer.padded_vocab_size(),
+        **variant,
+    )
     tags = [
         "final-family-throughput",
         f"size:{model_size}",
         f"ep:{system['ep']}",
         f"mb:{system['rank_microbatch_sequences']}",
         f"ep-capacity:{EP_CAPACITY_FACTOR:g}",
+        f"expert-variant:{EXPERT_VARIANT}",
         "gbs:8Mi",
     ]
     return (
@@ -242,14 +276,16 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group="olmoe3-final-family-8Mi-8gpu",
+                group=f"olmoe3-final-family-8Mi-8gpu-{EXPERT_VARIANT}",
                 project=WANDB_PROJECT,
                 entity="ai2-llm",
                 enabled=True,
                 tags=tags,
                 notes=(
-                    f"{g.expected_active_params:,} active / "
-                    f"{g.expected_total_params:,} total parameters"
+                    f"{model.num_active_params:,} active / "
+                    f"{model.num_params:,} total parameters; "
+                    f"{variant['num_experts']} experts, top-{variant['top_k']}, "
+                    f"expert hidden multiplier {variant['expert_hidden_multiplier']}"
                 ),
                 cancel_check_interval=10,
             ),
