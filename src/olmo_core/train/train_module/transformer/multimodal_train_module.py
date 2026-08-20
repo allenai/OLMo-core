@@ -152,11 +152,22 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     )
 
         model.to(self.device)
-        if vision_activation_checkpointing and hasattr(
-            model.vision, "apply_activation_checkpointing"
+        # A fully-frozen submodule has no trainable params, so wrapping it in activation
+        # checkpointing buys no backward-memory savings — and under compile, checkpointing a
+        # frozen (eval-mode) submodule has been observed to hit "RNG ops in recompute regions"
+        # (dropout inside a recompute region the AC/dynamo partitioner can't handle for a
+        # no-grad path). Skip AC entirely for a submodule with zero trainable parameters.
+        vision_params = list(model.vision.parameters())
+        vision_is_frozen = bool(vision_params) and not any(p.requires_grad for p in vision_params)
+        if (
+            vision_activation_checkpointing
+            and not vision_is_frozen
+            and hasattr(model.vision, "apply_activation_checkpointing")
         ):
             model.vision.apply_activation_checkpointing()
             log.info("Applied per-block activation checkpointing to model.vision")
+        elif vision_activation_checkpointing and vision_is_frozen:
+            log.info("Skipping vision activation checkpointing: encoder is fully frozen")
         if connector_activation_checkpointing and hasattr(
             model.connector, "apply_activation_checkpointing"
         ):
