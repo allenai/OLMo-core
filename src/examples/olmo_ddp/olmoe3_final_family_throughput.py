@@ -3,7 +3,7 @@
 Example::
 
     python src/examples/olmo_ddp/olmoe3_final_family_throughput.py launch \
-        final-family-0p5b-mb16 0p5b ai2/holmes
+        final-family-0p5b-mb16 ai2/holmes
 """
 
 from __future__ import annotations
@@ -235,22 +235,22 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
 
 def parse_model_size(value: str) -> str:
     normalized = value.lower()
-    if normalized not in MODEL_SIZES:
-        raise ValueError(f"Unknown model size {value!r}; choose from {MODEL_SIZES}")
-    return normalized
+    padded = f"-{normalized}-"
+    for model_size in MODEL_SIZES:
+        if f"-{model_size}-" in padded:
+            return model_size
+    raise ValueError(
+        f"Run name {value!r} must contain one of these model sizes: {MODEL_SIZES}"
+    )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 4:
         raise SystemExit(
-            f"Usage: {sys.argv[0]} <subcmd> <run_name> <model_size> <cluster> "
-            "[overrides...]"
+            f"Usage: {sys.argv[0]} <subcmd> <run_name> <cluster> [overrides...]"
         )
 
-    # The regular internal experiment CLI expects the cluster in argv[3].
-    # Remove our explicit model-size argument before handing control to it.
-    model_size = parse_model_size(sys.argv[3])
-    del sys.argv[3]
+    model_size = parse_model_size(sys.argv[2])
     config_builder = partial(
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
