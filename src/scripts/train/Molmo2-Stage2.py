@@ -27,7 +27,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Optional, Sequence, cast
+from typing import Dict, List, Optional, Sequence, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfig
@@ -161,6 +161,25 @@ DEFAULT_LOAD_PATH = (
     "/weka/oe-training-default/donovanc/molmofication/checkpoints/"
     "molmo2-pretraining-olmo-core/8-gpu-holmes/8-gpu-holmes-olmo-core-stable"
 )
+
+# Phase-p0 "ship stack": throughput settings validated on holmes B300s in the 8/16-GPU
+# A/B sweeps. Only knobs that differ from their in-code defaults are listed here --
+# MM_EMB_FULL_TENSOR and MM_EMB_STEP_CACHE already default to 1, and the DataLoader
+# settings are ExperimentConfig fields (DL_NUM_WORKERS=2, DATA_PREFETCH_WORKERS=0)
+# rather than env vars.
+#
+#   VIT_CROP_MICROBATCH=32           +3.0% TPS (20,185 vs 19,594, 8-GPU mb2)
+#   MM_FSDP_RESHARD_AFTER_FORWARD=0  +2.4% TPS (13,281 vs 12,973, 8-GPU)
+#   MM_FSDP_IMAGE_ALIGN_HACK=0       redundant since DP max-crop padding landed
+#
+# These are applied to Beaker-launched jobs only. A local `train` under torchrun still
+# gets the in-code defaults unless you export them yourself, which keeps the local
+# entrypoint unconfigured and matches how the hand-written Beaker YAMLs set them.
+SHIP_STACK_ENV: Dict[str, str] = {
+    "VIT_CROP_MICROBATCH": "32",
+    "MM_FSDP_RESHARD_AFTER_FORWARD": "0",
+    "MM_FSDP_IMAGE_ALIGN_HACK": "0",
+}
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -421,6 +440,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         launch_config.env_vars = list(launch_config.env_vars) + [
             BeakerEnvVar(name="OLMO2_FLEX_ATTN", value="1")
         ]
+    launch_config.env_vars = list(launch_config.env_vars) + [
+        BeakerEnvVar(name=name, value=value) for name, value in SHIP_STACK_ENV.items()
+    ]
 
     return _apply_mixture_pack_profile(
         ExperimentConfig(
