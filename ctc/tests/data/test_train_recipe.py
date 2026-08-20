@@ -141,3 +141,41 @@ def test_the_base_checkpoint_is_loaded_weights_only(tmp_path):
     assert trainer.load_path == "/base"
     assert trainer.load_optim_state is False
     assert trainer.load_trainer_state is False
+
+
+def test_chunked_mix_installs_an_annealed_curriculum():
+    """
+    The reference "chunked" numbers were trained with this curriculum (p 0.80 -> 0.0), so getting
+    it silently wrong reproduces a different experiment. The anneal length must equal the
+    per-rank forward count -- this recipe runs one padded instance per rank per step, so that is
+    the step budget; dividing by world size a second time is the historical bug where p stalled
+    at ``mix_start_p * (1 - 1/world_size)``.
+    """
+    def opts(**budget):
+        return options.TrainOptions(
+            run_name="t",
+            data=[options.DataSpec("/shards/a", 1)],
+            base="/base",
+            arch="chunked-mix",
+            seq_len=8192,
+            nodes=4,
+            mode="sft",
+            **budget,
+        )
+
+    model = recipe.build_model_config(opts(max_steps=1100), vocab_size=152064)
+    mix = model.document_chunk_attention
+    assert mix["mix_start_p"] == 0.80
+    assert mix["mix_end_p"] == 0.0
+    assert mix["mix_total_forwards"] == 1100
+    # A token budget anneals over the implied step count instead: 100 steps of 32 instances of
+    # 8192 tokens (4 nodes x 8 GPUs, one instance per rank per step).
+    tokens = recipe.build_model_config(opts(max_tokens=8192 * 32 * 100), vocab_size=152064)
+    assert tokens.document_chunk_attention["mix_total_forwards"] == 100
+
+
+def test_plain_chunked_gets_no_mix_keys():
+    """`chunked` must stay bit-identical to the pure mask: p == 0 is a different arm, not a
+    default of the same one."""
+    model = recipe.build_model_config(_opts("chunked", "sft"), vocab_size=152064)
+    assert "mix_start_p" not in model.document_chunk_attention

@@ -20,7 +20,7 @@ __all__ = ["TrainOptions", "DataSpec", "parse_data_spec", "build_parser", "optio
 #: Attention layouts a run can request. ``full`` is plain causal; the rest are the document-aware
 #: masks. The data must have been converted to match -- ``landmark`` needs landmark-emit shards,
 #: the others dense-emit -- which is why the format fingerprint is checked at step 0.
-ARCHITECTURES = ("full", "chunked", "hierarchical", "landmark")
+ARCHITECTURES = ("full", "chunked", "chunked-mix", "hierarchical", "landmark")
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,11 @@ class TrainOptions:
     :param tokenizer: Tokenizer family for vocab sizing and the reserved ids.
     :param seq_len: Instance length. For ``landmark`` it must be a multiple of ``mem_freq + 1``.
     :param mem_freq: Landmark spacing; block size is ``mem_freq + 1``.
+    :param mix_start_p: (``chunked-mix``) curriculum start: the per-example probability of
+        collapsing to plain causal on the first forward. The reference runs used 0.80.
+    :param mix_end_p: (``chunked-mix``) curriculum end probability, reached on the last
+        forward. The reference runs annealed to 0.0.
+    :param mix_seed: (``chunked-mix``) seed for the per-example collapse draws.
     :param lr: Peak learning rate.
     :param warmup_fraction: Fraction of the run spent warming up.
     :param max_steps: Stop after this many steps. Mutually exclusive with ``max_tokens``.
@@ -108,6 +113,9 @@ class TrainOptions:
     tokenizer: str = "qwen3"
     seq_len: int = 40960
     mem_freq: int = 63
+    mix_start_p: float = 0.80
+    mix_end_p: float = 0.0
+    mix_seed: int = 0
     lr: float = 1e-5
     warmup_fraction: float = 0.03
     max_steps: Optional[int] = None
@@ -206,6 +214,20 @@ def build_parser(description: str, *, mode: str) -> argparse.ArgumentParser:
     p.add_argument("--tokenizer", default="qwen3", choices=("qwen3", "qwen3_5"))
     p.add_argument("--seq-len", type=int, default=40960)
     p.add_argument("--mem-freq", type=int, default=63, help="(landmark) block = mem-freq + 1")
+    p.add_argument(
+        "--mix-start-p",
+        type=float,
+        default=0.80,
+        help="(chunked-mix) curriculum start collapse probability (default 0.80, the "
+        "reference runs' value)",
+    )
+    p.add_argument(
+        "--mix-end-p",
+        type=float,
+        default=0.0,
+        help="(chunked-mix) curriculum end collapse probability (default 0.0)",
+    )
+    p.add_argument("--mix-seed", type=int, default=0, help="(chunked-mix) collapse-draw seed")
     p.add_argument("--lr", type=float, default=1e-5 if mode == "sft" else 1e-4)
     p.add_argument("--warmup-fraction", type=float, default=0.03)
     p.add_argument("--max-steps", type=int)
@@ -264,6 +286,9 @@ def options_from_args(args: argparse.Namespace, *, mode: str) -> TrainOptions:
         tokenizer=args.tokenizer,
         seq_len=args.seq_len,
         mem_freq=args.mem_freq,
+        mix_start_p=args.mix_start_p,
+        mix_end_p=args.mix_end_p,
+        mix_seed=args.mix_seed,
         lr=args.lr,
         warmup_fraction=args.warmup_fraction,
         max_steps=args.max_steps,

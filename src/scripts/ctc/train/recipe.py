@@ -39,6 +39,8 @@ __all__ = ["build_experiment", "build_model_config", "build_trainer_config"]
 ARCH_KWARGS: Dict[str, Dict[str, Any]] = {
     "full": {},
     "chunked": {"document_chunked": True, "cross_doc_mode": "chunked"},
+    # Same model as `chunked`; the difference is a runtime curriculum (see build_model_config).
+    "chunked-mix": {"document_chunked": True, "cross_doc_mode": "chunked"},
     "hierarchical": {
         "document_chunked": True,
         "cross_doc_mode": "hierarchical_dilated",
@@ -92,9 +94,53 @@ def build_model_config(options: TrainOptions, vocab_size: int):
             "eos_id": ids.eos,
             "mode": "chunked",
             **({"pad_id": ids.pad} if options.arch == "landmark" else {}),
+            **(_mask_mix_keys(options) if options.arch == "chunked-mix" else {}),
         }
     config.lm_head.loss_implementation = LMLossImplementation.fused_linear
     return config
+
+
+def _mask_mix_keys(options: TrainOptions) -> Dict[str, Any]:
+    """
+    Derive the ``chunked-mix`` curriculum: per-example collapse-to-causal probability annealed
+    ``mix_start_p -> mix_end_p`` linearly over the run's per-rank forwards.
+
+    The anneal length is a per-RANK forward count, and this recipe runs one padded instance per
+    rank per step, so it equals the step budget. That division by world size has been wrong once
+    already -- p stalled at ``mix_start_p * (1 - 1/world_size)``, worse the more GPUs -- so the
+    predicted final p is checked against the mask code's own schedule rather than trusted.
+
+    :param options: Resolved options.
+
+    :returns: The ``document_chunk_attention`` keys that install the curriculum.
+
+    :raises ValueError: If the predicted final probability misses ``mix_end_p`` by more than 0.01.
+    """
+    from olmo_core.nn.attention.chunked_mask import mask_mix_standard_prob
+
+    if options.max_steps is not None:
+        total_forwards = options.max_steps
+    else:
+        total_forwards = int(options.max_tokens // options.global_batch_tokens)
+    final_p = mask_mix_standard_prob(
+        total_forwards,
+        mix_start_p=options.mix_start_p,
+        mix_end_p=options.mix_end_p,
+        mix_total_forwards=total_forwards,
+    )
+    if abs(final_p - options.mix_end_p) > 0.01:
+        raise ValueError(
+            f"chunked-mix curriculum would end at p={final_p:.4f}, not mix_end_p="
+            f"{options.mix_end_p}: the derived forward count ({total_forwards}) disagrees with "
+            "the schedule. Fix the budget arithmetic; do not train through this."
+        )
+    return {
+        "mix_start_p": options.mix_start_p,
+        "mix_end_p": options.mix_end_p,
+        "mix_total_forwards": total_forwards,
+        "mix_seed": options.mix_seed,
+        "mix_log_interval": 5,
+    }
 
 
 def build_train_module_config(options: TrainOptions):
