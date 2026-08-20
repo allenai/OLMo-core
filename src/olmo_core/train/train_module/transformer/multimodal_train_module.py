@@ -54,7 +54,10 @@ from olmo_core.utils import get_default_device, move_to_device, warn_once
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerActivationCheckpointingConfig, TransformerDataParallelConfig
+from .config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerDataParallelConfig,
+)
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
@@ -129,12 +132,24 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         # optimizer so frozen params are excluded from optimizer groups.
         self.freeze_params = freeze_params or []
         n_frozen = 0
+        matched_patterns: set = set()
         for name, p in model.named_parameters():
-            if any(fnmatch(name, pat) for pat in self.freeze_params):
-                p.requires_grad_(False)
-                n_frozen += 1
+            for pat in self.freeze_params:
+                if fnmatch(name, pat):
+                    p.requires_grad_(False)
+                    n_frozen += 1
+                    matched_patterns.add(pat)
+                    break
         if self.freeze_params:
             log.info(f"Froze {n_frozen} parameter tensors matching {self.freeze_params}")
+            # Unlike optimizer group overrides (which are strict), an unmatched freeze glob
+            # would otherwise leave the params trainable with no signal at all.
+            for pat in self.freeze_params:
+                if pat not in matched_patterns:
+                    log.warning(
+                        f"freeze_params pattern '{pat}' does not match any parameter — "
+                        "nothing was frozen for it"
+                    )
 
         model.to(self.device)
         if vision_activation_checkpointing and hasattr(
@@ -236,9 +251,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 vb.apply_fsdp(dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
             else:
                 if hasattr(vb.vision, "apply_fsdp"):
-                    vb.vision.apply_fsdp(
-                        dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf
-                    )
+                    vb.vision.apply_fsdp(dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
                 else:
                     fully_shard(vb.vision, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
                 fully_shard(vb.connector, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
@@ -277,10 +290,17 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         batch.pop("pack_source_names", None)
         return input_ids, labels, loss_masks, batch
 
+    def _vision_is_frozen(self) -> bool:
+        """True when no vision-encoder parameter requires grad (encoder fully frozen)."""
+        params = list(self._multimodal.vision.parameters())
+        return bool(params) and not any(p.requires_grad for p in params)
+
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         super()._set_model_mode(mode)
         # Frozen vision should stay in eval mode (mm_olmo trains the ViT; stage-1 freezes it).
-        if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
+        # Checked against the module's own params rather than the freeze globs so this stays
+        # correct regardless of where the encoder is registered (`vision_backbone.vision.*`).
+        if mode == "train" and self._vision_is_frozen():
             self._multimodal.vision.eval()
 
     def _log_batch_sources(self, batch: Dict[str, Any], local_weight: torch.Tensor) -> None:
