@@ -53,8 +53,9 @@ WANDB_PROJECT = "olmoe3-final-family-throughput"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24"
 PRESET = get_preset("olmo-ddp")
 
-# Initial 64-GPU matrix. These all exactly divide the 1,024-sequence global
-# batch; no production training setting is changed by this qualification.
+# Initial single-node microbatch qualification matrix. Each setting exactly
+# divides the 1,024-sequence global batch across 8 ranks; accumulation keeps
+# the optimizer batch fixed at 8 Mi tokens.
 SYSTEMS = {
     "0p5b": {"ep": 1, "rank_microbatch_sequences": 8},
     "0p9b": {"ep": 1, "rank_microbatch_sequences": 4},
@@ -219,7 +220,7 @@ def build_trainer_config(common: CommonComponents, model_size: str) -> TrainerCo
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group="olmoe3-final-family-8Mi-64gpu",
+                group="olmoe3-final-family-8Mi-8gpu",
                 project=WANDB_PROJECT,
                 entity="ai2-llm",
                 enabled=True,
@@ -256,7 +257,7 @@ if __name__ == "__main__":
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
-        num_nodes=8,
+        num_nodes=1,
         common_config_builder=build_common_components,
         data_config_builder=build_data_components,
         model_config_builder=partial(
