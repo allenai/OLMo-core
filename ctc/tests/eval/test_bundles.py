@@ -240,3 +240,26 @@ def test_an_ad_hoc_bundle_refuses_to_guess_its_series():
     adhoc = bundles.get_bundle("/data/somewhere/_eval_bundle_staged_copy")
     assert adhoc.kind == "reliable"  # the default, and exactly why it must not imply a series
     assert adhoc.ladder_version is None
+
+
+def test_a_ctc_data_output_directory_is_graded_as_is(tmp_path):
+    """
+    ``ctc-data build`` writes ``<task>/eval_<rung>.jsonl``; the registered bundles use weka-era
+    filenames. An ad-hoc directory bundle must resolve the files actually present, or the
+    clone -> build -> eval loop fails at its last step with "missing" files that exist.
+    """
+    task_dir = tmp_path / "contradiction"
+    task_dir.mkdir()
+    for rung in ("2k", "8k"):
+        (task_dir / f"eval_{rung}.jsonl").write_text("{}\n")
+
+    bundle = bundles.get_bundle(str(tmp_path))
+    assert bundle.declares_own_ladder("contradiction")
+    resolved = dict(bundles.resolve("contradiction", "all", root=str(tmp_path)))
+    assert set(resolved) == {"2k", "8k"}
+    assert resolved["2k"] == task_dir / "eval_2k.jsonl"
+    # Rungs the directory does not hold are an error, not a silent skip.
+    with pytest.raises(KeyError):
+        bundles.resolve("contradiction", "16k", root=str(tmp_path))
+    # A task with no files falls back to the legacy table rather than vanishing.
+    assert not bundle.declares_own_ladder("nq")

@@ -30,7 +30,10 @@ ctc-fingerprint check --ckpt CKPT --task contradiction --query-position both
 ```
 
 `--task` means the same thing to both `ctc-data` and `ctc-eval`. The per-task command table, and
-what each task's corpus needs, is in `src/ctc/data/README.md`.
+what each task's corpus needs, is in `src/ctc/data/README.md`; grading — backends, the vLLM
+specifics (including the Qwen3.5 serving-copy requirement), bundles and the eval guards — is in
+`src/ctc/eval/README.md`; training entry points are in `src/scripts/ctc/README.md` at the repo
+level.
 
 From inside the repo, `run/data.sh` → `run/convert.sh` → `run/train.sh` → `run/eval.sh` cover the
 whole pipeline and resolve the cluster environment first (node-local interpreter, caches, and this

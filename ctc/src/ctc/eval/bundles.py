@@ -480,12 +480,44 @@ BUNDLES: Dict[str, Bundle] = {
 }
 
 
+def _scan_ctc_data_layout(root: Path) -> Dict[str, Dict[str, str]]:
+    """
+    Detect ``ctc-data build`` output under an ad-hoc bundle root.
+
+    ``ctc-data`` writes ``<task>/eval_<rung>.jsonl``; the registered bundles use the older
+    weka-era filenames. Without this scan, pointing ``--bundle`` at a directory of freshly built
+    data resolved the *legacy* names and failed on files that are sitting right there -- breaking
+    the clone -> ``ctc-data build --pool auto`` -> ``ctc-eval`` loop at its last step.
+
+    :param root: The ad-hoc bundle directory.
+
+    :returns: ``{task: {rung label: relative path}}`` for every task with at least one
+        ``eval_*.jsonl``; empty when the directory does not exist or holds none (the launcher
+        submits from hosts where the bundle mount is absent, so absence cannot be an error here).
+    """
+    from ..format import rungs as rung_util
+
+    ladders: Dict[str, Dict[str, str]] = {}
+    if not root.is_dir():
+        return ladders
+    for task in BUNDLE:
+        found = {
+            path.stem.removeprefix("eval_"): f"{task}/{path.name}"
+            for path in (root / task).glob("eval_*.jsonl")
+        }
+        if found:
+            ladders[task] = {label: found[label] for label in rung_util.sort_rungs(found)}
+    return ladders
+
+
 def get_bundle(name_or_path: Optional[str] = None) -> Bundle:
     """
     Resolve ``--bundle``: a registered name, a filesystem path, or the default.
 
-    A path is accepted so a staged local copy works without registering anything; it is treated as
-    a ``reliable`` bundle carrying the base ladder only.
+    A path is accepted so a staged local copy works without registering anything. A directory
+    holding ``ctc-data build`` output (``<task>/eval_<rung>.jsonl``) is recognized and graded
+    as-is; anything else is treated as a ``reliable`` bundle carrying the base ladder's legacy
+    file names.
 
     :param name_or_path: A key of :data:`BUNDLES`, a directory path, or ``None``.
 
@@ -494,7 +526,13 @@ def get_bundle(name_or_path: Optional[str] = None) -> Bundle:
     raw = name_or_path or os.environ.get(ROOT_ENV) or DEFAULT_BUNDLE
     if raw in BUNDLES:
         return BUNDLES[raw]
-    return Bundle(name=Path(raw).name or raw, root=raw, description="ad-hoc path")
+    ladders = _scan_ctc_data_layout(Path(raw))
+    return Bundle(
+        name=Path(raw).name or raw,
+        root=raw,
+        ladders=ladders,
+        description="ad-hoc path (ctc-data layout)" if ladders else "ad-hoc path",
+    )
 
 
 def bundle_root(explicit: Optional[str] = None) -> Path:
