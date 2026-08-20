@@ -303,6 +303,18 @@ class BeakerLaunchConfig(Config):
     If the job should be preemptible.
     """
 
+    min_runtime: str | None = None
+    """
+    Minimum guaranteed runtime, as a Beaker duration (e.g. ``"4h"``).
+
+    Setting this to a non-zero duration makes the job *allocated*: Beaker guarantees it that much
+    runtime within a scheduling window, subject to runtime quota, and it counts against the
+    workspace's non-preemptible slot limit. Leaving it unset makes the job *unallocated* -- always
+    interruptible, scheduled only on idle cycles, with no guarantee it ever starts.
+
+    Set this to cover initialization plus one full checkpoint cycle.
+    """
+
     retries: int | None = None
     """
     The number of times to retry the experiment if it fails.
@@ -638,6 +650,7 @@ class BeakerLaunchConfig(Config):
             budget=self.budget,
             priority=self.priority,
             preemptible=self.preemptible,
+            min_runtime=self.min_runtime,
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
@@ -906,6 +919,14 @@ def _parse_args():
         help="""If the job should be preemptible.""",
     )
     parser.add_argument(
+        "--min-runtime",
+        type=str,
+        default=None,
+        help="""Minimum guaranteed runtime as a Beaker duration (e.g. '4h'). Setting this makes
+        the job allocated rather than unallocated, so it is guaranteed to be scheduled within a
+        window instead of only running on idle cycles.""",
+    )
+    parser.add_argument(
         "--allow-dirty",
         action="store_true",
         help="""Allow launching with uncommitted changes.""",
@@ -1002,6 +1023,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
         num_nodes=opts.nodes,
         num_gpus=opts.gpus,
         preemptible=opts.preemptible,
+        min_runtime=opts.min_runtime,
         priority=opts.priority,
         beaker_image=opts.beaker_image,
         slack_notifications=opts.slack_notifications,
