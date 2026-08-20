@@ -137,6 +137,7 @@ from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import (
     BeakerEnvVar,
     BeakerLaunchConfig,
+    BeakerWekaBucket,
     is_running_in_beaker_batch_job,
 )
 from olmo_core.nn.transformer import TransformerDataParallelWrappingStrategy
@@ -602,6 +603,25 @@ class PerceptionTrainabilityArm(StrEnum):
 
     treatment = "treatment"
     frozen_vision_control = "frozen_vision_control"
+
+
+_SECRETLESS_SSMAX_SMOKE_PROFILES = {
+    VisionAlignmentModelVariant.ssmax_head_qknorm: (
+        "vision-ssmax-head-qknorm-1p4b-cx8-bridge-smoke",
+        "configs/vision_moe/vision_alignment/bridge/ssmax_head_qknorm_1p4b_cx8_smoke.yaml",
+    ),
+    VisionAlignmentModelVariant.ssmax_no_qknorm: (
+        "vision-ssmax-no-qknorm-1p4b-cx8-bridge-smoke",
+        "configs/vision_moe/vision_alignment/bridge/ssmax_no_qknorm_1p4b_cx8_smoke.yaml",
+    ),
+}
+_SECRETLESS_SSMAX_SMOKE_REQUIRED_OVERRIDES = frozenset(
+    {
+        "--data.pixmo_cap_path=synthetic",
+        "--data.allow_unpinned_synthetic_smoke=true",
+        "--trainer.max_duration.value=1",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1300,6 +1320,97 @@ def _configure_launch_runtime(
     launch_config.post_setup = (
         preset.post_setup if model_variant is VisionAlignmentModelVariant.s002 else None
     )
+
+
+def _is_secretless_ssmax_smoke_request(
+    *,
+    model_variant: VisionAlignmentModelVariant,
+    phase: VisionAlignmentPhase,
+    run_name: str,
+    reviewed_profile_path: Optional[str],
+    overrides: Sequence[str],
+) -> bool:
+    expected_identity = _SECRETLESS_SSMAX_SMOKE_PROFILES.get(model_variant)
+    return bool(
+        expected_identity is not None
+        and phase is VisionAlignmentPhase.bridge
+        and run_name == expected_identity[0]
+        and reviewed_profile_path == expected_identity[1]
+        and _SECRETLESS_SSMAX_SMOKE_REQUIRED_OVERRIDES.issubset(overrides)
+    )
+
+
+def _build_vision_alignment_launch_config(
+    *,
+    script: str,
+    run_name: str,
+    overrides: Sequence[str],
+    model_variant: VisionAlignmentModelVariant,
+    secretless_runtime_smoke: bool,
+) -> BeakerLaunchConfig:
+    if secretless_runtime_smoke:
+        return BeakerLaunchConfig(
+            name=f"{run_name}-runtime",
+            cmd=[script, "train", run_name, *overrides],
+            budget=BEAKER_BUDGET,
+            workspace=_beaker_workspace(model_variant),
+            clusters=[BEAKER_CLUSTER],
+            num_nodes=2,
+            num_gpus=8,
+            shared_filesystem=True,
+            allow_dirty=False,
+            env_vars=[BeakerEnvVar(name="NCCL_DEBUG", value="WARN")],
+            env_secrets=[],
+            google_credentials_secret=None,
+            aws_config_secret=None,
+            aws_credentials_secret=None,
+            weka_buckets=[
+                BeakerWekaBucket(
+                    bucket="oe-training-default",
+                    mount="/weka/oe-training-default",
+                )
+            ],
+            step_soft_timeout=10 * 60,
+        )
+    return build_launch_config(
+        name=run_name,
+        root_dir=get_root_dir(BEAKER_CLUSTER),
+        cmd=[script, "train", run_name, *overrides],
+        cluster=BEAKER_CLUSTER,
+        workspace=_beaker_workspace(model_variant),
+        budget=BEAKER_BUDGET,
+        num_nodes=2,
+    )
+
+
+def _is_secretless_ssmax_smoke(config: ExperimentConfig) -> bool:
+    if not config.data.allow_unpinned_synthetic_smoke:
+        return False
+    expected_identity = _SECRETLESS_SSMAX_SMOKE_PROFILES.get(config.model_variant)
+    duration = config.trainer.max_duration
+    return bool(
+        expected_identity is not None
+        and config.phase is VisionAlignmentPhase.bridge
+        and config.required_run_name == expected_identity[0]
+        and config.reviewed_profile_path == expected_identity[1]
+        and config.data.pixmo_cap_path == "synthetic"
+        and duration.unit.value == "steps"
+        and duration.value == 1
+    )
+
+
+def _configure_synthetic_smoke_observability(config: ExperimentConfig) -> None:
+    """Keep the two reviewed one-step smokes independent of user-scoped secrets."""
+
+    if not _is_secretless_ssmax_smoke(config):
+        return
+    wandb = config.trainer.callbacks.get("wandb")
+    beaker = config.trainer.callbacks.get("beaker")
+    if not isinstance(wandb, WandBCallback) or not isinstance(beaker, BeakerCallback):
+        raise ValueError("Synthetic smoke requires the standard W&B and Beaker callbacks")
+    wandb.enabled = False
+    beaker.enabled = False
+    config.launch.env_secrets = []
 
 
 def _build_console_logger() -> ConsoleLoggerCallback:
@@ -5023,16 +5134,22 @@ def _validate_phase_contract(
         raise ValueError("Vision alignment may not disable checkpoints or checkpoint loading")
     if config.trainer.no_evals is not False:
         raise ValueError("Vision alignment may not disable its configured intrinsic evaluators")
+    secretless_smoke = _is_secretless_ssmax_smoke(config)
+    expected_wandb_enabled = not secretless_smoke
     wandb = config.trainer.callbacks.get("wandb")
     if (
         not isinstance(wandb, WandBCallback)
         or wandb.name != run_name
         or wandb.project != _wandb_project(config.model_variant)
         or wandb.entity != WANDB_ENTITY
-        or wandb.enabled is not True
+        or wandb.enabled is not expected_wandb_enabled
         or wandb.auto_resume is not True
     ):
         raise ValueError("W&B identity must match the positional run name")
+    beaker = config.trainer.callbacks.get("beaker")
+    expected_beaker_enabled = False if secretless_smoke else None
+    if not isinstance(beaker, BeakerCallback) or beaker.enabled is not expected_beaker_enabled:
+        raise ValueError("Beaker callback observability differs from the phase contract")
     checkpointer = config.trainer.callbacks.get("checkpointer")
     if (
         not isinstance(checkpointer, CheckpointerCallback)
@@ -5067,10 +5184,8 @@ def _validate_phase_contract(
         )
     ):
         raise ValueError("Vision alignment training must not receive cloud credentials")
-    if {secret.name for secret in config.launch.env_secrets} != {
-        "BEAKER_TOKEN",
-        "WANDB_API_KEY",
-    }:
+    expected_env_secret_names = set() if secretless_smoke else {"BEAKER_TOKEN", "WANDB_API_KEY"}
+    if {secret.name for secret in config.launch.env_secrets} != expected_env_secret_names:
         raise ValueError("Vision alignment launch has an unexpected secret surface")
     if not any(
         bucket.bucket == "oe-training-default" and bucket.mount == "/weka/oe-training-default"
@@ -5416,14 +5531,21 @@ def build_config(
                 run_name=run_name,
             ),
         )
-    launch_config = build_launch_config(
-        name=run_name,
-        root_dir=get_root_dir(BEAKER_CLUSTER),
-        cmd=[script, "train", run_name, *overrides],
-        cluster=BEAKER_CLUSTER,
-        workspace=_beaker_workspace(model_variant),
-        budget=BEAKER_BUDGET,
-        num_nodes=2,
+    launch_config = _build_vision_alignment_launch_config(
+        script=script,
+        run_name=run_name,
+        overrides=overrides,
+        model_variant=model_variant,
+        secretless_runtime_smoke=(
+            runtime
+            and _is_secretless_ssmax_smoke_request(
+                model_variant=model_variant,
+                phase=phase,
+                run_name=run_name,
+                reviewed_profile_path=reviewed_profile_path,
+                overrides=overrides,
+            )
+        ),
     )
     launch_config.aws_config_secret = None
     launch_config.aws_credentials_secret = None
@@ -5467,6 +5589,7 @@ def build_config(
         reviewed_profile_allowlist_sha256=reviewed_profile_allowlist_sha256,
     ).merge(overrides)
     _pin_launch_git_branch(config)
+    _configure_synthetic_smoke_observability(config)
     if (
         config.phase is VisionAlignmentPhase.perception
         and config.perception_trainability_arm is PerceptionTrainabilityArm.frozen_vision_control

@@ -1467,6 +1467,177 @@ def test_synthetic_smoke_uses_the_same_canonical_bridge_policy():
     vision_alignment._validate_canonical_data_policy(config)
 
 
+def test_synthetic_smoke_disables_user_scoped_observability_secrets():
+    vision_alignment = _load_module()
+    wandb = vision_alignment.WandBCallback(enabled=True)
+    beaker = vision_alignment.BeakerCallback(enabled=None)
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        phase=vision_alignment.VisionAlignmentPhase.bridge,
+        required_run_name="vision-ssmax-head-qknorm-1p4b-cx8-bridge-smoke",
+        reviewed_profile_path=(
+            "configs/vision_moe/vision_alignment/bridge/" "ssmax_head_qknorm_1p4b_cx8_smoke.yaml"
+        ),
+        data=SimpleNamespace(
+            allow_unpinned_synthetic_smoke=True,
+            pixmo_cap_path="synthetic",
+        ),
+        trainer=SimpleNamespace(
+            callbacks={"wandb": wandb, "beaker": beaker},
+            max_duration=vision_alignment.Duration.steps(1),
+        ),
+        launch=SimpleNamespace(env_secrets=[object(), object()]),
+    )
+
+    vision_alignment._configure_synthetic_smoke_observability(config)
+
+    assert wandb.enabled is False
+    assert beaker.enabled is False
+    assert config.launch.env_secrets == []
+
+
+def test_production_observability_secrets_are_unchanged():
+    vision_alignment = _load_module()
+    secrets = [object(), object()]
+    wandb = vision_alignment.WandBCallback(enabled=True)
+    beaker = vision_alignment.BeakerCallback(enabled=None)
+    config = SimpleNamespace(
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        trainer=SimpleNamespace(callbacks={"wandb": wandb, "beaker": beaker}),
+        launch=SimpleNamespace(env_secrets=secrets),
+    )
+
+    vision_alignment._configure_synthetic_smoke_observability(config)
+
+    assert wandb.enabled is True
+    assert beaker.enabled is None
+    assert config.launch.env_secrets == secrets
+
+
+def test_unreviewed_synthetic_smoke_keeps_normal_observability_contract():
+    vision_alignment = _load_module()
+    secrets = [object(), object()]
+    wandb = vision_alignment.WandBCallback(enabled=True)
+    beaker = vision_alignment.BeakerCallback(enabled=None)
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        phase=vision_alignment.VisionAlignmentPhase.bridge,
+        required_run_name="unreviewed-smoke",
+        reviewed_profile_path="configs/vision_moe/vision_alignment/bridge/unreviewed.yaml",
+        data=SimpleNamespace(
+            allow_unpinned_synthetic_smoke=True,
+            pixmo_cap_path="synthetic",
+        ),
+        trainer=SimpleNamespace(
+            callbacks={"wandb": wandb, "beaker": beaker},
+            max_duration=vision_alignment.Duration.steps(1),
+        ),
+        launch=SimpleNamespace(env_secrets=secrets),
+    )
+
+    vision_alignment._configure_synthetic_smoke_observability(config)
+
+    assert wandb.enabled is True
+    assert beaker.enabled is None
+    assert config.launch.env_secrets == secrets
+
+
+def test_secretless_runtime_smoke_launch_config_avoids_beaker_discovery(monkeypatch):
+    vision_alignment = _load_module()
+
+    def unexpected_discovery(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("secretless runtime smoke must not call Beaker discovery")
+
+    monkeypatch.setattr(vision_alignment, "get_root_dir", unexpected_discovery)
+    monkeypatch.setattr(vision_alignment, "build_launch_config", unexpected_discovery)
+    config = vision_alignment._build_vision_alignment_launch_config(
+        script="src/scripts/train/Vision-Alignment.py",
+        run_name="vision-ssmax-head-qknorm-1p4b-cx8-bridge-smoke",
+        overrides=["--phase=bridge"],
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        secretless_runtime_smoke=True,
+    )
+
+    assert config.workspace == "ai2/scaling-ladders"
+    assert config.budget == "ai2/oe-other"
+    assert config.clusters == ["ai2/holmes"]
+    assert config.num_nodes == 2
+    assert config.num_gpus == 8
+    assert config.shared_filesystem is True
+    assert config.env_secrets == []
+    assert config.google_credentials_secret is None
+    assert config.aws_config_secret is None
+    assert config.aws_credentials_secret is None
+    assert [(bucket.bucket, bucket.mount) for bucket in config.weka_buckets] == [
+        ("oe-training-default", "/weka/oe-training-default")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("variant", "run_name", "profile_name"),
+    [
+        (
+            "ssmax_head_qknorm",
+            "vision-ssmax-head-qknorm-1p4b-cx8-bridge-smoke",
+            "ssmax_head_qknorm_1p4b_cx8_smoke.yaml",
+        ),
+        (
+            "ssmax_no_qknorm",
+            "vision-ssmax-no-qknorm-1p4b-cx8-bridge-smoke",
+            "ssmax_no_qknorm_1p4b_cx8_smoke.yaml",
+        ),
+    ],
+)
+def test_secretless_runtime_smoke_full_config_needs_no_beaker_credentials(
+    monkeypatch, variant, run_name, profile_name
+):
+    import yaml
+
+    vision_alignment = _load_module()
+    root = Path(__file__).parents[3]
+    profile_path = root / "configs" / "vision_moe" / "vision_alignment" / "bridge" / profile_name
+    profile = yaml.safe_load(profile_path.read_text())
+    reviewed_path = profile_path.relative_to(root).as_posix()
+    overrides = [f"--phase={profile['phase']}", *profile["overrides"]]
+
+    def unexpected_discovery(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("runtime config reconstruction must not call Beaker discovery")
+
+    monkeypatch.delenv("BEAKER_TOKEN", raising=False)
+    monkeypatch.setattr(vision_alignment, "get_root_dir", unexpected_discovery)
+    monkeypatch.setattr(vision_alignment, "build_launch_config", unexpected_discovery)
+    monkeypatch.setattr(
+        vision_alignment,
+        "_load_tokenizer",
+        lambda artifacts: (SimpleNamespace(pad_token_id=100_277), Molmo2TokenIds()),
+    )
+    monkeypatch.setattr(vision_alignment, "_validate_git_provenance", lambda *args, **kwargs: None)
+
+    config = vision_alignment.build_config(
+        "src/scripts/train/Vision-Alignment.py",
+        run_name,
+        overrides,
+        runtime=True,
+        reviewed_profile_path=reviewed_path,
+        reviewed_profile_sha256=hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+    )
+    profile["__reviewed_path__"] = reviewed_path
+    profile["__reviewed_sha256__"] = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    config = vision_alignment._apply_profile_launch(config, profile, run_name=run_name)
+    vision_alignment._validate_phase_contract(config, run_name, runtime=True)
+
+    assert config.model_variant.value == variant
+    assert config.launch.workspace == "ai2/scaling-ladders"
+    assert config.launch.clusters == ["ai2/holmes"]
+    assert config.launch.num_nodes == 2
+    assert config.launch.num_gpus == 8
+    assert config.launch.env_secrets == []
+    assert config.trainer.callbacks["wandb"].enabled is False
+    assert config.trainer.callbacks["beaker"].enabled is False
+
+
 def test_perception_sources_are_supported_but_require_pinned_audit():
     vision_alignment = _load_module()
     mixture = vision_alignment.VisionAlignmentMixtureConfig(phase="perception")
