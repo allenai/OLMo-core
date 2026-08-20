@@ -18,3 +18,33 @@ sources or change the mixture between arms.
 Before either training launch, run the pinned profile-pair auditor and the exact two-node runtime
 provenance preflight. Submit only through the project launch path fixed to workspace
 `ai2/molmofication`; never use a default or alternate Beaker workspace.
+
+## SSMax 1.4B Cx8 pairs
+
+The QK-norm and no-QK-norm lineages each require their own two-profile causal fork from that
+lineage's approved permanent bridge checkpoint: one `treatment` and one
+`frozen_vision_control`. Within a lineage, the parent checkpoint/config/gate, visual provenance,
+source audit, loss-mass calibration, duration, seeds, checkpoint cadence, and evaluation cadence
+must be identical. The control transformation is derived by the recipe and consists only of
+adding `vision.*` to the freeze patterns and setting the vision optimizer-group LR to zero. The
+runtime trainability check independently proves that every vision parameter is frozen while the
+connector and six input image-token rows retain the treatment configuration.
+
+The SSMax loss-mass calibration is distinct from the historical multi-response source audit.
+Build it with `src/scripts/data/build_ssmax_single_response_calibration.py` after provenance
+selection and pin its raw SHA plus every projected mean in both profiles. It uses data seed 95818
+to choose a branch from the stable underlying raw index; evaluation is fixed to backing epoch
+zero. Pairing/bootstrap seed 6198 is a separate evidence choice. A profile without this immutable
+receipt, its complete 512-row/source validation preflight, or exact projected means is
+non-runnable.
+
+Do not add placeholder SSMax profiles to `approved_profiles.json`. Create the four concrete YAML
+profiles only after the bridge checkpoints and human-approved SSMax promotion gates exist, then
+review and allowlist their exact bytes. They must select `ssmax_head_qknorm` or
+`ssmax_no_qknorm`, use workspace `ai2/scaling-ladders`, and may reuse the existing visual
+provenance and source-audit artifacts because those artifacts describe data rather than a model
+lineage.
+
+The executable post-hoc causal-pair protocol and non-runnable spec templates are documented in
+[`../eval/SSMAX_PERCEPTION_EVALUATION.md`](../eval/SSMAX_PERCEPTION_EVALUATION.md). It has its own
+manifest, receipts, report, and v5 approval schema and does not inherit s002 skip lists or waivers.

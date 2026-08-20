@@ -1,0 +1,73 @@
+{
+  "format": "vision_alignment_ssmax_joint_manifest_spec",
+  "version": 1,
+  "run_id": "ssmax-head-qknorm-joint-v1",
+  "model_variant": "ssmax_head_qknorm",
+  "run_name": "<FILL_AFTER_APPROVED_V5_PERCEPTION_PARENT>",
+  "checkpoint_root": "<FILL_AFTER_JOINT_RUN_COMPLETES>",
+  "training_profile": "<FILL_WITH_REVIEWED_JOINT_PROFILE>",
+  "recipe": "src/scripts/train/Vision-Alignment.py",
+  "perception_parent_gate": "<FILL_WITH_APPROVED_V5_GATE>",
+  "joint_visual_projection": "<FILL_WITH_PINNED_JOINT_PROJECTION>",
+  "source_audit": "<FILL_WITH_PINNED_JOINT_SOURCE_AUDIT>",
+  "attention_probe": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-attention-probe-v1/ssmax-joint-attention-probe.json",
+  "pairing_paths": {
+    "audited_alignment": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/audited_alignment.json",
+    "cosyn_point": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/cosyn_point.json",
+    "count_numeric": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/count_numeric.json",
+    "ocr_document": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/ocr_document.json",
+    "pixmo_caption": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/pixmo_caption.json",
+    "pixmo_points_basic": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/pixmo_points_basic.json",
+    "pixmo_points_high_frequency": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/pixmo_points_high_frequency.json",
+    "pixmo_transcript": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-pairings-v1/pixmo_transcript.json"
+  },
+  "evaluation": {
+    "visual_sources": [
+      "audited_alignment",
+      "cosyn_point",
+      "count_numeric",
+      "ocr_document",
+      "pixmo_caption",
+      "pixmo_points_basic",
+      "pixmo_points_high_frequency",
+      "pixmo_transcript"
+    ],
+    "steps": [0, 4000, 8000, 12000, 16000],
+    "windows": ["first_1", "first_8", "first_32", "all"],
+    "examples_per_source": 496,
+    "eligible_rows_per_source": {
+      "audited_alignment": 511,
+      "cosyn_point": 510,
+      "count_numeric": 512,
+      "ocr_document": 512,
+      "pixmo_caption": 508,
+      "pixmo_points_basic": 510,
+      "pixmo_points_high_frequency": 509,
+      "pixmo_transcript": 508
+    },
+    "native_holdout_examples": 992,
+    "pairing_seed": 6198,
+    "single_response_projection_seed": 95818,
+    "rank_batch_instances": 1
+  },
+  "topology": {
+    "world_size": 16,
+    "num_nodes": 2,
+    "gpus_per_node": 8,
+    "data_parallel": "hsdp"
+  },
+  "policy": {
+    "decision_scope": "descriptive_non_promotion",
+    "maximum_data_errors": 0,
+    "maximum_optimizer_guard_skips": 0,
+    "maximum_nonfinite_losses": 0,
+    "maximum_nonfinite_gradients": 0,
+    "native_text_ce_max_relative_increase": 0.02,
+    "native_text_bootstrap_samples": 10000,
+    "native_text_bootstrap_seed": 6198,
+    "require_exact_frozen_surfaces": true
+  },
+  "companion_protocols": {
+    "downstream_fast_pair": "configs/vision_moe/vision_alignment/eval/downstream/ssmax_joint_fast_pair.yaml.template"
+  }
+}

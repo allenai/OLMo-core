@@ -1,10 +1,13 @@
 # Vision alignment continued pretraining
 
-Every Beaker submission for this project, including manual CPU, GPU, training, and evaluation
-jobs, must target workspace `ai2/molmofication`. Direct YAML/spec submissions must use
-`python src/scripts/beaker_submit_vision_moe.py SPEC.yaml`; direct use of
-`beaker experiment create` is prohibited for this tree. The supported Python training launchers
-independently fail closed unless their final workspace is exactly `ai2/molmofication`.
+Every Beaker submission for the s002 project, including manual CPU, GPU, training, and evaluation
+jobs, must target workspace `ai2/molmofication`. The explicitly paired SSMax experiment described
+below instead targets `ai2/scaling-ladders`, as pinned in its profiles. Submit s002 YAML specs with
+`src/scripts/beaker_submit_vision_moe.py`; submit SSMax downstream specs with
+`src/scripts/beaker_submit_vision_ssmax_eval.py`, and use the dedicated SSMax evidence launcher
+for checkpoint receipts. Direct use of `beaker experiment create` is prohibited for this tree.
+The supported launchers independently fail closed unless their final workspace matches the
+selected immutable model lineage.
 
 This directory owns the new vision-alignment recipe implemented by
 `src/scripts/train/Vision-Alignment.py`. It is separate from the historical
@@ -22,6 +25,53 @@ The recipe has three explicit phases:
    train connector + vision + the LM blocks/norms/routers at differential learning rates, with
    exact native `OLMo-mix-0925` replay. Ordinary lexical input-embedding rows and the untied
    output projection remain frozen; only the six image-token input rows adapt.
+
+## Paired SSMax 1.4B Cx8 experiment
+
+The two SSMax profiles compare exact 206,985,756,672-token parents at step 65,799. Both are
+dense 1.4B hybrid Transformers with width 1,280 and 20 layers: 16 GatedDeltaNet layers plus
+global attention at layers 4, 9, 14, and 19. Both global-attention stacks use learned per-head
+Scalable-Softmax. The treatment distinction is only QK RMSNorm in those four layers:
+
+- `ssmax_head_qknorm`: 384 FP32 parameter tensors and 1,422,110,784 parameters;
+- `ssmax_no_qknorm`: 376 FP32 parameter tensors and 1,422,109,760 parameters.
+
+The eight-tensor/1,024-parameter difference is exactly the query/key RMSNorm weights for 16
+heads in the four attention layers. The parents otherwise share tokenizer, seed, data seed,
+expanded pretraining paths, dataset fingerprint, batch shape, optimizer, learning-rate schedule,
+and actual completed token count. Before loading tensor shards, the recipe verifies each
+checkpoint's config, data-path manifest, permanent marker, DCP metadata, complete model key set,
+every tensor shape/dtype, and canonical semantic inventory against a meta-built model. At runtime,
+rank 0 also rehashes every DCP and trainer-state file against the pinned full-checkpoint byte
+inventory before any parent tensor is loaded, then broadcasts that verified identity to all ranks.
+
+SSMax alignment uses ordinary SkipStep AdamW and 2x8 HSDP (BF16 parameters with FP32 gradient
+reduction), while s002 retains OLMoDDP/EP8. The phase data, component learning rates, seeds,
+validation population, and checkpoint cadence are paired across the two SSMax arms.
+
+GatedDeltaNet currently has no safe per-example recurrent-state reset in the multimodal packing
+path. SSMax therefore requires `pack_sequences=false`. After the immutable perception/joint
+selection boundary, a versioned projection chooses one annotation branch using source, stable
+underlying raw index, epoch, and data seed 95818; validation and evidence force both selection and
+backing-row materialization to epoch zero. An immutable full-panel receipt recalibrates the
+resulting supervised-loss mass before a profile can run. Ordinary batch rows remain independent.
+The multimodal model rejects `example_ids`,
+`subsegment_ids`, and global document-boundary arguments for GatedDeltaNet rather than silently
+leaking recurrent or short-convolution state. Image tokens are bidirectional only in the four
+global attention layers; GatedDeltaNet layers retain their native causal recurrence. Scalable-
+Softmax deliberately retains the source checkpoint's absolute-prefix, mask-agnostic length
+definition. KV caching, context parallelism, and sliding-window attention are unsupported.
+
+The paired bridge profiles are:
+
+- `bridge/ssmax_head_qknorm_1p4b_cx8_v1.yaml`
+- `bridge/ssmax_no_qknorm_1p4b_cx8_v1.yaml`
+
+Both target `ai2/holmes` through `ai2/scaling-ladders`, use urgent priority with an eight-hour
+minimum runtime, and retain steps 0, 100, 200, 250, 300, 400, and 500. Promotion still requires
+the fixed matched-wrong semantic evidence, correct-image CE bound, frozen-state proof, and text
+retention evidence described below. Mid-training is intentionally not selected by this recipe;
+it begins only after a separate recipe choice.
 
 Changing phase, mixture, loss weighting, trainability, or learning-rate policy is never an
 exact resume. Each such change requires a new run name and save folder. An interruption within
@@ -273,6 +323,8 @@ bound, deliver caption/transcript loss mass within two percentage points of 70/3
 every frozen LM/vision tensor and non-image embedding row exactly. Do not use transcript
 `first_1` as a gate because its generic opening token is not expected to identify image content.
 
-The perception and joint directories contain no launch profile yet. Their default contracts
-deliberately fail closed until explicit scalar-count, OCR/document, audited-alignment, and
-native-replay artifacts are implemented and pinned.
+The perception and joint directories contain the completed, lineage-specific s002 profiles.
+They do not yet contain SSMax launch profiles: those are created only after the matching bridge
+v4 gate (for perception) or perception v5 gate (for joint) is explicitly approved. The SSMax
+defaults therefore fail closed rather than borrowing an s002 checkpoint, waiver, or evidence
+bundle.

@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 
 import olmo_core.nn.vision.multimodal as multimodal_module
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision import (
@@ -459,3 +460,63 @@ def test_packed_examples_are_isolated(backend):
     na, nb = len(a["input_ids"]), len(b["input_ids"])
     torch.testing.assert_close(lp[:na], la, atol=1e-4, rtol=1e-4)
     torch.testing.assert_close(lp[na : na + nb], lb, atol=1e-4, rtol=1e-4)
+
+
+def _as_gated_delta_multimodal(model: MultimodalLM) -> MultimodalLM:
+    """Exercise the recurrent boundary contract without running GPU-only FLA kernels."""
+    model._has_gated_delta_net = True
+    return model
+
+
+def test_gated_delta_multimodal_detects_recurrent_lm():
+    from olmo_core.nn.attention.flash_linear_attn_api import has_fla
+    from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
+
+    if not has_fla():
+        pytest.skip("flash-linear-attention is not installed")
+
+    cfg = _tiny_multimodal_cfg()
+    assert not isinstance(cfg.lm.block, dict)
+    cfg.lm.block.sequence_mixer = GatedDeltaNetConfig(n_heads=4)
+
+    model = cfg.build(init_device="meta")
+    assert model._has_gated_delta_net
+
+
+def test_gated_delta_multimodal_rejects_sequence_packing_metadata():
+    model = _as_gated_delta_multimodal(_tiny_multimodal_cfg().build(init_device="cpu"))
+    input_ids = torch.randint(2, _LM_VOCAB, (1, 8))
+
+    with pytest.raises(OLMoConfigurationError, match="Disable multimodal packing"):
+        model(input_ids, example_ids=torch.zeros_like(input_ids))
+
+
+def test_gated_delta_multimodal_rejects_multi_annotation_branches():
+    model = _as_gated_delta_multimodal(_tiny_multimodal_cfg().build(init_device="cpu"))
+    input_ids = torch.randint(2, _LM_VOCAB, (1, 8))
+    position_ids = torch.arange(input_ids.shape[1]).unsqueeze(0)
+    subsegment_ids = torch.tensor([[10_000, 10_000, 0, 0, 0, 1, 1, 1]])
+
+    with pytest.raises(OLMoConfigurationError, match="one response branch per example"):
+        model(
+            input_ids,
+            position_ids=position_ids,
+            subsegment_ids=subsegment_ids,
+        )
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("doc_lens", torch.tensor([[4, 4]], dtype=torch.int32)),
+        ("max_doc_lens", [4]),
+        ("cu_doc_lens", torch.tensor([0, 4, 8], dtype=torch.int32)),
+        ("max_doc_len", 4),
+    ],
+)
+def test_gated_delta_multimodal_rejects_unvalidated_global_document_lengths(key, value):
+    model = _as_gated_delta_multimodal(_tiny_multimodal_cfg().build(init_device="cpu"))
+    input_ids = torch.randint(2, _LM_VOCAB, (1, 8))
+
+    with pytest.raises(OLMoConfigurationError, match="global document-length path"):
+        model(input_ids, **{key: value})

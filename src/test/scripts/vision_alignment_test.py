@@ -612,6 +612,144 @@ def test_phase_selector_is_required_before_derived_defaults():
         vision_alignment._extract_phase(["--phase=sft"])
 
 
+def test_ssmax_model_variant_selection_is_explicit_and_pinned():
+    vision_alignment = _load_module()
+
+    assert (
+        vision_alignment._extract_model_variant([])
+        is vision_alignment.VisionAlignmentModelVariant.s002
+    )
+    assert (
+        vision_alignment._extract_model_variant(["--model_variant=ssmax_head_qknorm"])
+        is vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    )
+    assert (
+        vision_alignment._extract_model_variant(["--model_variant=ssmax_no_qknorm"])
+        is vision_alignment.VisionAlignmentModelVariant.ssmax_no_qknorm
+    )
+    with pytest.raises(ValueError, match="at most one"):
+        vision_alignment._extract_model_variant(
+            [
+                "--model_variant=ssmax_head_qknorm",
+                "--model_variant=ssmax_no_qknorm",
+            ]
+        )
+    with pytest.raises(ValueError, match="Unknown"):
+        vision_alignment._extract_model_variant(["--model_variant=unreviewed"])
+
+
+def test_ssmax_parent_artifact_contracts_are_distinct_and_complete():
+    vision_alignment = _load_module()
+    qk = vision_alignment.ArtifactConfig.for_model_variant(
+        vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    )
+    no_qk = vision_alignment.ArtifactConfig.for_model_variant(
+        vision_alignment.VisionAlignmentModelVariant.ssmax_no_qknorm
+    )
+
+    assert qk.base_checkpoint != no_qk.base_checkpoint
+    assert qk.base_config_sha256 != no_qk.base_config_sha256
+    assert qk.base_checkpoint_metadata_sha256 != no_qk.base_checkpoint_metadata_sha256
+    assert qk.source_commit != no_qk.source_commit
+    assert qk.expected_lm_tensor_count == 384
+    assert no_qk.expected_lm_tensor_count == 376
+    assert qk.expected_lm_parameter_count - no_qk.expected_lm_parameter_count == 1024
+    assert qk.base_model_keyset_sha256 == vision_alignment.SSMAX_HEAD_QKNORM_KEYSET_SHA256
+    assert no_qk.base_model_keyset_sha256 == vision_alignment.SSMAX_NO_QKNORM_KEYSET_SHA256
+    assert qk.base_model_inventory_sha256
+    assert no_qk.base_model_inventory_sha256
+    assert qk.base_checkpoint_identity_sha256 == (
+        vision_alignment.SSMAX_HEAD_QKNORM_CHECKPOINT_IDENTITY_SHA256
+    )
+    assert no_qk.base_checkpoint_identity_sha256 == (
+        vision_alignment.SSMAX_NO_QKNORM_CHECKPOINT_IDENTITY_SHA256
+    )
+    assert qk.base_checkpoint_state_file_count == no_qk.base_checkpoint_state_file_count == 1025
+    assert qk.base_checkpoint_trainer_state_count == no_qk.base_checkpoint_trainer_state_count == 64
+    assert qk.base_checkpoint_state_file_inventory_sha256
+    assert no_qk.base_checkpoint_state_file_inventory_sha256
+    assert qk.base_checkpoint_trainer_state_inventory_sha256
+    assert no_qk.base_checkpoint_trainer_state_inventory_sha256
+    assert qk.base_data_paths_sha256 == no_qk.base_data_paths_sha256
+    assert qk.base_dataset_fingerprint == no_qk.base_dataset_fingerprint
+
+
+def test_phase_parent_model_lineage_rejects_crossed_ssmax_arms():
+    vision_alignment = _load_module()
+    qk_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    no_qk_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_no_qknorm
+    qk_artifacts = vision_alignment.ArtifactConfig.for_model_variant(qk_variant)
+    parent_config = {
+        "model_variant": qk_variant.value,
+        "vision_alignment": {"model_variant": qk_variant.value},
+        "artifacts": qk_artifacts.as_dict(),
+    }
+
+    vision_alignment._validate_checkpoint_model_lineage(
+        SimpleNamespace(model_variant=qk_variant),
+        parent_config,
+        checkpoint="/checkpoints/qk/step500",
+    )
+    with pytest.raises(ValueError, match="uses model variant.*expected"):
+        vision_alignment._validate_checkpoint_model_lineage(
+            SimpleNamespace(model_variant=no_qk_variant),
+            parent_config,
+            checkpoint="/checkpoints/qk/step500",
+        )
+
+    parent_config["vision_alignment"]["model_variant"] = no_qk_variant.value
+    with pytest.raises(ValueError, match="root and vision-alignment model variants differ"):
+        vision_alignment._checkpoint_model_variant(parent_config)
+
+
+def test_legacy_s002_parent_variant_requires_exact_saved_artifact_identity():
+    vision_alignment = _load_module()
+    artifacts = vision_alignment.ArtifactConfig().as_dict()
+    for field_name in vision_alignment._LEGACY_S002_ARTIFACT_FIELDS:
+        artifacts.pop(field_name)
+    parent_config = {"vision_alignment": {"phase": "bridge"}, "artifacts": artifacts}
+
+    assert (
+        vision_alignment._checkpoint_model_variant(parent_config)
+        is vision_alignment.VisionAlignmentModelVariant.s002
+    )
+    vision_alignment._validate_checkpoint_model_lineage(
+        SimpleNamespace(model_variant=vision_alignment.VisionAlignmentModelVariant.s002),
+        parent_config,
+        checkpoint="/checkpoints/legacy-s002/step500",
+    )
+
+    parent_config["artifacts"]["base_checkpoint"] = "/different-parent"
+    with pytest.raises(ValueError, match="exact historical s002"):
+        vision_alignment._checkpoint_model_variant(parent_config)
+
+
+def test_ssmax_cross_phase_model_only_preflight_is_strict(tmp_path):
+    from olmo_core.distributed.checkpoint import save_state_dict
+
+    vision_alignment = _load_module()
+    parent = tmp_path / "step500"
+    state_dir = parent / "model_and_optim"
+    parent_model = nn.Linear(3, 2)
+    save_state_dict(state_dir, {"model": parent_model.state_dict()})
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        initialization=SimpleNamespace(checkpoint=str(parent)),
+    )
+    train_module = SimpleNamespace(multimodal_model=nn.Linear(3, 2))
+
+    vision_alignment._validate_ssmax_phase_parent_model_state(train_module, config)
+
+    train_module.multimodal_model = nn.Linear(4, 2)
+    with pytest.raises(RuntimeError, match="tensor contract differs"):
+        vision_alignment._validate_ssmax_phase_parent_model_state(train_module, config)
+
+    config.model_variant = vision_alignment.VisionAlignmentModelVariant.s002
+    train_module.multimodal_model = nn.Linear(4, 2)
+    vision_alignment._validate_ssmax_phase_parent_model_state(train_module, config)
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -654,6 +792,45 @@ def test_git_provenance_requires_owned_branch_for_local_launch(monkeypatch):
     with pytest.raises(ValueError, match="user-owned vision-moe branch"):
         vision_alignment._validate_git_provenance(config, runtime=False)
 
+    config.launch.git.branch = None
+    with pytest.raises(ValueError, match="user-owned vision-moe branch"):
+        vision_alignment._validate_git_provenance(config, runtime=False)
+
+
+def test_ssmax_launch_pins_branch_and_requires_exact_pushed_remote_ref(monkeypatch):
+    vision_alignment = _load_module()
+    git_ref = "a" * 40
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        launch=SimpleNamespace(
+            git=SimpleNamespace(
+                branch=None,
+                ref=git_ref,
+                repo_url="https://github.com/allenai/OLMo-core",
+            )
+        ),
+    )
+
+    vision_alignment._pin_launch_git_branch(config)
+
+    expected_branch = "rustin/vision-ssmax-molmofication"
+    expected_remote_ref = f"refs/heads/{expected_branch}"
+    assert config.launch.git.branch == expected_branch
+    monkeypatch.setattr(
+        vision_alignment.subprocess,
+        "check_output",
+        lambda *args, **kwargs: f"{git_ref}\t{expected_remote_ref}\n",
+    )
+    vision_alignment._validate_remote_git_ref(config)
+
+    monkeypatch.setattr(
+        vision_alignment.subprocess,
+        "check_output",
+        lambda *args, **kwargs: f"{'b' * 40}\t{expected_remote_ref}\n",
+    )
+    with pytest.raises(RuntimeError, match="not pushed"):
+        vision_alignment._validate_remote_git_ref(config)
+
 
 def test_runtime_launch_imports_the_exact_gantry_checkout_source():
     vision_alignment = _load_module()
@@ -672,6 +849,22 @@ def test_runtime_launch_imports_the_exact_gantry_checkout_source():
     assert realized_env["PYTHONPATH"] == "/gantry-runtime/src"
     assert realized_env["EXPLICIT_SETTING"] == "kept"
     assert [item.name for item in launch.env_vars].count("PYTHONPATH") == 1
+
+
+def test_ssmax_runtime_omits_unused_expert_parallel_setup():
+    vision_alignment = _load_module()
+    launch = vision_alignment.BeakerLaunchConfig(name="ssmax-runtime-test", cmd=["true"])
+
+    vision_alignment._configure_launch_runtime(
+        launch,
+        vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+    )
+
+    realized_env = dict(launch._get_env_vars())
+    assert realized_env["PYTHONPATH"] == "/gantry-runtime/src"
+    assert "OLMO_SYMM_VDEV2D_AUTO_BUILD" not in realized_env
+    assert "OLMO_EP_MP_HIGH_PRIORITY_GROUP" not in realized_env
+    assert launch.post_setup is None
 
 
 def test_git_provenance_accepts_matching_detached_beaker_checkout(monkeypatch):
@@ -785,6 +978,34 @@ def test_phase_trainability_and_lr_contract(
         assert connector_scheduler.get_lr(policy.connector_lr, 500, 500) == pytest.approx(2e-5)
 
 
+@pytest.mark.parametrize("variant_name", ["ssmax_head_qknorm", "ssmax_no_qknorm"])
+def test_ssmax_uses_paired_hsdp_skip_step_train_mechanics(variant_name):
+    vision_alignment = _load_module()
+    variant = vision_alignment.VisionAlignmentModelVariant(variant_name)
+    policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase.bridge]
+    image_rows = [100, 101, 102, 103, 104, 105]
+
+    train_module = vision_alignment._build_train_module_config(policy, image_rows, variant)
+    config = SimpleNamespace(
+        model_variant=variant,
+        phase=vision_alignment.VisionAlignmentPhase.bridge,
+        perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
+        train_module=train_module,
+        trainer=SimpleNamespace(max_duration=vision_alignment.Duration.steps(policy.max_steps)),
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+    )
+
+    assert isinstance(train_module, vision_alignment.MultimodalTransformerTrainModuleConfig)
+    assert isinstance(train_module.optim, vision_alignment.SkipStepAdamWConfig)
+    assert train_module.dp_config.name is vision_alignment.DataParallelType.hsdp
+    assert train_module.dp_config.param_dtype is vision_alignment.DType.bfloat16
+    assert train_module.dp_config.reduce_dtype is vision_alignment.DType.float32
+    assert train_module.train_embedding_rows == image_rows
+    assert train_module.diagnostics_interval == 100
+    assert train_module.response_logits_only is True
+    vision_alignment._validate_optimizer_scheduler_contract(config, policy)
+
+
 @pytest.mark.parametrize(
     ("phase", "rank_batch_instances"),
     [("bridge", 4), ("perception", 4), ("joint", 1)],
@@ -847,13 +1068,19 @@ def test_optimizer_scheduler_contract_rejects_unsafe_overrides(mutation):
         vision_alignment._validate_optimizer_scheduler_contract(config, policy)
 
 
-def test_perception_control_changes_only_vision_trainability():
+@pytest.mark.parametrize(
+    "variant_name",
+    ["s002", "ssmax_head_qknorm", "ssmax_no_qknorm"],
+)
+def test_perception_control_changes_only_vision_trainability(variant_name):
     vision_alignment = _load_module()
     policy = vision_alignment._PHASE_POLICIES[vision_alignment.VisionAlignmentPhase.perception]
     image_rows = [100, 101, 102, 103, 104, 105]
+    variant = vision_alignment.VisionAlignmentModelVariant(variant_name)
 
-    treatment_module = vision_alignment._build_train_module_config(policy, image_rows)
+    treatment_module = vision_alignment._build_train_module_config(policy, image_rows, variant)
     treatment = SimpleNamespace(
+        model_variant=variant,
         phase=vision_alignment.VisionAlignmentPhase.perception,
         perception_trainability_arm=vision_alignment.PerceptionTrainabilityArm.treatment,
         train_module=treatment_module,
@@ -864,10 +1091,11 @@ def test_perception_control_changes_only_vision_trainability():
     assert treatment_module.freeze_params == list(policy.freeze_params)
     assert treatment_module.optim.group_overrides[2].opts["lr"] == policy.vision_lr
 
-    control_module = vision_alignment._build_train_module_config(policy, image_rows)
+    control_module = vision_alignment._build_train_module_config(policy, image_rows, variant)
     control_module.freeze_params = ["vision.*", *(control_module.freeze_params or [])]
     control_module.optim.group_overrides[2].opts["lr"] = 0.0
     control = SimpleNamespace(
+        model_variant=variant,
         phase=vision_alignment.VisionAlignmentPhase.perception,
         perception_trainability_arm=(
             vision_alignment.PerceptionTrainabilityArm.frozen_vision_control
@@ -960,6 +1188,222 @@ def test_canonical_data_policy_pins_phase_sources_and_ratios_but_allows_artifact
     vision_alignment._validate_canonical_data_policy(config)
 
     assert config.data.mixture.resolved_targets() == expected_targets
+
+
+def test_ssmax_canonical_data_policy_requires_unpacked_single_examples():
+    vision_alignment = _load_module()
+    config = _canonical_policy_config(vision_alignment, "bridge")
+    config.model_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    config.data.pack_sequences = False
+
+    vision_alignment._validate_canonical_data_policy(config)
+
+    config.data.pack_sequences = True
+    with pytest.raises(ValueError, match="pack_sequences"):
+        vision_alignment._validate_canonical_data_policy(config)
+
+
+def test_ssmax_perception_projection_seed_and_calibration_are_fail_closed():
+    vision_alignment = _load_module()
+    config = _canonical_policy_config(vision_alignment, "perception")
+    config.model_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    config.data_seed = vision_alignment.DATA_SEED
+    config.data.pack_sequences = False
+    targets = config.data.mixture.resolved_targets()
+    config.data.ssmax_single_response_projection = (
+        vision_alignment.SSMaxSingleResponseProjectionConfig(
+            seed=vision_alignment.DATA_SEED,
+            projected_mean_loss_weight={source: 1.0 for source in targets},
+            calibration_path="/pinned/ssmax-projection-calibration.json",
+            calibration_sha256="a" * 64,
+        )
+    )
+    vision_alignment._validate_canonical_data_policy(config)
+
+    config.data.ssmax_single_response_projection.seed = 6198
+    with pytest.raises(ValueError, match="projection seed must equal data_seed=95818"):
+        vision_alignment._validate_canonical_data_policy(config)
+
+    config.data.ssmax_single_response_projection.seed = vision_alignment.DATA_SEED
+    config.data.ssmax_single_response_projection.projected_mean_loss_weight.pop("cosyn_point")
+    with pytest.raises(ValueError, match="projected loss-mass calibration"):
+        vision_alignment._validate_canonical_data_policy(config)
+
+
+def test_ssmax_data_errors_are_immediately_fatal_without_changing_s002_defaults():
+    vision_alignment = _load_module()
+    assert vision_alignment._mixture_data_error_policy(
+        vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+    ) == {"max_consecutive_data_errors": 0, "max_total_data_errors": 0}
+    assert vision_alignment._mixture_data_error_policy(
+        vision_alignment.VisionAlignmentModelVariant.ssmax_no_qknorm
+    ) == {"max_consecutive_data_errors": 0, "max_total_data_errors": 0}
+    assert (
+        vision_alignment._mixture_data_error_policy(
+            vision_alignment.VisionAlignmentModelVariant.s002
+        )
+        == {}
+    )
+
+
+def test_ssmax_projection_full_replay_is_rank_zero_only_and_rank_divergence_fails(monkeypatch):
+    import torch.distributed as dist
+
+    vision_alignment = _load_module()
+
+    class Dataset:
+        content_fingerprint = "selected-v1"
+
+        def __len__(self):
+            return 1
+
+        def get(self, index, epoch=0):
+            assert index == 0
+            del epoch
+            return {
+                "input_ids": np.array([1, 2], dtype=np.int64),
+                "labels": np.array([2, -100], dtype=np.int64),
+                "loss_masks": np.array([1.0, 0.0], dtype=np.float32),
+                "position_ids": np.array([0, 1], dtype=np.int64),
+                "token_type_ids": np.array([0, 0], dtype=np.int64),
+                "images": np.zeros((1, 4, 3), dtype=np.float32),
+                "pooled_patches_idx": np.zeros((1, 4), dtype=np.int64),
+            }
+
+    dataset = vision_alignment.SSMaxSingleResponseDataset(
+        Dataset(),
+        source_name="pixmo_caption",
+        logical_split="train",
+        seed=vision_alignment.DATA_SEED,
+        loss_token_weighting="root_subsegments",
+    )
+    expected = vision_alignment.ssmax_single_response_calibration_summary(dataset, ((0, 0),))
+    calibration = {
+        "projection_contract": dataset.contract,
+        "sources": {"pixmo_caption": expected},
+        "unprojected_sources": [],
+    }
+    rank = [1]
+    replay_calls: List[int] = []
+    monkeypatch.setattr(vision_alignment, "get_rank", lambda group=None: rank[0])
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    def all_gather_rank_local(output, value):
+        output[:] = [None, value]
+
+    def broadcast_rank_zero_success(output, src=0):
+        assert src == 0
+        output[0] = None
+
+    monkeypatch.setattr(dist, "all_gather_object", all_gather_rank_local)
+    monkeypatch.setattr(dist, "broadcast_object_list", broadcast_rank_zero_success)
+    monkeypatch.setattr(
+        vision_alignment,
+        "ssmax_single_response_calibration_summary",
+        lambda *args, **kwargs: replay_calls.append(rank[0]) or expected,
+    )
+
+    vision_alignment._validate_live_ssmax_projection_summary(
+        calibration,
+        dataset,
+        "pixmo_caption",
+        section="sources",
+        logical_split="train",
+        panel=None,
+    )
+    assert replay_calls == []
+
+    rank[0] = 0
+    vision_alignment._validate_live_ssmax_projection_summary(
+        calibration,
+        dataset,
+        "pixmo_caption",
+        section="sources",
+        logical_split="train",
+        panel=((0, 0),),
+    )
+    assert replay_calls == [0]
+
+    rank[0] = 1
+    dataset.content_fingerprint = "rank-one-drift"
+    with pytest.raises(ValueError, match="rank-local identity"):
+        vision_alignment._validate_live_ssmax_projection_summary(
+            calibration,
+            dataset,
+            "pixmo_caption",
+            section="sources",
+            logical_split="train",
+            panel=None,
+        )
+
+
+def test_ssmax_calibration_is_revalidated_after_caller_semantics_drift(
+    monkeypatch, tmp_path: Path
+) -> None:
+    vision_alignment = _load_module()
+    source_audit_path = tmp_path / "audit.json"
+    source_audit_path.write_text("{}\n")
+    selection_path = tmp_path / "selection.json"
+    selection_path.write_text("{}\n")
+    implementation_path = Path(vision_alignment.__file__).resolve()
+    implementation_sha = hashlib.sha256(implementation_path.read_bytes()).hexdigest()
+    payload = {
+        "producer": {
+            "path": "src/scripts/train/Vision-Alignment.py",
+            "sha256": implementation_sha,
+        },
+        "projection_implementation": {
+            "path": "src/scripts/train/Vision-Alignment.py",
+            "sha256": implementation_sha,
+        },
+    }
+    calibration_path = tmp_path / "calibration.json"
+    calibration_path.write_text(json.dumps(payload) + "\n")
+    calibration_sha = hashlib.sha256(calibration_path.read_bytes()).hexdigest()
+    means = {source: 1.0 for source in vision_alignment.PERCEPTION_SOURCE_NAMES}
+    config = SimpleNamespace(
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        data=SimpleNamespace(
+            ssmax_single_response_projection=(
+                vision_alignment.SSMaxSingleResponseProjectionConfig(
+                    seed=vision_alignment.DATA_SEED,
+                    projected_mean_loss_weight=means,
+                    calibration_path=str(calibration_path),
+                    calibration_sha256=calibration_sha,
+                )
+            ),
+            source_audit_path=str(source_audit_path),
+            loss_token_weighting="root_subsegments_root_tokens",
+        ),
+        evaluation=SimpleNamespace(examples_per_source=512),
+    )
+    selection = SimpleNamespace(
+        path=selection_path,
+        raw_sha256=hashlib.sha256(selection_path.read_bytes()).hexdigest(),
+        content_sha256="b" * 64,
+    )
+    monkeypatch.setattr(vision_alignment, "_perception_provenance", lambda _config: selection)
+    observed_means = []
+
+    def validate(value, **kwargs):
+        del kwargs["expected_phase"]
+        observed_means.append(dict(kwargs["expected_mean_loss_weight"]))
+        return value
+
+    monkeypatch.setattr(
+        vision_alignment,
+        "validate_ssmax_single_response_calibration",
+        validate,
+    )
+    source_audit = {"fingerprint": "a" * 64}
+    vision_alignment._ssmax_single_response_calibration(config, source_audit)
+    config.data.ssmax_single_response_projection.projected_mean_loss_weight["cosyn_point"] = 2.0
+    vision_alignment._ssmax_single_response_calibration(config, source_audit)
+
+    assert observed_means[0]["cosyn_point"] == 1.0
+    assert observed_means[1]["cosyn_point"] == 2.0
 
 
 @pytest.mark.parametrize(
@@ -1342,6 +1786,73 @@ def test_profile_name_must_match_positional_run_name():
         vision_alignment._apply_profile_launch(config, profile, run_name="different-run")
 
 
+def test_bridge_worker_reloads_reviewed_profile_and_preserves_cli_overrides():
+    vision_alignment = _load_module()
+    launch = SimpleNamespace(
+        clusters=[vision_alignment.BEAKER_CLUSTER],
+        hostnames=None,
+        num_nodes=2,
+        num_gpus=8,
+        workspace=vision_alignment.BEAKER_WORKSPACE,
+        budget=vision_alignment.BEAKER_BUDGET,
+        priority="urgent",
+        min_runtime="8h",
+        description=None,
+        cmd=[],
+    )
+    expanded_command = [
+        "Vision-Alignment.py",
+        "train",
+        "reviewed-bridge",
+        "--phase=bridge",
+        "--data.prefetch_workers=0",
+        "--trainer.metrics_collect_interval=7",
+    ]
+    config = SimpleNamespace(
+        launch=launch,
+        phase=vision_alignment.VisionAlignmentPhase.bridge,
+        expected_launch_command=list(expanded_command),
+        reviewed_profile_path=None,
+        reviewed_profile_sha256=None,
+    )
+    profile = {
+        "version": 1,
+        "name": "reviewed-bridge",
+        "phase": "bridge",
+        "overrides": ["--data.prefetch_workers=0"],
+        "__reviewed_path__": "configs/vision_moe/vision_alignment/bridge/reviewed.yaml",
+        "__reviewed_sha256__": "a" * 64,
+    }
+
+    result = vision_alignment._apply_profile_launch(config, profile, run_name="reviewed-bridge")
+
+    expected_worker_command = [
+        "Vision-Alignment.py",
+        "train",
+        "reviewed-bridge",
+        "--profile=configs/vision_moe/vision_alignment/bridge/reviewed.yaml",
+        "--trainer.metrics_collect_interval=7",
+    ]
+    assert result.expected_launch_command == expected_worker_command
+    assert result.launch.cmd == expected_worker_command
+    assert result.reviewed_profile_path == profile["__reviewed_path__"]
+    assert result.reviewed_profile_sha256 == "a" * 64
+
+
+def test_checked_in_ssmax_bridge_profile_forbids_trailing_cli_override():
+    vision_alignment = _load_module()
+    repository_root = Path(vision_alignment.__file__).resolve().parents[3]
+    profile = (
+        repository_root
+        / "configs/vision_moe/vision_alignment/bridge/ssmax_head_qknorm_1p4b_cx8_v1.yaml"
+    )
+
+    with pytest.raises(ValueError, match="own the complete configuration"):
+        vision_alignment._load_profile(
+            [f"--profile={profile}", "--trainer.metrics_collect_interval=7"]
+        )
+
+
 def test_parent_output_paths_must_be_disjoint(tmp_path):
     vision_alignment = _load_module()
     output = tmp_path / "phase"
@@ -1486,6 +1997,172 @@ def test_production_perception_requires_v2_gate_and_exact_human_waivers(tmp_path
     with pytest.raises(ValueError, match="unknown or unapproved waiver"):
         vision_alignment._validate_parent_gate(
             config, str(parent), parent_config, parent_config_sha
+        )
+
+
+def _ssmax_v4_parent_gate_case(tmp_path, vision_alignment):
+    parent = tmp_path / "step500"
+    parent.mkdir()
+    marker_path = parent / ".metadata.json"
+    marker_path.write_text(json.dumps({"ephemeral": False, "version": "2.5.0"}))
+    parent_config_sha = "c" * 64
+    parent_meta = {
+        "phase": "bridge",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "model_variant": "ssmax_head_qknorm",
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+    }
+    parent_config = {
+        "model_variant": "ssmax_head_qknorm",
+        "vision_alignment": parent_meta,
+    }
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 4,
+        "status": "approved",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "phase": "bridge",
+        "model_variant": "ssmax_head_qknorm",
+        "arm": "ssmax_head_qknorm",
+        "checkpoint": str(parent),
+        "checkpoint_config_sha256": parent_config_sha,
+        "checkpoint_identity_sha256": "d" * 64,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "global_step": 500,
+        "metrics_artifact_sha256": "e" * 64,
+        "promotion_report_path": str(tmp_path / "promotion-report.json"),
+        "promotion_report_sha256": "e" * 64,
+        "manifest_path": str(tmp_path / "manifest.json"),
+        "manifest_sha256": "f" * 64,
+        "manifest_content_sha256": "0" * 64,
+        "approved_by": "rustin@allenai.org",
+        "approved_at": "2026-08-20T00:00:00Z",
+        "waivers": [],
+    }
+    gate_path = tmp_path / "ssmax-parent-gate-v4.json"
+    gate_path.write_text(json.dumps(gate) + "\n")
+    gate_sha = vision_alignment._sha256_file(gate_path)
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        phase=vision_alignment.VisionAlignmentPhase.perception,
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        initialization=SimpleNamespace(
+            parent_gate_path=str(gate_path),
+            parent_gate_sha256=gate_sha,
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.bridge,
+        ),
+    )
+    return SimpleNamespace(
+        config=config,
+        gate=gate,
+        gate_path=gate_path,
+        gate_sha=gate_sha,
+        marker_path=marker_path,
+        parent=parent,
+        parent_config=parent_config,
+        parent_config_sha=parent_config_sha,
+    )
+
+
+def test_production_ssmax_perception_routes_v4_gate_to_strict_adapter(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    from olmo_core.eval import vision_alignment_ssmax_bridge as ssmax_bridge
+
+    case = _ssmax_v4_parent_gate_case(tmp_path, vision_alignment)
+    observed: Dict[str, Any] = {}
+
+    def validate(gate, **kwargs):
+        observed["gate"] = gate
+        observed.update(kwargs)
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
+    monkeypatch.setattr(ssmax_bridge, "validate_ssmax_bridge_parent_gate", validate)
+
+    assert vision_alignment._validate_parent_gate(
+        case.config,
+        str(case.parent),
+        case.parent_config,
+        case.parent_config_sha,
+    ) == vision_alignment._sha256_file(case.gate_path)
+    assert observed == {
+        "gate": case.gate,
+        "expected_checkpoint": case.parent.resolve(),
+        "expected_checkpoint_config_sha256": case.parent_config_sha,
+        "expected_model_variant": "ssmax_head_qknorm",
+        "expected_data_contract_sha256": "a" * 64,
+        "expected_trainable_contract_sha256": "b" * 64,
+    }
+
+
+def test_production_ssmax_perception_propagates_v4_evidence_error(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    from olmo_core.eval import vision_alignment_ssmax_bridge as ssmax_bridge
+
+    case = _ssmax_v4_parent_gate_case(tmp_path, vision_alignment)
+
+    def reject(*args, **kwargs):
+        raise ssmax_bridge.SSMaxBridgeEvidenceError("gate arm differs")
+
+    monkeypatch.setattr(ssmax_bridge, "validate_ssmax_bridge_parent_gate", reject)
+
+    with pytest.raises(ValueError, match="gate arm differs"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_s002_perception_rejects_ssmax_v4_parent_gate(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v4_parent_gate_case(tmp_path, vision_alignment)
+    case.config.model_variant = vision_alignment.VisionAlignmentModelVariant.s002
+
+    with pytest.raises(ValueError, match="requires a v2 parent gate"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_ssmax_perception_rejects_legacy_parent_gate(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v4_parent_gate_case(tmp_path, vision_alignment)
+    legacy_gate = {
+        name: value
+        for name, value in case.gate.items()
+        if name
+        in {
+            "format",
+            "status",
+            "recipe_version",
+            "formatter_version",
+            "phase",
+            "checkpoint",
+            "checkpoint_config_sha256",
+            "data_contract_sha256",
+            "trainable_contract_sha256",
+            "global_step",
+            "metrics_artifact_sha256",
+        }
+    }
+    legacy_gate["version"] = 1
+    case.gate_path.write_text(json.dumps(legacy_gate) + "\n")
+    case.config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(case.gate_path)
+
+    with pytest.raises(ValueError, match="SSMax perception requires.*v4"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
         )
 
 
@@ -1652,6 +2329,20 @@ def test_production_joint_routes_exact_v3_gate_to_approved_perception_adapter(
         "expected_checkpoint": case.parent.resolve(),
         "expected_checkpoint_config_sha256": case.parent_config_sha,
     }
+
+
+def test_production_ssmax_joint_rejects_legacy_s002_v3_gate(tmp_path):
+    vision_alignment = _load_module()
+    case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
+    case.config.model_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
+
+    with pytest.raises(ValueError, match="Production joint requires a v5 perception parent gate"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
 
 
 @pytest.mark.parametrize("version", [1, 2])
@@ -2007,17 +2698,21 @@ def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(mon
     provenance_path.write_bytes(b"parent provenance\n")
     provenance_sha = vision_alignment._sha256_file(provenance_path)
     parent_config = {
+        "model_variant": "s002",
         "vision_alignment": {
+            "model_variant": "s002",
             "phase": "perception",
             "recipe_version": 1,
             "formatter_version": "vision-alignment-document-v1",
         },
+        "artifacts": vision_alignment.ArtifactConfig().as_dict(),
         "data": {
             "perception_provenance_path": str(provenance_path),
             "perception_provenance_sha256": provenance_sha,
         },
     }
     config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.s002,
         phase=vision_alignment.VisionAlignmentPhase.joint,
         initialization=SimpleNamespace(
             checkpoint=parent,
@@ -2082,13 +2777,19 @@ def test_joint_resume_rechecks_parent_projection_lineage(monkeypatch, tmp_path):
     provenance_path.write_bytes(b"parent provenance\n")
     provenance_sha = vision_alignment._sha256_file(provenance_path)
     parent_config = {
+        "model_variant": "s002",
+        "vision_alignment": {"model_variant": "s002"},
+        "artifacts": vision_alignment.ArtifactConfig().as_dict(),
         "data": {
             "perception_provenance_path": str(provenance_path),
             "perception_provenance_sha256": provenance_sha,
-        }
+        },
     }
     saved_config = {
+        "model_variant": "s002",
+        "artifacts": vision_alignment.ArtifactConfig().as_dict(),
         "vision_alignment": {
+            "model_variant": "s002",
             "recipe_version": vision_alignment.RECIPE_VERSION,
             "formatter_version": vision_alignment.FORMATTER_VERSION,
             "phase": "joint",
@@ -2098,9 +2799,10 @@ def test_joint_resume_rechecks_parent_projection_lineage(monkeypatch, tmp_path):
             "parent_gate_sha256": gate_sha,
             "data_contract_sha256": "c" * 64,
             "trainable_contract_sha256": "d" * 64,
-        }
+        },
     }
     config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.s002,
         phase=vision_alignment.VisionAlignmentPhase.joint,
         initialization=SimpleNamespace(
             checkpoint=parent,
@@ -2141,12 +2843,16 @@ def test_joint_resume_rechecks_parent_projection_lineage(monkeypatch, tmp_path):
 def test_non_joint_parent_still_rejects_recipe_version_mismatch(monkeypatch):
     vision_alignment = _load_module()
     parent_config = {
+        "model_variant": "s002",
+        "artifacts": vision_alignment.ArtifactConfig().as_dict(),
         "vision_alignment": {
+            "model_variant": "s002",
             "phase": "bridge",
             "recipe_version": vision_alignment.RECIPE_VERSION + 1,
-        }
+        },
     }
     config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.s002,
         phase=vision_alignment.VisionAlignmentPhase.perception,
         initialization=SimpleNamespace(
             checkpoint="/checkpoints/bridge/step500",
@@ -3186,6 +3892,33 @@ def test_checked_in_smoke_profile_is_cluster_only_and_calibrated():
     assert any("mean_loss_weight.pixmo_transcript" in value for value in profile["overrides"])
 
 
+def test_checked_in_ssmax_bridge_profiles_are_strictly_paired():
+    import yaml
+
+    root = Path(__file__).parents[3] / "configs" / "vision_moe" / "vision_alignment" / "bridge"
+    qk = yaml.safe_load((root / "ssmax_head_qknorm_1p4b_cx8_v1.yaml").read_text())
+    no_qk = yaml.safe_load((root / "ssmax_no_qknorm_1p4b_cx8_v1.yaml").read_text())
+
+    for profile in (qk, no_qk):
+        assert profile["phase"] == "bridge"
+        assert profile["launch"] == {
+            "cluster": "ai2/holmes",
+            "workspace": "ai2/scaling-ladders",
+            "budget": "ai2/oe-other",
+            "num_nodes": 2,
+            "num_gpus": 8,
+            "priority": "urgent",
+            "min_runtime": "8h",
+        }
+    qk_variant = "--model_variant=ssmax_head_qknorm"
+    no_qk_variant = "--model_variant=ssmax_no_qknorm"
+    assert qk_variant in qk["overrides"]
+    assert no_qk_variant in no_qk["overrides"]
+    assert [value for value in qk["overrides"] if value != qk_variant] == [
+        value for value in no_qk["overrides"] if value != no_qk_variant
+    ]
+
+
 def test_joint_evaluates_all_visual_sources_and_deterministically_shuffles_native_holdout(
     monkeypatch, tmp_path
 ):
@@ -3227,7 +3960,11 @@ def test_joint_evaluates_all_visual_sources_and_deterministically_shuffles_nativ
     )
     config = SimpleNamespace(
         phase=vision_alignment.VisionAlignmentPhase.joint,
-        data=SimpleNamespace(sequence_length=2560),
+        model_variant=vision_alignment.VisionAlignmentModelVariant.s002,
+        data=SimpleNamespace(
+            sequence_length=2560,
+            ssmax_single_response_projection=None,
+        ),
         evaluation=evaluation,
     )
 

@@ -1,0 +1,89 @@
+{
+  "arm": "ssmax_no_qknorm",
+  "attention_probe": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-attention-probe-v1/ssmax-attention-probe.json",
+  "checkpoint_root": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/checkpoints/vision-ssmax-no-qknorm-1p4b-cx8-bridge-v1",
+  "evaluation": {
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 1006201,
+    "examples_per_source": 512,
+    "pairing_seed": 6198,
+    "rank_batch_instances": 4,
+    "sources": [
+      "pixmo_caption",
+      "pixmo_transcript"
+    ],
+    "steps": [
+      0,
+      100,
+      200,
+      250,
+      300,
+      400,
+      500
+    ],
+    "windows": [
+      "first_8",
+      "first_32",
+      "all"
+    ]
+  },
+  "format": "vision_alignment_ssmax_bridge_manifest_spec",
+  "model_variant": "ssmax_no_qknorm",
+  "pair_id": "ssmax-qknorm-1p4b-cx8-bridge-v1",
+  "pairing_paths": {
+    "pixmo_caption": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/bridge-matched-wrong-v1/pixmo_caption.json",
+    "pixmo_transcript": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/bridge-matched-wrong-v1/pixmo_transcript.json"
+  },
+  "parent": {
+    "checkpoint": "/weka/oe-training-default/ai2-llm/scaling-ladders/mainline/yashasbls/v0.0.1-ssmax_wo_qknorm-66759252e944/1.4B-Cx8/pretrain/step65799",
+    "checkpoint_identity_sha256": "66d38252ea86d000f92a2fe4aef1d0b8b52d8fc6865601ba911d19d68c68750b",
+    "config_sha256": "fea0962eda65fd3e26745be8d05fb799089a744f94aac4ea6a1a3af1608619be",
+    "data_paths_sha256": "852491e33d2fb27ddd00619e500871d23429e00c382e70593079a4dc5f983139",
+    "dcp_metadata_sha256": "c17b8d5b491989ac8432df3e13b0b90d9e437789e8d18d17ced114158508b7d2",
+    "marker_sha256": "77dfdeec42fe7990f4b3b9c4eeecd480edcf5066c110603b115920af38423d03",
+    "model_inventory_sha256": "97cd17d4a610efeaddfb1fe867f396dadb6e3ee4d6f60eb1da98bcfe7c8c5f85",
+    "model_keyset_sha256": "9f94f6da44d60380570861125e5f9d09f85c3286beeb98c704b953d23b9a12e4",
+    "olmo_core_commit": "1ca6f05c8061c260223e8dc65496f18167071c6c",
+    "parameter_count": 1422109760,
+    "source_commit": "9a4dc59b8f83749fb919388c6b77a29a1abf5ad5",
+    "state_file_count": 1025,
+    "state_file_inventory_sha256": "7d32cb4a511c0485bdb8f7d806424dd17779af04f80db460144580e9727f2c5b",
+    "tensor_count": 376,
+    "trainer_state_count": 64,
+    "trainer_state_inventory_sha256": "1e75c405f566ee709ef3e77cde949f493a4edaa2194f2ce399f3b2993fc34a9e",
+    "trainer_state_sha256": "d326aef32f4c8639b492f6a29703126078bc1bcd5cdd2dce5665c2b96c2829ee"
+  },
+  "policy": {
+    "correct_ce_candidate_step": 500,
+    "correct_ce_max_relative_increase": 0.02,
+    "correct_ce_reference_step": 250,
+    "loss_mass_share_tolerance": 0.02,
+    "maximum_data_errors": 0,
+    "minimum_gap_retention": 0.8,
+    "positive_gap_ci_steps": [
+      250,
+      300,
+      400,
+      500
+    ],
+    "step0_gap_role": "descriptive_baseline_only",
+    "require_step0_to_final_correct_ce_improvement": true,
+    "retention_candidate_step": 500,
+    "retention_reference_step": 250,
+    "retention_windows": [
+      "first_8",
+      "first_32"
+    ]
+  },
+  "recipe": "/weka/oe-training-default/rustin/OLMo-core-vision-ssmax/src/scripts/train/Vision-Alignment.py",
+  "run_name": "vision-ssmax-no-qknorm-1p4b-cx8-bridge-v1",
+  "topology": {
+    "data_parallel": "hsdp",
+    "gpus_per_node": 8,
+    "num_nodes": 2,
+    "world_size": 16
+  },
+  "training_profile": "/weka/oe-training-default/rustin/OLMo-core-vision-ssmax/configs/vision_moe/vision_alignment/bridge/ssmax_no_qknorm_1p4b_cx8_v1.yaml",
+  "validation": "/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/pixmo-cap-content-disjoint-v1/vision-alignment-validation-manifest.json",
+  "version": 1
+}

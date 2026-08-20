@@ -1111,6 +1111,14 @@ def _run_tensor_parallel_attention(
             {"gate": GateConfig(granularity=GateGranularity.headwise)},
             id="headwise-gating",
         ),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "scalable_softmax": True,
+            },
+            id="scalable-softmax",
+        ),
     ],
 )
 def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tmp_path):

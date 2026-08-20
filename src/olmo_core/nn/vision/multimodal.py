@@ -11,6 +11,7 @@ from torch.distributed.tensor import DTensor
 from olmo_core.config import Config
 from olmo_core.distributed.utils import barrier, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.vision.config import VisionEncoderConfig
@@ -137,6 +138,9 @@ class MultimodalLM(nn.Module):
         self.lm = cfg.lm.build(init_device=init_device)
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
+        self._has_gated_delta_net = any(
+            isinstance(module, GatedDeltaNet) for module in self.lm.modules()
+        )
         self._use_compact_flex_masks, self._flex_window_size = self._resolve_flex_mask_backend()
         self._collect_input_diagnostics = False
         self._input_diagnostic_sums: Dict[str, torch.Tensor] = {}
@@ -417,6 +421,40 @@ class MultimodalLM(nn.Module):
         """
         if subsegment_ids is not None and position_ids is None:
             raise ValueError("`position_ids` is required when `subsegment_ids` is provided")
+
+        if self._has_gated_delta_net:
+            # ``example_ids`` and ``subsegment_ids`` are attention-mask metadata. They do not
+            # reset GatedDeltaNet's short-convolution or recurrent state, so accepting either
+            # would silently leak state across packed examples / parallel response branches.
+            # The transformer's generic doc-length path is not a safe escape hatch here: it is
+            # applied to every block, while multimodal attention blocks use explicit position
+            # IDs and masks that are incompatible with that global ``cu_doc_lens`` path.
+            if example_ids is not None:
+                raise OLMoConfigurationError(
+                    "GatedDeltaNet multimodal models do not support sequence packing: "
+                    "`example_ids` isolates attention but cannot reset recurrent or "
+                    "short-convolution state. Disable multimodal packing (`pack=False`). "
+                    "Packed recurrent support requires validated per-block `cu_doc_lens` "
+                    "plumbing."
+                )
+            if subsegment_ids is not None:
+                raise OLMoConfigurationError(
+                    "GatedDeltaNet multimodal models do not support multi-annotation "
+                    "branches: `subsegment_ids` isolates attention but cannot isolate "
+                    "recurrent state. Materialize one response branch per example."
+                )
+            doc_length_keys = {
+                "doc_lens",
+                "max_doc_lens",
+                "cu_doc_lens",
+                "max_doc_len",
+            } & kwargs.keys()
+            if doc_length_keys:
+                raise OLMoConfigurationError(
+                    "GatedDeltaNet multimodal models cannot use the transformer's global "
+                    "document-length path yet; it would also be applied to multimodal "
+                    f"attention blocks. Unsupported keys: {sorted(doc_length_keys)}"
+                )
 
         if response_logits_only and loss_masks is None:
             raise ValueError("`loss_masks` is required when `response_logits_only=True`")

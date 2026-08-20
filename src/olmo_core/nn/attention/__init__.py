@@ -10,7 +10,13 @@ import torch
 import torch.nn as nn
 from torch.autograd.graph import saved_tensors_hooks
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard
+from torch.distributed.tensor import (
+    DTensor,
+    Placement,
+    Replicate,
+    Shard,
+    distribute_tensor,
+)
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
@@ -349,6 +355,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    scalable_softmax: bool = False
+    """
+    Use Scalable-Softmax with a learned scale for each query head.
+
+    The query at absolute causal position ``i`` is multiplied by
+    ``log(i + 1) * ssmax_scale[head]`` before scaled dot-product attention. When
+    ``cu_doc_lens`` is supplied, the absolute position resets at each packed-document boundary.
+    """
     attention_sinks: bool = False
     """
     Add a per-head learnable "attention sink" logit (as in GPT-OSS). Only supported by the default
@@ -450,6 +464,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             params += n_heads * head_dim
             params += n_kv_heads * head_dim
 
+        if self.scalable_softmax:
+            params += n_heads
+
         # Per-head attention-sink logits.
         if self.attention_sinks:
             params += n_heads
@@ -481,6 +498,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
+            if self.scalable_softmax:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
         else:  # global (non-SWA) layer
             rope_config: Optional[RoPEConfig] = kwargs.get("rope")
@@ -529,6 +550,17 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(
                 f"{enabled} are only supported by default and fused_v2 attention"
             )
+
+        # Scalable-Softmax is implemented by the regular, unpacked attention path. Keep the
+        # disabled field from perturbing the constructor APIs of the other implementations, and
+        # fail explicitly instead of surfacing a misleading unexpected-keyword error when enabled.
+        scalable_softmax = bool(kwargs.pop("scalable_softmax", False))
+        if scalable_softmax and self.name != AttentionType.default:
+            raise OLMoConfigurationError(
+                "'scalable_softmax' is only supported by default attention"
+            )
+        if self.name == AttentionType.default:
+            kwargs["scalable_softmax"] = scalable_softmax
 
         try:
             if self.name == "default":
@@ -597,6 +629,7 @@ class Attention(SequenceMixer):
     :param dropout: Dropout probability.
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
+    :param scalable_softmax: Use Scalable-Softmax with a learned scale for each query head.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -622,6 +655,7 @@ class Attention(SequenceMixer):
         init_device: str = "cpu",
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
+        scalable_softmax: bool = False,
         attention_sinks: bool = False,
         use_recompute_qkv_prep: bool = False,
         mxfp8_save_qkv_for_backward: bool = False,
@@ -671,6 +705,14 @@ class Attention(SequenceMixer):
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
+        self.scalable_softmax = scalable_softmax
+        self.ssmax_scale: Optional[nn.Parameter] = None
+        if scalable_softmax:
+            if window_size is not None:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
+            self.ssmax_scale = nn.Parameter(torch.ones(n_heads, dtype=dtype, device=init_device))
 
         # Per-head learnable attention-sink logits (GPT-OSS). See :meth:`sdpa`.
         self.sinks: Optional[nn.Parameter] = (
@@ -874,6 +916,45 @@ class Attention(SequenceMixer):
             **rope_kwargs,
         )
 
+    def _apply_scalable_softmax(
+        self,
+        q: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Apply the learned Scalable-Softmax query multiplier.
+
+        This deliberately matches the original checkpoint implementation: scale is based on the
+        absolute causal prefix length, resetting only at ``cu_doc_lens`` boundaries. Explicit
+        ``position_ids`` and custom attention masks do not redefine the multiplier.
+        """
+        if not self.scalable_softmax:
+            return q
+        if self.cp_enabled:
+            raise NotImplementedError("Scalable-Softmax is not supported with context parallelism")
+        if self.kv_cache_manager is not None:
+            raise NotImplementedError("Scalable-Softmax is not supported with KV caching")
+
+        if cu_doc_lens is None:
+            visible_lengths = torch.arange(1, q.shape[1] + 1, device=q.device)
+            visible_lengths = visible_lengths.unsqueeze(0).expand(q.shape[0], -1)
+        else:
+            boundaries = cu_doc_lens.to(device=q.device)
+            token_indices = torch.arange(
+                q.shape[0] * q.shape[1], device=q.device, dtype=boundaries.dtype
+            )
+            document_indices = torch.searchsorted(boundaries[1:], token_indices, right=True)
+            document_starts = boundaries[document_indices]
+            visible_lengths = (token_indices - document_starts + 1).view(q.shape[0], q.shape[1])
+
+        assert self.ssmax_scale is not None
+        ssmax_scale = self.ssmax_scale
+        if isinstance(ssmax_scale, DTensor):
+            ssmax_scale = ssmax_scale.to_local()
+        scale = visible_lengths.log().to(q.dtype).unsqueeze(-1)
+        scale = scale * ssmax_scale.to(q.dtype).view(1, 1, -1)
+        return q * scale.unsqueeze(-1)
+
     def _prepare_qkv(
         self,
         x: torch.Tensor,
@@ -1006,6 +1087,10 @@ class Attention(SequenceMixer):
                 position_ids=position_ids,
             )
 
+        # Scalable-Softmax follows Q/K normalization and RoPE, matching the implementation used to
+        # train the source checkpoints. It only scales queries; K and V remain unchanged.
+        q = self._apply_scalable_softmax(q, cu_doc_lens)
+
         # Optionally save Q/K/V for backward as MXFP8 to reduce the saved-activation footprint.
         self._mxfp8_saved_qkv_for_backward_last_pack_count = 0
         qkv_save_counter = [0]
@@ -1108,6 +1193,12 @@ class Attention(SequenceMixer):
             #    which will be reshaped into (B, T, H [sharded], D)
             # if head-wise norm: output is sharded on the head dimension (B, T, H [sharded], D)
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+
+        if self.ssmax_scale is not None:
+            self.register_parameter(
+                "ssmax_scale",
+                nn.Parameter(distribute_tensor(self.ssmax_scale, tp_mesh, [Shard(0)])),
+            )
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
 
@@ -1146,6 +1237,9 @@ class Attention(SequenceMixer):
         generator: Optional[torch.Generator] = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if self.ssmax_scale is not None:
+            nn.init.ones_(self.ssmax_scale)
 
         # Compute std for Q/K/V initialization
         if init_method == InitMethod.fan_in:
@@ -1725,6 +1819,11 @@ class FusedAttentionV2(Attention):
         self.use_recompute_qkv_prep = use_recompute_qkv_prep
         self.mxfp8_save_qkv_for_backward = mxfp8_save_qkv_for_backward
         self._mxfp8_saved_qkv_for_backward_last_pack_count = 0
+        # FusedAttentionV2 reuses :meth:`Attention.forward` without calling Attention.__init__.
+        # Scalable-Softmax is intentionally unsupported for this packed-projection variant, but
+        # these attributes must still satisfy the shared forward contract.
+        self.scalable_softmax = False
+        self.ssmax_scale: Optional[nn.Parameter] = None
 
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None

@@ -1,0 +1,25 @@
+dataset_path: BLINK-Benchmark/BLINK
+dataset_name: Jigsaw
+dataset_kwargs:
+  revision: a3666eb249237ba3d5eca8db21176cc47967e040
+task: ssmax_blink_jigsaw
+test_split: val
+output_type: generate_until
+doc_to_visual: !function utils.blink_doc_to_visual
+doc_to_text: !function utils.blink_doc_to_text
+doc_to_target: answer
+generation_kwargs:
+  max_new_tokens: 1
+process_results: !function utils.blink_process_results
+metric_list:
+  - metric: blink_acc
+    aggregation: !function utils.blink_aggregate_results
+    higher_is_better: true
+lmms_eval_specific_kwargs:
+  default:
+    pre_prompt: |
+      Note: You only need to respond with {} without providing any additional information.
+    post_prompt: ""
+metadata:
+  protocol: vision_alignment_ssmax_downstream_v1
+  expected_examples: 150

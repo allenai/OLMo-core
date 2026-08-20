@@ -1,12 +1,13 @@
-"""Vision alignment continued pretraining for the bare s002 language model.
+"""Vision alignment continued pretraining for pinned bare language-model lineages.
 
 This is a new recipe, intentionally independent from :mod:`Molmo2-Stage1`.  It treats
 multimodal adaptation as continued pretraining rather than instruction tuning and exposes
 three explicit, model-only phase boundaries:
 
 ``bridge``
-    Load the bare s002 checkpoint and pristine pinned SigLIP, then train only the connector
-    and the six input-only image-token rows on document-formatted captions/transcripts.
+    Load one pinned bare-LM checkpoint and pristine pinned SigLIP, then train only the
+    connector and the six input-only image-token rows on document-formatted
+    captions/transcripts.
 ``perception``
     Fork from a bridge checkpoint with a fresh optimizer and data cursor, unfreeze the vision
     encoder, and add audited perception sources while keeping the language model frozen.
@@ -14,9 +15,11 @@ three explicit, model-only phase boundaries:
     Fork from a perception checkpoint, unfreeze the language model at a low learning rate,
     and begin exact native pretraining-data replay.
 
-The bridge phase is executable today.  The production perception and joint defaults include
-source contracts whose audited adapters/manifests are still required; training fails closed
-when one is absent instead of silently substituting SFT/QA data.
+The default ``s002`` lineage retains its exact OLMoDDP/EP8 implementation. The paired 1.4B Cx8
+Scalable-Softmax variants use the generic dense-HSDP path and differ only in per-head QK RMSNorm
+on their four global-attention layers. Their recurrent GatedDeltaNet blocks require unpacked,
+single-response examples; packed metadata is rejected instead of allowing recurrent-state
+leakage across examples.
 
 Run without arguments for usage.  No command in this file launches automatically.
 """
@@ -25,12 +28,14 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import io
 import json
 import logging
 import math
 import os
 import re
 import stat
+import subprocess
 import sys
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -38,7 +43,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import yaml
@@ -57,8 +62,15 @@ from olmo_core.data.multimodal import (
 from olmo_core.data.multimodal.mixtures.vision_alignment import (
     VisionAlignmentMixtureConfig,
     expected_loss_mass,
+    sampling_weights_from_loss_mass,
 )
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
+from olmo_core.data.multimodal.ssmax_single_response import (
+    SSMaxSingleResponseDataset,
+    SSMaxSingleResponseProjectionConfig,
+    ssmax_single_response_calibration_summary,
+    validate_ssmax_single_response_calibration,
+)
 from olmo_core.data.multimodal.vision_alignment_joint_provenance import (
     JointVisualProjectionManifest,
     build_selected_joint_dataset,
@@ -127,12 +139,14 @@ from olmo_core.launch.beaker import (
     BeakerLaunchConfig,
     is_running_in_beaker_batch_job,
 )
+from olmo_core.nn.transformer import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.vision import Molmo2TokenIds, MultimodalLMConfig
 from olmo_core.optim import (
     CosWithWarmup,
     OLMoDDPOptimizerConfig,
     OptimGroupOverride,
     PerGroupScheduler,
+    SkipStepAdamWConfig,
 )
 from olmo_core.train import (
     Duration,
@@ -150,11 +164,14 @@ from olmo_core.train.callbacks import (
     EvaluatorCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    SSMaxHealthLedgerCallback,
     WandBCallback,
 )
 from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.train_module import (
     MultimodalOLMoDDPTrainModuleConfig,
+    MultimodalTransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
 )
@@ -174,6 +191,71 @@ BASE_PARENT_MIX_SHA256 = "fcc6a82b9a5e868885decfbc30486967644c7ca482a7d687102f7f
 BASE_CHECKPOINT_MARKER_SHA256 = "77dfdeec42fe7990f4b3b9c4eeecd480edcf5066c110603b115920af38423d03"
 BASE_CHECKPOINT_METADATA_SHA256 = "ce7a6c254c7b3aeca6d6a9b521328e09601211ddf98dc238e97b5b6c84c34633"
 PARENT_TEXT_MIX = "OLMo-mix-0925"
+
+SSMAX_HEAD_QKNORM_CHECKPOINT = (
+    "/weka/oe-training-default/ai2-llm/scaling-ladders/mainline/yashasbls/"
+    "v0.0.1-ssmax-a04f0e8e7236/1.4B-Cx8/pretrain/step65799"
+)
+SSMAX_HEAD_QKNORM_CONFIG_SHA256 = "34505b2d2738be361fc879722210bb5d17f4621dc4a3d22440177d2ff7ab5545"
+SSMAX_HEAD_QKNORM_TRAINER_STATE_SHA256 = (
+    "7beea032e59affa5f7fff7a7eeede2834e89362c19beef7c3115b665d789f445"
+)
+SSMAX_HEAD_QKNORM_DCP_METADATA_SHA256 = (
+    "c302ab461188b8e708b751ea1721fa8d043a9144155e04c32181e112b51870f2"
+)
+SSMAX_HEAD_QKNORM_SOURCE_COMMIT = "fc048bf86746ba8eb97d9bf02bb8a54a59f98581"
+SSMAX_HEAD_QKNORM_PARAMETER_COUNT = 1_422_110_784
+SSMAX_HEAD_QKNORM_TENSOR_COUNT = 384
+SSMAX_HEAD_QKNORM_KEYSET_SHA256 = "0d7834e0612209f80d2fe075e9816bf363aba85c507c60cf67ed59bad85ac597"
+SSMAX_HEAD_QKNORM_INVENTORY_SHA256 = (
+    "08100697841f2ac39074d3fb2938176f2c88ca4976e63e29a05cb9ea71eb21b4"
+)
+SSMAX_HEAD_QKNORM_CHECKPOINT_IDENTITY_SHA256 = (
+    "4ec8641183f87e2d73b2779dec58ea9c11ffe919fa4ac1e01f6aec0c84028748"
+)
+SSMAX_HEAD_QKNORM_STATE_FILE_COUNT = 1025
+SSMAX_HEAD_QKNORM_STATE_FILE_INVENTORY_SHA256 = (
+    "b9f8ef60fd81bf84ae5827246190253bb0352420ff2d6121f31252a6565d02a3"
+)
+SSMAX_HEAD_QKNORM_TRAINER_STATE_COUNT = 64
+SSMAX_HEAD_QKNORM_TRAINER_STATE_INVENTORY_SHA256 = (
+    "e72a816e2278f3a1ef39d1c2cc4507af06b07180376adbee500f5b8cb8892042"
+)
+
+SSMAX_NO_QKNORM_CHECKPOINT = (
+    "/weka/oe-training-default/ai2-llm/scaling-ladders/mainline/yashasbls/"
+    "v0.0.1-ssmax_wo_qknorm-66759252e944/1.4B-Cx8/pretrain/step65799"
+)
+SSMAX_NO_QKNORM_CONFIG_SHA256 = "fea0962eda65fd3e26745be8d05fb799089a744f94aac4ea6a1a3af1608619be"
+SSMAX_NO_QKNORM_TRAINER_STATE_SHA256 = (
+    "d326aef32f4c8639b492f6a29703126078bc1bcd5cdd2dce5665c2b96c2829ee"
+)
+SSMAX_NO_QKNORM_DCP_METADATA_SHA256 = (
+    "c17b8d5b491989ac8432df3e13b0b90d9e437789e8d18d17ced114158508b7d2"
+)
+SSMAX_NO_QKNORM_SOURCE_COMMIT = "9a4dc59b8f83749fb919388c6b77a29a1abf5ad5"
+SSMAX_NO_QKNORM_PARAMETER_COUNT = 1_422_109_760
+SSMAX_NO_QKNORM_TENSOR_COUNT = 376
+SSMAX_NO_QKNORM_KEYSET_SHA256 = "9f94f6da44d60380570861125e5f9d09f85c3286beeb98c704b953d23b9a12e4"
+SSMAX_NO_QKNORM_INVENTORY_SHA256 = (
+    "97cd17d4a610efeaddfb1fe867f396dadb6e3ee4d6f60eb1da98bcfe7c8c5f85"
+)
+SSMAX_NO_QKNORM_CHECKPOINT_IDENTITY_SHA256 = (
+    "66d38252ea86d000f92a2fe4aef1d0b8b52d8fc6865601ba911d19d68c68750b"
+)
+SSMAX_NO_QKNORM_STATE_FILE_COUNT = 1025
+SSMAX_NO_QKNORM_STATE_FILE_INVENTORY_SHA256 = (
+    "7d32cb4a511c0485bdb8f7d806424dd17779af04f80db460144580e9727f2c5b"
+)
+SSMAX_NO_QKNORM_TRAINER_STATE_COUNT = 64
+SSMAX_NO_QKNORM_TRAINER_STATE_INVENTORY_SHA256 = (
+    "1e75c405f566ee709ef3e77cde949f493a4edaa2194f2ce399f3b2993fc34a9e"
+)
+
+SSMAX_DATA_PATHS_SHA256 = "852491e33d2fb27ddd00619e500871d23429e00c382e70593079a4dc5f983139"
+SSMAX_DATASET_FINGERPRINT = BASE_DATASET_FINGERPRINT
+SSMAX_CHECKPOINT_MARKER_SHA256 = BASE_CHECKPOINT_MARKER_SHA256
+SSMAX_OLMO_CORE_COMMIT = "1ca6f05c8061c260223e8dc65496f18167071c6c"
 MOLMO2_CONFIG_MODEL_ID = "allenai/Molmo2-4B"
 MOLMO2_CONFIG_REVISION = "042abfa7a38879a376cec03d949eff0aefaa0600"
 VISION_MODEL_ID = "google/siglip2-so400m-patch14-384"
@@ -186,10 +268,14 @@ HF_CACHE_DIR = "/weka/oe-training-default/rustin/hf-cache/hub"
 
 EXPERIMENT_ROOT = "/weka/oe-training-default/rustin/experiments/vision-moe"
 VISION_ALIGNMENT_ROOT = f"{EXPERIMENT_ROOT}/vision-alignment"
+SSMAX_EXPERIMENT_ROOT = "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication"
+SSMAX_VISION_ALIGNMENT_ROOT = f"{SSMAX_EXPERIMENT_ROOT}/vision-alignment"
 BEAKER_CLUSTER = "ai2/holmes"
 BEAKER_WORKSPACE = "ai2/molmofication"
+SSMAX_BEAKER_WORKSPACE = "ai2/scaling-ladders"
 BEAKER_BUDGET = "ai2/oe-other"
 WANDB_PROJECT: Optional[str] = "vision-alignment"
+SSMAX_WANDB_PROJECT: Optional[str] = "vision-ssmax-molmofication"
 WANDB_ENTITY: Optional[str] = None
 
 EP_DEGREE = 8
@@ -465,6 +551,7 @@ _CANONICAL_PIXMO_SOURCE_SPLITS: Mapping[str, Tuple[str, int]] = {
 _RUN_NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,127}")
 _ALLOWED_OVERRIDE_PREFIXES = (
     "--phase=",
+    "--model_variant=",
     "--perception_trainability_arm=",
     "--data.",
     "--evaluation.",
@@ -485,6 +572,14 @@ _ALLOWED_OVERRIDE_PREFIXES = (
     "--checkpoint_load_threads=",
     "--router_lb_loss_weight=",
 )
+
+
+class VisionAlignmentModelVariant(StrEnum):
+    """Pinned language-model lineage used by a vision-alignment experiment."""
+
+    s002 = "s002"
+    ssmax_head_qknorm = "ssmax_head_qknorm"
+    ssmax_no_qknorm = "ssmax_no_qknorm"
 
 
 class VisionAlignmentPhase(StrEnum):
@@ -597,6 +692,20 @@ class ArtifactConfig(Config):
     base_data_paths_sha256: str = BASE_DATA_PATHS_SHA256
     base_checkpoint_marker_sha256: str = BASE_CHECKPOINT_MARKER_SHA256
     base_checkpoint_metadata_sha256: str = BASE_CHECKPOINT_METADATA_SHA256
+    base_trainer_state_sha256: str = BASE_TRAINER_STATE_SHA256
+    base_dataset_fingerprint: str = BASE_DATASET_FINGERPRINT
+    base_parent_mix_sha256: str = BASE_PARENT_MIX_SHA256
+    source_commit: Optional[str] = None
+    source_olmo_core_commit: Optional[str] = None
+    expected_lm_parameter_count: Optional[int] = None
+    expected_lm_tensor_count: Optional[int] = None
+    base_model_keyset_sha256: Optional[str] = None
+    base_model_inventory_sha256: Optional[str] = None
+    base_checkpoint_identity_sha256: Optional[str] = None
+    base_checkpoint_state_file_count: Optional[int] = None
+    base_checkpoint_state_file_inventory_sha256: Optional[str] = None
+    base_checkpoint_trainer_state_count: Optional[int] = None
+    base_checkpoint_trainer_state_inventory_sha256: Optional[str] = None
     parent_text_mix: str = PARENT_TEXT_MIX
     tokenizer_id: str = TOKENIZER_ID
     tokenizer_revision: str = TOKENIZER_REVISION
@@ -607,6 +716,64 @@ class ArtifactConfig(Config):
     vision_revision: str = VISION_REVISION
     vision_fingerprint: str = VISION_FINGERPRINT
     hf_cache_dir: str = HF_CACHE_DIR
+
+    @classmethod
+    def for_model_variant(cls, variant: VisionAlignmentModelVariant) -> "ArtifactConfig":
+        """Return the immutable parent-artifact contract for ``variant``."""
+
+        if variant is VisionAlignmentModelVariant.s002:
+            return cls()
+        common = dict(
+            base_data_paths_sha256=SSMAX_DATA_PATHS_SHA256,
+            base_checkpoint_marker_sha256=SSMAX_CHECKPOINT_MARKER_SHA256,
+            base_dataset_fingerprint=SSMAX_DATASET_FINGERPRINT,
+            source_olmo_core_commit=SSMAX_OLMO_CORE_COMMIT,
+        )
+        if variant is VisionAlignmentModelVariant.ssmax_head_qknorm:
+            return cls(
+                base_checkpoint=SSMAX_HEAD_QKNORM_CHECKPOINT,
+                base_config_sha256=SSMAX_HEAD_QKNORM_CONFIG_SHA256,
+                base_checkpoint_metadata_sha256=SSMAX_HEAD_QKNORM_DCP_METADATA_SHA256,
+                base_trainer_state_sha256=SSMAX_HEAD_QKNORM_TRAINER_STATE_SHA256,
+                source_commit=SSMAX_HEAD_QKNORM_SOURCE_COMMIT,
+                expected_lm_parameter_count=SSMAX_HEAD_QKNORM_PARAMETER_COUNT,
+                expected_lm_tensor_count=SSMAX_HEAD_QKNORM_TENSOR_COUNT,
+                base_model_keyset_sha256=SSMAX_HEAD_QKNORM_KEYSET_SHA256,
+                base_model_inventory_sha256=SSMAX_HEAD_QKNORM_INVENTORY_SHA256,
+                base_checkpoint_identity_sha256=SSMAX_HEAD_QKNORM_CHECKPOINT_IDENTITY_SHA256,
+                base_checkpoint_state_file_count=SSMAX_HEAD_QKNORM_STATE_FILE_COUNT,
+                base_checkpoint_state_file_inventory_sha256=(
+                    SSMAX_HEAD_QKNORM_STATE_FILE_INVENTORY_SHA256
+                ),
+                base_checkpoint_trainer_state_count=SSMAX_HEAD_QKNORM_TRAINER_STATE_COUNT,
+                base_checkpoint_trainer_state_inventory_sha256=(
+                    SSMAX_HEAD_QKNORM_TRAINER_STATE_INVENTORY_SHA256
+                ),
+                **common,
+            )
+        if variant is VisionAlignmentModelVariant.ssmax_no_qknorm:
+            return cls(
+                base_checkpoint=SSMAX_NO_QKNORM_CHECKPOINT,
+                base_config_sha256=SSMAX_NO_QKNORM_CONFIG_SHA256,
+                base_checkpoint_metadata_sha256=SSMAX_NO_QKNORM_DCP_METADATA_SHA256,
+                base_trainer_state_sha256=SSMAX_NO_QKNORM_TRAINER_STATE_SHA256,
+                source_commit=SSMAX_NO_QKNORM_SOURCE_COMMIT,
+                expected_lm_parameter_count=SSMAX_NO_QKNORM_PARAMETER_COUNT,
+                expected_lm_tensor_count=SSMAX_NO_QKNORM_TENSOR_COUNT,
+                base_model_keyset_sha256=SSMAX_NO_QKNORM_KEYSET_SHA256,
+                base_model_inventory_sha256=SSMAX_NO_QKNORM_INVENTORY_SHA256,
+                base_checkpoint_identity_sha256=SSMAX_NO_QKNORM_CHECKPOINT_IDENTITY_SHA256,
+                base_checkpoint_state_file_count=SSMAX_NO_QKNORM_STATE_FILE_COUNT,
+                base_checkpoint_state_file_inventory_sha256=(
+                    SSMAX_NO_QKNORM_STATE_FILE_INVENTORY_SHA256
+                ),
+                base_checkpoint_trainer_state_count=SSMAX_NO_QKNORM_TRAINER_STATE_COUNT,
+                base_checkpoint_trainer_state_inventory_sha256=(
+                    SSMAX_NO_QKNORM_TRAINER_STATE_INVENTORY_SHA256
+                ),
+                **common,
+            )
+        raise AssertionError(f"Unhandled vision-alignment model variant: {variant}")
 
 
 @dataclass
@@ -640,6 +807,7 @@ class VisionAlignmentDataConfig(Config):
     perception_provenance_sha256: Optional[str] = None
     joint_visual_projection_path: Optional[str] = None
     joint_visual_projection_sha256: Optional[str] = None
+    ssmax_single_response_projection: Optional[SSMaxSingleResponseProjectionConfig] = None
     allow_unpinned_synthetic_smoke: bool = False
     native_text_replay: Optional[NativeTextReplayDatasetConfig] = None
     native_text_replay_fingerprint: Optional[str] = None
@@ -676,6 +844,7 @@ class VisionAlignmentMetadataConfig(Config):
 
     recipe_version: int = RECIPE_VERSION
     formatter_version: str = FORMATTER_VERSION
+    model_variant: VisionAlignmentModelVariant = VisionAlignmentModelVariant.s002
     phase: VisionAlignmentPhase = VisionAlignmentPhase.bridge
     lineage_id: str = ""
     parent_checkpoint: Optional[str] = None
@@ -692,8 +861,9 @@ class ExperimentConfig(Config):
     launch: BeakerLaunchConfig
     model: MultimodalLMConfig
     collator: MultimodalCollatorConfig
-    train_module: MultimodalOLMoDDPTrainModuleConfig
+    train_module: Union[MultimodalOLMoDDPTrainModuleConfig, MultimodalTransformerTrainModuleConfig]
     trainer: TrainerConfig
+    model_variant: VisionAlignmentModelVariant
     phase: VisionAlignmentPhase
     perception_trainability_arm: PerceptionTrainabilityArm
     artifacts: ArtifactConfig
@@ -753,6 +923,54 @@ def _extract_phase(overrides: Sequence[str]) -> VisionAlignmentPhase:
         ) from error
 
 
+def _extract_model_variant(overrides: Sequence[str]) -> VisionAlignmentModelVariant:
+    selectors = [
+        value.split("=", 1)[1] for value in overrides if value.startswith("--model_variant=")
+    ]
+    if len(selectors) > 1:
+        raise ValueError("Vision alignment accepts at most one --model_variant selector")
+    if not selectors:
+        return VisionAlignmentModelVariant.s002
+    try:
+        return VisionAlignmentModelVariant(selectors[0])
+    except ValueError as error:
+        raise ValueError(
+            f"Unknown vision-alignment model variant {selectors[0]!r}; expected one of "
+            f"{[variant.value for variant in VisionAlignmentModelVariant]}"
+        ) from error
+
+
+def _is_ssmax_variant(variant: VisionAlignmentModelVariant) -> bool:
+    return variant in (
+        VisionAlignmentModelVariant.ssmax_head_qknorm,
+        VisionAlignmentModelVariant.ssmax_no_qknorm,
+    )
+
+
+def _experiment_root(variant: VisionAlignmentModelVariant) -> str:
+    return SSMAX_VISION_ALIGNMENT_ROOT if _is_ssmax_variant(variant) else VISION_ALIGNMENT_ROOT
+
+
+def _beaker_workspace(variant: VisionAlignmentModelVariant) -> str:
+    return SSMAX_BEAKER_WORKSPACE if _is_ssmax_variant(variant) else BEAKER_WORKSPACE
+
+
+def _wandb_project(variant: VisionAlignmentModelVariant) -> Optional[str]:
+    return SSMAX_WANDB_PROJECT if _is_ssmax_variant(variant) else WANDB_PROJECT
+
+
+def _expected_git_branch(variant: VisionAlignmentModelVariant) -> str:
+    return "rustin/vision-ssmax-molmofication" if _is_ssmax_variant(variant) else "vision-moe"
+
+
+def _pin_launch_git_branch(config: ExperimentConfig) -> None:
+    """Ensure Gantry exports the exact reviewed branch as worker metadata."""
+
+    if config.launch.git is None:
+        raise ValueError("Vision alignment launch must include Git provenance")
+    config.launch.git.branch = _expected_git_branch(config.model_variant)
+
+
 def _validate_run_name(run_name: str) -> None:
     if _RUN_NAME_RE.fullmatch(run_name) is None:
         raise ValueError(
@@ -793,13 +1011,17 @@ def _load_tokenizer(artifacts: ArtifactConfig):
     )
 
 
-def _build_model_config(token_ids: Molmo2TokenIds, artifacts: ArtifactConfig) -> MultimodalLMConfig:
-    """Compose the pinned bare s002 LM with the Molmo2 connector/SigLIP architecture."""
-    from olmo_core.nn.attention import AttentionConfig
+def _build_model_config(
+    token_ids: Molmo2TokenIds,
+    artifacts: ArtifactConfig,
+    model_variant: VisionAlignmentModelVariant = VisionAlignmentModelVariant.s002,
+) -> MultimodalLMConfig:
+    """Compose one pinned bare LM with the Molmo2 connector/SigLIP architecture."""
+    from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
     from olmo_core.nn.attention.backend import AttentionBackendName
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
     from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
-    from olmo_core.nn.transformer import OLMoDDPModelConfig
+    from olmo_core.nn.transformer import OLMoDDPModelConfig, TransformerConfig
     from olmo_core.nn.vision import (
         load_molmo2_hf_vision_config,
         multimodal_config_from_molmo2_vision,
@@ -807,29 +1029,109 @@ def _build_model_config(token_ids: Molmo2TokenIds, artifacts: ArtifactConfig) ->
 
     config_path = Path(artifacts.base_checkpoint) / "config.json"
     if _sha256_file(config_path) != artifacts.base_config_sha256:
-        raise ValueError(f"Bare s002 config fingerprint mismatch for {config_path}")
+        raise ValueError(f"Bare LM config fingerprint mismatch for {config_path}")
     data_paths_path = Path(artifacts.base_checkpoint) / "data_paths.txt"
     if _sha256_file(data_paths_path) != artifacts.base_data_paths_sha256:
-        raise ValueError(f"Bare s002 data-path fingerprint mismatch for {data_paths_path}")
+        raise ValueError(f"Bare LM data-path fingerprint mismatch for {data_paths_path}")
     checkpoint_marker = Path(artifacts.base_checkpoint) / ".metadata.json"
     if _sha256_file(checkpoint_marker) != artifacts.base_checkpoint_marker_sha256:
-        raise ValueError(f"Bare s002 checkpoint marker mismatch for {checkpoint_marker}")
+        raise ValueError(f"Bare LM checkpoint marker mismatch for {checkpoint_marker}")
     checkpoint_metadata = Path(artifacts.base_checkpoint) / "model_and_optim" / ".metadata"
     if _sha256_file(checkpoint_metadata) != artifacts.base_checkpoint_metadata_sha256:
-        raise ValueError(f"Bare s002 DCP metadata mismatch for {checkpoint_metadata}")
+        raise ValueError(f"Bare LM DCP metadata mismatch for {checkpoint_metadata}")
     with config_path.open() as file_handle:
-        lm_config = OLMoDDPModelConfig.from_dict(json.load(file_handle)["model"])
+        raw_lm_config = json.load(file_handle)["model"]
 
-    for block_config in [lm_config.block, *(lm_config.block_overrides or {}).values()]:
-        if not isinstance(block_config, OLMoDDPTransformerBlockConfig):
-            raise TypeError("The pinned s002 LM must use OLMoDDP transformer blocks")
-        if isinstance(block_config.sequence_mixer, AttentionConfig):
-            block_config.sequence_mixer.backend = AttentionBackendName.flex
-        if block_config.ep is not None:
-            block_config.ep.path = ExpertParallelPath.rowwise_nvshmem
-    lm_config.recompute_each_block = True
-    lm_config.recompute_all_blocks_by_chunk = False
-    lm_config.two_batch_overlap = False
+    if model_variant is VisionAlignmentModelVariant.s002:
+        lm_config = OLMoDDPModelConfig.from_dict(raw_lm_config)
+        for block_config in [lm_config.block, *(lm_config.block_overrides or {}).values()]:
+            if not isinstance(block_config, OLMoDDPTransformerBlockConfig):
+                raise TypeError("The pinned s002 LM must use OLMoDDP transformer blocks")
+            if isinstance(block_config.sequence_mixer, AttentionConfig):
+                block_config.sequence_mixer.backend = AttentionBackendName.flex
+            if block_config.ep is not None:
+                block_config.ep.path = ExpertParallelPath.rowwise_nvshmem
+        lm_config.recompute_each_block = True
+        lm_config.recompute_all_blocks_by_chunk = False
+        lm_config.two_batch_overlap = False
+    else:
+        lm_config = TransformerConfig.from_dict(raw_lm_config)
+        if not _is_ssmax_variant(model_variant):
+            raise AssertionError(f"Unhandled model variant {model_variant}")
+        if (
+            lm_config.d_model != 1280
+            or lm_config.n_layers != 20
+            or lm_config.vocab_size != 100_352
+            or not isinstance(lm_config.block.sequence_mixer, GatedDeltaNetConfig)
+        ):
+            raise ValueError("Pinned SSMax parent does not match the reviewed 1.4B hybrid layout")
+        attention_layers: List[int] = []
+        for layer_idx, block_config in enumerate(lm_config.resolved_block_configs):
+            mixer = block_config.sequence_mixer
+            if isinstance(mixer, AttentionConfig):
+                attention_layers.append(layer_idx)
+                mixer.backend = AttentionBackendName.flex
+                if not mixer.scalable_softmax:
+                    raise ValueError(f"SSMax is disabled in global-attention layer {layer_idx}")
+                has_qk_norm = mixer.qk_norm is not None and mixer.use_head_qk_norm is True
+                expected_qk_norm = model_variant is VisionAlignmentModelVariant.ssmax_head_qknorm
+                if has_qk_norm != expected_qk_norm:
+                    raise ValueError(
+                        f"QK-norm contract differs in global-attention layer {layer_idx}: "
+                        f"expected {expected_qk_norm}, got {has_qk_norm}"
+                    )
+            elif not isinstance(mixer, GatedDeltaNetConfig):
+                raise TypeError(
+                    f"SSMax layer {layer_idx} has unsupported mixer {type(mixer).__name__}"
+                )
+        if attention_layers != [4, 9, 14, 19]:
+            raise ValueError(f"SSMax global-attention layers differ: {attention_layers}")
+        if (
+            artifacts.expected_lm_parameter_count is None
+            or lm_config.num_params != artifacts.expected_lm_parameter_count
+        ):
+            raise ValueError(
+                "SSMax LM parameter count differs from the parent checkpoint contract: "
+                f"config={lm_config.num_params:,d}, "
+                f"expected={artifacts.expected_lm_parameter_count}"
+            )
+        if (
+            artifacts.expected_lm_tensor_count is None
+            or artifacts.base_model_keyset_sha256 is None
+            or artifacts.base_model_inventory_sha256 is None
+        ):
+            raise ValueError("SSMax parent model-state inventory pins are incomplete")
+        from olmo_core.eval.checkpoint_model_state import (
+            CheckpointModelStateContract,
+            verify_checkpoint_model_state,
+        )
+
+        verified_parent = verify_checkpoint_model_state(
+            artifacts.base_checkpoint,
+            contract=CheckpointModelStateContract(
+                config_sha256=artifacts.base_config_sha256,
+                data_paths_sha256=artifacts.base_data_paths_sha256,
+                marker_sha256=artifacts.base_checkpoint_marker_sha256,
+                dcp_metadata_sha256=artifacts.base_checkpoint_metadata_sha256,
+                model_keyset_sha256=artifacts.base_model_keyset_sha256,
+                model_inventory_sha256=artifacts.base_model_inventory_sha256,
+                model_tensor_count=artifacts.expected_lm_tensor_count,
+                model_parameter_count=artifacts.expected_lm_parameter_count,
+                model_parameter_tensor_count=artifacts.expected_lm_tensor_count,
+            ),
+            expected_model=lm_config.build(init_device="meta"),
+            trainer_state_relative_path=None,
+        )
+        if verified_parent.buffer_keys:
+            raise ValueError(
+                f"Pinned SSMax parent unexpectedly contains buffers: {verified_parent.buffer_keys}"
+            )
+        log.info(
+            "Verified %s parent DCP metadata: %d FP32 parameter tensors, %d parameters",
+            model_variant.value,
+            verified_parent.model_parameter_tensor_count,
+            verified_parent.model_parameter_count,
+        )
 
     hf_config = load_molmo2_hf_vision_config(
         artifacts.molmo2_config_model_id,
@@ -842,8 +1144,10 @@ def _build_model_config(token_ids: Molmo2TokenIds, artifacts: ArtifactConfig) ->
 
 
 def _build_train_module_config(
-    policy: _PhasePolicy, image_token_ids: List[int]
-) -> MultimodalOLMoDDPTrainModuleConfig:
+    policy: _PhasePolicy,
+    image_token_ids: List[int],
+    model_variant: VisionAlignmentModelVariant = VisionAlignmentModelVariant.s002,
+) -> Union[MultimodalOLMoDDPTrainModuleConfig, MultimodalTransformerTrainModuleConfig]:
     # OLMoDDPOptimizer requires a positive default LR even when every trainable parameter in a
     # frozen-LM phase is assigned to an explicit override group. The runtime trainability check
     # below proves that bridge/perception have no live fallback parameters.
@@ -874,51 +1178,84 @@ def _build_train_module_config(
             },
         ),
     ]
-    return MultimodalOLMoDDPTrainModuleConfig(
+    scheduler = PerGroupScheduler(
+        schedulers={
+            "connector": CosWithWarmup(
+                warmup=policy.connector_warmup,
+                alpha_f=0.1,
+                t_max=policy.connector_t_max,
+            ),
+            "vision": CosWithWarmup(warmup=policy.vision_warmup, alpha_f=0.1, t_max=None),
+        },
+        default=CosWithWarmup(warmup=policy.lm_warmup, alpha_f=0.1, t_max=None),
+    )
+    common = dict(
         rank_microbatch_size=policy.rank_microbatch_instances * policy.sequence_length,
         max_sequence_length=policy.sequence_length,
-        optim=OLMoDDPOptimizerConfig(
-            lr=default_lr,
-            betas=(0.9, 0.95),
-            eps=1e-6,
-            weight_decay=0.0,
-            group_overrides=group_overrides,
-            compile=False,
-            foreach_chunk_size=50_000_000,
-            sigma_factor=12,
-            max_grad_norm=1.0,
-            clip_grad_norm_by_scheduler_group=True,
-            check_nan_inf_grad=True,
-            use_distributed=True,
-        ),
         freeze_params=list(policy.freeze_params),
         train_embedding_rows=image_token_ids,
         vision_activation_checkpointing=policy.phase is not VisionAlignmentPhase.bridge,
         connector_activation_checkpointing=True,
         response_logits_only=True,
         diagnostics_interval=100,
-        z_loss_multiplier=1e-4,
+        source_loss_mass_targets={},
         max_grad_norm=1.0,
+        scheduler=scheduler,
+    )
+    if model_variant is VisionAlignmentModelVariant.s002:
+        return MultimodalOLMoDDPTrainModuleConfig(
+            **common,
+            optim=OLMoDDPOptimizerConfig(
+                lr=default_lr,
+                betas=(0.9, 0.95),
+                eps=1e-6,
+                weight_decay=0.0,
+                group_overrides=group_overrides,
+                compile=False,
+                foreach_chunk_size=50_000_000,
+                sigma_factor=12,
+                max_grad_norm=1.0,
+                clip_grad_norm_by_scheduler_group=True,
+                check_nan_inf_grad=True,
+                use_distributed=True,
+            ),
+            z_loss_multiplier=1e-4,
+            compile_model=True,
+            dp_config=TransformerDataParallelConfig(
+                name=DataParallelType.ddp,
+                reduce_dtype=DType.float32,
+                only_allreduce_last_microbatch=True,
+                reduce_grads_in_fp32=True,
+                accumulate_grads_in_fp32=True,
+            ),
+            ep_config=TransformerExpertParallelConfig(degree=EP_DEGREE),
+        )
+    if not _is_ssmax_variant(model_variant):
+        raise AssertionError(f"Unhandled model variant {model_variant}")
+    return MultimodalTransformerTrainModuleConfig(
+        **common,
+        new_component_init_seed=INIT_SEED,
+        optim=SkipStepAdamWConfig(
+            lr=default_lr,
+            betas=(0.9, 0.95),
+            eps=1e-6,
+            weight_decay=0.0,
+            group_overrides=group_overrides,
+            compile=False,
+            foreach=True,
+            sigma_factor=12,
+        ),
+        ac_config=TransformerActivationCheckpointingConfig(),
+        z_loss_multiplier=1e-4,
         compile_model=True,
-        scheduler=PerGroupScheduler(
-            schedulers={
-                "connector": CosWithWarmup(
-                    warmup=policy.connector_warmup,
-                    alpha_f=0.1,
-                    t_max=policy.connector_t_max,
-                ),
-                "vision": CosWithWarmup(warmup=policy.vision_warmup, alpha_f=0.1, t_max=None),
-            },
-            default=CosWithWarmup(warmup=policy.lm_warmup, alpha_f=0.1, t_max=None),
-        ),
+        autocast_precision=DType.bfloat16,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.ddp,
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
-            only_allreduce_last_microbatch=True,
-            reduce_grads_in_fp32=True,
-            accumulate_grads_in_fp32=True,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
+            prefetch_factor=0,
         ),
-        ep_config=TransformerExpertParallelConfig(degree=EP_DEGREE),
     )
 
 
@@ -935,25 +1272,34 @@ def _configure_router_load_balancing(lm_config, weight: Optional[float]) -> None
         raise ValueError("The pinned s002 LM has no routed-expert router configs")
 
 
-def _configure_launch_runtime(launch_config: BeakerLaunchConfig) -> None:
+def _configure_launch_runtime(
+    launch_config: BeakerLaunchConfig,
+    model_variant: VisionAlignmentModelVariant = VisionAlignmentModelVariant.s002,
+) -> None:
     from olmo_core.launch.beaker_presets import get_preset
 
     preset = get_preset("olmo-ddp")
     if preset.beaker_image is not None:
         launch_config.beaker_image = preset.beaker_image
     env = {item.name: item.value for item in launch_config.env_vars}
-    env.update(dict(preset.env_vars))
-    env.update(
-        {
-            "OLMO_USE_OWN_SYMM_MEM": "1",
-            "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
-            "OLMO_OWN_SYMM_PREWARM": "1",
-            "TORCHINDUCTOR_COMPILE_THREADS": "8",
-            "TORCH_LOGS": "-dynamo",
-        }
-    )
+    preset_env = dict(preset.env_vars)
+    if _is_ssmax_variant(model_variant):
+        preset_env.pop("OLMO_SYMM_VDEV2D_AUTO_BUILD", None)
+    env.update(preset_env)
+    env["TORCHINDUCTOR_COMPILE_THREADS"] = "8"
+    if model_variant is VisionAlignmentModelVariant.s002:
+        env.update(
+            {
+                "OLMO_USE_OWN_SYMM_MEM": "1",
+                "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
+                "OLMO_OWN_SYMM_PREWARM": "1",
+                "TORCH_LOGS": "-dynamo",
+            }
+        )
     launch_config.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
-    launch_config.post_setup = preset.post_setup
+    launch_config.post_setup = (
+        preset.post_setup if model_variant is VisionAlignmentModelVariant.s002 else None
+    )
 
 
 def _build_console_logger() -> ConsoleLoggerCallback:
@@ -1136,6 +1482,14 @@ def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[
         if phase in (VisionAlignmentPhase.perception.value, VisionAlignmentPhase.joint.value)
         else None
     )
+    ssmax_bridge_profile = phase == VisionAlignmentPhase.bridge.value and any(
+        value
+        in (
+            "--model_variant=ssmax_head_qknorm",
+            "--model_variant=ssmax_no_qknorm",
+        )
+        for value in profile_overrides
+    )
     if reviewed_phase is not None:
         profile_root, _, _ = _reviewed_profile_policy(reviewed_phase)
         approved_root = (repository_root / profile_root).resolve()
@@ -1153,6 +1507,22 @@ def _load_profile(overrides: List[str]) -> Tuple[Optional[Dict[str, Any]], List[
             raise ValueError(
                 f"Production {reviewed_phase.value} profiles own the complete configuration; "
                 "additional "
+                "CLI overrides are forbidden"
+            )
+    if ssmax_bridge_profile:
+        approved_root = (repository_root / "configs/vision_moe/vision_alignment/bridge").resolve()
+        if (
+            profile_path.parent != approved_root
+            or profile_path.suffix != ".yaml"
+            or profile_path.name.endswith(".yaml.template")
+        ):
+            raise ValueError(
+                "Production SSMax bridge requires a checked-in .yaml profile directly under "
+                f"{approved_root}"
+            )
+        if cli:
+            raise ValueError(
+                "Production SSMax bridge profiles own the complete configuration; additional "
                 "CLI overrides are forbidden"
             )
     try:
@@ -1235,6 +1605,28 @@ def _apply_profile_launch(
             raise ValueError("Vision-alignment profile review identity is malformed")
         config.reviewed_profile_path = reviewed_path
         config.reviewed_profile_sha256 = reviewed_sha256
+        profile_overrides = profile.get("overrides", [])
+        if not isinstance(profile_overrides, list) or not all(
+            isinstance(value, str) for value in profile_overrides
+        ):
+            raise ValueError("Vision-alignment profile overrides are malformed")
+        expanded_profile_command = [
+            *config.expected_launch_command[:3],
+            f"--phase={profile.get('phase')}",
+            *profile_overrides,
+        ]
+        if (
+            config.expected_launch_command[: len(expanded_profile_command)]
+            != expanded_profile_command
+        ):
+            raise ValueError("Vision-alignment launch command does not match its profile")
+        profile_command = [
+            *config.expected_launch_command[:3],
+            f"--profile={reviewed_path}",
+            *config.expected_launch_command[len(expanded_profile_command) :],
+        ]
+        config.expected_launch_command = profile_command
+        config.launch.cmd = list(profile_command)
         if config.phase in (VisionAlignmentPhase.perception, VisionAlignmentPhase.joint):
             _, expected_allowlist_path, _ = _reviewed_profile_policy(config.phase)
             allowlist_path = profile.get("__reviewed_allowlist_path__")
@@ -1249,12 +1641,6 @@ def _apply_profile_launch(
                 )
             config.reviewed_profile_allowlist_path = allowlist_path
             config.reviewed_profile_allowlist_sha256 = allowlist_sha256
-            profile_command = [
-                *config.expected_launch_command[:3],
-                f"--profile={reviewed_path}",
-            ]
-            config.expected_launch_command = profile_command
-            config.launch.cmd = list(profile_command)
     return config
 
 
@@ -1279,6 +1665,108 @@ def _checkpoint_config(checkpoint: str) -> Tuple[Dict[str, Any], str]:
     if not isinstance(data, dict):
         raise ValueError(f"Checkpoint config must be a JSON object: {config_path}")
     return data, hashlib.sha256(raw).hexdigest()
+
+
+_LEGACY_S002_ARTIFACT_FIELDS = frozenset(
+    {
+        "base_trainer_state_sha256",
+        "base_dataset_fingerprint",
+        "base_parent_mix_sha256",
+        "source_commit",
+        "source_olmo_core_commit",
+        "expected_lm_parameter_count",
+        "expected_lm_tensor_count",
+        "base_model_keyset_sha256",
+        "base_model_inventory_sha256",
+    }
+)
+
+
+def _checkpoint_model_variant(checkpoint_config: Mapping[str, Any]) -> VisionAlignmentModelVariant:
+    """Resolve a saved alignment checkpoint's model lineage without guessing dense variants.
+
+    Checkpoints produced before model variants were introduced have neither root nor metadata
+    selectors. Those are accepted only when their saved artifact contract identifies the exact
+    historical s002 parent. Every newer checkpoint, and every dense SSMax checkpoint, must carry
+    an explicit and internally consistent selector.
+    """
+
+    metadata = checkpoint_config.get("vision_alignment")
+    metadata_variant = metadata.get("model_variant") if isinstance(metadata, Mapping) else None
+    root_variant = checkpoint_config.get("model_variant")
+    selectors = [value for value in (root_variant, metadata_variant) if value is not None]
+    if selectors:
+        if any(not isinstance(value, str) for value in selectors):
+            raise ValueError("Checkpoint model_variant selectors must be strings")
+        if len(set(selectors)) != 1:
+            raise ValueError("Checkpoint root and vision-alignment model variants differ")
+        try:
+            return VisionAlignmentModelVariant(selectors[0])
+        except ValueError as error:
+            raise ValueError(
+                f"Checkpoint names an unknown model variant {selectors[0]!r}"
+            ) from error
+
+    artifacts = checkpoint_config.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        raise ValueError("Checkpoint lacks an explicit model variant and saved artifact lineage")
+    expected = ArtifactConfig.for_model_variant(VisionAlignmentModelVariant.s002)
+    legacy_identity = {
+        "base_checkpoint": expected.base_checkpoint,
+        "base_config_sha256": expected.base_config_sha256,
+        "base_data_paths_sha256": expected.base_data_paths_sha256,
+        "base_checkpoint_marker_sha256": expected.base_checkpoint_marker_sha256,
+        "base_checkpoint_metadata_sha256": expected.base_checkpoint_metadata_sha256,
+    }
+    if any(artifacts.get(name) != value for name, value in legacy_identity.items()):
+        raise ValueError("Only the exact historical s002 artifact lineage may omit model_variant")
+    return VisionAlignmentModelVariant.s002
+
+
+def _validate_checkpoint_model_lineage(
+    config: ExperimentConfig,
+    checkpoint_config: Mapping[str, Any],
+    *,
+    checkpoint: str,
+) -> None:
+    """Require a phase parent/resume to retain this run's exact bare-model lineage."""
+
+    checkpoint_variant = _checkpoint_model_variant(checkpoint_config)
+    if checkpoint_variant is not config.model_variant:
+        raise ValueError(
+            f"Checkpoint {checkpoint} uses model variant {checkpoint_variant.value!r}; "
+            f"expected {config.model_variant.value!r}"
+        )
+    raw_artifacts = checkpoint_config.get("artifacts")
+    if not isinstance(raw_artifacts, Mapping):
+        raise ValueError(f"Checkpoint {checkpoint} lacks its saved artifact contract")
+    expected_artifacts = asdict(ArtifactConfig.for_model_variant(config.model_variant))
+    metadata = checkpoint_config.get("vision_alignment")
+    legacy_s002 = (
+        config.model_variant is VisionAlignmentModelVariant.s002
+        and checkpoint_config.get("model_variant") is None
+        and (not isinstance(metadata, Mapping) or metadata.get("model_variant") is None)
+    )
+    missing = set(expected_artifacts) - set(raw_artifacts)
+    optional_missing = {
+        name for name, expected_value in expected_artifacts.items() if expected_value is None
+    }
+    allowed_missing = set(optional_missing)
+    if legacy_s002:
+        allowed_missing.update(_LEGACY_S002_ARTIFACT_FIELDS)
+    if not missing <= allowed_missing:
+        raise ValueError(
+            f"Checkpoint {checkpoint} artifact contract is incomplete: {sorted(missing)}"
+        )
+    mismatches = {
+        name: (raw_artifacts.get(name), expected_value)
+        for name, expected_value in expected_artifacts.items()
+        if name in raw_artifacts and raw_artifacts.get(name) != expected_value
+    }
+    if mismatches:
+        raise ValueError(
+            f"Checkpoint {checkpoint} bare-model artifact lineage differs: {mismatches}"
+        )
 
 
 def _validate_parent_gate(
@@ -1335,15 +1823,43 @@ def _validate_parent_gate(
         "promotion_kind",
         "promotion_policy",
     }
+    version_4_fields = {
+        "format",
+        "version",
+        "status",
+        "recipe_version",
+        "formatter_version",
+        "phase",
+        "model_variant",
+        "arm",
+        "checkpoint",
+        "checkpoint_config_sha256",
+        "checkpoint_identity_sha256",
+        "data_contract_sha256",
+        "trainable_contract_sha256",
+        "global_step",
+        "metrics_artifact_sha256",
+        "promotion_report_path",
+        "promotion_report_sha256",
+        "manifest_path",
+        "manifest_sha256",
+        "manifest_content_sha256",
+        "approved_by",
+        "approved_at",
+        "waivers",
+    }
+    version_5_fields = version_4_fields | {"promotion_report_content_sha256"}
     gate_schemas = {
         1: version_1_fields,
         2: version_2_fields,
         3: version_3_fields,
+        4: version_4_fields,
+        5: version_5_fields,
     }
     gate_version = gate.get("version")
     allowed_fields = gate_schemas.get(gate_version) if type(gate_version) is int else None
     if allowed_fields is None:
-        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, or 3")
+        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, 3, 4, or 5")
     if set(gate) != allowed_fields:
         raise ValueError(
             "Parent-quality gate fields differ from the locked schema: "
@@ -1353,7 +1869,7 @@ def _validate_parent_gate(
     parent_meta = parent_config.get("vision_alignment")
     expected_parent_phase = config.initialization.expected_parent_phase
     assert isinstance(parent_meta, Mapping)
-    if gate_version == 3:
+    if gate_version in (3, 4, 5):
         expected_recipe_version = parent_meta.get("recipe_version")
         expected_formatter_version = parent_meta.get("formatter_version")
         if type(expected_recipe_version) is not int or not isinstance(
@@ -1394,17 +1910,39 @@ def _validate_parent_gate(
     production_joint = getattr(config, "phase", None) is VisionAlignmentPhase.joint and not bool(
         getattr(getattr(config, "data", None), "allow_unpinned_synthetic_smoke", False)
     )
-    if production_perception and gate_version != 2:
-        raise ValueError(
-            "Production perception requires a v2 parent gate with an audited promotion bundle"
-        )
+    model_variant = getattr(config, "model_variant", VisionAlignmentModelVariant.s002)
+    if production_perception:
+        if _is_ssmax_variant(model_variant):
+            if gate_version != 4:
+                raise ValueError(
+                    "Production SSMax perception requires a deviation-free v4 bridge parent gate"
+                )
+        elif gate_version != 2:
+            raise ValueError(
+                "Production perception requires a v2 parent gate with an audited promotion bundle"
+            )
     if gate_version == 3 and getattr(config, "phase", None) is not VisionAlignmentPhase.joint:
         raise ValueError("A v3 perception parent gate may only authorize the joint phase")
+    if gate_version == 4 and (
+        getattr(config, "phase", None) is not VisionAlignmentPhase.perception
+        or not _is_ssmax_variant(model_variant)
+        or expected_parent_phase is not VisionAlignmentPhase.bridge
+    ):
+        raise ValueError("A v4 SSMax bridge parent gate may only authorize SSMax perception")
+    if gate_version == 5 and (
+        getattr(config, "phase", None) is not VisionAlignmentPhase.joint
+        or not _is_ssmax_variant(model_variant)
+        or expected_parent_phase is not VisionAlignmentPhase.perception
+    ):
+        raise ValueError("A v5 SSMax perception parent gate may only authorize SSMax joint")
+    expected_joint_gate = 5 if _is_ssmax_variant(model_variant) else 3
     if production_joint and (
-        gate_version != 3 or expected_parent_phase is not VisionAlignmentPhase.perception
+        gate_version != expected_joint_gate
+        or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
         raise ValueError(
-            "Production joint requires a v3 perception parent gate and perception parent phase"
+            f"Production joint requires a v{expected_joint_gate} perception parent gate and "
+            "perception parent phase"
         )
     if gate_version == 2:
         from olmo_core.eval import vision_alignment_promotion as promotion
@@ -1549,6 +2087,38 @@ def _validate_parent_gate(
             raise ValueError(
                 f"Perception parent promotion bundle failed validation: {error}"
             ) from error
+    elif gate_version == 4:
+        from olmo_core.eval import vision_alignment_ssmax_bridge as ssmax_bridge
+
+        try:
+            ssmax_bridge.validate_ssmax_bridge_parent_gate(
+                gate,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+                expected_model_variant=model_variant.value,
+                expected_data_contract_sha256=str(parent_meta.get("data_contract_sha256")),
+                expected_trainable_contract_sha256=str(
+                    parent_meta.get("trainable_contract_sha256")
+                ),
+            )
+        except ssmax_bridge.SSMaxBridgeEvidenceError as error:
+            raise ValueError(f"SSMax bridge parent gate failed validation: {error}") from error
+    elif gate_version == 5:
+        from olmo_core.eval import vision_alignment_ssmax_perception as ssmax_perception
+
+        try:
+            ssmax_perception.validate_ssmax_perception_parent_gate(
+                gate,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+                expected_model_variant=model_variant.value,
+                expected_data_contract_sha256=str(parent_meta.get("data_contract_sha256")),
+                expected_trainable_contract_sha256=str(
+                    parent_meta.get("trainable_contract_sha256")
+                ),
+            )
+        except ssmax_perception.SSMaxPerceptionEvidenceError as error:
+            raise ValueError(f"SSMax perception parent gate failed validation: {error}") from error
     marker_path = Path(parent) / ".metadata.json"
     try:
         marker = json.loads(marker_path.read_bytes(), object_pairs_hook=_strict_json_object)
@@ -1590,6 +2160,10 @@ class _AuditedDataset:
                 f"Live dataset fingerprint for {source_name!r} is {runtime_fingerprint!r}, "
                 f"but its pinned audit records {source.get('dataset_fingerprint')!r}"
             )
+        # Projection identity is defined at the immutable provenance/selection boundary.  The
+        # audit remains a separately bound and validated wrapper, but must not make the exact
+        # same selected rows hash differently from the offline calibration producer.
+        self.ssmax_projection_base_content_fingerprint = runtime_fingerprint
         if len(dataset) != source.get("dataset_size"):
             raise ValueError(
                 f"Live dataset length for {source_name!r} is {len(dataset)}, but its pinned "
@@ -2095,6 +2669,205 @@ def _preprocessing_config_sha256(config: ExperimentConfig) -> str:
     if config.phase is VisionAlignmentPhase.joint:
         return _joint_visual_projection(config).source_spec_sha256
     return _source_spec(config).preprocessing_sha256
+
+
+def _ssmax_single_response_calibration(
+    config: ExperimentConfig,
+    source_audit: Mapping[str, Any],
+) -> Optional[Mapping[str, Any]]:
+    """Load and semantically validate the immutable projected loss-mass receipt."""
+
+    projection = config.data.ssmax_single_response_projection
+    if projection is None:
+        return None
+    assert projection.calibration_path is not None
+    assert projection.calibration_sha256 is not None
+    calibration_path = Path(projection.calibration_path).expanduser().resolve()
+    try:
+        raw = calibration_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != projection.calibration_sha256:
+            raise ValueError("raw SHA-256 differs")
+        payload = json.loads(raw, object_pairs_hook=_strict_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(
+            f"Invalid SSMax single-response calibration {calibration_path}: {error}"
+        ) from error
+    source_audit_path = Path(str(config.data.source_audit_path)).expanduser().resolve()
+    source_audit_ref = {
+        "path": str(source_audit_path),
+        "raw_sha256": _sha256_file(source_audit_path),
+        "content_sha256": source_audit["fingerprint"],
+    }
+    if config.phase is VisionAlignmentPhase.perception:
+        selection = _perception_provenance(config)
+        selection_ref = {
+            "path": str(selection.path),
+            "raw_sha256": selection.raw_sha256,
+            "content_sha256": selection.content_sha256,
+        }
+        visual_sources = tuple(PERCEPTION_SOURCE_NAMES)
+        unprojected_sources: Tuple[str, ...] = ()
+    elif config.phase is VisionAlignmentPhase.joint:
+        selection = _joint_visual_projection(config)
+        selection_ref = {
+            "path": str(selection.path),
+            "raw_sha256": selection.raw_sha256,
+            "content_sha256": selection.content_sha256,
+        }
+        visual_sources = tuple(JOINT_VISUAL_SOURCE_NAMES)
+        unprojected_sources = ("native_text_replay",)
+    else:
+        raise ValueError("SSMax single-response calibration is forbidden for the bridge")
+    try:
+        validated = validate_ssmax_single_response_calibration(
+            payload,
+            expected_phase=config.phase.value,
+            expected_contract=projection.contract(
+                loss_token_weighting=config.data.loss_token_weighting
+            ),
+            expected_source_audit=source_audit_ref,
+            expected_selection_manifest=selection_ref,
+            expected_visual_sources=visual_sources,
+            expected_unprojected_sources=unprojected_sources,
+            expected_mean_loss_weight=projection.projected_mean_loss_weight,
+            expected_validation_rows_per_source={
+                source: config.evaluation.examples_per_source for source in visual_sources
+            },
+        )
+    except ValueError as error:
+        raise ValueError(f"SSMax projection calibration failed validation: {error}") from error
+    repository_root = Path(__file__).resolve().parents[3]
+    for reference_name in ("producer", "projection_implementation"):
+        reference = cast(Mapping[str, Any], validated[reference_name])
+        implementation_path = (repository_root / str(reference["path"])).resolve()
+        if (
+            not implementation_path.is_relative_to(repository_root)
+            or not implementation_path.is_file()
+            or _sha256_file(implementation_path) != reference["sha256"]
+        ):
+            raise ValueError(
+                f"SSMax projection calibration {reference_name} implementation differs"
+            )
+    return validated
+
+
+def _ssmax_projection_audit_panel(
+    audit: Mapping[str, Any], source_name: str
+) -> Tuple[Tuple[int, int], ...]:
+    source = cast(Mapping[str, Any], cast(Mapping[str, Any], audit["inputs"])[source_name])
+    indices = cast(Sequence[int], source["probe_indices"])
+    raw_epochs = source["probe_epochs"]
+    if audit.get("format") == "vision_alignment_perception_source_audit":
+        epochs = tuple(range(cast(int, raw_epochs)))
+    elif audit.get("format") == _JOINT_AUDIT_FORMAT:
+        epochs = tuple(cast(Sequence[int], raw_epochs))
+    else:
+        raise ValueError("SSMax projection calibration requires perception/joint source audit")
+    return tuple((int(index), int(epoch)) for epoch in epochs for index in indices)
+
+
+def _validate_live_ssmax_projection_summary(
+    calibration: Mapping[str, Any],
+    dataset: Any,
+    source_name: str,
+    *,
+    section: str,
+    logical_split: str,
+    panel: Optional[Sequence[Tuple[int, int]]] = None,
+) -> None:
+    """Rebuild one complete panel on rank 0 after cheap identity checks on every rank."""
+
+    import torch.distributed as dist
+
+    sources = cast(Mapping[str, Any], calibration[section])
+    if source_name not in sources:
+        if source_name in calibration["unprojected_sources"]:
+            return
+        raise ValueError(f"SSMax {section} lacks source {source_name!r}")
+    expected = cast(Mapping[str, Any], sources[source_name])
+    local_error: Optional[str] = None
+    try:
+        if not isinstance(dataset, SSMaxSingleResponseDataset):
+            raise TypeError("runtime dataset is not SSMaxSingleResponseDataset")
+        if dataset.source_name != source_name or dataset.logical_split != logical_split:
+            raise ValueError("runtime source/split identity differs")
+        if dict(dataset.contract) != dict(calibration["projection_contract"]):
+            raise ValueError("runtime projection contract differs")
+        if dataset.content_fingerprint != expected["dataset_content_fingerprint"]:
+            raise ValueError("runtime projected dataset fingerprint differs")
+        if logical_split != "train" and len(dataset) != expected["rows"]:
+            raise ValueError("runtime validation row count differs")
+    except Exception as error:  # noqa: BLE001 - every rank must reach the collective
+        local_error = f"rank {get_rank()}: {type(error).__name__}: {error}"
+
+    distributed = dist.is_available() and dist.is_initialized()
+    if distributed:
+        rank_errors: List[Optional[str]] = [None] * dist.get_world_size()
+        dist.all_gather_object(rank_errors, local_error)
+        failures = [error for error in rank_errors if error is not None]
+    else:
+        failures = [local_error] if local_error is not None else []
+    if failures:
+        raise ValueError("SSMax projection rank-local identity failed: " + "; ".join(failures))
+
+    replay_error: Optional[str] = None
+    if get_rank() == 0:
+        try:
+            if panel is None:
+                raise ValueError("rank-zero projection replay lacks its immutable panel")
+            summary = ssmax_single_response_calibration_summary(dataset, panel)
+            if summary != expected:
+                differing = sorted(
+                    key
+                    for key in set(summary) | set(expected)
+                    if summary.get(key) != expected.get(key)
+                )
+                raise ValueError(f"summary differs in {differing}")
+        except Exception as error:  # noqa: BLE001 - broadcast instead of stranding peers
+            replay_error = f"{type(error).__name__}: {error}"
+    if distributed:
+        result = [replay_error]
+        dist.broadcast_object_list(result, src=0)
+        replay_error = cast(Optional[str], result[0])
+    if replay_error is not None:
+        raise ValueError(
+            f"Live SSMax single-response {section} for {source_name!r} failed: {replay_error}"
+        )
+
+
+def _validate_live_ssmax_projection_calibration(
+    calibration: Mapping[str, Any],
+    audit: Mapping[str, Any],
+    dataset: Any,
+    source_name: str,
+) -> None:
+    """Rebuild one complete projected training audit panel once globally."""
+
+    panel = _ssmax_projection_audit_panel(audit, source_name) if get_rank() == 0 else None
+    _validate_live_ssmax_projection_summary(
+        calibration,
+        dataset,
+        source_name,
+        section="sources",
+        logical_split="train",
+        panel=panel,
+    )
+
+
+def _validate_live_ssmax_projection_validation(
+    calibration: Mapping[str, Any], dataset: Any, source_name: str
+) -> None:
+    """Rebuild the complete fixed held-out projection once globally."""
+
+    panel = tuple((index, 0) for index in range(len(dataset))) if get_rank() == 0 else None
+    _validate_live_ssmax_projection_summary(
+        calibration,
+        dataset,
+        source_name,
+        section="validation_preflight",
+        logical_split="validation",
+        panel=panel,
+    )
 
 
 def _validated_source_audit(config: ExperimentConfig) -> Optional[Mapping[str, Any]]:
@@ -3371,7 +4144,7 @@ def _set_contract_hashes(config: ExperimentConfig) -> None:
 
 
 def _load_pinned_native_parent_paths(artifacts: ArtifactConfig) -> Tuple[str, ...]:
-    """Load the exact expanded s002 parent-path inventory behind a replay receipt."""
+    """Load the selected bare model's exact expanded parent-path replay inventory."""
     path = Path(artifacts.base_checkpoint) / "data_paths.txt"
     try:
         raw = path.read_bytes()
@@ -3404,7 +4177,7 @@ def _load_pinned_native_parent_paths(artifacts: ArtifactConfig) -> Tuple[str, ..
 def _native_parent_dataset_fingerprint(
     remote_sources: Sequence[Mapping[str, Any]],
 ) -> str:
-    """Reconstruct the pinned s002 NumpyFSLDataset fingerprint from remote metadata."""
+    """Reconstruct the shared native NumpyFSLDataset fingerprint from remote metadata."""
     digest = hashlib.sha256()
     digest.update(b"class=NumpyFSLDataset")
     for field_name, field_value in (
@@ -3431,6 +4204,168 @@ def _native_parent_dataset_fingerprint(
     return digest.hexdigest()
 
 
+def _normalized_native_parent_paths(parent_paths: Sequence[str]) -> Tuple[str, ...]:
+    """Normalize storage-scheme aliases while retaining exact bucket/key order."""
+
+    normalized = []
+    for index, parent_path in enumerate(parent_paths):
+        match = re.fullmatch(r"(?:s3|gs)://ai2-llm/(.+)", parent_path)
+        if match is None or not match.group(1):
+            raise ValueError(
+                f"Native replay parent path {index} is not a canonical ai2-llm object URI"
+            )
+        normalized.append(f"ai2-llm/{match.group(1)}")
+    return tuple(normalized)
+
+
+def _native_dataset_semantic_contract(raw_config: bytes, *, name: str) -> Mapping[str, Any]:
+    """Extract only fields that determine the native FSL dataset's token corpus."""
+
+    try:
+        root = json.loads(raw_config, object_pairs_hook=_strict_json_object)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"Pinned {name} config is invalid JSON: {error}") from error
+    if not isinstance(root, Mapping) or not isinstance(root.get("dataset"), Mapping):
+        raise ValueError(f"Pinned {name} config lacks its native dataset contract")
+    dataset = cast(Mapping[str, Any], root["dataset"])
+    fields = (
+        "_CLASS_",
+        "tokenizer",
+        "mix",
+        "expand_glob",
+        "include_instance_metadata",
+        "instance_filter_config",
+        "ignore_fingerprint_mismatch",
+        "sequence_length",
+        "max_target_sequence_length",
+        "generate_doc_lengths",
+    )
+    missing = [field_name for field_name in fields if field_name not in dataset]
+    if missing:
+        raise ValueError(f"Pinned {name} native dataset contract lacks {missing}")
+    mix_base_dir = dataset.get("mix_base_dir")
+    if mix_base_dir not in ("s3://ai2-llm", "gs://ai2-llm"):
+        raise ValueError(f"Pinned {name} native mix_base_dir is not an ai2-llm root")
+    return {field_name: dataset[field_name] for field_name in fields}
+
+
+def _safe_native_loader_contract(raw_trainer_state: bytes, *, name: str) -> Mapping[str, Any]:
+    """Read the restricted dataset identity from one pinned rank-0 trainer state."""
+
+    import torch
+
+    allowed_globals = [
+        np._core.multiarray._reconstruct,
+        np.ndarray,
+        np.dtype,
+        type(np.dtype("uint32")),
+        type(np.dtype("int64")),
+        type(np.dtype("float64")),
+        type(np.dtype("bool")),
+    ]
+    try:
+        with torch.serialization.safe_globals(allowed_globals):
+            state = torch.load(io.BytesIO(raw_trainer_state), map_location="cpu", weights_only=True)
+    except Exception as error:
+        raise ValueError(f"Could not safely load pinned {name} trainer state: {error}") from error
+    if not isinstance(state, Mapping) or not isinstance(state.get("data_loader"), Mapping):
+        raise ValueError(f"Pinned {name} trainer state lacks its data-loader identity")
+    loader = cast(Mapping[str, Any], state["data_loader"])
+    fields = (
+        "dataset_fingerprint_version",
+        "dataset_fingerprint",
+        "dataset_type",
+        "sequence_length",
+        "max_target_sequence_length",
+    )
+    if any(field_name not in loader for field_name in fields):
+        raise ValueError(f"Pinned {name} trainer state has an incomplete dataset identity")
+    return {field_name: loader[field_name] for field_name in fields}
+
+
+def _native_replay_lineage_artifacts(artifacts: ArtifactConfig) -> ArtifactConfig:
+    """Select the reviewed replay anchor after proving SSMax corpus equivalence.
+
+    The two SSMax parents and historical s002 parent use the same ordered OLMo-mix-0925 token
+    objects; only the object-store scheme differs (``gs`` versus ``s3``). This proof permits all
+    three lineages to consume one immutable compact materialization while their model checkpoints
+    remain distinct. It deliberately ignores loader cursor, batch size, and seed: joint replay is
+    a new deterministic panel of the parent corpus, not a continuation of pretraining's cursor.
+    """
+
+    anchor = ArtifactConfig.for_model_variant(VisionAlignmentModelVariant.s002)
+    if artifacts == anchor:
+        return anchor
+    if artifacts not in (
+        ArtifactConfig.for_model_variant(VisionAlignmentModelVariant.ssmax_head_qknorm),
+        ArtifactConfig.for_model_variant(VisionAlignmentModelVariant.ssmax_no_qknorm),
+    ):
+        raise ValueError("Native replay lineage is not one of the reviewed bare-model artifacts")
+    if (
+        artifacts.parent_text_mix != anchor.parent_text_mix
+        or artifacts.base_parent_mix_sha256 != anchor.base_parent_mix_sha256
+        or artifacts.base_dataset_fingerprint != anchor.base_dataset_fingerprint
+    ):
+        raise ValueError("SSMax native corpus identity differs from the shared replay anchor")
+
+    def pinned_bytes(path: Path, expected_sha256: str, *, name: str) -> bytes:
+        try:
+            raw = path.read_bytes()
+        except OSError as error:
+            raise ValueError(f"Could not read pinned {name} at {path}: {error}") from error
+        actual_sha256 = hashlib.sha256(raw).hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise ValueError(
+                f"Pinned {name} SHA-256 differs: expected {expected_sha256}, "
+                f"got {actual_sha256}"
+            )
+        return raw
+
+    selected_config = pinned_bytes(
+        Path(artifacts.base_checkpoint) / "config.json",
+        artifacts.base_config_sha256,
+        name="selected native-parent config",
+    )
+    anchor_config = pinned_bytes(
+        Path(anchor.base_checkpoint) / "config.json",
+        anchor.base_config_sha256,
+        name="shared replay-anchor config",
+    )
+    if _native_dataset_semantic_contract(
+        selected_config, name="selected native parent"
+    ) != _native_dataset_semantic_contract(anchor_config, name="shared replay anchor"):
+        raise ValueError("SSMax native dataset semantics differ from the shared replay anchor")
+
+    selected_paths = _load_pinned_native_parent_paths(artifacts)
+    anchor_paths = _load_pinned_native_parent_paths(anchor)
+    if _normalized_native_parent_paths(selected_paths) != _normalized_native_parent_paths(
+        anchor_paths
+    ):
+        raise ValueError("SSMax native object inventory differs from the shared replay anchor")
+
+    selected_trainer = pinned_bytes(
+        Path(artifacts.base_checkpoint) / "train" / "rank0.pt",
+        artifacts.base_trainer_state_sha256,
+        name="selected native-parent trainer state",
+    )
+    anchor_trainer = pinned_bytes(
+        Path(anchor.base_checkpoint) / "train" / "rank0.pt",
+        anchor.base_trainer_state_sha256,
+        name="shared replay-anchor trainer state",
+    )
+    selected_loader = _safe_native_loader_contract(selected_trainer, name="selected native parent")
+    anchor_loader = _safe_native_loader_contract(anchor_trainer, name="shared replay anchor")
+    if selected_loader != anchor_loader or selected_loader != {
+        "dataset_fingerprint_version": "v2.0",
+        "dataset_fingerprint": artifacts.base_dataset_fingerprint,
+        "dataset_type": "fsl",
+        "sequence_length": _JOINT_SEQUENCE_LENGTH,
+        "max_target_sequence_length": _JOINT_SEQUENCE_LENGTH,
+    }:
+        raise ValueError("SSMax trainer dataset identity differs from the shared replay anchor")
+    return anchor
+
+
 def _validate_native_replay_pair(config: ExperimentConfig) -> None:
     """Validate pinned, disjoint native train/holdout replay manifests for joint CPT."""
     train_config = config.data.native_text_replay
@@ -3439,10 +4374,11 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
         raise ValueError(
             "Joint vision alignment requires native replay train and holdout manifests"
         )
+    replay_artifacts = _native_replay_lineage_artifacts(config.artifacts)
     expected = {
-        "expected_parent_checkpoint": config.artifacts.base_checkpoint,
-        "expected_parent_mix": config.artifacts.parent_text_mix,
-        "expected_parent_paths_sha256": config.artifacts.base_data_paths_sha256,
+        "expected_parent_checkpoint": replay_artifacts.base_checkpoint,
+        "expected_parent_mix": replay_artifacts.parent_text_mix,
+        "expected_parent_paths_sha256": replay_artifacts.base_data_paths_sha256,
     }
     for split, replay_config, pinned_fingerprint in (
         ("train", train_config, config.data.native_text_replay_fingerprint),
@@ -3477,16 +4413,16 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
     if receipt.version != 3:
         raise ValueError("Joint native replay requires a compact v3 verification receipt")
     expected_receipt_lineage = {
-        "parent_paths_sha256": config.artifacts.base_data_paths_sha256,
-        "parent_mix_sha256": BASE_PARENT_MIX_SHA256,
-        "parent_config_sha256": config.artifacts.base_config_sha256,
-        "parent_trainer_state_sha256": BASE_TRAINER_STATE_SHA256,
-        "parent_dataset_fingerprint": BASE_DATASET_FINGERPRINT,
+        "parent_paths_sha256": replay_artifacts.base_data_paths_sha256,
+        "parent_mix_sha256": replay_artifacts.base_parent_mix_sha256,
+        "parent_config_sha256": replay_artifacts.base_config_sha256,
+        "parent_trainer_state_sha256": replay_artifacts.base_trainer_state_sha256,
+        "parent_dataset_fingerprint": replay_artifacts.base_dataset_fingerprint,
     }
     for field_name, expected_value in expected_receipt_lineage.items():
         if getattr(receipt, field_name) != expected_value:
             raise ValueError(f"Native replay verification receipt has incompatible {field_name}")
-    parent_paths = _load_pinned_native_parent_paths(config.artifacts)
+    parent_paths = _load_pinned_native_parent_paths(replay_artifacts)
     receipt_parent_paths = tuple(
         cast(str, remote_source["parent_path"]) for remote_source in receipt.remote_sources
     )
@@ -3495,7 +4431,10 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
             "Native replay verification receipt remote_sources must exactly enumerate the "
             "pinned parent data paths"
         )
-    if _native_parent_dataset_fingerprint(receipt.remote_sources) != BASE_DATASET_FINGERPRINT:
+    if (
+        _native_parent_dataset_fingerprint(receipt.remote_sources)
+        != replay_artifacts.base_dataset_fingerprint
+    ):
         raise ValueError(
             "Native replay verification receipt remote sizes do not reconstruct the pinned "
             "parent dataset fingerprint"
@@ -3515,12 +4454,12 @@ def _validate_native_replay_pair(config: ExperimentConfig) -> None:
         raise ValueError("Native replay train/holdout lineage, size, or sequence contract differs")
 
     expected_manifest_lineage = {
-        "parent_checkpoint": config.artifacts.base_checkpoint,
-        "parent_mix": config.artifacts.parent_text_mix,
-        "parent_paths_sha256": config.artifacts.base_data_paths_sha256,
-        "parent_config_sha256": config.artifacts.base_config_sha256,
-        "parent_trainer_state_sha256": BASE_TRAINER_STATE_SHA256,
-        "parent_dataset_fingerprint": BASE_DATASET_FINGERPRINT,
+        "parent_checkpoint": replay_artifacts.base_checkpoint,
+        "parent_mix": replay_artifacts.parent_text_mix,
+        "parent_paths_sha256": replay_artifacts.base_data_paths_sha256,
+        "parent_config_sha256": replay_artifacts.base_config_sha256,
+        "parent_trainer_state_sha256": replay_artifacts.base_trainer_state_sha256,
+        "parent_dataset_fingerprint": replay_artifacts.base_dataset_fingerprint,
         "remote_snapshot_sha256": receipt.remote_snapshot_sha256,
         "compact_materialization_sha256": receipt.compact_materialization_sha256,
         "selection_algorithm": _JOINT_NATIVE_REPLAY_SELECTION_ALGORITHM,
@@ -3576,6 +4515,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
     existing = _latest_output_checkpoint(config)
     if existing is not None:
         saved, _ = _checkpoint_config(existing)
+        _validate_checkpoint_model_lineage(config, saved, checkpoint=existing)
         saved_meta = saved.get("vision_alignment")
         if not isinstance(saved_meta, dict):
             raise ValueError(
@@ -3646,6 +4586,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
     parent = config.initialization.checkpoint
     assert parent is not None
     parent_config, parent_sha = _checkpoint_config(parent)
+    _validate_checkpoint_model_lineage(config, parent_config, checkpoint=parent)
     parent_meta = parent_config.get("vision_alignment")
     if not isinstance(parent_meta, dict):
         raise ValueError(f"Parent {parent} is not a vision-alignment checkpoint")
@@ -3675,6 +4616,7 @@ def _validate_parent_or_resume(config: ExperimentConfig) -> None:
 
 def _validate_canonical_data_policy(config: ExperimentConfig) -> None:
     """Reject structural data-policy drift while allowing pinned artifact overrides."""
+    model_variant = getattr(config, "model_variant", VisionAlignmentModelVariant.s002)
     expected_targets = VisionAlignmentMixtureConfig(phase=config.phase.value).resolved_targets()
     actual_targets = config.data.mixture.resolved_targets()
     expected_sources = set(expected_targets)
@@ -3697,13 +4639,55 @@ def _validate_canonical_data_policy(config: ExperimentConfig) -> None:
             f"expected {sorted(expected_sources)}, got {sorted(calibrated_sources)}"
         )
 
+    single_response = config.data.ssmax_single_response_projection
+    requires_single_response = _is_ssmax_variant(model_variant) and config.phase in (
+        VisionAlignmentPhase.perception,
+        VisionAlignmentPhase.joint,
+    )
+    if not requires_single_response:
+        if single_response is not None:
+            raise ValueError(
+                "The deterministic single-response projection is SSMax perception/joint only"
+            )
+    elif single_response is None:
+        raise ValueError("SSMax perception/joint requires deterministic single-response projection")
+    else:
+        single_response.contract(loss_token_weighting=config.data.loss_token_weighting)
+        if single_response.seed != DATA_SEED or single_response.seed != config.data_seed:
+            raise ValueError(
+                f"SSMax single-response projection seed must equal data_seed={DATA_SEED}"
+            )
+        projected_means = single_response.projected_mean_loss_weight
+        if set(projected_means) != expected_sources or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= 0
+            for value in projected_means.values()
+        ):
+            raise ValueError(
+                "SSMax projected loss-mass calibration must contain one positive finite mean "
+                f"for every phase source {sorted(expected_sources)}"
+            )
+        if (
+            not isinstance(single_response.calibration_path, str)
+            or not single_response.calibration_path
+            or re.fullmatch(r"[0-9a-f]{64}", str(single_response.calibration_sha256 or "")) is None
+        ):
+            raise ValueError(
+                "SSMax perception/joint requires a raw-SHA-pinned projection calibration receipt"
+            )
+
     expected_fields: Tuple[Tuple[str, Any], ...] = (
         ("message_format", "document"),
         ("loss_token_weighting", "root_subsegments_root_tokens"),
         ("caption_prompt", "Description:"),
         ("transcript_prompt", "Transcript:"),
         ("max_crops", MAX_CROPS),
-        ("pack_sequences", True),
+        # GatedDeltaNet state cannot currently be reset at multimodal pack boundaries.
+        # The dense SSMax arms therefore use one serialized example per sequence and fail
+        # closed if packed metadata reaches the model.
+        ("pack_sequences", not _is_ssmax_variant(model_variant)),
         ("pack_buffer_size", PACK_BUFFER_SIZE),
         ("pack_max_crops", PACK_MAX_CROPS),
     )
@@ -3719,16 +4703,30 @@ def _validate_canonical_data_policy(config: ExperimentConfig) -> None:
 def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _PhasePolicy) -> None:
     """Reject unsafe optimizer topology or scheduler routing changes."""
     optim = config.train_module.optim
+    model_variant = getattr(config, "model_variant", VisionAlignmentModelVariant.s002)
     expected_default_lr = policy.lm_lr if policy.lm_lr > 0 else policy.connector_lr
     if not math.isclose(float(optim.lr), expected_default_lr) or optim.lr <= 0:
         raise ValueError("Optimizer default LR must remain positive and phase-derived")
-    if (
-        optim.use_distributed is not True
-        or optim.check_nan_inf_grad is not True
-        or optim.clip_grad_norm_by_scheduler_group is not True
-        or optim.compile is not False
+    if model_variant is VisionAlignmentModelVariant.s002:
+        if not isinstance(optim, OLMoDDPOptimizerConfig) or (
+            optim.use_distributed is not True
+            or optim.check_nan_inf_grad is not True
+            or optim.clip_grad_norm_by_scheduler_group is not True
+            or optim.compile is not False
+        ):
+            raise ValueError(
+                "s002 vision alignment requires the pinned distributed optimizer safeguards"
+            )
+    elif not isinstance(optim, SkipStepAdamWConfig) or (
+        optim.compile is not False
+        or optim.foreach is not True
+        or optim.step_increment_bugfix is not True
+        or optim.sigma_factor != 12
+        or optim.betas != (0.9, 0.95)
+        or not math.isclose(optim.eps, 1e-6)
+        or not math.isclose(optim.weight_decay, 0.0)
     ):
-        raise ValueError("Vision alignment requires the pinned distributed optimizer safeguards")
+        raise ValueError("Dense SSMax alignment requires the pinned SkipStep AdamW contract")
 
     effective_vision_lr = (
         0.0
@@ -3810,14 +4808,18 @@ def _validate_optimizer_scheduler_contract(config: ExperimentConfig, policy: _Ph
 
 def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None:
     git = config.launch.git
+    model_variant = getattr(config, "model_variant", VisionAlignmentModelVariant.s002)
+    expected_branch = _expected_git_branch(model_variant)
     if git is None or re.fullmatch(r"[0-9a-f]{40}", git.ref or "") is None:
         raise ValueError("Vision alignment launch must pin an exact 40-character git revision")
 
     if not runtime:
-        if git.branch != "vision-moe":
-            raise ValueError(
-                "Vision alignment may launch only from the user-owned vision-moe branch"
-            )
+        if git.branch != expected_branch:
+            if model_variant is VisionAlignmentModelVariant.s002:
+                raise ValueError(
+                    "Vision alignment may launch only from the user-owned vision-moe branch"
+                )
+            raise ValueError(f"Vision alignment may launch only from {expected_branch!r}")
         return
 
     if not is_running_in_beaker_batch_job():
@@ -3829,16 +4831,37 @@ def _validate_git_provenance(config: ExperimentConfig, *, runtime: bool) -> None
     # the actual detached checkout instead of requiring an active worker-side branch.
     runtime_branch = os.environ.get("GIT_BRANCH")
     runtime_ref = os.environ.get("GIT_REF")
-    if runtime_branch != "vision-moe":
-        raise ValueError(
-            "Vision alignment runtime metadata must identify the user-owned vision-moe branch"
-        )
+    if runtime_branch != expected_branch:
+        raise ValueError(f"Vision alignment runtime metadata must identify {expected_branch!r}")
     if re.fullmatch(r"[0-9a-f]{40}", runtime_ref or "") is None:
         raise ValueError("Vision alignment runtime must include an exact GIT_REF")
     if git.ref != runtime_ref:
         raise ValueError("Vision alignment detached checkout does not match the submitted GIT_REF")
-    if git.branch not in (None, "vision-moe"):
+    if git.branch not in (None, expected_branch):
         raise ValueError("Vision alignment runtime checkout reports an unexpected active branch")
+
+
+def _validate_remote_git_ref(config: ExperimentConfig) -> None:
+    """Prove the exact submitted commit is present at the reviewed remote branch."""
+
+    git = config.launch.git
+    expected_branch = _expected_git_branch(config.model_variant)
+    if git is None or git.branch != expected_branch:
+        raise RuntimeError("Vision alignment launch Git branch is not pinned")
+    remote_ref = f"refs/heads/{expected_branch}"
+    try:
+        output = subprocess.check_output(
+            ["git", "ls-remote", "--heads", git.repo_url, remote_ref],
+            text=True,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("Could not verify the reviewed remote Git branch") from error
+    records = [line.split("\t", 1) for line in output.splitlines() if line]
+    if records != [[git.ref, remote_ref]]:
+        raise RuntimeError(
+            "The exact vision-alignment Git revision is not pushed at the reviewed branch"
+        )
 
 
 def _validate_reviewed_profile(config: ExperimentConfig) -> None:
@@ -3913,11 +4936,28 @@ def _validate_reviewed_profile(config: ExperimentConfig) -> None:
         or profile.get("phase") != config.phase.value
     ):
         raise ValueError(f"Production {config.phase.value} profile identity or schema differs")
+    profile_overrides = profile.get("overrides")
+    if not isinstance(profile_overrides, list) or not all(
+        isinstance(value, str) for value in profile_overrides
+    ):
+        raise ValueError(f"Production {config.phase.value} profile overrides are malformed")
+    variant_selectors = [
+        value for value in profile_overrides if value.startswith("--model_variant=")
+    ]
+    expected_variant_selector = f"--model_variant={config.model_variant.value}"
+    if _is_ssmax_variant(config.model_variant):
+        if variant_selectors != [expected_variant_selector]:
+            raise ValueError(
+                f"Production SSMax {config.phase.value} profile must explicitly select "
+                f"{config.model_variant.value!r} exactly once"
+            )
+    elif variant_selectors not in ([], [expected_variant_selector]):
+        raise ValueError("Production profile model variant differs from the experiment lineage")
     profile_launch = profile.get("launch")
     required_launch = {
         "num_nodes": 2,
         "num_gpus": 8,
-        "workspace": BEAKER_WORKSPACE,
+        "workspace": _beaker_workspace(config.model_variant),
         "cluster": BEAKER_CLUSTER,
         "budget": BEAKER_BUDGET,
         "priority": "urgent",
@@ -3956,20 +4996,24 @@ def _validate_phase_contract(
     config: ExperimentConfig, run_name: str, *, runtime: bool = False
 ) -> None:
     policy = _PHASE_POLICIES[config.phase]
-    if config.artifacts != ArtifactConfig():
+    expected_artifacts = ArtifactConfig.for_model_variant(config.model_variant)
+    if config.artifacts != expected_artifacts:
         raise ValueError("Pinned vision-alignment artifact identities may not be overridden")
+    if config.vision_alignment.model_variant is not config.model_variant:
+        raise ValueError("Checkpoint metadata and experiment model variants must match")
     if config.required_run_name != run_name or config.vision_alignment.lineage_id != run_name:
         raise ValueError(
             "Positional run name, required_run_name, and lineage_id must match exactly"
         )
     _validate_reviewed_profile(config)
-    expected_save_folder = f"{VISION_ALIGNMENT_ROOT}/checkpoints/{run_name}"
+    experiment_root = _experiment_root(config.model_variant)
+    expected_save_folder = f"{experiment_root}/checkpoints/{run_name}"
     if config.trainer.save_folder != expected_save_folder:
         raise ValueError(
             f"Vision alignment save folder must be {expected_save_folder!r}, "
             f"got {config.trainer.save_folder!r}"
         )
-    checkpoint_root = (Path(VISION_ALIGNMENT_ROOT) / "checkpoints").resolve()
+    checkpoint_root = (Path(experiment_root) / "checkpoints").resolve()
     resolved_save_folder = Path(config.trainer.save_folder).resolve()
     if resolved_save_folder.parent != checkpoint_root:
         raise ValueError(f"Vision-alignment output must be one direct child of {checkpoint_root}")
@@ -3983,7 +5027,7 @@ def _validate_phase_contract(
     if (
         not isinstance(wandb, WandBCallback)
         or wandb.name != run_name
-        or wandb.project != WANDB_PROJECT
+        or wandb.project != _wandb_project(config.model_variant)
         or wandb.entity != WANDB_ENTITY
         or wandb.enabled is not True
         or wandb.auto_resume is not True
@@ -4004,7 +5048,10 @@ def _validate_phase_contract(
         raise ValueError("Vision alignment profiles may select Holmes only, not exact hosts")
     if config.launch.clusters != [BEAKER_CLUSTER]:
         raise ValueError(f"Vision alignment must target only {BEAKER_CLUSTER}")
-    if config.launch.workspace != BEAKER_WORKSPACE or config.launch.budget != BEAKER_BUDGET:
+    if (
+        config.launch.workspace != _beaker_workspace(config.model_variant)
+        or config.launch.budget != BEAKER_BUDGET
+    ):
         raise ValueError("Vision alignment workspace and budget are pinned by the recipe")
     if config.launch.num_gpus != 8 or config.launch.num_nodes < 1:
         raise ValueError("Vision alignment requires one or more complete 8-GPU Holmes nodes")
@@ -4030,8 +5077,12 @@ def _validate_phase_contract(
         for bucket in (config.launch.weka_buckets or [])
     ):
         raise ValueError("Vision alignment requires the approved training Weka mount")
-    if not config.launch.beaker_image or not config.launch.post_setup:
-        raise ValueError("Vision alignment requires the pinned runtime image and setup hook")
+    if not config.launch.beaker_image:
+        raise ValueError("Vision alignment requires the pinned runtime image")
+    if config.model_variant is VisionAlignmentModelVariant.s002 and not config.launch.post_setup:
+        raise ValueError("s002 vision alignment requires its OLMoDDP runtime setup hook")
+    if _is_ssmax_variant(config.model_variant) and config.launch.post_setup is not None:
+        raise ValueError("Dense SSMax alignment must not build the unused OLMoDDP EP extension")
 
     if config.initialization.mode is not policy.initialization_mode:
         raise ValueError(
@@ -4058,6 +5109,53 @@ def _validate_phase_contract(
         or len(config.train_module.train_embedding_rows) != 6
     ):
         raise ValueError("Exactly six input-only image-token rows must be trainable")
+    if config.model_variant is VisionAlignmentModelVariant.s002:
+        if "ssmax_health_ledger" in config.trainer.callbacks:
+            raise ValueError("The SSMax health ledger must not alter the historical s002 recipe")
+        if not isinstance(config.train_module, MultimodalOLMoDDPTrainModuleConfig):
+            raise ValueError("s002 requires the audited OLMoDDP multimodal train module")
+        if (
+            config.train_module.dp_config is None
+            or config.train_module.dp_config.name is not DataParallelType.ddp
+            or config.train_module.ep_config is None
+            or config.train_module.ep_config.degree != EP_DEGREE
+        ):
+            raise ValueError("s002 requires the pinned DDP/EP8 topology")
+        if config.router_lb_loss_weight is None:
+            raise ValueError("s002 requires its routed-expert load-balancing loss")
+    else:
+        ledger = config.trainer.callbacks.get("ssmax_health_ledger")
+        if (
+            not isinstance(ledger, SSMaxHealthLedgerCallback)
+            or ledger.enabled is not True
+            or ledger.model_variant != config.model_variant.value
+            or ledger.phase != config.phase.value
+            or ledger.run_name != run_name
+        ):
+            raise ValueError(
+                "Dense SSMax phases require their exact checkpoint-native health ledger"
+            )
+        if not isinstance(config.train_module, MultimodalTransformerTrainModuleConfig):
+            raise ValueError("Dense SSMax variants require the generic multimodal train module")
+        if (
+            config.train_module.dp_config is None
+            or config.train_module.dp_config.name is not DataParallelType.hsdp
+            or config.train_module.dp_config.param_dtype is not DType.bfloat16
+            or config.train_module.dp_config.reduce_dtype is not DType.float32
+        ):
+            raise ValueError("Dense SSMax variants require the pinned BF16/FP32 HSDP topology")
+        if config.router_lb_loss_weight is not None:
+            raise ValueError("Dense SSMax variants do not have a router loss")
+        if config.train_module.new_component_init_seed != config.init_seed:
+            raise ValueError("SSMax connector initialization seed must match init_seed")
+        if (
+            config.train_module.state_dict_load_opts is not None
+            or config.train_module.load_key_mapping is not None
+        ):
+            raise ValueError(
+                "SSMax alignment requires the generic checkpointer's default strict, "
+                "identity-key model load"
+            )
     _validate_optimizer_scheduler_contract(config, policy)
 
     _validate_canonical_data_policy(config)
@@ -4075,8 +5173,11 @@ def _validate_phase_contract(
         raise ValueError("global_batch_size must be divisible by sequence_length")
     if config.data.mixture.phase != config.phase.value:
         raise ValueError("Mixture phase must match the experiment phase")
-    if not config.data.pack_sequences:
-        raise ValueError("Vision alignment requires packing for exact source delivery telemetry")
+    if config.data.pack_sequences == _is_ssmax_variant(config.model_variant):
+        raise ValueError(
+            "s002 requires audited sequence packing, while recurrent SSMax variants must "
+            "disable it"
+        )
     if config.train_module.source_loss_mass_targets != config.data.mixture.resolved_targets():
         raise ValueError("Train-module source telemetry targets differ from the data mixture")
     if not config.data.allow_unpinned_synthetic_smoke and (
@@ -4099,13 +5200,14 @@ def _validate_phase_contract(
     if config.phase is VisionAlignmentPhase.joint:
         if replay is None:
             raise ValueError("The joint phase requires an exact native-text replay manifest")
-        if replay.expected_parent_checkpoint != config.artifacts.base_checkpoint:
-            raise ValueError("Native replay must pin the bare model's exact parent checkpoint")
-        if replay.expected_parent_mix != config.artifacts.parent_text_mix:
-            raise ValueError("Native replay must pin the bare model's exact parent text mix")
-        if replay.expected_parent_paths_sha256 != config.artifacts.base_data_paths_sha256:
+        replay_artifacts = _native_replay_lineage_artifacts(config.artifacts)
+        if replay.expected_parent_checkpoint != replay_artifacts.base_checkpoint:
+            raise ValueError("Native replay must pin the reviewed shared corpus anchor")
+        if replay.expected_parent_mix != replay_artifacts.parent_text_mix:
+            raise ValueError("Native replay must pin the shared corpus's exact parent text mix")
+        if replay.expected_parent_paths_sha256 != replay_artifacts.base_data_paths_sha256:
             raise ValueError(
-                "Native replay must pin the bare model's exact expanded parent path manifest"
+                "Native replay must pin the shared corpus's exact expanded parent path manifest"
             )
         if replay.expected_fingerprint is None:
             raise ValueError("Joint native replay must pin expected_fingerprint")
@@ -4126,6 +5228,8 @@ def _validate_phase_contract(
         _validate_native_artifact_phase(config)
 
     source_audit = _validated_source_audit(config)
+    if source_audit is not None:
+        _ssmax_single_response_calibration(config, source_audit)
     if config.phase is VisionAlignmentPhase.perception:
         provenance = _perception_provenance(config)
         if any(
@@ -4229,8 +5333,9 @@ def build_config(
     _validate_run_name(run_name)
     _validate_override_surface(overrides)
     phase = _extract_phase(overrides)
+    model_variant = _extract_model_variant(overrides)
     policy = _PHASE_POLICIES[phase]
-    artifacts = ArtifactConfig()
+    artifacts = ArtifactConfig.for_model_variant(model_variant)
     tokenizer, token_ids = _load_tokenizer(artifacts)
     if tokenizer.pad_token_id is None:
         raise ValueError(f"Tokenizer {artifacts.tokenizer_id!r} has no pad token")
@@ -4243,16 +5348,25 @@ def build_config(
     data = VisionAlignmentDataConfig(
         sequence_length=policy.sequence_length,
         mixture=VisionAlignmentMixtureConfig(phase=phase.value),
+        pack_sequences=not _is_ssmax_variant(model_variant),
+        ssmax_single_response_projection=(
+            SSMaxSingleResponseProjectionConfig(seed=DATA_SEED)
+            if _is_ssmax_variant(model_variant)
+            and phase in (VisionAlignmentPhase.perception, VisionAlignmentPhase.joint)
+            else None
+        ),
     )
     collator = MultimodalCollatorConfig(
         pad_token_id=int(tokenizer.pad_token_id),
         label_ignore_index=-100,
         pad_sequence_length=policy.sequence_length,
     )
-    train_module = _build_train_module_config(policy, image_ids)
+    train_module = _build_train_module_config(policy, image_ids, model_variant)
+    experiment_root = _experiment_root(model_variant)
+    wandb_project = _wandb_project(model_variant)
     trainer = (
         TrainerConfig(
-            save_folder=f"{VISION_ALIGNMENT_ROOT}/checkpoints/{run_name}",
+            save_folder=f"{experiment_root}/checkpoints/{run_name}",
             save_overwrite=True,
             load_path=None,
             load_strategy=(
@@ -4282,8 +5396,8 @@ def build_config(
             WandBCallback(
                 name=run_name,
                 entity=WANDB_ENTITY,
-                project=WANDB_PROJECT,
-                enabled=WANDB_PROJECT is not None,
+                project=wandb_project,
+                enabled=wandb_project is not None,
                 cancel_check_interval=10,
                 auto_resume=True,
             ),
@@ -4293,12 +5407,21 @@ def build_config(
         .with_callback("beaker", BeakerCallback())
         .with_callback("console_logger", _build_console_logger())
     )
+    if _is_ssmax_variant(model_variant):
+        trainer = trainer.with_callback(
+            "ssmax_health_ledger",
+            SSMaxHealthLedgerCallback(
+                model_variant=model_variant.value,
+                phase=phase.value,
+                run_name=run_name,
+            ),
+        )
     launch_config = build_launch_config(
         name=run_name,
         root_dir=get_root_dir(BEAKER_CLUSTER),
         cmd=[script, "train", run_name, *overrides],
         cluster=BEAKER_CLUSTER,
-        workspace=BEAKER_WORKSPACE,
+        workspace=_beaker_workspace(model_variant),
         budget=BEAKER_BUDGET,
         num_nodes=2,
     )
@@ -4310,14 +5433,15 @@ def build_config(
         for secret in launch_config.env_secrets
         if secret.name in ("BEAKER_TOKEN", "WANDB_API_KEY")
     ]
-    _configure_launch_runtime(launch_config)
+    _configure_launch_runtime(launch_config, model_variant)
 
     config = ExperimentConfig(
         launch=launch_config,
-        model=_build_model_config(token_ids, artifacts),
+        model=_build_model_config(token_ids, artifacts, model_variant),
         collator=collator,
         train_module=train_module,
         trainer=trainer,
+        model_variant=model_variant,
         phase=phase,
         perception_trainability_arm=PerceptionTrainabilityArm.treatment,
         artifacts=artifacts,
@@ -4325,12 +5449,16 @@ def build_config(
         data=data,
         evaluation=_build_evaluation_config(policy),
         vision_alignment=VisionAlignmentMetadataConfig(
+            model_variant=model_variant,
             phase=phase,
             lineage_id=run_name,
             parent_checkpoint=initialization.checkpoint,
             parent_gate_sha256=initialization.parent_gate_sha256,
         ),
         global_batch_size=GLOBAL_BATCH_INSTANCES * policy.sequence_length,
+        router_lb_loss_weight=(
+            0.015 if model_variant is VisionAlignmentModelVariant.s002 else None
+        ),
         required_run_name=run_name,
         expected_launch_command=[script, "train", run_name, *overrides],
         reviewed_profile_path=reviewed_profile_path,
@@ -4338,6 +5466,7 @@ def build_config(
         reviewed_profile_allowlist_path=reviewed_profile_allowlist_path,
         reviewed_profile_allowlist_sha256=reviewed_profile_allowlist_sha256,
     ).merge(overrides)
+    _pin_launch_git_branch(config)
     if (
         config.phase is VisionAlignmentPhase.perception
         and config.perception_trainability_arm is PerceptionTrainabilityArm.frozen_vision_control
@@ -4355,8 +5484,11 @@ def build_config(
     ):
         config.trainer.load_path = config.initialization.checkpoint
     config.vision_alignment.phase = config.phase
+    config.vision_alignment.model_variant = config.model_variant
     config.vision_alignment.parent_checkpoint = config.initialization.checkpoint
     config.vision_alignment.parent_gate_sha256 = config.initialization.parent_gate_sha256
+    if isinstance(config.train_module, MultimodalTransformerTrainModuleConfig):
+        config.train_module.new_component_init_seed = config.init_seed
 
     if config.data.native_text_replay is not None:
         manifest = config.data.native_text_replay.build(tokenizer).manifest
@@ -4365,7 +5497,10 @@ def build_config(
         holdout_manifest = config.evaluation.native_text_holdout.build(tokenizer).manifest
         config.evaluation.native_text_holdout_fingerprint = holdout_manifest.content_fingerprint
     config.train_module.source_loss_mass_targets = config.data.mixture.resolved_targets()
-    _configure_router_load_balancing(config.model.lm, config.router_lb_loss_weight)
+    if config.model_variant is VisionAlignmentModelVariant.s002:
+        _configure_router_load_balancing(config.model.lm, config.router_lb_loss_weight)
+    elif config.router_lb_loss_weight is not None:
+        raise ValueError("Dense SSMax variants do not have a routed-expert load-balancing loss")
     _validate_phase_contract(config, run_name, runtime=runtime)
     return config
 
@@ -4379,6 +5514,37 @@ def _visual_dataset_config(
 ) -> Any:
     return build_vision_alignment_dataset_config(
         _source_spec(config), token_ids, source_name, split=split
+    )
+
+
+def _ssmax_single_response_dataset(
+    config: ExperimentConfig,
+    dataset: Any,
+    source_name: str,
+    *,
+    logical_split: str,
+) -> Any:
+    """Apply the SSMax-only annotation projection at the selected-dataset boundary."""
+
+    projection = config.data.ssmax_single_response_projection
+    required = _is_ssmax_variant(config.model_variant) and config.phase in (
+        VisionAlignmentPhase.perception,
+        VisionAlignmentPhase.joint,
+    )
+    if not required:
+        if projection is not None:
+            raise ValueError("Single-response projection is configured outside its SSMax phases")
+        return dataset
+    if source_name == "native_text_replay":
+        return dataset
+    if projection is None:
+        raise ValueError("SSMax visual source reached runtime without a projection contract")
+    return SSMaxSingleResponseDataset(
+        dataset,
+        source_name=source_name,
+        logical_split=logical_split,
+        seed=projection.seed,
+        loss_token_weighting=config.data.loss_token_weighting,
     )
 
 
@@ -4405,6 +5571,7 @@ def _build_mixture_sources(
             f"{missing}. Implement and audit them; do not substitute QA/SFT sources."
         )
     audit = _validated_source_audit(config)
+    calibration = _ssmax_single_response_calibration(config, audit) if audit is not None else None
     perception_provenance = (
         _perception_provenance(config) if config.phase is VisionAlignmentPhase.perception else None
     )
@@ -4413,7 +5580,13 @@ def _build_mixture_sources(
         if config.phase is VisionAlignmentPhase.joint
         else None
     )
-    weights = config.data.mixture.sampling_weights()
+    single_response = config.data.ssmax_single_response_projection
+    effective_means = (
+        single_response.projected_mean_loss_weight
+        if single_response is not None
+        else config.data.mixture.mean_loss_weight
+    )
+    weights = sampling_weights_from_loss_mass(targets, effective_means)
     sources: List[Tuple[str, Any, float]] = []
     for name in targets:
         dataset: Any
@@ -4455,12 +5628,27 @@ def _build_mixture_sources(
                 )
         if audit is not None:
             dataset = _AuditedDataset(dataset, name, audit, token_ids=token_ids)
+        dataset = _ssmax_single_response_dataset(
+            config,
+            dataset,
+            name,
+            logical_split="train",
+        )
+        if calibration is not None:
+            if audit is None:
+                raise ValueError("SSMax projection calibration requires the pinned source audit")
+            _validate_live_ssmax_projection_calibration(
+                calibration,
+                audit,
+                dataset,
+                name,
+            )
         sources.append((name, dataset, weights[name]))
     sources.sort(key=lambda item: item[0])
     names = [item[0] for item in sources]
     datasets = [item[1] for item in sources]
     sampling = [item[2] for item in sources]
-    delivered = expected_loss_mass(dict(zip(names, sampling)), config.data.mixture.mean_loss_weight)
+    delivered = expected_loss_mass(dict(zip(names, sampling)), effective_means)
     log.info("Vision-alignment sampling probabilities: %s", dict(zip(names, sampling)))
     log.info("Calibrated expected supervised-loss mass: %s", delivered)
     return datasets, sampling, names
@@ -4486,6 +5674,11 @@ def _add_intrinsic_visual_evaluators(
         raise ValueError("examples_per_source must divide the global evaluation batch")
     eval_batches = eval_config.examples_per_source // global_instances
     evaluators: List[Evaluator] = []
+    calibration = None
+    if getattr(config.data, "ssmax_single_response_projection", None) is not None:
+        source_audit = _validated_source_audit(config)
+        assert source_audit is not None
+        calibration = _ssmax_single_response_calibration(config, source_audit)
     validation_manifest = None
     perception_provenance = None
     joint_projection = None
@@ -4541,6 +5734,14 @@ def _add_intrinsic_visual_evaluators(
                 config, token_ids, source_name, split="validation"
             ).build(tokenizer)
             _validate_live_validation_dataset(dataset, validation_manifest)
+        dataset = _ssmax_single_response_dataset(
+            config,
+            dataset,
+            source_name,
+            logical_split="validation",
+        )
+        if calibration is not None:
+            _validate_live_ssmax_projection_validation(calibration, dataset, source_name)
         loader = MultimodalDataLoader(
             dataset,
             collator,
@@ -4671,18 +5872,236 @@ def _validate_runtime_trainability(train_module, config: ExperimentConfig) -> No
         raise RuntimeError("Runtime image-row mask differs from the phase config")
 
 
+def _mixture_data_error_policy(
+    model_variant: VisionAlignmentModelVariant,
+) -> Dict[str, int]:
+    """Fail recurrent SSMax runs on the first non-reproducible data row."""
+
+    if _is_ssmax_variant(model_variant):
+        return {"max_consecutive_data_errors": 0, "max_total_data_errors": 0}
+    return {}
+
+
+def _write_immutable_json_receipt(path: Path, payload: Mapping[str, Any]) -> None:
+    """Create one canonical receipt, accepting only a byte-identical existing file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = (
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode()
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        if path.read_bytes() != raw:
+            raise RuntimeError(f"Existing immutable receipt differs at {path}")
+        return
+    with os.fdopen(descriptor, "wb") as file_handle:
+        file_handle.write(raw)
+        file_handle.flush()
+        os.fsync(file_handle.fileno())
+
+
+def _validate_ssmax_phase_parent_model_state(train_module, config: ExperimentConfig) -> None:
+    """Preflight an SSMax cross-phase checkpoint before Trainer performs its model-only load.
+
+    The ordinary generic checkpointer remains the sole loader. This metadata-only pass makes the
+    intended contract explicit: every current multimodal tensor must exist exactly once under the
+    native ``model.`` prefix with the same shape, dtype, and layout. Optimizer entries may be
+    present in the parent DCP, but the phase config separately requires ``load_optim_state=False``
+    and ``load_trainer_state=False``.
+    """
+
+    if not _is_ssmax_variant(config.model_variant) or config.phase is VisionAlignmentPhase.bridge:
+        return
+    parent = config.initialization.checkpoint
+    if not isinstance(parent, str) or not parent:
+        raise RuntimeError("SSMax phase transition lacks its validated parent checkpoint")
+
+    from torch.distributed.checkpoint.metadata import TensorStorageMetadata
+
+    from olmo_core.distributed.checkpoint import get_checkpoint_metadata
+
+    state_dir = _checkpoint_state_dir(parent)
+    metadata = get_checkpoint_metadata(state_dir)
+    checkpoint_model = {
+        key.removeprefix("model."): value
+        for key, value in metadata.state_dict_metadata.items()
+        if key.startswith("model.")
+    }
+    current_model = train_module.multimodal_model.state_dict()
+    current_keys = set(current_model)
+    checkpoint_keys = set(checkpoint_model)
+    if checkpoint_keys != current_keys:
+        raise RuntimeError(
+            "SSMax phase parent model inventory differs from the current multimodal model; "
+            f"missing={sorted(current_keys - checkpoint_keys)[:16]}, "
+            f"unexpected={sorted(checkpoint_keys - current_keys)[:16]}"
+        )
+    for key, current_value in current_model.items():
+        tensor_metadata = checkpoint_model[key]
+        if not isinstance(tensor_metadata, TensorStorageMetadata):
+            raise RuntimeError(f"SSMax phase parent model entry {key!r} is not a tensor")
+        if (
+            tuple(tensor_metadata.size) != tuple(current_value.shape)
+            or tensor_metadata.properties.dtype != current_value.dtype
+            or tensor_metadata.properties.layout != current_value.layout
+        ):
+            raise RuntimeError(
+                f"SSMax phase parent tensor contract differs for {key!r}: "
+                f"checkpoint=(shape={tuple(tensor_metadata.size)}, "
+                f"dtype={tensor_metadata.properties.dtype}, "
+                f"layout={tensor_metadata.properties.layout}), "
+                f"current=(shape={tuple(current_value.shape)}, dtype={current_value.dtype}, "
+                f"layout={current_value.layout})"
+            )
+    log.info(
+        "Verified strict model-only %s parent inventory: %d tensors from %s",
+        config.phase.value,
+        len(current_model),
+        state_dir,
+    )
+
+
+def _verify_ssmax_parent_checkpoint_bytes(config: ExperimentConfig) -> Mapping[str, Any]:
+    """Rehash every native parent shard on rank 0 and broadcast its exact identity."""
+    import torch.distributed as dist
+
+    from olmo_core.eval.vision_alignment_ssmax_bridge import checkpoint_identity
+
+    artifacts = config.artifacts
+    required = {
+        "identity_sha256": artifacts.base_checkpoint_identity_sha256,
+        "state_file_count": artifacts.base_checkpoint_state_file_count,
+        "state_file_inventory_sha256": artifacts.base_checkpoint_state_file_inventory_sha256,
+        "trainer_state_count": artifacts.base_checkpoint_trainer_state_count,
+        "trainer_state_inventory_sha256": (
+            artifacts.base_checkpoint_trainer_state_inventory_sha256
+        ),
+    }
+    if any(value is None for value in required.values()):
+        raise RuntimeError("SSMax parent full-checkpoint byte pins are incomplete")
+    result: list[Any] = [None, None]
+    if get_rank() == 0:
+        try:
+            result[0] = checkpoint_identity(
+                Path(artifacts.base_checkpoint), workers=config.checkpoint_load_threads
+            )
+        # Rank 0 must convert every failure into a broadcast or its peers will deadlock here.
+        except Exception as error:  # noqa: BLE001
+            result[1] = f"{type(error).__name__}: {error}"
+    dist.broadcast_object_list(result, src=0)
+    if result[1] is not None:
+        raise RuntimeError(f"SSMax parent full-checkpoint verification failed: {result[1]}")
+    identity = cast(Mapping[str, Any], result[0])
+    expected = {
+        "path": str(Path(artifacts.base_checkpoint).expanduser().resolve()),
+        "global_step": 65_799,
+        "config_sha256": artifacts.base_config_sha256,
+        "marker_sha256": artifacts.base_checkpoint_marker_sha256,
+        "dcp_metadata_sha256": artifacts.base_checkpoint_metadata_sha256,
+        **required,
+    }
+    differences = sorted(name for name, value in expected.items() if identity.get(name) != value)
+    unexpected = sorted(set(identity) - set(expected))
+    if differences or unexpected:
+        raise RuntimeError(
+            "SSMax parent full-checkpoint identity differs from its pinned bytes: "
+            f"differing={differences}, unexpected={unexpected}"
+        )
+    return identity
+
+
+def _initialize_ssmax_parent(train_module, config: ExperimentConfig) -> None:
+    """Strictly load every and only LM tensor from one byte-pinned SSMax parent DCP."""
+    import torch.distributed as dist
+
+    parent_checkpoint_identity = _verify_ssmax_parent_checkpoint_bytes(config)
+    model = train_module.multimodal_model
+    model_state = model.state_dict()
+    named_parameters = dict(model.named_parameters())
+    loaded_model_keys = {key for key in model_state if key.startswith("lm.")}
+    missing_model_keys = set(model_state) - loaded_model_keys
+    loaded_parameter_keys = {key for key in named_parameters if key.startswith("lm.")}
+    artifacts = config.artifacts
+    if len(loaded_model_keys) != artifacts.expected_lm_tensor_count:
+        raise RuntimeError(
+            "SSMax runtime LM tensor inventory differs from its pinned parent: "
+            f"runtime={len(loaded_model_keys)}, expected={artifacts.expected_lm_tensor_count}"
+        )
+    parameter_count = sum(named_parameters[key].numel() for key in loaded_parameter_keys)
+    if parameter_count != artifacts.expected_lm_parameter_count:
+        raise RuntimeError(
+            "SSMax runtime LM parameter inventory differs from its pinned parent: "
+            f"runtime={parameter_count:,d}, expected={artifacts.expected_lm_parameter_count}"
+        )
+    key_mapping = {key: key.removeprefix("lm.") for key in loaded_model_keys}
+    receipt = train_module.load_parent_model_state_dict(
+        _checkpoint_state_dir(artifacts.base_checkpoint),
+        current_to_checkpoint_key_mapping=key_mapping,
+        expected_loaded_model_keys=loaded_model_keys,
+        expected_missing_model_keys=missing_model_keys,
+        expected_loaded_parameter_keys=loaded_parameter_keys,
+        process_group=dist.group.WORLD,
+        thread_count=config.checkpoint_load_threads,
+    )
+    receipt.update(
+        {
+            "format": "vision_alignment_ssmax_parent_load_receipt",
+            "version": 1,
+            "model_variant": config.model_variant.value,
+            "parent_checkpoint": artifacts.base_checkpoint,
+            "parent_config_sha256": artifacts.base_config_sha256,
+            "parent_data_paths_sha256": artifacts.base_data_paths_sha256,
+            "parent_checkpoint_marker_sha256": artifacts.base_checkpoint_marker_sha256,
+            "parent_dcp_metadata_sha256": artifacts.base_checkpoint_metadata_sha256,
+            "parent_trainer_state_sha256": artifacts.base_trainer_state_sha256,
+            "parent_source_commit": artifacts.source_commit,
+            "parent_olmo_core_commit": artifacts.source_olmo_core_commit,
+            "parent_model_keyset_sha256": artifacts.base_model_keyset_sha256,
+            "parent_model_inventory_sha256": artifacts.base_model_inventory_sha256,
+            "parent_checkpoint_identity_sha256": parent_checkpoint_identity["identity_sha256"],
+            "parent_state_file_count": parent_checkpoint_identity["state_file_count"],
+            "parent_state_file_inventory_sha256": parent_checkpoint_identity[
+                "state_file_inventory_sha256"
+            ],
+            "parent_trainer_state_count": parent_checkpoint_identity["trainer_state_count"],
+            "parent_trainer_state_inventory_sha256": parent_checkpoint_identity[
+                "trainer_state_inventory_sha256"
+            ],
+            "loaded_parameter_numel": parameter_count,
+        }
+    )
+    receipt["fingerprint"] = _canonical_sha256(receipt)
+    if get_rank() == 0:
+        _write_immutable_json_receipt(
+            Path(config.trainer.save_folder) / "bridge-parent-load-receipt.json",
+            receipt,
+        )
+    dist.barrier()
+
+
 def _initialize_fresh_bridge(train_module, config: ExperimentConfig, token_ids) -> None:
     import torch.distributed as dist
 
     artifacts = config.artifacts
-    state_dir = _checkpoint_state_dir(artifacts.base_checkpoint)
-    log.info("Loading bare s002 language-model weights from %s", state_dir)
-    train_module.load_state_dict_direct(
-        state_dir,
-        process_group=dist.group.WORLD,
-        thread_count=config.checkpoint_load_threads,
-        load_optim_state=False,
-    )
+    if config.model_variant is VisionAlignmentModelVariant.s002:
+        state_dir = _checkpoint_state_dir(artifacts.base_checkpoint)
+        log.info("Loading bare s002 language-model weights from %s", state_dir)
+        train_module.load_state_dict_direct(
+            state_dir,
+            process_group=dist.group.WORLD,
+            thread_count=config.checkpoint_load_threads,
+            load_optim_state=False,
+        )
+    else:
+        log.info("Loading pinned bare %s language-model weights", config.model_variant.value)
+        _initialize_ssmax_parent(train_module, config)
 
     from olmo_core.nn.vision import (
         load_siglip_hf_vision_state_dict,
@@ -4713,9 +6132,10 @@ def _initialize_fresh_bridge(train_module, config: ExperimentConfig, token_ids) 
 
 def train(config: ExperimentConfig) -> None:
     """Run one validated vision-alignment phase under torchrun."""
-    os.environ.setdefault("OLMO_USE_OWN_SYMM_MEM", "1")
-    os.environ.setdefault("OLMO_EP_MP_HIGH_PRIORITY_GROUP", "1")
-    os.environ.setdefault("OLMO_OWN_SYMM_PREWARM", "1")
+    if config.model_variant is VisionAlignmentModelVariant.s002:
+        os.environ.setdefault("OLMO_USE_OWN_SYMM_MEM", "1")
+        os.environ.setdefault("OLMO_EP_MP_HIGH_PRIORITY_GROUP", "1")
+        os.environ.setdefault("OLMO_OWN_SYMM_PREWARM", "1")
     seed_all(config.init_seed)
 
     tokenizer, token_ids = _load_tokenizer(config.artifacts)
@@ -4726,6 +6146,8 @@ def train(config: ExperimentConfig) -> None:
     _validate_runtime_trainability(train_module, config)
 
     existing = _latest_output_checkpoint(config)
+    if existing is None:
+        _validate_ssmax_phase_parent_model_state(train_module, config)
     if existing is None and config.phase is VisionAlignmentPhase.bridge:
         _initialize_fresh_bridge(train_module, config, token_ids)
     elif existing is not None:
@@ -4743,6 +6165,7 @@ def train(config: ExperimentConfig) -> None:
     dp_group = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_group), get_rank(dp_group)
     datasets, weights, names = _build_mixture_sources(tokenizer, token_ids, config)
+    data_error_policy = _mixture_data_error_policy(config.model_variant)
     data_loader: DataLoaderBase = MixtureDataLoader(
         datasets,
         weights,
@@ -4758,6 +6181,7 @@ def train(config: ExperimentConfig) -> None:
         allow_legacy_state_without_dataset_fingerprints=False,
         dp_world_size=dp_world_size,
         dp_rank=dp_rank,
+        **data_error_policy,
     )
 
     # Dataset preparation can have large rank-local skew on cold hosts. Synchronize on the
@@ -4788,6 +6212,7 @@ def launch(config: ExperimentConfig) -> None:
         raise RuntimeError("Vision alignment launch requires the approved Holmes workspace")
     if config.launch.hostnames:
         raise RuntimeError("Exact node selection is forbidden; request the Holmes cluster only")
+    _validate_remote_git_ref(config)
     config.launch.launch(follow=True)
 
 

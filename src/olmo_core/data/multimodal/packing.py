@@ -10,7 +10,7 @@ Cross-example isolation reuses the same machinery as intra-example branch isolat
 
 * a per-token ``example_ids`` vector marks which packed example each token belongs to;
   :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]`` into
-  the attention keep-mask so a token never attends across an example boundary.
+  the attention keep-mask so an attention token never attends across an example boundary.
 * per-example ``position_ids`` are preserved (each example keeps its own 0-based RoPE
   positions / branch overlap), so packing is invisible to RoPE.
 * ``subsegment_ids`` are concatenated (examples without branches get a constant id, which
@@ -22,6 +22,11 @@ Cross-example isolation reuses the same machinery as intra-example branch isolat
 
 Examples are never split, so the ``#<im_patch> == #pooled-features`` invariant is preserved
 per example (and hence for the pack).
+
+This contract only isolates attention-based sequence mixers. Recurrent mixers such as
+GatedDeltaNet also need their convolution and recurrent state reset at every example boundary;
+until the multimodal model has per-block ``cu_doc_lens`` plumbing, it rejects packed metadata
+and callers must disable packing.
 """
 
 from __future__ import annotations

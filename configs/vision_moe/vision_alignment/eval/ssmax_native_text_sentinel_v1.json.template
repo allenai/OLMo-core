@@ -1,0 +1,15 @@
+{
+  "content_sha256": "__CANONICAL_SHA256_OF_ALL_OTHER_FIELDS__",
+  "format": "vision_alignment_ssmax_native_text_sentinel",
+  "input_ids": [
+    "__TOKEN_IDS_FROM_A_FIXED_NATIVE_PRETRAINING_HOLDOUT_ROW_WITH_NO_IMAGE_TOKENS__"
+  ],
+  "labels": [
+    "__SAME_LENGTH_NEXT_TOKEN_LABELS_USING_MINUS_100_ONLY_FOR_IGNORED_POSITIONS__"
+  ],
+  "tokenizer": {
+    "identifier": "allenai/dolma2-tokenizer",
+    "revision": "__PINNED_REVISION_FROM_THE_SAVED_CONFIG__"
+  },
+  "version": 1
+}

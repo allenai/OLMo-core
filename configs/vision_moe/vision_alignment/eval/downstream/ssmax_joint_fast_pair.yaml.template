@@ -1,0 +1,169 @@
+version: v2
+budget: ai2/oe-other
+description: >-
+  Paired dense-SSMax joint-boundary image multiple-choice evaluation: exact BLINK Jigsaw
+  validation and MathVista testmini geometry/problem-solving multiple-choice slice.
+tasks:
+  - name: ssmax-head-qknorm-downstream-fast
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/vision_alignment_ssmax_downstream.py
+      - --checkpoint
+      - <SSMAX_HEAD_QKNORM_JOINT_CHECKPOINT>
+      - --expected-model-variant
+      - ssmax_head_qknorm
+      - --expected-phase
+      - joint
+      - --expected-global-step
+      - <JOINT_GLOBAL_STEP>
+      - --expected-config-sha256
+      - <SSMAX_HEAD_QKNORM_CONFIG_SHA256>
+      - --expected-marker-sha256
+      - <SSMAX_HEAD_QKNORM_MARKER_SHA256>
+      - --expected-dcp-metadata-sha256
+      - <SSMAX_HEAD_QKNORM_DCP_METADATA_SHA256>
+      - --expected-checkpoint-identity-sha256
+      - <SSMAX_HEAD_QKNORM_CHECKPOINT_IDENTITY_SHA256>
+      - --max-sequence-length
+      - "8192"
+      - --max-crops-total
+      - "8"
+      - --sequence-bucket-size
+      - "128"
+      - --checkpoint-load-threads
+      - "8"
+      - --output
+      - <SSMAX_HEAD_QKNORM_RESULT_PATH>
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: <OLMO_CORE_GIT_REF>}
+      - {name: GIT_BRANCH, value: rustin/vision-ssmax-molmofication}
+      - {name: GANTRY_TASK_NAME, value: ssmax-head-qknorm-downstream-fast}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_PRE_SETUP_CMD
+        value: >-
+          uv pip install --system "lmms-eval @
+          git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@cb45ac4d4a667ea5ef89c7a148bff69b3489b981"
+          datasets==3.6.0 pyarrow==19.0.1
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /results/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 32 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 12h0m0s
+
+  - name: ssmax-no-qknorm-downstream-fast
+    image:
+      beaker: 01KY8RWDARD3PR0F1T4ANGFH95
+    command: [bash, /gantry/entrypoint.sh]
+    arguments:
+      - python
+      - src/scripts/eval/vision_alignment_ssmax_downstream.py
+      - --checkpoint
+      - <SSMAX_NO_QKNORM_JOINT_CHECKPOINT>
+      - --expected-model-variant
+      - ssmax_no_qknorm
+      - --expected-phase
+      - joint
+      - --expected-global-step
+      - <JOINT_GLOBAL_STEP>
+      - --expected-config-sha256
+      - <SSMAX_NO_QKNORM_CONFIG_SHA256>
+      - --expected-marker-sha256
+      - <SSMAX_NO_QKNORM_MARKER_SHA256>
+      - --expected-dcp-metadata-sha256
+      - <SSMAX_NO_QKNORM_DCP_METADATA_SHA256>
+      - --expected-checkpoint-identity-sha256
+      - <SSMAX_NO_QKNORM_CHECKPOINT_IDENTITY_SHA256>
+      - --max-sequence-length
+      - "8192"
+      - --max-crops-total
+      - "8"
+      - --sequence-bucket-size
+      - "128"
+      - --checkpoint-load-threads
+      - "8"
+      - --output
+      - <SSMAX_NO_QKNORM_RESULT_PATH>
+    envVars:
+      - {name: GANTRY_VERSION, value: 3.7.0}
+      - {name: GITHUB_REPO, value: allenai/OLMo-core}
+      - {name: GIT_REF, value: <OLMO_CORE_GIT_REF>}
+      - {name: GIT_BRANCH, value: rustin/vision-ssmax-molmofication}
+      - {name: GANTRY_TASK_NAME, value: ssmax-no-qknorm-downstream-fast}
+      - {name: RESULTS_DIR, value: /results}
+      - {name: GANTRY_RUNTIME_DIR, value: /gantry-runtime}
+      - {name: GANTRY_EXEC_METHOD, value: exec}
+      - {name: GANTRY_DEFAULT_PYTHON_VERSION, value: "3.12"}
+      - {name: GANTRY_USE_SYSTEM_PYTHON, value: "1"}
+      - {name: GANTRY_PYTHON_MANAGER, value: uv}
+      - {name: GANTRY_UV_ALL_EXTRAS, value: "1"}
+      - name: GANTRY_PRE_SETUP_CMD
+        value: >-
+          uv pip install --system "lmms-eval @
+          git+https://github.com/EvolvingLMMs-Lab/lmms-eval.git@cb45ac4d4a667ea5ef89c7a148bff69b3489b981"
+          datasets==3.6.0 pyarrow==19.0.1
+      - {name: HF_HOME, value: /weka/oe-training-default/rustin/hf-cache}
+      - {name: XDG_CACHE_HOME, value: /weka/oe-training-default/rustin/.cache/xdg}
+      - {name: TMPDIR, value: /results/tmp}
+      - {name: CUDA_CACHE_PATH, value: /weka/oe-training-default/rustin/.cache/cuda}
+      - name: TORCHINDUCTOR_CACHE_DIR
+        value: /weka/oe-training-default/rustin/.cache/torchinductor
+      - {name: OLMO_TRITON_CACHE_BASE, value: /weka/oe-training-default/rustin/.cache/triton}
+      - {name: TOKENIZERS_PARALLELISM, value: "false"}
+      - {name: TORCH_LOGS, value: -dynamo}
+      - {name: BEAKER_TOKEN, secret: RUSTINS_BEAKER_TOKEN}
+    datasets:
+      - mountPath: /gantry
+        source: {beaker: 01KVV2DQHDQ4VRW0RHYWWHXW4M}
+      - mountPath: /weka/oe-training-default
+        source: {weka: oe-training-default}
+    result:
+      path: /results
+    resources:
+      gpuCount: 1
+      sharedMemory: 32 GiB
+    context:
+      priority: urgent
+      minRuntime: 8h0m0s
+      autoResume: true
+    constraints:
+      cluster: [ai2/holmes]
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
+    timeout: 12h0m0s

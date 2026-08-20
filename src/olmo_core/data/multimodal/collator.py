@@ -164,4 +164,17 @@ class MultimodalCollator:
         if any("pack_source_names" in ex for ex in examples):
             batch["pack_source_names"] = [ex.get("pack_source_names", []) for ex in examples]
 
+        # ``MixtureDataLoader(pack=False)`` annotates each standalone example with exactly one
+        # source name. Preserve that metadata separately from the packed-example representation;
+        # the train module consumes it for source loss-mass telemetry and never forwards it to
+        # the model.
+        if any("_source_name" in ex for ex in examples):
+            if not all(
+                isinstance(ex.get("_source_name"), str) and ex["_source_name"] for ex in examples
+            ):
+                raise ValueError(
+                    "Every collated example must have a non-empty _source_name when any does"
+                )
+            batch["source_names"] = [ex["_source_name"] for ex in examples]
+
         return batch

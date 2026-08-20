@@ -1,0 +1,49 @@
+version: 1
+name: ssmax-attention-probe-v1
+description: >-
+  Fixed PixMo-caption validation queries for checkpoint-to-checkpoint SSMax magnitude and
+  attention-entropy and key-category routing diagnostics. This is a mechanism probe, not a
+  downstream promotion gate.
+manifest:
+  path: /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-attention-probe-v1/ssmax-attention-probe.json
+  sha256: efd9802d831ebcdacd6e33218bcbb9af6cdf32754abacf79b286c5e5afcd7218
+  upstream_validation_manifest_sha256: 83cb9594648952c53d3ad042605a2e099e6a1e04bb24fed18625c1db53452d42
+population:
+  source: pixmo_caption
+  split: validation
+  rows: 32
+  row_selection_seed: 20260820
+  epoch: 0
+queries:
+  categories:
+    - all
+    - image
+    - prompt
+    - response
+  max_per_category_per_row: 8
+  observed_totals:
+    all: 256
+    image: 256
+    prompt: 64
+    response: 256
+  observed_valid_length:
+    min: 838
+    max: 1529
+collector:
+  distribution_sample_capacity: 512
+  query_chunk_size: 8
+  kv_cache: false
+  packed_cu_doc_lens: false
+  key_categories:
+    - image
+    - prompt
+    - response
+  routing_metrics:
+    - post_softmax_probability_mass
+    - argmax_key_category_share
+    - allowed_mass_and_partition_checks
+comparison:
+  entropy_drop_threshold: 0.10
+  effective_context_fraction_ratio_threshold: 0.50
+  absolute_logit_q99_ratio_threshold: 2.0
+  q_magnitude_ratio_threshold: 2.0

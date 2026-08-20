@@ -1,0 +1,27 @@
+dataset_path: AI4Math/MathVista
+dataset_kwargs:
+  revision: 2b6ad69445fbb5695c9b165475e8decdbeb97747
+task: ssmax_mathvista_geometry_mc
+test_split: testmini
+process_docs: !function utils.mathvista_geometry_mc_process_docs
+output_type: generate_until
+doc_to_visual: !function utils.mathvista_doc_to_visual
+doc_to_text: !function utils.mathvista_doc_to_text
+doc_to_target: answer
+generation_kwargs:
+  max_new_tokens: 1
+process_results: !function utils.mathvista_process_results
+metric_list:
+  - metric: mathvista_geometry_mc_acc
+    aggregation: !function utils.mathvista_geometry_mc_aggregate_results
+    higher_is_better: true
+lmms_eval_specific_kwargs:
+  default:
+    shot_type: solution
+    shot: 0
+    use_caption: false
+    use_ocr: false
+metadata:
+  protocol: vision_alignment_ssmax_downstream_v1
+  subset: metadata.task == geometry problem solving and question_type == multi_choice
+  expected_examples: 203

@@ -17,6 +17,19 @@ from .multimodal_lm_evaluator import (
     MultimodalBlankImageEvaluator,
     MultimodalLMEvaluator,
 )
+from .ssmax_attention_diagnostics import (
+    ProbeSequence,
+    SSMaxAttentionDiagnosticsCollector,
+    SSMaxProbeBatch,
+    SSMaxProbeManifest,
+    build_probe_manifest,
+    capture_ssmax_probe_batches,
+    compare_ssmax_attention_reports,
+    iter_ssmax_probe_batches,
+    probe_manifest_sha256,
+    serialize_probe_manifest,
+    validate_ssmax_attention_report,
+)
 
 __all__ = [
     "Evaluator",
@@ -31,4 +44,15 @@ __all__ = [
     "validate_matched_wrong_image_pairing",
     "Metric",
     "MeanMetric",
+    "ProbeSequence",
+    "SSMaxAttentionDiagnosticsCollector",
+    "SSMaxProbeBatch",
+    "SSMaxProbeManifest",
+    "build_probe_manifest",
+    "capture_ssmax_probe_batches",
+    "compare_ssmax_attention_reports",
+    "iter_ssmax_probe_batches",
+    "probe_manifest_sha256",
+    "serialize_probe_manifest",
+    "validate_ssmax_attention_report",
 ]
