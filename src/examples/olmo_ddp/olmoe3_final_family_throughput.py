@@ -84,6 +84,14 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         launch.no_python = True
         env = dict(PRESET.env_vars)
         env.update({"S3_PROFILE": "default", "PYTHONPATH": "src"})
+        # The train subcommand rebuilds its config inside the Beaker container,
+        # so explicitly propagate any launch-time diagnostic overrides.
+        for name in (
+            "OLMOE3_THROUGHPUT_MAX_STEPS",
+            "OLMOE3_TEST_EP_CAPACITY_FACTOR",
+        ):
+            if value := os.environ.get(name):
+                env[name] = value
         launch.env_vars = [
             BeakerEnvVar(name=name, value=value) for name, value in env.items()
         ]
