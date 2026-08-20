@@ -24,7 +24,7 @@ import math
 import os
 from dataclasses import dataclass, replace
 from fnmatch import fnmatch
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import (
     Any,
     Collection,
@@ -122,6 +122,25 @@ def _retain_embedding_gradient_rows(grad: torch.Tensor, row_ids: Tuple[int, ...]
             placements=mask_placements,
         )
     return grad * row_mask
+
+
+def _mask_embedding_output_gradients(
+    module: torch.nn.Module,
+    args: Tuple[Any, ...],
+    output: torch.Tensor,
+    *,
+    row_ids: Tuple[int, ...],
+) -> None:
+    """Restrict embedding-table gradients to lookups of ``row_ids``."""
+    del module
+    if not args or not isinstance(args[0], torch.Tensor):
+        raise RuntimeError("LM embedding forward did not receive positional input IDs")
+    if output.requires_grad:
+        input_ids = args[0]
+        keep = torch.zeros_like(input_ids, dtype=torch.bool)
+        for row_id in row_ids:
+            keep |= input_ids == row_id
+        output.register_hook(lambda grad: grad * keep.unsqueeze(-1))
 
 
 def _matched_component_grad_norm_patterns(
@@ -405,8 +424,15 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 raise OLMoConfigurationError(
                     "Row-masked image embeddings require untied LM input and output weights"
                 )
-            self._embedding_grad_hook = embeddings.weight.register_hook(
-                lambda grad: _retain_embedding_gradient_rows(grad, self.train_embedding_rows)
+            # FSDP2 computes with a temporary unsharded Parameter, so a gradient hook on the
+            # persistent sharded Parameter is bypassed. Mask the embedding module's output
+            # branch instead: this runs before EmbeddingBackward and FSDP reduction, while the
+            # image-feature branch receives its original downstream gradient.
+            self._embedding_grad_hook = embeddings.register_forward_hook(
+                partial(
+                    _mask_embedding_output_gradients,
+                    row_ids=self.train_embedding_rows,
+                )
             )
             log.info(
                 "Restricted LM input-embedding gradients to rows %s",

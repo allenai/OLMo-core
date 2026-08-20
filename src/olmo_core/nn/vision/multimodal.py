@@ -5,8 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, cast
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
+from torch.distributed.fsdp import FSDPModule
 
 from olmo_core.config import Config
 from olmo_core.distributed.utils import barrier, is_distributed
@@ -529,14 +528,18 @@ class MultimodalLM(nn.Module):
 
         # Compute raw LM token embeddings. We embed here (rather than inside ``self.lm``)
         # so image features can be spliced in before the LM's native input preconditioning.
-        # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
-        # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
-        # DDP / single-GPU where the weight is already a plain tensor).
+        # Under FSDP the untied embedding module is independently wrapped, so call its
+        # forward instead of gathering ``weight.full_tensor()`` directly. The module forward
+        # runs FSDP's unshard and gradient-reduction hooks; a direct DTensor gather would
+        # produce rank-local, unsynchronized embedding gradients.
         emb = self.lm.embeddings
-        emb_weight = emb.weight
-        if isinstance(emb_weight, DTensor):
-            emb_weight = emb_weight.full_tensor()
-        h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
+        if getattr(self.lm, "fsdp_enabled", False) and not isinstance(emb, FSDPModule):
+            raise OLMoConfigurationError(
+                "Multimodal FSDP requires the LM embedding table to be an independently "
+                "fully-sharded child. Root-owned tied embeddings cannot be called before "
+                "the LM root forward with synchronized gradients; use untied word embeddings."
+            )
+        h = emb(input_ids)
 
         if images is not None and encoded_image_features is not None:
             raise ValueError("Pass either `images` or `encoded_image_features`, not both")

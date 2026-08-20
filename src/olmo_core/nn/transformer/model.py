@@ -1118,9 +1118,10 @@ class Transformer(nn.Module):
             # Embedding params are not needed for backwards computation.
             cast(FSDPModule, self.embeddings).set_unshard_in_backward(False)
 
+        if self.embedding_norm is not None:
+            fully_shard(self.embedding_norm, **fsdp_config)
+
         if wrapping_strategy != TransformerDataParallelWrappingStrategy.blocks:
-            if self.embedding_norm is not None:
-                fully_shard(self.embedding_norm, **fsdp_config)
             if self.lm_head is not None and not self.tie_word_embeddings:
                 fully_shard(self.lm_head, reshard_after_forward=False, **fsdp_config)
 

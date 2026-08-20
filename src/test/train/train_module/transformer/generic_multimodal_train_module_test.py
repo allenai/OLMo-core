@@ -10,7 +10,9 @@ from olmo_core.distributed.checkpoint import save_state_dict
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.eval import MultimodalLMEvaluator
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.transformer.config import TransformerConfig
+from olmo_core.nn.transformer.model import TransformerDataParallelWrappingStrategy
 from olmo_core.nn.vision import (
     MultimodalLMConfig,
     VisionConnectorConfig,
@@ -119,7 +121,8 @@ def test_generic_config_round_trip_and_selective_embedding_rows():
     assert train_module.multimodal_model is train_module.model
     assert train_module.train_embedding_rows == (1, 3)
 
-    train_module.multimodal_model.lm.embeddings.weight.sum().backward()
+    embedding_ids = torch.arange(VOCAB_SIZE).unsqueeze(0)
+    train_module.multimodal_model.lm.embeddings(embedding_ids).sum().backward()
     grad = train_module.multimodal_model.lm.embeddings.weight.grad
     assert grad is not None
     assert torch.nonzero(grad.abs().sum(dim=1)).flatten().tolist() == [1, 3]
@@ -494,12 +497,25 @@ def test_parent_load_rejects_dtype_mismatch(tmp_path):
         )
 
 
-def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
-    model = _multimodal_config().build(init_device="meta")
+def _run_hsdp_meta_row_mask_step(parent_checkpoint_dir: str):
+    model_config = _multimodal_config()
+    model_config.lm.embed_scale = 3.0
+    model_config.lm.embedding_norm = LayerNormConfig(
+        name=LayerNormType.rms,
+        eps=1e-6,
+        bias=False,
+    )
+    model = model_config.build(init_device="meta")
     train_module = MultimodalTransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,
         max_sequence_length=SEQUENCE_LENGTH,
-        optim=AdamWConfig(lr=1e-4),
+        optim=AdamWConfig(lr=1e-4, weight_decay=0.0),
+        freeze_params=[
+            "vision.*",
+            "lm.embedding_norm.*",
+            "lm.blocks.*",
+            "lm.lm_head.*",
+        ],
         train_embedding_rows=[IMAGE_PATCH_TOKEN_ID],
         new_component_init_seed=6198,
         diagnostics_interval=1,
@@ -507,9 +523,12 @@ def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
         connector_activation_checkpointing=False,
         ac_config=TransformerActivationCheckpointingConfig(),
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.fsdp,
+            name=DataParallelType.hsdp,
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
+            num_replicas=1,
+            shard_degree=2,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.blocks,
         ),
     ).build(model, device=torch.device("cuda"))
     train_module._trainer = _Trainer()
@@ -546,6 +565,18 @@ def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
     embedding_value = train_module.multimodal_model.lm.embeddings.weight.full_tensor()
     torch.testing.assert_close(embedding_value, torch.full_like(embedding_value, 0.125))
     train_module.reset_image_token_rows([IMAGE_PATCH_TOKEN_ID], seed=6198, reset_output_rows=False)
+    embedding_before = train_module.multimodal_model.lm.embeddings.weight.full_tensor().clone()
+    embedding_norm_weight = train_module.multimodal_model.lm.embedding_norm.weight
+    assert isinstance(embedding_norm_weight, DTensor)
+    assert not embedding_norm_weight.requires_grad
+    connector_parameters = {
+        name: parameter
+        for name, parameter in train_module.multimodal_model.connector.named_parameters()
+        if parameter.requires_grad
+    }
+    connector_before = {
+        name: parameter.full_tensor().clone() for name, parameter in connector_parameters.items()
+    }
     batch = {
         "input_ids": torch.tensor(
             [[IMAGE_PATCH_TOKEN_ID, 3, 4, 5, 6, 7, 8, 9]],
@@ -560,6 +591,11 @@ def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
         "images": torch.randn(1, 1, 4, 14 * 14 * 3, device="cuda"),
         "pooled_patches_idx": torch.arange(4, device="cuda").reshape(1, 1, 4),
     }
+    # Only rank 1 contributes a loss. The image-row gradient owned by rank 0 can therefore
+    # be non-zero only if the embedding module's FSDP forward/backward hooks synchronize it.
+    # A direct ``DTensor.full_tensor()`` embedding lookup leaves this row exactly zero.
+    if torch.distributed.get_rank() == 0:
+        batch["loss_masks"].zero_()
 
     train_module.train_batch(batch)
     grad = train_module.multimodal_model.lm.embeddings.weight.grad
@@ -568,15 +604,38 @@ def _run_fsdp_meta_row_mask_step(parent_checkpoint_dir: str):
     nonzero_rows = torch.nonzero(full_grad.abs().sum(dim=1)).flatten().tolist()
     assert nonzero_rows == [IMAGE_PATCH_TOKEN_ID]
     train_module.optim_step()
+    embedding_after = train_module.multimodal_model.lm.embeddings.weight.full_tensor()
+    assert not torch.equal(
+        embedding_after[IMAGE_PATCH_TOKEN_ID], embedding_before[IMAGE_PATCH_TOKEN_ID]
+    )
+    non_image_rows = torch.arange(VOCAB_SIZE) != IMAGE_PATCH_TOKEN_ID
+    torch.testing.assert_close(
+        embedding_after[non_image_rows],
+        embedding_before[non_image_rows],
+        rtol=0,
+        atol=0,
+    )
+    assert any(
+        not torch.equal(parameter.full_tensor(), connector_before[name])
+        for name, parameter in connector_parameters.items()
+    )
     assert "multimodal/connector output RMS" in train_module.trainer.metrics
-    assert "optim/vision grad norm" in train_module.trainer.metrics
     assert "optim/connector grad norm" in train_module.trainer.metrics
-    assert "optim/LM sequence mixers grad norm" in train_module.trainer.metrics
+    assert "optim/input embeddings grad norm" in train_module.trainer.metrics
+    assert "optim/vision grad norm" not in train_module.trainer.metrics
+    assert "optim/LM sequence mixers grad norm" not in train_module.trainer.metrics
 
 
 @pytest.mark.gpu
-def test_generic_fsdp_meta_build_and_row_mask_step(tmp_path):
-    parent = _multimodal_config().lm.build(init_device="cpu")
+def test_generic_hsdp_meta_build_and_row_mask_step(tmp_path):
+    model_config = _multimodal_config()
+    model_config.lm.embed_scale = 3.0
+    model_config.lm.embedding_norm = LayerNormConfig(
+        name=LayerNormType.rms,
+        eps=1e-6,
+        bias=False,
+    )
+    parent = model_config.lm.build(init_device="cpu")
     parent.init_weights(
         device=torch.device("cpu"),
         max_seq_len=SEQUENCE_LENGTH,
@@ -586,7 +645,7 @@ def test_generic_fsdp_meta_build_and_row_mask_step(tmp_path):
         parent.embeddings.weight.fill_(0.125)
     save_state_dict(tmp_path, {"model": dist_cp_sd.get_model_state_dict(parent)})
     run_distributed_test(
-        _run_fsdp_meta_row_mask_step,
+        _run_hsdp_meta_row_mask_step,
         func_args=[str(tmp_path)],
         world_size=2,
         backend="nccl",
