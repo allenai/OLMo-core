@@ -93,6 +93,7 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
                 required=True,
             )
             for name, suffix in (
+                ("BEAKER_TOKEN", "BEAKER_TOKEN"),
                 ("WANDB_API_KEY", "WANDB_API_KEY"),
                 ("AWS_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"),
                 ("AWS_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"),
