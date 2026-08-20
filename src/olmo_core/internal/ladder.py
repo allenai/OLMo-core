@@ -34,6 +34,7 @@ def parse_args(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder],
     *,
     size_enum: Type[TransformerSize] = TransformerSize,
+    default_name: str = "olmo3-ladder",
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ) -> argparse.Namespace:
     formatter_class = type(
@@ -73,7 +74,7 @@ def parse_args(
         parser.add_argument(
             "--name",
             type=str,
-            default="olmo3-ladder",
+            default=default_name,
             help="A name to assign to the ladder experiment.",
         )
         parser.add_argument(
@@ -174,6 +175,18 @@ def parse_args(
             action="store_true",
             help="Do a dry-run of the launch.",
             default=False,
+        )
+        parser.add_argument(
+            "--pre-setup",
+            type=str,
+            default=None,
+            help="Command to run before the standard Gantry setup steps.",
+        )
+        parser.add_argument(
+            "--post-setup",
+            type=str,
+            default=None,
+            help="Command to run after the standard Gantry setup steps.",
         )
 
     sub_commands: dict[str, argparse.ArgumentParser] = {}
@@ -353,7 +366,7 @@ def get_default_ladder_factory(
             name=args.name,
             project=args.project,
             dir=str(io.join_path(get_root_dir(args.cluster), "model-ladders", args.name)),
-            sizes=list(TransformerSize),
+            sizes=get_requested_sizes(args),
             max_devices=args.max_gpus,
             device_type=get_gpu_type(args.cluster),
             model_configurator=configure_model(args),
@@ -376,11 +389,23 @@ def get_default_ladder_factory(
     return factory
 
 
+def get_requested_sizes(args: argparse.Namespace) -> list[TransformerSize]:
+    """Resolve the ladder sizes requested via ``--size`` / ``--max-size``, if any."""
+    sizes = list(args.size_enum)
+    if getattr(args, "size", None):
+        return [args.size_enum(args.size)]
+    elif getattr(args, "max_size", None):
+        return [s for s in sizes if s <= args.size_enum(args.max_size)]
+    else:
+        return sizes
+
+
 def main(
     configure_ladder: Callable[[argparse.Namespace], ModelLadder] | None | None = None,
     configure_model: Callable[[argparse.Namespace], ModelConfigurator] | None = None,
     configure_run: Callable[[argparse.Namespace], RunConfigurator] | None = None,
     size_enum: Type[TransformerSize] = TransformerSize,
+    default_name: str = "olmo3-ladder",
     add_additional_args: Callable[[str, argparse.ArgumentParser], None] | None = None,
 ):
     if configure_ladder is None:
@@ -395,7 +420,10 @@ def main(
         ), "configure_model / configure_run and mutually exclusive with configure_ladder"
 
     args = parse_args(
-        configure_ladder, size_enum=size_enum, add_additional_args=add_additional_args
+        configure_ladder,
+        size_enum=size_enum,
+        default_name=default_name,
+        add_additional_args=add_additional_args,
     )
     args.func(args)
 
@@ -431,6 +459,8 @@ def configure_launcher(
     if args.preemptible is not None:
         launch_config.preemptible = args.preemptible
     launch_config.allow_dirty = args.allow_dirty
+    launch_config.pre_setup = args.pre_setup
+    launch_config.post_setup = args.post_setup
     return launch_config
 
 
