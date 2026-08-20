@@ -116,6 +116,28 @@ def _trainer_rank_states(checkpoint: Path) -> tuple[list[Mapping[str, Any]], lis
     return states, inventory
 
 
+def _validate_trainer_cursor(
+    trainer_state: Mapping[str, Any], *, step: int, world_size: int, rank: int
+) -> tuple[dict[str, Any], int | None]:
+    """Validate and return the exact saved loader cursor and its epoch."""
+
+    saved = _jsonable(trainer_state["data_loader"])
+    if (
+        trainer_state.get("global_step") != step
+        or trainer_state.get("world_size") != world_size
+        or saved.get("batches_processed") != step
+        or "packing_state" in saved
+    ):
+        raise SSMaxBridgeEvidenceError(f"Trainer rank{rank} cursor is incompatible")
+    epoch = saved.get("epoch")
+    if step == 0:
+        if epoch is not None:
+            raise SSMaxBridgeEvidenceError(f"Trainer rank{rank} has an invalid epoch")
+    elif type(epoch) is not int or epoch <= 0:
+        raise SSMaxBridgeEvidenceError(f"Trainer rank{rank} has an invalid epoch")
+    return saved, epoch
+
+
 def _empty_stats() -> dict[str, dict[str, float]]:
     return {source: {name: 0.0 for name in _METRICS} for source in SOURCES}
 
@@ -240,14 +262,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     work_dir = args.work_dir.expanduser().resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
     for rank, trainer_state in enumerate(rank_states):
-        saved = _jsonable(trainer_state["data_loader"])
-        if (
-            trainer_state.get("global_step") != args.step
-            or trainer_state.get("world_size") != world_size
-            or saved.get("batches_processed") != args.step
-            or "packing_state" in saved
-        ):
-            raise SSMaxBridgeEvidenceError(f"Trainer rank{rank} cursor is incompatible")
+        saved, epoch = _validate_trainer_cursor(
+            trainer_state, step=args.step, world_size=world_size, rank=rank
+        )
         loader = _build_loader(
             recipe,
             config,
@@ -263,10 +280,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             dataset_fingerprints = current_fingerprints
         elif current_fingerprints != dataset_fingerprints:
             raise SSMaxBridgeEvidenceError("Dataset fingerprints differ across replay ranks")
-        epoch = saved.get("epoch")
-        if type(epoch) is not int or epoch <= 0:
-            raise SSMaxBridgeEvidenceError(f"Trainer rank{rank} has an invalid epoch")
-        loader.reshuffle(epoch=epoch)
+        if epoch is not None:
+            loader.reshuffle(epoch=epoch)
         initial_states.append({"rank": rank, "state": _jsonable(loader.state_dict())})
         iterator = iter(loader)
         try:

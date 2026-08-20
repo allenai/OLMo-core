@@ -51,7 +51,10 @@ def _use_small_synthetic_protocol_contracts(
 ) -> None:
     """Keep synthetic bootstrap tests small while separately testing production constants."""
 
-    if request.node.name == "test_checked_in_specs_form_one_controlled_pair_and_reject_arm_drift":
+    if request.node.name in {
+        "test_archived_v1_manifests_remain_valid_without_live_reads",
+        "test_checked_in_specs_form_one_controlled_pair_and_reject_arm_drift",
+    }:
         return
     monkeypatch.setattr(bridge, "BRIDGE_EVALUATION_CONTRACT", _TEST_EVALUATION_CONTRACT)
     monkeypatch.setattr(bridge, "BRIDGE_TOPOLOGY_CONTRACT", _TEST_TOPOLOGY_CONTRACT)
@@ -84,12 +87,16 @@ def _checkpoint_reference(tmp_path: Path, arm: str, step: int) -> dict[str, Any]
     return reference
 
 
-def _manifest(tmp_path: Path, arm: str = "ssmax_head_qknorm") -> dict[str, Any]:
+def _manifest(
+    tmp_path: Path,
+    arm: str = "ssmax_head_qknorm",
+    pair_id: str = "ssmax-qknorm-1p4b-cx8-bridge-v2",
+) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "format": bridge.MANIFEST_FORMAT,
         "version": bridge.SCHEMA_VERSION,
         "created_at": _TIMESTAMP,
-        "pair_id": "controlled-ssmax-pair-v1",
+        "pair_id": pair_id,
         "arm": arm,
         "model_variant": arm,
         "run_name": f"{arm}-bridge-v1",
@@ -119,7 +126,7 @@ def _manifest(tmp_path: Path, arm: str = "ssmax_head_qknorm") -> dict[str, Any]:
             "ref": "3" * 40,
         },
         "manifest_spec": {
-            "repo_relative_path": bridge.MANIFEST_SPEC_RELATIVE_PATHS[arm],
+            "repo_relative_path": bridge.MANIFEST_SPEC_RELATIVE_PATHS[pair_id][arm],
             "sha256": "6" * 64,
             "git_ref": "3" * 40,
         },
@@ -583,8 +590,74 @@ def test_checked_in_specs_form_one_controlled_pair_and_reject_arm_drift(tmp_path
     config_root = (
         Path(__file__).resolve().parents[3] / "configs" / "vision_moe" / "vision_alignment" / "eval"
     )
-    head = bridge.load_manifest_spec(config_root / "ssmax_head_qknorm_bridge_manifest_v1.json")
-    no_qk = bridge.load_manifest_spec(config_root / "ssmax_no_qknorm_bridge_manifest_v1.json")
+    v1_paths = {
+        "ssmax_head_qknorm": config_root / "ssmax_head_qknorm_bridge_manifest_v1.json",
+        "ssmax_no_qknorm": config_root / "ssmax_no_qknorm_bridge_manifest_v1.json",
+    }
+    assert {
+        arm: hashlib.sha256(path.read_bytes()).hexdigest() for arm, path in v1_paths.items()
+    } == {
+        "ssmax_head_qknorm": "605dddc352504a5c3519c18f70dd861db82858f7522eba09aa22712832ee5227",
+        "ssmax_no_qknorm": "d7a4bda4fc855dc792d253acfaa6428e5f4fd00e387600c6ce9fc2c6ccf6fad9",
+    }
+    v1 = {arm: bridge.load_manifest_spec(path) for arm, path in v1_paths.items()}
+
+    v1_pair_id = "ssmax-qknorm-1p4b-cx8-bridge-v1"
+    v2_pair_id = "ssmax-qknorm-1p4b-cx8-bridge-v2"
+    assert bridge.MANIFEST_SPEC_RELATIVE_PATHS == {
+        v1_pair_id: {
+            "ssmax_head_qknorm": (
+                "configs/vision_moe/vision_alignment/eval/"
+                "ssmax_head_qknorm_bridge_manifest_v1.json"
+            ),
+            "ssmax_no_qknorm": (
+                "configs/vision_moe/vision_alignment/eval/"
+                "ssmax_no_qknorm_bridge_manifest_v1.json"
+            ),
+        },
+        v2_pair_id: {
+            "ssmax_head_qknorm": (
+                "configs/vision_moe/vision_alignment/eval/"
+                "ssmax_head_qknorm_bridge_manifest_v2.json"
+            ),
+            "ssmax_no_qknorm": (
+                "configs/vision_moe/vision_alignment/eval/"
+                "ssmax_no_qknorm_bridge_manifest_v2.json"
+            ),
+        },
+    }
+    v2 = {
+        arm: bridge.load_manifest_spec(config_root / Path(relative).name)
+        for arm, relative in bridge.MANIFEST_SPEC_RELATIVE_PATHS[v2_pair_id].items()
+    }
+    assert {spec["pair_id"] for spec in v1.values()} == {v1_pair_id}
+    assert {spec["pair_id"] for spec in v2.values()} == {v2_pair_id}
+
+    lineage = {
+        "ssmax_head_qknorm": {
+            "run_name": "vision-ssmax-head-qknorm-1p4b-cx8-bridge-v2",
+            "profile": "ssmax_head_qknorm_1p4b_cx8_v2.yaml",
+        },
+        "ssmax_no_qknorm": {
+            "run_name": "vision-ssmax-no-qknorm-1p4b-cx8-bridge-v2",
+            "profile": "ssmax_no_qknorm_1p4b_cx8_v2.yaml",
+        },
+    }
+    for arm in bridge.MODEL_VARIANTS:
+        expected = lineage[arm]
+        assert v2[arm]["run_name"] == expected["run_name"]
+        assert Path(v2[arm]["checkpoint_root"]).name == expected["run_name"]
+        assert Path(v2[arm]["training_profile"]).name == expected["profile"]
+
+        prior_science = dict(v1[arm])
+        rerun_science = dict(v2[arm])
+        for field in ("checkpoint_root", "pair_id", "run_name", "training_profile"):
+            prior_science.pop(field)
+            rerun_science.pop(field)
+        assert rerun_science == prior_science
+
+    head = v2["ssmax_head_qknorm"]
+    no_qk = v2["ssmax_no_qknorm"]
 
     assert head["pair_id"] == no_qk["pair_id"]
     assert head["evaluation"] == no_qk["evaluation"]
@@ -605,6 +678,13 @@ def test_checked_in_specs_form_one_controlled_pair_and_reject_arm_drift(tmp_path
     invalid_path = tmp_path / "invalid-spec.json"
     invalid_path.write_text(json.dumps(invalid))
     with pytest.raises(bridge.SSMaxBridgeEvidenceError, match="arm/model_variant"):
+        bridge.load_manifest_spec(invalid_path)
+
+    invalid = copy.deepcopy(head)
+    invalid["pair_id"] = "arbitrary-unregistered-rerun"
+    invalid_path = tmp_path / "invalid-pair-spec.json"
+    invalid_path.write_text(json.dumps(invalid))
+    with pytest.raises(bridge.SSMaxBridgeEvidenceError, match="not a registered bridge protocol"):
         bridge.load_manifest_spec(invalid_path)
 
     for name, mutation, match in (
@@ -630,6 +710,59 @@ def test_checked_in_specs_form_one_controlled_pair_and_reject_arm_drift(tmp_path
         weakened_path.write_text(json.dumps(weakened))
         with pytest.raises(bridge.SSMaxBridgeEvidenceError, match=match):
             bridge.load_manifest_spec(weakened_path)
+
+
+def test_manifest_protocol_resolution_preserves_versions_and_rejects_cross_binding(
+    tmp_path: Path,
+) -> None:
+    pair_ids = (
+        "ssmax-qknorm-1p4b-cx8-bridge-v1",
+        "ssmax-qknorm-1p4b-cx8-bridge-v2",
+    )
+    for pair_id in pair_ids:
+        other_pair_id = next(candidate for candidate in pair_ids if candidate != pair_id)
+        for arm in bridge.MODEL_VARIANTS:
+            manifest = _manifest(tmp_path, arm=arm, pair_id=pair_id)
+            assert bridge.validate_manifest(manifest, verify_live=False) == manifest
+
+            cross_bound = copy.deepcopy(manifest)
+            cross_bound["manifest_spec"][
+                "repo_relative_path"
+            ] = bridge.MANIFEST_SPEC_RELATIVE_PATHS[other_pair_id][arm]
+            cross_bound["content_sha256"] = bridge.canonical_sha256(
+                {key: value for key, value in cross_bound.items() if key != "content_sha256"}
+            )
+            with pytest.raises(
+                bridge.SSMaxBridgeEvidenceError,
+                match="not the canonical per-arm repository source",
+            ):
+                bridge.validate_manifest(cross_bound, verify_live=False)
+
+    arbitrary = _manifest(tmp_path)
+    arbitrary["pair_id"] = "arbitrary-unregistered-rerun"
+    arbitrary["content_sha256"] = bridge.canonical_sha256(
+        {key: value for key, value in arbitrary.items() if key != "content_sha256"}
+    )
+    with pytest.raises(bridge.SSMaxBridgeEvidenceError, match="not a registered bridge protocol"):
+        bridge.validate_manifest(arbitrary, verify_live=False)
+
+
+def test_archived_v1_manifests_remain_valid_without_live_reads() -> None:
+    archive_root = Path(
+        "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/"
+        "vision-alignment/evidence/bridge-v1"
+    )
+    paths = [archive_root / arm / "manifest.json" for arm in bridge.MODEL_VARIANTS]
+    if not all(path.is_file() for path in paths):
+        pytest.skip("immutable production bridge-v1 manifests are unavailable")
+
+    validated = [
+        bridge.validate_manifest(json.loads(path.read_text()), verify_live=False) for path in paths
+    ]
+    assert {manifest["pair_id"] for manifest in validated} == {"ssmax-qknorm-1p4b-cx8-bridge-v1"}
+    assert {manifest["manifest_spec"]["repo_relative_path"] for manifest in validated} == set(
+        bridge.MANIFEST_SPEC_RELATIVE_PATHS["ssmax-qknorm-1p4b-cx8-bridge-v1"].values()
+    )
 
 
 def test_finalized_manifest_validation_binds_content_and_checkpoint_inventory(
@@ -984,7 +1117,8 @@ def test_build_manifest_end_to_end_binds_saved_config_git_and_parent_receipt(
         "topology": base["topology"],
         "policy": base["policy"],
     }
-    spec_path = repository / bridge.MANIFEST_SPEC_RELATIVE_PATHS[base["model_variant"]]
+    spec_relative_path = bridge.MANIFEST_SPEC_RELATIVE_PATHS[base["pair_id"]][base["model_variant"]]
+    spec_path = repository / spec_relative_path
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n")
     subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
@@ -1010,7 +1144,7 @@ def test_build_manifest_end_to_end_binds_saved_config_git_and_parent_receipt(
 
     assert finalized["git"]["ref"] == git_ref
     assert finalized["manifest_spec"] == {
-        "repo_relative_path": bridge.MANIFEST_SPEC_RELATIVE_PATHS[base["model_variant"]],
+        "repo_relative_path": spec_relative_path,
         "sha256": bridge.sha256_file(spec_path),
         "git_ref": git_ref,
     }

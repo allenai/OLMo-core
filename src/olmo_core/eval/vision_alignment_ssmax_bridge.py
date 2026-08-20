@@ -92,12 +92,22 @@ BRIDGE_POLICY_CONTRACT: Mapping[str, Any] = {
     "maximum_data_errors": 0,
 }
 MANIFEST_SPEC_RELATIVE_PATHS = {
-    "ssmax_head_qknorm": (
-        "configs/vision_moe/vision_alignment/eval/" "ssmax_head_qknorm_bridge_manifest_v1.json"
-    ),
-    "ssmax_no_qknorm": (
-        "configs/vision_moe/vision_alignment/eval/" "ssmax_no_qknorm_bridge_manifest_v1.json"
-    ),
+    "ssmax-qknorm-1p4b-cx8-bridge-v1": {
+        "ssmax_head_qknorm": (
+            "configs/vision_moe/vision_alignment/eval/" "ssmax_head_qknorm_bridge_manifest_v1.json"
+        ),
+        "ssmax_no_qknorm": (
+            "configs/vision_moe/vision_alignment/eval/" "ssmax_no_qknorm_bridge_manifest_v1.json"
+        ),
+    },
+    "ssmax-qknorm-1p4b-cx8-bridge-v2": {
+        "ssmax_head_qknorm": (
+            "configs/vision_moe/vision_alignment/eval/" "ssmax_head_qknorm_bridge_manifest_v2.json"
+        ),
+        "ssmax_no_qknorm": (
+            "configs/vision_moe/vision_alignment/eval/" "ssmax_no_qknorm_bridge_manifest_v2.json"
+        ),
+    },
 }
 
 MATCHED_STATE_PRODUCER = "matched_state"
@@ -607,15 +617,31 @@ def _producer_source_references(
     return references
 
 
+def _canonical_manifest_spec_relative_path(*, pair_id: Any, model_variant: Any) -> str:
+    """Resolve the sole checked-in manifest specification for one protocol arm."""
+
+    if not isinstance(pair_id, str) or pair_id not in MANIFEST_SPEC_RELATIVE_PATHS:
+        raise SSMaxBridgeEvidenceError("Manifest pair ID is not a registered bridge protocol")
+    by_arm = MANIFEST_SPEC_RELATIVE_PATHS[pair_id]
+    if not isinstance(model_variant, str) or model_variant not in by_arm:
+        raise SSMaxBridgeEvidenceError(
+            "Manifest model variant is not registered for its bridge protocol"
+        )
+    return by_arm[model_variant]
+
+
 def _validate_manifest_spec_source_reference(
-    value: Any, *, model_variant: str, git: Mapping[str, str]
+    value: Any, *, pair_id: str, model_variant: str, git: Mapping[str, str]
 ) -> dict[str, str]:
     reference = _exact_fields(
         value,
         _PRODUCER_SOURCE_REF_FIELDS,
         name="manifest specification source",
     )
-    expected_relative = MANIFEST_SPEC_RELATIVE_PATHS[model_variant]
+    expected_relative = _canonical_manifest_spec_relative_path(
+        pair_id=pair_id,
+        model_variant=model_variant,
+    )
     if reference["repo_relative_path"] != expected_relative:
         raise SSMaxBridgeEvidenceError(
             "Manifest specification is not the canonical per-arm repository source"
@@ -636,7 +662,10 @@ def _manifest_spec_source_reference(
     """Bind a manifest spec to its canonical live file and clean Git blob."""
 
     _validate_repository_checkout(git, repository_root=repository_root)
-    relative = MANIFEST_SPEC_RELATIVE_PATHS[str(spec["model_variant"])]
+    relative = _canonical_manifest_spec_relative_path(
+        pair_id=spec.get("pair_id"),
+        model_variant=spec.get("model_variant"),
+    )
     canonical_path = (repository_root / relative).resolve()
     if spec_path.expanduser().resolve() != canonical_path or not canonical_path.is_file():
         raise SSMaxBridgeEvidenceError(
@@ -882,6 +911,10 @@ def _validate_common_manifest_fields(value: Mapping[str, Any], *, finalized: boo
             raise SSMaxBridgeEvidenceError(f"Manifest {name} must be a non-empty string")
     if value["model_variant"] not in MODEL_VARIANTS or value["arm"] != value["model_variant"]:
         raise SSMaxBridgeEvidenceError("Manifest arm/model_variant is not a supported paired arm")
+    _canonical_manifest_spec_relative_path(
+        pair_id=value["pair_id"],
+        model_variant=value["model_variant"],
+    )
     topology = _exact_fields(
         value["topology"],
         frozenset({"world_size", "num_nodes", "gpus_per_node", "data_parallel"}),
@@ -1474,6 +1507,7 @@ def validate_manifest(
     git = _validate_git_identity(manifest["git"])
     manifest_spec = _validate_manifest_spec_source_reference(
         manifest["manifest_spec"],
+        pair_id=str(manifest["pair_id"]),
         model_variant=str(manifest["model_variant"]),
         git=git,
     )

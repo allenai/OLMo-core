@@ -89,11 +89,24 @@ def _pair_config(
         },
         "data": {"pack_sequences": False, "allow_unpinned_synthetic_smoke": False},
         "launch": {
+            "name": f"{run_name}-1234abcd",
+            "cmd": [
+                "src/scripts/train/Vision-Alignment.py",
+                "train",
+                run_name,
+                f"--profile={profile}",
+            ],
+            "description": f"Reviewed causal arm {arm}",
             "num_nodes": 2,
             "num_gpus": 8,
             "workspace": "ai2/scaling-ladders",
+            "clusters": ["ai2/holmes"],
+            "budget": "ai2/oe-other",
             "priority": "urgent",
             "min_runtime": "8h",
+            "beaker_image": "ai2/olmo-core:pinned",
+            "preemptible": True,
+            "env_vars": [{"name": "PYTHONPATH", "value": "/gantry-runtime/src"}],
             "git": {
                 "repo": "allenai/OLMo-core",
                 "repo_url": "https://github.com/allenai/OLMo-core",
@@ -172,6 +185,20 @@ def test_saved_pair_allows_only_derived_vision_intervention(tmp_path: Path) -> N
 
     changed = copy.deepcopy(configs)
     changed[perception.TREATMENT_ARM]["data"]["seed"] = 17
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="differ outside"):
+        perception.validate_saved_config_pair(
+            changed, spec=spec, profile_references=profiles, recipe_path=recipe
+        )
+
+    changed = copy.deepcopy(configs)
+    changed[perception.TREATMENT_ARM]["launch"]["priority"] = "normal"
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="launch priority differs"):
+        perception.validate_saved_config_pair(
+            changed, spec=spec, profile_references=profiles, recipe_path=recipe
+        )
+
+    changed = copy.deepcopy(configs)
+    changed[perception.TREATMENT_ARM]["launch"]["beaker_image"] = "ai2/olmo-core:drifted"
     with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="differ outside"):
         perception.validate_saved_config_pair(
             changed, spec=spec, profile_references=profiles, recipe_path=recipe

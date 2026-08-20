@@ -16,8 +16,8 @@ the frozen-vision control and the vision-unfrozen treatment. Do not substitute i
 sources or change the mixture between arms.
 
 Before either training launch, run the pinned profile-pair auditor and the exact two-node runtime
-provenance preflight. Submit only through the project launch path fixed to workspace
-`ai2/molmofication`; never use a default or alternate Beaker workspace.
+provenance preflight. Historical s002 profiles remain fixed to `ai2/molmofication`; SSMax profiles
+are fixed to `ai2/scaling-ladders`. Never use a default or alternate Beaker workspace.
 
 ## SSMax 1.4B Cx8 pairs
 
@@ -44,6 +44,15 @@ review and allowlist their exact bytes. They must select `ssmax_head_qknorm` or
 `ssmax_no_qknorm`, use workspace `ai2/scaling-ladders`, and may reuse the existing visual
 provenance and source-audit artifacts because those artifacts describe data rather than a model
 lineage.
+
+For each concrete SSMax pair, write the immutable auditor output as
+`artifacts/ssmax-head-qknorm-perception-profile-pair-v3.json` or
+`artifacts/ssmax-no-qknorm-perception-profile-pair-v3.json`. Run the distributed preflight with
+the matching explicit `--model-variant=ssmax_head_qknorm` or
+`--model-variant=ssmax_no_qknorm`. The v3 path fails closed unless both profiles select the same
+lineage and differ only by the derived vision freeze/LR intervention; it also requires dense
+generic BF16/FP32 HSDP, no expert parallelism or router loss, and permanent checkpoints at steps
+500, 1000, 2000, 3000, and 4000. The historical s002 v2 schema and lineage policy remain intact.
 
 The executable post-hoc causal-pair protocol and non-runnable spec templates are documented in
 [`../eval/SSMAX_PERCEPTION_EVALUATION.md`](../eval/SSMAX_PERCEPTION_EVALUATION.md). It has its own

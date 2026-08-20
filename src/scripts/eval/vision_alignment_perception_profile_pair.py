@@ -37,13 +37,19 @@ from typing import Any, Iterator
 
 FORMAT = "vision_alignment_perception_profile_pair_audit"
 VERSION = 2
+SSMAX_VERSION = 3
 CONTROL_ARM = "frozen_vision_control"
 TREATMENT_ARM = "treatment"
 ARM_OVERRIDE_PREFIX = "--perception_trainability_arm="
+MODEL_VARIANT_OVERRIDE_PREFIX = "--model_variant="
+S002_MODEL_VARIANT = "s002"
+SSMAX_MODEL_VARIANTS = ("ssmax_head_qknorm", "ssmax_no_qknorm")
 CANONICAL_WORKSPACE = "ai2/molmofication"
+SSMAX_CANONICAL_WORKSPACE = "ai2/scaling-ladders"
 CANONICAL_CLUSTER = "ai2/holmes"
 CANONICAL_BUDGET = "ai2/oe-other"
 CANONICAL_GIT_BRANCH = "vision-moe"
+SSMAX_CANONICAL_GIT_BRANCH = "rustin/vision-ssmax-molmofication"
 PRODUCER_REPOSITORY_PATH = "src/scripts/eval/vision_alignment_perception_profile_pair.py"
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_REF_RE = re.compile(r"[0-9a-f]{40}")
@@ -82,7 +88,52 @@ _PERCEPTION_CONSTANTS: dict[str, Any] = {
     "router_lb_loss_weight": 0.015,
 }
 
-_REQUIRED_LAUNCH = {
+_SSMAX_FIXED_STEPS = [500, 1000, 2000, 3000, 4000]
+_SSMAX_TRAIN_MODULE_CLASS = (
+    "olmo_core.train.train_module.transformer.multimodal_train_module."
+    "MultimodalTransformerTrainModuleConfig"
+)
+_SSMAX_DP_CONFIG_CLASS = (
+    "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig"
+)
+_SSMAX_PERCEPTION_CONSTANTS: dict[str, Any] = {
+    "duration": {"unit": "steps", "value": 4000},
+    "evaluation": {
+        "interval": 500,
+        "examples_per_source": 512,
+        "rank_batch_instances": 4,
+        "seed": 6198,
+        "eval_on_startup": True,
+        "eval_on_finish": True,
+    },
+    "checkpointer": {
+        "save_interval": None,
+        "ephemeral_save_interval": 400,
+        "fixed_steps": _SSMAX_FIXED_STEPS,
+        "max_checkpoints": 6,
+        "save_async": False,
+        "pre_train_checkpoint": True,
+    },
+    "data_sequence_length": 2560,
+    "global_batch_size": 327680,
+    "rank_microbatch_size": 10240,
+    "data_seed": 95818,
+    "init_seed": 6198,
+    "checkpoint_load_threads": 8,
+    "router_lb_loss_weight": None,
+    "parallelism": {
+        "train_module_class": _SSMAX_TRAIN_MODULE_CLASS,
+        "data_parallel": {
+            "class": _SSMAX_DP_CONFIG_CLASS,
+            "name": "hsdp",
+            "param_dtype": "bfloat16",
+            "reduce_dtype": "float32",
+        },
+        "expert_parallel": None,
+    },
+}
+
+_REQUIRED_LAUNCH: dict[str, Any] = {
     "num_nodes": 2,
     "num_gpus": 8,
     "workspace": CANONICAL_WORKSPACE,
@@ -90,6 +141,11 @@ _REQUIRED_LAUNCH = {
     "budget": CANONICAL_BUDGET,
     "priority": "urgent",
     "min_runtime": "8h",
+}
+
+_SSMAX_REQUIRED_LAUNCH: dict[str, Any] = {
+    **_REQUIRED_LAUNCH,
+    "workspace": SSMAX_CANONICAL_WORKSPACE,
 }
 
 _IDENTITY_CONFIG_PATHS = (
@@ -316,6 +372,30 @@ def _require_exact_value(actual: Any, expected: Any, *, name: str) -> Any:
     return actual
 
 
+def _model_variant_policy(model_variant: str) -> dict[str, Any]:
+    """Return the closed launch and receipt policy for one supported model lineage."""
+
+    if model_variant == S002_MODEL_VARIANT:
+        return {
+            "model_variant": model_variant,
+            "receipt_version": VERSION,
+            "workspace": CANONICAL_WORKSPACE,
+            "workspace_recipe_constant": "BEAKER_WORKSPACE",
+            "git_branch": CANONICAL_GIT_BRANCH,
+            "launch": _REQUIRED_LAUNCH,
+        }
+    if model_variant in SSMAX_MODEL_VARIANTS:
+        return {
+            "model_variant": model_variant,
+            "receipt_version": SSMAX_VERSION,
+            "workspace": SSMAX_CANONICAL_WORKSPACE,
+            "workspace_recipe_constant": "SSMAX_BEAKER_WORKSPACE",
+            "git_branch": SSMAX_CANONICAL_GIT_BRANCH,
+            "launch": _SSMAX_REQUIRED_LAUNCH,
+        }
+    raise ProfilePairAuditError(f"Unsupported perception model variant {model_variant!r}")
+
+
 def _clear_perception_provenance_cache(recipe: types.ModuleType) -> None:
     cache = getattr(recipe, "_PERCEPTION_PROVENANCE_RUNTIME_CACHE", None)
     if not isinstance(cache, dict):
@@ -396,6 +476,34 @@ def _profile_arm(profile: Mapping[str, Any], *, expected_arm: str) -> list[str]:
     return [value for value in overrides if not value.startswith(ARM_OVERRIDE_PREFIX)]
 
 
+def _profile_model_variant(profile: Mapping[str, Any], *, arm: str) -> str:
+    overrides = profile.get("overrides")
+    if not isinstance(overrides, list) or not all(isinstance(value, str) for value in overrides):
+        raise ProfilePairAuditError(f"{arm} reviewed profile overrides must be strings")
+    selectors = [
+        value.split("=", 1)[1]
+        for value in overrides
+        if value.startswith(MODEL_VARIANT_OVERRIDE_PREFIX)
+    ]
+    if not selectors:
+        return S002_MODEL_VARIANT
+    if len(selectors) != 1:
+        raise ProfilePairAuditError(
+            f"{arm} profile must select its model variant at most once; got {selectors}"
+        )
+    model_variant = selectors[0]
+    _model_variant_policy(model_variant)
+    if model_variant in SSMAX_MODEL_VARIANTS:
+        expected = f"{MODEL_VARIANT_OVERRIDE_PREFIX}{model_variant}"
+        if [value for value in overrides if value.startswith(MODEL_VARIANT_OVERRIDE_PREFIX)] != [
+            expected
+        ]:
+            raise ProfilePairAuditError(
+                f"{arm} SSMax profile must select {model_variant!r} exactly once"
+            )
+    return model_variant
+
+
 def _reviewed_relative_path(
     profile: Mapping[str, Any], *, repository_root: Path, input_path: Path
 ) -> str:
@@ -422,6 +530,13 @@ def _audit_profiles(
     treatment_path: Path,
     treatment_sha256: str,
 ) -> dict[str, Any]:
+    control_model_variant = _profile_model_variant(control, arm=CONTROL_ARM)
+    treatment_model_variant = _profile_model_variant(treatment, arm=TREATMENT_ARM)
+    if control_model_variant != treatment_model_variant:
+        raise ProfilePairAuditError("Reviewed profiles select different model variants")
+    model_variant = control_model_variant
+    policy = _model_variant_policy(model_variant)
+
     allowed_internal = {
         "__reviewed_path__",
         "__reviewed_sha256__",
@@ -442,9 +557,11 @@ def _audit_profiles(
         if profile.get("phase") != "perception":
             raise ProfilePairAuditError(f"{arm} profile must select the perception phase")
         launch = profile.get("launch")
-        if not _is_exact_mapping(launch, _REQUIRED_LAUNCH):
+        if not _is_exact_mapping(launch, policy["launch"]):
             raise ProfilePairAuditError(
-                f"{arm} profile must use the exact molmofication/Holmes 2x8 urgent/8h launch"
+                f"{arm} profile must use the exact "
+                f"{policy['workspace'].removeprefix('ai2/')}/Holmes "
+                "2x8 urgent/8h launch"
             )
 
     control_base_overrides = _profile_arm(control, expected_arm=CONTROL_ARM)
@@ -505,6 +622,7 @@ def _audit_profiles(
         raise ProfilePairAuditError("Reviewed profile allowlist bytes differ from their pin")
 
     return {
+        "model_variant": model_variant,
         "allowlist_path": allowlist_absolute,
         "allowlist_relative_path": allowlist_path,
         "allowlist_sha256": allowlist_sha256,
@@ -537,7 +655,9 @@ def _validate_config_identity(
     command_path: str,
     profile_relative_path: str,
     profile_sha256: str,
+    model_variant: str,
 ) -> Path:
+    policy = _model_variant_policy(model_variant)
     run_name = profile["name"]
     expected_command = [
         command_path,
@@ -579,11 +699,13 @@ def _validate_config_identity(
         "priority": launch.get("priority"),
         "min_runtime": launch.get("min_runtime"),
     }
-    if not _is_exact_mapping(expected_final_launch, _REQUIRED_LAUNCH) or launch.get("clusters") != [
+    if not _is_exact_mapping(expected_final_launch, policy["launch"]) or launch.get("clusters") != [
         CANONICAL_CLUSTER
     ]:
         raise ProfilePairAuditError(
-            f"{arm} config must use the exact molmofication/Holmes 2x8 urgent/8h launch"
+            f"{arm} config must use the exact "
+            f"{policy['workspace'].removeprefix('ai2/')}/Holmes "
+            "2x8 urgent/8h launch"
         )
     if launch.get("hostnames"):
         raise ProfilePairAuditError(f"{arm} config may not select exact hosts")
@@ -644,14 +766,21 @@ def _data_identity(config: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
-def _perception_contract(config: Mapping[str, Any], *, arm: str) -> dict[str, Any]:
-    """Independently require every frozen perception cadence and scale constant."""
+def _perception_contract(
+    config: Mapping[str, Any], *, arm: str, model_variant: str = S002_MODEL_VARIANT
+) -> dict[str, Any]:
+    """Independently require every frozen perception cadence, scale, and topology constant."""
+    constants = (
+        _SSMAX_PERCEPTION_CONSTANTS
+        if model_variant in SSMAX_MODEL_VARIANTS
+        else _PERCEPTION_CONSTANTS
+    )
     duration = _at(config, "trainer", "max_duration")
     duration_contract = {
         field_name: _require_exact_value(
             _at(duration, field_name), expected, name=f"{arm} duration {field_name}"
         )
-        for field_name, expected in _PERCEPTION_CONSTANTS["duration"].items()
+        for field_name, expected in constants["duration"].items()
     }
 
     evaluation = _at(config, "evaluation")
@@ -659,20 +788,23 @@ def _perception_contract(config: Mapping[str, Any], *, arm: str) -> dict[str, An
         field_name: _require_exact_value(
             _at(evaluation, field_name), expected, name=f"{arm} evaluation {field_name}"
         )
-        for field_name, expected in _PERCEPTION_CONSTANTS["evaluation"].items()
+        for field_name, expected in constants["evaluation"].items()
     }
 
     checkpointer = _at(config, "trainer", "callbacks", "checkpointer")
     checkpointer_contract: dict[str, Any] = {}
-    for field_name, expected in _PERCEPTION_CONSTANTS["checkpointer"].items():
+    for field_name, expected in constants["checkpointer"].items():
         # Config.as_config_dict() excludes None fields. With the pinned producer, absence of
-        # fixed_steps is its exact serialized representation of fixed_steps=None; every non-None
-        # value is serialized and therefore rejected here.
-        actual = (
-            checkpointer.get(field_name)
-            if field_name == "fixed_steps"
-            else _at(checkpointer, field_name)
-        )
+        # an optional field is its exact serialized representation of None; every non-None value
+        # is serialized and therefore rejected here.
+        if expected is None:
+            if model_variant in SSMAX_MODEL_VARIANTS and field_name in checkpointer:
+                raise ProfilePairAuditError(
+                    f"{arm} SSMax checkpointer {field_name} must be omitted (serialized None)"
+                )
+            actual = checkpointer.get(field_name)
+        else:
+            actual = _at(checkpointer, field_name)
         checkpointer_contract[field_name] = _require_exact_value(
             actual, expected, name=f"{arm} checkpointer {field_name}"
         )
@@ -681,11 +813,9 @@ def _perception_contract(config: Mapping[str, Any], *, arm: str) -> dict[str, An
         ("data_sequence_length", ("data", "sequence_length")),
         ("global_batch_size", ("global_batch_size",)),
         ("rank_microbatch_size", ("train_module", "rank_microbatch_size")),
-        ("expert_parallel_degree", ("train_module", "ep_config", "degree")),
         ("data_seed", ("data_seed",)),
         ("init_seed", ("init_seed",)),
         ("checkpoint_load_threads", ("checkpoint_load_threads",)),
-        ("router_lb_loss_weight", ("router_lb_loss_weight",)),
     )
     contract: dict[str, Any] = {
         "duration": duration_contract,
@@ -693,18 +823,76 @@ def _perception_contract(config: Mapping[str, Any], *, arm: str) -> dict[str, An
         "checkpointer": checkpointer_contract,
     }
     for field_name, path in scalar_paths:
-        expected = _PERCEPTION_CONSTANTS[field_name]
+        expected = constants[field_name]
         contract[field_name] = _require_exact_value(
             _at(config, *path), expected, name=f"{arm} {field_name}"
         )
+
+    if model_variant == S002_MODEL_VARIANT:
+        contract["expert_parallel_degree"] = _require_exact_value(
+            _at(config, "train_module", "ep_config", "degree"),
+            _PERCEPTION_CONSTANTS["expert_parallel_degree"],
+            name=f"{arm} expert_parallel_degree",
+        )
+        contract["router_lb_loss_weight"] = _require_exact_value(
+            _at(config, "router_lb_loss_weight"),
+            _PERCEPTION_CONSTANTS["router_lb_loss_weight"],
+            name=f"{arm} router_lb_loss_weight",
+        )
+        return contract
+
+    train_module = _at(config, "train_module")
+    train_module_class = _require_exact_value(
+        _at(train_module, "_CLASS_"),
+        _SSMAX_TRAIN_MODULE_CLASS,
+        name=f"{arm} SSMax train module class",
+    )
+    if "ep_config" in train_module:
+        raise ProfilePairAuditError(
+            f"{arm} SSMax ep_config must be omitted for the dense generic train module"
+        )
+    dp_config = _at(train_module, "dp_config")
+    data_parallel = {
+        "class": _require_exact_value(
+            _at(dp_config, "_CLASS_"),
+            _SSMAX_DP_CONFIG_CLASS,
+            name=f"{arm} SSMax data-parallel config class",
+        ),
+        "name": _require_exact_value(
+            _at(dp_config, "name"), "hsdp", name=f"{arm} SSMax data parallelism"
+        ),
+        "param_dtype": _require_exact_value(
+            _at(dp_config, "param_dtype"),
+            "bfloat16",
+            name=f"{arm} SSMax parameter dtype",
+        ),
+        "reduce_dtype": _require_exact_value(
+            _at(dp_config, "reduce_dtype"),
+            "float32",
+            name=f"{arm} SSMax reduction dtype",
+        ),
+    }
+    if "router_lb_loss_weight" in config:
+        raise ProfilePairAuditError(
+            f"{arm} SSMax router_lb_loss_weight must be omitted (serialized None)"
+        )
+    contract["router_lb_loss_weight"] = None
+    contract["parallelism"] = {
+        "train_module_class": train_module_class,
+        "data_parallel": data_parallel,
+        "expert_parallel": None,
+    }
     return contract
 
 
-def _git_and_parent_identity(config: Mapping[str, Any], *, arm: str) -> dict[str, Any]:
+def _git_and_parent_identity(
+    config: Mapping[str, Any], *, arm: str, model_variant: str = S002_MODEL_VARIANT
+) -> dict[str, Any]:
     """Require and collect the shared code revision and parent-quality lineage."""
     git = _at(config, "launch", "git")
+    policy = _model_variant_policy(model_variant)
     branch = _require_exact_value(
-        _at(git, "branch"), CANONICAL_GIT_BRANCH, name=f"{arm} git branch"
+        _at(git, "branch"), policy["git_branch"], name=f"{arm} git branch"
     )
     git_ref = _at(git, "ref")
     if not isinstance(git_ref, str) or _GIT_REF_RE.fullmatch(git_ref) is None:
@@ -761,6 +949,24 @@ def _git_and_parent_identity(config: Mapping[str, Any], *, arm: str) -> dict[str
     }
 
 
+def _validate_config_model_variant(
+    config: Mapping[str, Any], *, arm: str, model_variant: str
+) -> None:
+    root_variant = config.get("model_variant")
+    metadata_variant = _at(config, "vision_alignment").get("model_variant")
+    if model_variant == S002_MODEL_VARIANT:
+        for location, value in (("root", root_variant), ("metadata", metadata_variant)):
+            if value not in (None, S002_MODEL_VARIANT):
+                raise ProfilePairAuditError(
+                    f"{arm} {location} model variant differs from historical s002"
+                )
+        return
+    if root_variant != model_variant or metadata_variant != model_variant:
+        raise ProfilePairAuditError(
+            f"{arm} SSMax root and metadata model variants must both equal {model_variant!r}"
+        )
+
+
 def _audit_configs(
     control: Mapping[str, Any],
     treatment: Mapping[str, Any],
@@ -772,6 +978,7 @@ def _audit_configs(
     control_sha256: str,
     treatment_relative_path: str,
     treatment_sha256: str,
+    model_variant: str = S002_MODEL_VARIANT,
 ) -> dict[str, Any]:
     if control.get("phase") != "perception" or treatment.get("phase") != "perception":
         raise ProfilePairAuditError("Both canonical configs must select perception")
@@ -779,6 +986,8 @@ def _audit_configs(
         raise ProfilePairAuditError("Control config does not select frozen_vision_control")
     if treatment.get("perception_trainability_arm") != TREATMENT_ARM:
         raise ProfilePairAuditError("Treatment config does not select treatment")
+    _validate_config_model_variant(control, arm=CONTROL_ARM, model_variant=model_variant)
+    _validate_config_model_variant(treatment, arm=TREATMENT_ARM, model_variant=model_variant)
 
     control_save = _validate_config_identity(
         control,
@@ -787,6 +996,7 @@ def _audit_configs(
         command_path=command_path,
         profile_relative_path=control_relative_path,
         profile_sha256=control_sha256,
+        model_variant=model_variant,
     )
     treatment_save = _validate_config_identity(
         treatment,
@@ -795,6 +1005,7 @@ def _audit_configs(
         command_path=command_path,
         profile_relative_path=treatment_relative_path,
         profile_sha256=treatment_sha256,
+        model_variant=model_variant,
     )
     if control_save == treatment_save:
         raise ProfilePairAuditError("Control and treatment save folders must be distinct")
@@ -855,15 +1066,23 @@ def _audit_configs(
     if control_data != treatment_data:
         raise ProfilePairAuditError("Control and treatment data hashes are not identical")
 
-    control_perception_contract = _perception_contract(control, arm=CONTROL_ARM)
-    treatment_perception_contract = _perception_contract(treatment, arm=TREATMENT_ARM)
+    control_perception_contract = _perception_contract(
+        control, arm=CONTROL_ARM, model_variant=model_variant
+    )
+    treatment_perception_contract = _perception_contract(
+        treatment, arm=TREATMENT_ARM, model_variant=model_variant
+    )
     if _canonical_json_bytes(control_perception_contract) != _canonical_json_bytes(
         treatment_perception_contract
     ):
         raise ProfilePairAuditError("Control and treatment perception constants differ")
 
-    control_lineage = _git_and_parent_identity(control, arm=CONTROL_ARM)
-    treatment_lineage = _git_and_parent_identity(treatment, arm=TREATMENT_ARM)
+    control_lineage = _git_and_parent_identity(
+        control, arm=CONTROL_ARM, model_variant=model_variant
+    )
+    treatment_lineage = _git_and_parent_identity(
+        treatment, arm=TREATMENT_ARM, model_variant=model_variant
+    )
     if _canonical_json_bytes(control_lineage) != _canonical_json_bytes(treatment_lineage):
         raise ProfilePairAuditError("Control and treatment git or parent lineage differs")
 
@@ -1010,14 +1229,6 @@ def build_profile_pair_receipt(
         )
     producer_sha256 = _sha256_file(producer_path)
     recipe = _load_pinned_recipe(recipe_path, expected_recipe_sha256)
-    if (
-        getattr(recipe, "BEAKER_WORKSPACE", None) != CANONICAL_WORKSPACE
-        or getattr(recipe, "BEAKER_CLUSTER", None) != CANONICAL_CLUSTER
-        or getattr(recipe, "BEAKER_BUDGET", None) != CANONICAL_BUDGET
-    ):
-        raise ProfilePairAuditError(
-            "Pinned recipe does not declare the canonical molmofication/Holmes launch constants"
-        )
     try:
         with _recipe_main_module(recipe):
             recipe.prepare_cli_environment()
@@ -1037,6 +1248,17 @@ def build_profile_pair_receipt(
         treatment_path=treatment_profile_path,
         treatment_sha256=expected_treatment_profile_sha256,
     )
+    model_variant = profile_audit["model_variant"]
+    policy = _model_variant_policy(model_variant)
+    if (
+        getattr(recipe, policy["workspace_recipe_constant"], None) != policy["workspace"]
+        or getattr(recipe, "BEAKER_CLUSTER", None) != CANONICAL_CLUSTER
+        or getattr(recipe, "BEAKER_BUDGET", None) != CANONICAL_BUDGET
+    ):
+        raise ProfilePairAuditError(
+            f"Pinned recipe does not declare the canonical {policy['workspace']}/Holmes "
+            "launch constants"
+        )
 
     _clear_perception_provenance_cache(recipe)
     _, control_config = _build_profile_config(
@@ -1062,13 +1284,14 @@ def build_profile_pair_receipt(
         control_sha256=expected_control_profile_sha256,
         treatment_relative_path=profile_audit["treatment_relative_path"],
         treatment_sha256=expected_treatment_profile_sha256,
+        model_variant=model_variant,
     )
 
     allowlist_path = profile_audit["allowlist_path"]
     allowlist_sha256 = profile_audit["allowlist_sha256"]
     receipt = {
         "format": FORMAT,
-        "version": VERSION,
+        "version": policy["receipt_version"],
         "status": "passed",
         "recipe_execution_module": "__main__",
         "producer": {
@@ -1100,7 +1323,7 @@ def build_profile_pair_receipt(
                 "sha256": expected_treatment_profile_sha256,
             },
         },
-        "launch_contract": dict(_REQUIRED_LAUNCH),
+        "launch_contract": dict(policy["launch"]),
         "comparison": {
             "allowed_identity_config_paths": list(_IDENTITY_CONFIG_PATHS),
             "allowed_arm_config_paths": list(_ARM_CONFIG_PATHS),
@@ -1118,6 +1341,8 @@ def build_profile_pair_receipt(
             TREATMENT_ARM: config_audit["save_folders"][TREATMENT_ARM],
         },
     }
+    if model_variant in SSMAX_MODEL_VARIANTS:
+        receipt["model_variant"] = model_variant
     expected_inputs = {
         producer_path: producer_sha256,
         recipe_path: expected_recipe_sha256,

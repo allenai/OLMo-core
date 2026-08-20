@@ -1,0 +1,34 @@
+version: 1
+name: vision-ssmax-no-qknorm-1p4b-cx8-bridge-v2
+description: >-
+  Scientifically identical v2 rerun of the paired 500-step connector-only bridge for the
+  1.4B Cx8 Scalable-Softmax parent without QK RMSNorm in its four global-attention layers.
+  Reuses the exact audited PixMo source and held-out validation artifacts while disabling
+  packing for GatedDeltaNet safety.
+phase: bridge
+launch:
+  cluster: ai2/holmes
+  workspace: ai2/scaling-ladders
+  budget: ai2/oe-other
+  num_nodes: 2
+  num_gpus: 8
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --model_variant=ssmax_no_qknorm
+  - --data.pixmo_cap_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/pixmo-cap-content-disjoint-v1/dataset
+  - --data.source_audit_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/bridge-source-audit-v1.json
+  - --data.source_audit_fingerprint=6d49234bb6233e9ce6a4becec04de6c068f3cb3fd1cfddb71a219b88fce4b3a0
+  - --data.mixture.mean_loss_weight.pixmo_caption=29.144221610185923
+  - --data.mixture.mean_loss_weight.pixmo_transcript=29.720018727071874
+  - --evaluation.validation_manifest_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/pixmo-cap-content-disjoint-v1/vision-alignment-validation-manifest.json
+  - --evaluation.validation_manifest_sha256=83cb9594648952c53d3ad042605a2e099e6a1e04bb24fed18625c1db53452d42
+  - --evaluation.interval=100
+  - --evaluation.examples_per_source=512
+  - --evaluation.eval_on_startup=true
+  - --evaluation.eval_on_finish=true
+  - --trainer.max_duration.value=500
+  - --trainer.callbacks.checkpointer.save_interval=null
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=50
+  - --trainer.callbacks.checkpointer.fixed_steps=[100, 200, 250, 300, 400, 500]
+  - --trainer.callbacks.checkpointer.max_checkpoints=7

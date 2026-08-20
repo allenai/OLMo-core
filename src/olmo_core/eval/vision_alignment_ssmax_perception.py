@@ -601,6 +601,15 @@ def _normalize_pair_config(config: Mapping[str, Any], *, arm: str) -> dict[str, 
     metadata.pop("lineage_id", None)
     metadata.pop("trainable_contract_sha256", None)
     normalized["vision_alignment"] = metadata
+
+    launch = dict(_mapping(normalized.get("launch"), name=f"{arm} launch"))
+    # These values are necessarily derived from each arm's distinct run identity. Every other
+    # launch field remains in the causal comparison, including workspace, topology, priority,
+    # runtime floor, environment, image, mounts, and pinned Git provenance.
+    for field in ("name", "cmd", "description"):
+        launch.pop(field, None)
+    normalized["launch"] = launch
+
     trainer = dict(_mapping(normalized.get("trainer"), name=f"{arm} trainer"))
     trainer.pop("save_folder", None)
     callbacks = dict(_mapping(trainer.get("callbacks"), name=f"{arm} callbacks"))

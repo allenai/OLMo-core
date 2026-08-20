@@ -4067,8 +4067,41 @@ def test_checked_in_ssmax_bridge_profiles_are_strictly_paired():
     import yaml
 
     root = Path(__file__).parents[3] / "configs" / "vision_moe" / "vision_alignment" / "bridge"
-    qk = yaml.safe_load((root / "ssmax_head_qknorm_1p4b_cx8_v1.yaml").read_text())
-    no_qk = yaml.safe_load((root / "ssmax_no_qknorm_1p4b_cx8_v1.yaml").read_text())
+    v1_paths = {
+        "ssmax_head_qknorm": root / "ssmax_head_qknorm_1p4b_cx8_v1.yaml",
+        "ssmax_no_qknorm": root / "ssmax_no_qknorm_1p4b_cx8_v1.yaml",
+    }
+    assert {
+        arm: hashlib.sha256(path.read_bytes()).hexdigest() for arm, path in v1_paths.items()
+    } == {
+        "ssmax_head_qknorm": "36e5d6346b9564bb2b2308403546052028d67fe2428b4b0ec8a3694a64e9f01a",
+        "ssmax_no_qknorm": "5d3844bc044442d3a98c6bc1c1867e58ac87d56e38605dea59983dba4d36cb65",
+    }
+    v1 = {arm: yaml.safe_load(path.read_text()) for arm, path in v1_paths.items()}
+    v2 = {
+        "ssmax_head_qknorm": yaml.safe_load(
+            (root / "ssmax_head_qknorm_1p4b_cx8_v2.yaml").read_text()
+        ),
+        "ssmax_no_qknorm": yaml.safe_load((root / "ssmax_no_qknorm_1p4b_cx8_v2.yaml").read_text()),
+    }
+
+    expected_names = {
+        "ssmax_head_qknorm": "vision-ssmax-head-qknorm-1p4b-cx8-bridge-v2",
+        "ssmax_no_qknorm": "vision-ssmax-no-qknorm-1p4b-cx8-bridge-v2",
+    }
+    for arm in v2:
+        assert v2[arm]["name"] == expected_names[arm]
+        assert v2[arm]["description"].startswith("Scientifically identical v2 rerun")
+        v1_science = {
+            key: value for key, value in v1[arm].items() if key not in {"name", "description"}
+        }
+        v2_science = {
+            key: value for key, value in v2[arm].items() if key not in {"name", "description"}
+        }
+        assert v2_science == v1_science
+
+    qk = v2["ssmax_head_qknorm"]
+    no_qk = v2["ssmax_no_qknorm"]
 
     for profile in (qk, no_qk):
         assert profile["phase"] == "bridge"

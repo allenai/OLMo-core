@@ -98,6 +98,50 @@ def test_health_jsonable_accepts_finite_state_and_rejects_nonfinite(health_modul
         health_module._jsonable({"ratio": float("nan")})
 
 
+@pytest.mark.parametrize(("step", "epoch"), [(0, None), (100, 1)])
+def test_health_cursor_accepts_only_canonical_epoch_for_step(
+    health_module, step: int, epoch: int | None
+) -> None:
+    state = {
+        "global_step": step,
+        "world_size": 16,
+        "data_loader": {"batches_processed": step, "epoch": epoch},
+    }
+
+    saved, validated_epoch = health_module._validate_trainer_cursor(
+        state, step=step, world_size=16, rank=3
+    )
+
+    assert saved == state["data_loader"]
+    assert validated_epoch is epoch
+
+
+@pytest.mark.parametrize(
+    ("step", "epoch"),
+    [
+        (0, 0),
+        (0, False),
+        (0, -1),
+        (0, 1),
+        (100, None),
+        (100, 0),
+        (100, False),
+        (100, -1),
+    ],
+)
+def test_health_cursor_rejects_noncanonical_epoch(
+    health_module, step: int, epoch: int | None
+) -> None:
+    state = {
+        "global_step": step,
+        "world_size": 16,
+        "data_loader": {"batches_processed": step, "epoch": epoch},
+    }
+
+    with pytest.raises(health_module.SSMaxBridgeEvidenceError, match="rank3.*invalid epoch"):
+        health_module._validate_trainer_cursor(state, step=step, world_size=16, rank=3)
+
+
 def test_trainer_rank_state_inventory_is_contiguous_and_step_preserving(
     tmp_path: Path, health_module
 ) -> None:

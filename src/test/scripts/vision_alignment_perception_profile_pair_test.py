@@ -120,9 +120,11 @@ import json
 from pathlib import Path
 
 BEAKER_WORKSPACE = "ai2/molmofication"
+SSMAX_BEAKER_WORKSPACE = "ai2/scaling-ladders"
 BEAKER_CLUSTER = "ai2/holmes"
 BEAKER_BUDGET = "ai2/oe-other"
 PERCEPTION_PROFILE_ALLOWLIST = "configs/vision_moe/vision_alignment/perception/approved_profiles.json"
+CASE_MODEL_VARIANT = __MODEL_VARIANT__
 DRIFT_CONFIG = __DRIFT_CONFIG__
 WRONG_WORKSPACE = __WRONG_WORKSPACE__
 TYPE_ALIAS_DRIFT = __TYPE_ALIAS_DRIFT__
@@ -216,11 +218,20 @@ def build_config(
     assert len(selectors) == 1
     arm = selectors[0]
     control = arm == "frozen_vision_control"
+    variant_selectors = [
+        item.split("=", 1)[1]
+        for item in overrides
+        if item.startswith("--model_variant=")
+    ]
+    model_variant = variant_selectors[0] if variant_selectors else "s002"
+    assert model_variant == CASE_MODEL_VARIANT
+    is_ssmax = model_variant != "s002"
     _PERCEPTION_PROVENANCE_RUNTIME_CACHE["built_arm"] = arm
     root = Path(__file__).resolve().parents[3]
     command = [script, "train", run_name, f"--profile={reviewed_profile_path}"]
     data_seed = 999 if DRIFT_CONFIG and control else 95818
-    workspace = "ai2/OLMo-core" if WRONG_WORKSPACE else BEAKER_WORKSPACE
+    expected_workspace = SSMAX_BEAKER_WORKSPACE if is_ssmax else BEAKER_WORKSPACE
+    workspace = "ai2/OLMo-core" if WRONG_WORKSPACE else expected_workspace
     treatment_freeze = ["lm.embedding_norm.*", "lm.blocks.*", "lm.lm_head.*"]
     if WRONG_FREEZE_LIST:
         treatment_freeze.append("lm.extra.*")
@@ -244,7 +255,13 @@ def build_config(
             "num_gpus": 8,
             "priority": "normal",
             "git": {
-                "branch": "main" if WRONG_GIT_BRANCH else "vision-moe",
+                "branch": (
+                    "main"
+                    if WRONG_GIT_BRANCH
+                    else (
+                        "rustin/vision-ssmax-molmofication" if is_ssmax else "vision-moe"
+                    )
+                ),
                 "ref": "1" * 40,
             },
         },
@@ -255,11 +272,15 @@ def build_config(
             "callbacks": {
                 "wandb": {"name": run_name, "project": "synthetic"},
                 "checkpointer": {
-                    "save_interval": 1000,
                     "ephemeral_save_interval": 400,
                     "max_checkpoints": 6,
                     "save_async": False,
                     "pre_train_checkpoint": True,
+                    **(
+                        {"fixed_steps": [500, 1000, 2000, 3000, 4000]}
+                        if is_ssmax
+                        else {"save_interval": 1000}
+                    ),
                 },
             },
         },
@@ -279,8 +300,26 @@ def build_config(
                 ]
             },
             "rank_microbatch_size": 10240,
-            "ep_config": {"degree": 8},
             "source_loss_mass_targets": {"source_a": 1.0},
+            **(
+                {
+                    "_CLASS_": (
+                        "olmo_core.train.train_module.transformer.multimodal_train_module."
+                        "MultimodalTransformerTrainModuleConfig"
+                    ),
+                    "dp_config": {
+                        "_CLASS_": (
+                            "olmo_core.train.train_module.transformer.config."
+                            "TransformerDataParallelConfig"
+                        ),
+                        "name": "hsdp",
+                        "param_dtype": "bfloat16",
+                        "reduce_dtype": "float32",
+                    },
+                }
+                if is_ssmax
+                else {"ep_config": {"degree": 8}}
+            ),
         },
         "vision_alignment": {
             "lineage_id": run_name,
@@ -317,8 +356,11 @@ def build_config(
         "global_batch_size": 327680,
         "init_seed": 6198,
         "checkpoint_load_threads": 8,
-        "router_lb_loss_weight": 0.015,
+        **({} if is_ssmax else {"router_lb_loss_weight": 0.015}),
     }
+    if is_ssmax:
+        value["model_variant"] = model_variant
+        value["vision_alignment"]["model_variant"] = model_variant
     return FakeConfig(value)
 
 
@@ -353,6 +395,7 @@ def _write_json(path: Path, value: Any) -> None:
 def _make_case(
     tmp_path: Path,
     *,
+    model_variant: str = "s002",
     config_drift: bool = False,
     wrong_workspace: bool = False,
     profile_drift: bool = False,
@@ -367,7 +410,8 @@ def _make_case(
     recipe = root / "src" / "scripts" / "train" / "Vision-Alignment.py"
     recipe.parent.mkdir(parents=True)
     recipe.write_text(
-        _FAKE_RECIPE.replace("__DRIFT_CONFIG__", repr(config_drift))
+        _FAKE_RECIPE.replace("__MODEL_VARIANT__", repr(model_variant))
+        .replace("__DRIFT_CONFIG__", repr(config_drift))
         .replace("__WRONG_WORKSPACE__", repr(wrong_workspace))
         .replace("__TYPE_ALIAS_DRIFT__", repr(type_alias_drift))
         .replace("__CONTRACT_TYPE_ALIAS_DRIFT__", repr(contract_type_alias_drift))
@@ -379,13 +423,16 @@ def _make_case(
     launch = {
         "num_nodes": 2,
         "num_gpus": 8,
-        "workspace": "ai2/molmofication",
+        "workspace": (
+            "ai2/scaling-ladders" if model_variant.startswith("ssmax_") else "ai2/molmofication"
+        ),
         "cluster": "ai2/holmes",
         "budget": "ai2/oe-other",
         "priority": "urgent",
         "min_runtime": "8h",
     }
     common_overrides = [
+        *([f"--model_variant={model_variant}"] if model_variant.startswith("ssmax_") else []),
         "--data.perception_provenance_path=/synthetic/perception-provenance.json",
         f"--data.perception_provenance_sha256={'a' * 64}",
         "--data.source_audit_path=/synthetic/perception-source-audit.json",
@@ -394,11 +441,18 @@ def _make_case(
     ]
     control = profile_root / "control.yaml"
     treatment = profile_root / "treatment.yaml"
+    if model_variant.startswith("ssmax_"):
+        run_prefix = f"vision-{model_variant.replace('_', '-')}-1p4b-cx8-perception"
+        control_name = f"{run_prefix}-frozen-vision-control-v1"
+        treatment_name = f"{run_prefix}-treatment-v1"
+    else:
+        control_name = "perception-frozen-control"
+        treatment_name = "perception-treatment"
     _write_json(
         control,
         {
             "version": True if profile_type_alias_drift else 1,
-            "name": "perception-frozen-control",
+            "name": control_name,
             "description": "Frozen vision causal control",
             "phase": "perception",
             "launch": launch,
@@ -412,7 +466,7 @@ def _make_case(
         treatment,
         {
             "version": 1,
-            "name": "perception-treatment",
+            "name": treatment_name,
             "description": "Vision-unfrozen treatment",
             "phase": "perception",
             "launch": launch,
@@ -524,6 +578,65 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
     assert case["output"].read_bytes() == first_raw
 
 
+@pytest.mark.parametrize("model_variant", ["ssmax_head_qknorm", "ssmax_no_qknorm"])
+def test_builds_strict_ssmax_dense_hsdp_pair_receipt(tmp_path: Path, model_variant: str) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, model_variant=model_variant)
+
+    receipt = module.build_profile_pair_receipt(**_kwargs(case))
+
+    assert receipt["version"] == 3
+    assert receipt["model_variant"] == model_variant
+    assert receipt["launch_contract"]["workspace"] == "ai2/scaling-ladders"
+    assert receipt["git"]["branch"] == "rustin/vision-ssmax-molmofication"
+    assert receipt["perception_contract"] == module._SSMAX_PERCEPTION_CONSTANTS
+    assert receipt["perception_contract"]["checkpointer"]["fixed_steps"] == [
+        500,
+        1000,
+        2000,
+        3000,
+        4000,
+    ]
+    assert receipt["perception_contract"]["router_lb_loss_weight"] is None
+    assert receipt["perception_contract"]["parallelism"]["data_parallel"] == {
+        "class": module._SSMAX_DP_CONFIG_CLASS,
+        "name": "hsdp",
+        "param_dtype": "bfloat16",
+        "reduce_dtype": "float32",
+    }
+
+
+@pytest.mark.parametrize(
+    ("drift", "message"),
+    [
+        ("fixed_steps", "checkpointer fixed_steps differs"),
+        ("router", "router_lb_loss_weight must be omitted"),
+        ("expert_parallel", "ep_config must be omitted"),
+    ],
+)
+def test_rejects_ssmax_dense_contract_drift(
+    monkeypatch, tmp_path: Path, drift: str, message: str
+) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, model_variant="ssmax_head_qknorm")
+    original = module._build_profile_config
+
+    def drift_both_arms(*args, **kwargs):
+        config, config_dict = original(*args, **kwargs)
+        if drift == "fixed_steps":
+            config_dict["trainer"]["callbacks"]["checkpointer"]["fixed_steps"] = [1000, 2000]
+        elif drift == "router":
+            config_dict["router_lb_loss_weight"] = 0.015
+        else:
+            config_dict["train_module"]["ep_config"] = {"degree": 8}
+        return config, config_dict
+
+    monkeypatch.setattr(module, "_build_profile_config", drift_both_arms)
+    with pytest.raises(module.ProfilePairAuditError, match=message):
+        module.build_profile_pair_receipt(**_kwargs(case))
+    assert not case["output"].exists()
+
+
 def test_real_recipe_data_contract_matches_direct_main_execution() -> None:
     module = _load_module()
     recipe_path = (
@@ -562,6 +675,25 @@ def test_rejects_reviewed_profile_difference_outside_arm(tmp_path: Path) -> None
     case = _make_case(tmp_path, profile_drift=True)
 
     with pytest.raises(module.ProfilePairAuditError, match="outside their exact arm selector"):
+        module.build_profile_pair_receipt(**_kwargs(case))
+    assert not case["output"].exists()
+
+
+def test_rejects_cross_variant_ssmax_profile_pair(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, model_variant="ssmax_head_qknorm")
+    treatment = json.loads(case["treatment"].read_text())
+    treatment["overrides"] = [
+        value.replace("ssmax_head_qknorm", "ssmax_no_qknorm") for value in treatment["overrides"]
+    ]
+    _write_json(case["treatment"], treatment)
+    case["treatment_sha256"] = _sha256(case["treatment"])
+    allowlist = json.loads(case["allowlist"].read_text())
+    relative = case["treatment"].relative_to(case["root"]).as_posix()
+    allowlist["profiles"][relative] = case["treatment_sha256"]
+    _write_json(case["allowlist"], allowlist)
+
+    with pytest.raises(module.ProfilePairAuditError, match="different model variants"):
         module.build_profile_pair_receipt(**_kwargs(case))
     assert not case["output"].exists()
 

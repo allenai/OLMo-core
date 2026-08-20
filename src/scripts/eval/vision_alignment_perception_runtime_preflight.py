@@ -15,6 +15,10 @@ Run this under the same two-node Gantry/torchrun topology as production::
       --profile-pair-receipt=<path> \
       --expected-profile-pair-receipt-sha256=<sha256> \
       --expected-git-ref=<40-character-commit>
+
+For either SSMax lineage, additionally pass its explicit ``--model-variant`` selector. This binds
+the scaling-ladders workspace, SSMax branch, v3 pair receipt/name, dense HSDP topology, and fixed
+checkpoint cadence without changing the historical default s002 checks.
 """
 
 from __future__ import annotations
@@ -49,18 +53,42 @@ LOCAL_WORLD_SIZE = 8
 NUM_NODES = 2
 CANONICAL_WORKSPACE = "ai2/molmofication"
 CANONICAL_WORKSPACE_ID = "01KSTRJHG4A32N7GDM82KY8J3E"
+SSMAX_CANONICAL_WORKSPACE = "ai2/scaling-ladders"
+SSMAX_CANONICAL_WORKSPACE_ID = "01KSTRR20XQE9V505A61SW3EBS"
 CANONICAL_CLUSTER = "ai2/holmes"
 CANONICAL_BUDGET = "ai2/oe-other"
 CANONICAL_GIT_BRANCH = "vision-moe"
+SSMAX_CANONICAL_GIT_BRANCH = "rustin/vision-ssmax-molmofication"
 RECIPE_REPOSITORY_PATH = "src/scripts/train/Vision-Alignment.py"
 PROFILE_PAIR_FORMAT = "vision_alignment_perception_profile_pair_audit"
 PROFILE_PAIR_VERSION = 2
+SSMAX_PROFILE_PAIR_VERSION = 3
+S002_MODEL_VARIANT = "s002"
+SSMAX_MODEL_VARIANTS = ("ssmax_head_qknorm", "ssmax_no_qknorm")
 PROFILE_ARMS = ("frozen_vision_control", "treatment")
 PROFILE_NAMES = {
     "frozen_vision_control": "vision-alignment-perception-frozen-vision-control-v1",
     "treatment": "vision-alignment-perception-treatment-v1",
 }
 PROFILE_PAIR_NAME = "perception-profile-pair-v2.json"
+SSMAX_PROFILE_NAMES = {
+    "ssmax_head_qknorm": {
+        "frozen_vision_control": (
+            "vision-ssmax-head-qknorm-1p4b-cx8-perception-frozen-vision-control-v1"
+        ),
+        "treatment": "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v1",
+    },
+    "ssmax_no_qknorm": {
+        "frozen_vision_control": (
+            "vision-ssmax-no-qknorm-1p4b-cx8-perception-frozen-vision-control-v1"
+        ),
+        "treatment": "vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v1",
+    },
+}
+SSMAX_PROFILE_PAIR_NAMES = {
+    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-profile-pair-v3.json",
+    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-profile-pair-v3.json",
+}
 _PROFILE_PAIR_ROOT_FIELDS = frozenset(
     {
         "format",
@@ -80,6 +108,7 @@ _PROFILE_PAIR_ROOT_FIELDS = frozenset(
         "save_folders",
     }
 )
+_SSMAX_PROFILE_PAIR_ROOT_FIELDS = frozenset({*_PROFILE_PAIR_ROOT_FIELDS, "model_variant"})
 _PATH_IDENTITY_FIELDS = frozenset({"path", "repository_path", "sha256"})
 _PROFILE_FIELDS = frozenset({"name", "path", "repository_path", "sha256"})
 _DATA_FIELDS = frozenset(
@@ -94,6 +123,95 @@ _DATA_FIELDS = frozenset(
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_REF_RE = re.compile(r"[0-9a-f]{40}")
 _HOLMES_HOSTNAME_RE = re.compile(r"holmes-[a-z0-9][a-z0-9.-]*")
+_SSMAX_FIXED_STEPS = [500, 1000, 2000, 3000, 4000]
+_SSMAX_TRAIN_MODULE_CLASS = (
+    "olmo_core.train.train_module.transformer.multimodal_train_module."
+    "MultimodalTransformerTrainModuleConfig"
+)
+_SSMAX_DP_CONFIG_CLASS = (
+    "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig"
+)
+_ALLOWED_IDENTITY_CONFIG_PATHS = (
+    "/expected_launch_command",
+    "/launch/cmd",
+    "/launch/description",
+    "/launch/name",
+    "/required_run_name",
+    "/reviewed_profile_path",
+    "/reviewed_profile_sha256",
+    "/trainer/callbacks/wandb/name",
+    "/trainer/save_folder",
+    "/vision_alignment/lineage_id",
+)
+_ALLOWED_ARM_CONFIG_PATHS = (
+    "/perception_trainability_arm",
+    "/train_module/freeze_params",
+    "/train_module/optim/group_overrides/<vision>/opts/lr",
+    "/vision_alignment/trainable_contract_sha256",
+)
+_LEGACY_PERCEPTION_CONTRACT: dict[str, Any] = {
+    "duration": {"unit": "steps", "value": 4000},
+    "evaluation": {
+        "interval": 500,
+        "examples_per_source": 512,
+        "rank_batch_instances": 4,
+        "seed": 6198,
+        "eval_on_startup": True,
+        "eval_on_finish": True,
+    },
+    "checkpointer": {
+        "save_interval": 1000,
+        "ephemeral_save_interval": 400,
+        "fixed_steps": None,
+        "max_checkpoints": 6,
+        "save_async": False,
+        "pre_train_checkpoint": True,
+    },
+    "data_sequence_length": 2560,
+    "global_batch_size": 327680,
+    "rank_microbatch_size": 10240,
+    "expert_parallel_degree": 8,
+    "data_seed": 95818,
+    "init_seed": 6198,
+    "checkpoint_load_threads": 8,
+    "router_lb_loss_weight": 0.015,
+}
+_SSMAX_PERCEPTION_CONTRACT: dict[str, Any] = {
+    "duration": {"unit": "steps", "value": 4000},
+    "evaluation": {
+        "interval": 500,
+        "examples_per_source": 512,
+        "rank_batch_instances": 4,
+        "seed": 6198,
+        "eval_on_startup": True,
+        "eval_on_finish": True,
+    },
+    "checkpointer": {
+        "save_interval": None,
+        "ephemeral_save_interval": 400,
+        "fixed_steps": _SSMAX_FIXED_STEPS,
+        "max_checkpoints": 6,
+        "save_async": False,
+        "pre_train_checkpoint": True,
+    },
+    "data_sequence_length": 2560,
+    "global_batch_size": 327680,
+    "rank_microbatch_size": 10240,
+    "data_seed": 95818,
+    "init_seed": 6198,
+    "checkpoint_load_threads": 8,
+    "router_lb_loss_weight": None,
+    "parallelism": {
+        "train_module_class": _SSMAX_TRAIN_MODULE_CLASS,
+        "data_parallel": {
+            "class": _SSMAX_DP_CONFIG_CLASS,
+            "name": "hsdp",
+            "param_dtype": "bfloat16",
+            "reduce_dtype": "float32",
+        },
+        "expert_parallel": None,
+    },
+}
 _FORBIDDEN_CREDENTIAL_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -120,6 +238,40 @@ _T = TypeVar("_T")
 
 class PerceptionRuntimePreflightError(RuntimeError):
     """Raised when the production perception runtime preflight fails closed."""
+
+
+def _model_variant_policy(model_variant: str) -> dict[str, Any]:
+    """Return the closed runtime policy for one supported perception lineage."""
+
+    if model_variant == S002_MODEL_VARIANT:
+        return {
+            "model_variant": model_variant,
+            "workspace": CANONICAL_WORKSPACE,
+            "workspace_id": CANONICAL_WORKSPACE_ID,
+            "workspace_recipe_constant": "BEAKER_WORKSPACE",
+            "git_branch": CANONICAL_GIT_BRANCH,
+            "profile_pair_version": PROFILE_PAIR_VERSION,
+            "profile_pair_name": PROFILE_PAIR_NAME,
+            "profile_pair_root_fields": _PROFILE_PAIR_ROOT_FIELDS,
+            "profile_names": PROFILE_NAMES,
+            "perception_contract": _LEGACY_PERCEPTION_CONTRACT,
+            "experiment_root_constant": "VISION_ALIGNMENT_ROOT",
+        }
+    if model_variant in SSMAX_MODEL_VARIANTS:
+        return {
+            "model_variant": model_variant,
+            "workspace": SSMAX_CANONICAL_WORKSPACE,
+            "workspace_id": SSMAX_CANONICAL_WORKSPACE_ID,
+            "workspace_recipe_constant": "SSMAX_BEAKER_WORKSPACE",
+            "git_branch": SSMAX_CANONICAL_GIT_BRANCH,
+            "profile_pair_version": SSMAX_PROFILE_PAIR_VERSION,
+            "profile_pair_name": SSMAX_PROFILE_PAIR_NAMES[model_variant],
+            "profile_pair_root_fields": _SSMAX_PROFILE_PAIR_ROOT_FIELDS,
+            "profile_names": SSMAX_PROFILE_NAMES[model_variant],
+            "perception_contract": _SSMAX_PERCEPTION_CONTRACT,
+            "experiment_root_constant": "SSMAX_VISION_ALIGNMENT_ROOT",
+        }
+    raise PerceptionRuntimePreflightError(f"Unsupported perception model variant {model_variant!r}")
 
 
 def _sha256_file(path: Path) -> str:
@@ -172,11 +324,17 @@ def _reject_symlink_components(path: Path, *, name: str) -> None:
             raise PerceptionRuntimePreflightError(f"{name} may not contain symlinks: {current}")
 
 
-def _pinned_profile_pair_receipt(path_value: str | Path, expected_sha256: str) -> Path:
+def _pinned_profile_pair_receipt(
+    path_value: str | Path,
+    expected_sha256: str,
+    *,
+    model_variant: str = S002_MODEL_VARIANT,
+) -> Path:
+    policy = _model_variant_policy(model_variant)
     path = _absolute_lexical_path(path_value)
-    if path.name != PROFILE_PAIR_NAME or path.parent.name != "artifacts":
+    if path.name != policy["profile_pair_name"] or path.parent.name != "artifacts":
         raise PerceptionRuntimePreflightError(
-            f"Profile-pair receipt must be artifacts/{PROFILE_PAIR_NAME}"
+            f"Profile-pair receipt must be artifacts/{policy['profile_pair_name']}"
         )
     _reject_symlink_components(path, name="profile-pair receipt")
     try:
@@ -372,9 +530,11 @@ def _load_profile_pair_receipt(
     profile_path: Path,
     profile_sha256: str,
     git_ref: str,
-) -> dict[str, str]:
-    """Load and bind the exact v2 pair receipt to this preflight's pinned inputs."""
-    receipt_path = _pinned_profile_pair_receipt(path, expected_sha256)
+    model_variant: str = S002_MODEL_VARIANT,
+) -> dict[str, Any]:
+    """Load and bind the exact lineage-specific pair receipt to the pinned runtime inputs."""
+    policy = _model_variant_policy(model_variant)
+    receipt_path = _pinned_profile_pair_receipt(path, expected_sha256, model_variant=model_variant)
     try:
         raw = receipt_path.read_bytes()
         receipt = json.loads(
@@ -388,7 +548,7 @@ def _load_profile_pair_receipt(
         raise PerceptionRuntimePreflightError(
             f"Profile-pair receipt is not strict JSON: {error}"
         ) from error
-    root = _required_mapping(receipt, name="root", fields=_PROFILE_PAIR_ROOT_FIELDS)
+    root = _required_mapping(receipt, name="root", fields=policy["profile_pair_root_fields"])
     canonical = (
         json.dumps(
             root,
@@ -403,13 +563,17 @@ def _load_profile_pair_receipt(
         raise PerceptionRuntimePreflightError("Profile-pair receipt bytes are not canonical JSON")
     if (
         root.get("format") != PROFILE_PAIR_FORMAT
-        or root.get("version") != PROFILE_PAIR_VERSION
+        or root.get("version") != policy["profile_pair_version"]
         or isinstance(root.get("version"), bool)
         or root.get("status") != "passed"
         or root.get("recipe_execution_module") != "__main__"
     ):
         raise PerceptionRuntimePreflightError(
             "Profile-pair receipt identity, version, or passed status differs"
+        )
+    if model_variant in SSMAX_MODEL_VARIANTS and root.get("model_variant") != model_variant:
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt SSMax model variant differs from the requested lineage"
         )
 
     producer = _required_mapping(
@@ -440,7 +604,7 @@ def _load_profile_pair_receipt(
         )
     _receipt_sha256(recipe.get("sha256"), name="recipe.sha256")
     git = _required_mapping(root.get("git"), name="git", fields=frozenset({"branch", "ref"}))
-    if git.get("branch") != CANONICAL_GIT_BRANCH or git.get("ref") != git_ref:
+    if git.get("branch") != policy["git_branch"] or git.get("ref") != git_ref:
         raise PerceptionRuntimePreflightError(
             "Profile-pair receipt git identity differs from the pinned checkout"
         )
@@ -452,7 +616,7 @@ def _load_profile_pair_receipt(
         ),
     )
     expected_launch = {
-        "workspace": CANONICAL_WORKSPACE,
+        "workspace": policy["workspace"],
         "cluster": CANONICAL_CLUSTER,
         "budget": CANONICAL_BUDGET,
         "num_nodes": NUM_NODES,
@@ -482,7 +646,7 @@ def _load_profile_pair_receipt(
     for arm in PROFILE_ARMS:
         record = _required_mapping(profiles[arm], name=f"profiles.{arm}", fields=_PROFILE_FIELDS)
         if (
-            record.get("name") != PROFILE_NAMES[arm]
+            record.get("name") != policy["profile_names"][arm]
             or not isinstance(record.get("path"), str)
             or not record["path"]
             or not isinstance(record.get("repository_path"), str)
@@ -531,6 +695,12 @@ def _load_profile_pair_receipt(
             }
         ),
     )
+    if comparison.get("allowed_identity_config_paths") != list(
+        _ALLOWED_IDENTITY_CONFIG_PATHS
+    ) or comparison.get("allowed_arm_config_paths") != list(_ALLOWED_ARM_CONFIG_PATHS):
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt does not declare the exact identity and causal-arm difference"
+        )
     _receipt_sha256(comparison.get("shared_config_sha256"), name="comparison.shared_config_sha256")
     for field in ("arm_config_sha256", "trainable_contract_sha256"):
         values = _required_mapping(
@@ -547,7 +717,27 @@ def _load_profile_pair_receipt(
     )
     for field in ("parent_config_sha256", "parent_gate_sha256"):
         _receipt_sha256(initialization.get(field), name=f"initialization.{field}")
-    _required_mapping(root.get("perception_contract"), name="perception_contract")
+    perception_contract = _required_mapping(
+        root.get("perception_contract"), name="perception_contract"
+    )
+    actual_contract = json.dumps(
+        perception_contract,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    expected_contract = json.dumps(
+        policy["perception_contract"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    if actual_contract != expected_contract:
+        raise PerceptionRuntimePreflightError(
+            "Profile-pair receipt perception contract differs from the exact lineage policy"
+        )
     save_folders = _required_mapping(
         root.get("save_folders"),
         name="save_folders",
@@ -578,6 +768,8 @@ def _load_profile_pair_receipt(
     return {
         "path": str(receipt_path),
         "sha256": expected_sha256,
+        "version": policy["profile_pair_version"],
+        "model_variant": model_variant,
         "arm": arm,
         "profile_name": profile_name,
         "data_contract_sha256": data_contract_sha256,
@@ -658,9 +850,13 @@ def _one_value(packets: Sequence[Mapping[str, Any]], field: str) -> Any:
 
 
 def _validate_rank_metadata(
-    packets: Sequence[Mapping[str, Any]], *, expected_git_ref: str
+    packets: Sequence[Mapping[str, Any]],
+    *,
+    expected_git_ref: str,
+    model_variant: str = S002_MODEL_VARIANT,
 ) -> dict[str, Any]:
     """Validate authoritative Beaker metadata for exactly two eight-GPU Holmes nodes."""
+    policy = _model_variant_policy(model_variant)
     if len(packets) != WORLD_SIZE:
         raise PerceptionRuntimePreflightError(
             f"Metadata collective returned {len(packets)} ranks, expected {WORLD_SIZE}"
@@ -697,9 +893,9 @@ def _validate_rank_metadata(
             "assigned_gpu_count": LOCAL_WORLD_SIZE,
             "cuda_device_count": LOCAL_WORLD_SIZE,
             "cuda_device": local_rank,
-            "workspace_id": CANONICAL_WORKSPACE_ID,
+            "workspace_id": policy["workspace_id"],
             "job_kind": "batch",
-            "git_branch": CANONICAL_GIT_BRANCH,
+            "git_branch": policy["git_branch"],
             "git_ref": expected_git_ref,
             "checkout_ref": expected_git_ref,
             "tracked_checkout_dirty": False,
@@ -797,8 +993,8 @@ def _validate_rank_metadata(
         "world_size": WORLD_SIZE,
         "nodes": NUM_NODES,
         "gpus_per_node": LOCAL_WORLD_SIZE,
-        "workspace": CANONICAL_WORKSPACE,
-        "workspace_id": CANONICAL_WORKSPACE_ID,
+        "workspace": policy["workspace"],
+        "workspace_id": policy["workspace_id"],
         "cluster": CANONICAL_CLUSTER,
         "experiment_id": experiment_id,
         "node_hostnames": sorted(item["hostname"] for item in node_summaries),
@@ -868,6 +1064,126 @@ def _expected_cache_key(config: Any) -> tuple[str, str]:
     return str(Path(path).expanduser().resolve()), sha256
 
 
+def _serialized_at(value: Any, *path: str) -> Any:
+    current = value
+    for field in path:
+        if not isinstance(current, Mapping) or field not in current:
+            raise PerceptionRuntimePreflightError(
+                f"Runtime config is missing required field {'.'.join(path)}"
+            )
+        current = current[field]
+    return current
+
+
+def _runtime_perception_contract(config: Any, *, model_variant: str) -> dict[str, Any]:
+    """Reconstruct the receipt contract independently from the runtime config."""
+
+    try:
+        raw = config.as_config_dict()
+    except Exception as error:  # noqa: BLE001 - convert config failures to a closed preflight.
+        raise PerceptionRuntimePreflightError(
+            f"Runtime config could not be serialized for contract validation: {error}"
+        ) from error
+    if not isinstance(raw, Mapping):
+        raise PerceptionRuntimePreflightError("Runtime config serialization must be an object")
+
+    duration = _serialized_at(raw, "trainer", "max_duration")
+    evaluation = _serialized_at(raw, "evaluation")
+    checkpointer = _serialized_at(raw, "trainer", "callbacks", "checkpointer")
+    train_module = _serialized_at(raw, "train_module")
+    if not isinstance(checkpointer, Mapping) or not isinstance(train_module, Mapping):
+        raise PerceptionRuntimePreflightError(
+            "Runtime checkpointer and train module serializations must be objects"
+        )
+    contract: dict[str, Any] = {
+        "duration": {field: _serialized_at(duration, field) for field in ("unit", "value")},
+        "evaluation": {
+            field: _serialized_at(evaluation, field)
+            for field in (
+                "interval",
+                "examples_per_source",
+                "rank_batch_instances",
+                "seed",
+                "eval_on_startup",
+                "eval_on_finish",
+            )
+        },
+        "checkpointer": {
+            "save_interval": checkpointer.get("save_interval"),
+            "ephemeral_save_interval": _serialized_at(checkpointer, "ephemeral_save_interval"),
+            "fixed_steps": checkpointer.get("fixed_steps"),
+            "max_checkpoints": _serialized_at(checkpointer, "max_checkpoints"),
+            "save_async": _serialized_at(checkpointer, "save_async"),
+            "pre_train_checkpoint": _serialized_at(checkpointer, "pre_train_checkpoint"),
+        },
+        "data_sequence_length": _serialized_at(raw, "data", "sequence_length"),
+        "global_batch_size": _serialized_at(raw, "global_batch_size"),
+        "rank_microbatch_size": _serialized_at(train_module, "rank_microbatch_size"),
+        "data_seed": _serialized_at(raw, "data_seed"),
+        "init_seed": _serialized_at(raw, "init_seed"),
+        "checkpoint_load_threads": _serialized_at(raw, "checkpoint_load_threads"),
+    }
+    if model_variant == S002_MODEL_VARIANT:
+        contract["expert_parallel_degree"] = _serialized_at(train_module, "ep_config", "degree")
+        contract["router_lb_loss_weight"] = _serialized_at(raw, "router_lb_loss_weight")
+        return contract
+
+    if "save_interval" in checkpointer:
+        raise PerceptionRuntimePreflightError(
+            "SSMax runtime checkpointer save_interval must be omitted (serialized None)"
+        )
+    if "ep_config" in train_module:
+        raise PerceptionRuntimePreflightError(
+            "SSMax runtime ep_config must be omitted for dense generic HSDP"
+        )
+    if "router_lb_loss_weight" in raw:
+        raise PerceptionRuntimePreflightError(
+            "SSMax runtime router_lb_loss_weight must be omitted (serialized None)"
+        )
+    if (
+        raw.get("model_variant") != model_variant
+        or _serialized_at(raw, "vision_alignment", "model_variant") != model_variant
+    ):
+        raise PerceptionRuntimePreflightError(
+            "SSMax runtime root and metadata model variants differ from the requested lineage"
+        )
+    dp_config = _serialized_at(train_module, "dp_config")
+    contract["router_lb_loss_weight"] = None
+    contract["parallelism"] = {
+        "train_module_class": _serialized_at(train_module, "_CLASS_"),
+        "data_parallel": {
+            "class": _serialized_at(dp_config, "_CLASS_"),
+            "name": _serialized_at(dp_config, "name"),
+            "param_dtype": _serialized_at(dp_config, "param_dtype"),
+            "reduce_dtype": _serialized_at(dp_config, "reduce_dtype"),
+        },
+        "expert_parallel": None,
+    }
+    return contract
+
+
+def _validate_runtime_perception_contract(config: Any, *, model_variant: str) -> None:
+    policy = _model_variant_policy(model_variant)
+    actual = json.dumps(
+        _runtime_perception_contract(config, model_variant=model_variant),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    expected = json.dumps(
+        policy["perception_contract"],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    if actual != expected:
+        raise PerceptionRuntimePreflightError(
+            "Runtime perception cadence, scale, router, or parallelism contract differs"
+        )
+
+
 def _validate_runtime_config(
     recipe: types.ModuleType,
     config: Any,
@@ -878,21 +1194,28 @@ def _validate_runtime_config(
     expected_data_contract_sha256: str,
     expected_provenance_sha256: str,
     expected_save_folder: Path,
+    model_variant: str = S002_MODEL_VARIANT,
 ) -> None:
+    policy = _model_variant_policy(model_variant)
     phase = getattr(config.phase, "value", config.phase)
     if phase != "perception":
         raise PerceptionRuntimePreflightError("Runtime config does not select perception")
+    actual_model_variant = getattr(config.model_variant, "value", config.model_variant)
+    if actual_model_variant != model_variant:
+        raise PerceptionRuntimePreflightError(
+            "Runtime config model variant differs from the requested lineage"
+        )
     if (
-        getattr(recipe, "BEAKER_WORKSPACE", None) != CANONICAL_WORKSPACE
+        getattr(recipe, policy["workspace_recipe_constant"], None) != policy["workspace"]
         or getattr(recipe, "BEAKER_CLUSTER", None) != CANONICAL_CLUSTER
         or getattr(recipe, "BEAKER_BUDGET", None) != CANONICAL_BUDGET
     ):
         raise PerceptionRuntimePreflightError(
-            "Pinned recipe launch constants differ from molmofication/Holmes"
+            f"Pinned recipe launch constants differ from {policy['workspace']}/Holmes"
         )
     launch = config.launch
     if (
-        launch.workspace != CANONICAL_WORKSPACE
+        launch.workspace != policy["workspace"]
         or launch.clusters != [CANONICAL_CLUSTER]
         or launch.budget != CANONICAL_BUDGET
         or launch.num_nodes != NUM_NODES
@@ -903,9 +1226,13 @@ def _validate_runtime_config(
         or launch.allow_dirty is not False
     ):
         raise PerceptionRuntimePreflightError(
-            "Reviewed config does not use the exact molmofication/Holmes 2x8 launch"
+            f"Reviewed config does not use the exact {policy['workspace']}/Holmes 2x8 launch"
         )
-    if launch.git is None or launch.git.ref != expected_git_ref:
+    if (
+        launch.git is None
+        or launch.git.ref != expected_git_ref
+        or launch.git.branch != policy["git_branch"]
+    ):
         raise PerceptionRuntimePreflightError(
             "Runtime config git revision differs from its CLI pin"
         )
@@ -933,6 +1260,7 @@ def _validate_runtime_config(
         raise PerceptionRuntimePreflightError(
             "Runtime config is not bound to one profile-only command"
         )
+    _validate_runtime_perception_contract(config, model_variant=model_variant)
     save_folder = _absolute_lexical_path(config.trainer.save_folder)
     if save_folder != expected_save_folder or os.path.lexists(save_folder):
         raise PerceptionRuntimePreflightError(
@@ -958,6 +1286,11 @@ def _validate_runtime_config(
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model-variant",
+        choices=(S002_MODEL_VARIANT, *SSMAX_MODEL_VARIANTS),
+        default=S002_MODEL_VARIANT,
+    )
     parser.add_argument("--recipe", type=Path, required=True)
     parser.add_argument("--expected-recipe-sha256", type=_sha256_arg, required=True)
     parser.add_argument("--profile", type=Path, required=True)
@@ -975,6 +1308,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the read-only, distributed production perception provenance preflight."""
     args = _parse_args(argv)
+    policy = _model_variant_policy(args.model_variant)
     if os.environ.get("WORLD_SIZE") != str(WORLD_SIZE):
         raise PerceptionRuntimePreflightError(
             f"Runtime preflight requires torchrun WORLD_SIZE={WORLD_SIZE} before initialization"
@@ -999,7 +1333,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         packets: list[Any] = [None] * WORLD_SIZE
         dist.all_gather_object(packets, _runtime_metadata_packet(repository_root))
-        topology = _validate_rank_metadata(packets, expected_git_ref=args.expected_git_ref)
+        topology = _validate_rank_metadata(
+            packets,
+            expected_git_ref=args.expected_git_ref,
+            model_variant=args.model_variant,
+        )
         source_identity = _collective_stage(
             "runtime source identity", lambda: _runtime_source_identity(repository_root)
         )
@@ -1013,6 +1351,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 _pinned_profile_pair_receipt(
                     receipt_path,
                     args.expected_profile_pair_receipt_sha256,
+                    model_variant=args.model_variant,
                 ),
             ),
         )
@@ -1026,6 +1365,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 profile_path=profile_path,
                 profile_sha256=args.expected_profile_sha256,
                 git_ref=args.expected_git_ref,
+                model_variant=args.model_variant,
             ),
         )
         receipt = _collective_identical("Profile-pair receipt summary", receipt)
@@ -1053,10 +1393,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
         def require_absent_output() -> Path:
-            root = getattr(recipe, "VISION_ALIGNMENT_ROOT", None)
+            root = getattr(recipe, policy["experiment_root_constant"], None)
             if not isinstance(root, str) or not root:
                 raise PerceptionRuntimePreflightError(
-                    "Pinned recipe lacks its production vision-alignment root"
+                    "Pinned recipe lacks its production lineage-specific vision-alignment root"
                 )
             save_folder = _absolute_lexical_path(Path(root) / "checkpoints" / run_name)
             if os.path.lexists(save_folder):
@@ -1087,6 +1427,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     expected_data_contract_sha256=receipt["data_contract_sha256"],
                     expected_provenance_sha256=receipt["perception_provenance_sha256"],
                     expected_save_folder=expected_save_folder,
+                    model_variant=args.model_variant,
                 )
             return config
 
@@ -1153,7 +1494,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "profile_pair_receipt": {
                             "path": receipt["path"],
                             "sha256": receipt["sha256"],
-                            "version": PROFILE_PAIR_VERSION,
+                            "version": receipt["version"],
+                            "model_variant": receipt["model_variant"],
                             "arm": receipt["arm"],
                             "recipe_execution_module": "__main__",
                             "data_contract_sha256": receipt["data_contract_sha256"],
