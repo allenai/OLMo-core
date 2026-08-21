@@ -23,6 +23,7 @@ from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .profiler import ProfilerCallback
+from .profiler_annotation import AnnotationBackend, ProfilerAnnotationCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -46,6 +47,8 @@ __all__ = [
     "GPUMemoryMonitorCallback",
     "HFConverterCallback",
     "ProfilerCallback",
+    "ProfilerAnnotationCallback",
+    "AnnotationBackend",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
