@@ -41,6 +41,7 @@ from olmo_core.train.callbacks import (
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
     LMEvaluatorCallbackConfig,
+    ProfilerAnnotationCallback,
     ProfilerCallback,
     SlackNotifierCallback,
 )
@@ -265,6 +266,7 @@ def _build_required_callbacks(common: CommonComponents) -> Dict[str, Callback]:
     callbacks = {
         "config_saver": ConfigSaverCallback(),
         "profiler": ProfilerCallback(enabled=False),
+        "profiler_annotations": ProfilerAnnotationCallback(enabled=False),
         "garbage_collector": GarbageCollectorCallback(),
         "slack_notifier": SlackNotifierCallback(name=common.run_name, enabled=False),
         "gap_monitor": GAPMonitorCallback(enabled=False),

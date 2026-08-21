@@ -5,7 +5,7 @@ import os
 from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 import torch
 
@@ -104,6 +104,51 @@ def _summarize_distributed_events(events: Iterable[Any]) -> list[dict[str, Any]]
     return summary
 
 
+def should_profile_rank(ranks: Optional[str]) -> bool:
+    """
+    Whether the current rank should be profiled, given a ``ranks`` specification.
+    See :data:`ProfilerCallback.ranks` for the accepted values.
+    """
+    current_rank = get_rank()
+
+    if ranks is None:
+        return current_rank == 0
+    elif isinstance(ranks, str):  # Handle string shortcuts for parallel groups
+        world_mesh = get_world_mesh()
+        if world_mesh is None:
+            if ranks != "all":
+                log.warning("No world mesh available, falling back to rank 0 only")
+            return current_rank == 0
+
+        try:
+            if ranks == "dp":
+                dp_mesh = get_dp_mesh(world_mesh)
+                return dp_mesh.get_local_rank() == 0
+            elif ranks == "tp":
+                tp_mesh = get_tp_mesh(world_mesh)
+                return tp_mesh.get_local_rank() == 0
+            elif ranks == "cp":
+                cp_mesh = get_cp_mesh(world_mesh)
+                return cp_mesh.get_local_rank() == 0
+            elif ranks == "pp":
+                pp_mesh = get_pp_mesh(world_mesh)
+                return pp_mesh.get_local_rank() == 0
+            elif ranks == "ep":
+                ep_mesh = get_ep_mesh(world_mesh)
+                return ep_mesh.get_local_rank() == 0
+            elif ranks == "all":
+                return True
+            else:
+                raise ValueError(f"Unknown rank shortcut '{ranks}'")
+        except RuntimeError as e:
+            log.warning(
+                f"Failed to determine parallel mesh for '{ranks}': {e}, falling back to rank 0 only"
+            )
+            return current_rank == 0
+    else:
+        raise TypeError(f"Invalid ranks specification: {ranks}")
+
+
 @dataclass
 class ProfilerCallback(Callback):
     """
@@ -177,44 +222,7 @@ class ProfilerCallback(Callback):
     _first_batch: bool = True
 
     def _should_profile_rank(self) -> bool:
-        current_rank = get_rank()
-
-        if self.ranks is None:
-            return current_rank == 0
-        elif isinstance(self.ranks, str):  # Handle string shortcuts for parallel groups
-            world_mesh = get_world_mesh()
-            if world_mesh is None:
-                if self.ranks != "all":
-                    log.warning("No world mesh available, falling back to rank 0 only")
-                return current_rank == 0
-
-            try:
-                if self.ranks == "dp":
-                    dp_mesh = get_dp_mesh(world_mesh)
-                    return dp_mesh.get_local_rank() == 0
-                elif self.ranks == "tp":
-                    tp_mesh = get_tp_mesh(world_mesh)
-                    return tp_mesh.get_local_rank() == 0
-                elif self.ranks == "cp":
-                    cp_mesh = get_cp_mesh(world_mesh)
-                    return cp_mesh.get_local_rank() == 0
-                elif self.ranks == "pp":
-                    pp_mesh = get_pp_mesh(world_mesh)
-                    return pp_mesh.get_local_rank() == 0
-                elif self.ranks == "ep":
-                    ep_mesh = get_ep_mesh(world_mesh)
-                    return ep_mesh.get_local_rank() == 0
-                elif self.ranks == "all":
-                    return True
-                else:
-                    raise ValueError(f"Unknown rank shortcut '{self.ranks}'")
-            except RuntimeError as e:
-                log.warning(
-                    f"Failed to determine parallel mesh for '{self.ranks}': {e}, falling back to rank 0 only"
-                )
-                return current_rank == 0
-        else:
-            raise TypeError(f"Invalid ranks specification: {self.ranks}")
+        return should_profile_rank(self.ranks)
 
     def pre_train(self):
         if not self.enabled or not self._should_profile_rank():

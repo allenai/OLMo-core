@@ -27,6 +27,7 @@ from .profiler import (
     ProfilerCallback,
     TorchMemoryHistoryCallback,
 )
+from .profiler_annotation import AnnotationBackend, ProfilerAnnotationCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
@@ -52,6 +53,8 @@ __all__ = [
     "ProfilerCallback",
     "NvidiaProfilerCallback",
     "TorchMemoryHistoryCallback",
+    "ProfilerAnnotationCallback",
+    "AnnotationBackend",
     "SlackNotifierCallback",
     "SlackNotificationSetting",
     "SequenceLengthSchedulerCallback",
