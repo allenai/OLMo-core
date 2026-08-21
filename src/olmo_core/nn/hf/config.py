@@ -510,12 +510,17 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
+    scalable_softmax = attention.scalable_softmax
     gate_signature = (
         (attention.gate.granularity, attention.gate.full_precision)
         if attention.gate is not None
         else None
     )
     for block in attention_blocks[1:]:
+        if block.attention.scalable_softmax != scalable_softmax:
+            raise NotImplementedError(
+                "Heterogeneous full-attention Scalable-Softmax settings are unsupported."
+            )
         block_gate = block.attention.gate
         block_gate_signature = (
             (block_gate.granularity, block_gate.full_precision) if block_gate is not None else None
@@ -607,6 +612,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         max_position_embeddings=-1,
         use_head_qk_norm=True,
         use_rope=attention.rope is not None,
+        scalable_softmax=scalable_softmax,
         rope_theta=rope_theta,
         rope_scaling=rope_scaling,
         attention_gate_type=gate_type,

@@ -834,6 +834,8 @@ def convert_olmo3moe_state_from_hf(
             }
             if getattr(config, "attention_gate_type", None) is not None:
                 attention_map["g_proj.weight"] = "w_g.weight"
+            if getattr(config, "scalable_softmax", False):
+                attention_map["ssmax_scale"] = "ssmax_scale"
             for hf_suffix, olmo_suffix in attention_map.items():
                 olmo_state[f"{olmo_prefix}attention.{olmo_suffix}"] = _take(
                     hf_state, used, f"{prefix}self_attn.{hf_suffix}"
@@ -983,6 +985,8 @@ def convert_olmo3moe_state_to_hf(
             }
             if getattr(config, "attention_gate_type", None) is not None:
                 attention_map["w_g.weight"] = "g_proj.weight"
+            if getattr(config, "scalable_softmax", False):
+                attention_map["ssmax_scale"] = "ssmax_scale"
             for olmo_suffix, hf_suffix in attention_map.items():
                 hf_state[f"{prefix}self_attn.{hf_suffix}"] = _take(
                     olmo_core_state,
