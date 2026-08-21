@@ -50,6 +50,20 @@ class MixtureDataLoader(DataLoaderBase):
         the sum of the source lengths.
     """
 
+    # Resume replays a checkpointed (seed, epoch) through reshuffle()/mixture_epoch_pairs and
+    # skips ahead by batches_processed, rather than persisting the actual shuffle order — so
+    # that replay is only correct if the shuffle algorithm hasn't changed since the checkpoint
+    # was written. Bump this whenever reshuffle()'s or mixture_epoch_pairs's RNG call sequence
+    # changes (even if the seed/epoch semantics stay the same), so load_state_dict() can refuse
+    # an unsafe resume instead of silently repeating or skipping examples.
+    #
+    # 1: the original reshuffle() built every source's full rng.permutation() up front (in
+    #    source order), then drew all of src_choices in one rng.choice() call.
+    # 2 (current): mixture_epoch_pairs draws rng.choice() in bounded chunks and builds each
+    #    source's permutation lazily on first use — a different RNG call sequence for the same
+    #    (seed, epoch), even though both are internally deterministic.
+    SHUFFLE_ALGO_VERSION = 2
+
     def __init__(
         self,
         datasets: Sequence,
@@ -60,6 +74,7 @@ class MixtureDataLoader(DataLoaderBase):
         global_batch_size: int,
         seed: int = 0,
         epoch_instances: Optional[int] = None,
+        ignore_shuffle_algo_version_mismatch: bool = False,
         pack: bool = False,
         pack_max_crops: Optional[int] = None,
         pack_buffer_size: int = 48,
@@ -106,6 +121,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.weights = (w / w.sum()).tolist()
         self.collator = collator
         self.seed = seed
+        self.ignore_shuffle_algo_version_mismatch = ignore_shuffle_algo_version_mismatch
         self.seq_len = collator.pad_sequence_length
         self.pack = pack
         self.pack_max_crops = pack_max_crops
@@ -382,9 +398,29 @@ class MixtureDataLoader(DataLoaderBase):
             "batches_processed": self.batches_processed,
             "epoch": self._epoch,
             "seed": self.seed,
+            "shuffle_algo_version": self.SHUFFLE_ALGO_VERSION,
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        # Checkpoints only persist (seed, epoch, batches_processed) and replay reshuffle() to
+        # reconstruct the reference order on resume, rather than persisting the order itself —
+        # so a resume is only correct if reshuffle()'s RNG call sequence for that (seed, epoch)
+        # hasn't changed since the checkpoint was written. Absence of the key means the
+        # checkpoint predates this field, i.e. version 1 (see SHUFFLE_ALGO_VERSION).
+        checkpoint_version = state_dict.get("shuffle_algo_version", 1)
+        if checkpoint_version != self.SHUFFLE_ALGO_VERSION:
+            msg = (
+                f"Checkpoint was written with mixture shuffle algorithm version "
+                f"{checkpoint_version}, but this code uses version {self.SHUFFLE_ALGO_VERSION}. "
+                "Resuming would regenerate a different epoch and skip into it at the old batch "
+                "offset, silently repeating some examples and omitting others."
+            )
+            if not self.ignore_shuffle_algo_version_mismatch:
+                raise RuntimeError(
+                    msg + " Set ignore_shuffle_algo_version_mismatch=True to resume anyway."
+                )
+            log.warning(msg + " Ignored since ignore_shuffle_algo_version_mismatch=True.")
+
         self.batches_processed = state_dict.get("batches_processed", 0)
         self._epoch = state_dict.get("epoch")
         self.seed = state_dict.get("seed", self.seed)
