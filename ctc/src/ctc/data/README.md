@@ -25,14 +25,14 @@ ctc-data audit --task <task> --dir DIR                     # re-check data alrea
 | **further in-distribution corpora**, graded by a spec that already exists | | | |
 | `hotpotqa` | retrieval | HotpotQA `distractor` (bridge) — 2 gold/question, the benchmark's own distractors as hard negatives, CE-ranked | `ctc-data build --task hotpotqa --out DIR` |
 | `absence` | absence | Project Gutenberg (`sedthh/gutenberg_english`) — a window of N sentences, K deleted in a second copy. Needs the punkt model; **rungs are built independently**, see below | `ctc-data build --task absence --out DIR` |
-| `xabsence` | xabsence | PubMed claim/paraphrase twins — mine a pool once (`-C base_url=...`), then reuse it with `-C pool_path=...` | `ctc-data build --task xabsence -C pool_path=POOL.jsonl --out DIR` |
+| `xabsence` | xabsence | PubMed claim twins. Default `mode=exact` (the suite's declared construction: the twin is a byte-identical copy — no model, and the pool grows to every claim sentence PubMedQA supplies). The semantic variant stays behind `-C mode=paraphrase -C base_url=...` / `-C pool_path=...` | `ctc-data build --task xabsence --out DIR` |
 | `reorder` | reorder | Project Gutenberg — N consecutive ~100-word passages of one book, shuffled. Same corpus as `absence`; **rungs are built independently**, see below | `ctc-data build --task reorder --out DIR` |
 | `qdmatch_nq` / `qdmatch_hpqa` | qdmatch | A *transform*, not a corpus: it pools prepared retrieval queries, so `-C path=RETRIEVAL.jsonl` reads a built unified-retrieval file and needs no network at all | `ctc-data build --task qdmatch_nq -C path=nq_train_*.jsonl --out DIR` |
 | `grouping_labeled` | grouping_labeled | OpenAlex **compact** JSONL (the ~300 GB works snapshot is not fetched here); pass a second, year-restricted file as `eval_path` or the temporal split is too thin at coarse levels | `ctc-data build --task grouping_labeled -C path=COMPACT.jsonl -C eval_path=EVAL.jsonl --out DIR` |
-| **the four held-out (OOD) ladders** — eval only | | | |
-| `fiqa` | retrieval | BEIR FiQA + BM25 + CE | `ctc-data build --task fiqa --split eval --out DIR` |
-| `scifact` | retrieval | BEIR SciFact + BM25 | `ctc-data build --task scifact --split eval --out DIR` |
-| `outlier_review` | outlier | Amazon-Reviews-2023 | `ctc-data build --task outlier_review --split eval --out DIR` |
+| **held-out-corpus ladders** — suite rows; since 2026-08-20 they train in-domain like every other row (one model per task × arm). Their older role as OOD probes of the 5-task *mixed* models survives as protocol (never feed them to a mix you will score them on), not as a build refusal | | | |
+| `fiqa` | retrieval | BEIR FiQA + BM25 + CE | `ctc-data build --task fiqa --out DIR` |
+| `scifact` | retrieval | BEIR SciFact + BM25 | `ctc-data build --task scifact --out DIR` |
+| `outlier_review` | outlier | Amazon-Reviews-2023 | `ctc-data build --task outlier_review --out DIR` |
 | `contra_fever` | contradiction | FEVER (`copenlu/fever_gold_evidence`) | `ctc-data build --task contra_fever --split eval --out DIR` |
 | **pure synthetic** — no corpus, no network | | | |
 | `cycle` | cycle | — | `ctc-data build --task cycle --out DIR` |
@@ -183,8 +183,9 @@ shorter rung is a different answer, not a smaller one. `qdmatch` *does* nest —
 `separate` layout, which is what keeps every gold pair's query id below its document id, and hence
 what makes the shrink's within-group sort a no-op instead of a pair-swapper.
 
-**The held-out ladders refuse to produce training data.** Not a warning: by the time a warning is
-noticed the checkpoint is trained and the whole OOD column means nothing.
+**`contra_fever` refuses to produce training data.** It is not a suite row; it exists solely to
+probe the 5-task mixed models on an unseen corpus, and that refusal is not a warning: by the time
+a warning is noticed the checkpoint is trained and the OOD column means nothing.
 
 **NQ's defaults are deliberately not the old ones.** `hard_frac=0.1` with the CE gold filter **on**.
 The pre-migration generator defaulted to 1.0 with the filter off, which silently reproduced the

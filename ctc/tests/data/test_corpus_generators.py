@@ -148,13 +148,18 @@ def test_every_corpus_backed_generator_has_a_fixture_pool():
     assert not missing, f"no fixture pool for {missing}"
 
 
-def test_the_five_main_and_four_held_out_ladders_are_all_registered():
-    """The suite's roster, asserted rather than assumed."""
-    main = {"contradiction", "nq", "outlier", "rerank", "oolong"}
-    ood = {"fiqa", "scifact", "outlier_review", "contra_fever"}
-    assert main | ood <= set(generators.names())
-    assert {n for n in ood if generators.get(n).eval_only} == ood
-    assert not any(generators.get(n).eval_only for n in main)
+def test_suite_rows_train_in_domain_and_the_mixed_family_probe_does_not():
+    """
+    In the 22-task suite every row trains in-domain -- one model per (task, arm), fiqa, scifact
+    and outlier_review included (suite coverage record, 2026-08-20). Only contra_fever remains
+    eval-only: it is not a suite row at all, existing solely to probe the 5-task MIXED models on
+    an unseen corpus, and training on it would destroy that one purpose.
+    """
+    suite_trained = {"contradiction", "nq", "outlier", "rerank", "oolong",
+                     "fiqa", "scifact", "outlier_review"}
+    assert suite_trained | {"contra_fever"} <= set(generators.names())
+    assert not any(generators.get(n).eval_only for n in suite_trained)
+    assert generators.get("contra_fever").eval_only
 
 
 @pytest.mark.parametrize("task", CORPUS_BACKED)
@@ -283,7 +288,7 @@ def test_every_rung_of_the_ladder_is_buildable(task):
 # ── held-out ladders ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("task", ["fiqa", "scifact", "outlier_review", "contra_fever"])
+@pytest.mark.parametrize("task", ["contra_fever"])
 def test_a_held_out_ladder_refuses_to_produce_training_data(task):
     """
     An error, not a warning. By the time a warning is noticed the checkpoint is trained and the
@@ -1184,8 +1189,9 @@ def test_xabsence_pool_refilters_a_pool_mined_at_a_looser_threshold(tmp_path):
 
 def test_xabsence_exact_copy_mode_is_the_string_matchable_variant():
     """
-    Kept as the no-LLM fallback, and the probe is what stops it being used by accident: a
-    byte-identical twin makes "the document with no lexical counterpart" find every orphan.
+    Exact mode is the suite's DECLARED construction (2026-08-20): verbatim-twin absence, whose
+    perfect lexical score is the task working, not a leak. The probe must recognise the
+    byte-identical twins, report the 1.0 as informational, and stay armed for paraphrase data.
     """
     from ctc.data.sources import paraphrase
 
@@ -1204,4 +1210,5 @@ def test_xabsence_exact_copy_mode_is_the_string_matchable_variant():
         generator.build_example(random.Random(s), corpus=pool, num_docs=59) for s in range(10)
     ]
     result = audit_mod.unmatched_by_lexical_overlap(examples, registry.get("xabsence"))
-    assert result.score == 1.0 and result.failed
+    assert result.score == 1.0 and not result.failed
+    assert "declared construction" in result.detail

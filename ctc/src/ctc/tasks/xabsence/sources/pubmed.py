@@ -64,16 +64,26 @@ def _draw(
     """
     if len(corpus) < pairs + num_unmatched:
         return None
+    # Decoys exist to give an orphan a LEXICALLY close counterpart so that only meaning separates
+    # a twin from a neighbour -- which is vacuous when the twins are byte-identical (exact mode,
+    # the suite's declared construction). Skipping them there also skips the pool's lazy
+    # nearest-neighbour index, whose one-time cost is ~5 minutes per 90k-entry split and scales
+    # with the pool -- the difference between an exact-mode build running in seconds and hanging.
+    if decoys_per_unmatched and corpus.pairs and all(
+        pair.original == pair.paraphrase for pair in corpus.pairs[:8]
+    ):
+        decoys_per_unmatched = 0
     orphans = rng.sample(range(len(corpus)), num_unmatched)
     sides = [rng.choice("AB") for _ in orphans]
 
     taken = set(orphans)
     forced: List[int] = []
-    for index, side in zip(orphans, sides):
-        for candidate in corpus.decoys(side, index, decoys_per_unmatched):
-            if candidate not in taken:
-                taken.add(candidate)
-                forced.append(candidate)
+    if decoys_per_unmatched:
+        for index, side in zip(orphans, sides):
+            for candidate in corpus.decoys(side, index, decoys_per_unmatched):
+                if candidate not in taken:
+                    taken.add(candidate)
+                    forced.append(candidate)
     forced = forced[:pairs]
 
     rest = [i for i in range(len(corpus)) if i not in taken]
@@ -227,7 +237,7 @@ GENERATOR = Generator(
     corpus=source.load_pool,
     corpus_defaults={
         "pool_path": None,
-        "mode": "paraphrase",
+        "mode": "exact",
         "num_abstracts": 8_000,
         "num_claims": 30_000,
         "seed": 42,

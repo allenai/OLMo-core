@@ -180,6 +180,8 @@ GENERATOR = Generator(
         "seed": 42,
         "hf_dataset": "McAuley-Lab/Amazon-Reviews-2023",
     },
-    eval_only=True,
+    # NOT eval_only: a 22-task-suite row trains in-domain (one model per task x arm). The OOD
+    # convention -- never train the 5-task MIXED models on this -- is a protocol rule for that
+    # family, not a property of the ladder.
     notes="held-out: Amazon reviews graded by the outlier spec; difficulty-matched `matched` build",
 )

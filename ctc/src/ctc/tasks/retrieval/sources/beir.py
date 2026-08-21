@@ -74,7 +74,10 @@ def _generator(name: str, dataset: str, notes: str) -> Generator:
             "bm25_threads": 8,
         },
         indexed=True,
-        eval_only=True,
+        # NOT eval_only: in the 22-task suite every row trains in-domain -- one model per
+        # (task, arm), fiqa and scifact included (suite coverage record, 2026-08-20). Their
+        # older role as OOD probes of the 5-task MIXED models still holds by convention:
+        # never feed these shards to a multi-task mix you plan to score them against.
         notes=notes,
     )
 
