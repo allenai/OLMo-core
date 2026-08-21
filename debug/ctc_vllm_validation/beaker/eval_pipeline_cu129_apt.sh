@@ -41,7 +41,20 @@ echo "aws cli: $(aws --version 2>&1)"
 
 WORK=/root/vllm_beaker_eval_${TASK}_${RUNG}
 mkdir -p "$WORK"
-VENV="$WORK/venv"
+# ── VENV CACHE: skip the ~19-min per-job build ────────────────────────────────────────────────
+# The venv is built ONCE at a FIXED path (venv shebangs embed absolute paths, so the path must be
+# identical in every job), tarred to S3, and later jobs untar it in ~2 min. Self-priming: when the
+# tarball is absent the job builds as before and uploads. VENV_CACHE_KEY names the payload -- BUMP
+# IT whenever the wheel URL or the pinned package triad below changes, or stale caches will serve
+# the old stack silently.
+VENV=/root/vllm_venv_cu129
+VENV_CACHE_KEY="${VENV_CACHE_KEY:-vllm0251-cu129-v1}"
+VENV_TAR="s3://ai2-llm/checkpoints/prasanns/_transfer/venv_cache/${VENV_CACHE_KEY}.tar.gz"
+if [ ! -x "$VENV/bin/python" ] && aws s3 cp "$VENV_TAR" /root/venv_cache.tar.gz --only-show-errors 2>/dev/null; then
+  echo "=== venv cache HIT ($VENV_CACHE_KEY) $(date '+%F %T') ==="
+  tar -xzf /root/venv_cache.tar.gz -C / && rm -f /root/venv_cache.tar.gz
+  "$VENV/bin/python" -c "import vllm" 2>/dev/null || { echo "cache unusable -- rebuilding"; rm -rf "$VENV"; }
+fi
 
 # --- PyPI only publishes a cu13-linked vllm==0.25.1 wheel (needs driver >=~580), but vLLM's
 # GitHub release also ships a vllm-0.25.1+cu129 wheel (CUDA 12.9). jupiter's driver reports
@@ -49,6 +62,7 @@ VENV="$WORK/venv"
 # version compatibility* (driver >= the 12.x baseline, no forward-compat package needed)
 # should let this run natively, unlike the cu13 (major-version) jump.
 CU129_WHEEL_URL="https://github.com/vllm-project/vllm/releases/download/v0.25.1/vllm-0.25.1%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl"
+if [ ! -x "$VENV/bin/python" ]; then
 echo "=== building vllm venv (cu129 wheel from GitHub releases) $(date '+%F %T') ==="
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --quiet --upgrade pip
@@ -185,6 +199,12 @@ echo "=== light olmo_core/corpus_reasoning deps $(date '+%F %T') ==="
   safetensors importlib_resources bettermap pandas huggingface_hub scikit-learn 2>&1 | tail -20
 echo "=== installing flash-linear-attention (fla) -- required for GatedDeltaNet construction $(date '+%F %T') ==="
 "$VENV/bin/pip" install --quiet "flash-linear-attention==0.4.1" 2>&1 | tail -60
+echo "=== venv build complete; uploading cache ($VENV_CACHE_KEY) $(date '+%F %T') ==="
+tar -czf /root/venv_cache.tar.gz -C / "${VENV#/}" \
+  && aws s3 cp /root/venv_cache.tar.gz "$VENV_TAR" --only-show-errors \
+  && echo "venv cache uploaded" || echo "venv cache upload FAILED (non-fatal)"
+rm -f /root/venv_cache.tar.gz
+fi
 
 # --- pull the untracked debug/ctc_vllm_validation tree (build_prefills_any.py, grade_any.py,
 # run_vllm_eval.py) + a refreshed src/scripts/eval/ctc_suite/run_rung_eval.py, overlaid onto the
