@@ -415,6 +415,7 @@ def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
     return {
         "root": tmp_path,
         "recipe_sha256": sha256(recipe),
+        "control": control,
         "profile": profile,
         "profile_sha256": sha256(profile),
         "receipt": receipt,
@@ -461,6 +462,22 @@ def test_profile_pair_receipt_binds_runtime_recipe_profile_git_and_data(tmp_path
         "control_save_folder": str(tmp_path / "control-output"),
         "treatment_save_folder": str(tmp_path / "treatment-output"),
     }
+
+
+def test_profile_pair_receipt_reports_the_selected_control_arm(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _profile_pair_case(tmp_path, module, model_variant="ssmax_head_qknorm")
+    case["profile"] = case["control"]
+    case["profile_sha256"] = hashlib.sha256(case["control"].read_bytes()).hexdigest()
+    receipt_sha256 = _write_receipt(case)
+
+    summary = _load_receipt_case(module, case, receipt_sha256)
+
+    assert summary["arm"] == "frozen_vision_control"
+    assert (
+        summary["profile_name"]
+        == module.SSMAX_PROFILE_NAMES["ssmax_head_qknorm"]["frozen_vision_control"]
+    )
 
 
 @pytest.mark.parametrize("model_variant", ["ssmax_head_qknorm", "ssmax_no_qknorm"])

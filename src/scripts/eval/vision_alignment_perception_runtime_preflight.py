@@ -675,7 +675,7 @@ def _load_profile_pair_receipt(
         raise PerceptionRuntimePreflightError(
             "Pinned profile is not exactly one arm in the profile-pair receipt"
         )
-    arm, profile_record = selected[0]
+    selected_arm, profile_record = selected[0]
     profile_name = profile_record.get("name")
     if not isinstance(profile_name, str) or not profile_name:
         raise PerceptionRuntimePreflightError(
@@ -721,8 +721,11 @@ def _load_profile_pair_receipt(
         values = _required_mapping(
             comparison.get(field), name=f"comparison.{field}", fields=frozenset(PROFILE_ARMS)
         )
-        for arm in PROFILE_ARMS:
-            _receipt_sha256(values.get(arm), name=f"comparison.{field}.{arm}")
+        for comparison_arm in PROFILE_ARMS:
+            _receipt_sha256(
+                values.get(comparison_arm),
+                name=f"comparison.{field}.{comparison_arm}",
+            )
     initialization = _required_mapping(
         root.get("initialization"),
         name="initialization",
@@ -785,7 +788,7 @@ def _load_profile_pair_receipt(
         "sha256": expected_sha256,
         "version": policy["profile_pair_version"],
         "model_variant": model_variant,
-        "arm": arm,
+        "arm": selected_arm,
         "profile_name": profile_name,
         "data_contract_sha256": data_contract_sha256,
         "perception_provenance_sha256": provenance_sha256,
