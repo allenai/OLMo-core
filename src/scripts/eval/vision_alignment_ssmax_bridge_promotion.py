@@ -95,7 +95,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Build an immutable promotion report or controlled two-arm comparison."""
 
     args = _parse_args(argv)
-    created_at = args.created_at or datetime.now(timezone.utc).isoformat()
     if args.command == "promote":
         manifest_path = args.manifest.expanduser().resolve()
         if sha256_file(manifest_path) != args.expected_manifest_sha256:
@@ -112,7 +111,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.expected_health_sha256,
                 option="--health",
             ),
-            created_at=created_at,
+            created_at=args.created_at or datetime.now(timezone.utc).isoformat(),
         )
         write_json_once(args.output, report)
         if report["status"] != "passed":
@@ -137,7 +136,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "path": str(args.right_promotion.expanduser().resolve()),
             "sha256": args.expected_right_promotion_sha256,
         },
-        created_at=created_at,
+        created_at=args.created_at or datetime.now(timezone.utc).isoformat(),
     )
     write_json_once(args.output, comparison)
 
