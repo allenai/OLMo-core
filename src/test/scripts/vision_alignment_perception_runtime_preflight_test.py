@@ -319,7 +319,11 @@ def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
             },
         },
         "comparison": {
-            "allowed_identity_config_paths": list(module._ALLOWED_IDENTITY_CONFIG_PATHS),
+            "allowed_identity_config_paths": list(
+                module._SSMAX_ALLOWED_IDENTITY_CONFIG_PATHS
+                if model_variant in module.SSMAX_MODEL_VARIANTS
+                else module._ALLOWED_IDENTITY_CONFIG_PATHS
+            ),
             "allowed_arm_config_paths": list(module._ALLOWED_ARM_CONFIG_PATHS),
             "arm_config_sha256": {
                 "frozen_vision_control": "6" * 64,
@@ -412,6 +416,25 @@ def test_ssmax_v3_profile_pair_receipt_binds_exact_lineage(
     assert summary["model_variant"] == model_variant
     assert summary["profile_name"] == module.SSMAX_PROFILE_NAMES[model_variant]["treatment"]
     assert summary["arm"] == "treatment"
+    assert (
+        "/trainer/callbacks/ssmax_health_ledger/run_name"
+        in case["receipt"]["comparison"]["allowed_identity_config_paths"]
+    )
+
+
+def test_ssmax_v3_profile_pair_receipt_rejects_legacy_identity_paths(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _profile_pair_case(tmp_path, module, model_variant="ssmax_head_qknorm")
+    case["receipt"]["comparison"]["allowed_identity_config_paths"] = list(
+        module._ALLOWED_IDENTITY_CONFIG_PATHS
+    )
+    receipt_sha256 = _write_receipt(case)
+
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="exact identity and causal-arm difference",
+    ):
+        _load_receipt_case(module, case, receipt_sha256)
 
 
 @pytest.mark.parametrize(

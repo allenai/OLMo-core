@@ -143,6 +143,10 @@ _ALLOWED_IDENTITY_CONFIG_PATHS = (
     "/trainer/save_folder",
     "/vision_alignment/lineage_id",
 )
+_SSMAX_ALLOWED_IDENTITY_CONFIG_PATHS = (
+    *_ALLOWED_IDENTITY_CONFIG_PATHS,
+    "/trainer/callbacks/ssmax_health_ledger/run_name",
+)
 _ALLOWED_ARM_CONFIG_PATHS = (
     "/perception_trainability_arm",
     "/train_module/freeze_params",
@@ -695,8 +699,13 @@ def _load_profile_pair_receipt(
             }
         ),
     )
+    expected_identity_config_paths = (
+        _SSMAX_ALLOWED_IDENTITY_CONFIG_PATHS
+        if model_variant in SSMAX_MODEL_VARIANTS
+        else _ALLOWED_IDENTITY_CONFIG_PATHS
+    )
     if comparison.get("allowed_identity_config_paths") != list(
-        _ALLOWED_IDENTITY_CONFIG_PATHS
+        expected_identity_config_paths
     ) or comparison.get("allowed_arm_config_paths") != list(_ALLOWED_ARM_CONFIG_PATHS):
         raise PerceptionRuntimePreflightError(
             "Profile-pair receipt does not declare the exact identity and causal-arm difference"

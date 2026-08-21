@@ -161,6 +161,11 @@ _IDENTITY_CONFIG_PATHS = (
     "/vision_alignment/lineage_id",
 )
 
+_SSMAX_IDENTITY_CONFIG_PATHS = (
+    *_IDENTITY_CONFIG_PATHS,
+    "/trainer/callbacks/ssmax_health_ledger/run_name",
+)
+
 _ARM_CONFIG_PATHS = (
     "/perception_trainability_arm",
     "/train_module/freeze_params",
@@ -718,8 +723,32 @@ def _validate_config_identity(
     return save_path
 
 
-def _normalize_identity(config: Mapping[str, Any], vision_group_index: int) -> dict[str, Any]:
+def _normalize_identity(
+    config: Mapping[str, Any], vision_group_index: int, *, model_variant: str
+) -> dict[str, Any]:
     normalized = copy.deepcopy(dict(config))
+    run_name = _at(normalized, "required_run_name")
+    callbacks = _at(normalized, "trainer", "callbacks")
+    health_ledger = callbacks.get("ssmax_health_ledger")
+    if model_variant in SSMAX_MODEL_VARIANTS:
+        if not isinstance(health_ledger, dict):
+            raise ProfilePairAuditError("SSMax health-ledger callback is missing")
+        _require_exact_value(
+            health_ledger.get("model_variant"),
+            model_variant,
+            name="SSMax health-ledger model variant",
+        )
+        _require_exact_value(
+            health_ledger.get("phase"),
+            "perception",
+            name="SSMax health-ledger phase",
+        )
+        _require_exact_value(
+            health_ledger.get("run_name"),
+            run_name,
+            name="SSMax health-ledger run name",
+        )
+        health_ledger["run_name"] = "<run>"
     normalized["expected_launch_command"] = ["<recipe>", "train", "<run>", "--profile=<profile>"]
     normalized["required_run_name"] = "<run>"
     normalized["reviewed_profile_path"] = "<profile>"
@@ -1048,8 +1077,12 @@ def _audit_configs(
     if control_trainable_contract_sha256 == treatment_trainable_contract_sha256:
         raise ProfilePairAuditError("Arm trainable-contract SHA-256 values must be distinct")
 
-    control_identity_normalized = _normalize_identity(control, control_vision_index)
-    treatment_identity_normalized = _normalize_identity(treatment, treatment_vision_index)
+    control_identity_normalized = _normalize_identity(
+        control, control_vision_index, model_variant=model_variant
+    )
+    treatment_identity_normalized = _normalize_identity(
+        treatment, treatment_vision_index, model_variant=model_variant
+    )
     control_arm_config_sha256 = _canonical_sha256(control_identity_normalized)
     treatment_arm_config_sha256 = _canonical_sha256(treatment_identity_normalized)
     _normalize_arm(control_identity_normalized, control_vision_index)
@@ -1289,6 +1322,11 @@ def build_profile_pair_receipt(
 
     allowlist_path = profile_audit["allowlist_path"]
     allowlist_sha256 = profile_audit["allowlist_sha256"]
+    identity_config_paths = (
+        _SSMAX_IDENTITY_CONFIG_PATHS
+        if model_variant in SSMAX_MODEL_VARIANTS
+        else _IDENTITY_CONFIG_PATHS
+    )
     receipt = {
         "format": FORMAT,
         "version": policy["receipt_version"],
@@ -1325,7 +1363,7 @@ def build_profile_pair_receipt(
         },
         "launch_contract": dict(policy["launch"]),
         "comparison": {
-            "allowed_identity_config_paths": list(_IDENTITY_CONFIG_PATHS),
+            "allowed_identity_config_paths": list(identity_config_paths),
             "allowed_arm_config_paths": list(_ARM_CONFIG_PATHS),
             "arm_config_sha256": config_audit["arm_config_sha256"],
             "shared_config_sha256": config_audit["shared_config_sha256"],

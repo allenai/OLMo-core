@@ -282,6 +282,17 @@ def build_config(
                         else {"save_interval": 1000}
                     ),
                 },
+                **(
+                    {
+                        "ssmax_health_ledger": {
+                            "model_variant": model_variant,
+                            "phase": "perception",
+                            "run_name": run_name,
+                        }
+                    }
+                    if is_ssmax
+                    else {}
+                ),
             },
         },
         "train_module": {
@@ -525,6 +536,10 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
     assert json.loads(first_raw) == receipt
     assert receipt["status"] == "passed"
     assert receipt["version"] == 2
+    assert (
+        "/trainer/callbacks/ssmax_health_ledger/run_name"
+        not in receipt["comparison"]["allowed_identity_config_paths"]
+    )
     assert receipt["recipe_execution_module"] == "__main__"
     producer = (
         Path(__file__).resolve().parents[2]
@@ -604,6 +619,34 @@ def test_builds_strict_ssmax_dense_hsdp_pair_receipt(tmp_path: Path, model_varia
         "param_dtype": "bfloat16",
         "reduce_dtype": "float32",
     }
+    assert (
+        "/trainer/callbacks/ssmax_health_ledger/run_name"
+        in receipt["comparison"]["allowed_identity_config_paths"]
+    )
+
+
+@pytest.mark.parametrize("drift", ["missing", "model_variant", "phase", "run_name"])
+def test_rejects_ssmax_health_ledger_identity_drift(
+    monkeypatch, tmp_path: Path, drift: str
+) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, model_variant="ssmax_head_qknorm")
+    original = module._build_profile_config
+
+    def drift_treatment(*args, **kwargs):
+        config, config_dict = original(*args, **kwargs)
+        if config_dict["perception_trainability_arm"] == "treatment":
+            callbacks = config_dict["trainer"]["callbacks"]
+            if drift == "missing":
+                callbacks.pop("ssmax_health_ledger")
+            else:
+                callbacks["ssmax_health_ledger"][drift] = "wrong"
+        return config, config_dict
+
+    monkeypatch.setattr(module, "_build_profile_config", drift_treatment)
+    with pytest.raises(module.ProfilePairAuditError, match="SSMax health-ledger"):
+        module.build_profile_pair_receipt(**_kwargs(case))
+    assert not case["output"].exists()
 
 
 @pytest.mark.parametrize(
