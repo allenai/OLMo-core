@@ -479,6 +479,20 @@ def _register_debug_hooks(hf_model: torch.nn.Module, model: Transformer):
     return olmo_core_debug_state, hf_debug_state
 
 
+def _use_reference_kda_kernels(model: torch.nn.Module) -> int:
+    """Pin optimized KDA layers to FLA for deterministic conversion validation."""
+    count = 0
+    for module in model.modules():
+        is_olmo_kda = (
+            type(module).__module__ == "olmo_core.nn.attention.kda"
+            and type(module).__name__ == "KimiDeltaAttention"
+        )
+        if is_olmo_kda and module.use_cute_kernel:
+            module.use_cute_kernel = False
+            count += 1
+    return count
+
+
 def validate_conversion(
     hf_path: str | Path,
     model: Transformer,
@@ -547,13 +561,7 @@ def validate_conversion(
     # numerical sensitivity (and produced large false mismatches for some otherwise
     # correctly mapped checkpoints).  Pin OLMo Core to the same semantic-reference kernel
     # as HF for validation; production training keeps the configured optimized kernel.
-    from olmo_core.nn.attention.kda import KimiDeltaAttention
-
-    kda_reference_layers = 0
-    for module in model.modules():
-        if isinstance(module, KimiDeltaAttention) and module.use_cute_kernel:
-            module.use_cute_kernel = False
-            kda_reference_layers += 1
+    kda_reference_layers = _use_reference_kda_kernels(model)
     if kda_reference_layers:
         log.info(
             "Using FLA's reference KDA kernel for conversion validation in %d layers",
