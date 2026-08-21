@@ -906,6 +906,7 @@ class Olmo3MoeAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
         self.use_head_qk_norm = config.use_head_qk_norm
+        self.scalable_softmax = config.scalable_softmax
         self.gate_type = config.attention_gate_type
         self.gate_full_precision = config.attention_gate_full_precision
 
@@ -956,6 +957,11 @@ class Olmo3MoeAttention(nn.Module):
             self.k_norm = Olmo3MoeRMSNorm(
                 config.num_key_value_heads * self.head_dim, config.rms_norm_eps
             )
+        self.ssmax_scale: Optional[nn.Parameter]
+        if self.scalable_softmax:
+            self.ssmax_scale = nn.Parameter(torch.ones(config.num_attention_heads))
+        else:
+            self.register_parameter("ssmax_scale", None)
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = (
@@ -970,6 +976,7 @@ class Olmo3MoeAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
@@ -1001,6 +1008,23 @@ class Olmo3MoeAttention(nn.Module):
         if position_embeddings is not None:
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        if self.scalable_softmax:
+            if position_ids is None:
+                if cache_position is None:
+                    raise ValueError(
+                        "Scalable-Softmax requires position_ids or cache_position"
+                    )
+                position_ids = cache_position.unsqueeze(0)
+            assert self.ssmax_scale is not None
+            # OLMo-core scales each query head by
+            # log(number of causally visible tokens) * learned_head_scale.
+            # position_ids are zero based, including during cached decode.
+            visible_scale = (position_ids + 1).log().to(query_states.dtype)
+            query_states = query_states * visible_scale[:, None, :, None]
+            query_states = query_states * self.ssmax_scale.to(query_states.dtype)[
+                None, :, None, None
+            ]
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}

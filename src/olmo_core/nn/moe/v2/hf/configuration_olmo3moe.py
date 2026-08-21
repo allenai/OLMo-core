@@ -57,6 +57,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         sliding_window=4096,
         use_head_qk_norm=False,
         use_rope=True,
+        scalable_softmax=False,
         attention_gate_type=None,
         attention_gate_full_precision=True,
         linear_num_key_heads=None,
@@ -158,6 +159,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.rms_norm_eps = rms_norm_eps
         self.use_head_qk_norm = use_head_qk_norm
         self.use_rope = use_rope
+        self.scalable_softmax = scalable_softmax
         self.attention_gate_type = attention_gate_type
         self.attention_gate_full_precision = attention_gate_full_precision
 
