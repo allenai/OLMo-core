@@ -15,7 +15,10 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_from_hf,
     convert_olmo3moe_state_to_hf,
 )
-from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.nn.hf.convert_checkpoint import (
+    _normalize_legacy_latent_moe_config,
+    _use_reference_kda_kernels,
+)
 from olmo_core.testing.utils import requires_fla, requires_gpu, requires_triton
 
 
@@ -174,3 +177,17 @@ def test_legacy_latent_moe_dimension_is_normalized():
     }
     _normalize_legacy_latent_moe_config(config)
     assert config["block"]["latent_moe"] == {"latent_dim": 320, "bias": False}
+
+
+def test_conversion_validation_disables_only_optimized_kda_kernel():
+    class KimiDeltaAttention(torch.nn.Module):
+        pass
+
+    KimiDeltaAttention.__module__ = "olmo_core.nn.attention.kda"
+    kda = KimiDeltaAttention()
+    kda.use_cute_kernel = True
+    model = torch.nn.Sequential(torch.nn.Linear(2, 2), kda)
+
+    assert _use_reference_kda_kernels(model) == 1
+    assert kda.use_cute_kernel is False
+    assert _use_reference_kda_kernels(model) == 0
