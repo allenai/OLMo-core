@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 from ..format.registry import TaskSpec
-from . import ladders
+from . import ladders, supply
 from .generators import base as generators
 from .schema import gold_field_for
 
@@ -407,6 +407,7 @@ def build_eval(
     if corpus is None:
         corpus = generator.load_corpus()
     resolved = _resolve(generator, config, corpus, "eval")
+    supply.check(task, resolved.get("corpus"), labels)
     cursor = _cursor_for(generator, resolved, report)
 
     if generator.build_ladder is not None:
@@ -588,6 +589,7 @@ def build_train(
     if corpus is None:
         corpus = generator.load_corpus()
     base = _resolve(generator, config, corpus, "train")
+    supply.check(task, base.get("corpus"), labels)
     # One cursor for the whole split, not one per rung: restarting it per rung would ask the same
     # questions five times at five lengths instead of covering the pool.
     cursor = _cursor_for(generator, base, report)

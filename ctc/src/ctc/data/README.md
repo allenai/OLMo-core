@@ -143,8 +143,11 @@ Four things to know at this scale:
   arithmetic provably cannot honour (`qdmatch_hpqa` past 256k, `scifact` past 1m, `strmatch` past
   48k — its frozen vocabulary caps ~1.9k documents). Tasks in `ladders.SUPPLY_BOUNDED` (absence,
   reorder, rerank, ...) are bounded by what their corpus happens to contain — a single book's
-  length, the per-query scored fill — and fail at draw time with the rejection-limit error rather
-  than up front. The four pure synthetics (`cycle`, `groups4`, `mathmatch`, `textgroups`) scale
+  length, the per-query scored fill — and `ctc.data.supply` now refuses those up front too, from
+  the **loaded pool's own arithmetic** ("the 10m rung needs 138,425 per example; this pool
+  supplies at most 1,367 sentences in the longest prose run"), in milliseconds instead of a
+  rejection-limit error minutes into the draw. The bound is generous, so a pass only means "not
+  provably hopeless"; oolong is exempt because it under-fills rather than fails. The four pure synthetics (`cycle`, `groups4`, `mathmatch`, `textgroups`) scale
   arbitrarily; all are O(N) per example (~10–20 s per 10M-token example).
 - **Two tasks' answers grow with the rung** (`reorder`, `grouping_labeled`) — see below; at 1m a
   reorder target alone is ~30k tokens, which is a decode-budget problem before it is a data one.

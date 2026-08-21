@@ -250,8 +250,9 @@ def load_pool(
         raise ImportError("HotpotQA loading needs `datasets`: pip install './ctc[sources]'") from e
 
     dataset = load_dataset("hotpotqa/hotpot_qa", "distractor", split=split)
-    order = list(range(len(dataset)))
-    random.Random(seed).shuffle(order)
+    shuffled = list(range(len(dataset)))
+    random.Random(seed).shuffle(shuffled)
+    order = shuffled
     if question_type != "all":
         types = dataset["type"]
         order = [i for i in order if types[i] == question_type]
@@ -259,12 +260,19 @@ def load_pool(
         levels = dataset["level"]
         order = [i for i in order if levels[i] == level]
 
-    # Two DISJOINT slices of the same shuffled order: the first backs the questions, the second only
+    # Two DISJOINT slices of one shuffled dataset: the first backs the questions, the second only
     # ever contributes filler. Sharing one slice would let a question's own adversarial distractors
     # come back as its "random" fill whenever the CE pass dropped them -- the example would be
     # harder than `hard_neg_indices` records, and that field is the only account of how a pool was
     # built.
-    question_ids, filler_ids = order[:num_questions], order[num_questions:]
+    #
+    # The question slice honours the type/level filter; the filler slice deliberately does NOT. A
+    # filler is a supporting paragraph -- plain Wikipedia text whose question's type is irrelevant
+    # -- and restricting fillers to the filtered rows capped the deduped pool at ~85k paragraph
+    # titles, which left the 10M rung (92k documents per example) unsuppliable at any slice size.
+    question_ids = order[:num_questions]
+    question_set = set(question_ids)
+    filler_ids = [i for i in shuffled if i not in question_set]
     if not filler_ids:
         raise ValueError(
             f"num_questions={num_questions} consumes all {len(order)} matching rows, leaving none "
