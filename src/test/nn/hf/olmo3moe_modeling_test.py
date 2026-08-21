@@ -167,6 +167,28 @@ def test_olmo3moe_logprobs_match_after_conversion_roundtrip():
 
 
 @requires_olmo3moe
+def test_olmo3moe_scalable_softmax_matches_core_bfloat16_operation_order():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeAttention
+
+    config = _small_config()
+    config.scalable_softmax = True
+    attention = Olmo3MoeAttention(config, layer_idx=0).to(torch.bfloat16)
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.copy_(torch.tensor([0.947, 0.435, 0.637, 0.934]))
+
+    query_states = torch.randn(1, 4, 60, 8, dtype=torch.bfloat16)
+    position_ids = torch.arange(60).unsqueeze(0)
+    visible_scale = (position_ids + 1).log().to(query_states.dtype)
+    scale = visible_scale[:, None, :, None]
+    scale = scale * attention.ssmax_scale[None, :, None, None]
+    expected = query_states * scale
+
+    actual = attention._apply_scalable_softmax(query_states, position_ids, None)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@requires_olmo3moe
 def test_olmo3moe_kda_rejects_padding_mask_before_attention():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import _validate_linear_attention_mask
 

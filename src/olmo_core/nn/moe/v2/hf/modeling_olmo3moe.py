@@ -968,6 +968,29 @@ class Olmo3MoeAttention(nn.Module):
             config.sliding_window if self.attention_type == "sliding_attention" else None
         )
 
+    def _apply_scalable_softmax(
+        self,
+        query_states: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
+        cache_position: Optional[torch.LongTensor],
+    ) -> torch.Tensor:
+        if not self.scalable_softmax:
+            return query_states
+        if position_ids is None:
+            if cache_position is None:
+                raise ValueError("Scalable-Softmax requires position_ids or cache_position")
+            position_ids = cache_position.unsqueeze(0)
+        assert self.ssmax_scale is not None
+
+        # Preserve OLMo-core's bf16 operation order exactly: first form the combined
+        # per-token/per-head scale, then multiply Q once. Applying the two factors to Q
+        # sequentially is algebraically equivalent in real arithmetic but introduces a
+        # different bf16 rounding point and breaks strict conversion parity.
+        visible_scale = (position_ids + 1).log().to(query_states.dtype)
+        scale = visible_scale[:, None, :, None]
+        scale = scale * self.ssmax_scale.to(query_states.dtype)[None, :, None, None]
+        return query_states * scale
+
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
         self,
@@ -1009,22 +1032,9 @@ class Olmo3MoeAttention(nn.Module):
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if self.scalable_softmax:
-            if position_ids is None:
-                if cache_position is None:
-                    raise ValueError(
-                        "Scalable-Softmax requires position_ids or cache_position"
-                    )
-                position_ids = cache_position.unsqueeze(0)
-            assert self.ssmax_scale is not None
-            # OLMo-core scales each query head by
-            # log(number of causally visible tokens) * learned_head_scale.
-            # position_ids are zero based, including during cached decode.
-            visible_scale = (position_ids + 1).log().to(query_states.dtype)
-            query_states = query_states * visible_scale[:, None, :, None]
-            query_states = query_states * self.ssmax_scale.to(query_states.dtype)[
-                None, :, None, None
-            ]
+        query_states = self._apply_scalable_softmax(
+            query_states, position_ids, cache_position
+        )
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}
