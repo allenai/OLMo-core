@@ -541,6 +541,24 @@ def validate_conversion(
         model = model.to(dtype.as_pt())
     model = model.to(device=device)
     model.eval()
+    # The optimized CuTe KDA training kernel is intentionally not bitwise identical to
+    # FLA's reference KDA kernel, while the HF implementation uses FLA.  Comparing those
+    # two kernels can make this *state-conversion* check depend on the checkpoint's
+    # numerical sensitivity (and produced large false mismatches for some otherwise
+    # correctly mapped checkpoints).  Pin OLMo Core to the same semantic-reference kernel
+    # as HF for validation; production training keeps the configured optimized kernel.
+    from olmo_core.nn.attention.kda import KimiDeltaAttention
+
+    kda_reference_layers = 0
+    for module in model.modules():
+        if isinstance(module, KimiDeltaAttention) and module.use_cute_kernel:
+            module.use_cute_kernel = False
+            kda_reference_layers += 1
+    if kda_reference_layers:
+        log.info(
+            "Using FLA's reference KDA kernel for conversion validation in %d layers",
+            kda_reference_layers,
+        )
     # Conversion validation is a semantic reference check, not an inference-kernel
     # benchmark. Math SDPA keeps it independent of cuDNN plan support. The conversion
     # launcher also selects the established grouped-GEMM expert backend so this check
