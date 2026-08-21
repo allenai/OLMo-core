@@ -298,11 +298,16 @@ def unmatched_by_lexical_overlap(examples: Sequence[Mapping], spec: TaskSpec) ->
     """
     For ``xabsence``: can the unmatched claims be found by word overlap alone?
 
-    The task is supposed to require recognising a *paraphrase* across the corpus boundary. Score
-    every document by its best word-Jaccard against any document in the other corpus, take the ``k``
-    lowest, and ask how many of them are gold. A near-copy twin -- or the ``exact`` pool mode, whose
-    twin is byte-identical -- makes this 1.0, and the task is then a string match dressed up as a
-    semantic one.
+    In ``paraphrase`` mode the task requires recognising a rewrite across the corpus boundary,
+    and this probe is the leak detector: score every document by its best word-Jaccard against the
+    other corpus, take the ``k`` lowest, and ask how many are gold. A near-copy twin makes that
+    1.0 -- a semantic task quietly degraded to a string match.
+
+    In ``exact`` mode (the suite's declared construction, decided 2026-08-20) the twin is
+    byte-identical BY DESIGN: the task is verbatim-duplicate absence at scale, and a perfect
+    lexical score is the construction working, not a leak. The probe detects that case -- some
+    cross-corpus pair with identical text -- and reports itself as informational rather than
+    failing the build. It stays fully armed for paraphrase-mode data.
 
     :param examples: xabsence examples.
     :param spec: The xabsence spec.
@@ -313,6 +318,7 @@ def unmatched_by_lexical_overlap(examples: Sequence[Mapping], spec: TaskSpec) ->
     scores: List[float] = []
     chances: List[float] = []
     probed = 0
+    exact_mode = 0
     for example in examples:
         docs = example["documents"]
         gold = set(_gold_positions(example, spec))
@@ -320,6 +326,17 @@ def unmatched_by_lexical_overlap(examples: Sequence[Mapping], spec: TaskSpec) ->
             continue
         probed += 1
         sides = [doc.get("corpus", "A") for doc in docs]
+        by_side: Dict[str, Set[str]] = {}
+        for doc, side in zip(docs, sides):
+            by_side.setdefault(side, set()).add(doc["text"])
+        if any(
+            text in other
+            for side, texts in by_side.items()
+            for other_side, other in by_side.items()
+            if other_side != side
+            for text in texts
+        ):
+            exact_mode += 1
         tokens = [_tokens(doc["text"]) for doc in docs]
         best: List[float] = []
         for i, side in enumerate(sides):
@@ -338,6 +355,15 @@ def unmatched_by_lexical_overlap(examples: Sequence[Mapping], spec: TaskSpec) ->
         chances.append(len(gold) / len(docs))
     score = sum(scores) / len(scores) if scores else 0.0
     chance = sum(chances) / len(chances) if chances else 0.0
+    if probed and exact_mode == probed:
+        return ProbeResult(
+            "unmatched_by_lexical_overlap",
+            score,
+            chance,
+            "exact-mode twins are byte-identical by declared construction; a perfect lexical "
+            "score is the task, not a leak (probe stays armed for paraphrase-mode data)",
+            ceiling=1.01,
+        )
     return ProbeResult(
         "unmatched_by_lexical_overlap",
         score,

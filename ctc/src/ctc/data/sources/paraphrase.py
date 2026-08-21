@@ -34,8 +34,10 @@ not are the answer.
    that single document's style (recall 0.98 on B-side orphans vs 0.08 on A-side). Making the twin
    a byte-identical copy removes every per-document cue by construction. The ported generator fixes
    the same leak the *other* way -- an orphan is rendered in the form its own corpus uses
-   (:mod:`ctc.tasks.xabsence.generate`) -- so ``mode="paraphrase"`` is both safe and semantic, and
-   ``exact`` is kept only as the no-LLM fallback. Its lexical probe scores 1.0 by construction,
+   (:mod:`ctc.tasks.xabsence.generate`) -- so ``mode="paraphrase"`` remains the semantic variant, and
+   ``exact`` is the **suite's declared mode** (decided 2026-08-20): the task is verbatim-twin
+   absence at scale -- mechanically checkable, needs no model, and its pool grows to every
+   claim sentence PubMedQA supplies. Its lexical probe scores 1.0 by construction,
    which is not an acceptable finding for a suite row.
 
 Three ways in, in order of preference:
