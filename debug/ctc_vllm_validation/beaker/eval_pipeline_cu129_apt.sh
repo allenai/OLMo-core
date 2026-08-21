@@ -169,6 +169,27 @@ echo "=== installing flashinfer (GDN prefill kernel backend) $(date '+%F %T') ==
 "$VENV/bin/pip" install --quiet "flashinfer-python==0.6.13" "flashinfer-cubin==0.6.13" 2>&1 | tail -40
 "$VENV/bin/python" -c "import flashinfer; print('flashinfer', flashinfer.__version__)"
 
+
+echo "=== light olmo_core/corpus_reasoning deps $(date '+%F %T') ==="
+"$VENV/bin/pip" install --quiet dataclass-extensions cached-path filelock packaging pyyaml rich \
+  safetensors importlib_resources bettermap pandas huggingface_hub scikit-learn 2>&1 | tail -20
+echo "=== installing flash-linear-attention (fla) -- required for GatedDeltaNet construction $(date '+%F %T') ==="
+"$VENV/bin/pip" install --quiet "flash-linear-attention==0.4.1" 2>&1 | tail -60
+echo "=== venv build complete; uploading cache ($VENV_CACHE_KEY) $(date '+%F %T') ==="
+tar -czf /root/venv_cache.tar.gz -C / "${VENV#/}" \
+  && aws s3 cp /root/venv_cache.tar.gz "$VENV_TAR" --only-show-errors \
+  && echo "venv cache uploaded" || echo "venv cache upload FAILED (non-fatal)"
+rm -f /root/venv_cache.tar.gz
+fi
+
+# ── CUDA toolkit / CUDA_HOME: MUST run on EVERY job, cache hit or miss ──────────────────
+# This block used to live inside the `if [ ! -x $VENV/bin/python ]` venv-build branch above.
+# That made CUDA_HOME conditional on a venv cache MISS: the first job of a wave built the venv,
+# set CUDA_HOME, succeeded and UPLOADED the cache -- and every job launched afterwards took the
+# cache-HIT path, skipped this block, and died ~10 min in with
+#     eval_pipeline_cu129_apt.sh: line NNN: CUDA_HOME: unbound variable
+# under `set -u`. The same guard is why the SECOND and later rungs of a PACKED job failed while
+# the first succeeded: rung 1 leaves $VENV in place, so rungs 2..N skip this block too.
 echo "=== CUDA_HOME / nvcc: REAL apt system toolkit (coherent nvcc+headers), NOT pip metapackage $(date '+%F %T') ==="
 . /etc/os-release; UBU_TAG="ubuntu${VERSION_ID//./}"
 echo "distro=$UBU_TAG"
@@ -193,18 +214,6 @@ echo "CUDA_HOME=$CUDA_HOME  nvcc=$(which nvcc)"
 echo "=== coherence check: nvcc __CUDACC_VER vs cuda.h CUDA_VERSION $(date '+%F %T') ==="
 echo | "$CUDA_HOME/bin/nvcc" -x cu -E -dM - 2>/dev/null | grep -E "CUDACC_VER"
 grep -E "CUDA_VERSION" "$CUDA_HOME/include/cuda.h" | head -3
-
-echo "=== light olmo_core/corpus_reasoning deps $(date '+%F %T') ==="
-"$VENV/bin/pip" install --quiet dataclass-extensions cached-path filelock packaging pyyaml rich \
-  safetensors importlib_resources bettermap pandas huggingface_hub scikit-learn 2>&1 | tail -20
-echo "=== installing flash-linear-attention (fla) -- required for GatedDeltaNet construction $(date '+%F %T') ==="
-"$VENV/bin/pip" install --quiet "flash-linear-attention==0.4.1" 2>&1 | tail -60
-echo "=== venv build complete; uploading cache ($VENV_CACHE_KEY) $(date '+%F %T') ==="
-tar -czf /root/venv_cache.tar.gz -C / "${VENV#/}" \
-  && aws s3 cp /root/venv_cache.tar.gz "$VENV_TAR" --only-show-errors \
-  && echo "venv cache uploaded" || echo "venv cache upload FAILED (non-fatal)"
-rm -f /root/venv_cache.tar.gz
-fi
 
 # --- pull the untracked debug/ctc_vllm_validation tree (build_prefills_any.py, grade_any.py,
 # run_vllm_eval.py) + a refreshed src/scripts/eval/ctc_suite/run_rung_eval.py, overlaid onto the
