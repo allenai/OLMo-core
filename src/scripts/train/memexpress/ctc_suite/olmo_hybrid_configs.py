@@ -167,7 +167,15 @@ def olmo_hybrid_7B_ctc(
             # linear_allow_neg_eigval: true.
             allow_neg_eigval=True,
             conv_size=_LINEAR_CONV_KERNEL,
-            norm_eps=_LAYER_NORM_EPS,
+            # ⚠ Do NOT pass norm_eps=_LAYER_NORM_EPS (1e-6) here. GatedDeltaNetConfig's default of
+            # 1e-5 is what HF OlmoHybridGatedDeltaNet and vLLM hardcode for the GDN o_norm, and the
+            # HF export cannot express any other value — so a 1e-6-trained checkpoint is silently
+            # served at 1e-5 by vLLM. Measured 2026-08-21: that mismatch flips 96% of per-example
+            # generations on a near-chance task (aggregates survive within 1 SE, but only verified
+            # after the fact). Training at the default keeps train == eval on every backend.
+            # Probe evidence: debug/ctc_olmo_hybrid/hybrid_vllm/. Checkpoints trained before this
+            # change (all ctc-olmohyb-* through 2026-08-21) are 1e-6: evaluate those NATIVE, or
+            # accept the documented per-example shuffle under vLLM.
             dtype=dtype,
         ),
         feed_forward=feed_forward,

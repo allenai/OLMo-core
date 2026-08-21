@@ -234,6 +234,42 @@ HF_EXPORT="$WORK/hf_export"
 # instead), so the first 0.8B job through here lost ~28 minutes of venv build before dying.
 BASE_MODEL_ID="${BASE_MODEL_ID:-Qwen/Qwen3.5-4B-Base}"
 
+# ⚠ EXPORTER SELECTS THE CHECKPOINT->HF PATH. It is an explicit caller-set switch, NOT sniffed
+# from the checkpoint: guessing is what turns "wrong family" into a plausible number instead of an
+# error, and the caller always knows which family it launched.
+#   qwen  (default, unchanged): src/corpus_reasoning/train/export_olmo_to_hf.py. Its
+#         resolve_olmo_model() supports ONLY model_type qwen3 / qwen3_5 and RAISES otherwise, so an
+#         OLMo checkpoint cannot go through it at all.
+#   noswa: debug/ctc_olmo_hybrid/export_noswa_to_hf.py -- a sliding-window-FREE olmo3 model
+#         (--model-scale 7b-noswa) mapped onto the Olmo2 HF class, which IS the full-attention
+#         arch. Validated locally: /scratch/users/prasann/ctc_olmo3ns_results/*-noswa-cpt-vllm_full/
+#         (oolong 2k gen_seconds=25.0 vs 2191s native).
+# NOT a path for GDN/hybrid (ctc-olmohyb-*) checkpoints: get_hf_config routes those to
+# save_hf_hybrid_model and vLLM has no loader for the result. Those stay on the native evaluator.
+EXPORTER="${EXPORTER:-qwen}"
+case "$EXPORTER" in qwen|noswa) ;; *) echo "FATAL: EXPORTER must be qwen|noswa, got '$EXPORTER'"; exit 2 ;; esac
+
+# ⚠ MARKER IDS AND TOKENIZER ARE NOW PASSED EXPLICITLY TO build_prefills_any (below).
+# They used to be left at that script's defaults, which are the Qwen3.5 values. Pointed at an OLMo
+# checkpoint those defaults DO NOT CRASH -- they emit a mis-tokenized prompt wrapped in the wrong
+# marker ids and the run reports a plausible number. The values here are read off
+# olmo_core.data.document_chunk_landmark.RESERVED_IDS; the qwen defaults below are bit-identical to
+# build_prefills_any's own defaults (RESERVED_IDS['qwen3_5'] = 248049/248050/248044), so the Qwen
+# path is unchanged -- they are spelled out only so the log records which set was used.
+if [ "$EXPORTER" = "noswa" ]; then
+  DOC_START_ID="${DOC_START_ID:-100266}"   # <|box_start|> (renamed <|extra_id_1|>)
+  DOC_END_ID="${DOC_END_ID:-100267}"       # <|box_end|>   (renamed <|extra_id_2|>)
+  EOS_ID="${EOS_ID:-100257}"               # <|endoftext|> -- what the dolma2 SFT shards stop on
+  # The PATCHED dolma2 marker tokenizer (weka copy; the Berkeley /scratch copy does not exist here).
+  # Must be the same copy the shards were tokenized with -- stock allenai/dolma2-tokenizer has no
+  # <|box_start|>/<|box_end|> at all.
+  TOKENIZER_DIR="${TOKENIZER_DIR:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_olmo3/tokenizer}"
+else
+  DOC_START_ID="${DOC_START_ID:-248049}"
+  DOC_END_ID="${DOC_END_ID:-248050}"
+  EOS_ID="${EOS_ID:-248044}"
+fi
+
 if [ -f "$CKPT_WEKA/config.json" ] || [ -d "$CKPT_WEKA/model_and_optim" ]; then
   CKPT="$CKPT_WEKA"
   echo "=== using weka checkpoint: $CKPT ==="
@@ -248,16 +284,52 @@ else
   echo "=== using S3-synced checkpoint: $CKPT ==="
 fi
 
+if [ "$EXPORTER" = "noswa" ]; then
+  [ -d "$TOKENIZER_DIR" ] || { echo "FATAL: marker tokenizer not found at $TOKENIZER_DIR (is --weka mounted?)"; exit 1; }
+  # NOSWA_MAX_SEQ_LEN -> max_position_embeddings in the export. 40960 is the --seq-len these runs
+  # trained at. It does NOT bound vLLM: with YaRN (factor 8, original_max_position_embeddings 8192)
+  # vLLM derives max_model_len = 8192*8 = 65536, and run_vllm_eval auto-bumps its own
+  # --max-model-len to the longest actual prompt. A rung whose prompts exceed 65536 needs a config
+  # patch, not this knob.
+  echo "=== export olmo3-noswa distcp -> HF (Olmo2 arch) $(date '+%F %T') ==="
+  # NOSWA_DTYPE=bfloat16 matches the native evaluator, which builds at DType("bfloat16"). Leaving
+  # it fp32 (the distcp's master-weight dtype) makes vLLM's dtype="auto" downcast to FLOAT16 --
+  # a different rounding mode than the number we are trying to reproduce -- and writes a 29GB
+  # export instead of a 15GB one.
+  "$VENV/bin/python" "$REPO/debug/ctc_olmo_hybrid/export_noswa_to_hf.py" \
+    "$CKPT" "$HF_EXPORT" \
+    --tokenizer "$TOKENIZER_DIR" --max-seq-len "${NOSWA_MAX_SEQ_LEN:-40960}" \
+    --dtype "${NOSWA_DTYPE:-bfloat16}"
+  echo "--- disk after export (a 7B bf16 export is ~15GB on top of the ~15GB venv) ---"
+  df -h "$WORK" 2>/dev/null | tail -1
+else
 echo "=== export olmo distcp -> HF text $(date '+%F %T') ==="
 "$VENV/bin/python" "$REPO/src/corpus_reasoning/train/export_olmo_to_hf.py" \
   --save-folder "$CKPT" --ckpt "$CKPT" \
   --hf-out "$HF_EXPORT" --base-model "$BASE_MODEL_ID"
+fi
 rc=$?
 if [ $rc -ne 0 ] || [ ! -f "$HF_EXPORT/config.json" ]; then
   echo "FATAL: export step failed (rc=$rc) or $HF_EXPORT/config.json missing"; exit 1
 fi
 echo "=== export done $(date '+%F %T') ==="
 
+if [ "$EXPORTER" = "noswa" ]; then
+# An Olmo2 export is a PLAIN single-arch causal LM: no multimodal wrapper, no vision tower, no
+# key rename. The three-script serving-copy recipe below exists solely to serve the Qwen3.5 VL
+# wrapper text-only, and every piece of it is wrong here (make_vl_weights would also assume a
+# single model.safetensors, which a 7B export is not -- it shards). Serve the export directly.
+SERVE="$HF_EXPORT"
+echo "=== noswa: serving straight from the HF export (no VL wrapper) $(date '+%F %T') ==="
+ls "$SERVE"
+"$VENV/bin/python" -c "
+import json; c=json.load(open('$SERVE/config.json'))
+print('[serve] model_type=%s arch=%s vocab=%s max_pos=%s rope_scaling=%s' % (
+    c.get('model_type'), c.get('architectures'), c.get('vocab_size'),
+    c.get('max_position_embeddings'), c.get('rope_scaling')))
+assert c.get('model_type') == 'olmo2', 'expected an Olmo2 (full-attention) export, got %r -- a sliding-window or hybrid checkpoint has no vLLM path here' % c.get('model_type')
+" || { echo "FATAL: noswa export is not a plain Olmo2 config"; exit 1; }
+else
 echo "=== resolve base VL snapshot (reuses export's HF cache) $(date '+%F %T') ==="
 BASE_SNAP=$("$VENV/bin/python" -c "
 from huggingface_hub import snapshot_download
@@ -401,6 +473,8 @@ if [ "$HAS_VISUAL" != "True" ]; then
   echo "=== no real vision weights grafted -> synthesizing dummy visual.* $(date '+%F %T') ==="
   "$VENV/bin/python" "$WORK/scripts/add_dummy_visual.py" --serve "$SERVE"
 fi
+TOKENIZER_DIR="$BASE_SNAP"
+fi
 
 # =====================================================================================
 # REAL EVAL CHAIN (replaces the smoke test): pull rung data -> build_prefills_any ->
@@ -431,9 +505,10 @@ PREFILLS="$WORK/prefills.json"
 # That is the contradiction 0.559-vs-0.946 failure. Any run whose shard metadata.json says
 # "after" MUST pass QUERY_POSITION=after here, and BOTH arms must pass the same value or the
 # dense-vs-chunked delta is a prompt-layout artifact rather than a result.
-echo "=== build_prefills_any query_position=${QUERY_POSITION:-<default both>} cot=${COT_MODE:-<default plan>} $(date '+%F %T') ==="
+echo "=== build_prefills_any tokenizer=$TOKENIZER_DIR ids=$DOC_START_ID/$DOC_END_ID/$EOS_ID query_position=${QUERY_POSITION:-<default both>} cot=${COT_MODE:-<default plan>} $(date '+%F %T') ==="
 "$VENV/bin/python" "$REPO/debug/ctc_vllm_validation/general/build_prefills_any.py" \
-  --tokenizer "$BASE_SNAP" --task "$EVAL_TASK" --eval-data "$RUNG_JSONL" \
+  --tokenizer "$TOKENIZER_DIR" --task "$EVAL_TASK" --eval-data "$RUNG_JSONL" \
+  --doc-start-id "$DOC_START_ID" --doc-end-id "$DOC_END_ID" --eos-token-id "$EOS_ID" \
   ${COT_MODE:+--cot-mode "$COT_MODE"} \
   ${QUERY_POSITION:+--query-position "$QUERY_POSITION"} \
   --max-test-samples 100000 --out "$PREFILLS"
@@ -477,6 +552,18 @@ RESP="$WORK/responses.json"
 # mode=chunked, so anything but a matching mode is not a comparison.
 # MODE defaults to full so every existing caller is unchanged.
 MODE="${MODE:-full}"
+# ⚠ EXPORTER=noswa + MODE=chunked IS REFUSED, and not for a portability reason.
+# run_vllm_eval's document-chunk patch masks EVERY attention layer, but the olmo3 chunked arms
+# (olmo3_7B_ctc_swa / the noswa variants) apply the mask to the full-attention layers only. Scoring
+# one with the other is not the model that trained, and -- like every other mask mismatch in this
+# file -- it would return a well-formed number rather than an error. The flex kv-block size below
+# is also tuned to the Qwen3.5 GDN page size (528), which an Olmo2 model does not have.
+if [ "$EXPORTER" = "noswa" ] && [ "$MODE" = "chunked" ]; then
+  echo "FATAL: MODE=chunked is not supported for EXPORTER=noswa (the in-process patch masks all"
+  echo "       layers; the olmo3 chunked arms mask only the full-attention layers). Use the native"
+  echo "       evaluator (debug/ctc_crossfamily/eval_olmo_beaker.sh) for chunked OLMo arms."
+  exit 2
+fi
 # The chunked path rebuilds a FlexAttention block mask per step and is ~18x slower without the
 # varlen prefill plan; turn it on by default for chunked mode (validated: +0.0014/-0.0020 metric
 # movement at eval_size 500) and keep concurrency pinned at the measured-best 16/18.
@@ -499,8 +586,18 @@ if [ "$MODE" = "chunked" ]; then
   fi
 fi
 echo "=== run_vllm_eval MODE=$MODE TP=${TP:-1} stop_ids=+${EXTRA_STOP_TOKEN_IDS:-<none>} gpu_mem_util=${GPU_MEM_UTIL:-0.85} varlen=${CHUNK_VARLEN_PREFILL:-0} ==="
+# --model-family is run_vllm_eval's switch for the Qwen3.5-VL serving overrides
+# (hf_overrides={"architectures":["Qwen3_5ForCausalLM"]} + limit_mm_per_prompt=0). "qwen3" means
+# PLAIN DENSE -- no VL wrapper, no arch override, use the config's own architecture -- which is
+# exactly what an Olmo2 export needs. ⚠ The name is a misnomer here and cannot be fixed from this
+# repo: run_vllm_eval.py is OVERWRITTEN by the $CODE_TARBALL overlay untarred over $REPO above, so
+# adding an "olmo2" choice would require rebuilding that S3 tarball. "qwen3" is the existing
+# plain-dense branch; naming is the only thing wrong with it.
+[ "$EXPORTER" = "noswa" ] && VLLM_MODEL_FAMILY=qwen3 || VLLM_MODEL_FAMILY=qwen3_5
+echo "=== run_vllm_eval --model-family $VLLM_MODEL_FAMILY (exporter=$EXPORTER) ==="
 "$VENV/bin/python" -u "$REPO/debug/ctc_vllm_validation/run_vllm_eval.py" \
   --hf-model "$SERVE" --prefills "$PREFILLS" --mode "$MODE" --task "$EVAL_TASK" \
+  --model-family "$VLLM_MODEL_FAMILY" \
   --max-new-tokens 256 --max-model-len 4096 --gpu-mem-util "${GPU_MEM_UTIL:-0.85}" \
   --tensor-parallel-size "${TP:-1}" \
   --out "$RESP"
