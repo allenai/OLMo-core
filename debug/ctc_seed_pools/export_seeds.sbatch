@@ -72,6 +72,22 @@ gpu)
         fi
     done
     ;;
+hpqa_fill2)
+    # hotpotqa's fillers come from rows OUTSIDE the question slice (2 supporting paragraphs per
+    # row), so the 25k-question slice capped the pool at ~70k. A 10k slice frees ~30k more rows;
+    # queries stay ample (train wraps; eval needs 500 of 1000).
+    run hotpotqa -C num_questions=10000 -C filler_pool=150000
+    ;;
+bigfill)
+    # nq/hotpotqa filler pools raised so the 10M rung is supplied: 64.7k/92.3k docs per example
+    # against the old 60k pool. No extra CE cost -- the cross-encoder work is per-question.
+    run nq -C filler_pool=150000
+    run hotpotqa -C filler_pool=150000
+    ;;
+fiqa_only)
+    # Rerun slot: FiQA's raw corpus ships 38 empty-text rows; the loader now filters them.
+    run fiqa
+    ;;
 rerank_only)
     # Rerun slot. First pass died on the _pool_scores fill-shadowing bug (fixed same day); the
     # second exposed the default num_queries=5000 as unusable at suite scale -- one query per

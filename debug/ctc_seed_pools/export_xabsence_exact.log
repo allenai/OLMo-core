@@ -1,0 +1,2 @@
+loading the xabsence corpus (this is the expensive step the pool exists to cache)
+wrote debug/ctc_seed_pools/seeds/xabsence.seed.jsonl.gz (64.2 MB)

@@ -43,18 +43,18 @@ ladder, and `ctc-data pool info FILE` prints the header.
 |---|---|---|
 | `contradiction.seed.jsonl.gz` | LLM-mined claim/contradiction pairs (60,342, recovered losslessly from the audited 20k train build) + PubMed filler abstracts | pairs are consumed, never reused: k=3 caps train at ~18k examples — pass `--train 18000` |
 | `redundancy.seed.jsonl.gz` | LLM-mined paraphrase pairs (4,477) + LLM-judged same-abstract hard negatives + fillers | supply-bounded like contradiction: ~1.3k train examples at the default k=3 |
-| `nq.seed.jsonl.gz` | BM25 hard negatives from the 21M-passage `wikipedia-dpr-100w` Lucene index + GPU cross-encoder gold filter | 10% hard-negative regime, CE filter on; 9,093 distinct queries — a 20k train build reuses queries with fresh distractor draws and says so ("pool wraps") in its report |
-| `hotpotqa.seed.jsonl.gz` | GPU cross-encoder ranking of the benchmark's distractors | bridge questions, 2 gold each; 25k queries |
+| `nq.seed.jsonl.gz` | BM25 hard negatives from the 21M-passage `wikipedia-dpr-100w` Lucene index + GPU cross-encoder gold filter | 10% hard-negative regime, CE filter on; 9,093 distinct queries — a 20k train build reuses queries with fresh distractor draws and says so ("pool wraps") in its report. 150k filler passages — supplies the 10M rung |
+| `hotpotqa.seed.jsonl.gz` | GPU cross-encoder ranking of the benchmark's distractors | bridge questions, 2 gold each; 10k queries + 96k filler paragraphs — supplies the 10M rung |
 | `rerank.seed.jsonl.gz` | MS MARCO mined hard negatives + a cross-encoder score for **every** document (25k queries) | the graded-ordering reference. Cannot wrap: fill is pre-drawn and scored per query, so distinct examples need distinct queries |
-| `fiqa.seed.jsonl.gz` / `scifact.seed.jsonl.gz` | BEIR corpus + locally-built Lucene index + CE margin filter | **eval-only** ladders; `build` refuses `--split train` |
+| `fiqa.seed.jsonl.gz` / `scifact.seed.jsonl.gz` | BEIR corpus + locally-built Lucene index + CE margin filter | suite rows train in-domain; their OOD-probe role applies only to the 5-task mixed models |
 | `outlier.seed.jsonl.gz` | full scan of the 21M-passage wiki100w index into an article pool (2.2 GB) | largest file; expect a slow first load |
-| `outlier_review.seed.jsonl.gz` | Amazon-Reviews-2023 streaming sample | eval-only |
+| `outlier_review.seed.jsonl.gz` | Amazon-Reviews-2023 streaming sample | |
 | `contra_fever.seed.jsonl.gz` | FEVER gold-evidence restructuring | eval-only |
 | `oolong.seed.jsonl.gz` | OOLONG-synth pull + per-item token counts (Qwen3 tokenizer) | |
 | `absence.seed.jsonl.gz` / `reorder.seed.jsonl.gz` | Project Gutenberg (~11 GB) + punkt sentence segmentation into prose runs / passage streams | |
 | `grouping_labeled.seed.jsonl.gz` | OpenAlex compact projection (52k papers + 31k year-restricted eval fetch) | the ~300 GB works snapshot, pre-reduced |
 | `qdmatch_nq.seed.jsonl.gz` / `qdmatch_hpqa.seed.jsonl.gz` | projected from the nq / hotpotqa pools above | |
-| `xabsence.seed.jsonl.gz` | LLM-mined paraphrase-twin pool | ⚠ 659 pairs only — seeds small builds; large rungs need a bigger mining run |
+| `xabsence.seed.jsonl.gz` | 895,300 exact-twin pairs from every PubMedQA claim sentence (the suite's declared `mode=exact` construction — no model needed) | train reaches 10M; eval caps ~5.7M (the eval split is a tenth of PubMedQA) |
 
 The four pure-synthetic ladders (`cycle`, `groups4`, `mathmatch`, `textgroups`) need no pool —
 they build from a seed integer alone.
