@@ -1,0 +1,60 @@
+version: 1
+name: vision-ssmax-no-qknorm-1p4b-cx8-perception-frozen-vision-control-v2
+description: >-
+  Production v2 SSMax perception-phase frozen-vision control for the 1.4B Cx8 lineage without
+  QK RMSNorm, prospectively rerun from its human-approved permanent bridge-v2 step 500.
+phase: perception
+launch:
+  cluster: ai2/holmes
+  workspace: ai2/scaling-ladders
+  budget: ai2/oe-other
+  num_nodes: 2
+  num_gpus: 8
+  priority: urgent
+  min_runtime: 8h
+overrides:
+  - --model_variant=ssmax_no_qknorm
+  - --data.pixmo_cap_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/pixmo-cap-content-disjoint-v1/dataset
+  - --data.perception_provenance_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/perception-provenance-v2/vision-alignment-perception-provenance.json
+  - --data.perception_provenance_sha256=73cb3920676db5e16d789f7257800dcb44b2553b6463cff81beb740213d921e2
+  - --data.source_audit_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/perception-source-audit-v2.json
+  - --data.source_audit_fingerprint=2e9bf63765c674b6a1161cd12313580e29dac028f990bfd9d304a00d844d5d3b
+  - --data.mixture.mean_loss_weight.audited_alignment=18.58728085551411
+  - --data.mixture.mean_loss_weight.cosyn_point=20.31768759561237
+  - --data.mixture.mean_loss_weight.ocr_document=4.165374373900704
+  - --data.mixture.mean_loss_weight.pixmo_caption=29.374187365814578
+  - --data.mixture.mean_loss_weight.pixmo_points_basic=33.16318166248675
+  - --data.mixture.mean_loss_weight.pixmo_points_high_frequency=27.629776440531714
+  - --data.mixture.mean_loss_weight.pixmo_transcript=29.7867612372429
+  - --data.mixture.mean_loss_weight.scalar_count=3.464101552963257
+  - --data.ssmax_single_response_projection.seed=95818
+  - --data.ssmax_single_response_projection.calibration_path=/weka/oe-training-default/rustin/experiments/vision-moe/vision-alignment/artifacts/ssmax-single-response-calibration-v1/perception.json
+  - --data.ssmax_single_response_projection.calibration_sha256=ac27b1653d2fbf38546d7ced20c4521dcc05b105c0666be01de888437789731f
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.audited_alignment=18.58728085551411
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.cosyn_point=9.204181374283507
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.ocr_document=4.165374373900704
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.pixmo_caption=29.374187365814578
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.pixmo_points_basic=9.498400458949618
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.pixmo_points_high_frequency=18.12065271866595
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.pixmo_transcript=29.7867612372429
+  - --data.ssmax_single_response_projection.projected_mean_loss_weight.scalar_count=3.464101552963257
+  - --initialization.checkpoint=/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/checkpoints/vision-ssmax-no-qknorm-1p4b-cx8-bridge-v2/step500
+  - --initialization.parent_config_sha256=930a8dabbf857621d4514d466ecdf754138af28e4cf79535ab09981d96f63dc5
+  - --initialization.parent_gate_path=/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/bridge-v2/ssmax_no_qknorm/parent-gate-v4.json
+  - --initialization.parent_gate_sha256=9d65891d28666f31fad7465a8487f677fca506a52b552ea3434e5454c607e25e
+  - --evaluation.interval=500
+  - --evaluation.examples_per_source=512
+  - --evaluation.seed=6198
+  - --evaluation.eval_on_startup=true
+  - --evaluation.eval_on_finish=true
+  - --trainer.max_duration.value=4000
+  - --trainer.callbacks.checkpointer.save_interval=null
+  - --trainer.callbacks.checkpointer.ephemeral_save_interval=400
+  - --trainer.callbacks.checkpointer.fixed_steps=[500, 1000, 2000, 3000, 4000]
+  - --trainer.callbacks.checkpointer.max_checkpoints=6
+  - --global_batch_size=327680
+  - --data_seed=95818
+  - --init_seed=6198
+  - --checkpoint_load_threads=8
+  - --router_lb_loss_weight=null
+  - --perception_trainability_arm=frozen_vision_control

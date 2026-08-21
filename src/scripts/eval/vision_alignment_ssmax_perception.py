@@ -46,7 +46,6 @@ from olmo_core.eval.vision_alignment_ssmax_perception import (
     EVALUATION_RECEIPT_FORMAT,
     IMAGE_TOKEN_ROWS,
     REQUIRED_STEPS,
-    SCHEMA_VERSION,
     SOURCES,
     WINDOWS,
     SSMaxPerceptionEvidenceError,
@@ -566,7 +565,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         payload: dict[str, Any] = {
             "format": EVALUATION_RECEIPT_FORMAT,
-            "version": SCHEMA_VERSION,
+            "version": manifest["version"],
             "status": "passed" if status_ok else "failed",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "manifest": manifest_reference(manifest_path, manifest),

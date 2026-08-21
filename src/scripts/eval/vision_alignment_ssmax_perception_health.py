@@ -25,8 +25,8 @@ from olmo_core.eval.vision_alignment_ssmax_perception import (
     ARMS,
     HEALTH_PRODUCER,
     HEALTH_RECEIPT_FORMAT,
+    PERCEPTION_V2_SCHEMA_VERSION,
     REQUIRED_STEPS,
-    SCHEMA_VERSION,
     SOURCES,
     SSMaxPerceptionEvidenceError,
     canonical_sha256,
@@ -34,6 +34,7 @@ from olmo_core.eval.vision_alignment_ssmax_perception import (
     load_manifest,
     manifest_reference,
     sha256_file,
+    summarize_optimizer_guard_trajectory,
     validate_artifact_reference,
     validate_manifest_producer_source,
     write_json_once,
@@ -325,16 +326,23 @@ def main(argv: Sequence[str] | None = None) -> None:
             ("active_loss_weight", total_active),
         )
     )
+    guard_status_ok = True
+    if manifest["version"] == PERCEPTION_V2_SCHEMA_VERSION:
+        guard_status_ok = summarize_optimizer_guard_trajectory(
+            health_ledgers[0], policy=manifest["policy"], step=args.step
+        )["passed"]
     status_ok = (
         within_mass
+        and guard_status_ok
         and counters["data_errors"] <= manifest["policy"]["maximum_data_errors"]
         and counters["optimizer_guard_skips"] <= manifest["policy"]["maximum_optimizer_guard_skips"]
-        and counters["nonfinite_losses"] == 0
-        and counters["nonfinite_gradients"] == 0
+        and counters["nonfinite_losses"] <= manifest["policy"].get("maximum_nonfinite_losses", 0)
+        and counters["nonfinite_gradients"]
+        <= manifest["policy"].get("maximum_nonfinite_gradients", 0)
     )
     receipt: dict[str, Any] = {
         "format": HEALTH_RECEIPT_FORMAT,
-        "version": SCHEMA_VERSION,
+        "version": manifest["version"],
         "status": "passed" if status_ok else "failed",
         "created_at": args.created_at or datetime.now(timezone.utc).isoformat(),
         "manifest": manifest_reference(manifest_path, manifest),

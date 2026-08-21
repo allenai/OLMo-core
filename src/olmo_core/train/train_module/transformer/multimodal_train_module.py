@@ -77,7 +77,12 @@ from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, move_to_device, warn_once
 
-from ...common import ReduceType
+from ...common import (
+    OPTIM_GUARD_ACTIVE_METRIC,
+    OPTIM_GUARD_GRADIENT_WITHIN_METRIC,
+    OPTIM_GUARD_LOSS_WITHIN_METRIC,
+    ReduceType,
+)
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
 from .config import (
@@ -1068,6 +1073,17 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self.optim.step()
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
+            for metric, value in (
+                (OPTIM_GUARD_ACTIVE_METRIC, self.optim.guard_active),
+                (OPTIM_GUARD_LOSS_WITHIN_METRIC, self.optim.guard_loss_within),
+                (OPTIM_GUARD_GRADIENT_WITHIN_METRIC, self.optim.guard_gradient_within),
+            ):
+                self.record_metric(
+                    metric.removeprefix("optim/"),
+                    value,
+                    reduce_type=None,
+                    namespace="optim",
+                )
 
         if hasattr(self._lm, "post_optim_step"):
             self._lm.post_optim_step()

@@ -29,16 +29,17 @@ fails closed.
 The generic dense-HSDP model-only loader and shared replay path are ready. Production SSMax joint
 remains fail-closed until the matching treatment/control runs pass the dedicated protocol in
 [`../eval/SSMAX_PERCEPTION_EVALUATION.md`](../eval/SSMAX_PERCEPTION_EVALUATION.md) and a human
-creates its deviation-free v5 gate. The existing v3 perception gate authenticates one exact s002
-experiment and cannot authorize either SSMax lineage.
+creates its deviation-free version-matched v5/v6 gate. The existing v3 perception gate
+authenticates one exact s002 experiment and cannot authorize either SSMax lineage.
 
-Only after the v5 evidence is produced and explicitly human-approved should one concrete joint
-profile per SSMax treatment lineage be added to `approved_profiles.json`. Each profile must retain
-its own exact model parent/gate while pointing both lineages at the same reviewed compact replay
-paths and pins. Do not add placeholder profiles or gates.
+Only after the versioned perception evidence is produced and explicitly human-approved should one
+concrete joint profile per SSMax treatment lineage be added to `approved_profiles.json`. Each
+profile must retain its own exact model parent/gate while pointing both lineages at the same
+reviewed compact replay paths and pins. Do not add placeholder profiles or gates.
 
 The generic post-hoc joint evidence implementation and deliberately non-runnable per-lineage
 manifest templates are documented in
 [`../eval/SSMAX_JOINT_EVIDENCE.md`](../eval/SSMAX_JOINT_EVIDENCE.md). They bind steps
 0/4000/8000/12000/16000 and remain descriptive-only; they do not authorize joint training before
-the required live v5 perception approvals, and they do not choose or launch mid-training.
+the required live version-matched v5/v6 perception approvals, and they do not choose or launch
+mid-training.

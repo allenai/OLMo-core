@@ -1,9 +1,10 @@
 """Launch the reviewed distributed SSMax perception runtime preflight on Beaker.
 
 This wrapper is deliberately narrower than the generic Beaker launcher. It derives the exact
-treatment profile and v3 pair-receipt path from one of the two reviewed SSMax lineages, verifies
-all caller-pinned bytes, and fixes the scaling-ladders/Holmes 2x8 operational contract. It cannot
-launch training and accepts no arbitrary worker arguments.
+prospective-v2 treatment profile and v4 pair-receipt path from one of the two reviewed SSMax
+lineages, verifies all caller-pinned bytes and the optimizer-guard contract, and fixes the
+scaling-ladders/Holmes 2x8 operational contract. It cannot launch training and accepts no
+arbitrary worker arguments.
 """
 
 from __future__ import annotations
@@ -48,39 +49,39 @@ MODEL_VARIANTS = ("ssmax_head_qknorm", "ssmax_no_qknorm")
 PROFILE_PATHS = {
     "ssmax_head_qknorm": (
         "configs/vision_moe/vision_alignment/perception/"
-        "ssmax_head_qknorm_1p4b_cx8_treatment_v1.yaml"
+        "ssmax_head_qknorm_1p4b_cx8_treatment_v2.yaml"
     ),
     "ssmax_no_qknorm": (
         "configs/vision_moe/vision_alignment/perception/"
-        "ssmax_no_qknorm_1p4b_cx8_treatment_v1.yaml"
+        "ssmax_no_qknorm_1p4b_cx8_treatment_v2.yaml"
     ),
 }
 PROFILE_NAMES = {
     "ssmax_head_qknorm": {
         "frozen_vision_control": (
-            "vision-ssmax-head-qknorm-1p4b-cx8-perception-frozen-vision-control-v1"
+            "vision-ssmax-head-qknorm-1p4b-cx8-perception-frozen-vision-control-v2"
         ),
-        "treatment": "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v1",
+        "treatment": "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v2",
     },
     "ssmax_no_qknorm": {
         "frozen_vision_control": (
-            "vision-ssmax-no-qknorm-1p4b-cx8-perception-frozen-vision-control-v1"
+            "vision-ssmax-no-qknorm-1p4b-cx8-perception-frozen-vision-control-v2"
         ),
-        "treatment": "vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v1",
+        "treatment": "vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v2",
     },
 }
 PAIR_RECEIPT_NAMES = {
-    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-profile-pair-v3.json",
-    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-profile-pair-v3.json",
+    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-profile-pair-v4.json",
+    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-profile-pair-v4.json",
 }
 EXPERIMENT_NAMES = {
-    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-runtime-preflight-v1",
-    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-runtime-preflight-v1",
+    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-runtime-preflight-v2",
+    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-runtime-preflight-v2",
 }
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_REF_RE = re.compile(r"[0-9a-f]{40}")
 _PAIR_FORMAT = "vision_alignment_perception_profile_pair_audit"
-_PAIR_VERSION = 3
+_PAIR_VERSION = 4
 _LAUNCH_CONTRACT = {
     "num_nodes": NUM_NODES,
     "num_gpus": GPUS_PER_NODE,
@@ -89,6 +90,24 @@ _LAUNCH_CONTRACT = {
     "budget": BEAKER_BUDGET,
     "priority": "urgent",
     "min_runtime": MIN_RUNTIME,
+}
+_OPTIMIZER_GUARD_CONTRACT = {
+    "optimizer": {
+        "type": "skip_step_adamw",
+        "rolling_interval_length": 128,
+        "sigma_factor": 12,
+        "max_grad_norm": 1.0,
+    },
+    "eligibility": {
+        "maximum_optimizer_guard_skips": 8,
+        "minimum_clean_steps_between_skips": 128,
+        "minimum_clean_final_steps": 128,
+        "require_finite_gradient_only_skips": True,
+        "require_uninterrupted_optimizer_guard_history": True,
+        "maximum_data_errors": 0,
+        "maximum_nonfinite_losses": 0,
+        "maximum_nonfinite_gradients": 0,
+    },
 }
 
 
@@ -173,10 +192,23 @@ def _validate_pair_receipt(
     checkpoint_root: Path,
 ) -> None:
     try:
-        receipt = json.loads(path.read_bytes(), object_pairs_hook=_strict_object)
+        raw = path.read_bytes()
+        receipt = json.loads(raw, object_pairs_hook=_strict_object)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
         raise PerceptionPreflightLaunchError(f"Invalid profile-pair receipt {path}: {error}")
     root = _mapping(receipt, name="profile-pair receipt")
+    canonical = (
+        json.dumps(
+            root,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if raw != canonical:
+        raise PerceptionPreflightLaunchError("Profile-pair receipt bytes are not canonical JSON")
     if (
         root.get("format") != _PAIR_FORMAT
         or type(root.get("version")) is not int
@@ -187,6 +219,24 @@ def _validate_pair_receipt(
     ):
         raise PerceptionPreflightLaunchError(
             "Profile-pair receipt identity or launch contract differs"
+        )
+    actual_guard_contract = json.dumps(
+        root.get("optimizer_guard_contract"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    expected_guard_contract = json.dumps(
+        _OPTIMIZER_GUARD_CONTRACT,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    if actual_guard_contract != expected_guard_contract:
+        raise PerceptionPreflightLaunchError(
+            "Profile-pair receipt optimizer-guard contract differs"
         )
     recipe = _mapping(root.get("recipe"), name="profile-pair recipe")
     git = _mapping(root.get("git"), name="profile-pair git")
@@ -309,6 +359,7 @@ def build_launch_config(
     command = [
         PREFLIGHT_PATH,
         f"--model-variant={model_variant}",
+        "--protocol-version=v2",
         f"--recipe={RECIPE_PATH}",
         f"--expected-recipe-sha256={expected_recipe_sha256}",
         f"--profile={PROFILE_PATHS[model_variant]}",

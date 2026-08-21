@@ -314,6 +314,12 @@ def test_skip_step_receives_global_mean_loss_and_grad_norm_each_step():
     assert train_module.optim.latest_grad_norm is not None
     assert torch.isfinite(train_module.optim.latest_loss)
     assert torch.isfinite(train_module.optim.latest_grad_norm)
+    assert "optim/guard active" in train_module.trainer.metrics
+    assert "optim/guard loss within" in train_module.trainer.metrics
+    assert "optim/guard gradient within" in train_module.trainer.metrics
+    assert train_module.trainer.metrics["optim/guard active"][0].item() == 0.0
+    assert train_module.trainer.metrics["optim/guard loss within"][0].item() == 1.0
+    assert train_module.trainer.metrics["optim/guard gradient within"][0].item() == 1.0
 
 
 def test_strict_vision_load_optimizer_identity_and_image_row_reset():

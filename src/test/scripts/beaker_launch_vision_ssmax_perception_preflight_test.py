@@ -47,6 +47,7 @@ def _case(
         "status": "passed",
         "model_variant": model_variant,
         "launch_contract": launcher._LAUNCH_CONTRACT,
+        "optimizer_guard_contract": launcher._OPTIMIZER_GUARD_CONTRACT,
         "recipe": {"sha256": recipe_sha256},
         "git": {"branch": launcher.GIT_BRANCH, "ref": git_ref},
         "profiles": {
@@ -123,6 +124,7 @@ def test_build_launch_config_fixes_exact_operational_and_argument_contract(
     assert config.cmd == [
         launcher.PREFLIGHT_PATH,
         f"--model-variant={model_variant}",
+        "--protocol-version=v2",
         f"--recipe={launcher.RECIPE_PATH}",
         f"--expected-recipe-sha256={case['expected_recipe_sha256']}",
         f"--profile={launcher.PROFILE_PATHS[model_variant]}",
@@ -184,6 +186,24 @@ def test_build_rejects_launch_contract_type_alias(
     receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
     case["expected_profile_pair_receipt_sha256"] = _sha256(receipt)
     with pytest.raises(launcher.PerceptionPreflightLaunchError, match="launch contract"):
+        launcher.build_launch_config(**case)
+
+
+def test_build_rejects_optimizer_guard_contract_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _case(tmp_path, monkeypatch)
+    receipt = case["profile_pair_receipt"]
+    assert isinstance(receipt, Path)
+    payload = json.loads(receipt.read_text())
+    payload["optimizer_guard_contract"]["eligibility"]["maximum_optimizer_guard_skips"] = 9
+    receipt.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+    case["expected_profile_pair_receipt_sha256"] = _sha256(receipt)
+
+    with pytest.raises(
+        launcher.PerceptionPreflightLaunchError,
+        match="optimizer-guard contract differs",
+    ):
         launcher.build_launch_config(**case)
 
 

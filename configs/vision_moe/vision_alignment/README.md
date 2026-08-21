@@ -325,6 +325,7 @@ every frozen LM/vision tensor and non-image embedding row exactly. Do not use tr
 
 The perception and joint directories contain the completed, lineage-specific s002 profiles.
 They do not yet contain SSMax launch profiles: those are created only after the matching bridge
-v4 gate (for perception) or perception v5 gate (for joint) is explicitly approved. The SSMax
+v4 gate (for perception) or version-matched perception v5/v6 gate (for joint) is explicitly
+approved. The SSMax
 defaults therefore fail closed rather than borrowing an s002 checkpoint, waiver, or evidence
 bundle.

@@ -9,24 +9,36 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Dict, Mapping, Sequence
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.train.common import OPTIM_GRAD_NORM_METRIC, TRAIN_CE_LOSS_METRIC
+from olmo_core.train.common import (
+    OPTIM_GRAD_NORM_METRIC,
+    OPTIM_GUARD_ACTIVE_METRIC,
+    OPTIM_GUARD_GRADIENT_WITHIN_METRIC,
+    OPTIM_GUARD_LOSS_WITHIN_METRIC,
+    OPTIM_STEP_SKIPPED_METRIC,
+    TRAIN_CE_LOSS_METRIC,
+)
 
 from .callback import Callback
 
 SSMAX_HEALTH_LEDGER_FORMAT = "ssmax_training_health_ledger"
-SSMAX_HEALTH_LEDGER_VERSION = 2
+SSMAX_HEALTH_LEDGER_LEGACY_VERSION = 2
+SSMAX_HEALTH_LEDGER_VERSION = 3
 SSMAX_MODEL_VARIANTS = frozenset({"ssmax_head_qknorm", "ssmax_no_qknorm"})
 SSMAX_PHASES = frozenset({"bridge", "perception", "joint"})
-OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
-_TRAIN_HEALTH_METRICS = frozenset(
+_LEGACY_TRAIN_HEALTH_METRICS = frozenset(
     {
         TRAIN_CE_LOSS_METRIC,
         OPTIM_GRAD_NORM_METRIC,
         OPTIM_STEP_SKIPPED_METRIC,
     }
 )
+_TRAIN_HEALTH_METRICS = _LEGACY_TRAIN_HEALTH_METRICS | {
+    OPTIM_GUARD_ACTIVE_METRIC,
+    OPTIM_GUARD_LOSS_WITHIN_METRIC,
+    OPTIM_GUARD_GRADIENT_WITHIN_METRIC,
+}
 
-_EVENT_FIELDS = frozenset(
+_LEGACY_EVENT_FIELDS = frozenset(
     {
         "global_step",
         "loss",
@@ -38,7 +50,23 @@ _EVENT_FIELDS = frozenset(
         "event_sha256",
     }
 )
-_STATE_FIELDS = frozenset(
+_EVENT_FIELDS = _LEGACY_EVENT_FIELDS | {
+    "optimizer_guard_active",
+    "optimizer_guard_loss_within",
+    "optimizer_guard_gradient_within",
+}
+_LEGACY_METRIC_CONTRACT = {
+    "loss": TRAIN_CE_LOSS_METRIC,
+    "grad_norm": OPTIM_GRAD_NORM_METRIC,
+    "optimizer_guard_skip": OPTIM_STEP_SKIPPED_METRIC,
+}
+_METRIC_CONTRACT = {
+    **_LEGACY_METRIC_CONTRACT,
+    "optimizer_guard_active": OPTIM_GUARD_ACTIVE_METRIC,
+    "optimizer_guard_loss_within": OPTIM_GUARD_LOSS_WITHIN_METRIC,
+    "optimizer_guard_gradient_within": OPTIM_GUARD_GRADIENT_WITHIN_METRIC,
+}
+_LEGACY_STATE_FIELDS = frozenset(
     {
         "format",
         "version",
@@ -56,6 +84,10 @@ _STATE_FIELDS = frozenset(
         "content_sha256",
     }
 )
+_STATE_FIELDS = _LEGACY_STATE_FIELDS | {
+    "optimizer_guard_history_reset_steps",
+    "optimizer_guard_rolling_interval_length",
+}
 _ZERO_SHA256 = "0" * 64
 
 
@@ -107,12 +139,20 @@ def validate_ssmax_health_ledger_state(
     checkpoint trainer-state inventory. Every event and cumulative counter is recomputed here.
     """
 
-    if not isinstance(value, Mapping) or set(value) != _STATE_FIELDS:
+    if not isinstance(value, Mapping):
         raise SSMaxHealthLedgerError("SSMax health ledger state fields differ")
-    if (
-        value["format"] != SSMAX_HEALTH_LEDGER_FORMAT
-        or value["version"] != SSMAX_HEALTH_LEDGER_VERSION
+    version = value.get("version")
+    if type(version) is not int or version not in (
+        SSMAX_HEALTH_LEDGER_LEGACY_VERSION,
+        SSMAX_HEALTH_LEDGER_VERSION,
     ):
+        raise SSMaxHealthLedgerError("SSMax health ledger format/version differs")
+    expected_fields = (
+        _LEGACY_STATE_FIELDS if version == SSMAX_HEALTH_LEDGER_LEGACY_VERSION else _STATE_FIELDS
+    )
+    if set(value) != expected_fields:
+        raise SSMaxHealthLedgerError("SSMax health ledger state fields differ")
+    if value["format"] != SSMAX_HEALTH_LEDGER_FORMAT or value["version"] != version:
         raise SSMaxHealthLedgerError("SSMax health ledger format/version differs")
     _validate_identity(expected_model_variant, expected_phase, expected_run_name)
     for name, expected in (
@@ -123,13 +163,36 @@ def validate_ssmax_health_ledger_state(
     ):
         if value[name] != expected:
             raise SSMaxHealthLedgerError(f"SSMax health ledger {name} differs")
-    expected_metrics = {
-        "loss": TRAIN_CE_LOSS_METRIC,
-        "grad_norm": OPTIM_GRAD_NORM_METRIC,
-        "optimizer_guard_skip": OPTIM_STEP_SKIPPED_METRIC,
-    }
+    expected_metrics = (
+        _LEGACY_METRIC_CONTRACT
+        if version == SSMAX_HEALTH_LEDGER_LEGACY_VERSION
+        else _METRIC_CONTRACT
+    )
     if value["metrics"] != expected_metrics:
         raise SSMaxHealthLedgerError("SSMax health ledger metric contract differs")
+    history_reset_steps = value.get("optimizer_guard_history_reset_steps", [])
+    if not isinstance(history_reset_steps, list):
+        raise SSMaxHealthLedgerError(
+            "SSMax health ledger optimizer history reset steps must be a list"
+        )
+    previous_reset = -1
+    for reset_step in history_reset_steps:
+        reset_step = _nonnegative_int(reset_step, name="SSMax health optimizer history reset step")
+        if reset_step <= previous_reset or reset_step > expected_step:
+            raise SSMaxHealthLedgerError(
+                "SSMax health optimizer history reset steps are not strictly increasing"
+            )
+        previous_reset = reset_step
+    rolling_interval_length = None
+    if version == SSMAX_HEALTH_LEDGER_VERSION:
+        rolling_interval_length = _nonnegative_int(
+            value["optimizer_guard_rolling_interval_length"],
+            name="SSMax health optimizer rolling interval length",
+        )
+        if rolling_interval_length <= 0:
+            raise SSMaxHealthLedgerError(
+                "SSMax health optimizer rolling interval length must be positive"
+            )
     events = value["events"]
     if not isinstance(events, list) or len(events) != expected_step:
         raise SSMaxHealthLedgerError("SSMax health ledger event count differs from global step")
@@ -137,8 +200,11 @@ def validate_ssmax_health_ledger_state(
     optimizer_skips = 0
     nonfinite_losses = 0
     nonfinite_gradients = 0
+    expected_event_fields = (
+        _LEGACY_EVENT_FIELDS if version == SSMAX_HEALTH_LEDGER_LEGACY_VERSION else _EVENT_FIELDS
+    )
     for step, raw_event in enumerate(events, start=1):
-        if not isinstance(raw_event, Mapping) or set(raw_event) != _EVENT_FIELDS:
+        if not isinstance(raw_event, Mapping) or set(raw_event) != expected_event_fields:
             raise SSMaxHealthLedgerError(f"SSMax health ledger step{step} event fields differ")
         event = dict(raw_event)
         if event["global_step"] != step or event["previous_event_sha256"] != previous_sha:
@@ -146,6 +212,14 @@ def validate_ssmax_health_ledger_state(
         for name in ("loss_finite", "gradients_finite", "optimizer_guard_skipped"):
             if type(event[name]) is not bool:
                 raise SSMaxHealthLedgerError(f"SSMax health ledger {name} must be boolean")
+        if version == SSMAX_HEALTH_LEDGER_VERSION:
+            for name in (
+                "optimizer_guard_active",
+                "optimizer_guard_loss_within",
+                "optimizer_guard_gradient_within",
+            ):
+                if type(event[name]) is not bool:
+                    raise SSMaxHealthLedgerError(f"SSMax health ledger {name} must be boolean")
         for value_name, finite_name in (
             ("loss", "loss_finite"),
             ("grad_norm", "gradients_finite"),
@@ -172,6 +246,33 @@ def validate_ssmax_health_ledger_state(
         if event_sha != _canonical_sha256(event):
             raise SSMaxHealthLedgerError("SSMax health ledger event SHA-256 differs")
         previous_sha = event_sha
+        if version == SSMAX_HEALTH_LEDGER_VERSION:
+            if not event["optimizer_guard_active"] and (
+                not event["optimizer_guard_loss_within"]
+                or not event["optimizer_guard_gradient_within"]
+            ):
+                raise SSMaxHealthLedgerError(
+                    "SSMax inactive optimizer guard must pass both live comparisons"
+                )
+            assert rolling_interval_length is not None
+            history_reset_step = max(
+                (reset_step for reset_step in history_reset_steps if reset_step < step),
+                default=0,
+            )
+            expected_guard_active = step - history_reset_step >= max(
+                2, rolling_interval_length // 2
+            )
+            if event["optimizer_guard_active"] is not expected_guard_active:
+                raise SSMaxHealthLedgerError(
+                    "SSMax optimizer guard activation differs from its reset history"
+                )
+            expected_skip = not (
+                event["optimizer_guard_loss_within"] and event["optimizer_guard_gradient_within"]
+            )
+            if event["optimizer_guard_skipped"] is not expected_skip:
+                raise SSMaxHealthLedgerError(
+                    "SSMax optimizer skip differs from its live guard decision"
+                )
         optimizer_skips += int(raw_event["optimizer_guard_skipped"])
         nonfinite_losses += int(not raw_event["loss_finite"])
         nonfinite_gradients += int(not raw_event["gradients_finite"])
@@ -234,9 +335,25 @@ def extract_ssmax_health_ledgers(
     event_chain = ledgers[0]["event_chain_sha256"]
     if any(ledger["event_chain_sha256"] != event_chain for ledger in ledgers):
         raise SSMaxHealthLedgerError("SSMax health ledger event chains differ across ranks")
+    history_reset_steps = list(ledgers[0].get("optimizer_guard_history_reset_steps", []))
+    if any(
+        list(ledger.get("optimizer_guard_history_reset_steps", [])) != history_reset_steps
+        for ledger in ledgers
+    ):
+        raise SSMaxHealthLedgerError(
+            "SSMax health optimizer history reset steps differ across ranks"
+        )
+    rolling_interval_length = ledgers[0].get("optimizer_guard_rolling_interval_length")
+    if any(
+        ledger.get("optimizer_guard_rolling_interval_length") != rolling_interval_length
+        for ledger in ledgers
+    ):
+        raise SSMaxHealthLedgerError("SSMax health optimizer rolling intervals differ across ranks")
     return {
         "rank_ledgers": [dict(ledger) for ledger in ledgers],
         "event_chain_sha256": event_chain,
+        "optimizer_guard_history_reset_steps": history_reset_steps,
+        "optimizer_guard_rolling_interval_length": rolling_interval_length,
         "counters": {
             "data_errors": sum(int(ledger["data_errors"]) for ledger in ledgers),
             "optimizer_guard_skips": int(ledgers[0]["optimizer_guard_skips"]),
@@ -262,6 +379,13 @@ class SSMaxHealthLedgerCallback(Callback):
     run_name: str = ""
     enabled: bool = True
     _events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
+    _ledger_version: int = field(default=SSMAX_HEALTH_LEDGER_VERSION, init=False, repr=False)
+    _optimizer_guard_history_reset_steps: list[int] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _optimizer_guard_rolling_interval_length: int | None = field(
+        default=None, init=False, repr=False
+    )
     _loaded_data_errors: int = field(default=0, init=False, repr=False)
     _metrics_baseline_step: int = field(default=0, init=False, repr=False)
 
@@ -294,10 +418,27 @@ class SSMaxHealthLedgerCallback(Callback):
             raise RuntimeError("SSMax health ledger step differs from trainer state")
         self._metrics_baseline_step = self.step
 
+    def _bind_optimizer_guard_contract(self) -> None:
+        train_module = getattr(self.trainer, "train_module", None)
+        optimizer = getattr(train_module, "optim", None)
+        value = getattr(optimizer, "rolling_interval_length", None)
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise RuntimeError("SSMax health ledger observed an invalid rolling interval")
+        if (
+            self._optimizer_guard_rolling_interval_length is not None
+            and self._events
+            and value != self._optimizer_guard_rolling_interval_length
+        ):
+            raise RuntimeError("SSMax health ledger optimizer rolling interval changed")
+        self._optimizer_guard_rolling_interval_length = value
+
     def pre_train(self) -> None:
         """Bind non-training startup and dry-run metrics to this run segment's baseline."""
 
         if self.enabled:
+            self._bind_optimizer_guard_contract()
             self._set_metrics_baseline()
 
     def log_metrics(self, step: int, metrics: Dict[str, float]) -> None:
@@ -315,13 +456,18 @@ class SSMaxHealthLedgerCallback(Callback):
         # records checkpoint timing and other ancillary metrics under that same step for a later
         # flush. Ignore only batches that contain none of the ledger's health contract. A duplicate
         # or partial health batch still reaches the strict step/field checks below and fails closed.
-        if not (_TRAIN_HEALTH_METRICS & metrics.keys()):
+        required_metrics = (
+            _LEGACY_TRAIN_HEALTH_METRICS
+            if self._ledger_version == SSMAX_HEALTH_LEDGER_LEGACY_VERSION
+            else _TRAIN_HEALTH_METRICS
+        )
+        if not (required_metrics & metrics.keys()):
             return
         if step != self.last_step + 1:
             raise RuntimeError(
                 f"SSMax health ledger expected step {self.last_step + 1}, received step {step}"
             )
-        missing = _TRAIN_HEALTH_METRICS - set(metrics)
+        missing = required_metrics - set(metrics)
         if missing:
             raise RuntimeError(f"SSMax health ledger metrics are missing {sorted(missing)}")
         loss = float(metrics[TRAIN_CE_LOSS_METRIC])
@@ -340,6 +486,20 @@ class SSMaxHealthLedgerCallback(Callback):
                 self._events[-1]["event_sha256"] if self._events else _ZERO_SHA256
             ),
         }
+        if self._ledger_version == SSMAX_HEALTH_LEDGER_VERSION:
+            live_decisions: dict[str, bool] = {}
+            for field, metric_name in (
+                ("optimizer_guard_active", OPTIM_GUARD_ACTIVE_METRIC),
+                ("optimizer_guard_loss_within", OPTIM_GUARD_LOSS_WITHIN_METRIC),
+                ("optimizer_guard_gradient_within", OPTIM_GUARD_GRADIENT_WITHIN_METRIC),
+            ):
+                metric = float(metrics[metric_name])
+                if metric not in (0.0, 1.0):
+                    raise RuntimeError(
+                        f"SSMax health ledger {metric_name} is not boolean: {metric!r}"
+                    )
+                live_decisions[field] = bool(metric)
+            event.update(live_decisions)
         event["event_sha256"] = _canonical_sha256(event)
         self._events.append(event)
 
@@ -350,18 +510,19 @@ class SSMaxHealthLedgerCallback(Callback):
             raise RuntimeError(
                 f"SSMax health ledger has {self.last_step} events at trainer step {self.step}"
             )
+        self._bind_optimizer_guard_contract()
         data_errors = self._data_errors()
         state: dict[str, Any] = {
             "format": SSMAX_HEALTH_LEDGER_FORMAT,
-            "version": SSMAX_HEALTH_LEDGER_VERSION,
+            "version": self._ledger_version,
             "model_variant": self.model_variant,
             "phase": self.phase,
             "run_name": self.run_name,
-            "metrics": {
-                "loss": TRAIN_CE_LOSS_METRIC,
-                "grad_norm": OPTIM_GRAD_NORM_METRIC,
-                "optimizer_guard_skip": OPTIM_STEP_SKIPPED_METRIC,
-            },
+            "metrics": dict(
+                _LEGACY_METRIC_CONTRACT
+                if self._ledger_version == SSMAX_HEALTH_LEDGER_LEGACY_VERSION
+                else _METRIC_CONTRACT
+            ),
             "last_step": self.last_step,
             "events": [dict(event) for event in self._events],
             "optimizer_guard_skips": sum(
@@ -376,6 +537,17 @@ class SSMaxHealthLedgerCallback(Callback):
                 self._events[-1]["event_sha256"] if self._events else _ZERO_SHA256
             ),
         }
+        if self._ledger_version == SSMAX_HEALTH_LEDGER_VERSION:
+            if self._optimizer_guard_rolling_interval_length is None:
+                raise RuntimeError(
+                    "SSMax health ledger could not bind the optimizer rolling interval"
+                )
+            state["optimizer_guard_history_reset_steps"] = list(
+                self._optimizer_guard_history_reset_steps
+            )
+            state[
+                "optimizer_guard_rolling_interval_length"
+            ] = self._optimizer_guard_rolling_interval_length
         state["content_sha256"] = _canonical_sha256(state)
         validate_ssmax_health_ledger_state(
             state,
@@ -403,9 +575,31 @@ class SSMaxHealthLedgerCallback(Callback):
         except (SSMaxHealthLedgerError, AttributeError, TypeError, ValueError) as error:
             raise RuntimeError(f"Could not restore SSMax health ledger: {error}") from error
         self._events = [dict(event) for event in state["events"]]
+        self._ledger_version = int(state["version"])
+        self._optimizer_guard_history_reset_steps = list(
+            state.get("optimizer_guard_history_reset_steps", [])
+        )
+        rolling_interval_length = state.get("optimizer_guard_rolling_interval_length")
+        self._optimizer_guard_rolling_interval_length = (
+            int(rolling_interval_length) if rolling_interval_length is not None else None
+        )
         self._loaded_data_errors = int(state["data_errors"])
 
     def post_checkpoint_loaded(self, path: Any) -> None:
         del path
         if self.enabled:
+            self._bind_optimizer_guard_contract()
+            if self._ledger_version == SSMAX_HEALTH_LEDGER_VERSION:
+                if (
+                    self._optimizer_guard_history_reset_steps
+                    and self.step < self._optimizer_guard_history_reset_steps[-1]
+                ):
+                    raise RuntimeError(
+                        "SSMax health optimizer history reset steps are not monotonic"
+                    )
+                if (
+                    not self._optimizer_guard_history_reset_steps
+                    or self.step > self._optimizer_guard_history_reset_steps[-1]
+                ):
+                    self._optimizer_guard_history_reset_steps.append(self.step)
             self._set_metrics_baseline()

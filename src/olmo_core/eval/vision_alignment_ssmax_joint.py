@@ -1,7 +1,7 @@
 """Immutable, descriptive post-hoc evidence for dense SSMax joint alignment.
 
 This protocol is intentionally separate from the historical s002 joint evaluators.  A manifest
-binds one model variant, its approved v5 perception parent, reviewed joint profile, permanent
+binds one model variant, its approved versioned perception parent, reviewed joint profile, permanent
 steps, visual projection, exact matched/wrong pairings, native replay population, and full
 checkpoint byte identities.  Reports are reconstructed from raw receipts and are never promotion
 gates: only load, frozen-surface, data-cursor, and non-finite failures are hard collapse signals.
@@ -53,7 +53,9 @@ HEALTH_RECEIPT_FORMAT = "vision_alignment_ssmax_joint_health_receipt"
 TRAJECTORY_REPORT_FORMAT = "vision_alignment_ssmax_joint_trajectory_report"
 PAIR_COMPARISON_FORMAT = "vision_alignment_ssmax_joint_pair_comparison"
 SCHEMA_VERSION = 1
-PARENT_GATE_VERSION = 5
+LEGACY_PARENT_GATE_VERSION = 5
+PARENT_GATE_VERSION = 6
+SUPPORTED_PARENT_GATE_VERSIONS = frozenset({LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION})
 
 REQUIRED_STEPS = (0, 4000, 8000, 12000, 16000)
 VISUAL_SOURCES = tuple(JOINT_VISUAL_SOURCE_NAMES)
@@ -804,7 +806,9 @@ def _validate_perception_parent(
             verify_live_checkpoint=verify_live_checkpoint,
         )
     except perception.SSMaxPerceptionEvidenceError as error:
-        raise SSMaxJointEvidenceError(f"perception v5 parent gate failed: {error}") from error
+        raise SSMaxJointEvidenceError(
+            f"versioned perception parent gate failed: {error}"
+        ) from error
     candidate = _mapping(result.get("candidate"), name="perception candidate")
     return {
         "checkpoint": str(parent),

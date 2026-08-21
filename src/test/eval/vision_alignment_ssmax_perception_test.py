@@ -236,7 +236,9 @@ def _rows(*, correct: float, gap: float) -> list[dict[str, Any]]:
     return output
 
 
-def _manifest_fixture(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, str]]:
+def _manifest_fixture(
+    tmp_path: Path, *, version: int = perception.SCHEMA_VERSION
+) -> tuple[Path, dict[str, Any], dict[str, str]]:
     evaluator = tmp_path / "evaluator.py"
     evaluator.write_text("# evaluator\n")
     health_producer = tmp_path / "health-producer.py"
@@ -254,6 +256,8 @@ def _manifest_fixture(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, s
             {"pairs": [{"recipient": 0, "donor": 1}, {"recipient": 1, "donor": 0}]},
         )
     manifest: dict[str, Any] = {
+        "format": perception.MANIFEST_FORMAT,
+        "version": version,
         "pair_id": "ssmax-perception-test-pair",
         "model_variant": "ssmax_head_qknorm",
         "git": {
@@ -283,15 +287,7 @@ def _manifest_fixture(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, s
         "pairings": pairings,
         "evaluation": {"examples_per_source": 2, "bootstrap_seed": 7, "bootstrap_samples": 128},
         "topology": {"world_size": 1},
-        "policy": {
-            "did_lower_ci_minimum": 0.0,
-            "treatment_gap_lower_ci_minimum": 0.0,
-            "correct_ce_max_relative_increase": 0.02,
-            "minimum_gap_retention": 0.8,
-            "loss_mass_share_tolerance": 0.02,
-            "maximum_data_errors": 0,
-            "maximum_optimizer_guard_skips": 0,
-        },
+        "policy": perception._locked_promotion_policy(version),
         "loss_mass_targets": {source: 1 / len(perception.SOURCES) for source in perception.SOURCES},
         "arms": {
             arm: {
@@ -357,7 +353,7 @@ def _evaluation_receipt(
     }
     payload: dict[str, Any] = {
         "format": perception.EVALUATION_RECEIPT_FORMAT,
-        "version": perception.SCHEMA_VERSION,
+        "version": manifest["version"],
         "status": "passed",
         "created_at": _RECEIPT_TIME,
         "manifest": perception.manifest_reference(manifest_path, manifest),
@@ -410,31 +406,46 @@ def _health_receipt(
     *,
     arm: str,
     step: int,
+    skip_steps: tuple[int, ...] = (),
 ) -> dict[str, Any]:
     callback = SSMaxHealthLedgerCallback(
         model_variant=manifest["model_variant"],
         phase="perception",
         run_name=manifest["arms"][arm]["run_name"],
     )
-    callback.trainer = SimpleNamespace(
-        global_step=step,
+    trainer = SimpleNamespace(
+        global_step=0,
         data_loader=SimpleNamespace(state_dict=lambda: {"total_data_errors": 0}),
+        train_module=SimpleNamespace(optim=SimpleNamespace(rolling_interval_length=128)),
     )
+    callback.trainer = trainer
+    callback.post_checkpoint_loaded("bridge-parent")
     for global_step in range(1, step + 1):
+        trainer.global_step = global_step
+        skipped = global_step in skip_steps
+        guard_active = global_step >= 64
         callback.log_metrics(
             global_step,
             {
                 "train/CE loss": 2.0,
-                "optim/total grad norm": 1.0,
-                "optim/step skipped": 0.0,
+                "optim/total grad norm": 2.0 if skipped else 1.0,
+                "optim/step skipped": float(skipped),
+                "optim/guard active": float(guard_active),
+                "optim/guard loss within": 1.0,
+                "optim/guard gradient within": float(not skipped),
             },
         )
     ledger = callback.state_dict()
+    guard_ok = True
+    if manifest["version"] == perception.PERCEPTION_V2_SCHEMA_VERSION:
+        guard_ok = perception.summarize_optimizer_guard_trajectory(
+            ledger, policy=manifest["policy"], step=step
+        )["passed"]
     weight = 0.0 if step == 0 else 1.0
     payload: dict[str, Any] = {
         "format": perception.HEALTH_RECEIPT_FORMAT,
-        "version": perception.SCHEMA_VERSION,
-        "status": "passed",
+        "version": manifest["version"],
+        "status": "passed" if guard_ok else "failed",
         "created_at": _RECEIPT_TIME,
         "manifest": perception.manifest_reference(manifest_path, manifest),
         "pair_id": manifest["pair_id"],
@@ -466,7 +477,7 @@ def _health_receipt(
         },
         "run_counters": {
             "data_errors": 0,
-            "optimizer_guard_skips": 0,
+            "optimizer_guard_skips": len([item for item in skip_steps if item <= step]),
             "nonfinite_losses": 0,
             "nonfinite_gradients": 0,
         },
@@ -477,6 +488,231 @@ def _health_receipt(
     }
     payload["content_sha256"] = perception.canonical_sha256(payload)
     return payload
+
+
+def _guard_ledger(
+    skip_observations: Mapping[int, tuple[float, float]],
+    *,
+    step: int = 4000,
+    resume_at: int | None = None,
+    live_decisions: Mapping[int, tuple[bool, bool, bool]] | None = None,
+) -> Mapping[str, Any]:
+    callback = SSMaxHealthLedgerCallback(
+        model_variant="ssmax_head_qknorm",
+        phase="perception",
+        run_name="v2-guard-boundary-test",
+    )
+    trainer = SimpleNamespace(
+        global_step=0,
+        data_loader=SimpleNamespace(state_dict=lambda: {"total_data_errors": 0}),
+        train_module=SimpleNamespace(optim=SimpleNamespace(rolling_interval_length=128)),
+    )
+    callback.trainer = trainer
+    callback.post_checkpoint_loaded("bridge-parent")
+    history_reset_step = 0
+    for global_step in range(1, step + 1):
+        if resume_at is not None and global_step == resume_at + 1:
+            resumed = SSMaxHealthLedgerCallback(
+                model_variant="ssmax_head_qknorm",
+                phase="perception",
+                run_name="v2-guard-boundary-test",
+            )
+            resumed.trainer = trainer
+            resumed.load_state_dict(callback.state_dict())
+            resumed.post_checkpoint_loaded(f"step{resume_at}")
+            callback = resumed
+            history_reset_step = resume_at
+        trainer.global_step = global_step
+        loss, grad_norm = skip_observations.get(global_step, (2.0, 1.0))
+        guard_active = global_step - history_reset_step >= 64
+        loss_within_guard = loss <= 2.0
+        gradient_within_guard = grad_norm <= 1.0
+        if live_decisions is not None and global_step in live_decisions:
+            guard_active, loss_within_guard, gradient_within_guard = live_decisions[global_step]
+        callback.log_metrics(
+            global_step,
+            {
+                "train/CE loss": loss,
+                "optim/total grad norm": grad_norm,
+                "optim/step skipped": float(global_step in skip_observations),
+                "optim/guard active": float(guard_active),
+                "optim/guard loss within": float(loss_within_guard),
+                "optim/guard gradient within": float(gradient_within_guard),
+            },
+        )
+    return callback.state_dict()
+
+
+def _legacy_v2_ledger(ledger: Mapping[str, Any]) -> dict[str, Any]:
+    legacy = copy.deepcopy(dict(ledger))
+    legacy["version"] = 2
+    legacy.pop("optimizer_guard_history_reset_steps")
+    legacy.pop("optimizer_guard_rolling_interval_length")
+    legacy["metrics"] = {
+        "loss": "train/CE loss",
+        "grad_norm": "optim/total grad norm",
+        "optimizer_guard_skip": "optim/step skipped",
+    }
+    previous_sha = "0" * 64
+    for event in legacy["events"]:
+        event.pop("optimizer_guard_active")
+        event.pop("optimizer_guard_loss_within")
+        event.pop("optimizer_guard_gradient_within")
+        event["previous_event_sha256"] = previous_sha
+        event["event_sha256"] = perception.canonical_sha256(
+            {name: value for name, value in event.items() if name != "event_sha256"}
+        )
+        previous_sha = event["event_sha256"]
+    legacy["event_chain_sha256"] = previous_sha
+    legacy["content_sha256"] = perception.canonical_sha256(
+        {name: value for name, value in legacy.items() if name != "content_sha256"}
+    )
+    return legacy
+
+
+def test_v2_manifest_template_locks_prospective_guard_policy(tmp_path: Path) -> None:
+    template = (
+        Path(__file__).resolve().parents[3]
+        / "configs/vision_moe/vision_alignment/eval/ssmax_perception_pair_manifest_v2.json.template"
+    )
+    spec = json.loads(template.read_text())
+    spec["model_variant"] = "ssmax_head_qknorm"
+    spec["pair_id"] = "ssmax-head-qknorm-perception-v2"
+    for arm in perception.ARMS:
+        identity = perception.V2_ARM_IDENTITIES[spec["model_variant"]][arm]
+        spec["arms"][arm] = {
+            "run_name": identity["run_name"],
+            "checkpoint_root": str(tmp_path / identity["run_name"]),
+            "training_profile": str(tmp_path / identity["training_profile_name"]),
+        }
+    perception._validate_spec_common(spec)
+
+    drifted = copy.deepcopy(spec)
+    drifted["policy"]["maximum_optimizer_guard_skips"] = 9
+    drifted_path = tmp_path / "drifted-v2-spec.json"
+    drifted_path.write_text(json.dumps(drifted))
+    with pytest.raises(
+        perception.SSMaxPerceptionEvidenceError,
+        match="differs from the locked policy",
+    ):
+        perception.load_manifest_spec(drifted_path)
+
+    for field, alias, message in (
+        ("maximum_optimizer_guard_skips", 8.0, "must be an integer"),
+        ("require_finite_gradient_only_skips", 1, "must be boolean"),
+        ("require_uninterrupted_optimizer_guard_history", 1, "must be boolean"),
+    ):
+        drifted = copy.deepcopy(spec)
+        drifted["policy"][field] = alias
+        with pytest.raises(perception.SSMaxPerceptionEvidenceError, match=message):
+            perception._validate_spec_common(drifted)
+
+    drifted = copy.deepcopy(spec)
+    drifted["policy"]["optimizer_guard"]["max_grad_norm"] = 1
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="must be a JSON float"):
+        perception._validate_spec_common(drifted)
+
+    drifted = copy.deepcopy(spec)
+    drifted["arms"][perception.TREATMENT_ARM][
+        "run_name"
+    ] = "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v1"
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="fresh rerun"):
+        perception._validate_spec_common(drifted)
+
+
+def test_v2_optimizer_guard_boundaries_are_fail_closed() -> None:
+    policy = perception._locked_promotion_policy(perception.PERCEPTION_V2_SCHEMA_VERSION)
+    eight_steps = tuple(64 + 129 * index for index in range(8))
+    eight = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({step: (2.0, 2.0) for step in eight_steps}),
+        policy=policy,
+        step=4000,
+    )
+    assert eight["passed"] is True
+    assert eight["count"] == 8
+    assert eight["minimum_step_distance"] == 129
+    assert eight["required_minimum_step_distance"] == 129
+    assert all(event["finite_gradient_only"] for event in eight["skip_events"])
+
+    nine_steps = tuple(64 + 129 * index for index in range(9))
+    nine = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({step: (2.0, 2.0) for step in nine_steps}),
+        policy=policy,
+        step=4000,
+    )
+    assert nine["maximum_passed"] is False
+    assert nine["passed"] is False
+
+    exact_spacing = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({64: (2.0, 2.0), 193: (2.0, 2.0)}),
+        policy=policy,
+        step=4000,
+    )
+    assert exact_spacing["spacing_passed"] is True
+    too_close = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({64: (2.0, 2.0), 192: (2.0, 100.0)}),
+        policy=policy,
+        step=4000,
+    )
+    assert too_close["finite_gradient_only_passed"] is True
+    assert too_close["minimum_step_distance"] == 128
+    assert too_close["spacing_passed"] is False
+
+    exact_final = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({3872: (2.0, 2.0)}), policy=policy, step=4000
+    )
+    assert exact_final["clean_final_steps"] == 128
+    assert exact_final["final_window_passed"] is True
+    too_late = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({3873: (2.0, 2.0)}), policy=policy, step=4000
+    )
+    assert too_late["clean_final_steps"] == 127
+    assert too_late["final_window_passed"] is False
+
+    loss_triggered = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({217: (3.0, 2.0)}), policy=policy, step=4000
+    )
+    assert loss_triggered["skip_events"][0]["loss_within_guard"] is False
+    assert loss_triggered["skip_events"][0]["gradient_exceeds_guard"] is True
+    assert loss_triggered["finite_gradient_only_passed"] is False
+
+
+def test_v2_optimizer_guard_resume_is_truthfully_classified_but_ineligible() -> None:
+    policy = perception._locked_promotion_policy(perception.PERCEPTION_V2_SCHEMA_VERSION)
+    first_active = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger({564: (2.0, 2.0)}, resume_at=500),
+        policy=policy,
+        step=4000,
+    )
+    active_skip = first_active["skip_events"][0]
+    assert active_skip["history_reset_step"] == 500
+    assert active_skip["guard_active"] is True
+    assert active_skip["loss_within_guard"] is True
+    assert active_skip["gradient_exceeds_guard"] is True
+    assert active_skip["finite_gradient_only"] is True
+    assert first_active["optimizer_guard_history_reset_steps"] == [0, 500]
+    assert first_active["resume_free_passed"] is False
+    assert first_active["passed"] is False
+
+
+def test_v2_optimizer_guard_uses_live_device_reason_not_cpu_replay() -> None:
+    policy = perception._locked_promotion_policy(perception.PERCEPTION_V2_SCHEMA_VERSION)
+    loss_only = perception.summarize_optimizer_guard_trajectory(
+        _guard_ledger(
+            {217: (2.0, 2.0)},
+            live_decisions={217: (True, False, True)},
+        ),
+        policy=policy,
+        step=4000,
+    )
+    event = loss_only["skip_events"][0]
+    assert event["cpu_reconstruction"]["loss_within_guard"] is True
+    assert event["cpu_reconstruction"]["gradient_exceeds_guard"] is True
+    assert event["live_decision_matches_cpu_reconstruction"] is False
+    assert event["loss_within_guard"] is False
+    assert event["gradient_exceeds_guard"] is False
+    assert event["finite_gradient_only"] is False
+    assert loss_only["passed"] is False
 
 
 def test_cross_model_comparison_separates_absolute_and_step0_adaptation(monkeypatch) -> None:
@@ -625,9 +861,13 @@ def test_cross_model_comparison_separates_absolute_and_step0_adaptation(monkeypa
 
 
 def _report_fixture(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    version: int = perception.SCHEMA_VERSION,
+    treatment_skip_steps: tuple[int, ...] = (),
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
-    manifest_path, manifest, evaluator = _manifest_fixture(tmp_path)
+    manifest_path, manifest, evaluator = _manifest_fixture(tmp_path, version=version)
     evidence_file = tmp_path / "health-producer.py"
     evidence_file.write_text("# health producer\n")
     evidence = perception.artifact_reference(evidence_file)
@@ -647,6 +887,7 @@ def _report_fixture(
                     evidence,
                     arm=arm,
                     step=step,
+                    skip_steps=(treatment_skip_steps if arm == perception.TREATMENT_ARM else ()),
                 ),
             )
     monkeypatch.setattr(perception, "load_manifest", lambda *_args, **_kwargs: manifest)
@@ -707,6 +948,59 @@ def test_promotion_rebuilds_all_bound_receipts_and_rejects_report_tamper(
         )
 
 
+def test_v2_promotion_accepts_bound_finite_gradient_only_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, manifest, fixture = _report_fixture(
+        tmp_path,
+        monkeypatch,
+        version=perception.PERCEPTION_V2_SCHEMA_VERSION,
+        treatment_skip_steps=(217,),
+    )
+    report = fixture["report"]
+    assert report["version"] == perception.PERCEPTION_V2_SCHEMA_VERSION
+    assert report["status"] == "passed"
+    assert report["deviations"] == []
+    trajectories = report["summary"]["optimizer_guard_trajectories"]
+    assert trajectories[perception.CONTROL_ARM]["observed_steps"] == []
+    treatment = trajectories[perception.TREATMENT_ARM]
+    assert treatment["observed_steps"] == [217]
+    assert treatment["finite_gradient_only_passed"] is True
+    assert treatment["clean_final_steps"] == 3783
+
+    candidate_arm = manifest["arms"][perception.TREATMENT_ARM]
+    candidate = candidate_arm["checkpoints"]["4000"]
+    perception.validate_promotion_report_reference(
+        fixture["reference"],
+        expected_checkpoint=Path(candidate["path"]),
+        expected_checkpoint_config_sha256=candidate["config_sha256"],
+        expected_model_variant=manifest["model_variant"],
+        expected_data_contract_sha256=candidate_arm["data_contract_sha256"],
+        expected_trainable_contract_sha256=candidate_arm["trainable_contract_sha256"],
+        verify_live_checkpoint=False,
+    )
+
+    mixed = copy.deepcopy(report)
+    mixed["version"] = perception.SCHEMA_VERSION
+    mixed["content_sha256"] = perception.canonical_sha256(
+        {key: item for key, item in mixed.items() if key != "content_sha256"}
+    )
+    mixed_ref = _write_json(tmp_path / "mixed-version-report.json", mixed)
+    with pytest.raises(
+        perception.SSMaxPerceptionEvidenceError,
+        match="incompatible manifest",
+    ):
+        perception.validate_promotion_report_reference(
+            mixed_ref,
+            expected_checkpoint=Path(candidate["path"]),
+            expected_checkpoint_config_sha256=candidate["config_sha256"],
+            expected_model_variant=manifest["model_variant"],
+            expected_data_contract_sha256=candidate_arm["data_contract_sha256"],
+            expected_trainable_contract_sha256=candidate_arm["trainable_contract_sha256"],
+            verify_live_checkpoint=False,
+        )
+
+
 def test_perception_health_receipt_binds_ledger_to_trainer_state_bytes(
     tmp_path: Path,
 ) -> None:
@@ -724,6 +1018,41 @@ def test_perception_health_receipt_binds_ledger_to_trainer_state_bytes(
         arm=perception.TREATMENT_ARM,
         step=3000,
     )
+
+    historical = copy.deepcopy(receipt)
+    historical["rank_states"][0]["health_ledger"] = _legacy_v2_ledger(
+        historical["rank_states"][0]["health_ledger"]
+    )
+    perception._validate_health_receipt(
+        historical,
+        manifest=manifest,
+        arm=perception.TREATMENT_ARM,
+        step=3000,
+    )
+
+    v2_fixture_root = tmp_path / "v2"
+    v2_fixture_root.mkdir()
+    v2_path, v2_manifest, v2_evidence = _manifest_fixture(
+        v2_fixture_root, version=perception.PERCEPTION_V2_SCHEMA_VERSION
+    )
+    v2_receipt = _health_receipt(
+        v2_path,
+        v2_manifest,
+        v2_evidence,
+        arm=perception.TREATMENT_ARM,
+        step=3000,
+    )
+    v2_receipt["rank_states"][0]["health_ledger"] = _legacy_v2_ledger(
+        v2_receipt["rank_states"][0]["health_ledger"]
+    )
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="resume-aware v3"):
+        perception._validate_health_receipt(
+            v2_receipt,
+            manifest=v2_manifest,
+            arm=perception.TREATMENT_ARM,
+            step=3000,
+        )
+
     changed = copy.deepcopy(receipt)
     changed["rank_states"][0]["trainer_state_sha256"] = "9" * 64
     with pytest.raises(
@@ -732,6 +1061,63 @@ def test_perception_health_receipt_binds_ledger_to_trainer_state_bytes(
     ):
         perception._validate_health_receipt(
             changed,
+            manifest=manifest,
+            arm=perception.TREATMENT_ARM,
+            step=3000,
+        )
+
+
+def test_v2_health_receipt_rejects_cross_rank_resume_boundary_divergence(tmp_path: Path) -> None:
+    manifest_path, manifest, evidence = _manifest_fixture(
+        tmp_path, version=perception.PERCEPTION_V2_SCHEMA_VERSION
+    )
+    receipt = _health_receipt(
+        manifest_path,
+        manifest,
+        evidence,
+        arm=perception.TREATMENT_ARM,
+        step=3000,
+    )
+    rank1 = copy.deepcopy(receipt["rank_states"][0])
+    rank1["rank"] = 1
+    rank1["trainer_state_sha256"] = "d" * 64
+    rank1["health_ledger"]["optimizer_guard_history_reset_steps"] = [0, 3000]
+    rank1["health_ledger"]["content_sha256"] = perception.canonical_sha256(
+        {name: value for name, value in rank1["health_ledger"].items() if name != "content_sha256"}
+    )
+    receipt["rank_states"].append(rank1)
+    manifest["topology"]["world_size"] = 2
+    checkpoint = manifest["arms"][perception.TREATMENT_ARM]["checkpoints"]["3000"]
+    checkpoint["trainer_state_count"] = 2
+    checkpoint["trainer_state_inventory_sha256"] = perception.canonical_sha256(
+        [
+            {
+                "rank": state["rank"],
+                "path": f"train/rank{state['rank']}.pt",
+                "size": state["trainer_state_size_bytes"],
+                "sha256": state["trainer_state_sha256"],
+            }
+            for state in receipt["rank_states"]
+        ]
+    )
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="reset steps differ"):
+        perception._validate_health_receipt(
+            receipt,
+            manifest=manifest,
+            arm=perception.TREATMENT_ARM,
+            step=3000,
+        )
+
+    divergent_interval = copy.deepcopy(receipt)
+    divergent_ledger = divergent_interval["rank_states"][1]["health_ledger"]
+    divergent_ledger["optimizer_guard_history_reset_steps"] = [0]
+    divergent_ledger["optimizer_guard_rolling_interval_length"] = 129
+    divergent_ledger["content_sha256"] = perception.canonical_sha256(
+        {name: value for name, value in divergent_ledger.items() if name != "content_sha256"}
+    )
+    with pytest.raises(perception.SSMaxPerceptionEvidenceError, match="rolling intervals differ"):
+        perception._validate_health_receipt(
+            divergent_interval,
             manifest=manifest,
             arm=perception.TREATMENT_ARM,
             step=3000,
@@ -871,8 +1257,15 @@ def test_receipts_reject_rehashed_fabricated_producer_identity(
         )
 
 
-def test_v5_gate_binds_treatment_candidate_and_forbids_waivers(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("gate_version", "report_version"),
+    ((5, perception.SCHEMA_VERSION), (6, perception.PERCEPTION_V2_SCHEMA_VERSION)),
+)
+def test_versioned_gate_binds_matching_treatment_candidate_and_forbids_waivers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_version: int,
+    report_version: int,
 ) -> None:
     candidate = tmp_path / "treatment" / "step4000"
     report_path = tmp_path / "report.json"
@@ -881,7 +1274,11 @@ def test_v5_gate_binds_treatment_candidate_and_forbids_waivers(
     manifest_path.write_text("{}\n")
     summary = {
         "candidate": {"identity_sha256": "1" * 64},
-        "report": {"content_sha256": "2" * 64, "created_at": _REPORT_TIME},
+        "report": {
+            "version": report_version,
+            "content_sha256": "2" * 64,
+            "created_at": _REPORT_TIME,
+        },
         "manifest_reference": {
             "path": str(manifest_path),
             "sha256": perception.sha256_file(manifest_path),
@@ -895,7 +1292,7 @@ def test_v5_gate_binds_treatment_candidate_and_forbids_waivers(
     )
     gate = {
         "format": "vision_alignment_parent_gate",
-        "version": 5,
+        "version": gate_version,
         "status": "approved",
         "recipe_version": 3,
         "formatter_version": "v1",
@@ -940,3 +1337,56 @@ def test_v5_gate_binds_treatment_candidate_and_forbids_waivers(
             expected_trainable_contract_sha256="6" * 64,
             verify_live_checkpoint=False,
         )
+
+    changed = copy.deepcopy(gate)
+    changed["version"] = 6 if gate_version == 5 else 5
+    with pytest.raises(
+        perception.SSMaxPerceptionEvidenceError,
+        match="does not match promotion protocol",
+    ):
+        perception.validate_ssmax_perception_parent_gate(
+            changed,
+            expected_checkpoint=candidate,
+            expected_checkpoint_config_sha256="4" * 64,
+            expected_model_variant="ssmax_head_qknorm",
+            expected_data_contract_sha256="5" * 64,
+            expected_trainable_contract_sha256="6" * 64,
+            verify_live_checkpoint=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("report_version", "expected_gate_version"),
+    ((perception.SCHEMA_VERSION, 5), (perception.PERCEPTION_V2_SCHEMA_VERSION, 6)),
+)
+def test_parent_gate_builder_selects_version_from_rebuilt_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    report_version: int,
+    expected_gate_version: int,
+) -> None:
+    _, manifest, fixture = _report_fixture(tmp_path, monkeypatch, version=report_version)
+    candidate = Path(manifest["arms"][perception.TREATMENT_ARM]["checkpoints"]["4000"]["path"])
+    candidate.mkdir(parents=True)
+    (candidate / "config.json").write_text(
+        json.dumps(
+            {
+                "vision_alignment": {
+                    "recipe_version": 3,
+                    "formatter_version": "v1",
+                }
+            }
+        )
+        + "\n"
+    )
+    report_reference = fixture["reference"]
+
+    gate = perception.build_parent_gate(
+        promotion_report_path=Path(report_reference["path"]),
+        expected_promotion_report_sha256=report_reference["sha256"],
+        approved_by="reviewer@example.org",
+        approved_at="2026-08-20T02:00:00+00:00",
+        verify_live_checkpoint=False,
+    )
+
+    assert gate["version"] == expected_gate_version

@@ -1960,17 +1960,22 @@ def _validate_parent_gate(
         "waivers",
     }
     version_5_fields = version_4_fields | {"promotion_report_content_sha256"}
+    # SSMax perception protocol v2 uses the same exact approval payload shape as v5 while
+    # assigning a new version so the referenced v2 manifest/report cannot be confused with
+    # historical zero-skip evidence.
+    version_6_fields = version_5_fields
     gate_schemas = {
         1: version_1_fields,
         2: version_2_fields,
         3: version_3_fields,
         4: version_4_fields,
         5: version_5_fields,
+        6: version_6_fields,
     }
     gate_version = gate.get("version")
     allowed_fields = gate_schemas.get(gate_version) if type(gate_version) is int else None
     if allowed_fields is None:
-        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, 3, 4, or 5")
+        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, 3, 4, 5, or 6")
     if set(gate) != allowed_fields:
         raise ValueError(
             "Parent-quality gate fields differ from the locked schema: "
@@ -1980,7 +1985,7 @@ def _validate_parent_gate(
     parent_meta = parent_config.get("vision_alignment")
     expected_parent_phase = config.initialization.expected_parent_phase
     assert isinstance(parent_meta, Mapping)
-    if gate_version in (3, 4, 5):
+    if gate_version in (3, 4, 5, 6):
         expected_recipe_version = parent_meta.get("recipe_version")
         expected_formatter_version = parent_meta.get("formatter_version")
         if type(expected_recipe_version) is not int or not isinstance(
@@ -2040,19 +2045,20 @@ def _validate_parent_gate(
         or expected_parent_phase is not VisionAlignmentPhase.bridge
     ):
         raise ValueError("A v4 SSMax bridge parent gate may only authorize SSMax perception")
-    if gate_version == 5 and (
+    if gate_version in (5, 6) and (
         getattr(config, "phase", None) is not VisionAlignmentPhase.joint
         or not _is_ssmax_variant(model_variant)
         or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
-        raise ValueError("A v5 SSMax perception parent gate may only authorize SSMax joint")
-    expected_joint_gate = 5 if _is_ssmax_variant(model_variant) else 3
+        raise ValueError("A v5/v6 SSMax perception parent gate may only authorize SSMax joint")
+    expected_joint_gates = {5, 6} if _is_ssmax_variant(model_variant) else {3}
     if production_joint and (
-        gate_version != expected_joint_gate
+        gate_version not in expected_joint_gates
         or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
+        expected_joint_gate_text = "v5 or v6" if _is_ssmax_variant(model_variant) else "v3"
         raise ValueError(
-            f"Production joint requires a v{expected_joint_gate} perception parent gate and "
+            f"Production joint requires a {expected_joint_gate_text} perception parent gate and "
             "perception parent phase"
         )
     if gate_version == 2:
@@ -2214,7 +2220,7 @@ def _validate_parent_gate(
             )
         except ssmax_bridge.SSMaxBridgeEvidenceError as error:
             raise ValueError(f"SSMax bridge parent gate failed validation: {error}") from error
-    elif gate_version == 5:
+    elif gate_version in (5, 6):
         from olmo_core.eval import vision_alignment_ssmax_perception as ssmax_perception
 
         try:

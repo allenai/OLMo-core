@@ -191,6 +191,36 @@ def test_cli_accepts_explicit_ssmax_model_variant(model_variant: str) -> None:
         ]
     )
     assert args.model_variant == model_variant
+    assert args.protocol_version == "v1"
+
+
+@pytest.mark.parametrize("model_variant", ["ssmax_head_qknorm", "ssmax_no_qknorm"])
+def test_cli_accepts_explicit_ssmax_v2_protocol(model_variant: str) -> None:
+    module = _load_module()
+    args = module._parse_args(
+        [
+            f"--model-variant={model_variant}",
+            "--protocol-version=v2",
+            "--recipe=recipe.py",
+            f"--expected-recipe-sha256={'a' * 64}",
+            "--profile=profile.yaml",
+            f"--expected-profile-sha256={'b' * 64}",
+            "--profile-pair-receipt=pair.json",
+            f"--expected-profile-pair-receipt-sha256={'d' * 64}",
+            f"--expected-git-ref={'c' * 40}",
+        ]
+    )
+    assert args.model_variant == model_variant
+    assert args.protocol_version == "v2"
+
+
+def test_v2_protocol_rejects_legacy_s002_lineage() -> None:
+    module = _load_module()
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="supported only for SSMax",
+    ):
+        module._model_variant_policy("s002", "v2")
 
 
 def test_pinned_file_rejects_changed_bytes(tmp_path: Path) -> None:
@@ -307,8 +337,13 @@ if __name__ == "__main__":
     assert not marker.exists()
 
 
-def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
-    policy = module._model_variant_policy(model_variant)
+def _profile_pair_case(
+    tmp_path: Path,
+    module,
+    model_variant: str = "s002",
+    protocol_version: str = "v1",
+):
+    policy = module._model_variant_policy(model_variant, protocol_version)
     recipe = tmp_path / module.RECIPE_REPOSITORY_PATH
     recipe.parent.mkdir(parents=True)
     recipe.write_text("# pinned recipe\n")
@@ -318,11 +353,11 @@ def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
         / "vision_moe"
         / "vision_alignment"
         / "perception"
-        / "treatment_v1.yaml"
+        / f"treatment_{protocol_version}.yaml"
     )
     profile.parent.mkdir(parents=True)
     profile.write_text(f"name: {policy['profile_names']['treatment']}\n")
-    control = profile.with_name("frozen_vision_control_v1.yaml")
+    control = profile.with_name(f"frozen_vision_control_{protocol_version}.yaml")
     control.write_text(f"name: {policy['profile_names']['frozen_vision_control']}\n")
 
     def sha256(path: Path) -> str:
@@ -412,6 +447,8 @@ def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
     }
     if model_variant in module.SSMAX_MODEL_VARIANTS:
         receipt["model_variant"] = model_variant
+    if policy["optimizer_guard_contract"] is not None:
+        receipt["optimizer_guard_contract"] = copy.deepcopy(policy["optimizer_guard_contract"])
     return {
         "root": tmp_path,
         "recipe_sha256": sha256(recipe),
@@ -420,6 +457,7 @@ def _profile_pair_case(tmp_path: Path, module, model_variant: str = "s002"):
         "profile_sha256": sha256(profile),
         "receipt": receipt,
         "model_variant": model_variant,
+        "protocol_version": protocol_version,
         "receipt_path": tmp_path / "artifacts" / policy["profile_pair_name"],
     }
 
@@ -442,6 +480,7 @@ def _load_receipt_case(module, case, receipt_sha256):
         profile_sha256=case["profile_sha256"],
         git_ref="a" * 40,
         model_variant=case["model_variant"],
+        protocol_version=case["protocol_version"],
     )
 
 
@@ -515,6 +554,66 @@ def test_ssmax_v3_profile_pair_receipt_rejects_legacy_identity_paths(tmp_path: P
         _load_receipt_case(module, case, receipt_sha256)
 
 
+@pytest.mark.parametrize("model_variant", ["ssmax_head_qknorm", "ssmax_no_qknorm"])
+def test_ssmax_v4_profile_pair_receipt_binds_v2_guard_policy(
+    tmp_path: Path, model_variant: str
+) -> None:
+    module = _load_module()
+    case = _profile_pair_case(
+        tmp_path,
+        module,
+        model_variant=model_variant,
+        protocol_version="v2",
+    )
+    receipt_sha256 = _write_receipt(case)
+
+    summary = _load_receipt_case(module, case, receipt_sha256)
+
+    assert summary["version"] == 4
+    assert summary["protocol_version"] == "v2"
+    assert summary["model_variant"] == model_variant
+    assert summary["profile_name"] == module.SSMAX_V2_PROFILE_NAMES[model_variant]["treatment"]
+    assert summary["optimizer_guard_contract"] == module._SSMAX_V2_OPTIMIZER_GUARD_CONTRACT
+
+
+def test_ssmax_v4_profile_pair_receipt_rejects_guard_policy_drift(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _profile_pair_case(
+        tmp_path,
+        module,
+        model_variant="ssmax_head_qknorm",
+        protocol_version="v2",
+    )
+    case["receipt"]["optimizer_guard_contract"]["eligibility"]["maximum_optimizer_guard_skips"] = 9
+    receipt_sha256 = _write_receipt(case)
+
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="optimizer-guard contract differs",
+    ):
+        _load_receipt_case(module, case, receipt_sha256)
+
+
+def test_ssmax_v2_protocol_rejects_v1_receipt_name(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _profile_pair_case(
+        tmp_path,
+        module,
+        model_variant="ssmax_head_qknorm",
+        protocol_version="v2",
+    )
+    case["receipt_path"] = case["receipt_path"].with_name(
+        module.SSMAX_PROFILE_PAIR_NAMES["ssmax_head_qknorm"]
+    )
+    receipt_sha256 = _write_receipt(case)
+
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="must be artifacts/ssmax-head-qknorm-perception-profile-pair-v4.json",
+    ):
+        _load_receipt_case(module, case, receipt_sha256)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
@@ -584,6 +683,12 @@ def _ssmax_runtime_config(module, model_variant: str):
         "train_module": {
             "_CLASS_": module._SSMAX_TRAIN_MODULE_CLASS,
             "rank_microbatch_size": 10240,
+            "max_grad_norm": 1.0,
+            "optim": {
+                "type": "skip_step_adamw",
+                "rolling_interval_length": 128,
+                "sigma_factor": 12,
+            },
             "dp_config": {
                 "_CLASS_": module._SSMAX_DP_CONFIG_CLASS,
                 "name": "hsdp",
@@ -627,6 +732,40 @@ def test_runtime_perception_contract_rejects_ssmax_drift(mutate, message) -> Non
     mutate(raw)
     with pytest.raises(module.PerceptionRuntimePreflightError, match=message):
         module._validate_runtime_perception_contract(config, model_variant="ssmax_head_qknorm")
+
+
+def test_runtime_optimizer_guard_accepts_exact_v2_training_config() -> None:
+    module = _load_module()
+    _, config = _ssmax_runtime_config(module, "ssmax_head_qknorm")
+
+    module._validate_runtime_optimizer_guard_contract(
+        config,
+        expected_contract=module._SSMAX_V2_OPTIMIZER_GUARD_CONTRACT,
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda raw: raw["train_module"]["optim"].update(type="adamw"),
+        lambda raw: raw["train_module"]["optim"].update(rolling_interval_length=64),
+        lambda raw: raw["train_module"]["optim"].update(sigma_factor=18),
+        lambda raw: raw["train_module"].update(max_grad_norm=2.0),
+    ],
+)
+def test_runtime_optimizer_guard_rejects_v2_training_drift(mutate) -> None:
+    module = _load_module()
+    raw, config = _ssmax_runtime_config(module, "ssmax_head_qknorm")
+    mutate(raw)
+
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="Runtime optimizer guard differs",
+    ):
+        module._validate_runtime_optimizer_guard_contract(
+            config,
+            expected_contract=module._SSMAX_V2_OPTIMIZER_GUARD_CONTRACT,
+        )
 
 
 def test_credential_env_names_reports_names_only() -> None:

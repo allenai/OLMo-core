@@ -43,6 +43,9 @@ class SkipStepOptimizer(Optimizer):
         self._losses: List[torch.Tensor] = []
         self._grad_norms: List[torch.Tensor] = []
         self._device: Optional[torch.device] = None
+        self._guard_active: Optional[torch.Tensor] = None
+        self._guard_loss_within: Optional[torch.Tensor] = None
+        self._guard_gradient_within: Optional[torch.Tensor] = None
 
     @property
     def device(self) -> torch.device:
@@ -65,6 +68,9 @@ class SkipStepOptimizer(Optimizer):
 
     @latest_loss.setter
     def latest_loss(self, loss: torch.Tensor):
+        self._guard_active = None
+        self._guard_loss_within = None
+        self._guard_gradient_within = None
         self._losses.append(loss)
         while len(self._losses) > self.rolling_interval_length + 1:
             self._losses.pop(0)
@@ -92,21 +98,53 @@ class SkipStepOptimizer(Optimizer):
         without a host-device sync.
         """
         if len(self._losses) < max(2, self.rolling_interval_length // 2):
+            self._guard_active = move_to_device(torch.tensor(False), self.device)
+            self._guard_loss_within = move_to_device(torch.tensor(True), self.device)
+            self._guard_gradient_within = move_to_device(torch.tensor(True), self.device)
             return move_to_device(torch.tensor(1.0), self.device)
 
         loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
         assert self.latest_loss is not None
+        self._guard_active = move_to_device(torch.tensor(True), self.device)
+        self._guard_loss_within = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
         if self._grad_norms:
             assert self.latest_grad_norm is not None
             grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
+            self._guard_gradient_within = (
+                self.latest_grad_norm - grad_norm_mean
+            ) <= self.sigma_factor * grad_norm_std
             step_factor = torch.logical_and(
-                (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std,
-                (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std,
+                self._guard_loss_within,
+                self._guard_gradient_within,
             )
         else:
-            step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+            self._guard_gradient_within = move_to_device(torch.tensor(True), self.device)
+            step_factor = self._guard_loss_within
 
         return step_factor.float()
+
+    def _guard_decision(self, value: Optional[torch.Tensor], *, name: str) -> torch.Tensor:
+        if value is None:
+            raise RuntimeError(f"SkipStep {name} is unavailable before the optimizer decision")
+        return value
+
+    @property
+    def guard_active(self) -> torch.Tensor:
+        """Whether the rolling guard was active for the latest optimizer decision."""
+
+        return self._guard_decision(self._guard_active, name="guard-active decision")
+
+    @property
+    def guard_loss_within(self) -> torch.Tensor:
+        """The live-device loss-side comparison used by the latest optimizer decision."""
+
+        return self._guard_decision(self._guard_loss_within, name="loss-side decision")
+
+    @property
+    def guard_gradient_within(self) -> torch.Tensor:
+        """The live-device gradient-side comparison used by the latest optimizer decision."""
+
+        return self._guard_decision(self._guard_gradient_within, name="gradient-side decision")
 
     @property
     def step_skipped(self) -> torch.Tensor:

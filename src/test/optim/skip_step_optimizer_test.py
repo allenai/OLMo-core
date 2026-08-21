@@ -49,3 +49,43 @@ def test_skip_step_optimizer(device: torch.device):
     loss.backward()
     optim.step()
     assert torch.equal(optim.step_skipped.cpu().detach(), torch.tensor(False))
+
+
+@pytest.mark.parametrize(
+    ("current_loss", "current_grad_norm", "expected_loss_within", "expected_grad_within"),
+    (
+        (2.0, 1.0, False, True),
+        (1.0, 2.0, True, False),
+        (2.0, 2.0, False, False),
+    ),
+)
+@pytest.mark.parametrize("device", DEVICES)
+def test_skip_step_optimizer_caches_the_live_guard_reason(
+    device: torch.device,
+    current_loss: float,
+    current_grad_norm: float,
+    expected_loss_within: bool,
+    expected_grad_within: bool,
+) -> None:
+    model = nn.Linear(1, 1).to(device)
+    optim = SkipStepAdamWConfig(rolling_interval_length=6, sigma_factor=1).build(model)
+
+    optim.latest_loss = torch.tensor(1.0, device=device)
+    optim.latest_grad_norm = torch.tensor(1.0, device=device)
+    assert optim.get_step_factor().item() == 1.0
+    assert optim.guard_active.item() is False
+    assert optim.guard_loss_within.item() is True
+    assert optim.guard_gradient_within.item() is True
+
+    optim.latest_loss = torch.tensor(1.0, device=device)
+    optim.latest_grad_norm = torch.tensor(1.0, device=device)
+    assert optim.get_step_factor().item() == 1.0
+    assert optim.guard_active.item() is False
+
+    optim.latest_loss = torch.tensor(current_loss, device=device)
+    optim.latest_grad_norm = torch.tensor(current_grad_norm, device=device)
+    expected_step_factor = float(expected_loss_within and expected_grad_within)
+    assert optim.get_step_factor().item() == expected_step_factor
+    assert optim.guard_active.item() is True
+    assert optim.guard_loss_within.item() is expected_loss_within
+    assert optim.guard_gradient_within.item() is expected_grad_within

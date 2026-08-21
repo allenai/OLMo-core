@@ -1,12 +1,14 @@
 # Descriptive SSMax joint evidence
 
 This protocol starts only after one exact treatment checkpoint for each SSMax lineage has an
-explicitly approved v5 perception gate. It stops at the end of joint alignment; it neither selects
-nor starts a mid-training recipe. The historical s002 joint receipts remain historical evidence and
-are not accepted by these model-variant-aware tools.
+explicitly approved perception gate. Historical perception-v1 evidence produces v5 gates;
+prospective perception-v2 evidence produces v6 gates. The gate validator reopens the referenced
+report and manifest, so a v5 gate cannot authorize a v2 candidate. This protocol stops at the end
+of joint alignment; it neither selects nor starts a mid-training recipe. The historical s002 joint
+receipts remain historical evidence and are not accepted by these model-variant-aware tools.
 
 The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. Fill
-one copy per approved lineage only after its reviewed joint profile, v5 gate, projection, source
+one copy per approved lineage only after its reviewed joint profile, version-matched gate, projection, source
 audit, pairings, and output root exist. Do not replace a missing artifact with a placeholder path.
 Each finalized manifest binds all bytes of permanent steps 0, 4,000, 8,000, 12,000, and 16,000,
 the clean recipe/profile/git identity, the approved perception candidate, the fixed eight-source

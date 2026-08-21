@@ -298,6 +298,16 @@ def build_config(
         "train_module": {
             "freeze_params": (["vision.*"] if control else []) + treatment_freeze,
             "optim": {
+                **(
+                    {
+                        "_CLASS_": "olmo_core.optim.adamw.SkipStepAdamWConfig",
+                        "type": "skip_step_adamw",
+                        "rolling_interval_length": 128,
+                        "sigma_factor": 12,
+                    }
+                    if is_ssmax
+                    else {}
+                ),
                 "group_overrides": [
                     {"params": ["*lm.embeddings.weight"], "opts": {"lr": 5e-5}},
                     {"params": ["*connector.*"], "opts": {"lr": 5e-5}},
@@ -327,6 +337,7 @@ def build_config(
                         "param_dtype": "bfloat16",
                         "reduce_dtype": "float32",
                     },
+                    "max_grad_norm": 1.0,
                 }
                 if is_ssmax
                 else {"ep_config": {"degree": 8}}
@@ -416,6 +427,9 @@ def _make_case(
     wrong_freeze_list: bool = False,
     wrong_vision_lr: bool = False,
     wrong_git_branch: bool = False,
+    profile_identity_version: str = "v1",
+    profile_path_version: str | None = None,
+    run_identity_version: str | None = None,
 ) -> dict[str, Any]:
     root = tmp_path / "repo"
     recipe = root / "src" / "scripts" / "train" / "Vision-Alignment.py"
@@ -450,15 +464,25 @@ def _make_case(
         f"--data.source_audit_fingerprint={'b' * 64}",
         "--initialization.checkpoint=/synthetic/bridge/step500",
     ]
-    control = profile_root / "control.yaml"
-    treatment = profile_root / "treatment.yaml"
+    profile_path_version = profile_path_version or profile_identity_version
+    run_identity_version = run_identity_version or profile_identity_version
+    for identity_kind, identity_version in (
+        ("profile path", profile_path_version),
+        ("run", run_identity_version),
+    ):
+        if identity_version not in ("v1", "v2"):
+            raise ValueError(f"Unsupported synthetic {identity_kind} identity {identity_version!r}")
+    identity_suffix = "_v2" if profile_path_version == "v2" else ""
+    control = profile_root / f"control{identity_suffix}.yaml"
+    treatment = profile_root / f"treatment{identity_suffix}.yaml"
     if model_variant.startswith("ssmax_"):
         run_prefix = f"vision-{model_variant.replace('_', '-')}-1p4b-cx8-perception"
-        control_name = f"{run_prefix}-frozen-vision-control-v1"
-        treatment_name = f"{run_prefix}-treatment-v1"
+        control_name = f"{run_prefix}-frozen-vision-control-{run_identity_version}"
+        treatment_name = f"{run_prefix}-treatment-{run_identity_version}"
     else:
-        control_name = "perception-frozen-control"
-        treatment_name = "perception-treatment"
+        run_suffix = "-v2" if run_identity_version == "v2" else ""
+        control_name = f"perception-frozen-control{run_suffix}"
+        treatment_name = f"perception-treatment{run_suffix}"
     _write_json(
         control,
         {
@@ -515,8 +539,8 @@ def _make_case(
     }
 
 
-def _kwargs(case: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _kwargs(case: dict[str, Any], *, protocol_version: str | None = None) -> dict[str, Any]:
+    kwargs = {
         "recipe_path": case["recipe"],
         "expected_recipe_sha256": case["recipe_sha256"],
         "control_profile_path": case["control"],
@@ -525,6 +549,9 @@ def _kwargs(case: dict[str, Any]) -> dict[str, Any]:
         "expected_treatment_profile_sha256": case["treatment_sha256"],
         "output_path": case["output"],
     }
+    if protocol_version is not None:
+        kwargs["protocol_version"] = protocol_version
+    return kwargs
 
 
 def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
@@ -583,6 +610,7 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
         "parent_gate_sha256": "f" * 64,
     }
     assert receipt["perception_contract"] == module._PERCEPTION_CONSTANTS
+    assert "optimizer_guard_contract" not in receipt
 
     with pytest.raises(FileExistsError, match="Refusing to overwrite"):
         module.build_profile_pair_receipt(**_kwargs(case))
@@ -590,6 +618,11 @@ def test_builds_deterministic_immutable_pair_receipt(tmp_path: Path) -> None:
     case["output"].unlink()
     second = module.build_profile_pair_receipt(**_kwargs(case))
     assert second == receipt
+    assert case["output"].read_bytes() == first_raw
+
+    case["output"] = case["output"].with_name("profile-pair-explicit-v1.json")
+    explicit_v1 = module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v1"))
+    assert explicit_v1 == receipt
     assert case["output"].read_bytes() == first_raw
 
 
@@ -623,6 +656,201 @@ def test_builds_strict_ssmax_dense_hsdp_pair_receipt(tmp_path: Path, model_varia
         "/trainer/callbacks/ssmax_health_ledger/run_name"
         in receipt["comparison"]["allowed_identity_config_paths"]
     )
+    assert "optimizer_guard_contract" not in receipt
+
+    default_v1_raw = case["output"].read_bytes()
+    case["output"] = case["output"].with_name("profile-pair-explicit-v1.json")
+    explicit_v1 = module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v1"))
+    assert explicit_v1 == receipt
+    assert case["output"].read_bytes() == default_v1_raw
+
+
+@pytest.mark.parametrize("model_variant", ["ssmax_head_qknorm", "ssmax_no_qknorm"])
+def test_builds_ssmax_v2_optimizer_guard_receipt(tmp_path: Path, model_variant: str) -> None:
+    module = _load_module()
+    case = _make_case(
+        tmp_path,
+        model_variant=model_variant,
+        profile_identity_version="v2",
+    )
+
+    receipt = module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v2"))
+
+    assert receipt["version"] == 4
+    assert receipt["model_variant"] == model_variant
+    assert "protocol_version" not in receipt
+    assert receipt["optimizer_guard_contract"] == {
+        "optimizer": {
+            "type": "skip_step_adamw",
+            "rolling_interval_length": 128,
+            "sigma_factor": 12,
+            "max_grad_norm": 1.0,
+        },
+        "eligibility": {
+            "maximum_optimizer_guard_skips": 8,
+            "minimum_clean_steps_between_skips": 128,
+            "minimum_clean_final_steps": 128,
+            "require_finite_gradient_only_skips": True,
+            "require_uninterrupted_optimizer_guard_history": True,
+            "maximum_data_errors": 0,
+            "maximum_nonfinite_losses": 0,
+            "maximum_nonfinite_gradients": 0,
+        },
+    }
+    for profile in receipt["profiles"].values():
+        assert profile["name"].endswith("-v2")
+        assert profile["repository_path"].endswith("_v2.yaml")
+
+
+def test_protocol_version_cli_defaults_to_v1_and_accepts_v2(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path)
+    required_args = [
+        f"--recipe={case['recipe']}",
+        f"--expected-recipe-sha256={case['recipe_sha256']}",
+        f"--control-profile={case['control']}",
+        f"--expected-control-profile-sha256={case['control_sha256']}",
+        f"--treatment-profile={case['treatment']}",
+        f"--expected-treatment-profile-sha256={case['treatment_sha256']}",
+        f"--output={case['output']}",
+    ]
+
+    assert module._parse_args(required_args).protocol_version == "v1"
+    assert module._parse_args(["--protocol-version=v2", *required_args]).protocol_version == "v2"
+    with pytest.raises(SystemExit):
+        module._parse_args(["--protocol-version=v3", *required_args])
+
+
+def test_v2_rejects_s002_profiles(tmp_path: Path) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, profile_identity_version="v2")
+
+    with pytest.raises(module.ProfilePairAuditError, match="v2 requires SSMax profiles"):
+        module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v2"))
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize(
+    ("profile_path_version", "run_identity_version"),
+    [("v1", "v2"), ("v2", "v1")],
+)
+def test_v2_requires_both_new_ssmax_profile_identities(
+    tmp_path: Path,
+    profile_path_version: str,
+    run_identity_version: str,
+) -> None:
+    module = _load_module()
+    case = _make_case(
+        tmp_path,
+        model_variant="ssmax_head_qknorm",
+        profile_path_version=profile_path_version,
+        run_identity_version=run_identity_version,
+    )
+
+    with pytest.raises(
+        module.ProfilePairAuditError,
+        match=r"must use -v2 run and _v2\.yaml file identities",
+    ):
+        module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v2"))
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("_CLASS_", "olmo_core.optim.adamw.AdamWConfig", "optimizer class differs"),
+        ("type", "adamw", "optimizer type differs"),
+        (
+            "rolling_interval_length",
+            127,
+            "optimizer rolling_interval_length differs",
+        ),
+        (
+            "rolling_interval_length",
+            True,
+            "optimizer rolling_interval_length differs",
+        ),
+        ("sigma_factor", 11, "optimizer sigma_factor differs"),
+        ("max_grad_norm", 2.0, "train-module max_grad_norm differs"),
+        ("max_grad_norm", True, "train-module max_grad_norm differs"),
+    ],
+)
+def test_v2_rejects_optimizer_guard_config_drift(
+    monkeypatch,
+    tmp_path: Path,
+    field: str,
+    value: Any,
+    message: str,
+) -> None:
+    module = _load_module()
+    case = _make_case(
+        tmp_path,
+        model_variant="ssmax_head_qknorm",
+        profile_identity_version="v2",
+    )
+    original = module._build_profile_config
+
+    def drift_both_arms(*args, **kwargs):
+        config, config_dict = original(*args, **kwargs)
+        train_module = config_dict["train_module"]
+        if field == "max_grad_norm":
+            train_module[field] = value
+        else:
+            train_module["optim"][field] = value
+        return config, config_dict
+
+    monkeypatch.setattr(module, "_build_profile_config", drift_both_arms)
+    with pytest.raises(module.ProfilePairAuditError, match=message):
+        module.build_profile_pair_receipt(**_kwargs(case, protocol_version="v2"))
+    assert not case["output"].exists()
+
+
+def test_optimizer_guard_contract_validates_treatment_independently() -> None:
+    module = _load_module()
+
+    def config() -> dict[str, Any]:
+        return {
+            "train_module": {
+                "max_grad_norm": 1.0,
+                "optim": {
+                    "_CLASS_": module._SSMAX_SKIP_STEP_ADAMW_CONFIG_CLASS,
+                    "type": "skip_step_adamw",
+                    "rolling_interval_length": 128,
+                    "sigma_factor": 12,
+                },
+            }
+        }
+
+    control = config()
+    treatment = config()
+    treatment["train_module"]["optim"]["sigma_factor"] = 11
+
+    with pytest.raises(
+        module.ProfilePairAuditError,
+        match="treatment optimizer sigma_factor differs",
+    ):
+        module._optimizer_guard_contract(control, treatment)
+
+
+def test_v1_ssmax_does_not_require_v2_optimizer_guard_fields(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    case = _make_case(tmp_path, model_variant="ssmax_head_qknorm")
+    original = module._build_profile_config
+
+    def remove_v2_guard_fields(*args, **kwargs):
+        config, config_dict = original(*args, **kwargs)
+        train_module = config_dict["train_module"]
+        train_module.pop("max_grad_norm")
+        optim = train_module["optim"]
+        for field in ("_CLASS_", "type", "rolling_interval_length", "sigma_factor"):
+            optim.pop(field)
+        return config, config_dict
+
+    monkeypatch.setattr(module, "_build_profile_config", remove_v2_guard_fields)
+    receipt = module.build_profile_pair_receipt(**_kwargs(case))
+
+    assert receipt["version"] == 3
+    assert "optimizer_guard_contract" not in receipt
 
 
 @pytest.mark.parametrize("drift", ["missing", "model_variant", "phase", "run_name"])

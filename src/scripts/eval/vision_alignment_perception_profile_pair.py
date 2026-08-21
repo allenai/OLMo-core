@@ -3,16 +3,20 @@
 This tool builds both profiles through the exact, SHA-256-pinned training recipe that would
 launch them. It never submits a job. The resulting receipt proves that the two reviewed
 profiles use identical data and configuration except for run identity and the intended
-vision-trainability intervention.
+vision-trainability intervention. Protocol ``v1`` is the compatibility default. Protocol ``v2``
+is SSMax-only and additionally binds the optimizer-guard policy used to judge a run.
 
 Example::
 
     PYTHONPATH=src python src/scripts/eval/vision_alignment_perception_profile_pair.py \
       --recipe=src/scripts/train/Vision-Alignment.py \
       --expected-recipe-sha256=<sha256> \
-      --control-profile=configs/vision_moe/vision_alignment/perception/control.yaml \
+      --protocol-version=v2 \
+      --control-profile=configs/vision_moe/vision_alignment/perception/\
+ssmax_head_qknorm_1p4b_cx8_frozen_vision_control_v2.yaml \
       --expected-control-profile-sha256=<sha256> \
-      --treatment-profile=configs/vision_moe/vision_alignment/perception/treatment.yaml \
+      --treatment-profile=configs/vision_moe/vision_alignment/perception/\
+ssmax_head_qknorm_1p4b_cx8_treatment_v2.yaml \
       --expected-treatment-profile-sha256=<sha256> \
       --output=/path/to/profile-pair-audit.json
 """
@@ -38,6 +42,8 @@ from typing import Any, Iterator
 FORMAT = "vision_alignment_perception_profile_pair_audit"
 VERSION = 2
 SSMAX_VERSION = 3
+SSMAX_V2_VERSION = 4
+PROTOCOL_VERSIONS = ("v1", "v2")
 CONTROL_ARM = "frozen_vision_control"
 TREATMENT_ARM = "treatment"
 ARM_OVERRIDE_PREFIX = "--perception_trainability_arm="
@@ -96,6 +102,27 @@ _SSMAX_TRAIN_MODULE_CLASS = (
 _SSMAX_DP_CONFIG_CLASS = (
     "olmo_core.train.train_module.transformer.config.TransformerDataParallelConfig"
 )
+_SSMAX_SKIP_STEP_ADAMW_CONFIG_CLASS = "olmo_core.optim.adamw.SkipStepAdamWConfig"
+# Clean-between steps exclude the two skip events (128 clean means a step delta of at least 129).
+# Clean-final steps are the candidate step minus the final optimizer-guard skip step.
+_SSMAX_V2_OPTIMIZER_GUARD_CONTRACT: dict[str, Any] = {
+    "optimizer": {
+        "type": "skip_step_adamw",
+        "rolling_interval_length": 128,
+        "sigma_factor": 12,
+        "max_grad_norm": 1.0,
+    },
+    "eligibility": {
+        "maximum_optimizer_guard_skips": 8,
+        "minimum_clean_steps_between_skips": 128,
+        "minimum_clean_final_steps": 128,
+        "require_finite_gradient_only_skips": True,
+        "require_uninterrupted_optimizer_guard_history": True,
+        "maximum_data_errors": 0,
+        "maximum_nonfinite_losses": 0,
+        "maximum_nonfinite_gradients": 0,
+    },
+}
 _SSMAX_PERCEPTION_CONSTANTS: dict[str, Any] = {
     "duration": {"unit": "steps", "value": 4000},
     "evaluation": {
@@ -377,8 +404,15 @@ def _require_exact_value(actual: Any, expected: Any, *, name: str) -> Any:
     return actual
 
 
-def _model_variant_policy(model_variant: str) -> dict[str, Any]:
+def _model_variant_policy(model_variant: str, *, protocol_version: str = "v1") -> dict[str, Any]:
     """Return the closed launch and receipt policy for one supported model lineage."""
+
+    if protocol_version not in PROTOCOL_VERSIONS:
+        raise ProfilePairAuditError(
+            f"Unsupported perception profile-pair protocol {protocol_version!r}"
+        )
+    if protocol_version == "v2" and model_variant not in SSMAX_MODEL_VARIANTS:
+        raise ProfilePairAuditError("Perception profile-pair protocol v2 requires SSMax profiles")
 
     if model_variant == S002_MODEL_VARIANT:
         return {
@@ -392,7 +426,7 @@ def _model_variant_policy(model_variant: str) -> dict[str, Any]:
     if model_variant in SSMAX_MODEL_VARIANTS:
         return {
             "model_variant": model_variant,
-            "receipt_version": SSMAX_VERSION,
+            "receipt_version": (SSMAX_V2_VERSION if protocol_version == "v2" else SSMAX_VERSION),
             "workspace": SSMAX_CANONICAL_WORKSPACE,
             "workspace_recipe_constant": "SSMAX_BEAKER_WORKSPACE",
             "git_branch": SSMAX_CANONICAL_GIT_BRANCH,
@@ -481,7 +515,9 @@ def _profile_arm(profile: Mapping[str, Any], *, expected_arm: str) -> list[str]:
     return [value for value in overrides if not value.startswith(ARM_OVERRIDE_PREFIX)]
 
 
-def _profile_model_variant(profile: Mapping[str, Any], *, arm: str) -> str:
+def _profile_model_variant(
+    profile: Mapping[str, Any], *, arm: str, protocol_version: str = "v1"
+) -> str:
     overrides = profile.get("overrides")
     if not isinstance(overrides, list) or not all(isinstance(value, str) for value in overrides):
         raise ProfilePairAuditError(f"{arm} reviewed profile overrides must be strings")
@@ -491,13 +527,15 @@ def _profile_model_variant(profile: Mapping[str, Any], *, arm: str) -> str:
         if value.startswith(MODEL_VARIANT_OVERRIDE_PREFIX)
     ]
     if not selectors:
-        return S002_MODEL_VARIANT
+        model_variant = S002_MODEL_VARIANT
+        _model_variant_policy(model_variant, protocol_version=protocol_version)
+        return model_variant
     if len(selectors) != 1:
         raise ProfilePairAuditError(
             f"{arm} profile must select its model variant at most once; got {selectors}"
         )
     model_variant = selectors[0]
-    _model_variant_policy(model_variant)
+    _model_variant_policy(model_variant, protocol_version=protocol_version)
     if model_variant in SSMAX_MODEL_VARIANTS:
         expected = f"{MODEL_VARIANT_OVERRIDE_PREFIX}{model_variant}"
         if [value for value in overrides if value.startswith(MODEL_VARIANT_OVERRIDE_PREFIX)] != [
@@ -534,13 +572,18 @@ def _audit_profiles(
     control_sha256: str,
     treatment_path: Path,
     treatment_sha256: str,
+    protocol_version: str = "v1",
 ) -> dict[str, Any]:
-    control_model_variant = _profile_model_variant(control, arm=CONTROL_ARM)
-    treatment_model_variant = _profile_model_variant(treatment, arm=TREATMENT_ARM)
+    control_model_variant = _profile_model_variant(
+        control, arm=CONTROL_ARM, protocol_version=protocol_version
+    )
+    treatment_model_variant = _profile_model_variant(
+        treatment, arm=TREATMENT_ARM, protocol_version=protocol_version
+    )
     if control_model_variant != treatment_model_variant:
         raise ProfilePairAuditError("Reviewed profiles select different model variants")
     model_variant = control_model_variant
-    policy = _model_variant_policy(model_variant)
+    policy = _model_variant_policy(model_variant, protocol_version=protocol_version)
 
     allowed_internal = {
         "__reviewed_path__",
@@ -609,6 +652,15 @@ def _audit_profiles(
     )
     if control_relative == treatment_relative:
         raise ProfilePairAuditError("Control and treatment must be distinct reviewed files")
+    if protocol_version == "v2":
+        for arm, run_name, relative_path in (
+            (CONTROL_ARM, control_name, control_relative),
+            (TREATMENT_ARM, treatment_name, treatment_relative),
+        ):
+            if not run_name.endswith("-v2") or not relative_path.endswith("_v2.yaml"):
+                raise ProfilePairAuditError(
+                    f"{arm} protocol v2 profile must use -v2 run and _v2.yaml file identities"
+                )
 
     allowlist_path = control.get("__reviewed_allowlist_path__")
     allowlist_sha256 = control.get("__reviewed_allowlist_sha256__")
@@ -650,6 +702,34 @@ def _find_vision_group(config: Mapping[str, Any], *, arm: str) -> tuple[int, Map
     if len(matches) != 1:
         raise ProfilePairAuditError(f"{arm} config must have exactly one *vision.* optimizer group")
     return matches[0]
+
+
+def _optimizer_guard_contract(
+    control: Mapping[str, Any], treatment: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate and return the prospective SSMax v2 optimizer-guard contract."""
+
+    expected_optimizer = _SSMAX_V2_OPTIMIZER_GUARD_CONTRACT["optimizer"]
+    for arm, config in ((CONTROL_ARM, control), (TREATMENT_ARM, treatment)):
+        train_module = _at(config, "train_module")
+        optim = _at(train_module, "optim")
+        _require_exact_value(
+            optim.get("_CLASS_"),
+            _SSMAX_SKIP_STEP_ADAMW_CONFIG_CLASS,
+            name=f"{arm} optimizer class",
+        )
+        for field_name in ("type", "rolling_interval_length", "sigma_factor"):
+            _require_exact_value(
+                optim.get(field_name),
+                expected_optimizer[field_name],
+                name=f"{arm} optimizer {field_name}",
+            )
+        _require_exact_value(
+            train_module.get("max_grad_norm"),
+            expected_optimizer["max_grad_norm"],
+            name=f"{arm} train-module max_grad_norm",
+        )
+    return copy.deepcopy(_SSMAX_V2_OPTIMIZER_GUARD_CONTRACT)
 
 
 def _validate_config_identity(
@@ -1207,6 +1287,7 @@ def build_profile_pair_receipt(
     treatment_profile_path: str | Path,
     expected_treatment_profile_sha256: str,
     output_path: str | Path,
+    protocol_version: str = "v1",
 ) -> dict[str, Any]:
     """Build and publish one immutable causal profile-pair audit receipt.
 
@@ -1217,9 +1298,15 @@ def build_profile_pair_receipt(
     :param treatment_profile_path: Reviewed vision-unfrozen treatment profile.
     :param expected_treatment_profile_sha256: Exact raw SHA-256 of the treatment profile.
     :param output_path: New receipt path; an existing path is never replaced.
+    :param protocol_version: Profile-pair protocol. ``v1`` preserves the legacy receipts;
+        ``v2`` requires new SSMax v2 identities and binds optimizer-guard eligibility.
 
     :returns: The deterministic receipt that was published.
     """
+    if protocol_version not in PROTOCOL_VERSIONS:
+        raise ProfilePairAuditError(
+            f"Unsupported perception profile-pair protocol {protocol_version!r}"
+        )
     expected_recipe_sha256 = _require_sha256(expected_recipe_sha256, name="expected recipe SHA-256")
     expected_control_profile_sha256 = _require_sha256(
         expected_control_profile_sha256, name="expected control profile SHA-256"
@@ -1280,9 +1367,10 @@ def build_profile_pair_receipt(
         control_sha256=expected_control_profile_sha256,
         treatment_path=treatment_profile_path,
         treatment_sha256=expected_treatment_profile_sha256,
+        protocol_version=protocol_version,
     )
     model_variant = profile_audit["model_variant"]
-    policy = _model_variant_policy(model_variant)
+    policy = _model_variant_policy(model_variant, protocol_version=protocol_version)
     if (
         getattr(recipe, policy["workspace_recipe_constant"], None) != policy["workspace"]
         or getattr(recipe, "BEAKER_CLUSTER", None) != CANONICAL_CLUSTER
@@ -1318,6 +1406,11 @@ def build_profile_pair_receipt(
         treatment_relative_path=profile_audit["treatment_relative_path"],
         treatment_sha256=expected_treatment_profile_sha256,
         model_variant=model_variant,
+    )
+    optimizer_guard_contract = (
+        _optimizer_guard_contract(control_config, treatment_config)
+        if protocol_version == "v2"
+        else None
     )
 
     allowlist_path = profile_audit["allowlist_path"]
@@ -1379,6 +1472,8 @@ def build_profile_pair_receipt(
             TREATMENT_ARM: config_audit["save_folders"][TREATMENT_ARM],
         },
     }
+    if optimizer_guard_contract is not None:
+        receipt["optimizer_guard_contract"] = optimizer_guard_contract
     if model_variant in SSMAX_MODEL_VARIANTS:
         receipt["model_variant"] = model_variant
     expected_inputs = {
@@ -1410,6 +1505,7 @@ def build_profile_pair_receipt(
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--protocol-version", choices=PROTOCOL_VERSIONS, default="v1")
     parser.add_argument("--recipe", type=Path, required=True)
     parser.add_argument("--expected-recipe-sha256", required=True)
     parser.add_argument("--control-profile", type=Path, required=True)
@@ -1431,6 +1527,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         treatment_profile_path=args.treatment_profile,
         expected_treatment_profile_sha256=args.expected_treatment_profile_sha256,
         output_path=args.output,
+        protocol_version=args.protocol_version,
     )
     output = _absolute_lexical_path(args.output)
     print(

@@ -1,0 +1,83 @@
+{
+  "arms": {
+    "frozen_vision_control": {
+      "checkpoint_root": "__FILL_AFTER_FRESH_V2_CONTROL_RUN_EXISTS__",
+      "run_name": "__REVIEWED_V2_CONTROL_RUN_NAME__",
+      "training_profile": "__CHECKED_IN_REVIEWED_V2_CONTROL_PROFILE__"
+    },
+    "treatment": {
+      "checkpoint_root": "__FILL_AFTER_FRESH_V2_TREATMENT_RUN_EXISTS__",
+      "run_name": "__REVIEWED_V2_TREATMENT_RUN_NAME__",
+      "training_profile": "__CHECKED_IN_REVIEWED_V2_TREATMENT_PROFILE__"
+    }
+  },
+  "attention_probe": "__EXACT_FIXED_SSMAX_ATTENTION_PROBE__",
+  "bridge_parent_gate": "__EXACT_HUMAN_APPROVED_V4_BRIDGE_GATE__",
+  "evaluation": {
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 1006201,
+    "examples_per_source": 512,
+    "pairing_seed": 6198,
+    "rank_batch_instances": 4,
+    "sources": [
+      "audited_alignment",
+      "cosyn_point",
+      "ocr_document",
+      "pixmo_caption",
+      "pixmo_points_basic",
+      "pixmo_points_high_frequency",
+      "pixmo_transcript",
+      "scalar_count"
+    ],
+    "steps": [0, 3000, 4000],
+    "windows": ["first_1", "first_8", "first_32", "all"]
+  },
+  "format": "vision_alignment_ssmax_perception_pair_manifest_spec",
+  "model_variant": "__ONE_OF_ssmax_head_qknorm_OR_ssmax_no_qknorm__",
+  "pair_id": "__FRESH_V2_MODEL_VARIANT_CAUSAL_PAIR_ID__",
+  "pairing_paths": {
+    "audited_alignment": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/audited_alignment.json",
+    "cosyn_point": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/cosyn_point.json",
+    "ocr_document": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/ocr_document.json",
+    "pixmo_caption": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/pixmo_caption.json",
+    "pixmo_points_basic": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/pixmo_points_basic.json",
+    "pixmo_points_high_frequency": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/pixmo_points_high_frequency.json",
+    "pixmo_transcript": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/pixmo_transcript.json",
+    "scalar_count": "__IMMUTABLE_V2_PAIRING_OUTPUT_ROOT__/scalar_count.json"
+  },
+  "perception_provenance": "__EXACT_EXISTING_PERCEPTION_PROVENANCE__",
+  "policy": {
+    "baseline_step": 0,
+    "candidate_step": 4000,
+    "correct_ce_max_relative_increase": 0.02,
+    "did_lower_ci_minimum": 0.0,
+    "durability_step": 3000,
+    "loss_mass_share_tolerance": 0.02,
+    "maximum_data_errors": 0,
+    "maximum_nonfinite_gradients": 0,
+    "maximum_nonfinite_losses": 0,
+    "maximum_optimizer_guard_skips": 8,
+    "minimum_clean_final_steps": 128,
+    "minimum_clean_steps_between_skips": 128,
+    "minimum_gap_retention": 0.8,
+    "optimizer_guard": {
+      "max_grad_norm": 1.0,
+      "rolling_interval_length": 128,
+      "sigma_factor": 12,
+      "type": "skip_step_adamw"
+    },
+    "require_finite_gradient_only_skips": true,
+    "require_uninterrupted_optimizer_guard_history": true,
+    "treatment_gap_lower_ci_minimum": 0.0
+  },
+  "recipe": "__CLEAN_CHECKED_OUT_REPOSITORY__/src/scripts/train/Vision-Alignment.py",
+  "source_audit": "__EXACT_EXISTING_PERCEPTION_SOURCE_AUDIT__",
+  "text_sentinel": "__IMMUTABLE_NATIVE_TEXT_SENTINEL__",
+  "topology": {
+    "data_parallel": "hsdp",
+    "gpus_per_node": 8,
+    "num_nodes": 2,
+    "world_size": 16
+  },
+  "version": 2
+}

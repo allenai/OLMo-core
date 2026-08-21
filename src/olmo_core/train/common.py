@@ -12,6 +12,10 @@ TRAIN_CE_LOSS_METRIC = "train/CE loss"
 TRAIN_PPL_METRIC = "train/PPL"
 TRAIN_Z_LOSS_METRIC = "train/Z loss"
 OPTIM_GRAD_NORM_METRIC = "optim/total grad norm"
+OPTIM_STEP_SKIPPED_METRIC = "optim/step skipped"
+OPTIM_GUARD_ACTIVE_METRIC = "optim/guard active"
+OPTIM_GUARD_LOSS_WITHIN_METRIC = "optim/guard loss within"
+OPTIM_GUARD_GRADIENT_WITHIN_METRIC = "optim/guard gradient within"
 
 
 class DurationUnit(StrEnum):

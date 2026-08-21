@@ -475,6 +475,7 @@ def _health_receipt(manifest: Mapping[str, Any], step: int) -> dict[str, Any]:
     callback.trainer = SimpleNamespace(
         global_step=step,
         data_loader=SimpleNamespace(state_dict=lambda: {"total_data_errors": 0}),
+        train_module=SimpleNamespace(optim=SimpleNamespace(rolling_interval_length=128)),
     )
     for global_step in range(1, step + 1):
         callback.log_metrics(
@@ -483,6 +484,9 @@ def _health_receipt(manifest: Mapping[str, Any], step: int) -> dict[str, Any]:
                 "train/CE loss": 2.0,
                 "optim/total grad norm": 1.0,
                 "optim/step skipped": 0.0,
+                "optim/guard active": float(global_step >= 64),
+                "optim/guard loss within": 1.0,
+                "optim/guard gradient within": 1.0,
             },
         )
     ledger = callback.state_dict()

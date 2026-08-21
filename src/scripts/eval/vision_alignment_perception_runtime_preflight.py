@@ -10,15 +10,17 @@ Run this under the same two-node Gantry/torchrun topology as production::
     python src/scripts/eval/vision_alignment_perception_runtime_preflight.py \
       --recipe=src/scripts/train/Vision-Alignment.py \
       --expected-recipe-sha256=<sha256> \
-      --profile=configs/vision_moe/vision_alignment/perception/treatment_v1.yaml \
+      --profile=configs/vision_moe/vision_alignment/perception/treatment_v2.yaml \
       --expected-profile-sha256=<sha256> \
       --profile-pair-receipt=<path> \
       --expected-profile-pair-receipt-sha256=<sha256> \
-      --expected-git-ref=<40-character-commit>
+      --expected-git-ref=<40-character-commit> \
+      --protocol-version=v2
 
-For either SSMax lineage, additionally pass its explicit ``--model-variant`` selector. This binds
-the scaling-ladders workspace, SSMax branch, v3 pair receipt/name, dense HSDP topology, and fixed
-checkpoint cadence without changing the historical default s002 checks.
+For either SSMax lineage, additionally pass its explicit ``--model-variant`` selector. The
+prospective v2 protocol also requires ``--protocol-version=v2``. This binds the scaling-ladders
+workspace, SSMax branch, v4 pair receipt/name, dense HSDP topology, fixed checkpoint cadence, and
+optimizer-guard eligibility contract without changing historical s002 or SSMax-v1 checks.
 """
 
 from __future__ import annotations
@@ -63,6 +65,10 @@ RECIPE_REPOSITORY_PATH = "src/scripts/train/Vision-Alignment.py"
 PROFILE_PAIR_FORMAT = "vision_alignment_perception_profile_pair_audit"
 PROFILE_PAIR_VERSION = 2
 SSMAX_PROFILE_PAIR_VERSION = 3
+SSMAX_V2_PROFILE_PAIR_VERSION = 4
+PROTOCOL_V1 = "v1"
+PROTOCOL_V2 = "v2"
+PROTOCOL_VERSIONS = (PROTOCOL_V1, PROTOCOL_V2)
 S002_MODEL_VARIANT = "s002"
 SSMAX_MODEL_VARIANTS = ("ssmax_head_qknorm", "ssmax_no_qknorm")
 PROFILE_ARMS = ("frozen_vision_control", "treatment")
@@ -89,6 +95,14 @@ SSMAX_PROFILE_PAIR_NAMES = {
     "ssmax_head_qknorm": "ssmax-head-qknorm-perception-profile-pair-v3.json",
     "ssmax_no_qknorm": "ssmax-no-qknorm-perception-profile-pair-v3.json",
 }
+SSMAX_V2_PROFILE_NAMES = {
+    model_variant: {arm: f"{name.removesuffix('-v1')}-v2" for arm, name in names.items()}
+    for model_variant, names in SSMAX_PROFILE_NAMES.items()
+}
+SSMAX_V2_PROFILE_PAIR_NAMES = {
+    "ssmax_head_qknorm": "ssmax-head-qknorm-perception-profile-pair-v4.json",
+    "ssmax_no_qknorm": "ssmax-no-qknorm-perception-profile-pair-v4.json",
+}
 _PROFILE_PAIR_ROOT_FIELDS = frozenset(
     {
         "format",
@@ -109,6 +123,9 @@ _PROFILE_PAIR_ROOT_FIELDS = frozenset(
     }
 )
 _SSMAX_PROFILE_PAIR_ROOT_FIELDS = frozenset({*_PROFILE_PAIR_ROOT_FIELDS, "model_variant"})
+_SSMAX_V2_PROFILE_PAIR_ROOT_FIELDS = frozenset(
+    {*_SSMAX_PROFILE_PAIR_ROOT_FIELDS, "optimizer_guard_contract"}
+)
 _PATH_IDENTITY_FIELDS = frozenset({"path", "repository_path", "sha256"})
 _PROFILE_FIELDS = frozenset({"name", "path", "repository_path", "sha256"})
 _DATA_FIELDS = frozenset(
@@ -216,6 +233,24 @@ _SSMAX_PERCEPTION_CONTRACT: dict[str, Any] = {
         "expert_parallel": None,
     },
 }
+_SSMAX_V2_OPTIMIZER_GUARD_CONTRACT: dict[str, Any] = {
+    "optimizer": {
+        "type": "skip_step_adamw",
+        "rolling_interval_length": 128,
+        "sigma_factor": 12,
+        "max_grad_norm": 1.0,
+    },
+    "eligibility": {
+        "maximum_optimizer_guard_skips": 8,
+        "minimum_clean_steps_between_skips": 128,
+        "minimum_clean_final_steps": 128,
+        "require_finite_gradient_only_skips": True,
+        "require_uninterrupted_optimizer_guard_history": True,
+        "maximum_data_errors": 0,
+        "maximum_nonfinite_losses": 0,
+        "maximum_nonfinite_gradients": 0,
+    },
+}
 _FORBIDDEN_CREDENTIAL_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -244,10 +279,20 @@ class PerceptionRuntimePreflightError(RuntimeError):
     """Raised when the production perception runtime preflight fails closed."""
 
 
-def _model_variant_policy(model_variant: str) -> dict[str, Any]:
+def _model_variant_policy(
+    model_variant: str, protocol_version: str = PROTOCOL_V1
+) -> dict[str, Any]:
     """Return the closed runtime policy for one supported perception lineage."""
 
+    if protocol_version not in PROTOCOL_VERSIONS:
+        raise PerceptionRuntimePreflightError(
+            f"Unsupported perception protocol version {protocol_version!r}"
+        )
     if model_variant == S002_MODEL_VARIANT:
+        if protocol_version != PROTOCOL_V1:
+            raise PerceptionRuntimePreflightError(
+                "The prospective perception v2 protocol is supported only for SSMax lineages"
+            )
         return {
             "model_variant": model_variant,
             "workspace": CANONICAL_WORKSPACE,
@@ -259,20 +304,35 @@ def _model_variant_policy(model_variant: str) -> dict[str, Any]:
             "profile_pair_root_fields": _PROFILE_PAIR_ROOT_FIELDS,
             "profile_names": PROFILE_NAMES,
             "perception_contract": _LEGACY_PERCEPTION_CONTRACT,
+            "optimizer_guard_contract": None,
             "experiment_root_constant": "VISION_ALIGNMENT_ROOT",
         }
     if model_variant in SSMAX_MODEL_VARIANTS:
+        is_v2 = protocol_version == PROTOCOL_V2
         return {
             "model_variant": model_variant,
             "workspace": SSMAX_CANONICAL_WORKSPACE,
             "workspace_id": SSMAX_CANONICAL_WORKSPACE_ID,
             "workspace_recipe_constant": "SSMAX_BEAKER_WORKSPACE",
             "git_branch": SSMAX_CANONICAL_GIT_BRANCH,
-            "profile_pair_version": SSMAX_PROFILE_PAIR_VERSION,
-            "profile_pair_name": SSMAX_PROFILE_PAIR_NAMES[model_variant],
-            "profile_pair_root_fields": _SSMAX_PROFILE_PAIR_ROOT_FIELDS,
-            "profile_names": SSMAX_PROFILE_NAMES[model_variant],
+            "profile_pair_version": (
+                SSMAX_V2_PROFILE_PAIR_VERSION if is_v2 else SSMAX_PROFILE_PAIR_VERSION
+            ),
+            "profile_pair_name": (
+                SSMAX_V2_PROFILE_PAIR_NAMES[model_variant]
+                if is_v2
+                else SSMAX_PROFILE_PAIR_NAMES[model_variant]
+            ),
+            "profile_pair_root_fields": (
+                _SSMAX_V2_PROFILE_PAIR_ROOT_FIELDS if is_v2 else _SSMAX_PROFILE_PAIR_ROOT_FIELDS
+            ),
+            "profile_names": (
+                SSMAX_V2_PROFILE_NAMES[model_variant]
+                if is_v2
+                else SSMAX_PROFILE_NAMES[model_variant]
+            ),
             "perception_contract": _SSMAX_PERCEPTION_CONTRACT,
+            "optimizer_guard_contract": (_SSMAX_V2_OPTIMIZER_GUARD_CONTRACT if is_v2 else None),
             "experiment_root_constant": "SSMAX_VISION_ALIGNMENT_ROOT",
         }
     raise PerceptionRuntimePreflightError(f"Unsupported perception model variant {model_variant!r}")
@@ -333,8 +393,9 @@ def _pinned_profile_pair_receipt(
     expected_sha256: str,
     *,
     model_variant: str = S002_MODEL_VARIANT,
+    protocol_version: str = PROTOCOL_V1,
 ) -> Path:
-    policy = _model_variant_policy(model_variant)
+    policy = _model_variant_policy(model_variant, protocol_version)
     path = _absolute_lexical_path(path_value)
     if path.name != policy["profile_pair_name"] or path.parent.name != "artifacts":
         raise PerceptionRuntimePreflightError(
@@ -541,10 +602,16 @@ def _load_profile_pair_receipt(
     profile_sha256: str,
     git_ref: str,
     model_variant: str = S002_MODEL_VARIANT,
+    protocol_version: str = PROTOCOL_V1,
 ) -> dict[str, Any]:
     """Load and bind the exact lineage-specific pair receipt to the pinned runtime inputs."""
-    policy = _model_variant_policy(model_variant)
-    receipt_path = _pinned_profile_pair_receipt(path, expected_sha256, model_variant=model_variant)
+    policy = _model_variant_policy(model_variant, protocol_version)
+    receipt_path = _pinned_profile_pair_receipt(
+        path,
+        expected_sha256,
+        model_variant=model_variant,
+        protocol_version=protocol_version,
+    )
     try:
         raw = receipt_path.read_bytes()
         receipt = json.loads(
@@ -756,6 +823,34 @@ def _load_profile_pair_receipt(
         raise PerceptionRuntimePreflightError(
             "Profile-pair receipt perception contract differs from the exact lineage policy"
         )
+    optimizer_guard_contract: dict[str, Any] | None = None
+    expected_optimizer_guard_contract = policy["optimizer_guard_contract"]
+    if expected_optimizer_guard_contract is not None:
+        optimizer_guard_contract = dict(
+            _required_mapping(
+                root.get("optimizer_guard_contract"),
+                name="optimizer_guard_contract",
+                fields=frozenset({"optimizer", "eligibility"}),
+            )
+        )
+        actual_guard_contract = json.dumps(
+            optimizer_guard_contract,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        expected_guard_contract = json.dumps(
+            expected_optimizer_guard_contract,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        if actual_guard_contract != expected_guard_contract:
+            raise PerceptionRuntimePreflightError(
+                "Profile-pair receipt optimizer-guard contract differs from v2 policy"
+            )
     save_folders = _required_mapping(
         root.get("save_folders"),
         name="save_folders",
@@ -783,7 +878,7 @@ def _load_profile_pair_receipt(
         raise PerceptionRuntimePreflightError(
             "Profile-pair receipt production save folders are not distinct"
         )
-    return {
+    summary = {
         "path": str(receipt_path),
         "sha256": expected_sha256,
         "version": policy["profile_pair_version"],
@@ -795,6 +890,10 @@ def _load_profile_pair_receipt(
         "control_save_folder": str(save_folder_paths["frozen_vision_control"]),
         "treatment_save_folder": str(save_folder_paths["treatment"]),
     }
+    if optimizer_guard_contract is not None:
+        summary["protocol_version"] = protocol_version
+        summary["optimizer_guard_contract"] = optimizer_guard_contract
+    return summary
 
 
 def _required_env(name: str) -> str:
@@ -1181,8 +1280,13 @@ def _runtime_perception_contract(config: Any, *, model_variant: str) -> dict[str
     return contract
 
 
-def _validate_runtime_perception_contract(config: Any, *, model_variant: str) -> None:
-    policy = _model_variant_policy(model_variant)
+def _validate_runtime_perception_contract(
+    config: Any,
+    *,
+    model_variant: str,
+    protocol_version: str = PROTOCOL_V1,
+) -> None:
+    policy = _model_variant_policy(model_variant, protocol_version)
     actual = json.dumps(
         _runtime_perception_contract(config, model_variant=model_variant),
         sort_keys=True,
@@ -1203,6 +1307,49 @@ def _validate_runtime_perception_contract(config: Any, *, model_variant: str) ->
         )
 
 
+def _validate_runtime_optimizer_guard_contract(
+    config: Any,
+    *,
+    expected_contract: Mapping[str, Any] | None,
+) -> None:
+    """Bind the v2 evidence policy to the exact optimizer guard used by training."""
+
+    if expected_contract is None:
+        return
+    try:
+        raw = config.as_config_dict()
+    except Exception as error:
+        raise PerceptionRuntimePreflightError(
+            f"Runtime config could not be serialized for optimizer-guard validation: {error}"
+        ) from error
+    optimizer = _serialized_at(raw, "train_module", "optim")
+    actual = {
+        "type": _serialized_at(optimizer, "type"),
+        "rolling_interval_length": _serialized_at(optimizer, "rolling_interval_length"),
+        "sigma_factor": _serialized_at(optimizer, "sigma_factor"),
+        "max_grad_norm": _serialized_at(raw, "train_module", "max_grad_norm"),
+    }
+    expected_optimizer = _required_mapping(
+        expected_contract.get("optimizer"),
+        name="optimizer_guard_contract.optimizer",
+        fields=frozenset({"type", "rolling_interval_length", "sigma_factor", "max_grad_norm"}),
+    )
+    if json.dumps(
+        actual,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ) != json.dumps(
+        expected_optimizer,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ):
+        raise PerceptionRuntimePreflightError(
+            "Runtime optimizer guard differs from the v2 profile-pair contract"
+        )
+
+
 def _validate_runtime_config(
     recipe: types.ModuleType,
     config: Any,
@@ -1214,8 +1361,10 @@ def _validate_runtime_config(
     expected_provenance_sha256: str,
     expected_save_folder: Path,
     model_variant: str = S002_MODEL_VARIANT,
+    protocol_version: str = PROTOCOL_V1,
+    expected_optimizer_guard_contract: Mapping[str, Any] | None = None,
 ) -> None:
-    policy = _model_variant_policy(model_variant)
+    policy = _model_variant_policy(model_variant, protocol_version)
     phase = getattr(config.phase, "value", config.phase)
     if phase != "perception":
         raise PerceptionRuntimePreflightError("Runtime config does not select perception")
@@ -1279,7 +1428,19 @@ def _validate_runtime_config(
         raise PerceptionRuntimePreflightError(
             "Runtime config is not bound to one profile-only command"
         )
-    _validate_runtime_perception_contract(config, model_variant=model_variant)
+    _validate_runtime_perception_contract(
+        config,
+        model_variant=model_variant,
+        protocol_version=protocol_version,
+    )
+    if expected_optimizer_guard_contract != policy["optimizer_guard_contract"]:
+        raise PerceptionRuntimePreflightError(
+            "Runtime optimizer-guard receipt summary differs from the selected protocol"
+        )
+    _validate_runtime_optimizer_guard_contract(
+        config,
+        expected_contract=expected_optimizer_guard_contract,
+    )
     save_folder = _absolute_lexical_path(config.trainer.save_folder)
     if save_folder != expected_save_folder or os.path.lexists(save_folder):
         raise PerceptionRuntimePreflightError(
@@ -1310,6 +1471,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=(S002_MODEL_VARIANT, *SSMAX_MODEL_VARIANTS),
         default=S002_MODEL_VARIANT,
     )
+    parser.add_argument(
+        "--protocol-version",
+        choices=PROTOCOL_VERSIONS,
+        default=PROTOCOL_V1,
+    )
     parser.add_argument("--recipe", type=Path, required=True)
     parser.add_argument("--expected-recipe-sha256", type=_sha256_arg, required=True)
     parser.add_argument("--profile", type=Path, required=True)
@@ -1327,7 +1493,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     """Run the read-only, distributed production perception provenance preflight."""
     args = _parse_args(argv)
-    policy = _model_variant_policy(args.model_variant)
+    policy = _model_variant_policy(args.model_variant, args.protocol_version)
     if os.environ.get("WORLD_SIZE") != str(WORLD_SIZE):
         raise PerceptionRuntimePreflightError(
             f"Runtime preflight requires torchrun WORLD_SIZE={WORLD_SIZE} before initialization"
@@ -1371,6 +1537,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     receipt_path,
                     args.expected_profile_pair_receipt_sha256,
                     model_variant=args.model_variant,
+                    protocol_version=args.protocol_version,
                 ),
             ),
         )
@@ -1385,6 +1552,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 profile_sha256=args.expected_profile_sha256,
                 git_ref=args.expected_git_ref,
                 model_variant=args.model_variant,
+                protocol_version=args.protocol_version,
             ),
         )
         receipt = _collective_identical("Profile-pair receipt summary", receipt)
@@ -1447,6 +1615,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     expected_provenance_sha256=receipt["perception_provenance_sha256"],
                     expected_save_folder=expected_save_folder,
                     model_variant=args.model_variant,
+                    protocol_version=args.protocol_version,
+                    expected_optimizer_guard_contract=receipt.get("optimizer_guard_contract"),
                 )
             return config
 
@@ -1514,6 +1684,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "path": receipt["path"],
                             "sha256": receipt["sha256"],
                             "version": receipt["version"],
+                            "protocol_version": args.protocol_version,
                             "model_variant": receipt["model_variant"],
                             "arm": receipt["arm"],
                             "recipe_execution_module": "__main__",

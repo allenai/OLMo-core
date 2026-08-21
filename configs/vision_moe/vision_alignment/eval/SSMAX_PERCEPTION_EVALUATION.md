@@ -45,9 +45,12 @@ to `freeze_params` and changes the vision group LR from the treatment's positive
 Do not add a profile or allowlist entry containing a placeholder.
 
 Profiles must permanently retain steps 0/500/1000/2000/3000/4000 so early-signal and sample-
-efficiency trajectories remain observable. After both runs contain those checkpoints, copy
-`ssmax_perception_pair_manifest_v1.json.template` to a concrete reviewed spec and replace every
-placeholder. Finalization refuses partial runs, creates or verifies exact-geometry wrong-image
+efficiency trajectories remain observable. Manifest v1 remains the immutable zero-skip protocol
+for already-created evidence. Fresh prospectively authorized reruns use
+`ssmax_perception_pair_manifest_v2.json.template`; do not edit or reinterpret a v1 manifest.
+After both fresh runs contain the required checkpoints, copy the v2 template to a concrete
+reviewed spec and replace every placeholder. Finalization refuses partial runs, creates or
+verifies exact-geometry wrong-image
 pairings for all eight provenance-selected validation sources, hashes every DCP and trainer-rank
 file, verifies both checked-in profile blobs and both canonical evidence-producer blobs at the
 saved clean git ref, and revalidates the common v4 bridge gate:
@@ -73,21 +76,31 @@ logit/QK magnitude, entropy, effective context, and routing in every step 0/3000
 ```bash
 PYTHONPATH=src python src/scripts/beaker_launch_vision_ssmax_evidence.py launch perception \
   ssmax-VARIANT-perception-ARM-stepSTEP -- \
-  --manifest /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v1/VARIANT/pair-manifest.json \
+  --manifest /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v2/VARIANT/pair-manifest.json \
   --expected-manifest-sha256 SHA256 --arm treatment --step 4000 \
-  --work-dir /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v1/VARIANT/work/ARM-stepSTEP \
-  --output /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v1/VARIANT/ARM-stepSTEP-evaluation.json
+  --work-dir /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v2/VARIANT/work/ARM-stepSTEP \
+  --output /weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/evidence/perception-v2/VARIANT/ARM-stepSTEP-evaluation.json
 ```
 
-Every SSMax phase installs `SSMaxHealthLedgerCallback`. OLMo Core passes every reduced train-step
+Every SSMax phase installs `SSMaxHealthLedgerCallback`. OLMo Core passes every train-step health
 metric to it even though metric collection is batched at cadence 5, and flushes those callbacks
 before serializing trainer state. Each rank's checkpoint therefore contains a self-hashed,
 resume-safe chain with exactly steps 1..N, finite-loss/gradient flags, optimizer-guard decisions,
-and the loader's cumulative data errors. There is no W&B export or hand-authored counter input.
+the exact live-device guard-active/loss-within/gradient-within booleans used for each update, guard
+history reset boundaries, and the loader's cumulative data errors. There is no W&B export or
+hand-authored counter input.
 
 The health producer loads and recomputes that ledger directly from each checkpoint-bound
 `train/rank*.pt`, replays the exact unpacked loader independently for every saved rank, requires
-exact cursor equality, and recomputes both delivered raw and active loss mass:
+exact cursor equality, and recomputes both delivered raw and active loss mass. A v2 receipt also
+requires those checkpointed optimizer-side booleans to prove that the loss remained within its
+12-sigma bound while the finite gradient norm alone exceeded its 12-sigma bound. Those booleans
+come from the same CUDA comparison that formed the optimizer's step factor and are authoritative.
+A CPU float32 `torch.std_mean` replay and its thresholds remain descriptive diagnostics only,
+because reduction-order differences can move a threshold-adjacent value across the bound. Ledger
+v3 records every rolling-history reset; v2 eligibility requires exactly the genesis step-0 parent
+load (`optimizer_guard_history_reset_steps == [0]`), so any later checkpoint resume is truthfully
+recorded but makes the run scientifically ineligible:
 
 ```bash
 PYTHONPATH=src python src/scripts/eval/vision_alignment_ssmax_perception_health.py \
@@ -110,19 +123,28 @@ PYTHONPATH=src python src/scripts/eval/vision_alignment_ssmax_perception_promoti
 
 The report is passed only when step-0 model states are identical; all LM tensors, non-image
 embedding rows, control vision tensors, and native-text outputs stay exact; all-rank cursors and
-loss mass pass; no data error, optimizer guard skip, or non-finite event occurs; the paired
+loss mass pass; and no data or non-finite event occurs. Under v1, any optimizer guard skip rejects
+promotion. Under v2, the same prospective policy applies independently to both arms: at most
+eight finite gradient-only skips through step 4000, 128 clean steps between skips (therefore skip
+step numbers differ by at least 129), 128 clean steps after the final skip, and uninterrupted guard
+history after the genesis parent load. Eight is the predeclared 0.2% ceiling, rounded from the
+historical s002 observation of seven skips in 4000 steps; it is not a waiver for either SSMax arm.
+A loss-triggered, non-finite, ninth, too-close,
+post-step-3872, or post-genesis-resume trajectory rejects promotion. The paired
 source-balanced 10,000-sample bootstrap has positive lower bounds for both DID and the treatment's
 absolute gap; correct-image CE is within 2% of control for the macro and every source; and the
 step-4000 treatment gap retains at least 80% of step 3000. These checks apply at first 1/8/32/all.
 
-`audit` reopens the report and exactly rebuilds it from its raw receipts. Only after that succeeds
-may a human explicitly run `approve --approved-by ID --approved-at TIMESTAMP`. The resulting v5
+The manifest version is inherited by every evaluation receipt, health receipt, and promotion
+report, so v1 and v2 evidence cannot be mixed. `audit` reopens the report and exactly rebuilds it
+from its raw receipts. Only after that succeeds
+may a human explicitly run `approve --approved-by ID --approved-at TIMESTAMP`. The resulting v6
 gate permits no waivers and is accepted only for the matching SSMax treatment step 4000 when
 starting joint training. There are intentionally no pre-created production profiles, manifests,
 reports, approvals, or gates in this repository.
 
-After both variants have complete rebuilt v5 reports, produce the separate descriptive model
-comparison. It requires identical provenance, projection/calibration, pairings, evaluation,
+After both variants have complete rebuilt v2 reports and v6 gates, produce the separate descriptive
+model comparison. It requires identical provenance, projection/calibration, pairings, evaluation,
 topology, cadence, attention probe, and retained steps. At every treatment/control step it
 directly compares the two attention reports and keeps absolute checkpoint differences separate
 from the step-0-normalized adaptation quantity
@@ -141,6 +163,6 @@ PYTHONPATH=src python src/scripts/eval/vision_alignment_ssmax_perception_compare
   --output /immutable/perception-model-comparison.json
 ```
 
-The comparison validator reopens both promotion-report references, rebuilds both v5 decisions from
-their raw receipts, and exactly regenerates every nested bootstrap and attention comparison. A
-rehashed edit to any inner descriptive result is rejected.
+The comparison validator reopens both promotion-report references, rebuilds both version-matched
+promotion decisions from their raw receipts, and exactly regenerates every nested bootstrap and
+attention comparison. A rehashed edit to any inner descriptive result is rejected.

@@ -1,4 +1,4 @@
-"""Build a descriptive QK-vs-no-QK perception comparison from two rebuilt v5 reports."""
+"""Build a descriptive QK-vs-no-QK perception comparison from rebuilt versioned reports."""
 
 from __future__ import annotations
 

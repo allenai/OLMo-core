@@ -22,10 +22,12 @@ import re
 import subprocess
 from collections.abc import Mapping
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 
 from olmo_core.data.multimodal.ssmax_single_response import (
     ssmax_single_response_projection_contract,
@@ -47,6 +49,7 @@ from olmo_core.eval.ssmax_attention_diagnostics import (
 )
 from olmo_core.eval.vision_alignment_ssmax_data import content_ids_sha256
 from olmo_core.train.callbacks.ssmax_health_ledger import (
+    SSMAX_HEALTH_LEDGER_VERSION,
     SSMaxHealthLedgerError,
     validate_ssmax_health_ledger_state,
 )
@@ -57,8 +60,18 @@ EVALUATION_RECEIPT_FORMAT = "vision_alignment_ssmax_perception_evaluation_receip
 HEALTH_RECEIPT_FORMAT = "vision_alignment_ssmax_perception_health_receipt"
 PROMOTION_REPORT_FORMAT = "vision_alignment_ssmax_perception_promotion_report"
 MODEL_COMPARISON_FORMAT = "vision_alignment_ssmax_perception_model_comparison"
+# Keep the v1 name and value stable for callers that produce or audit historical artifacts.
+# New artifacts select the prospectively approved protocol through their manifest version.
 SCHEMA_VERSION = 1
-PARENT_GATE_VERSION = 5
+PERCEPTION_V2_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = frozenset({SCHEMA_VERSION, PERCEPTION_V2_SCHEMA_VERSION})
+LEGACY_PARENT_GATE_VERSION = 5
+PARENT_GATE_VERSION = 6
+SUPPORTED_PARENT_GATE_VERSIONS = frozenset({LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION})
+_PARENT_GATE_VERSION_BY_SCHEMA = {
+    SCHEMA_VERSION: LEGACY_PARENT_GATE_VERSION,
+    PERCEPTION_V2_SCHEMA_VERSION: PARENT_GATE_VERSION,
+}
 
 CONTROL_ARM = "frozen_vision_control"
 TREATMENT_ARM = "treatment"
@@ -77,6 +90,38 @@ LOSS_MASS_SHARE_TOLERANCE = 0.02
 ATTENTION_PROBE_ROWS = 32
 PROJECTION_SEED = 95818
 PAIRING_SEED = 6198
+
+V2_OPTIMIZER_GUARD_CONTRACT = {
+    "type": "skip_step_adamw",
+    "rolling_interval_length": 128,
+    "sigma_factor": 12,
+    "max_grad_norm": 1.0,
+}
+V2_MAXIMUM_OPTIMIZER_GUARD_SKIPS = 8
+V2_MINIMUM_CLEAN_STEPS_BETWEEN_SKIPS = 128
+V2_MINIMUM_CLEAN_FINAL_STEPS = 128
+V2_ARM_IDENTITIES = {
+    "ssmax_head_qknorm": {
+        CONTROL_ARM: {
+            "run_name": "vision-ssmax-head-qknorm-1p4b-cx8-perception-frozen-vision-control-v2",
+            "training_profile_name": "ssmax_head_qknorm_1p4b_cx8_frozen_vision_control_v2.yaml",
+        },
+        TREATMENT_ARM: {
+            "run_name": "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v2",
+            "training_profile_name": "ssmax_head_qknorm_1p4b_cx8_treatment_v2.yaml",
+        },
+    },
+    "ssmax_no_qknorm": {
+        CONTROL_ARM: {
+            "run_name": "vision-ssmax-no-qknorm-1p4b-cx8-perception-frozen-vision-control-v2",
+            "training_profile_name": "ssmax_no_qknorm_1p4b_cx8_frozen_vision_control_v2.yaml",
+        },
+        TREATMENT_ARM: {
+            "run_name": "vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v2",
+            "training_profile_name": "ssmax_no_qknorm_1p4b_cx8_treatment_v2.yaml",
+        },
+    },
+}
 
 EVALUATION_PRODUCER = "evaluation"
 HEALTH_PRODUCER = "health"
@@ -317,6 +362,93 @@ def _finite(value: Any, *, name: str) -> float:
     if not math.isfinite(result):
         raise SSMaxPerceptionEvidenceError(f"{name} must be finite")
     return result
+
+
+def _schema_version(value: Any, *, name: str) -> int:
+    version = _positive_int(value, name=name)
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise SSMaxPerceptionEvidenceError(
+            f"{name} must be one of {sorted(SUPPORTED_SCHEMA_VERSIONS)}"
+        )
+    return version
+
+
+def _locked_promotion_policy(version: int) -> dict[str, Any]:
+    common: dict[str, Any] = {
+        "baseline_step": 0,
+        "durability_step": 3000,
+        "candidate_step": 4000,
+        "did_lower_ci_minimum": 0.0,
+        "treatment_gap_lower_ci_minimum": 0.0,
+        "correct_ce_max_relative_increase": CORRECT_CE_MAX_RELATIVE_INCREASE,
+        "minimum_gap_retention": MINIMUM_GAP_RETENTION,
+        "loss_mass_share_tolerance": LOSS_MASS_SHARE_TOLERANCE,
+        "maximum_data_errors": 0,
+    }
+    if version == SCHEMA_VERSION:
+        return {**common, "maximum_optimizer_guard_skips": 0}
+    if version == PERCEPTION_V2_SCHEMA_VERSION:
+        return {
+            **common,
+            "optimizer_guard": dict(V2_OPTIMIZER_GUARD_CONTRACT),
+            "maximum_optimizer_guard_skips": V2_MAXIMUM_OPTIMIZER_GUARD_SKIPS,
+            "minimum_clean_steps_between_skips": V2_MINIMUM_CLEAN_STEPS_BETWEEN_SKIPS,
+            "minimum_clean_final_steps": V2_MINIMUM_CLEAN_FINAL_STEPS,
+            "require_finite_gradient_only_skips": True,
+            "require_uninterrupted_optimizer_guard_history": True,
+            "maximum_nonfinite_losses": 0,
+            "maximum_nonfinite_gradients": 0,
+        }
+    raise SSMaxPerceptionEvidenceError(f"Unsupported perception schema version {version}")
+
+
+def _validate_v2_policy_types(policy: Mapping[str, Any]) -> None:
+    """Reject JSON numeric aliases in the prospectively locked v2 policy."""
+
+    for field in (
+        "baseline_step",
+        "durability_step",
+        "candidate_step",
+        "maximum_data_errors",
+        "maximum_nonfinite_losses",
+        "maximum_nonfinite_gradients",
+        "maximum_optimizer_guard_skips",
+        "minimum_clean_steps_between_skips",
+        "minimum_clean_final_steps",
+    ):
+        _positive_int(policy[field], name=f"v2 policy {field}", minimum=0)
+    for field in (
+        "did_lower_ci_minimum",
+        "treatment_gap_lower_ci_minimum",
+        "correct_ce_max_relative_increase",
+        "minimum_gap_retention",
+        "loss_mass_share_tolerance",
+    ):
+        if type(policy[field]) is not float:
+            raise SSMaxPerceptionEvidenceError(f"v2 policy {field} must be a JSON float")
+        _finite(policy[field], name=f"v2 policy {field}")
+    for field, description in (
+        ("require_finite_gradient_only_skips", "finite-gradient-only"),
+        ("require_uninterrupted_optimizer_guard_history", "uninterrupted optimizer-history"),
+    ):
+        if type(policy[field]) is not bool:
+            raise SSMaxPerceptionEvidenceError(
+                f"V2 policy {description} requirement must be boolean"
+            )
+        if policy[field] is not True:
+            raise SSMaxPerceptionEvidenceError(f"V2 policy must require {description} evidence")
+    guard = _exact_fields(
+        policy["optimizer_guard"],
+        frozenset(V2_OPTIMIZER_GUARD_CONTRACT),
+        name="v2 optimizer guard",
+    )
+    if type(guard["type"]) is not str or guard["type"] != "skip_step_adamw":
+        raise SSMaxPerceptionEvidenceError("V2 optimizer guard type differs")
+    for field in ("rolling_interval_length", "sigma_factor"):
+        _positive_int(guard[field], name=f"v2 optimizer guard {field}")
+    if type(guard["max_grad_norm"]) is not float:
+        raise SSMaxPerceptionEvidenceError("v2 optimizer guard max_grad_norm must be a JSON float")
+    _finite(guard["max_grad_norm"], name="v2 optimizer guard max_grad_norm")
 
 
 def _timestamp(value: Any, *, name: str) -> datetime:
@@ -686,6 +818,55 @@ def validate_saved_config_pair(
             profile_references[arm]["sha256"],
             name=f"{arm} reviewed profile SHA-256",
         )
+        if spec.get("version") == PERCEPTION_V2_SCHEMA_VERSION:
+            identity = V2_ARM_IDENTITIES[spec["model_variant"]][arm]
+            canonical_profile = (
+                repository_root
+                / "configs/vision_moe/vision_alignment/perception"
+                / identity["training_profile_name"]
+            ).resolve()
+            if profile_path != canonical_profile:
+                raise SSMaxPerceptionEvidenceError(
+                    f"{arm} v2 profile is not the canonical prospectively approved profile"
+                )
+            canonical_allowlist = (
+                repository_root
+                / "configs/vision_moe/vision_alignment/perception/approved_profiles.json"
+            ).resolve()
+            allowlist_path = _resolved_path(
+                config.get("reviewed_profile_allowlist_path"),
+                repository_root=repository_root,
+                name=f"{arm} reviewed profile allowlist",
+            )
+            allowlist_sha = _sha256(
+                config.get("reviewed_profile_allowlist_sha256"),
+                name=f"{arm} reviewed profile allowlist SHA-256",
+            )
+            if (
+                allowlist_path != canonical_allowlist
+                or sha256_file(allowlist_path) != allowlist_sha
+            ):
+                raise SSMaxPerceptionEvidenceError(
+                    f"{arm} v2 profile allowlist differs from its saved identity"
+                )
+            allowlist = _exact_fields(
+                load_json(allowlist_path),
+                frozenset({"format", "version", "profiles"}),
+                name=f"{arm} reviewed profile allowlist",
+            )
+            profiles = _mapping(
+                allowlist["profiles"], name=f"{arm} reviewed profile allowlist entries"
+            )
+            relative_profile = canonical_profile.relative_to(repository_root).as_posix()
+            if (
+                allowlist["format"] != "vision_alignment_perception_profile_allowlist"
+                or type(allowlist["version"]) is not int
+                or allowlist["version"] != 1
+                or profiles.get(relative_profile) != profile_references[arm]["sha256"]
+            ):
+                raise SSMaxPerceptionEvidenceError(
+                    f"{arm} v2 profile is absent from its exact approved allowlist"
+                )
         data = _mapping(config.get("data"), name=f"{arm} data")
         _expect_equal(data.get("pack_sequences"), False, name=f"{arm} pack_sequences")
         _expect_equal(
@@ -750,9 +931,30 @@ def validate_saved_config_pair(
             ("enabled", True),
         ):
             _expect_equal(ledger.get(field), expected, name=f"{arm} health ledger {field}")
-        freeze = _mapping(config.get("train_module"), name=f"{arm} train module").get(
-            "freeze_params"
-        )
+        train_module = _mapping(config.get("train_module"), name=f"{arm} train module")
+        if spec.get("version") == PERCEPTION_V2_SCHEMA_VERSION:
+            guard = _exact_fields(
+                _mapping(spec["policy"], name="manifest policy")["optimizer_guard"],
+                frozenset(V2_OPTIMIZER_GUARD_CONTRACT),
+                name="v2 optimizer guard contract",
+            )
+            optim = _mapping(train_module.get("optim"), name=f"{arm} optimizer")
+            _expect_equal(optim.get("type"), guard["type"], name=f"{arm} optimizer type")
+            for field in ("rolling_interval_length", "sigma_factor"):
+                value = optim.get(field)
+                if type(value) is not int or value != guard[field]:
+                    raise SSMaxPerceptionEvidenceError(
+                        f"{arm} optimizer {field} differs from its exact integer contract"
+                    )
+            max_grad_norm = train_module.get("max_grad_norm")
+            if type(max_grad_norm) is not float or not math.isclose(
+                _finite(max_grad_norm, name=f"{arm} max_grad_norm"),
+                guard["max_grad_norm"],
+                rel_tol=0.0,
+                abs_tol=0.0,
+            ):
+                raise SSMaxPerceptionEvidenceError(f"{arm} optimizer max_grad_norm differs")
+        freeze = train_module.get("freeze_params")
         if not isinstance(freeze, list):
             raise SSMaxPerceptionEvidenceError(f"{arm} freeze_params must be a list")
         _, vision_group = _vision_group(config, arm=arm)
@@ -801,8 +1003,9 @@ def validate_saved_config_pair(
 
 
 def _validate_spec_common(spec: Mapping[str, Any]) -> None:
-    if spec.get("format") != MANIFEST_SPEC_FORMAT or spec.get("version") != SCHEMA_VERSION:
+    if spec.get("format") != MANIFEST_SPEC_FORMAT:
         raise SSMaxPerceptionEvidenceError("SSMax perception manifest spec is incompatible")
+    version = _schema_version(spec.get("version"), name="manifest spec version")
     for field in ("pair_id", "model_variant"):
         if not isinstance(spec.get(field), str) or not spec[field]:
             raise SSMaxPerceptionEvidenceError(f"Manifest spec {field} must be non-empty")
@@ -814,6 +1017,19 @@ def _validate_spec_common(spec: Mapping[str, Any]) -> None:
         for field in _ARM_SPEC_FIELDS:
             if not isinstance(arm_spec[field], str) or not arm_spec[field]:
                 raise SSMaxPerceptionEvidenceError(f"{arm} spec {field} must be non-empty")
+        if version == PERCEPTION_V2_SCHEMA_VERSION:
+            identity = V2_ARM_IDENTITIES[spec["model_variant"]][arm]
+            if (
+                arm_spec["run_name"] != identity["run_name"]
+                or Path(arm_spec["checkpoint_root"]).name != identity["run_name"]
+                or Path(arm_spec["training_profile"]).name != identity["training_profile_name"]
+            ):
+                raise SSMaxPerceptionEvidenceError(
+                    f"{arm} v2 run/profile/checkpoint identity is not the prospectively "
+                    "approved fresh rerun"
+                )
+    if version == PERCEPTION_V2_SCHEMA_VERSION and not spec["pair_id"].endswith("-v2"):
+        raise SSMaxPerceptionEvidenceError("V2 manifest pair_id must end with '-v2'")
     for field in (
         "recipe",
         "bridge_parent_gate",
@@ -889,40 +1105,14 @@ def _validate_spec_common(spec: Mapping[str, Any]) -> None:
             "Examples per source must divide the global evaluation instance batch"
         )
 
-    policy = _exact_fields(
-        spec["policy"],
-        frozenset(
-            {
-                "baseline_step",
-                "durability_step",
-                "candidate_step",
-                "did_lower_ci_minimum",
-                "treatment_gap_lower_ci_minimum",
-                "correct_ce_max_relative_increase",
-                "minimum_gap_retention",
-                "loss_mass_share_tolerance",
-                "maximum_data_errors",
-                "maximum_optimizer_guard_skips",
-            }
-        ),
-        name="manifest policy",
-    )
-    locked = {
-        "baseline_step": 0,
-        "durability_step": 3000,
-        "candidate_step": 4000,
-        "did_lower_ci_minimum": 0.0,
-        "treatment_gap_lower_ci_minimum": 0.0,
-        "correct_ce_max_relative_increase": CORRECT_CE_MAX_RELATIVE_INCREASE,
-        "minimum_gap_retention": MINIMUM_GAP_RETENTION,
-        "loss_mass_share_tolerance": LOSS_MASS_SHARE_TOLERANCE,
-        "maximum_data_errors": 0,
-        "maximum_optimizer_guard_skips": 0,
-    }
+    locked = _locked_promotion_policy(version)
+    policy = _exact_fields(spec["policy"], frozenset(locked), name="manifest policy")
     if dict(policy) != locked:
         raise SSMaxPerceptionEvidenceError(
             "Manifest promotion policy differs from the locked policy"
         )
+    if version == PERCEPTION_V2_SCHEMA_VERSION:
+        _validate_v2_policy_types(policy)
 
 
 def load_manifest_spec(path: Path) -> Mapping[str, Any]:
@@ -1550,7 +1740,7 @@ def build_manifest(
 
     manifest: dict[str, Any] = {
         "format": MANIFEST_FORMAT,
-        "version": SCHEMA_VERSION,
+        "version": spec["version"],
         "created_at": created_at,
         "pair_id": spec["pair_id"],
         "model_variant": spec["model_variant"],
@@ -1596,8 +1786,9 @@ def validate_manifest(
     """Validate a finalized causal-pair manifest and optionally every live byte pin."""
 
     manifest = _exact_fields(value, _MANIFEST_FIELDS, name="SSMax perception pair manifest")
-    if manifest["format"] != MANIFEST_FORMAT or manifest["version"] != SCHEMA_VERSION:
+    if manifest["format"] != MANIFEST_FORMAT:
         raise SSMaxPerceptionEvidenceError("SSMax perception pair manifest is incompatible")
+    version = _schema_version(manifest["version"], name="manifest version")
     _timestamp(manifest["created_at"], name="manifest created_at")
     if manifest["model_variant"] not in MODEL_VARIANTS:
         raise SSMaxPerceptionEvidenceError("Manifest model variant is unsupported")
@@ -1637,7 +1828,7 @@ def validate_manifest(
 
     pseudo_spec: dict[str, Any] = {
         "format": MANIFEST_SPEC_FORMAT,
-        "version": SCHEMA_VERSION,
+        "version": version,
         "pair_id": manifest["pair_id"],
         "model_variant": manifest["model_variant"],
         "arms": {},
@@ -2130,9 +2321,10 @@ def _load_receipt_reference(
         else _HEALTH_RECEIPT_FIELDS
     )
     _exact_fields(payload, fields, name=f"{arm} step{step} receipt")
+    receipt_version = _schema_version(payload["version"], name=f"{arm} step{step} receipt version")
     if (
         payload["format"] != expected_format
-        or payload["version"] != SCHEMA_VERSION
+        or receipt_version != manifest["version"]
         or payload["pair_id"] != manifest["pair_id"]
         or payload["model_variant"] != manifest["model_variant"]
         or payload["arm"] != arm
@@ -2209,6 +2401,230 @@ def _validate_evaluation_receipt(
     return output
 
 
+def _rolling_guard_decision(
+    events: list[Mapping[str, Any]],
+    *,
+    index: int,
+    history_reset_steps: list[int],
+    rolling_interval_length: int,
+    sigma_factor: int,
+) -> dict[str, Any]:
+    """Descriptively replay one guard decision on CPU from checkpointed scalar metrics."""
+
+    event = events[index]
+    global_step = index + 1
+    history_reset_step = max(
+        (reset_step for reset_step in history_reset_steps if reset_step < global_step),
+        default=0,
+    )
+    history_length = min(global_step - history_reset_step, rolling_interval_length + 1)
+    active = history_length >= max(2, rolling_interval_length // 2)
+    finite = bool(event["loss_finite"] and event["gradients_finite"])
+    start = max(history_reset_step, index - rolling_interval_length)
+    prior = events[start:index]
+    prior_finite = all(item["loss_finite"] and item["gradients_finite"] for item in prior)
+    if not active or not finite or not prior_finite:
+        return {
+            "history_reset_step": history_reset_step,
+            "guard_active": active,
+            "loss_mean": None,
+            "loss_std": None,
+            "loss_upper_bound": None,
+            "grad_norm_mean": None,
+            "grad_norm_std": None,
+            "grad_norm_upper_bound": None,
+            "loss_within_guard": False,
+            "gradient_exceeds_guard": False,
+        }
+
+    # This replay deliberately remains descriptive. The live optimizer comparison is performed on
+    # CUDA, and reduction-order differences can move a threshold-adjacent value across the bound.
+    # Eligibility therefore uses the optimizer-side booleans checkpointed in ledger v3 below.
+    losses = torch.tensor([item["loss"] for item in prior], dtype=torch.float32)
+    grad_norms = torch.tensor([item["grad_norm"] for item in prior], dtype=torch.float32)
+    current_loss = torch.tensor(event["loss"], dtype=torch.float32)
+    current_grad_norm = torch.tensor(event["grad_norm"], dtype=torch.float32)
+    loss_std, loss_mean = torch.std_mean(losses)
+    grad_std, grad_mean = torch.std_mean(grad_norms)
+    loss_limit = loss_mean + sigma_factor * loss_std
+    grad_limit = grad_mean + sigma_factor * grad_std
+    return {
+        "history_reset_step": history_reset_step,
+        "guard_active": True,
+        "loss_mean": float(loss_mean),
+        "loss_std": float(loss_std),
+        "loss_upper_bound": float(loss_limit),
+        "grad_norm_mean": float(grad_mean),
+        "grad_norm_std": float(grad_std),
+        "grad_norm_upper_bound": float(grad_limit),
+        "loss_within_guard": bool(((current_loss - loss_mean) <= sigma_factor * loss_std).item()),
+        "gradient_within_guard": bool(
+            ((current_grad_norm - grad_mean) <= sigma_factor * grad_std).item()
+        ),
+        "gradient_exceeds_guard": bool(
+            ((current_grad_norm - grad_mean) > sigma_factor * grad_std).item()
+        ),
+    }
+
+
+def summarize_optimizer_guard_trajectory(
+    ledger: Mapping[str, Any], *, policy: Mapping[str, Any], step: int
+) -> dict[str, Any]:
+    """Summarize the prospectively locked v2 guarded-skip trajectory.
+
+    A qualifying skip has finite loss and gradients and is identified as gradient-only by the exact
+    live-device comparison booleans checkpointed at optimizer-step time. The CPU rolling replay is
+    retained only as a diagnostic. Two skip step numbers must differ by at least 129, which leaves
+    128 clean optimizer decisions between them. The final clean-window requirement is evaluated
+    only at the candidate checkpoint, and any post-genesis optimizer-history reset is ineligible.
+    """
+
+    _positive_int(step, name="optimizer guard trajectory step", minimum=0)
+    expected_policy = _locked_promotion_policy(PERCEPTION_V2_SCHEMA_VERSION)
+    if dict(policy) != expected_policy:
+        raise SSMaxPerceptionEvidenceError(
+            "Optimizer guard trajectory requires the locked v2 promotion policy"
+        )
+    _validate_v2_policy_types(policy)
+    guard = _exact_fields(
+        policy["optimizer_guard"],
+        frozenset(V2_OPTIMIZER_GUARD_CONTRACT),
+        name="v2 optimizer guard contract",
+    )
+    events_value = ledger.get("events")
+    if not isinstance(events_value, list) or len(events_value) != step:
+        raise SSMaxPerceptionEvidenceError(
+            "Optimizer guard trajectory differs from the checkpoint step"
+        )
+    events = [
+        _mapping(event, name=f"optimizer guard step{index + 1}")
+        for index, event in enumerate(events_value)
+    ]
+    if (
+        type(ledger.get("version")) is not int
+        or ledger.get("version") != SSMAX_HEALTH_LEDGER_VERSION
+    ):
+        raise SSMaxPerceptionEvidenceError(
+            "V2 optimizer guard trajectory requires a resume-aware v3 health ledger"
+        )
+    history_reset_steps = ledger.get("optimizer_guard_history_reset_steps")
+    if (
+        not isinstance(history_reset_steps, list)
+        or not history_reset_steps
+        or history_reset_steps[0] != 0
+    ):
+        raise SSMaxPerceptionEvidenceError(
+            "V2 perception health ledger does not record its step0 parent-load boundary"
+        )
+    previous_reset_step = -1
+    for reset_step in history_reset_steps:
+        _positive_int(reset_step, name="optimizer guard history reset step", minimum=0)
+        if reset_step <= previous_reset_step or reset_step > step:
+            raise SSMaxPerceptionEvidenceError(
+                "Optimizer guard history reset steps are not strictly increasing"
+            )
+        previous_reset_step = reset_step
+    rolling_interval_length = ledger.get("optimizer_guard_rolling_interval_length")
+    if (
+        type(rolling_interval_length) is not int
+        or rolling_interval_length != guard["rolling_interval_length"]
+    ):
+        raise SSMaxPerceptionEvidenceError(
+            "V2 health ledger optimizer rolling interval differs from the locked guard"
+        )
+    resume_free_passed = history_reset_steps == [0]
+    skip_details: list[dict[str, Any]] = []
+    for index, event in enumerate(events):
+        if event.get("optimizer_guard_skipped") is not True:
+            continue
+        cpu_reconstruction = _rolling_guard_decision(
+            events,
+            index=index,
+            history_reset_steps=history_reset_steps,
+            rolling_interval_length=int(guard["rolling_interval_length"]),
+            sigma_factor=int(guard["sigma_factor"]),
+        )
+        finite = bool(event.get("loss_finite") and event.get("gradients_finite"))
+        for field in (
+            "optimizer_guard_active",
+            "optimizer_guard_loss_within",
+            "optimizer_guard_gradient_within",
+        ):
+            if type(event.get(field)) is not bool:
+                raise SSMaxPerceptionEvidenceError(
+                    f"Optimizer guard step{index + 1} omits its live {field} decision"
+                )
+        guard_active = event["optimizer_guard_active"]
+        loss_within_guard = event["optimizer_guard_loss_within"]
+        gradient_within_guard = event["optimizer_guard_gradient_within"]
+        gradient_exceeds_guard = bool(finite and not gradient_within_guard)
+        finite_gradient_only = bool(
+            finite and guard_active and loss_within_guard and gradient_exceeds_guard
+        )
+        reconstruction_matches_live = bool(
+            cpu_reconstruction["guard_active"] == guard_active
+            and cpu_reconstruction["loss_within_guard"] == loss_within_guard
+            and cpu_reconstruction.get("gradient_within_guard") == gradient_within_guard
+        )
+        skip_details.append(
+            {
+                "step": index + 1,
+                "loss": event.get("loss"),
+                "grad_norm": event.get("grad_norm"),
+                "history_reset_step": cpu_reconstruction["history_reset_step"],
+                "guard_active": guard_active,
+                "loss_within_guard": loss_within_guard,
+                "gradient_within_guard": gradient_within_guard,
+                "gradient_exceeds_guard": gradient_exceeds_guard,
+                "cpu_reconstruction": cpu_reconstruction,
+                "live_decision_matches_cpu_reconstruction": reconstruction_matches_live,
+                "finite_gradient_only": finite_gradient_only,
+            }
+        )
+
+    observed_steps = [int(item["step"]) for item in skip_details]
+    distances = [right - left for left, right in pairwise(observed_steps)]
+    minimum_step_distance = min(distances) if distances else None
+    required_distance = int(policy["minimum_clean_steps_between_skips"]) + 1
+    spacing_passed = all(distance >= required_distance for distance in distances)
+    clean_final_steps = step - observed_steps[-1] if observed_steps else step
+    final_window_evaluated = step == int(policy["candidate_step"])
+    final_window_passed = (
+        clean_final_steps >= int(policy["minimum_clean_final_steps"])
+        if final_window_evaluated
+        else True
+    )
+    maximum_passed = len(observed_steps) <= int(policy["maximum_optimizer_guard_skips"])
+    classification_passed = all(item["finite_gradient_only"] for item in skip_details)
+    return {
+        "contract": "finite-gradient-only-rolling-guard-v2",
+        "optimizer_guard": dict(guard),
+        "optimizer_guard_history_reset_steps": list(history_reset_steps),
+        "required_optimizer_guard_history_reset_steps": [0],
+        "observed_steps": observed_steps,
+        "count": len(observed_steps),
+        "maximum": int(policy["maximum_optimizer_guard_skips"]),
+        "skip_events": skip_details,
+        "minimum_step_distance": minimum_step_distance,
+        "required_minimum_step_distance": required_distance,
+        "clean_final_steps": clean_final_steps,
+        "required_clean_final_steps": int(policy["minimum_clean_final_steps"]),
+        "maximum_passed": maximum_passed,
+        "resume_free_passed": resume_free_passed,
+        "finite_gradient_only_passed": classification_passed,
+        "spacing_passed": spacing_passed,
+        "final_window_evaluated": final_window_evaluated,
+        "final_window_passed": final_window_passed,
+        "passed": (
+            maximum_passed
+            and resume_free_passed
+            and classification_passed
+            and spacing_passed
+            and final_window_passed
+        ),
+    }
+
+
 def _validate_health_receipt(
     receipt: Mapping[str, Any], *, manifest: Mapping[str, Any], arm: str, step: int
 ) -> dict[str, Any]:
@@ -2244,6 +2660,14 @@ def _validate_health_receipt(
                 f"{arm} step{step} rank{rank} health ledger is invalid: {error}"
             ) from error
         ledgers.append(ledger)
+        if manifest["version"] == PERCEPTION_V2_SCHEMA_VERSION and (
+            ledger["version"] != SSMAX_HEALTH_LEDGER_VERSION
+            or ledger["optimizer_guard_history_reset_steps"][:1] != [0]
+        ):
+            raise SSMaxPerceptionEvidenceError(
+                f"{arm} step{step} v2 evidence requires a resume-aware v3 health ledger "
+                "with its step0 parent-load boundary"
+            )
     trainer_inventory = [
         {
             "rank": rank,
@@ -2264,6 +2688,22 @@ def _validate_health_receipt(
     if any(ledger["event_chain_sha256"] != event_chain for ledger in ledgers):
         raise SSMaxPerceptionEvidenceError(
             f"{arm} step{step} health event chains differ across ranks"
+        )
+    history_reset_steps = list(ledgers[0].get("optimizer_guard_history_reset_steps", []))
+    if any(
+        list(ledger.get("optimizer_guard_history_reset_steps", [])) != history_reset_steps
+        for ledger in ledgers
+    ):
+        raise SSMaxPerceptionEvidenceError(
+            f"{arm} step{step} optimizer history reset steps differ across ranks"
+        )
+    rolling_interval_length = ledgers[0].get("optimizer_guard_rolling_interval_length")
+    if any(
+        ledger.get("optimizer_guard_rolling_interval_length") != rolling_interval_length
+        for ledger in ledgers
+    ):
+        raise SSMaxPerceptionEvidenceError(
+            f"{arm} step{step} optimizer rolling intervals differ across ranks"
         )
     sources = _exact_fields(receipt["sources"], frozenset(SOURCES), name="health sources")
     total_loss = 0.0
@@ -2313,13 +2753,20 @@ def _validate_health_receipt(
         raise SSMaxPerceptionEvidenceError("Health recipe identity differs from the manifest")
     if dict(producer) != dict(producers[HEALTH_PRODUCER]):
         raise SSMaxPerceptionEvidenceError("Health producer source identity differs")
-    return {
+    summary = {
         "rank_states": list(rank_states),
         "total_loss_weight": total_loss,
         "total_active_loss_weight": total_active,
         "sources": sources,
         "run_counters": counters,
+        "optimizer_guard_history_reset_steps": history_reset_steps,
+        "optimizer_guard_rolling_interval_length": rolling_interval_length,
     }
+    if manifest["version"] == PERCEPTION_V2_SCHEMA_VERSION:
+        summary["optimizer_guard"] = summarize_optimizer_guard_trajectory(
+            ledgers[0], policy=manifest["policy"], step=step
+        )
+    return summary
 
 
 def _source_balanced_interval(
@@ -2541,8 +2988,8 @@ def build_promotion_report(
             for counter, maximum in (
                 ("data_errors", int(policy["maximum_data_errors"])),
                 ("optimizer_guard_skips", int(policy["maximum_optimizer_guard_skips"])),
-                ("nonfinite_losses", 0),
-                ("nonfinite_gradients", 0),
+                ("nonfinite_losses", int(policy.get("maximum_nonfinite_losses", 0))),
+                ("nonfinite_gradients", int(policy.get("maximum_nonfinite_gradients", 0))),
             ):
                 if counters[counter] > maximum:
                     deviations.append(
@@ -2587,6 +3034,53 @@ def build_promotion_report(
                                 }
                             )
 
+    guard_trajectories: dict[str, Any] | None = None
+    if manifest["version"] == PERCEPTION_V2_SCHEMA_VERSION:
+        guard_trajectories = {}
+        for arm in ARMS:
+            guard_summary = health_summaries[arm][int(policy["candidate_step"])]["optimizer_guard"]
+            guard_trajectories[arm] = guard_summary
+            if not guard_summary["resume_free_passed"]:
+                deviations.append(
+                    {
+                        "kind": "optimizer_guard_history_reset",
+                        "arm": arm,
+                        "observed": guard_summary["optimizer_guard_history_reset_steps"],
+                        "required": guard_summary["required_optimizer_guard_history_reset_steps"],
+                    }
+                )
+            invalid_steps = [
+                event["step"]
+                for event in guard_summary["skip_events"]
+                if not event["finite_gradient_only"]
+            ]
+            if invalid_steps:
+                deviations.append(
+                    {
+                        "kind": "optimizer_guard_not_finite_gradient_only",
+                        "arm": arm,
+                        "steps": invalid_steps,
+                    }
+                )
+            if not guard_summary["spacing_passed"]:
+                deviations.append(
+                    {
+                        "kind": "optimizer_guard_spacing",
+                        "arm": arm,
+                        "observed": guard_summary["minimum_step_distance"],
+                        "minimum": guard_summary["required_minimum_step_distance"],
+                    }
+                )
+            if not guard_summary["final_window_passed"]:
+                deviations.append(
+                    {
+                        "kind": "optimizer_guard_final_clean_window",
+                        "arm": arm,
+                        "observed": guard_summary["clean_final_steps"],
+                        "minimum": guard_summary["required_clean_final_steps"],
+                    }
+                )
+
     attention_trajectory: dict[str, Any] = {}
     for arm in ARMS:
         baseline_attention = evaluation_payloads[arm][0]["attention_diagnostics"]
@@ -2615,6 +3109,8 @@ def build_promotion_report(
         "windows": {},
         "attention_trajectory": attention_trajectory,
     }
+    if guard_trajectories is not None:
+        summary["optimizer_guard_trajectories"] = guard_trajectories
     samples = int(manifest["evaluation"]["bootstrap_samples"])
     base_seed = int(manifest["evaluation"]["bootstrap_seed"])
     for window_index, window in enumerate(WINDOWS):
@@ -2722,7 +3218,7 @@ def build_promotion_report(
 
     report: dict[str, Any] = {
         "format": PROMOTION_REPORT_FORMAT,
-        "version": SCHEMA_VERSION,
+        "version": manifest["version"],
         "status": "passed" if not deviations else "rejected",
         "created_at": created_at,
         "manifest": manifest_reference(manifest_path, manifest),
@@ -2739,7 +3235,7 @@ def build_promotion_report(
 def _rebuilt_promotion_for_model_comparison(
     reference: Mapping[str, Any], *, verify_live_checkpoint: bool
 ) -> Mapping[str, Any]:
-    """Rebuild one passed v5 evidence report without accepting caller-supplied expectations."""
+    """Rebuild one passed versioned evidence report without caller-supplied expectations."""
 
     report_path = validate_artifact_reference(reference, name="model-comparison promotion report")
     report = _exact_fields(
@@ -2830,7 +3326,7 @@ def build_model_variant_comparison(
     created_at: str,
     verify_live_checkpoint: bool = True,
 ) -> dict[str, Any]:
-    """Build a descriptive QK-vs-no-QK perception comparison from rebuilt v5 evidence.
+    """Build a descriptive QK-vs-no-QK perception comparison from rebuilt versioned evidence.
 
     Absolute same-checkpoint differences and step-0-normalized adaptation differences are kept
     separate.  This function deliberately emits no winner and cannot authorize a checkpoint.
@@ -3089,7 +3585,7 @@ def build_model_variant_comparison(
 def validate_model_variant_comparison(
     value: Any, *, verify_live_checkpoint: bool = True
 ) -> Mapping[str, Any]:
-    """Rebuild the closed descriptive comparison from both pinned v5 reports."""
+    """Rebuild the closed descriptive comparison from both pinned versioned reports."""
 
     comparison = _exact_fields(
         value, _MODEL_COMPARISON_FIELDS, name="SSMax perception model comparison"
@@ -3158,7 +3654,8 @@ def validate_promotion_report_reference(
 ) -> Mapping[str, Any]:
     """Re-open a passed report and reproduce it exactly from every raw receipt.
 
-    The returned candidate/manifest summary is the only input accepted by the v5 parent gate.
+    The returned candidate/manifest summary is the only input accepted by a version-matched
+    perception parent gate.
     """
 
     if expected_model_variant not in MODEL_VARIANTS:
@@ -3167,9 +3664,9 @@ def validate_promotion_report_reference(
     report = _exact_fields(
         load_json(report_path), _PROMOTION_REPORT_FIELDS, name="SSMax perception promotion report"
     )
+    report_version = _schema_version(report["version"], name="promotion report version")
     if (
         report["format"] != PROMOTION_REPORT_FORMAT
-        or report["version"] != SCHEMA_VERSION
         or report["status"] != "passed"
         or report["model_variant"] != expected_model_variant
         or report["deviations"] != []
@@ -3186,7 +3683,8 @@ def validate_promotion_report_reference(
     )
     manifest = load_manifest(manifest_path, verify_live=verify_live_checkpoint)
     if (
-        manifest["content_sha256"] != manifest_ref["content_sha256"]
+        report_version != manifest["version"]
+        or manifest["content_sha256"] != manifest_ref["content_sha256"]
         or manifest["pair_id"] != report["pair_id"]
         or manifest["model_variant"] != expected_model_variant
     ):
@@ -3308,9 +3806,13 @@ def build_parent_gate(
     formatter_version = metadata.get("formatter_version")
     if not isinstance(formatter_version, str) or not formatter_version:
         raise SSMaxPerceptionEvidenceError("Candidate formatter version is malformed")
+    report_version = _schema_version(
+        summary["report"]["version"], name="approved promotion report version"
+    )
+    gate_version = _PARENT_GATE_VERSION_BY_SCHEMA[report_version]
     gate = {
         "format": "vision_alignment_parent_gate",
-        "version": PARENT_GATE_VERSION,
+        "version": gate_version,
         "status": "approved",
         "recipe_version": recipe_version,
         "formatter_version": formatter_version,
@@ -3356,12 +3858,17 @@ def validate_ssmax_perception_parent_gate(
     expected_trainable_contract_sha256: str,
     verify_live_checkpoint: bool = True,
 ) -> Mapping[str, Any]:
-    """Validate the deviation-free v5 gate used exclusively by an SSMax joint phase."""
+    """Validate a version-matched, deviation-free gate for an SSMax joint phase."""
 
-    value = _exact_fields(gate, _PARENT_GATE_FIELDS, name="SSMax v5 perception parent gate")
+    value = _exact_fields(gate, _PARENT_GATE_FIELDS, name="SSMax perception parent gate")
+    gate_version = value.get("version")
+    if type(gate_version) is not int or gate_version not in SUPPORTED_PARENT_GATE_VERSIONS:
+        raise SSMaxPerceptionEvidenceError(
+            "SSMax perception parent gate version must be exactly integer 5 or 6"
+        )
+    gate_name = f"SSMax v{gate_version} parent gate"
     expected_pairs = (
         ("format", "vision_alignment_parent_gate"),
-        ("version", PARENT_GATE_VERSION),
         ("status", "approved"),
         ("phase", "perception"),
         ("model_variant", expected_model_variant),
@@ -3372,19 +3879,19 @@ def validate_ssmax_perception_parent_gate(
         ("trainable_contract_sha256", expected_trainable_contract_sha256),
     )
     for name, expected in expected_pairs:
-        if value[name] != expected:
-            raise SSMaxPerceptionEvidenceError(f"SSMax v5 parent gate {name} differs")
+        if type(value[name]) is not type(expected) or value[name] != expected:
+            raise SSMaxPerceptionEvidenceError(f"{gate_name} {name} differs")
     if expected_model_variant not in MODEL_VARIANTS:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 parent gate model variant is unsupported")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} model variant is unsupported")
     if (
         Path(str(value["checkpoint"])).expanduser().resolve()
         != expected_checkpoint.expanduser().resolve()
         or expected_checkpoint.name != "step4000"
     ):
-        raise SSMaxPerceptionEvidenceError("SSMax v5 gate must name the treatment step4000")
-    _positive_int(value["recipe_version"], name="SSMax v5 recipe version")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} must name the treatment step4000")
+    _positive_int(value["recipe_version"], name=f"{gate_name} recipe version")
     if not isinstance(value["formatter_version"], str) or not value["formatter_version"]:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 formatter version is malformed")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} formatter version is malformed")
     for name in (
         "checkpoint_config_sha256",
         "checkpoint_identity_sha256",
@@ -3396,18 +3903,20 @@ def validate_ssmax_perception_parent_gate(
         "manifest_sha256",
         "manifest_content_sha256",
     ):
-        _sha256(value[name], name=f"SSMax v5 parent gate {name}")
+        _sha256(value[name], name=f"{gate_name} {name}")
     if value["waivers"] != []:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 parent gate does not permit waivers")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} does not permit waivers")
     if value["metrics_artifact_sha256"] != value["promotion_report_sha256"]:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 metrics artifact must be its promotion report")
+        raise SSMaxPerceptionEvidenceError(
+            f"{gate_name} metrics artifact must be its promotion report"
+        )
     approved_by = value["approved_by"]
     if (
         not isinstance(approved_by, str)
         or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@:/+\-]{2,127}", approved_by) is None
     ):
-        raise SSMaxPerceptionEvidenceError("SSMax v5 approved_by is not a durable identity")
-    approval_time = _timestamp(value["approved_at"], name="SSMax v5 approved_at")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} approved_by is not a durable identity")
+    approval_time = _timestamp(value["approved_at"], name=f"{gate_name} approved_at")
     report_reference = {
         "path": value["promotion_report_path"],
         "sha256": value["promotion_report_sha256"],
@@ -3421,25 +3930,33 @@ def validate_ssmax_perception_parent_gate(
         expected_trainable_contract_sha256=expected_trainable_contract_sha256,
         verify_live_checkpoint=verify_live_checkpoint,
     )
+    report_version = _schema_version(
+        summary["report"]["version"], name="approved promotion report version"
+    )
+    expected_gate_version = _PARENT_GATE_VERSION_BY_SCHEMA[report_version]
+    if gate_version != expected_gate_version:
+        raise SSMaxPerceptionEvidenceError(
+            f"{gate_name} does not match promotion protocol v{report_version}"
+        )
     if verify_live_checkpoint:
         checkpoint_config = _mapping(
             load_json(expected_checkpoint.expanduser().resolve() / "config.json"),
-            name="SSMax v5 candidate config",
+            name=f"{gate_name} candidate config",
         )
         metadata = _mapping(
             checkpoint_config.get("vision_alignment"),
-            name="SSMax v5 candidate vision-alignment metadata",
+            name=f"{gate_name} candidate vision-alignment metadata",
         )
         if value["recipe_version"] != metadata.get("recipe_version") or value[
             "formatter_version"
         ] != metadata.get("formatter_version"):
             raise SSMaxPerceptionEvidenceError(
-                "SSMax v5 recipe/formatter identity differs from the live candidate"
+                f"{gate_name} recipe/formatter identity differs from the live candidate"
             )
     if summary["candidate"]["identity_sha256"] != value["checkpoint_identity_sha256"]:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 checkpoint identity differs")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} checkpoint identity differs")
     if summary["report"]["content_sha256"] != value["promotion_report_content_sha256"]:
-        raise SSMaxPerceptionEvidenceError("SSMax v5 promotion semantic SHA differs")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} promotion semantic SHA differs")
     manifest_ref = summary["manifest_reference"]
     if (
         Path(str(manifest_ref["path"])).resolve()
@@ -3447,9 +3964,9 @@ def validate_ssmax_perception_parent_gate(
         or manifest_ref["sha256"] != value["manifest_sha256"]
         or manifest_ref["content_sha256"] != value["manifest_content_sha256"]
     ):
-        raise SSMaxPerceptionEvidenceError("SSMax v5 manifest reference differs")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} manifest reference differs")
     if approval_time < _timestamp(summary["report"]["created_at"], name="report created_at"):
-        raise SSMaxPerceptionEvidenceError("SSMax v5 approval predates its promotion report")
+        raise SSMaxPerceptionEvidenceError(f"{gate_name} approval predates its promotion report")
     return summary
 
 
@@ -3460,19 +3977,23 @@ __all__ = [
     "EVALUATION_RECEIPT_FORMAT",
     "HEALTH_PRODUCER",
     "HEALTH_RECEIPT_FORMAT",
+    "LEGACY_PARENT_GATE_VERSION",
     "MANIFEST_FORMAT",
     "MANIFEST_SPEC_FORMAT",
     "MODEL_COMPARISON_FORMAT",
     "MODEL_VARIANTS",
     "PARENT_GATE_VERSION",
+    "PERCEPTION_V2_SCHEMA_VERSION",
     "PRODUCER_RELATIVE_PATHS",
     "PROMOTION_REPORT_FORMAT",
     "REQUIRED_STEPS",
     "SCHEMA_VERSION",
     "SOURCES",
-    "SSMaxPerceptionEvidenceError",
+    "SUPPORTED_PARENT_GATE_VERSIONS",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "TREATMENT_ARM",
     "WINDOWS",
+    "SSMaxPerceptionEvidenceError",
     "artifact_reference",
     "build_manifest",
     "build_model_variant_comparison",
@@ -3481,6 +4002,7 @@ __all__ = [
     "canonical_sha256",
     "load_manifest",
     "load_manifest_spec",
+    "summarize_optimizer_guard_trajectory",
     "validate_manifest",
     "validate_manifest_producer_source",
     "validate_model_variant_comparison",
