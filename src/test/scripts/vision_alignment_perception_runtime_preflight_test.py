@@ -6,6 +6,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -201,6 +202,66 @@ def test_pinned_file_rejects_changed_bytes(tmp_path: Path) -> None:
     path.write_bytes(b"changed bytes\n")
     with pytest.raises(module.PerceptionRuntimePreflightError, match="SHA-256 differs"):
         module._pinned_file(path, expected, name="profile")
+
+
+def test_runtime_source_identity_requires_exact_gantry_pythonpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    repository_root = tmp_path / "gantry-runtime"
+    source_root = repository_root / "src"
+    expected = {
+        "olmo_core": source_root / "olmo_core" / "__init__.py",
+        "perception_provenance": (
+            source_root
+            / "olmo_core"
+            / "data"
+            / "multimodal"
+            / "vision_alignment_perception_provenance.py"
+        ),
+    }
+    monkeypatch.setattr(module.olmo_core, "__file__", str(expected["olmo_core"]))
+    monkeypatch.setattr(
+        module.vision_alignment_perception_provenance,
+        "__file__",
+        str(expected["perception_provenance"]),
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        f"{source_root}{os.pathsep}{repository_root}",
+    )
+
+    assert module._runtime_source_identity(repository_root) == {
+        name: path.relative_to(repository_root).as_posix() for name, path in expected.items()
+    }
+
+
+@pytest.mark.parametrize(
+    "pythonpath",
+    [
+        "{source}",
+        "{root}{sep}{source}",
+        "{source}{sep}{root}{sep}/unreviewed",
+    ],
+)
+def test_runtime_source_identity_rejects_pythonpath_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pythonpath: str,
+) -> None:
+    module = _load_module()
+    repository_root = tmp_path / "gantry-runtime"
+    source_root = repository_root / "src"
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        pythonpath.format(source=source_root, root=repository_root, sep=os.pathsep),
+    )
+
+    with pytest.raises(
+        module.PerceptionRuntimePreflightError,
+        match="exact Gantry source/check-out identity",
+    ):
+        module._runtime_source_identity(repository_root)
 
 
 def test_pinned_recipe_uses_direct_main_identity_without_running_cli(tmp_path: Path) -> None:

@@ -361,10 +361,16 @@ def _pinned_profile_pair_receipt(
 
 
 def _runtime_source_identity(repository_root: Path) -> dict[str, str]:
+    repository_root = repository_root.resolve()
     source_root = (repository_root / "src").resolve()
-    if os.environ.get("PYTHONPATH") != str(source_root):
+    # The reviewed launch config submits only ``source_root``. Gantry 3.7.0 then
+    # deterministically appends its current checkout directory before torchrun.
+    expected_pythonpath = os.pathsep.join((str(source_root), str(repository_root)))
+    actual_pythonpath = os.environ.get("PYTHONPATH")
+    if actual_pythonpath != expected_pythonpath:
         raise PerceptionRuntimePreflightError(
-            f"Runtime PYTHONPATH must be exactly the checkout source root {source_root}"
+            "Runtime PYTHONPATH differs from the exact Gantry source/check-out identity: "
+            f"expected {expected_pythonpath!r}, got {actual_pythonpath!r}"
         )
     expected = {
         "olmo_core": source_root / "olmo_core" / "__init__.py",
@@ -1087,9 +1093,10 @@ def _serialized_at(value: Any, *path: str) -> Any:
 def _runtime_perception_contract(config: Any, *, model_variant: str) -> dict[str, Any]:
     """Reconstruct the receipt contract independently from the runtime config."""
 
+    # Convert config serialization failures to a closed preflight.
     try:
         raw = config.as_config_dict()
-    except Exception as error:  # noqa: BLE001 - convert config failures to a closed preflight.
+    except Exception as error:
         raise PerceptionRuntimePreflightError(
             f"Runtime config could not be serialized for contract validation: {error}"
         ) from error
