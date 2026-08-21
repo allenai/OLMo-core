@@ -46,11 +46,11 @@ from ...data.schema import make_document, make_example
 __all__ = ["SOURCES", "assemble", "place_pairs"]
 
 #: Source name -> the ladder it builds, resolvable through
-#: :func:`ctc.data.generators.base.get`. ``pubmed`` is the in-distribution anchor; ``fever`` is the
-#: held-out probe. ``wiki`` is deliberately absent: the pre-migration
+#: :func:`ctc.data.generators.base.get`. ``pubmed`` is the in-distribution anchor (``fever``, the
+#: 5-task mixed-family probe, lives on the development branch). ``wiki`` is deliberately absent: the pre-migration
 #: ``generate_wiki_contradiction_data.py`` has zero references anywhere in the old tree and nothing
 #: was ever built from it.
-SOURCES: Dict[str, str] = {"pubmed": "contradiction", "fever": "contra_fever"}
+SOURCES: Dict[str, str] = {"pubmed": "contradiction"}
 
 
 def place_pairs(pairs: Sequence[Tuple[str, str]]) -> Tuple[List[str], List[Tuple[int, int]]]:

@@ -33,7 +33,6 @@ ctc-data audit --task <task> --dir DIR                     # re-check data alrea
 | `fiqa` | retrieval | BEIR FiQA + BM25 + CE | `ctc-data build --task fiqa --out DIR` |
 | `scifact` | retrieval | BEIR SciFact + BM25 | `ctc-data build --task scifact --out DIR` |
 | `outlier_review` | outlier | Amazon-Reviews-2023 | `ctc-data build --task outlier_review --out DIR` |
-| `contra_fever` | contradiction | FEVER (`copenlu/fever_gold_evidence`) | `ctc-data build --task contra_fever --split eval --out DIR` |
 | **pure synthetic** — no corpus, no network | | | |
 | `textgroups` | textgroups | — | `ctc-data build --task textgroups --out DIR` |
 
@@ -181,10 +180,6 @@ one case and a partition in the other, so there is no distractor for the shrink 
 shorter rung is a different answer, not a smaller one. `qdmatch` *does* nest — but only in the
 `separate` layout, which is what keeps every gold pair's query id below its document id, and hence
 what makes the shrink's within-group sort a no-op instead of a pair-swapper.
-
-**`contra_fever` refuses to produce training data.** It is not a suite row; it exists solely to
-probe the 5-task mixed models on an unseen corpus, and that refusal is not a warning: by the time
-a warning is noticed the checkpoint is trained and the OOD column means nothing.
 
 **NQ's defaults are deliberately not the old ones.** `hard_frac=0.1` with the CE gold filter **on**.
 The pre-migration generator defaulted to 1.0 with the filter off, which silently reproduced the

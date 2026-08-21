@@ -146,10 +146,6 @@ LADDERS: Dict[str, Dict[str, int]] = {
     "fiqa": {"2k": 4, "4k": 9, "8k": 19, "16k": 40, "32k": 80},  # ~400 tok/post
     "scifact": {"2k": 5, "4k": 10, "8k": 21, "16k": 43, "32k": 88},  # ~365 tok/abstract
     "outlier_review": {"2k": 20, "4k": 40, "8k": 80, "16k": 160, "32k": 320},  # ~100 tok/review
-    # ~20 tok/claim: a one-line FEVER claim is half the length of a PubMed one, which is why this
-    # row is ~2x contradiction's at every rung. Matches the shipped
-    # `contradiction_eval_fever_plain_n{100,408,820,1642}` files.
-    "contra_fever": {"2k": 100, "4k": 204, "8k": 408, "16k": 820, "32k": 1642},
 }
 
 #: How each row was arrived at. ``estimated`` means an offline per-document token estimate, not a
@@ -196,7 +192,6 @@ CALIBRATION: Dict[str, str] = {
     "fiqa": "estimated (BUILD_MATRIX row 8)",
     "scifact": "estimated (BUILD_MATRIX row 7)",
     "outlier_review": "estimated (BUILD_MATRIX row 12)",
-    "contra_fever": "measured (matches the shipped fever_plain ladder)",
 }
 
 

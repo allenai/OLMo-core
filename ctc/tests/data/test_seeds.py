@@ -30,7 +30,6 @@ from ctc.tasks import load_all
 #: the registry.
 POOLS = {
     "contradiction": pools.pubmed_pool,
-    "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
     "hotpotqa": lambda: pools.retrieval_pool(source="hotpotqa", gold=2, hard=8),
     "fiqa": lambda: pools.retrieval_pool(source="beir_fiqa"),

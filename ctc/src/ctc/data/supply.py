@@ -35,12 +35,6 @@ def _pubmed(pool: Any) -> Tuple[int, str]:
     return total + 2 * len(pool.pairs), "filler sentences plus gold pairs"
 
 
-def _fever(pool: Any) -> Tuple[int, str]:
-    nei = sum(len(v) for v in pool.nei_by_page.values())
-    support = 2 * sum(len(v) for v in pool.support_pairs_by_page.values())
-    return len(pool.fillers) + nei + support + 2 * len(pool.pairs), "distractor sentences"
-
-
 def _retrieval(pool: Any) -> Tuple[int, str]:
     per_query = max((len(q.gold) + len(q.hard) + len(q.fill) for q in pool.queries), default=0)
     if pool.corpus:
@@ -87,7 +81,6 @@ def _review(pool: Any) -> Tuple[int, str]:
 _BY_POOL: Dict[str, Callable[[Any], Tuple[int, str]]] = {
     "PubMedPool": _pubmed,
     "RedundancyPool": _pubmed,
-    "FeverPool": _fever,
     "RetrievalPool": _retrieval,
     "BookPool": _book,
     "PassagePool": _passage,

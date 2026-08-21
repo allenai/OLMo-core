@@ -18,7 +18,6 @@ from typing import Dict, List, Tuple
 
 from ctc.data.sources import (
     amazon,
-    fever,
     gutenberg,
     oolong,
     openalex,
@@ -30,7 +29,6 @@ from ctc.data.sources.retrieval import Candidate, QueryPool, RetrievalPool
 
 __all__ = [
     "pubmed_pool",
-    "fever_pool",
     "retrieval_pool",
     "rerank_pool",
     "article_pool",
@@ -70,37 +68,6 @@ def pubmed_pool(pairs: int = 40, abstracts: int = 60, per_abstract: int = 8) -> 
         for i in range(abstracts)
     }
     return pubmed.PubMedPool(pairs=claim_pairs, fillers=fillers, provenance={"pairs": "fixture"})
-
-
-def fever_pool(pairs: int = 40, pages: int = 30, fillers: int = 400) -> fever.FeverPool:
-    """
-    :param pairs: REFUTES pairs.
-    :param pages: Wikipedia pages carrying NEI and SUPPORTS rows.
-    :param fillers: Flat filler claims.
-
-    :returns: A FEVER pool.
-    """
-    return fever.FeverPool(
-        pairs=tuple(
-            (f"Person {i} was born in July.", f"Person {i} was born on 16 May 1991.", f"page{i}")
-            for i in range(pairs)
-        ),
-        nei_by_page={
-            f"page{i}": tuple(f"Person {i} may have visited city {j}." for j in range(6))
-            for i in range(pages)
-        },
-        support_pairs_by_page={
-            f"page{i}": tuple(
-                (f"Person {i} acted in film {j}.", f"Person {i} starred in film {j} in 200{j}.")
-                for j in range(3)
-            )
-            for i in range(pages)
-        },
-        fillers=tuple(
-            f"Filler claim number {i} about an unrelated subject." for i in range(fillers)
-        ),
-        pages=tuple(f"page{i}" for i in range(pages)),
-    )
 
 
 def retrieval_pool(

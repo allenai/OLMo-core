@@ -24,7 +24,6 @@ def _small_ladders(monkeypatch):
     monkeypatch.setitem(ladders.LADDERS, "strmatch", {"2k": 20, "4k": 40})
     monkeypatch.setitem(ladders.LADDERS, "nq", {"2k": 11, "4k": 23})
     monkeypatch.setitem(ladders.LADDERS, "fiqa", {"2k": 6, "4k": 12})
-    monkeypatch.setitem(ladders.LADDERS, "contra_fever", {"2k": 8, "4k": 16})
 
 
 @pytest.fixture
@@ -49,13 +48,6 @@ def fake_corpora(monkeypatch):
                 corpus=lambda source=source, **kw: pools.retrieval_pool(queries=600, source=source),
             ),
         )
-    fever = __import__("ctc.tasks.contradiction.sources.fever", fromlist=["GENERATOR"])
-    monkeypatch.setattr(
-        "ctc.tasks.contradiction.sources.fever.GENERATOR",
-        dataclasses.replace(
-            fever.GENERATOR, corpus=lambda **kw: pools.fever_pool(pairs=16000, fillers=2000)
-        ),
-    )
 
 
 def test_list_names_every_ported_generator(capsys):
@@ -65,17 +57,11 @@ def test_list_names_every_ported_generator(capsys):
         assert name in printed
 
 
-def test_list_flags_the_held_out_ladders(capsys):
-    """A user must not have to read the source to learn a ladder is eval-only -- and must not be
-    told a suite row is, now that fiqa/scifact/outlier_review train in-domain."""
+def test_no_suite_row_is_flagged_held_out(capsys):
+    """Every row of the 22-task suite trains in-domain; a HELD OUT tag here would tell a user the
+    build refuses training data it does not refuse."""
     cli.main(["list"])
-    printed = capsys.readouterr().out
-    for line in printed.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("contra_fever"):
-            assert "HELD OUT" in line
-        elif stripped.startswith(("fiqa", "scifact", "outlier_review")):
-            assert "HELD OUT" not in line
+    assert "HELD OUT" not in capsys.readouterr().out
 
 
 def test_build_writes_a_train_file_and_one_file_per_rung(tmp_path):
@@ -126,17 +112,6 @@ def test_a_corpus_backed_task_builds_through_the_cli(tmp_path, fake_corpora):
     assert all(r["source"] == "nq" and r["gold_doc_indices"] for r in rows)
 
 
-def test_a_held_out_ladder_builds_eval_only_without_being_asked(tmp_path, fake_corpora, capsys):
-    """``--split both`` on a held-out ladder must not quietly build training data."""
-    assert cli.main(["build", "--task", "contra_fever", "--out", str(tmp_path)]) == 0
-    assert "held out" in capsys.readouterr().out
-    assert not (tmp_path / "contra_fever" / "train.jsonl").exists()
-
-
-def test_asking_a_held_out_ladder_for_training_data_is_an_error(tmp_path, fake_corpora):
-    assert cli.main(["build", "--task", "contra_fever", "--split", "train", "--out", str(tmp_path)]) == 1
-
-
 def test_an_override_reaches_the_generator(tmp_path):
     cli.main(
         ["build", "--task", "strmatch", "--train", "20", "-C", "num_pairs=2", "--out", str(tmp_path)]
@@ -184,12 +159,9 @@ def test_the_task_names_are_the_ones_ctc_eval_takes():
 
     shared = set(bundles.BUNDLE) & set(generators.names())
     assert {"contradiction", "nq", "outlier", "rerank", "oolong"} <= shared
-    assert {"fiqa", "scifact", "outlier_review", "contra_fever"} <= shared
+    assert {"fiqa", "scifact", "outlier_review"} <= shared
     for name in sorted(shared):
         assert bundles.BUNDLE[name].spec == generators.get(name).task, name
-        if name == "contra_fever":
-            assert generators.get(name).eval_only, name
-        else:
-            # The eval bundle's "ood" group is a GRADING convention for the 5-task mixed models;
-            # since 2026-08-20 it no longer implies the generator refuses training data.
-            assert not generators.get(name).eval_only, name
+        # The eval bundle's "ood" group is a GRADING convention for the 5-task mixed models;
+        # it does not imply the generator refuses training data.
+        assert not generators.get(name).eval_only, name

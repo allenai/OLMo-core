@@ -21,7 +21,6 @@ from ctc.tasks import load_all
 #: Ladder -> a fixture pool. Every SEEDABLE pool family appears at least once, asserted below.
 POOLS = {
     "contradiction": pools.pubmed_pool,
-    "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
     "rerank": pools.rerank_pool,
     "outlier": pools.article_pool,
@@ -42,9 +41,9 @@ def _tasks():
 def test_every_pool_family_has_a_registered_bound():
     covered = {type(POOLS[t]()).__name__ for t in POOLS}
     assert covered <= set(supply._BY_POOL), "a fixture pool family has no supply bound"
-    missing = set(supply._BY_POOL) - covered - {"RedundancyPool", "PubMedPool"}
+    missing = set(supply._BY_POOL) - covered - {"RedundancyPool", "PubMedPool", "FeverPool"}
     # PubMedPool is covered via contradiction; RedundancyPool shares its bound and only exists on
-    # the development branch's roster. OolongPool has no bound on purpose: it under-fills
+    # the development branch's roster (as are FeverPool's ladders). OolongPool has no bound on purpose: it under-fills
     # instead of failing, so there is no crash for this check to prevent.
     assert not missing, f"registered bounds with no fixture exercising them: {missing}"
 

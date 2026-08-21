@@ -35,7 +35,6 @@ from ctc.tasks import load_all
 #: without a fixture fails the coverage test below rather than silently going untested.
 POOLS = {
     "contradiction": pools.pubmed_pool,
-    "contra_fever": pools.fever_pool,
     "nq": pools.retrieval_pool,
     # 2 gold and a supply of only 8 hard negatives, both of which are corpus properties HotpotQA's
     # construction has to survive rather than fixture convenience.
@@ -149,20 +148,18 @@ def test_every_corpus_backed_generator_has_a_fixture_pool():
 def test_suite_rows_train_in_domain_and_the_mixed_family_probe_does_not():
     """
     In the 22-task suite every row trains in-domain -- one model per (task, arm), fiqa, scifact
-    and outlier_review included (suite coverage record, 2026-08-20). Only contra_fever remains
-    eval-only: it is not a suite row at all, existing solely to probe the 5-task MIXED models on
-    an unseen corpus, and training on it would destroy that one purpose.
+    and outlier_review included (suite coverage record, 2026-08-20). No ladder on this branch is
+    eval-only; contra_fever, the 5-task mixed-family OOD probe, lives on the development branch.
     """
     suite_trained = {"contradiction", "nq", "outlier", "rerank", "oolong",
                      "fiqa", "scifact", "outlier_review"}
-    assert suite_trained | {"contra_fever"} <= set(generators.names())
-    assert not any(generators.get(n).eval_only for n in suite_trained)
-    assert generators.get("contra_fever").eval_only
+    assert suite_trained <= set(generators.names())
+    assert not any(generators.get(n).eval_only for n in generators.names())
 
 
 @pytest.mark.parametrize("task", CORPUS_BACKED)
 def test_a_generator_names_a_registered_grading_spec(task):
-    """``nq`` is graded by ``retrieval`` and ``contra_fever`` by ``contradiction``; a ladder that
+    """``nq`` is graded by ``retrieval`` and ``fiqa`` by ``retrieval`` too; a ladder that
     names a spec the registry does not have would fail only at eval time."""
     assert registry.get(generators.get(task).task) is not None
 
@@ -286,18 +283,9 @@ def test_every_rung_of_the_ladder_is_buildable(task):
 # ── held-out ladders ────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("task", ["contra_fever"])
-def test_a_held_out_ladder_refuses_to_produce_training_data(task):
-    """
-    An error, not a warning. By the time a warning is noticed the checkpoint is trained and the
-    whole OOD column means nothing.
-    """
-    spec = registry.get(generators.get(task).task)
-    with pytest.raises(ValueError, match="held-out"):
-        build.build_train(task, spec, total=4, corpus=POOLS[task]())
 
 
-@pytest.mark.parametrize("task", ["fiqa", "scifact", "outlier_review", "contra_fever"])
+@pytest.mark.parametrize("task", ["fiqa", "scifact", "outlier_review"])
 def test_a_held_out_ladder_is_graded_by_an_in_distribution_spec(task):
     """
     The OOD gap is only a *source* effect if both arms are graded identically. A held-out ladder
@@ -352,37 +340,6 @@ def test_contradiction_pairs_are_consumed_in_order_and_not_reused():
         texts = frozenset(example["documents"][i - 1]["text"] for i in gold_flat(example))
         assert not (texts & seen)
         seen |= texts
-
-
-def test_contra_fever_defaults_to_the_difficulty_matched_plain_build():
-    """
-    The pre-migration generator defaulted its hard distractors ON, but every shipped FEVER file --
-    the only variant the grid has used -- was built with them off, so its difficulty matches the
-    PubMed ladder it is compared against.
-    """
-    gen = generators.get("contra_fever")
-    assert gen.defaults["hard_nei_per_pair"] == 0
-    assert gen.defaults["decoy_support_pairs"] == 0
-    assert gen.defaults["use_decoys"] is False
-    example = build_one("contra_fever", num_docs=40)
-    from ctc.data.schema import meta_of
-
-    assert meta_of(example)["variant"] == "plain"
-
-
-def test_contra_fever_hard_distractors_stay_on_topic_when_enabled():
-    """When the hard build IS asked for, its NEI distractors must come from the gold pages."""
-    pool = pools.fever_pool()
-    gen = generators.get("contra_fever")
-    example = gen.build_example(
-        random.Random(0),
-        index=0,
-        corpus=pool,
-        **gen.config(num_docs=40, num_pairs=2, hard_nei_per_pair=4),
-    )
-    texts = {d["text"] for d in example["documents"]}
-    gold_pages = [page for _, _, page in pool.pairs[:2]]
-    assert any(claim in texts for page in gold_pages for claim in pool.nei_by_page[page])
 
 
 # ── nq: the banned regime must not be the default ───────────────────────────────────────────────

@@ -64,7 +64,6 @@ REPO_ENV = "CTC_SEED_POOL_REPO"
 #: fed to the fiqa ladder would build data that grades, plausibly, as the wrong ladder.
 LADDER_TAGS: Dict[str, str] = {
     "contradiction": "pubmed",
-    "contra_fever": "fever",
     "nq": "retrieval",
     "hotpotqa": "retrieval",
     "fiqa": "retrieval",
@@ -124,32 +123,6 @@ def _decode_pubmed(payload: Dict[str, Any]) -> Any:
         pairs=tuple(pubmed.ClaimPair(**p) for p in payload["pairs"]),
         fillers={k: tuple(v) for k, v in payload["fillers"].items()},
         provenance=payload.get("provenance", {}),
-    )
-
-
-def _encode_fever(pool: Any) -> Dict[str, Any]:
-    return {
-        "pairs": [list(p) for p in pool.pairs],
-        "nei_by_page": {k: list(v) for k, v in pool.nei_by_page.items()},
-        "support_pairs_by_page": {
-            k: [list(p) for p in v] for k, v in pool.support_pairs_by_page.items()
-        },
-        "fillers": list(pool.fillers),
-        "pages": list(pool.pages),
-    }
-
-
-def _decode_fever(payload: Dict[str, Any]) -> Any:
-    from .sources import fever
-
-    return fever.FeverPool(
-        pairs=tuple((p[0], p[1], p[2]) for p in payload["pairs"]),
-        nei_by_page={k: tuple(v) for k, v in payload["nei_by_page"].items()},
-        support_pairs_by_page={
-            k: tuple((p[0], p[1]) for p in v) for k, v in payload["support_pairs_by_page"].items()
-        },
-        fillers=tuple(payload["fillers"]),
-        pages=tuple(payload["pages"]),
     )
 
 
@@ -399,7 +372,6 @@ def _decode_unit(payload: Dict[str, Any]) -> Any:
 
 _CODECS: Dict[str, Tuple[Callable[[Any], Dict[str, Any]], Callable[[Dict[str, Any]], Any]]] = {
     "pubmed": (_encode_pubmed, _decode_pubmed),
-    "fever": (_encode_fever, _decode_fever),
     "retrieval": (_encode_retrieval, _decode_retrieval),
     "article": (_encode_article, _decode_article),
     "review": (_encode_review, _decode_review),

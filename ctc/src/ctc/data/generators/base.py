@@ -61,7 +61,6 @@ GENERATORS: Dict[str, str] = {
     "fiqa": "ctc.tasks.retrieval.sources.beir:FIQA",
     "scifact": "ctc.tasks.retrieval.sources.beir:SCIFACT",
     "outlier_review": "ctc.tasks.outlier.sources.review",
-    "contra_fever": "ctc.tasks.contradiction.sources.fever",
 }
 
 
