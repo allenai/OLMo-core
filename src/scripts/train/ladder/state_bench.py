@@ -5,6 +5,20 @@ Each run trains one model variant on one StateBench training distribution
 repeating the distribution as necessary to fill the size-specific Chinchilla budget
 (Cx1 by default).
 
+Two additional sensitivity-ordering conditions train on the periodic distribution
+partitioned into :data:`STATE_BENCH_SENSITIVITY_BUCKETS` sensitivity-quantile bucket
+datasets (produced by state-bench's ``scripts/partition_train_by_sensitivity.py`` +
+``scripts/tokenize_dataset.py``). Both conditions draw the identical instances from the
+identical bucket sources and differ only in the data loader's shuffle strategy:
+
+- ``periodic-sens-shuffled``: buckets shuffled together into one uniform pool
+  (:data:`~olmo_core.data.composable.ShuffleStrategy.inter_source`).
+- ``periodic-sens-curriculum``: buckets presented in ascending-sensitivity order, shuffled
+  only within each bucket (:data:`~olmo_core.data.composable.ShuffleStrategy.intra_source`).
+
+These conditions are not part of the default ``launch`` suite; select them explicitly with
+``--distribution``.
+
 Model variants share the hybrid-small-suite 275M backbone (d_model=640, 10 layers,
 peri-norm blocks, gated attention with head QK-norm, embed scale + embedding norm) and
 differ only in their sequence mixers:
@@ -37,8 +51,10 @@ from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
     ConcatAndChunkInstanceSourceConfig,
     InstanceFilterConfig,
+    InstanceSourceConfig,
     NumpyDocumentSourceConfig,
     SamplingInstanceSourceConfig,
+    ShuffleStrategy,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
@@ -82,11 +98,30 @@ STATE_BENCH_DISTRIBUTION_TOKENS = {
     "integer-code--r-trivial": 17_176_160_694,
     "integer-code--aperiodic": 17_176_160_694,
     "integer-code--periodic": 15_431_502_989,
+    # The sensitivity conditions train on an exhaustive repartition of the periodic
+    # documents (same documents, same tokenizer), so they retain its token count.
+    "integer-code--periodic--sens-shuffled": 15_431_502_989,
+    "integer-code--periodic--sens-curriculum": 15_431_502_989,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
     "aperiodic": "integer-code--aperiodic",
     "periodic": "integer-code--periodic",
+    "periodic-sens-shuffled": "integer-code--periodic--sens-shuffled",
+    "periodic-sens-curriculum": "integer-code--periodic--sens-curriculum",
+}
+# The sensitivity conditions are a separate experiment over pre-bucketed data, so a
+# `launch` with no --distribution expands to the original three distributions only.
+STATE_BENCH_DEFAULT_SUITE = ("r-trivial", "aperiodic", "periodic")
+
+STATE_BENCH_SENSITIVITY_BUCKETS = 16
+STATE_BENCH_SENSITIVITY_BUCKET_TEMPLATE = "integer-code--periodic--sens-{:02d}"
+# Both conditions read the same bucket datasets; only the shuffle strategy differs.
+# `intra_source` shuffles within each bucket and concatenates buckets in the order they
+# are passed (ascending sensitivity), yielding the low-to-high sensitivity curriculum.
+STATE_BENCH_SENSITIVITY_CONDITIONS = {
+    "integer-code--periodic--sens-shuffled": ShuffleStrategy.inter_source,
+    "integer-code--periodic--sens-curriculum": ShuffleStrategy.intra_source,
 }
 
 MAX_WANDB_TAG_LENGTH = 64
@@ -344,6 +379,53 @@ def _state_bench_source(
     )
 
 
+def _per_bucket_max_tokens(training_tokens: int, sequence_length: int) -> int:
+    """Split the training budget evenly across sensitivity buckets.
+
+    Rounds up to a multiple of the sequence length so the buckets together always cover
+    at least ``training_tokens`` despite per-bucket instance rounding; the run then
+    finishes within a single data-loader epoch.
+    """
+    per_bucket = math.ceil(training_tokens / STATE_BENCH_SENSITIVITY_BUCKETS)
+    return sequence_length * math.ceil(per_bucket / sequence_length)
+
+
+def _sensitivity_condition_sources(
+    args: argparse.Namespace,
+    tokenizer: TokenizerConfig,
+    training_tokens: int | None = None,
+) -> list[InstanceSourceConfig]:
+    """Configure one instance source per sensitivity bucket, in ascending-sensitivity order.
+
+    With ``training_tokens``, each bucket is independently sampled down (or repeated) to an
+    equal share of the budget. The buckets hold approximately equal token mass by
+    construction (``partition_train_by_sensitivity.py`` cuts the sensitivity-sorted
+    documents at equal byte mass), so equal shares preserve the marginal sensitivity
+    distribution of the periodic training set.
+    """
+    bucket_names = [
+        STATE_BENCH_SENSITIVITY_BUCKET_TEMPLATE.format(bucket)
+        for bucket in range(STATE_BENCH_SENSITIVITY_BUCKETS)
+    ]
+    bucket_sources = [_state_bench_source(args, tokenizer, name) for name in bucket_names]
+    if training_tokens is None:
+        return list(bucket_sources)
+    max_tokens = _per_bucket_max_tokens(training_tokens, args.sequence_length)
+    return [
+        SamplingInstanceSourceConfig(sources=[source], max_tokens=max_tokens, label=name)
+        for name, source in zip(bucket_names, bucket_sources)
+    ]
+
+
+def _data_loader_config(distribution: str) -> ComposableDataLoaderConfig:
+    """Configure the data loader; the sensitivity conditions set their shuffle strategy."""
+    return ComposableDataLoaderConfig(
+        num_workers=8,
+        instance_filter_config=InstanceFilterConfig(),
+        shuffle_strategy=STATE_BENCH_SENSITIVITY_CONDITIONS.get(distribution),
+    )
+
+
 def _model_configurator(args: argparse.Namespace) -> StateBenchModelConfigurator:
     return StateBenchModelConfigurator(
         model_type=str(args.model_type),
@@ -430,7 +512,11 @@ def add_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         "--distribution",
         choices=sorted(STATE_BENCH_DISTRIBUTION_ALIASES),
         default=None,
-        help="StateBench training distribution. Omit with `launch` to launch all distributions.",
+        help=(
+            "StateBench training distribution. Omit with `launch` to launch the default suite "
+            f"({', '.join(STATE_BENCH_DEFAULT_SUITE)}); the periodic-sens-* conditions must be "
+            "selected explicitly."
+        ),
     )
     parser.add_argument(
         "--state-bench-data-root",
@@ -463,6 +549,7 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         tokenizer=tokenizer,
         device_type=get_gpu_type(args.cluster),
     )
+    is_sensitivity_condition = distribution in STATE_BENCH_SENSITIVITY_CONDITIONS
     draft_ladder = ModelLadder(
         name=args.name,
         project=args.project,
@@ -474,10 +561,10 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         run_configurator=run_configurator,
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
-        instance_sources=[_state_bench_source(args, tokenizer, distribution)],
-        data_loader=ComposableDataLoaderConfig(
-            num_workers=8, instance_filter_config=InstanceFilterConfig()
-        ),
+        instance_sources=_sensitivity_condition_sources(args, tokenizer)
+        if is_sensitivity_condition
+        else [_state_bench_source(args, tokenizer, distribution)],
+        data_loader=_data_loader_config(distribution),
     )
     global_batch_size, *_ = draft_ladder._configure_batch_size_and_num_devices(
         str(size_for_duration), model_config.num_non_embedding_params
@@ -485,6 +572,22 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
     training_tokens = run_configurator.configure_duration(
         model_config.num_non_embedding_params, global_batch_size
     ).value
+
+    if is_sensitivity_condition:
+        # Per-bucket sampling fills the Chinchilla budget while keeping every bucket its
+        # own loader source, which the shuffle strategy orders (curriculum) or pools
+        # (shuffled). A single sampling wrapper would collapse the buckets into one
+        # source and erase the ordering.
+        instance_sources = _sensitivity_condition_sources(args, tokenizer, training_tokens)
+    else:
+        # Sampling repeats the selected distribution as needed to reach the Chinchilla budget.
+        instance_sources = [
+            SamplingInstanceSourceConfig(
+                sources=[_state_bench_source(args, tokenizer, distribution)],
+                max_tokens=training_tokens,
+                label="state-bench",
+            )
+        ]
 
     return StateBenchLadder(
         name=args.name,
@@ -497,17 +600,8 @@ def configure_ladder(args: argparse.Namespace) -> ModelLadder:
         run_configurator=run_configurator,
         sequence_length=args.sequence_length,
         tokenizer=tokenizer,
-        # Sampling repeats the selected distribution as needed to reach the Chinchilla budget.
-        instance_sources=[
-            SamplingInstanceSourceConfig(
-                sources=[_state_bench_source(args, tokenizer, distribution)],
-                max_tokens=training_tokens,
-                label="state-bench",
-            )
-        ],
-        data_loader=ComposableDataLoaderConfig(
-            num_workers=8, instance_filter_config=InstanceFilterConfig()
-        ),
+        instance_sources=instance_sources,
+        data_loader=_data_loader_config(distribution),
         model_type=str(args.model_type),
         distribution=distribution,
         state_bench_tokens=STATE_BENCH_DISTRIBUTION_TOKENS[distribution],
@@ -547,9 +641,7 @@ def launch_state_bench(args: argparse.Namespace) -> None:
     prepare_cli_environment()
     model_types = [args.model_type] if args.model_type is not None else list(StateBenchModelType)
     distributions = (
-        [args.distribution]
-        if args.distribution is not None
-        else list(STATE_BENCH_DISTRIBUTION_ALIASES)
+        [args.distribution] if args.distribution is not None else list(STATE_BENCH_DEFAULT_SUITE)
     )
     suite_size = len(model_types) * len(distributions)
 
