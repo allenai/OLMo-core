@@ -17,13 +17,10 @@ books, and the filtering happens once at load time.
    instead of quietly changing the corpus.
 
 .. note::
-   **The corpus is already on disk.** ``sedthh/gutenberg_english`` (~11 GB) is cached on **horton**
-   at ``/data/prasann/hf`` (both layouts: ``datasets/sedthh___gutenberg_english`` and
-   ``hub/datasets--sedthh--gutenberg_english``) and on **cubbins** at
-   ``/data/prasann/hf_cache/hub``. Point ``HF_HOME`` at it from a job on that node rather than
-   re-downloading, and read it over the node-local disk -- ``/net/horton/...`` is the slow NFS
-   layer and an 11 GB memory-map over it will not finish. See
-   ``debug/absence_port/build_absence_horton.sh`` for the working invocation.
+   **The download is ~11 GB.** ``sedthh/gutenberg_english`` is the largest corpus any loader here
+   fetches; point ``HF_HOME`` at fast local disk (an 11 GB memory-map over network storage will
+   not finish), and prefer the published seed pool (``--pool auto``), which skips the download
+   entirely.
 
 .. warning::
    **What the long rungs need is a long unbroken RUN, not a long book, and runs that long are
@@ -359,7 +356,7 @@ def load_pool(
     """
     Load books and reduce them to runs of clean consecutive prose.
 
-    :param hf_dataset: HF dataset id. The cached copy on horton is the one to use.
+    :param hf_dataset: HF dataset id.
     :param text_column: Book-text column.
     :param id_column: Book-id column; ``None`` hashes the text instead.
     :param local_dir: Read ``*.txt`` from here instead of HF. Deterministic, and the only
