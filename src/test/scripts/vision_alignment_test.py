@@ -2562,7 +2562,7 @@ def test_production_ssmax_joint_rejects_legacy_s002_v3_gate(tmp_path):
     case.config.model_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
 
     with pytest.raises(
-        ValueError, match="Production joint requires a v5 or v6 perception parent gate"
+        ValueError, match="Production joint requires a v5, v6, or v7 perception parent gate"
     ):
         vision_alignment._validate_parent_gate(
             case.config,
@@ -2655,6 +2655,143 @@ def test_production_ssmax_joint_routes_versioned_perception_gate(
     assert observed["gate"] == gate
     assert observed["expected_checkpoint"] == parent.resolve()
     assert observed["expected_model_variant"] == "ssmax_head_qknorm"
+
+
+def _ssmax_v7_parent_gate_case(tmp_path, vision_alignment):
+    from olmo_core.eval import vision_alignment_ssmax_perception_direct as direct
+
+    parent = tmp_path / "step4000"
+    parent.mkdir()
+    (parent / ".metadata.json").write_text(json.dumps({"ephemeral": False, "version": "2.5.0"}))
+    parent_config_sha = "c" * 64
+    parent_meta = {
+        "phase": "perception",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "model_variant": "ssmax_head_qknorm",
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+    }
+    parent_config = {
+        "model_variant": "ssmax_head_qknorm",
+        "vision_alignment": parent_meta,
+    }
+    gate = {
+        "format": "vision_alignment_parent_gate",
+        "version": 7,
+        "status": "approved",
+        "recipe_version": vision_alignment.RECIPE_VERSION,
+        "formatter_version": vision_alignment.FORMATTER_VERSION,
+        "phase": "perception",
+        "model_variant": "ssmax_head_qknorm",
+        "lineage_kind": direct.LINEAGE_KIND,
+        "run_id": "ssmax-head-qknorm-direct-perception-v1",
+        "checkpoint": str(parent),
+        "checkpoint_config_sha256": parent_config_sha,
+        "checkpoint_identity_sha256": "d" * 64,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "global_step": 4000,
+        "metrics_artifact_sha256": "e" * 64,
+        "promotion_report_path": str(tmp_path / "promotion.json"),
+        "promotion_report_sha256": "e" * 64,
+        "promotion_report_content_sha256": "f" * 64,
+        "manifest_path": str(tmp_path / "manifest.json"),
+        "manifest_sha256": "0" * 64,
+        "manifest_content_sha256": "1" * 64,
+        "protocol_amendment_path": str(tmp_path / "amendment.json"),
+        "protocol_amendment_sha256": direct.AMENDMENT_SHA256,
+        "protocol_amendment_content_sha256": "2" * 64,
+        "training_git_ref": direct.TRAINING_GIT_REF,
+        "evidence_git_ref": "3" * 40,
+        "approved_by": "rustins",
+        "approved_at": "2026-08-22T04:00:00Z",
+        "waivers": [],
+    }
+    gate_path = tmp_path / "perception-parent-gate-v7.json"
+    gate_path.write_text(json.dumps(gate) + "\n")
+    config = SimpleNamespace(
+        model_variant=vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm,
+        phase=vision_alignment.VisionAlignmentPhase.joint,
+        data=SimpleNamespace(allow_unpinned_synthetic_smoke=False),
+        initialization=SimpleNamespace(
+            parent_gate_path=str(gate_path),
+            parent_gate_sha256=vision_alignment._sha256_file(gate_path),
+            expected_parent_phase=vision_alignment.VisionAlignmentPhase.perception,
+        ),
+    )
+    return SimpleNamespace(
+        config=config,
+        direct=direct,
+        gate=gate,
+        gate_path=gate_path,
+        parent=parent,
+        parent_config=parent_config,
+        parent_config_sha=parent_config_sha,
+    )
+
+
+def test_production_ssmax_joint_routes_exact_v7_direct_perception_gate(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _ssmax_v7_parent_gate_case(tmp_path, vision_alignment)
+    observed: dict[str, Any] = {}
+
+    def validate(candidate_gate, **kwargs):
+        observed["gate"] = candidate_gate
+        observed.update(kwargs)
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
+    monkeypatch.setattr(
+        case.direct,
+        "validate_ssmax_perception_direct_parent_gate",
+        validate,
+    )
+
+    assert set(case.gate) == case.direct._PARENT_GATE_FIELDS
+    assert vision_alignment._validate_parent_gate(
+        case.config,
+        str(case.parent),
+        case.parent_config,
+        case.parent_config_sha,
+    ) == vision_alignment._sha256_file(case.gate_path)
+    assert observed["gate"] == case.gate
+    assert observed["expected_checkpoint"] == case.parent.resolve()
+    assert observed["expected_checkpoint_config_sha256"] == case.parent_config_sha
+    assert observed["expected_model_variant"] == "ssmax_head_qknorm"
+    assert observed["expected_data_contract_sha256"] == "a" * 64
+    assert observed["expected_trainable_contract_sha256"] == "b" * 64
+
+
+def test_v7_direct_joint_configures_exact_three_commit_history_fetch(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v7_parent_gate_case(tmp_path, vision_alignment)
+    case.config.launch = SimpleNamespace(post_setup=None)
+
+    vision_alignment._configure_ssmax_direct_joint_git_history(case.config)
+
+    assert (
+        case.config.launch.post_setup == vision_alignment.SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP
+    )
+
+    case.config.initialization.parent_gate_sha256 = "0" * 64
+    with pytest.raises(ValueError, match="SHA mismatch"):
+        vision_alignment._configure_ssmax_direct_joint_git_history(case.config)
+
+
+def test_production_ssmax_joint_rejects_paired_arm_field_in_v7_schema(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v7_parent_gate_case(tmp_path, vision_alignment)
+    case.gate["arm"] = "treatment"
+    case.gate_path.write_text(json.dumps(case.gate) + "\n")
+    case.config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(case.gate_path)
+
+    with pytest.raises(ValueError, match="fields differ from the locked schema"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
 
 
 @pytest.mark.parametrize("version", [1, 2])

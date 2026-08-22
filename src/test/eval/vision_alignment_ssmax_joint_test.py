@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,119 @@ def test_checked_in_manifest_templates_lock_joint_trajectory(filename: str) -> N
         "data_parallel": "hsdp",
     }
     assert spec["policy"]["decision_scope"] == "descriptive_non_promotion"
+
+
+def _perception_parent_case(
+    tmp_path: Path, *, gate_version: Any
+) -> tuple[dict[str, Any], dict[str, str]]:
+    parent = tmp_path / "step4000"
+    parent.mkdir()
+    parent_config = {
+        "model_variant": "ssmax_head_qknorm",
+        "phase": "perception",
+        "perception_trainability_arm": "treatment",
+        "vision_alignment": {
+            "data_contract_sha256": "a" * 64,
+            "trainable_contract_sha256": "b" * 64,
+        },
+    }
+    config_path = parent / "config.json"
+    config_path.write_text(json.dumps(parent_config) + "\n")
+    gate_path = tmp_path / "perception-parent-gate.json"
+    gate_path.write_text(json.dumps({"version": gate_version}) + "\n")
+    return (
+        {
+            "initialization": {
+                "checkpoint": str(parent),
+                "parent_config_sha256": joint.sha256_file(config_path),
+                "parent_gate_path": str(gate_path),
+                "parent_gate_sha256": joint.sha256_file(gate_path),
+            }
+        },
+        joint.artifact_reference(gate_path),
+    )
+
+
+@pytest.mark.parametrize(
+    ("gate_version", "expected_validator"),
+    [(5, "paired"), (6, "paired"), (7, "direct")],
+)
+def test_perception_parent_dispatches_to_exact_versioned_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gate_version: int,
+    expected_validator: str,
+) -> None:
+    config_summary, gate_reference = _perception_parent_case(tmp_path, gate_version=gate_version)
+    calls: list[tuple[str, Mapping[str, Any], dict[str, Any]]] = []
+
+    def validate_paired(gate: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        calls.append(("paired", gate, kwargs))
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
+    def validate_direct(gate: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        calls.append(("direct", gate, kwargs))
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
+    monkeypatch.setattr(
+        joint.perception,
+        "validate_ssmax_perception_parent_gate",
+        validate_paired,
+    )
+    monkeypatch.setattr(
+        joint.direct_perception,
+        "validate_ssmax_perception_direct_parent_gate",
+        validate_direct,
+    )
+
+    result = joint._validate_perception_parent(
+        config_summary,
+        gate_reference=gate_reference,
+        model_variant="ssmax_head_qknorm",
+        verify_live_checkpoint=False,
+    )
+
+    assert len(calls) == 1
+    validator, gate, kwargs = calls[0]
+    assert validator == expected_validator
+    assert gate == {"version": gate_version}
+    assert kwargs == {
+        "expected_checkpoint": tmp_path / "step4000",
+        "expected_checkpoint_config_sha256": config_summary["initialization"][
+            "parent_config_sha256"
+        ],
+        "expected_model_variant": "ssmax_head_qknorm",
+        "expected_data_contract_sha256": "a" * 64,
+        "expected_trainable_contract_sha256": "b" * 64,
+        "verify_live_checkpoint": False,
+    }
+    assert result == {
+        "checkpoint": str(tmp_path / "step4000"),
+        "checkpoint_config_sha256": config_summary["initialization"]["parent_config_sha256"],
+        "checkpoint_identity_sha256": "d" * 64,
+        "data_contract_sha256": "a" * 64,
+        "trainable_contract_sha256": "b" * 64,
+        "gate": gate_reference,
+        "gate_semantic_sha256": joint.canonical_sha256({"version": gate_version}),
+    }
+
+
+@pytest.mark.parametrize("gate_version", [4, True, 7.0])
+def test_perception_parent_rejects_unsupported_or_aliased_gate_version(
+    tmp_path: Path, gate_version: Any
+) -> None:
+    config_summary, gate_reference = _perception_parent_case(tmp_path, gate_version=gate_version)
+
+    with pytest.raises(
+        joint.SSMaxJointEvidenceError,
+        match="version must be exactly integer 5, 6, or 7",
+    ):
+        joint._validate_perception_parent(
+            config_summary,
+            gate_reference=gate_reference,
+            model_variant="ssmax_head_qknorm",
+            verify_live_checkpoint=False,
+        )
 
 
 def test_spec_rejects_native_population_not_divisible_by_world() -> None:

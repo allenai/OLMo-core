@@ -1,0 +1,90 @@
+{
+  "attention_probe": "__EXACT_PERCEPTION_PROBE__",
+  "bridge_parent_gate": "__EXACT_MODEL_VARIANT_V4_BRIDGE_GATE__",
+  "checkpoint_root": "__EXACT_COMPLETED_DIRECT_PERCEPTION_ROOT__",
+  "evaluation": {
+    "bootstrap_samples": 10000,
+    "bootstrap_seed": 1006201,
+    "examples_per_source": 480,
+    "pairing_seed": 6198,
+    "rank_batch_instances": 2,
+    "sources": [
+      "audited_alignment",
+      "cosyn_point",
+      "ocr_document",
+      "pixmo_caption",
+      "pixmo_points_basic",
+      "pixmo_points_high_frequency",
+      "pixmo_transcript",
+      "scalar_count"
+    ],
+    "steps": [0, 3000, 4000],
+    "windows": ["first_1", "first_8", "first_32", "all"]
+  },
+  "evidence_git": {
+    "branch": "rustin/vision-ssmax-direct-alignment-v3",
+    "ref": "__CLEAN_EVIDENCE_COMMIT_SHA__",
+    "repo": "allenai/OLMo-core",
+    "repo_url": "https://github.com/allenai/OLMo-core"
+  },
+  "format": "vision_alignment_ssmax_perception_direct_manifest_spec",
+  "model_variant": "__ONE_OF_ssmax_head_qknorm_OR_ssmax_no_qknorm__",
+  "pairing_paths": {
+    "audited_alignment": "__NEW_PROJECTED_PAIRING_ROOT__/audited_alignment.json",
+    "cosyn_point": "__NEW_PROJECTED_PAIRING_ROOT__/cosyn_point.json",
+    "ocr_document": "__NEW_PROJECTED_PAIRING_ROOT__/ocr_document.json",
+    "pixmo_caption": "__NEW_PROJECTED_PAIRING_ROOT__/pixmo_caption.json",
+    "pixmo_points_basic": "__NEW_PROJECTED_PAIRING_ROOT__/pixmo_points_basic.json",
+    "pixmo_points_high_frequency": "__NEW_PROJECTED_PAIRING_ROOT__/pixmo_points_high_frequency.json",
+    "pixmo_transcript": "__NEW_PROJECTED_PAIRING_ROOT__/pixmo_transcript.json",
+    "scalar_count": "__NEW_PROJECTED_PAIRING_ROOT__/scalar_count.json"
+  },
+  "perception_provenance": "__EXACT_EXISTING_PERCEPTION_PROVENANCE__",
+  "policy": {
+    "baseline_step": 0,
+    "candidate_gap_improvement_lower_ci_minimum": 0.0,
+    "candidate_gap_lower_ci_minimum": 0.0,
+    "candidate_step": 4000,
+    "durability_step": 3000,
+    "loss_mass_share_tolerance": 0.02,
+    "maximum_correct_ce_fraction_of_step0": 1.02,
+    "maximum_data_errors": 0,
+    "maximum_nonfinite_gradients": 0,
+    "maximum_nonfinite_losses": 0,
+    "maximum_optimizer_guard_skips": 8,
+    "minimum_clean_final_steps": 128,
+    "minimum_clean_steps_between_skips": 128,
+    "minimum_gap_retention": 0.8,
+    "optimizer_guard": {
+      "max_grad_norm": 1.0,
+      "rolling_interval_length": 128,
+      "sigma_factor": 12,
+      "type": "skip_step_adamw"
+    },
+    "require_finite_gradient_only_skips": true,
+    "require_uninterrupted_optimizer_guard_history": true
+  },
+  "protocol_amendment": {
+    "path": "configs/vision_moe/vision_alignment/eval/ssmax_perception_single_lineage_amendment_v1.json",
+    "sha256": "a67735449d44ee52c62a3562cf0925b534f916433779203ceedaa177cd1f5364"
+  },
+  "recipe": "src/scripts/train/Vision-Alignment.py",
+  "run_id": "__UNIQUE_DIRECT_LINEAGE_ID__",
+  "run_name": "__EXACT_AUTHORIZED_TREATMENT_V2_RUN_NAME__",
+  "source_audit": "__EXACT_EXISTING_PERCEPTION_SOURCE_AUDIT__",
+  "text_sentinel": "__IMMUTABLE_NATIVE_TEXT_SENTINEL__",
+  "topology": {
+    "data_parallel": "hsdp",
+    "gpus_per_node": 8,
+    "num_nodes": 2,
+    "world_size": 16
+  },
+  "training_git": {
+    "branch": "rustin/vision-ssmax-molmofication",
+    "ref": "1826b78105858a2163cb7689b151fadefa538bbc",
+    "repo": "allenai/OLMo-core",
+    "repo_url": "https://github.com/allenai/OLMo-core"
+  },
+  "training_profile": "__EXACT_AUTHORIZED_TREATMENT_V2_PROFILE__",
+  "version": 1
+}
