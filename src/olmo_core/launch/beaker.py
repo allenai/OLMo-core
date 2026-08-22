@@ -301,11 +301,38 @@ class BeakerLaunchConfig(Config):
     preemptible: bool = True
     """
     If the job should be preemptible.
+
+    .. seealso::
+        :data:`min_runtime` and :data:`auto_resume`, which supersede this and are what
+        Beaker actually stores. Setting either of those causes ``preemptible`` to be
+        omitted from the spec.
+    """
+
+    min_runtime: str | None = None
+    """
+    Guaranteed minimum runtime before the job becomes preemptible, e.g. ``"8h"``.
+
+    This is the modern spelling of ``preemptible=False``, which Beaker normalizes to
+    ``minRuntime: 8h0m0s`` + ``autoResume: false``. Set it explicitly when you also want
+    :data:`auto_resume`, since the two must be configured together.
+    """
+
+    auto_resume: bool | None = None
+    """
+    If Beaker should automatically create a replacement job when this one is preempted,
+    resuming from wherever the training script picks up (for OLMo-core that means the
+    latest checkpoint in ``save_folder``, via ``load_strategy='if_available'``).
+
+    Long runs on a contended cluster want this: a job with only ``preemptible=False`` is
+    still preempted once its :data:`min_runtime` guarantee elapses, and without
+    ``auto_resume`` it simply stays dead.
     """
 
     retries: int | None = None
     """
     The number of times to retry the experiment if it fails.
+
+    This covers task *failure*, not preemption — use :data:`auto_resume` for the latter.
     """
 
     env_vars: list[BeakerEnvVar] = dataclasses.field(default_factory=list)
@@ -629,6 +656,13 @@ class BeakerLaunchConfig(Config):
         if command[0].endswith(".py"):
             command = ["python"] + command
 
+        # 'preemptible' is legacy sugar that Beaker expands into 'min_runtime' +
+        # 'auto_resume', so passing it alongside either is ambiguous (gantry's own CLI
+        # rejects the combination outright). When the caller sets either explicitly, let
+        # those win and drop 'preemptible' from the spec.
+        uses_explicit_preemption = self.min_runtime is not None or self.auto_resume is not None
+        preemptible = None if uses_explicit_preemption else self.preemptible
+
         recipe = GantryRecipe(
             command,
             name=self.name,
@@ -637,7 +671,9 @@ class BeakerLaunchConfig(Config):
             workspace=self.workspace,
             budget=self.budget,
             priority=self.priority,
-            preemptible=self.preemptible,
+            preemptible=preemptible,
+            min_runtime=self.min_runtime,
+            auto_resume=self.auto_resume,
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
