@@ -33,7 +33,7 @@ def _arguments(root: Path, *, stage: str = "bridge") -> list[str]:
     return values
 
 
-@pytest.mark.parametrize("stage", ["bridge", "perception", "joint"])
+@pytest.mark.parametrize("stage", ["bridge", "perception", "perception_direct", "joint"])
 def test_build_launch_config_fixes_operational_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -55,7 +55,9 @@ def test_build_launch_config_fixes_operational_contract(
     assert config.allow_dirty is False
     assert config.follow is False
     assert config.shared_filesystem is True
-    assert config.post_setup is None
+    assert config.post_setup == (
+        launcher.DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP if stage == "perception_direct" else None
+    )
     assert [secret.name for secret in config.env_secrets] == ["BEAKER_TOKEN"]
     assert config.cmd[0] == launcher._EVALUATORS[stage]
 
@@ -94,6 +96,11 @@ def test_launch_rejects_manifest_byte_drift(
             "joint",
             lambda values: ["3000" if value == "0" else value for value in values],
             "unsupported joint evidence step",
+        ),
+        (
+            "perception_direct",
+            lambda values: values + ["--arm", "treatment"],
+            "unsupported perception_direct evaluator flag",
         ),
     ],
 )

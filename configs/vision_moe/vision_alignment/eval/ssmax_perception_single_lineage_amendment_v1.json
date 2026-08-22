@@ -1,0 +1,64 @@
+{
+  "approved_by": "rustins",
+  "control_runs_required": false,
+  "cross_model_comparison": {
+    "mode": "descriptive_non_promotion",
+    "winner": null
+  },
+  "excluded_control_runs": {
+    "ssmax_head_qknorm": {
+      "checkpoint_root_created": false,
+      "experiment_id": "01M0KBV398GTYAK7VZ9FMMHS8X",
+      "status": "canceled_while_starting"
+    },
+    "ssmax_no_qknorm": {
+      "checkpoint_root_created": false,
+      "experiment_id": null,
+      "status": "not_launched"
+    }
+  },
+  "evidence_policy": {
+    "candidate_absolute_visual_gap_ci_low_must_be_positive": true,
+    "candidate_visual_gap_improvement_vs_step0_ci_low_must_be_positive": true,
+    "maximum_correct_ce_fraction_of_step0": 1.02,
+    "maximum_data_errors": 0,
+    "maximum_nonfinite_gradients": 0,
+    "maximum_nonfinite_losses": 0,
+    "maximum_optimizer_guard_skips": 8,
+    "minimum_clean_final_steps": 128,
+    "minimum_clean_steps_between_skips": 128,
+    "minimum_step4000_gap_retention_fraction_of_step3000": 0.8,
+    "require_finite_gradient_only_skips": true,
+    "require_uninterrupted_optimizer_guard_history": true,
+    "required_steps": [
+      0,
+      3000,
+      4000
+    ]
+  },
+  "excluded_claims": [
+    "causal_effect_of_unfreezing_the_vision_encoder"
+  ],
+  "format": "vision_alignment_ssmax_perception_single_lineage_amendment",
+  "model_runs": {
+    "ssmax_head_qknorm": {
+      "checkpoint_root": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/checkpoints/vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v2",
+      "profile": "configs/vision_moe/vision_alignment/perception/ssmax_head_qknorm_1p4b_cx8_treatment_v2.yaml",
+      "profile_sha256": "5baf7aa4da2cedea44d6caed0e88882474f9821071e33ae838fe188f7d7a8a51",
+      "run_name": "vision-ssmax-head-qknorm-1p4b-cx8-perception-treatment-v2"
+    },
+    "ssmax_no_qknorm": {
+      "checkpoint_root": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/checkpoints/vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v2",
+      "profile": "configs/vision_moe/vision_alignment/perception/ssmax_no_qknorm_1p4b_cx8_treatment_v2.yaml",
+      "profile_sha256": "834545f9352a56d539f3d377f915f58c2aca78a89965f7913164461e9551b9f0",
+      "run_name": "vision-ssmax-no-qknorm-1p4b-cx8-perception-treatment-v2"
+    }
+  },
+  "recorded_at": "2026-08-22T01:53:30Z",
+  "scope": "two_direct_bridge_perception_joint_lineages",
+  "training_git": {
+    "branch": "rustin/vision-ssmax-molmofication",
+    "ref": "1826b78105858a2163cb7689b151fadefa538bbc"
+  },
+  "version": 1
+}

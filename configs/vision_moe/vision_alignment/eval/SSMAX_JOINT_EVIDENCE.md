@@ -1,15 +1,20 @@
 # Descriptive SSMax joint evidence
 
 This protocol starts only after one exact treatment checkpoint for each SSMax lineage has an
-explicitly approved perception gate. Historical perception-v1 evidence produces v5 gates;
-prospective perception-v2 evidence produces v6 gates. The gate validator reopens the referenced
-report and manifest, so a v5 gate cannot authorize a v2 candidate. This protocol stops at the end
-of joint alignment; it neither selects nor starts a mid-training recipe. The historical s002 joint
-receipts remain historical evidence and are not accepted by these model-variant-aware tools.
+explicitly approved perception gate. Historical paired perception-v1 and perception-v2 evidence
+produce v5 and v6 gates. The direct, no-control perception protocol produces a v7 gate bound to its
+single lineage, authorizing amendment, training Git ref, and evidence Git ref. Validation dispatches
+by the exact gate version and reopens that version's referenced report and manifest; no version can
+authorize another protocol's candidate. This protocol stops at the end of joint alignment; it
+neither selects nor starts a mid-training recipe. The historical s002 joint receipts remain
+historical evidence and are not accepted by these model-variant-aware tools.
 
-The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. Fill
-one copy per approved lineage only after its reviewed joint profile, version-matched gate, projection, source
-audit, pairings, and output root exist. Do not replace a missing artifact with a placeholder path.
+The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. For
+the current direct program, fill one copy per lineage only after its v7 gate and reviewed joint
+profile exist, together with the projection, source audit, pairings, and output root. Do not replace
+a missing artifact with a placeholder path. Historical v5/v6 gates remain accepted only through
+their original paired validators.
+
 Each finalized manifest binds all bytes of permanent steps 0, 4,000, 8,000, 12,000, and 16,000,
 the clean recipe/profile/git identity, the approved perception candidate, the fixed eight-source
 matched/wrong population, a 992-row manifest-order native holdout prefix, and the fixed 32-row

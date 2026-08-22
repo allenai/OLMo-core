@@ -29,6 +29,7 @@ BEAKER_CLUSTER = "ai2/holmes"
 MIN_RUNTIME = "8h"
 NUM_NODES = 2
 GPUS_PER_NODE = 8
+DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 2 origin "$GIT_REF"'
 EVIDENCE_ROOT = Path(
     "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/"
     "vision-alignment/evidence"
@@ -39,6 +40,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _EVALUATORS: Mapping[str, str] = {
     "bridge": "src/scripts/eval/vision_alignment_ssmax_bridge.py",
     "perception": "src/scripts/eval/vision_alignment_ssmax_perception.py",
+    "perception_direct": "src/scripts/eval/vision_alignment_ssmax_perception_direct.py",
     "joint": "src/scripts/eval/vision_alignment_ssmax_joint.py",
 }
 _COMMON_FLAGS = frozenset(
@@ -58,16 +60,19 @@ _REQUIRED_FLAGS = frozenset(
 _STAGE_FLAGS = {
     "bridge": _COMMON_FLAGS,
     "perception": _COMMON_FLAGS | {"--arm"},
+    "perception_direct": _COMMON_FLAGS,
     "joint": _COMMON_FLAGS,
 }
 _STAGE_REQUIRED_FLAGS = {
     "bridge": _REQUIRED_FLAGS,
     "perception": _REQUIRED_FLAGS | {"--arm"},
+    "perception_direct": _REQUIRED_FLAGS,
     "joint": _REQUIRED_FLAGS,
 }
 _STEPS = {
     "bridge": frozenset({0, 100, 200, 250, 300, 400, 500}),
     "perception": frozenset({0, 3000, 4000}),
+    "perception_direct": frozenset({0, 3000, 4000}),
     "joint": frozenset({0, 4000, 8000, 12000, 16000}),
 }
 
@@ -198,6 +203,9 @@ def build_launch_config(
         priority="urgent",
         preemptible=True,
         min_runtime=MIN_RUNTIME,
+        post_setup=(
+            DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP if stage == "perception_direct" else None
+        ),
         allow_dirty=False,
         follow=False,
         slack_notifications=False,

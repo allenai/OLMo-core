@@ -275,6 +275,7 @@ BEAKER_CLUSTER = "ai2/holmes"
 BEAKER_WORKSPACE = "ai2/molmofication"
 SSMAX_BEAKER_WORKSPACE = "ai2/scaling-ladders"
 BEAKER_BUDGET = "ai2/oe-other"
+SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 3 origin "$GIT_REF"'
 WANDB_PROJECT: Optional[str] = "vision-alignment"
 SSMAX_WANDB_PROJECT: Optional[str] = "vision-ssmax-molmofication"
 WANDB_ENTITY: Optional[str] = None
@@ -1322,6 +1323,43 @@ def _configure_launch_runtime(
     )
 
 
+def _ssmax_joint_parent_gate_version(config: ExperimentConfig) -> Optional[int]:
+    """Read the pinned SSMax joint parent-gate version used to configure launch history."""
+
+    if config.phase is not VisionAlignmentPhase.joint or not _is_ssmax_variant(
+        config.model_variant
+    ):
+        return None
+    path_value = config.initialization.parent_gate_path
+    expected_sha256 = config.initialization.parent_gate_sha256
+    if path_value is None or expected_sha256 is None:
+        return None
+    gate_path = Path(path_value).expanduser().resolve()
+    try:
+        raw = gate_path.read_bytes()
+        gate = json.loads(
+            raw,
+            object_pairs_hook=_strict_json_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant {value}")
+            ),
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"Invalid parent-quality gate {gate_path}: {error}") from error
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError("Parent-quality gate SHA mismatch while configuring Git history")
+    if not isinstance(gate, Mapping) or type(gate.get("version")) is not int:
+        raise ValueError("Parent-quality gate version is not a canonical integer")
+    return gate["version"]
+
+
+def _configure_ssmax_direct_joint_git_history(config: ExperimentConfig) -> None:
+    """Materialize the exact training/evidence ancestry needed by a v7 joint consumer."""
+
+    if _ssmax_joint_parent_gate_version(config) == 7:
+        config.launch.post_setup = SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP
+
+
 def _is_secretless_ssmax_smoke_request(
     *,
     model_variant: VisionAlignmentModelVariant,
@@ -1964,6 +2002,40 @@ def _validate_parent_gate(
     # assigning a new version so the referenced v2 manifest/report cannot be confused with
     # historical zero-skip evidence.
     version_6_fields = version_5_fields
+    # The direct single-lineage protocol has a distinct, transitively bound approval payload.
+    # It intentionally has no paired-arm field and cannot be confused with a v5/v6 gate.
+    version_7_fields = {
+        "format",
+        "version",
+        "status",
+        "recipe_version",
+        "formatter_version",
+        "phase",
+        "model_variant",
+        "lineage_kind",
+        "run_id",
+        "checkpoint",
+        "checkpoint_config_sha256",
+        "checkpoint_identity_sha256",
+        "data_contract_sha256",
+        "trainable_contract_sha256",
+        "global_step",
+        "metrics_artifact_sha256",
+        "promotion_report_path",
+        "promotion_report_sha256",
+        "promotion_report_content_sha256",
+        "manifest_path",
+        "manifest_sha256",
+        "manifest_content_sha256",
+        "protocol_amendment_path",
+        "protocol_amendment_sha256",
+        "protocol_amendment_content_sha256",
+        "training_git_ref",
+        "evidence_git_ref",
+        "approved_by",
+        "approved_at",
+        "waivers",
+    }
     gate_schemas = {
         1: version_1_fields,
         2: version_2_fields,
@@ -1971,11 +2043,14 @@ def _validate_parent_gate(
         4: version_4_fields,
         5: version_5_fields,
         6: version_6_fields,
+        7: version_7_fields,
     }
     gate_version = gate.get("version")
     allowed_fields = gate_schemas.get(gate_version) if type(gate_version) is int else None
     if allowed_fields is None:
-        raise ValueError("Parent-quality gate version must be exactly integer 1, 2, 3, 4, 5, or 6")
+        raise ValueError(
+            "Parent-quality gate version must be exactly integer 1, 2, 3, 4, 5, 6, or 7"
+        )
     if set(gate) != allowed_fields:
         raise ValueError(
             "Parent-quality gate fields differ from the locked schema: "
@@ -1985,7 +2060,7 @@ def _validate_parent_gate(
     parent_meta = parent_config.get("vision_alignment")
     expected_parent_phase = config.initialization.expected_parent_phase
     assert isinstance(parent_meta, Mapping)
-    if gate_version in (3, 4, 5, 6):
+    if gate_version in (3, 4, 5, 6, 7):
         expected_recipe_version = parent_meta.get("recipe_version")
         expected_formatter_version = parent_meta.get("formatter_version")
         if type(expected_recipe_version) is not int or not isinstance(
@@ -2051,12 +2126,18 @@ def _validate_parent_gate(
         or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
         raise ValueError("A v5/v6 SSMax perception parent gate may only authorize SSMax joint")
-    expected_joint_gates = {5, 6} if _is_ssmax_variant(model_variant) else {3}
+    if gate_version == 7 and (
+        getattr(config, "phase", None) is not VisionAlignmentPhase.joint
+        or not _is_ssmax_variant(model_variant)
+        or expected_parent_phase is not VisionAlignmentPhase.perception
+    ):
+        raise ValueError("A v7 direct SSMax perception parent gate may only authorize SSMax joint")
+    expected_joint_gates = {5, 6, 7} if _is_ssmax_variant(model_variant) else {3}
     if production_joint and (
         gate_version not in expected_joint_gates
         or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
-        expected_joint_gate_text = "v5 or v6" if _is_ssmax_variant(model_variant) else "v3"
+        expected_joint_gate_text = "v5, v6, or v7" if _is_ssmax_variant(model_variant) else "v3"
         raise ValueError(
             f"Production joint requires a {expected_joint_gate_text} perception parent gate and "
             "perception parent phase"
@@ -2236,6 +2317,26 @@ def _validate_parent_gate(
             )
         except ssmax_perception.SSMaxPerceptionEvidenceError as error:
             raise ValueError(f"SSMax perception parent gate failed validation: {error}") from error
+    elif gate_version == 7:
+        from olmo_core.eval import (
+            vision_alignment_ssmax_perception_direct as ssmax_perception_direct,
+        )
+
+        try:
+            ssmax_perception_direct.validate_ssmax_perception_direct_parent_gate(
+                gate,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+                expected_model_variant=model_variant.value,
+                expected_data_contract_sha256=str(parent_meta.get("data_contract_sha256")),
+                expected_trainable_contract_sha256=str(
+                    parent_meta.get("trainable_contract_sha256")
+                ),
+            )
+        except ssmax_perception_direct.SSMaxPerceptionDirectEvidenceError as error:
+            raise ValueError(
+                f"SSMax direct perception parent gate failed validation: {error}"
+            ) from error
     marker_path = Path(parent) / ".metadata.json"
     try:
         marker = json.loads(marker_path.read_bytes(), object_pairs_hook=_strict_json_object)
@@ -5202,8 +5303,15 @@ def _validate_phase_contract(
         raise ValueError("Vision alignment requires the pinned runtime image")
     if config.model_variant is VisionAlignmentModelVariant.s002 and not config.launch.post_setup:
         raise ValueError("s002 vision alignment requires its OLMoDDP runtime setup hook")
-    if _is_ssmax_variant(config.model_variant) and config.launch.post_setup is not None:
-        raise ValueError("Dense SSMax alignment must not build the unused OLMoDDP EP extension")
+    expected_ssmax_post_setup = (
+        SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP
+        if _ssmax_joint_parent_gate_version(config) == 7
+        else None
+    )
+    if _is_ssmax_variant(config.model_variant) and (
+        config.launch.post_setup != expected_ssmax_post_setup
+    ):
+        raise ValueError("Dense SSMax launch Git-history setup differs from its parent protocol")
 
     if config.initialization.mode is not policy.initialization_mode:
         raise ValueError(
@@ -5594,6 +5702,7 @@ def build_config(
         reviewed_profile_allowlist_path=reviewed_profile_allowlist_path,
         reviewed_profile_allowlist_sha256=reviewed_profile_allowlist_sha256,
     ).merge(overrides)
+    _configure_ssmax_direct_joint_git_history(config)
     _pin_launch_git_branch(config)
     _configure_synthetic_smoke_observability(config)
     if (
