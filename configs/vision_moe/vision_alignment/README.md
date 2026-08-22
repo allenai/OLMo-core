@@ -323,9 +323,8 @@ bound, deliver caption/transcript loss mass within two percentage points of 70/3
 every frozen LM/vision tensor and non-image embedding row exactly. Do not use transcript
 `first_1` as a gate because its generic opening token is not expected to identify image content.
 
-The perception and joint directories contain the completed, lineage-specific s002 profiles.
-They do not yet contain SSMax launch profiles: those are created only after the matching bridge
-v4 gate (for perception) or version-matched perception v5/v6 gate (for joint) is explicitly
-approved. The SSMax
-defaults therefore fail closed rather than borrowing an s002 checkpoint, waiver, or evidence
+The perception directory contains the reviewed SSMax direct-treatment profiles. The joint
+directory does not yet contain concrete SSMax launch profiles: those are created only after an
+exact version-matched perception gate (paired v5/v6 or direct v7) is explicitly approved. The
+SSMax defaults therefore fail closed rather than borrowing an s002 checkpoint, waiver, or evidence
 bundle.

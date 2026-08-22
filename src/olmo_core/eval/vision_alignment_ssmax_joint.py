@@ -33,6 +33,7 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
 )
 from olmo_core.eval import vision_alignment_ssmax_bridge as bridge
 from olmo_core.eval import vision_alignment_ssmax_perception as perception
+from olmo_core.eval import vision_alignment_ssmax_perception_direct as direct_perception
 from olmo_core.eval.matched_wrong_image import (
     matched_wrong_image_pairing_sha256,
     validate_matched_wrong_image_pairing,
@@ -55,7 +56,10 @@ PAIR_COMPARISON_FORMAT = "vision_alignment_ssmax_joint_pair_comparison"
 SCHEMA_VERSION = 1
 LEGACY_PARENT_GATE_VERSION = 5
 PARENT_GATE_VERSION = 6
-SUPPORTED_PARENT_GATE_VERSIONS = frozenset({LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION})
+DIRECT_PARENT_GATE_VERSION = direct_perception.PARENT_GATE_VERSION
+SUPPORTED_PARENT_GATE_VERSIONS = frozenset(
+    {LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION, DIRECT_PARENT_GATE_VERSION}
+)
 
 REQUIRED_STEPS = (0, 4000, 8000, 12000, 16000)
 VISUAL_SOURCES = tuple(JOINT_VISUAL_SOURCE_NAMES)
@@ -793,22 +797,39 @@ def _validate_perception_parent(
     ):
         raise SSMaxJointEvidenceError("joint parent is not the selected perception treatment")
     gate = _mapping(load_json(gate_path), name="perception parent gate")
-    try:
-        result = perception.validate_ssmax_perception_parent_gate(
-            gate,
-            expected_checkpoint=parent,
-            expected_checkpoint_config_sha256=expected_config_sha,
-            expected_model_variant=model_variant,
-            expected_data_contract_sha256=str(parent_metadata.get("data_contract_sha256")),
-            expected_trainable_contract_sha256=str(
-                parent_metadata.get("trainable_contract_sha256")
-            ),
-            verify_live_checkpoint=verify_live_checkpoint,
-        )
-    except perception.SSMaxPerceptionEvidenceError as error:
+    gate_version = gate.get("version")
+    if type(gate_version) is not int or gate_version not in SUPPORTED_PARENT_GATE_VERSIONS:
         raise SSMaxJointEvidenceError(
-            f"versioned perception parent gate failed: {error}"
-        ) from error
+            "perception parent gate version must be exactly integer 5, 6, or 7"
+        )
+    validator_kwargs: dict[str, Any] = {
+        "expected_checkpoint": parent,
+        "expected_checkpoint_config_sha256": expected_config_sha,
+        "expected_model_variant": model_variant,
+        "expected_data_contract_sha256": str(parent_metadata.get("data_contract_sha256")),
+        "expected_trainable_contract_sha256": str(parent_metadata.get("trainable_contract_sha256")),
+        "verify_live_checkpoint": verify_live_checkpoint,
+    }
+    if gate_version in (LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION):
+        try:
+            result = perception.validate_ssmax_perception_parent_gate(
+                gate,
+                **validator_kwargs,
+            )
+        except perception.SSMaxPerceptionEvidenceError as error:
+            raise SSMaxJointEvidenceError(
+                f"paired perception parent gate failed: {error}"
+            ) from error
+    else:
+        try:
+            result = direct_perception.validate_ssmax_perception_direct_parent_gate(
+                gate,
+                **validator_kwargs,
+            )
+        except direct_perception.SSMaxPerceptionDirectEvidenceError as error:
+            raise SSMaxJointEvidenceError(
+                f"direct perception parent gate failed: {error}"
+            ) from error
     candidate = _mapping(result.get("candidate"), name="perception candidate")
     return {
         "checkpoint": str(parent),
