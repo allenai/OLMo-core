@@ -25,7 +25,8 @@ from olmo_core.config import Config
 
 from .grounding import normalize_points, pointing_answer
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import example_rng, build_branched_sequence
+from .sequence_builder import build_branched_sequence, example_rng
+from .sft_common import encode_corpus_text
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -67,9 +68,7 @@ def _build_example(
         rng.shuffle(order)
         branches_text = [branches_text[i] for i in order]
 
-    preprocess_rng = (
-        shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
-    )
+    preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
         pil_image,
         dtype=torch.float32,
@@ -84,11 +83,13 @@ def _build_example(
     branches = [
         (
             branch_context_ids(tokenizer, q, branch_index=i, multi_branch=multi_branch),
-            tokenizer.encode(a, add_special_tokens=False),
+            encode_corpus_text(tokenizer, a),
         )
         for i, (q, a) in enumerate(branches_text)
     ]
-    from olmo_core.data.multimodal.message_weight import apply_message_weight_to_loss_masks
+    from olmo_core.data.multimodal.message_weight import (
+        apply_message_weight_to_loss_masks,
+    )
 
     seq = build_branched_sequence(
         prefix,
@@ -153,7 +154,9 @@ class PixMoPointsDataset:
         )
         from datasets import concatenate_datasets
 
-        self._data = concatenate_datasets([_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub])
+        self._data = concatenate_datasets(
+            [_load_split(f"{PIXMO_DATASETS}/{s}", "train") for s in sub]
+        )
         # Pre-split each row's labels into sub-batches with <= max_total_points (mm_olmo).
         self._index = self._build_sub_index()
 

@@ -30,12 +30,49 @@ LOW_RES_IM_START_ID = 151940  # <low_res_im_start>
 IM_END_ID = 151937  # <im_end>
 IMAGE_PLACEHOLDER_ID = 151941  # <|image|>
 
+IM_LOW_ID = 151942  # <im_low>
+FRAME_START_ID = 151943  # <frame_start>
+FRAME_END_ID = 151944  # <frame_end>
+VIDEO_PLACEHOLDER_ID = 151945  # <|video|>
+
 # Image structural tokens that attend bidirectionally in HF Molmo2 (token_type_ids==1).
 # Matches the processor's IMAGE_TOKENS set for the image (non-video) path.
 IMAGE_TOKEN_IDS = frozenset({IM_PATCH_ID, IM_COL_ID, IM_START_ID, LOW_RES_IM_START_ID, IM_END_ID})
 
+# Size of the LM head's output layer (``MultimodalLMConfig.lm.vocab_size``).
+LM_VOCAB_SIZE = 151936
+
+# The Molmo2 tokenizer is *larger* than the LM head: ``len(tokenizer) == 151946`` but the
+# head only predicts ``LM_VOCAB_SIZE == 151936`` classes. These ten image/video control
+# tokens occupy the gap. They are legitimate in ``input_ids`` (the embedding table covers
+# them) but can never be a *supervised* label: ``F.cross_entropy`` range-checks every
+# target it is given and aborts the CUDA context with
+# ``Assertion 'cur_target >= 0 && cur_target < n_classes' failed``.
+#
+# Normally they are harmless because ``response_logits_only`` keeps only positions with
+# ``loss_masks > 0``, and image tokens always carry weight 0. The danger is corpus *text*
+# that literally contains one of these strings: ``tokenizer.encode`` parses it as the
+# control token, and inside a supervised response that lands an out-of-range id in the
+# labels. Encode untrusted corpus text with ``split_special_tokens=True`` to prevent it.
+NON_LM_TOKEN_IDS = frozenset(
+    {
+        IM_START_ID,
+        IM_END_ID,
+        IM_PATCH_ID,
+        IM_COL_ID,
+        LOW_RES_IM_START_ID,
+        IMAGE_PLACEHOLDER_ID,
+        IM_LOW_ID,
+        FRAME_START_ID,
+        FRAME_END_ID,
+        VIDEO_PLACEHOLDER_ID,
+    }
+)
+
 DEFAULT_MODEL_ID = "allenai/Molmo2-4B"
-EOS_TOKEN_ID = 151643  # <|endoftext|> — the PAD token; Molmo2's real eos_token is <|im_end|> (151645)
+EOS_TOKEN_ID = (
+    151643  # <|endoftext|> — the PAD token; Molmo2's real eos_token is <|im_end|> (151645)
+)
 IM_END_TURN_ID = 151645  # Qwen2.5 <|im_end|> (chat end-of-turn)
 
 

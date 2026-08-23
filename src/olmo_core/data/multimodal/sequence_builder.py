@@ -23,12 +23,89 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-from olmo_core.nn.vision.molmo2_tokens import IMAGE_TOKEN_IDS
+from olmo_core.nn.vision.molmo2_tokens import IMAGE_TOKEN_IDS, NON_LM_TOKEN_IDS
 
 # Subsegment id of the shared prefix. Larger than any branch id so that, under the
 # ``subseg[q] <= subseg[k]`` rule, prefix tokens only attend to other prefix tokens
 # while every branch attends the prefix. Matches mm_olmo's ``ATTEND_ALL_SUBSEGMENT_ID``.
 ATTEND_ALL_SUBSEGMENT_ID = 10000
+
+
+class OutOfRangeLabelError(ValueError):
+    """A built example would supervise a token the LM head cannot predict.
+
+    Raised by :func:`check_supervised_labels`. Catching this in a dataset's
+    ``__getitem__`` and skipping the row is reasonable; letting it propagate is better
+    than the alternative, which is a CUDA device-side assert that kills every rank.
+    """
+
+
+def check_supervised_labels(
+    input_ids: np.ndarray,
+    labels: np.ndarray,
+    loss_masks: np.ndarray,
+    *,
+    source: str = "<unknown>",
+    image_token_ids: frozenset = IMAGE_TOKEN_IDS,
+) -> None:
+    """Fail fast if an example would feed the loss a target outside the LM head's vocab.
+
+    ``labels`` are shifted ``input_ids``, so the image/video control tokens in
+    :data:`~olmo_core.nn.vision.molmo2_tokens.NON_LM_TOKEN_IDS` are always *present* in
+    the label array. That is fine: ``response_logits_only`` drops every position whose
+    ``loss_masks`` is 0, and real image tokens always carry weight 0. What is not fine is
+    such an id at a **supervised** position — ``F.cross_entropy`` range-checks every
+    target it receives and aborts the CUDA context with
+    ``Assertion 'cur_target >= 0 && cur_target < n_classes' failed``, taking down all
+    ranks with a traceback that names neither the source nor the row.
+
+    That happens when corpus text literally contains a special-token string (e.g. an
+    OmniScience caption describing "``<im_start>`` and ``<im_end>`` tags"). Encoding
+    untrusted text via :func:`~olmo_core.data.multimodal.sft_common.encode_corpus_text`
+    prevents it; this check is the backstop that turns the residual case into an
+    actionable Python error at data-build time.
+
+    Also flags control tokens that reach ``input_ids`` through text rather than through
+    the image block: ``token_type_ids`` is computed by membership in ``image_token_ids``,
+    so a stray one silently marks a text position as an image patch and misaligns the
+    vision embeddings.
+
+    :param input_ids: The example's token ids.
+    :param labels: Next-token-aligned labels (shifted ``input_ids``).
+    :param loss_masks: Per-token float weights aligned with ``labels``.
+    :param source: Dataset name used in the error message.
+    :param image_token_ids: Ids that legitimately appear as part of an image block.
+
+    :raises OutOfRangeLabelError: If a supervised label is a non-LM control token.
+    """
+    bad = np.fromiter(NON_LM_TOKEN_IDS, dtype=np.int64)
+    supervised = np.asarray(loss_masks) > 0
+    offenders = np.isin(labels, bad) & supervised
+    if offenders.any():
+        idx = int(np.flatnonzero(offenders)[0])
+        raise OutOfRangeLabelError(
+            f"{source}: supervised label at position {idx} is token id {int(labels[idx])}, "
+            f"which is outside the LM head's vocab (see NON_LM_TOKEN_IDS). This usually "
+            f"means the row's text literally contains a special-token string such as "
+            f"'<im_start>'; encode corpus text with encode_corpus_text() so it is "
+            f"tokenized as plain text. Offending supervised positions: "
+            f"{int(offenders.sum())}."
+        )
+
+    # Control tokens in the *input* that are not part of an image block corrupt
+    # token_type_ids even though they never reach the loss.
+    stray = np.isin(input_ids, bad) & ~np.isin(
+        input_ids, np.fromiter(image_token_ids, dtype=np.int64)
+    )
+    if stray.any():
+        idx = int(np.flatnonzero(stray)[0])
+        raise OutOfRangeLabelError(
+            f"{source}: input_ids position {idx} holds control token "
+            f"{int(input_ids[idx])} outside the image block, which would be miscounted "
+            f"as an image patch by token_type_ids. Encode corpus text with "
+            f"encode_corpus_text()."
+        )
+
 
 LOSS_TOKEN_WEIGHTINGS = ("none", "root_subsegments", "root_subsegments_root_tokens")
 
@@ -181,6 +258,8 @@ def build_packed_sequence(
         np.int64
     )
 
+    check_supervised_labels(input_ids, labels, loss_mask_shifted, image_token_ids=image_token_ids)
+
     out: Dict[str, np.ndarray] = {
         "input_ids": input_ids,
         "labels": labels,
@@ -240,11 +319,7 @@ def build_branched_sequence(
 
     def _as_segments(branch):
         """Normalize a branch to a list of (context, response) turn segments."""
-        if (
-            len(branch) == 2
-            and len(branch[0]) > 0
-            and isinstance(branch[0][0], (int, np.integer))
-        ):
+        if len(branch) == 2 and len(branch[0]) > 0 and isinstance(branch[0][0], (int, np.integer)):
             return [branch]
         return list(branch)
 
@@ -327,6 +402,9 @@ def build_branched_sequence(
     token_type_ids = np.isin(input_ids, np.fromiter(image_token_ids, dtype=np.int64)).astype(
         np.int64
     )
+
+    check_supervised_labels(input_ids, labels, loss_mask_shifted, image_token_ids=image_token_ids)
+
     out: Dict[str, np.ndarray] = {
         "input_ids": input_ids,
         "labels": labels,

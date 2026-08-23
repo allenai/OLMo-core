@@ -20,6 +20,7 @@ from olmo_core.config import Config
 from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
 
 from .paths import TULU4_DATA
+from .sft_common import encode_corpus_text
 
 __all__ = ["Tulu4DatasetConfig", "Tulu4Dataset"]
 
@@ -139,7 +140,7 @@ class Tulu4Dataset:
                 ctx = user_turn_ids(tok, u)
             else:
                 ctx = followup_turn_context_ids(tok, u)
-            segments.append((ctx, tok.encode(a, add_special_tokens=False)))
+            segments.append((ctx, encode_corpus_text(tok, a)))
 
         seq = build_branched_sequence(
             [],  # no shared prefix and no BOS (qwen3)

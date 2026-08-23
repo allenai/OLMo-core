@@ -229,7 +229,15 @@ class _FakeTokenizer:
         content = messages[0]["content"]
         return f"<|im_start|>user\n{content}<|im_end|>\n<|im_start|>assistant\n"
 
-    def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
+    def encode(
+        self,
+        text: str,
+        add_special_tokens: bool = True,
+        split_special_tokens: bool = False,
+    ) -> List[int]:
+        # This fake has no special tokens at all, so `split_special_tokens` is accepted
+        # (real tokenizers take it, and `encode_corpus_text` always passes it) but has
+        # nothing to do here.
         return [(zlib.crc32(w.encode()) % 10000) + 100 for w in text.split()]
 
 

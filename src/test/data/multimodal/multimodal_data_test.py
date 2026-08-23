@@ -376,7 +376,7 @@ class _FakeTok:
             text += "<|im_start|>assistant\n"
         return text
 
-    def encode(self, text, add_special_tokens=False):
+    def encode(self, text, add_special_tokens=False, split_special_tokens=False):
         return [(ord(c) % 90) + 10 for c in text]
 
 

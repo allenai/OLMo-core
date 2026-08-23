@@ -15,7 +15,7 @@ class _FakeTokenizer:
     def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False):
         return f"user:{messages[0]['content']}\nassistant:"
 
-    def encode(self, text, add_special_tokens=False):
+    def encode(self, text, add_special_tokens=False, split_special_tokens=False):
         return [ord(c) % 1000 for c in text[:32]]
 
 

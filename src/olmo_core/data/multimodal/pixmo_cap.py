@@ -29,7 +29,8 @@ import numpy as np
 from olmo_core.config import Config
 
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import example_rng, build_branched_sequence
+from .sequence_builder import build_branched_sequence, example_rng
+from .sft_common import encode_corpus_text
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
 
@@ -259,7 +260,7 @@ class PixMoCapDataset:
                     prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
                 else:
                     prompt = base_prompt
-            response_ids = self.tokenizer.encode(text, add_special_tokens=False)
+            response_ids = encode_corpus_text(self.tokenizer, text)
             branch_specs.append((prompt, response_ids))
 
         multi_branch = len(branch_specs) > 1

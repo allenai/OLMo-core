@@ -39,9 +39,39 @@ __all__ = [
     "strip_image_placeholders",
     "count_image_placeholders",
     "decode_pil_image",
+    "encode_corpus_text",
     "truncate_example",
     "get_example_with_skip",
 ]
+
+
+def encode_corpus_text(tokenizer, text: str) -> List[int]:
+    """Tokenize *untrusted* corpus text, never emitting special/control token ids.
+
+    Use this for any string that came out of a dataset — an answer, a caption, a
+    question — as opposed to framework-authored template strings such as the qwen3
+    ``<|im_start|>user`` scaffolding, which must keep their special-token meaning and
+    should go through :func:`~olmo_core.data.multimodal.qwen3_layout.user_turn_ids`.
+
+    ``add_special_tokens=False`` alone is **not** enough: it only suppresses the
+    tokenizer's *automatically added* BOS/EOS, and still parses any special-token string
+    appearing in the text into that token's id. A caption reading "...uses ``<im_start>``
+    and ``<im_end>`` tags..." therefore encodes to ids 151936/151937, which exceed the LM
+    head's :data:`~olmo_core.nn.vision.molmo2_tokens.LM_VOCAB_SIZE` and abort the CUDA
+    context with ``Assertion 'cur_target >= 0 && cur_target < n_classes' failed`` once the
+    id lands in a supervised label. ``split_special_tokens=True`` encodes the run as
+    ordinary text instead, which is what a corpus author meant by it anyway.
+
+    This is a no-op for text that contains no special-token strings: every other string
+    tokenizes to byte-identical ids, so mm_olmo text parity is unaffected.
+
+    :param tokenizer: A HuggingFace tokenizer.
+    :param text: Text taken verbatim from a dataset row.
+
+    :returns: Token ids, none of which are special/control tokens.
+    """
+    return tokenizer.encode(text, add_special_tokens=False, split_special_tokens=True)
+
 
 log = logging.getLogger(__name__)
 
