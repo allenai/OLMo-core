@@ -95,13 +95,13 @@ STATE_BENCH_DATA_ROOT = (
     "state-tracking-long-context-v1/rendered-tokenized/tokens"
 )
 STATE_BENCH_DISTRIBUTION_TOKENS = {
-    "integer-code--r-trivial": 17_176_160_694,
-    "integer-code--aperiodic": 17_176_160_694,
-    "integer-code--periodic": 15_431_502_989,
+    "integer-code--r-trivial": 35_320_069_248,
+    "integer-code--aperiodic": 35_320_069_248,
+    "integer-code--periodic": 30_842_931_386,
     # The sensitivity conditions train on an exhaustive repartition of the periodic
     # documents (same documents, same tokenizer), so they retain its token count.
-    "integer-code--periodic--sens-shuffled": 15_431_502_989,
-    "integer-code--periodic--sens-curriculum": 15_431_502_989,
+    "integer-code--periodic--sens-shuffled": 30_842_931_386,
+    "integer-code--periodic--sens-curriculum": 30_842_931_386,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
