@@ -12,7 +12,10 @@ gated-attention/peri-norm/embed-scale backbone is not expressible as ``Olmo2Conf
 ``Olmo3Config``), so validating and loading the converted checkpoints requires a
 ``transformers`` build that provides that architecture, e.g.::
 
-    pip install 'transformers @ git+https://github.com/yashassamaga/transformers.git@olmo-3.5-hybrid'
+    pip install 'transformers @ git+https://github.com/jopetty/transformers.git@olmo-3.5-hybrid-state-bench'
+
+(This branch extends yashassamaga/transformers@olmo-3.5-hybrid with support for the
+homogeneous layer_types the pure-transformer and pure-GDN StateBench variants need.)
 
 Typical usage, on a weka-mounted GPU machine::
 
