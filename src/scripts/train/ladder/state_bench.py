@@ -124,6 +124,13 @@ STATE_BENCH_SENSITIVITY_CONDITIONS = {
     "integer-code--periodic--sens-curriculum": ShuffleStrategy.intra_source,
 }
 
+# FLA disables its default Triton kernel for gated chunk_bwd_dqkwg on Hopper GPUs with
+# the Triton version shipped in the Beaker image (fla-org/flash-linear-attention#640),
+# so every GDN-bearing run crashes in the first backward pass. Installing tilelang
+# gives FLA's backend dispatch an alternate implementation of that kernel.
+GDN_MODEL_TYPES = {"hybrid", "gdn-sdp", "gdn-full"}
+TILELANG_POST_SETUP = "pip install tilelang"
+
 MAX_WANDB_TAG_LENGTH = 64
 
 
@@ -659,6 +666,12 @@ def launch_state_bench(args: argparse.Namespace) -> None:
                 launcher = configure_launcher(args, ladder, "run")
             finally:
                 sys.argv = original_argv
+            if str(model_type) in GDN_MODEL_TYPES:
+                launcher.post_setup = (
+                    TILELANG_POST_SETUP
+                    if launcher.post_setup is None
+                    else f"{launcher.post_setup} && {TILELANG_POST_SETUP}"
+                )
             if suite_size > 1:
                 # The standard launcher enables a log-following soft timeout. A suite must
                 # submit every condition without following the first job, so disable that
