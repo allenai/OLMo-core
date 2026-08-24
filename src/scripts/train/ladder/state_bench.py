@@ -672,10 +672,11 @@ def launch_state_bench(args: argparse.Namespace) -> None:
                     if launcher.post_setup is None
                     else f"{launcher.post_setup} && {TILELANG_POST_SETUP}"
                 )
-            if suite_size > 1:
-                # The standard launcher enables a log-following soft timeout. A suite must
-                # submit every condition without following the first job, so disable that
-                # follow-only timeout for its individual submissions.
+            if suite_size > 1 or not args.follow:
+                # The standard launcher enables a log-following soft timeout, which is
+                # only valid when following. A suite must submit every condition without
+                # following the first job, and --no-follow disables following outright,
+                # so drop the follow-only timeouts in both cases.
                 launcher.step_timeout = None
                 launcher.step_soft_timeout = None
 
