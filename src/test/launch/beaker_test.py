@@ -2,7 +2,11 @@ import os
 
 import pytest
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+    get_beaker_client,
+)
 
 
 def test_launch_config_accepts_min_runtime():

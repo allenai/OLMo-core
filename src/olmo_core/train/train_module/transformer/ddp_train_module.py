@@ -80,6 +80,7 @@ from olmo_core.utils import get_default_device, log_once, move_to_device
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
+from .common import get_emo_segment_ids
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -88,6 +89,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .pipeline.pipeline_schedule import SUPPORTED_MODEL_KWARGS
 
 log = logging.getLogger(__name__)
 
@@ -873,6 +875,28 @@ class OLMoDDPTrainModule(TrainModule):
         )
 
     @staticmethod
+    def _pad_pp_batch_dim(value: Any, multiple: int) -> Any:
+        """
+        Pad a batch-leading value up to a multiple of ``multiple`` by repeating its last instance.
+
+        Handles the Python lists used for per-instance metadata such as ``max_doc_lens`` as well as
+        tensors, so that all batch-leading inputs stay the same length after padding.
+        """
+        if isinstance(value, torch.Tensor):
+            if value.size(0) % multiple == 0:
+                return value
+            pad_size = multiple - (value.size(0) % multiple)
+            padding = value[-1].unsqueeze(0).expand(pad_size, *value.size()[1:])
+            return torch.cat([value, padding], dim=0).contiguous()
+        if isinstance(value, (list, tuple)):
+            if len(value) % multiple == 0:
+                return value
+            pad_size = multiple - (len(value) % multiple)
+            padded = list(value) + [value[-1]] * pad_size
+            return tuple(padded) if isinstance(value, tuple) else padded
+        return value
+
+    @staticmethod
     def _slice_pp_batch_dim(value: Any, original_batch_size: int, batch_size: int) -> Any:
         if isinstance(value, torch.Tensor) and value.size(0) == original_batch_size:
             return value[:batch_size].contiguous()
@@ -943,8 +967,8 @@ class OLMoDDPTrainModule(TrainModule):
         if callable(clear_step_info):
             clear_step_info()
 
+    @staticmethod
     def _split_pp_dry_run_model_kwargs(
-        self,
         kwargs: Dict[str, Any],
         *,
         original_batch_size: int,
@@ -958,6 +982,12 @@ class OLMoDDPTrainModule(TrainModule):
                     start = mb_idx * micro_batch_size
                     end = start + micro_batch_size
                     kwargs_mbs[mb_idx][key] = value[start:end].contiguous()
+            elif isinstance(value, (list, tuple)) and len(value) == original_batch_size:
+                # Per-instance metadata such as 'max_doc_lens' is a Python list, so it has to be
+                # sliced on the same boundaries rather than handed whole to every microbatch.
+                for mb_idx in range(num_microbatches):
+                    start = mb_idx * micro_batch_size
+                    kwargs_mbs[mb_idx][key] = value[start : start + micro_batch_size]
             else:
                 for kwargs_mb in kwargs_mbs:
                     kwargs_mb[key] = value
@@ -989,8 +1019,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "Cannot run independent PP dry-run with empty pipeline microbatches"
             )
 
-        supported_model_kwargs = {"cp_already_sharded", "cp_original_seq_len"}
-        unexpected_model_kwargs = set(kwargs) - supported_model_kwargs
+        unexpected_model_kwargs = set(kwargs) - SUPPORTED_MODEL_KWARGS
         if unexpected_model_kwargs:
             raise OLMoConfigurationError(
                 "Independent PP dry-run only supports the same model kwargs as the PP "
@@ -1942,25 +1971,18 @@ class OLMoDDPTrainModule(TrainModule):
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         # the micro-batch size should be a multiple of pp degree
-        def pad_dim_0_to_multiple_of(tensor: torch.Tensor, multiple: int) -> torch.Tensor:
-            bsz = tensor.size(0)
-            if bsz % multiple == 0:
-                return tensor
-            pad_size = multiple - (bsz % multiple)
-            padding_tensor = (
-                tensor[-1].unsqueeze(0).expand(pad_size, *tensor.size()[1:])
-            )  # repeat last element
-            padded_tensor = torch.cat([tensor, padding_tensor], dim=0).contiguous()
-            return padded_tensor
-
+        multiple = self.train_pp_schedule.pp_mesh.size()
         original_batch_size = input_ids.size(0)
-        padded_input_ids = pad_dim_0_to_multiple_of(
-            input_ids, self.train_pp_schedule.pp_mesh.size()
-        )
-        padded_labels = pad_dim_0_to_multiple_of(labels, self.train_pp_schedule.pp_mesh.size())
+        padded_input_ids = self._pad_pp_batch_dim(input_ids, multiple)
+        padded_labels = self._pad_pp_batch_dim(labels, multiple)
         for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor) and v.size(0) == original_batch_size:
-                kwargs[k] = pad_dim_0_to_multiple_of(v, self.train_pp_schedule.pp_mesh.size())
+            length = (
+                v.size(0)
+                if isinstance(v, torch.Tensor)
+                else (len(v) if isinstance(v, (list, tuple)) else None)
+            )
+            if length == original_batch_size:
+                kwargs[k] = self._pad_pp_batch_dim(v, multiple)
 
         with self._model_forward_context():
             schedule_outputs = self.train_pp_schedule.step(
@@ -2464,6 +2486,8 @@ class OLMoDDPTrainModule(TrainModule):
                 log_once(log, "intra-document masking enabled")
                 kwargs["doc_lens"] = batch["doc_lens"]
                 kwargs["max_doc_lens"] = batch["max_doc_lens"]
+            if (segment_ids := get_emo_segment_ids(self.model_parts, input_ids)) is not None:
+                kwargs["segment_ids"] = segment_ids
             return input_ids, labels, kwargs
         else:
             input_ids = batch.pop("input_ids")
