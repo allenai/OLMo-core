@@ -138,6 +138,12 @@ VALIDATION_MIXTURES_V11: Dict[str, Optional[Tuple[str, ...]]] = {
     "figure-captions": CAPTION_DATASET_NAMES,
     "web-reasoning": FINEVISION_V11_DATASET_NAMES + (MMFINEREASON_DATASET_NAME,),
     "v11-new": IMAGE_ONLY_V11_NEW_DATASET_NAMES,
+    # Per-source ablation tiers: train on exactly one v11-new source (see the matching
+    # block in image_only_v10.py). "chartverse" is already a key above, so the dict
+    # comprehension just re-states it identically. These must live in *this* dict, not
+    # VALIDATION_MIXTURES: `_build_mixture` dispatches by dict membership, so a v11 name
+    # registered in the v9 dict routes to build_image_only_v9_mixture and raises.
+    **{name: (name,) for name in IMAGE_ONLY_V11_NEW_DATASET_NAMES},
 }
 
 
@@ -271,6 +277,19 @@ def build_image_only_v11_mixture(
         max_sequence_length=max_sequence_length,
         finevision_cache_dir=finevision_cache_dir,
     )
+    # Fast path for single-source ablation tiers. The surviving weight is renormalized to
+    # 1.0 regardless of what the group math produces, so the general path below would build
+    # *every* dataset in the mixture -- `lengths` calls len() on all of them, and the lazy
+    # map constructs each one (minutes of Arrow/parquet index building) -- purely to compute
+    # weights it then discards. Deliberately restricted to a single name: for a multi-source
+    # filter, weights computed before vs after filtering genuinely differ whenever a group is
+    # only partly kept, so the general path stays authoritative there.
+    if dataset_names is not None and len(set(dataset_names)) == 1:
+        only = next(iter(dataset_names))
+        if only not in {src.name for group in groups for src in group.datasets}:
+            raise ValueError(f"No mixture sources matched dataset_names={dataset_names!r}")
+        return [datasets_map[only]], [1.0], [only]
+
     needed = {src.name for group in groups for src in group.datasets}
     lengths = {name: len(datasets_map[name]) for name in needed}
     flat = compute_flat_mixture_weights(groups, lengths)

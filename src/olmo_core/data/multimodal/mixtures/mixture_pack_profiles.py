@@ -10,6 +10,7 @@ __all__ = [
     "MULTI_IMAGE_PACK_MAX_CROPS",
     "SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS",
     "MIXTURE_PACK_PROFILES",
+    "PER_SOURCE_ABLATION_TIERS",
     "get_mixture_pack_profile",
 ]
 
@@ -25,6 +26,33 @@ class MixturePackProfile:
     pack_max_crops: int
     pack_shortcut_max_len_images: bool
     description: str = ""
+
+
+# One tier per dataset added since image-only-v9 (5 v10 FineVision configs + the 11
+# v11-only sources). Mirrors FINEVISION_V10_DATASET_NAMES and
+# IMAGE_ONLY_V11_NEW_DATASET_NAMES; DynaMath is deliberately absent because its six
+# seed variants are ablated together via the existing "dynamath" tier (each variant on
+# its own is 339 rows, less than one global batch, i.e. an empty epoch).
+PER_SOURCE_ABLATION_TIERS: tuple = (
+    # v10-new
+    "finevision_densefusion_1m",
+    "finevision_objects365_qa",
+    "finevision_arxivqa",
+    "finevision_geomverse",
+    "finevision_doclingmatix",
+    # v11-new
+    "chartverse",
+    "arxivcap",
+    "omniscience",
+    "vistext",
+    "chart2text",
+    "finevision_visualwebinstruct",
+    "finevision_mavis_math_rule_geo",
+    "finevision_mavis_math_metagen",
+    "finevision_geo170k_align",
+    "finevision_geo170k_qa",
+    "mmfinereason",
+)
 
 
 MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
@@ -114,6 +142,19 @@ MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
         pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
         pack_shortcut_max_len_images=True,
     ),
+    # Per-source ablation tiers (one key per dataset added since image-only-v9), used to
+    # measure each source's marginal contribution from a fixed v9 checkpoint. Every one is
+    # single-image, so they all take the throughput-friendly profile. Listing the names
+    # literally keeps this module dependency-free; `test_ablation_tiers_have_pack_profiles`
+    # cross-checks them against the real name tuples so the two cannot drift.
+    **{
+        name: MixturePackProfile(
+            pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+            pack_shortcut_max_len_images=True,
+            description=f"Single-source ablation: {name} only.",
+        )
+        for name in PER_SOURCE_ABLATION_TIERS
+    },
 }
 
 _DEFAULT_PROFILE = MixturePackProfile(

@@ -78,6 +78,11 @@ VALIDATION_MIXTURES_V10: Dict[str, Optional[Tuple[str, ...]]] = {
     "finevision": FINEVISION_V10_DATASET_NAMES,
     "dynamath": DYNAMATH_TRAINING_VARIANTS,
     "finevision-dynamath": FINEVISION_V10_DATASET_NAMES + DYNAMATH_TRAINING_VARIANTS,
+    # Per-source ablation tiers: train on exactly one v10-new source, so its marginal
+    # contribution can be measured against a fixed v9 checkpoint. Mirrors the pointing
+    # bisect keys in image_only_v9.py. Every key added here also needs an entry in
+    # MIXTURE_PACK_PROFILES, or it silently falls back to the multi-image pack profile.
+    **{name: (name,) for name in FINEVISION_V10_DATASET_NAMES},
 }
 
 
@@ -194,6 +199,19 @@ def build_image_only_v10_mixture(
         max_sequence_length=max_sequence_length,
         finevision_cache_dir=finevision_cache_dir,
     )
+    # Fast path for single-source ablation tiers. The surviving weight is renormalized to
+    # 1.0 regardless of what the group math produces, so the general path below would build
+    # *every* dataset in the mixture -- `lengths` calls len() on all of them, and the lazy
+    # map constructs each one (minutes of Arrow/parquet index building) -- purely to compute
+    # weights it then discards. Deliberately restricted to a single name: for a multi-source
+    # filter, weights computed before vs after filtering genuinely differ whenever a group is
+    # only partly kept, so the general path stays authoritative there.
+    if dataset_names is not None and len(set(dataset_names)) == 1:
+        only = next(iter(dataset_names))
+        if only not in {src.name for group in groups for src in group.datasets}:
+            raise ValueError(f"No mixture sources matched dataset_names={dataset_names!r}")
+        return [datasets_map[only]], [1.0], [only]
+
     needed = {src.name for group in groups for src in group.datasets}
     lengths = {name: len(datasets_map[name]) for name in needed}
     flat = compute_flat_mixture_weights(groups, lengths)
