@@ -349,7 +349,9 @@ def convert_checkpoint_to_hf(
     log.info(
         "Fixing HF config using updated config from tokenizer config data and script arguments"
     )
-    huggingface_config = AutoConfig.from_pretrained(output_path)
+    huggingface_config = AutoConfig.from_pretrained(
+        output_path, trust_remote_code=hf_router_overlay_template is not None
+    )
     huggingface_config.max_position_embeddings = max_sequence_length
     huggingface_config.pad_token_id = tokenizer_config.pad_token_id
     huggingface_config.bos_token_id = tokenizer_config.bos_token_id
