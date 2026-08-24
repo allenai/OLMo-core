@@ -37,7 +37,7 @@ from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerC
 from olmo_core.nn.transformer.model import Transformer
 
 from .checkpoint import save_hf_hybrid_model, save_hf_model
-from .config import is_olmo_hybrid_model
+from .config import requires_hybrid_hf_format
 from .convert import get_converter_to_hf
 
 log = logging.getLogger(__name__)
@@ -217,10 +217,13 @@ def convert_checkpoint_to_hf(
             # Load the provided state dict into the model so that validation works.
             model.load_state_dict(model_state_dict)
 
-        hybrid = is_olmo_hybrid_model(model)
+        hybrid = requires_hybrid_hf_format(model)
 
         if hybrid:
-            log.info("Detected hybrid model (GDN + attention layers)")
+            log.info(
+                "Model requires the hybrid HF format (GDN layers, peri-norm, gated attention, "
+                "head QK-norm, embedding norm, or embedding scale detected)"
+            )
             save_hf_hybrid_model(
                 output_path,
                 model_state_dict,
@@ -271,12 +274,25 @@ def convert_checkpoint_to_hf(
     log.info(
         "Fixing HF config using updated config from tokenizer config data and script arguments"
     )
-    huggingface_config = AutoConfig.from_pretrained(output_path)
-    huggingface_config.max_position_embeddings = max_sequence_length
-    huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
-    huggingface_config.eos_token_id = tokenizer_config.eos_token_id
-    huggingface_config.save_pretrained(output_path)
+    if hybrid:
+        # The hybrid architecture may not be registered with the installed transformers,
+        # so edit the raw JSON rather than round-tripping through AutoConfig.
+        hybrid_config_path = Path(output_path) / "config.json"
+        with hybrid_config_path.open(encoding="utf-8") as f:
+            hybrid_config = json.load(f)
+        hybrid_config["max_position_embeddings"] = max_sequence_length
+        hybrid_config["pad_token_id"] = tokenizer_config.pad_token_id
+        hybrid_config["bos_token_id"] = tokenizer_config.bos_token_id
+        hybrid_config["eos_token_id"] = tokenizer_config.eos_token_id
+        with hybrid_config_path.open("w", encoding="utf-8") as f:
+            json.dump(hybrid_config, f, indent=2)
+    else:
+        huggingface_config = AutoConfig.from_pretrained(output_path)
+        huggingface_config.max_position_embeddings = max_sequence_length
+        huggingface_config.pad_token_id = tokenizer_config.pad_token_id
+        huggingface_config.bos_token_id = tokenizer_config.bos_token_id
+        huggingface_config.eos_token_id = tokenizer_config.eos_token_id
+        huggingface_config.save_pretrained(output_path)
     log.info(
         "Successfully fixed config using updated config from tokenizer config data and script arguments"
     )

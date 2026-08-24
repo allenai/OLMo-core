@@ -188,8 +188,8 @@ def test_get_hybrid_hf_config_model_type(hybrid_model: Transformer):
     layer_types = get_hybrid_layer_types(hybrid_model)
     hf_config = get_hybrid_hf_config(hybrid_model, layer_types, max_seq_len=256)
 
-    assert hf_config["model_type"] == "olmo_hybrid"
-    assert hf_config["architectures"] == ["OlmoHybridForCausalLM"]
+    assert hf_config["model_type"] == "olmo3_5_hybrid"
+    assert hf_config["architectures"] == ["Olmo3_5HybridForCausalLM"]
 
 
 @requires_fla
@@ -279,8 +279,8 @@ def test_convert_checkpoint_to_hf_produces_valid_output(
     with open(output_dir / "config.json") as f:
         config = json.load(f)
 
-    assert config["model_type"] == "olmo_hybrid"
-    assert config["architectures"] == ["OlmoHybridForCausalLM"]
+    assert config["model_type"] == "olmo3_5_hybrid"
+    assert config["architectures"] == ["Olmo3_5HybridForCausalLM"]
     assert config["num_hidden_layers"] == 4
     assert config["hidden_size"] == hybrid_model_config.d_model
     assert config["layer_types"] == [
@@ -302,7 +302,7 @@ def test_convert_checkpoint_to_hf_produces_valid_output(
     # GDN layer 0 should have linear_attn keys.
     assert "model.layers.0.linear_attn.q_proj.weight" in hf_state
     assert "model.layers.0.linear_attn.A_log" in hf_state
-    assert "model.layers.0.input_layernorm.weight" in hf_state
+    assert "model.layers.0.post_attention_layernorm.weight" in hf_state
 
     # Attention layer 3 should have self_attn keys.
     assert "model.layers.3.self_attn.q_proj.weight" in hf_state
@@ -424,7 +424,7 @@ def test_convert_hybrid_state_with_mock_data():
     # GDN layer 0: should use linear_attn prefix.
     assert torch.equal(hf["model.layers.0.linear_attn.q_proj.weight"], torch.ones(1))
     assert torch.equal(hf["model.layers.0.linear_attn.A_log"], torch.ones(1) * 2)
-    assert "model.layers.0.input_layernorm.weight" in hf
+    assert "model.layers.0.post_attention_layernorm.weight" in hf
 
     # Attention layer 3: should use self_attn prefix.
     assert torch.equal(hf["model.layers.3.self_attn.q_proj.weight"], torch.ones(1) * 3)

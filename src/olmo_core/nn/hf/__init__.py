@@ -10,6 +10,7 @@ from .config import (
     get_hybrid_hf_config,
     get_hybrid_layer_types,
     is_olmo_hybrid_model,
+    requires_hybrid_hf_format,
 )
 from .convert import (
     convert_hybrid_state_to_hf,
@@ -39,6 +40,7 @@ __all__ = [
     "is_olmo_hybrid_model",
     "load_config",
     "load_hf_model",
+    "requires_hybrid_hf_format",
     "save_hf_hybrid_model",
     "save_hf_model",
     "validate_conversion",

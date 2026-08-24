@@ -268,6 +268,32 @@ def is_olmo_hybrid_model(model: Transformer) -> bool:
 
 
 @beta_feature
+def requires_hybrid_hf_format(model: Transformer) -> bool:
+    """
+    Return ``True`` if the model must be saved in the HF ``olmo3_5_hybrid`` format.
+
+    This is the case when the model uses any feature only that format can express:
+    :class:`GatedDeltaNet` layers (in any proportion, including all layers), peri-norm
+    blocks, gated attention, head QK-norm, an embedding norm, or an embedding scale.
+    Plain OLMo2/OLMo3-style models return ``False`` and convert through the standard
+    ``save_pretrained`` path.
+    """
+    if model.embedding_norm is not None or model.embed_scale is not None:
+        return True
+    for block in model.blocks.values():
+        if isinstance(block.attention, GatedDeltaNet):
+            return True
+        if isinstance(block, PeriNormTransformerBlock):
+            return True
+        attention = block.attention
+        if isinstance(attention, Attention) and (
+            attention.gate is not None or attention.use_head_qk_norm
+        ):
+            return True
+    return False
+
+
+@beta_feature
 def get_hybrid_layer_types(model: Transformer) -> List[str]:
     """
     Return a per-layer type list for a hybrid model.
@@ -322,12 +348,17 @@ def get_hybrid_hf_config(
     max_seq_len: int = 65536,
 ) -> Dict[str, Any]:
     """
-    Build the ``config.json`` dict for a HF ``olmo_hybrid`` model.
+    Build the ``config.json`` dict for a HF ``olmo3_5_hybrid`` model.
 
     Returns a plain dict (not :class:`PretrainedConfig`) to avoid a hard dependency
     on a specific ``transformers`` version.
 
-    :param model: The OLMo-core hybrid transformer model.
+    The model does not need to be a true hybrid: an all-attention model (no GDN layers)
+    or an all-GDN model (no attention layers) is also supported. The fields describing
+    the absent mixer type are filled with inert defaults derived from the present one,
+    since the HF config requires them even though no layer reads them.
+
+    :param model: The OLMo-core transformer model.
     :param layer_types: Per-layer type list from :func:`get_hybrid_layer_types`.
     :param max_seq_len: Maximum sequence length for ``max_position_embeddings``.
     """
@@ -341,17 +372,17 @@ def get_hybrid_hf_config(
         elif lt == "linear_attention" and gdn_block is None:
             gdn_block = block
 
-    if attn_block is None:
-        raise ValueError("Hybrid model must have at least one attention layer")
-    if gdn_block is None:
-        raise ValueError("Hybrid model must have at least one GDN layer")
+    if attn_block is None and gdn_block is None:
+        raise ValueError("Model has neither attention nor GDN layers")
 
-    attn: Attention = attn_block.attention
-    gdn: GatedDeltaNet = gdn_block.attention
+    attn: Optional[Attention] = attn_block.attention if attn_block is not None else None
+    gdn: Optional[GatedDeltaNet] = gdn_block.attention if gdn_block is not None else None
+    first_block = attn_block if attn_block is not None else gdn_block
+    assert first_block is not None
 
     # RoPE (from attention blocks only)
     rope_parameters: Optional[dict] = None
-    if attn.rope is not None:
+    if attn is not None and attn.rope is not None:
         rope_theta = float(attn.rope.theta)
         rope_scaling = _get_hybrid_rope_scaling(model, layer_types)
         rope_parameters = {"rope_theta": rope_theta}
@@ -371,42 +402,71 @@ def get_hybrid_hf_config(
             "outputs may not match exactly."
         )
 
+    # Attention fields, or inert stand-ins derived from GDN for all-GDN models.
+    if attn is not None:
+        attention_fields: Dict[str, Any] = {
+            "num_attention_heads": attn.n_heads,
+            "num_key_value_heads": attn.n_kv_heads,
+            "head_dim": attn.head_dim,
+            "attention_bias": attn.w_out.bias is not None,
+            "use_attention_gate": attn.gate is not None,
+            "use_head_qk_norm": attn.use_head_qk_norm,
+        }
+    else:
+        assert gdn is not None
+        attention_fields = {
+            "num_attention_heads": gdn.n_heads,
+            "num_key_value_heads": gdn.n_heads,
+            "head_dim": gdn.head_k_dim,
+            "attention_bias": False,
+            "use_attention_gate": False,
+            "use_head_qk_norm": False,
+        }
+
+    # GDN fields, or inert stand-ins derived from attention for all-attention models.
+    if gdn is not None:
+        gdn_fields: Dict[str, Any] = {
+            "linear_num_key_heads": gdn.n_heads,
+            "linear_num_value_heads": gdn.n_v_heads,
+            "linear_key_head_dim": gdn.head_k_dim,
+            "linear_value_head_dim": gdn.head_v_dim,
+            "linear_conv_kernel_dim": gdn.conv_size,
+            "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        }
+    else:
+        assert attn is not None
+        gdn_fields = {
+            "linear_num_key_heads": attn.n_heads,
+            "linear_num_value_heads": attn.n_heads,
+            "linear_key_head_dim": attn.head_dim,
+            "linear_value_head_dim": attn.head_dim,
+            "linear_conv_kernel_dim": 4,
+            "linear_allow_neg_eigval": False,
+        }
+
     config: Dict[str, Any] = {
         "model_type": "olmo3_5_hybrid",
         "architectures": ["Olmo3_5HybridForCausalLM"],
         # Standard transformer fields
         "vocab_size": model.vocab_size,
         "hidden_size": model.d_model,
-        "intermediate_size": attn_block.feed_forward.hidden_size,
+        "intermediate_size": first_block.feed_forward.hidden_size,
         "num_hidden_layers": len(blocks),
-        "num_attention_heads": attn.n_heads,
-        "num_key_value_heads": attn.n_kv_heads,
-        "head_dim": attn.head_dim,
         "hidden_act": "silu",
         "max_position_embeddings": max_seq_len,
         "initializer_range": 0.02,
         "use_cache": True,
-        "attention_bias": attn.w_out.bias is not None,
         "attention_dropout": 0.0,
-        "rms_norm_eps": attn_block.feed_forward_norm.eps,  # todo: revisit
+        "rms_norm_eps": first_block.feed_forward_norm.eps,  # todo: revisit
         "tie_word_embeddings": model.tie_word_embeddings,
         # Hybrid layer configuration
         "layer_types": layer_types,
-        # GDN (linear attention) parameters
-        "linear_num_key_heads": gdn.n_heads,
-        "linear_num_value_heads": gdn.n_v_heads,
-        "linear_key_head_dim": gdn.head_k_dim,
-        "linear_value_head_dim": gdn.head_v_dim,
-        "linear_conv_kernel_dim": gdn.conv_size,
-        "linear_allow_neg_eigval": gdn.allow_neg_eigval,
+        **attention_fields,
+        **gdn_fields,
         # Architecture extras
         "embed_scale": model.embed_scale,
         "use_embedding_norm": model.embedding_norm is not None,
-        "use_attention_gate": attn.gate is not None,
-        "use_head_qk_norm": attn.use_head_qk_norm,
-        "use_peri_norm": any(
-            isinstance(b, PeriNormTransformerBlock) for b in blocks
-        ),
+        "use_peri_norm": any(isinstance(b, PeriNormTransformerBlock) for b in blocks),
         # Token IDs (updated later after tokenizer is saved)
         "pad_token_id": None,
         "bos_token_id": None,
