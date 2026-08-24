@@ -4,7 +4,8 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from transformers import AutoModelForCausalLM, Olmo2Config
 
-from olmo_core.nn.hf.checkpoint import load_hf_model, save_hf_model
+from olmo_core.config import DType
+from olmo_core.nn.hf.checkpoint import _cast_hybrid_export_dtype, load_hf_model, save_hf_model
 from olmo_core.nn.transformer.config import TransformerConfig
 
 
@@ -82,3 +83,35 @@ def test_save_hf_model(tmp_path: Path):
     assert hf_logits.shape[-1] == vocab_size
     assert logits.shape[-1] == padded_vocab_size
     torch.testing.assert_close(hf_logits, logits[..., :vocab_size])
+
+
+def test_cast_hybrid_export_dtype_preserves_fp32_router():
+    router = torch.randn(4, 8, dtype=torch.float32)
+    dense = torch.randn(8, 8, dtype=torch.float32)
+    state = {
+        "model.layers.1.mlp.router.gate.weight": router,
+        "model.layers.1.self_attn.q_proj.weight": dense,
+        "metadata": "unchanged",
+    }
+
+    converted = _cast_hybrid_export_dtype(
+        state,
+        DType.bfloat16,
+        preserve_router_precision=True,
+    )
+
+    assert converted["model.layers.1.mlp.router.gate.weight"].dtype == torch.float32
+    assert converted["model.layers.1.self_attn.q_proj.weight"].dtype == torch.bfloat16
+    assert converted["metadata"] == "unchanged"
+
+
+def test_cast_hybrid_export_dtype_can_cast_router():
+    state = {"model.layers.1.mlp.router.gate.weight": torch.randn(4, 8)}
+
+    converted = _cast_hybrid_export_dtype(
+        state,
+        DType.bfloat16,
+        preserve_router_precision=False,
+    )
+
+    assert converted["model.layers.1.mlp.router.gate.weight"].dtype == torch.bfloat16

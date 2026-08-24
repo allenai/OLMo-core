@@ -40,6 +40,28 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+def _cast_hybrid_export_dtype(
+    state_dict: Dict[str, Any],
+    dtype: DType,
+    *,
+    preserve_router_precision: bool,
+) -> Dict[str, Any]:
+    target_dtype = dtype.as_pt()
+    return {
+        key: (
+            state
+            if preserve_router_precision
+            and key.endswith(".mlp.router.gate.weight")
+            and torch.is_tensor(state)
+            and state.dtype == torch.float32
+            else state.to(target_dtype)
+            if torch.is_tensor(state)
+            else state
+        )
+        for key, state in state_dict.items()
+    }
+
+
 @beta_feature
 def load_hf_model(
     model_name_or_path: PathOrStr,
@@ -215,6 +237,7 @@ def save_hf_hybrid_model(
     dtype: Optional[DType] = None,
     vocab_size: Optional[int] = None,
     max_sequence_length: int = 65536,
+    preserve_router_precision: bool = True,
 ) -> None:
     """
     Save a hybrid (GDN + attention) model as ``config.json`` + ``model.safetensors``.
@@ -228,6 +251,9 @@ def save_hf_hybrid_model(
     :param dtype: Optional dtype to cast weights to.
     :param vocab_size: If set, truncate embeddings/lm_head to this size.
     :param max_sequence_length: Maximum sequence length for ``max_position_embeddings``.
+    :param preserve_router_precision: Preserve native FP32 routed-expert router weights when
+        casting the rest of the exported checkpoint to ``dtype``. Router weights are small and
+        top-k selection is sensitive to quantization near routing boundaries.
     """
     import json
 
@@ -240,9 +266,11 @@ def save_hf_hybrid_model(
     hf_state = convert_hybrid_state_to_hf(model_state_dict, layer_types)
 
     if dtype is not None:
-        hf_state = {
-            k: v.to(dtype.as_pt()) if torch.is_tensor(v) else v for k, v in hf_state.items()
-        }
+        hf_state = _cast_hybrid_export_dtype(
+            hf_state,
+            dtype,
+            preserve_router_precision=preserve_router_precision,
+        )
 
     if vocab_size is not None:
         hf_config["vocab_size"] = vocab_size
