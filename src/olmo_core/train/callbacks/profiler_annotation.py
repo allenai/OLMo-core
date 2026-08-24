@@ -40,6 +40,11 @@ _SUBMODULE_LABELS = (
 )
 
 
+# Sentinel for "torch.profiler didn't tell us what it's doing", so a missing
+# attribute is distinguishable from a real profiler action.
+_UNKNOWN_ACTION = object()
+
+
 class AnnotationBackend(StrEnum):
     """
     How annotation ranges are emitted.
@@ -539,7 +544,16 @@ class ProfilerAnnotationCallback(Callback):
             return True
         # We run after 'ProfilerCallback.pre_load_batch()' stepped the profiler, so
         # 'current_action' already refers to the step that's about to run.
-        return getattr(profiler, "current_action", None) in (
+        action = getattr(profiler, "current_action", _UNKNOWN_ACTION)
+        if action is _UNKNOWN_ACTION:
+            # 'current_action' is internal to torch.profiler and may not exist on
+            # every version. Annotate unconditionally when we can't read it: the
+            # profiler only records during its own window, so extra ranges cost a
+            # few microseconds and land nowhere, whereas failing closed would
+            # silently produce an unannotated trace -- the exact problem this
+            # callback exists to fix.
+            return True
+        return action in (
             ProfilerAction.WARMUP,
             ProfilerAction.RECORD,
             ProfilerAction.RECORD_AND_SAVE,
