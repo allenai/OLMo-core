@@ -141,7 +141,7 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
         template / "model.safetensors",
         metadata={"format": "pt"},
     )
-    native_router = torch.randn(4, 3, dtype=torch.float32)
+    native_router = torch.randn(4 * 3, dtype=torch.float32)
 
     save_hf_model_with_native_router_overlay(
         output,
@@ -150,12 +150,28 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     )
 
     exported = load_file(output / "model.safetensors")
-    assert torch.equal(exported[hf_router_name], native_router)
+    assert torch.equal(exported[hf_router_name], native_router.reshape(4, 3))
     assert exported[hf_router_name].dtype == torch.float32
     assert torch.equal(exported[hf_dense_name], original_dense)
     assert (output / "config.json").read_text() == (template / "config.json").read_text()
     with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
         assert checkpoint.metadata() == {"format": "pt"}
+
+
+def test_native_router_overlay_rejects_mismatched_element_count(tmp_path: Path):
+    template = tmp_path / "template"
+    template.mkdir()
+    save_file(
+        {"model.layers.1.mlp.router.gate.weight": torch.zeros(4, 3)},
+        template / "model.safetensors",
+    )
+
+    with pytest.raises(RuntimeError, match="Router shape mismatch"):
+        save_hf_model_with_native_router_overlay(
+            tmp_path / "output",
+            template,
+            {"blocks.1.routed_experts_router.weight": torch.ones(11)},
+        )
 
 
 def test_native_router_overlay_rejects_missing_template_router(tmp_path: Path):

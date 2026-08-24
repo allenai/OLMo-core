@@ -105,12 +105,15 @@ def save_hf_model_with_native_router_overlay(
             shard_router_names = set(checkpoint.keys()) & set(replacements)
         tensors = load_file(shard_path, device="cpu")
         for name in shard_router_names:
-            if tensors[name].shape != replacements[name].shape:
-                raise RuntimeError(
-                    f"Router shape mismatch for {name}: template={tuple(tensors[name].shape)} "
-                    f"native={tuple(replacements[name].shape)}"
-                )
-            tensors[name] = replacements[name]
+            replacement = replacements[name]
+            if tensors[name].shape != replacement.shape:
+                if tensors[name].numel() != replacement.numel():
+                    raise RuntimeError(
+                        f"Router shape mismatch for {name}: template={tuple(tensors[name].shape)} "
+                        f"native={tuple(replacement.shape)}"
+                    )
+                replacement = replacement.reshape(tensors[name].shape)
+            tensors[name] = replacement
         save_file(tensors, shard_path, metadata=metadata)
 
     log.info("Overlaid %d native FP32 router tensors onto %s", len(replacements), save_path)
