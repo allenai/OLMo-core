@@ -262,6 +262,11 @@ def test_state_dict_maps_completely(model_type: str, tokenizer_config: Tokenizer
     assert "model.embedding_norm.weight" in hf_state
     assert "model.norm.weight" in hf_state
     assert "lm_head.weight" in hf_state
+    if model_type in GDN_MODEL_TYPES:
+        # The olmo3_5_hybrid modeling code declares o_proj/o_norm; the out_proj/norm
+        # spellings load as randomly initialized parameters.
+        assert "model.layers.0.linear_attn.o_proj.weight" in hf_state
+        assert "model.layers.0.linear_attn.o_norm.weight" in hf_state
     # Peri-norm blocks emit all four per-block norms.
     for norm in (
         "pre_attention_norm",

@@ -807,11 +807,14 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_a.weight": "linear_attn.a_proj.weight",
     "attention.w_b.weight": "linear_attn.b_proj.weight",
     "attention.w_g.weight": "linear_attn.g_proj.weight",
-    "attention.w_out.weight": "linear_attn.out_proj.weight",
+    # NOTE: the olmo3_5_hybrid modeling code names these o_proj/o_norm (the Qwen3.5 HF
+    # naming out_proj/norm does not apply here); mismatched names load as randomly
+    # initialized parameters.
+    "attention.w_out.weight": "linear_attn.o_proj.weight",
     "attention.q_conv1d.weight": "linear_attn.q_conv1d.weight",
     "attention.k_conv1d.weight": "linear_attn.k_conv1d.weight",
     "attention.v_conv1d.weight": "linear_attn.v_conv1d.weight",
-    "attention.o_norm.weight": "linear_attn.norm.weight",
+    "attention.o_norm.weight": "linear_attn.o_norm.weight",
     "attention.A_log": "linear_attn.A_log",
     "attention.dt_bias": "linear_attn.dt_bias",
     "attention_norm.weight": "post_attention_layernorm.weight",
