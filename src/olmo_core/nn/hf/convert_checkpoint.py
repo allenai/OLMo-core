@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 def _load_ddp_optimizer_model_state(
-    checkpoint_dir: str | Path,
+    checkpoint_dir: PathOrStr,
     model: Transformer,
     *,
     work_dir: str | Path,

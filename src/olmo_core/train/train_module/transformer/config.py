@@ -151,6 +151,11 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
                 "share a weight."
             )
 
+        # Validate the document-routing EOS token while the whole block list is still visible.
+        # Afterwards each stage only sees its own blocks, so blocks that disagree would each derive
+        # their own segment IDs and routing would silently depend on where the split landed.
+        model.emo_eos_token_id
+
         pp_rank = pp_mesh.get_local_rank()
 
         def build_stage(
@@ -177,6 +182,10 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
 
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
+
+            # The deepcopy above carries over any block-derived caches the full model had already
+            # populated, which would leave this chunk describing the unsplit block list.
+            model_chunk.invalidate_block_topology_caches()
 
             if self.use_custom_stage_implementation:
                 # Custom stage implementation re-uses receive buffers across micro-batches.
