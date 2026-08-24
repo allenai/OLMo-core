@@ -28,7 +28,12 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
-from olmo_core.distributed.checkpoint import load_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
+    load_model_and_optim_state,
+    load_olmo_ddp_checkpoint_state,
+    normalize_olmo_ddp_checkpoint_state,
+)
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
@@ -242,16 +247,33 @@ def convert_checkpoint_to_hf(
             assert original_checkpoint_path is not None
             model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
             log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
-            load_model_and_optim_state(
-                model_and_optim_dir,
-                model,
-                work_dir=work_dir,
+            checkpoint_metadata = get_checkpoint_metadata(model_and_optim_dir)
+            checkpoint_names = checkpoint_metadata.state_dict_metadata
+            is_olmo_ddp_checkpoint = any(
+                name.startswith("module.") and name.endswith(".main") for name in checkpoint_names
             )
+            if is_olmo_ddp_checkpoint:
+                log.info("Detected OLMoDDP FP32 master-parameter checkpoint")
+                model_state_dict = normalize_olmo_ddp_checkpoint_state(
+                    load_olmo_ddp_checkpoint_state(
+                        model_and_optim_dir,
+                        work_dir=work_dir,
+                    )
+                )
+                model.load_state_dict(model_state_dict)
+            else:
+                load_model_and_optim_state(
+                    model_and_optim_dir,
+                    model,
+                    work_dir=work_dir,
+                )
+                state_dict_options = dist_cp_sd.StateDictOptions(
+                    flatten_optimizer_state_dict=True, cpu_offload=True
+                )
+                model_state_dict = dist_cp_sd.get_model_state_dict(
+                    model, options=state_dict_options
+                )
             log.info(f"Saving checkpoint to '{output_path}'")
-            state_dict_options = dist_cp_sd.StateDictOptions(
-                flatten_optimizer_state_dict=True, cpu_offload=True
-            )
-            model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
         else:
             log.info(f"Using provided model state dict, saving to '{output_path}'")
             # Load the provided state dict into the model so that validation works.

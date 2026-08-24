@@ -18,8 +18,8 @@ from transformers import (
     GenerationConfig,
 )
 
+from olmo_core.distributed.checkpoint import load_olmo_ddp_checkpoint_state
 from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
-from olmo_core.nn.moe.v2.checkpoint import load_olmo_ddp_checkpoint_state
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)

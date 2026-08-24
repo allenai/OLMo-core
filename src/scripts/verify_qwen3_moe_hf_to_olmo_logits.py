@@ -14,9 +14,11 @@ from torch.distributed.checkpoint import FileSystemReader
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.config import DType
-from olmo_core.distributed.checkpoint import load_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    load_olmo_ddp_checkpoint_state,
+)
 from olmo_core.nn.attention import AttentionBackendName
-from olmo_core.nn.moe.v2.checkpoint import load_olmo_ddp_checkpoint_state
 from olmo_core.nn.moe.v2.qwen import build_qwen3_moe_config_from_hf_config
 from olmo_core.utils import prepare_cli_environment
 

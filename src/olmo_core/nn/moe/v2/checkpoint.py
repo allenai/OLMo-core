@@ -7,40 +7,8 @@ import torch.distributed as dist
 from torch.distributed.tensor import DTensor
 from transformers import PretrainedConfig
 
-from olmo_core.aliases import PathOrStr
-from olmo_core.distributed.checkpoint import get_checkpoint_metadata, load_keys
 from olmo_core.distributed.utils import get_local_tensor
 from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
-
-
-def load_olmo_ddp_checkpoint_state(
-    checkpoint_dir: PathOrStr,
-    *,
-    pre_download: bool = False,
-    work_dir: PathOrStr | None = None,
-) -> dict[str, torch.Tensor]:
-    """Load the raw model tensors from an OLMoDDP distributed checkpoint.
-
-    This is a single-process, unsharded load intended for offline checkpoint
-    conversion and verification. The returned keys retain their checkpoint
-    names, such as ``module.embeddings.weight.main``.
-    """
-
-    metadata = get_checkpoint_metadata(checkpoint_dir)
-    model_keys = [
-        key
-        for key, value in metadata.state_dict_metadata.items()
-        if key.endswith(".main") and hasattr(value, "size")
-    ]
-    if not model_keys:
-        raise RuntimeError(f"No OLMoDDP model tensors ending in '.main' found in {checkpoint_dir}")
-    values = load_keys(
-        checkpoint_dir,
-        model_keys,
-        pre_download=pre_download,
-        work_dir=work_dir,
-    )
-    return dict(zip(model_keys, values))
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:

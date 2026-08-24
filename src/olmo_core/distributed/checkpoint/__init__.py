@@ -29,7 +29,7 @@ import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Generator, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Generator, Iterable, List, Mapping, Optional, Set, Tuple
 
 import torch
 import torch.distributed as dist
@@ -63,9 +63,70 @@ __all__ = [
     "swap_param_keys",
     "prune_state_dict",
     "merge_state_dicts",
+    "normalize_olmo_ddp_checkpoint_state",
+    "load_olmo_ddp_checkpoint_state",
 ]
 
 log = logging.getLogger(__name__)
+
+
+def load_olmo_ddp_checkpoint_state(
+    checkpoint_dir: PathOrStr,
+    *,
+    pre_download: bool = False,
+    work_dir: Optional[PathOrStr] = None,
+) -> Dict[str, torch.Tensor]:
+    """Load raw FP32 master parameters from an OLMoDDP checkpoint."""
+
+    metadata = get_checkpoint_metadata(checkpoint_dir)
+    model_keys = [
+        key
+        for key, value in metadata.state_dict_metadata.items()
+        if key.endswith(".main") and hasattr(value, "size")
+    ]
+    if not model_keys:
+        raise RuntimeError(f"No OLMoDDP model tensors ending in '.main' found in {checkpoint_dir}")
+    values = load_keys(
+        checkpoint_dir,
+        model_keys,
+        pre_download=pre_download,
+        work_dir=work_dir,
+    )
+    return dict(zip(model_keys, values))
+
+
+def normalize_olmo_ddp_checkpoint_state(
+    checkpoint_state: Mapping[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """Convert OLMoDDP master-parameter names into ordinary model state names.
+
+    OLMoDDP checkpoints store the FP32 master copy of each model parameter as
+    ``module.<parameter>.main``. Offline conversion operates on an unwrapped model whose
+    state dict uses ``<parameter>``. Rejecting every non-conforming tensor keeps this
+    normalization fail-closed instead of silently exporting a partial checkpoint.
+    """
+
+    prefix = "module."
+    suffix = ".main"
+    normalized: Dict[str, torch.Tensor] = {}
+    invalid_names: List[str] = []
+    for name, value in checkpoint_state.items():
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            invalid_names.append(name)
+            continue
+        normalized_name = name.removeprefix(prefix).removesuffix(suffix)
+        if normalized_name in normalized:
+            raise RuntimeError(f"Duplicate normalized OLMoDDP parameter name: {normalized_name}")
+        normalized[normalized_name] = value
+
+    if invalid_names:
+        raise RuntimeError(
+            "Unexpected OLMoDDP checkpoint tensor names; expected "
+            f"'module.<model parameter>.main': {sorted(invalid_names)[:20]}"
+        )
+    if not normalized:
+        raise RuntimeError("OLMoDDP checkpoint contains no model parameters")
+    return normalized
 
 
 @torch.no_grad()

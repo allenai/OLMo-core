@@ -11,6 +11,7 @@ from olmo_core.data.tokenizer import TokenizerConfig
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
+    save_state_dict,
 )
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.attention.flash_linear_attn_api import has_fla
@@ -311,6 +312,38 @@ def test_convert_checkpoint_to_hf_produces_valid_output(
     assert "model.layers.3.post_feedforward_layernorm.weight" in hf_state
 
     shutil.rmtree(output_dir)
+
+
+@requires_fla
+def test_convert_olmo_ddp_checkpoint_to_hf(
+    tmp_path: Path,
+    hybrid_model: Transformer,
+    hybrid_model_config: TransformerConfig,
+    tokenizer_config: TokenizerConfig,
+):
+    checkpoint_path = tmp_path / "olmo-ddp-checkpoint"
+    output_dir = tmp_path / "hf-output-olmo-ddp"
+    save_state_dict(
+        checkpoint_path / "model_and_optim",
+        {
+            f"module.{name}.main": parameter.detach().float()
+            for name, parameter in hybrid_model.named_parameters()
+        },
+    )
+
+    convert_checkpoint_to_hf(
+        original_checkpoint_path=checkpoint_path,
+        output_path=output_dir,
+        transformer_config_dict=hybrid_model_config.as_config_dict(),
+        tokenizer_config_dict=tokenizer_config.as_config_dict(),
+        max_sequence_length=256,
+        validate=False,
+    )
+
+    hf_state = load_file(output_dir / "model.safetensors")
+    assert "model.embed_tokens.weight" in hf_state
+    assert "model.layers.0.linear_attn.q_proj.weight" in hf_state
+    assert "model.layers.3.self_attn.q_proj.weight" in hf_state
 
 
 @requires_fla
