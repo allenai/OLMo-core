@@ -92,6 +92,14 @@ def parse_args():
         type=float,
         help="The MoE capacity factor. Higher capacity factor can decrease validation false negatives but may cause out of memory errors.",
     )
+    parser.add_argument(
+        "--hf-router-overlay-template",
+        help=(
+            "Copy this existing HF checkpoint and replace only its router tensors with native "
+            "FP32 values. Intended for experimental architectures not fully represented by the "
+            "generic exporter."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -122,6 +130,7 @@ def main():
         moe_capacity_factor=args.moe_capacity_factor,
         validation_device=args.validation_device or args.device,
         validation_sliding_window=args.validation_sliding_window,
+        hf_router_overlay_template=args.hf_router_overlay_template,
     )
 
 

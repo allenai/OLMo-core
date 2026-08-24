@@ -1,4 +1,5 @@
 import logging
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
@@ -8,6 +9,8 @@ import torch.distributed as dist
 from huggingface_hub import repo_exists
 from torch.distributed.tensor import DTensor, distribute_tensor
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from safetensors import safe_open
+from safetensors.torch import load_file, save_file
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -38,6 +41,79 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
+
+
+@beta_feature
+def save_hf_model_with_native_router_overlay(
+    save_dir: PathOrStr,
+    template_dir: PathOrStr,
+    model_state_dict: Dict[str, Any],
+) -> None:
+    """Copy an existing HF export and replace its MoE routers from native FP32 state.
+
+    This is intended for experimental GDN+MoE checkpoints whose complete Hugging Face
+    architecture is already available, but whose native OLMo-core router weights retain
+    higher precision than the older BF16 HF export. Only router tensors are changed.
+    """
+    save_path = Path(save_dir)
+    template_path = Path(template_dir)
+    if not template_path.is_dir():
+        raise FileNotFoundError(template_path)
+    copy_dir(template_path, save_path, save_overwrite=True)
+
+    replacements: Dict[str, torch.Tensor] = {}
+    router_pattern = re.compile(r"blocks\.(\d+)\.routed_experts_router\.weight")
+    for name, value in model_state_dict.items():
+        match = router_pattern.fullmatch(name)
+        if match is None:
+            continue
+        tensor = get_full_tensor(value)
+        if not torch.is_tensor(tensor):
+            raise TypeError(f"Expected tensor router state for {name!r}, found {type(tensor)}")
+        replacements[f"model.layers.{match.group(1)}.mlp.router.gate.weight"] = (
+            tensor.detach().float().cpu().contiguous()
+        )
+    if not replacements:
+        raise RuntimeError("Native checkpoint contains no routed-expert router weights")
+
+    index_path = save_path / "model.safetensors.index.json"
+    if index_path.is_file():
+        import json
+
+        weight_map = json.loads(index_path.read_text())["weight_map"]
+        missing = sorted(set(replacements) - set(weight_map))
+        if missing:
+            raise RuntimeError(f"HF template is missing native router tensors: {missing}")
+        router_shards = {weight_map[name] for name in replacements}
+    else:
+        router_shards = set()
+        template_router_names = set()
+        for shard_path in sorted(save_path.glob("*.safetensors")):
+            with safe_open(shard_path, framework="pt", device="cpu") as checkpoint:
+                shard_router_names = set(checkpoint.keys()) & set(replacements)
+            if shard_router_names:
+                router_shards.add(shard_path.name)
+                template_router_names.update(shard_router_names)
+        missing = sorted(set(replacements) - template_router_names)
+        if missing:
+            raise RuntimeError(f"HF template is missing native router tensors: {missing}")
+
+    for shard_name in sorted(router_shards):
+        shard_path = save_path / shard_name
+        with safe_open(shard_path, framework="pt", device="cpu") as checkpoint:
+            metadata = checkpoint.metadata()
+            shard_router_names = set(checkpoint.keys()) & set(replacements)
+        tensors = load_file(shard_path, device="cpu")
+        for name in shard_router_names:
+            if tensors[name].shape != replacements[name].shape:
+                raise RuntimeError(
+                    f"Router shape mismatch for {name}: template={tuple(tensors[name].shape)} "
+                    f"native={tuple(replacements[name].shape)}"
+                )
+            tensors[name] = replacements[name]
+        save_file(tensors, shard_path, metadata=metadata)
+
+    log.info("Overlaid %d native FP32 router tensors onto %s", len(replacements), save_path)
 
 
 def _cast_hybrid_export_dtype(

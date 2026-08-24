@@ -36,7 +36,11 @@ from olmo_core.nn.moe.moe import MoEType
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 
-from .checkpoint import save_hf_hybrid_model, save_hf_model
+from .checkpoint import (
+    save_hf_hybrid_model,
+    save_hf_model,
+    save_hf_model_with_native_router_overlay,
+)
 from .config import is_olmo_hybrid_model
 from .convert import get_converter_to_hf
 
@@ -59,6 +63,7 @@ def convert_checkpoint_to_hf(
     moe_capacity_factor: float | None = None,
     validation_device: torch.device | None = None,
     validation_sliding_window: int | None = None,
+    hf_router_overlay_template: str | Path | None = None,
 ) -> None:
     """
     Convert an OLMo Core checkpoint to HuggingFace format.
@@ -70,6 +75,9 @@ def convert_checkpoint_to_hf(
     :param tokenizer_config_dict: Dictionary form of OLMo Core tokenizer config.
     :param model_state_dict: Optional pre-gathered model state dict. If provided, weights are
         taken from this instead of loading from ``original_checkpoint_path``.
+    :param hf_router_overlay_template: Existing HF checkpoint to copy before replacing only its
+        router tensors with native FP32 values. This avoids re-exporting experimental model
+        components that the generic HF converter cannot represent.
     """
     if model_state_dict is None and original_checkpoint_path is None:
         raise ValueError("Either model_state_dict or original_checkpoint_path must be provided")
@@ -119,9 +127,9 @@ def convert_checkpoint_to_hf(
         if attention_config.name == AttentionType.fused:
             backend = attention_config.backend
             if backend is None:
-                assert (
-                    attention_config.use_flash
-                ), "use_flash or flash_2 backend is expected for fused attention"
+                assert attention_config.use_flash, (
+                    "use_flash or flash_2 backend is expected for fused attention"
+                )
                 backend = AttentionBackendName.flash_2
 
             assert backend in (
@@ -219,7 +227,14 @@ def convert_checkpoint_to_hf(
 
         hybrid = is_olmo_hybrid_model(model)
 
-        if hybrid:
+        if hf_router_overlay_template is not None:
+            log.info("Copying HF template and overlaying native FP32 router tensors")
+            save_hf_model_with_native_router_overlay(
+                output_path,
+                hf_router_overlay_template,
+                model_state_dict,
+            )
+        elif hybrid:
             log.info("Detected hybrid model (GDN + attention layers)")
             save_hf_hybrid_model(
                 output_path,

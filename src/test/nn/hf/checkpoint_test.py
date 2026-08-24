@@ -1,11 +1,19 @@
 from pathlib import Path
 
+import pytest
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from safetensors import safe_open
+from safetensors.torch import load_file, save_file
 from transformers import AutoModelForCausalLM, Olmo2Config
 
 from olmo_core.config import DType
-from olmo_core.nn.hf.checkpoint import _cast_hybrid_export_dtype, load_hf_model, save_hf_model
+from olmo_core.nn.hf.checkpoint import (
+    _cast_hybrid_export_dtype,
+    load_hf_model,
+    save_hf_model,
+    save_hf_model_with_native_router_overlay,
+)
 from olmo_core.nn.transformer.config import TransformerConfig
 
 
@@ -115,3 +123,49 @@ def test_cast_hybrid_export_dtype_can_cast_router():
     )
 
     assert converted["model.layers.1.mlp.router.gate.weight"].dtype == torch.bfloat16
+
+
+def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_path: Path):
+    template = tmp_path / "template"
+    output = tmp_path / "output"
+    template.mkdir()
+    (template / "config.json").write_text('{"model_type": "olmo3moe"}\n')
+    hf_router_name = "model.layers.1.mlp.router.gate.weight"
+    hf_dense_name = "model.layers.1.self_attn.q_proj.weight"
+    original_dense = torch.randn(3, 3, dtype=torch.bfloat16)
+    save_file(
+        {
+            hf_router_name: torch.zeros(4, 3, dtype=torch.bfloat16),
+            hf_dense_name: original_dense,
+        },
+        template / "model.safetensors",
+        metadata={"format": "pt"},
+    )
+    native_router = torch.randn(4, 3, dtype=torch.float32)
+
+    save_hf_model_with_native_router_overlay(
+        output,
+        template,
+        {"blocks.1.routed_experts_router.weight": native_router},
+    )
+
+    exported = load_file(output / "model.safetensors")
+    assert torch.equal(exported[hf_router_name], native_router)
+    assert exported[hf_router_name].dtype == torch.float32
+    assert torch.equal(exported[hf_dense_name], original_dense)
+    assert (output / "config.json").read_text() == (template / "config.json").read_text()
+    with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
+        assert checkpoint.metadata() == {"format": "pt"}
+
+
+def test_native_router_overlay_rejects_missing_template_router(tmp_path: Path):
+    template = tmp_path / "template"
+    template.mkdir()
+    save_file({"dense.weight": torch.ones(2, 2)}, template / "model.safetensors")
+
+    with pytest.raises(RuntimeError, match="missing native router"):
+        save_hf_model_with_native_router_overlay(
+            tmp_path / "output",
+            template,
+            {"blocks.1.routed_experts_router.weight": torch.ones(4, 3)},
+        )
