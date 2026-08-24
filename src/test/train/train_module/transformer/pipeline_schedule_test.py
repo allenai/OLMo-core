@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import Any, Dict
 
 import pytest
+import torch
 
 from olmo_core.distributed.parallel.pipeline_parallel import (
     PipelineSchedule,
@@ -15,6 +16,8 @@ from olmo_core.train.train_module.transformer.pipeline.helpers import (
     generate_stage_to_rank_mapping,
 )
 from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
+    BATCH_LEADING_MODEL_KWARGS,
+    SUPPORTED_MODEL_KWARGS,
     CustomSchedule1F1BV,
     CustomScheduleInterleaved1F1B,
     PipelineActionType,
@@ -354,3 +357,102 @@ def test_pipeline_schedule_rejects_standard_schedules(schedule_name: PipelineSch
             pp_mesh=None,  # type: ignore[arg-type]
             schedule_name=schedule_name,
         )
+
+
+def _build_splitter(n_microbatches: int) -> CustomScheduleInterleaved1F1B:
+    schedule = CustomScheduleInterleaved1F1B.__new__(CustomScheduleInterleaved1F1B)
+    schedule._n_microbatches = n_microbatches
+    schedule._args_chunk_spec = None
+    schedule._kwargs_chunk_spec = None
+    return schedule
+
+
+def test_split_inputs_keeps_segment_ids_aligned_with_input_ids():
+    splitter = _build_splitter(2)
+    input_ids = torch.arange(16).reshape(4, 4)
+    segment_ids = torch.arange(16).reshape(4, 4) // 2
+
+    args_split, kwargs_split = splitter._split_inputs((input_ids,), {"segment_ids": segment_ids})
+
+    assert len(args_split) == len(kwargs_split) == 2
+    for i, (start, stop) in enumerate([(0, 2), (2, 4)]):
+        assert torch.equal(args_split[i][0], input_ids[start:stop])
+        assert torch.equal(kwargs_split[i]["segment_ids"], segment_ids[start:stop])
+
+
+def test_split_inputs_splits_packed_document_metadata():
+    splitter = _build_splitter(2)
+    input_ids = torch.arange(16).reshape(4, 4)
+    doc_lens = torch.tensor([[4, 0], [2, 2], [3, 1], [4, 0]])
+    max_doc_lens = [4, 2, 3, 4]
+
+    _, kwargs_split = splitter._split_inputs(
+        (input_ids,), {"doc_lens": doc_lens, "max_doc_lens": max_doc_lens}
+    )
+
+    assert torch.equal(kwargs_split[0]["doc_lens"], doc_lens[0:2])
+    assert torch.equal(kwargs_split[1]["doc_lens"], doc_lens[2:4])
+    # The Python list has to be sliced on the same boundaries as the tensors.
+    assert kwargs_split[0]["max_doc_lens"] == [4, 2]
+    assert kwargs_split[1]["max_doc_lens"] == [3, 4]
+
+
+def test_split_inputs_rejects_uneven_microbatches():
+    # Stages size their P2P buffers from one floor-divided microbatch shape, so a batch that
+    # doesn't divide evenly would leave receivers with undersized buffers.
+    splitter = _build_splitter(4)
+
+    with pytest.raises(ValueError, match="not divisible"):
+        splitter._split_inputs((torch.arange(24).reshape(6, 4),), {})
+
+
+@pytest.mark.parametrize("present_keys", [("labels",), ("segment_ids",), ("max_doc_lens",)])
+def test_split_inputs_infers_batch_size_on_later_stages(present_keys):
+    # Ranks that don't own the first stage get empty positional args, so the batch size has to come
+    # from whichever batch-leading kwargs happen to be present.
+    splitter = _build_splitter(2)
+    available = {
+        "labels": torch.arange(16).reshape(4, 4),
+        "segment_ids": torch.zeros(4, 4, dtype=torch.long),
+        "max_doc_lens": [4, 4, 4, 4],
+    }
+    kwargs = {key: available[key] for key in present_keys}
+
+    args_split, kwargs_split = splitter._split_inputs((), kwargs)
+
+    assert args_split == [(), ()]
+    for key in present_keys:
+        assert len(kwargs_split[0][key]) == 2
+        assert len(kwargs_split[1][key]) == 2
+
+
+def test_split_inputs_rejects_metadata_with_mismatched_batch_size():
+    splitter = _build_splitter(2)
+
+    with pytest.raises(ValueError, match="does not match input batch size"):
+        splitter._split_inputs((torch.arange(16).reshape(4, 4),), {"max_doc_lens": [1, 2, 3]})
+
+
+def test_supported_model_kwargs_covers_every_batch_leading_kwarg():
+    # The independent PP dry run validates against this same set, so a kwarg the splitter accepts
+    # but the set omits would train fine and then fail the dry run.
+    assert set(BATCH_LEADING_MODEL_KWARGS) <= SUPPORTED_MODEL_KWARGS
+
+
+@pytest.mark.parametrize("key", sorted(SUPPORTED_MODEL_KWARGS - {"labels"}))
+def test_split_inputs_accepts_every_supported_model_kwarg(key):
+    splitter = _build_splitter(2)
+    values = {
+        "segment_ids": torch.zeros(4, 4, dtype=torch.long),
+        "doc_lens": torch.tensor([[4, 0], [2, 2], [3, 1], [4, 0]]),
+        "max_doc_lens": [4, 2, 3, 4],
+        "loss_div_factor": 2.0,
+        "ignore_index": -100,
+        "loss_reduction": "sum",
+        "z_loss_multiplier": None,
+        "return_logits": False,
+        "cp_already_sharded": False,
+        "cp_original_seq_len": 4,
+    }
+    _, kwargs_split = splitter._split_inputs((torch.arange(16).reshape(4, 4),), {key: values[key]})
+    assert all(key in kwargs_mb for kwargs_mb in kwargs_split)

@@ -4,6 +4,7 @@ from typing import Optional
 
 import pytest
 import torch
+import torch.distributed as dist
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -21,7 +22,7 @@ from olmo_core.nn.transformer import (
 )
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
-from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
+from olmo_core.train.train_module import OLMoDDPTrainModule, OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
@@ -62,6 +63,7 @@ def _tiny_model_config(
     n_layers: int = 2,
     dtype: DType = DType.float32,
     router_bias_gamma: Optional[float] = None,
+    global_load_balancing: bool = False,
 ) -> OLMoDDPModelConfig:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
     return OLMoDDPModelConfig(
@@ -80,7 +82,12 @@ def _tiny_model_config(
                 d_model=d_model, hidden_size=128, num_experts=4, bias=False, dtype=dtype
             ),
             routed_experts_router=MoERouterConfigV2(
-                d_model=d_model, num_experts=4, top_k=2, dtype=dtype, bias_gamma=router_bias_gamma
+                d_model=d_model,
+                num_experts=4,
+                top_k=2,
+                dtype=dtype,
+                bias_gamma=router_bias_gamma,
+                global_load_balancing=global_load_balancing,
             ),
             shared_experts=None,
             layer_norm=layer_norm,
@@ -283,4 +290,89 @@ def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
+    )
+
+
+@pytest.mark.parametrize(
+    "value, multiple, expected",
+    [
+        ([4, 2, 3], 2, [4, 2, 3, 3]),
+        ([4, 2], 2, [4, 2]),
+        ((4, 2, 3), 2, (4, 2, 3, 3)),
+    ],
+)
+def test_pad_pp_batch_dim_pads_batch_leading_sequences(value, multiple, expected):
+    # Per-instance metadata such as 'max_doc_lens' is a Python list, so it has to be padded
+    # alongside the tensors it accompanies or it ends up shorter than the padded batch.
+    assert OLMoDDPTrainModule._pad_pp_batch_dim(value, multiple) == expected
+
+
+def test_pad_pp_batch_dim_pads_tensors_by_repeating_the_last_instance():
+    value = torch.tensor([[1, 2], [3, 4], [5, 6]])
+    padded = OLMoDDPTrainModule._pad_pp_batch_dim(value, 2)
+    assert torch.equal(padded, torch.tensor([[1, 2], [3, 4], [5, 6], [5, 6]]))
+
+
+def test_split_pp_dry_run_model_kwargs_slices_batch_leading_values():
+    # The independent PP dry run splits model kwargs itself, so per-instance metadata has to be
+    # sliced there too rather than handed whole to every microbatch.
+    kwargs = {
+        "segment_ids": torch.arange(8).reshape(4, 2),
+        "max_doc_lens": [4, 2, 3, 4],
+        "cp_original_seq_len": 2,
+    }
+    split = OLMoDDPTrainModule._split_pp_dry_run_model_kwargs(
+        kwargs,
+        original_batch_size=4,
+        micro_batch_size=2,
+        num_microbatches=2,
+    )
+
+    assert torch.equal(split[0]["segment_ids"], kwargs["segment_ids"][0:2])
+    assert torch.equal(split[1]["segment_ids"], kwargs["segment_ids"][2:4])
+    assert split[0]["max_doc_lens"] == [4, 2]
+    assert split[1]["max_doc_lens"] == [3, 4]
+    # Scalars are broadcast rather than sliced.
+    assert split[0]["cp_original_seq_len"] == split[1]["cp_original_seq_len"] == 2
+
+
+def _run_global_lb_group_is_stage_local():
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module.world_mesh = {}
+    train_module._build_world_mesh(
+        dp=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        pp=TransformerPipelineParallelConfig(degree=2),
+        device_type="cpu",
+    )
+    pp_rank = train_module.dense_mesh["pp"].get_local_rank()
+
+    model = _tiny_model_config(global_load_balancing=True).build(init_device="cpu")
+    # Call apply_dp directly rather than building the whole train module: the PP path installs
+    # CUDA events, which this CPU-only test cannot do. This is the call that hands the routers
+    # their load-balancing group, which is what the test is about.
+    model.apply_dp(dp_mesh=train_module.dense_mesh["dp"], ep_mesh=None)
+
+    expected_size = dist.get_world_size() // 2
+    for block in model.blocks.values():
+        lb_group = block.routed_experts_router.lb_process_group
+        assert lb_group is not None, "global load balancing needs a group after apply_dp"
+        assert dist.get_world_size(lb_group) == expected_size
+
+        # Every member has to be a data-parallel replica of this rank's own pipeline stage.
+        # A group spanning stages would average expert counts over unrelated layers, which
+        # nothing else would catch: the reduction still succeeds, it just balances the wrong thing.
+        gathered = [torch.zeros(1, dtype=torch.long) for _ in range(expected_size)]
+        dist.all_gather(gathered, torch.tensor([pp_rank], dtype=torch.long), group=lb_group)
+        assert {int(t.item()) for t in gathered} == {
+            pp_rank
+        }, f"rank {dist.get_rank()} shares a load-balancing group with another pipeline stage"
+
+
+def test_global_lb_group_is_stage_local():
+    # 2 pipeline stages x 2 data-parallel replicas.
+    run_distributed_test(
+        _run_global_lb_group_is_stage_local,
+        world_size=4,
+        backend="gloo",
+        start_method="spawn",
     )
