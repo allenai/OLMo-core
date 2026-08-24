@@ -402,7 +402,12 @@ def validate_conversion(
     device = device or torch.device("cpu")
     log.info(f"Running validation on {device}")
 
-    B, T = 1, 60
+    # Use a sequence longer than 64 tokens: the HF olmo3_5_hybrid GDN layers switch to a
+    # separate recurrent implementation for seq_len <= 64 at inference, which is
+    # numerically different from the chunked FLA kernel olmo-core uses (and from what
+    # long-prompt eval prefill exercises), so short sequences compare the wrong pair of
+    # algorithms.
+    B, T = 1, 128
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
     # When the model's kernels allow it, compare in full precision: both models keep the
