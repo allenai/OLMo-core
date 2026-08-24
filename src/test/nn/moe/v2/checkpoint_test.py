@@ -50,6 +50,42 @@ def test_normalize_olmo_ddp_checkpoint_state():
         torch.testing.assert_close(actual[key], expected[key])
 
 
+def test_normalize_olmo_ddp_checkpoint_state_restores_flat_parameter_shapes():
+    model_state = {
+        "embeddings.weight": torch.empty(2, 3),
+        "blocks.0.router.weight": torch.empty(2, 4),
+    }
+    checkpoint_state = {
+        f"module.{name}.main": torch.arange(parameter.numel())
+        for name, parameter in model_state.items()
+    }
+
+    actual = normalize_olmo_ddp_checkpoint_state(checkpoint_state, model_state)
+
+    assert {name: value.shape for name, value in actual.items()} == {
+        name: value.shape for name, value in model_state.items()
+    }
+
+
+def test_normalize_olmo_ddp_checkpoint_state_rejects_wrong_numel():
+    with pytest.raises(RuntimeError, match="has 5 elements, expected 6"):
+        normalize_olmo_ddp_checkpoint_state(
+            {"module.embeddings.weight.main": torch.ones(5)},
+            {"embeddings.weight": torch.empty(2, 3)},
+        )
+
+
+def test_normalize_olmo_ddp_checkpoint_state_rejects_missing_model_parameter():
+    with pytest.raises(RuntimeError, match="missing model parameters"):
+        normalize_olmo_ddp_checkpoint_state(
+            {"module.embeddings.weight.main": torch.ones(6)},
+            {
+                "embeddings.weight": torch.empty(2, 3),
+                "norm.weight": torch.empty(3),
+            },
+        )
+
+
 def test_normalize_olmo_ddp_checkpoint_state_rejects_unexpected_names():
     with pytest.raises(RuntimeError, match="Unexpected OLMoDDP checkpoint tensor names"):
         normalize_olmo_ddp_checkpoint_state(

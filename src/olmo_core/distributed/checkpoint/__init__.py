@@ -97,6 +97,7 @@ def load_olmo_ddp_checkpoint_state(
 
 def normalize_olmo_ddp_checkpoint_state(
     checkpoint_state: Mapping[str, torch.Tensor],
+    model_state: Optional[Mapping[str, torch.Tensor]] = None,
 ) -> Dict[str, torch.Tensor]:
     """Convert OLMoDDP master-parameter names into ordinary model state names.
 
@@ -117,6 +118,17 @@ def normalize_olmo_ddp_checkpoint_state(
         normalized_name = name.removeprefix(prefix).removesuffix(suffix)
         if normalized_name in normalized:
             raise RuntimeError(f"Duplicate normalized OLMoDDP parameter name: {normalized_name}")
+        if model_state is not None:
+            if normalized_name not in model_state:
+                invalid_names.append(name)
+                continue
+            expected = model_state[normalized_name]
+            if value.numel() != expected.numel():
+                raise RuntimeError(
+                    f"OLMoDDP parameter {name!r} has {value.numel()} elements, "
+                    f"expected {expected.numel()} for shape {tuple(expected.shape)}"
+                )
+            value = value.reshape(expected.shape)
         normalized[normalized_name] = value
 
     if invalid_names:
@@ -126,6 +138,12 @@ def normalize_olmo_ddp_checkpoint_state(
         )
     if not normalized:
         raise RuntimeError("OLMoDDP checkpoint contains no model parameters")
+    if model_state is not None:
+        missing_names = sorted(set(model_state) - set(normalized))
+        if missing_names:
+            raise RuntimeError(
+                f"OLMoDDP checkpoint is missing model parameters: {missing_names[:20]}"
+            )
     return normalized
 
 

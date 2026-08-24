@@ -258,7 +258,8 @@ def convert_checkpoint_to_hf(
                     load_olmo_ddp_checkpoint_state(
                         model_and_optim_dir,
                         work_dir=work_dir,
-                    )
+                    ),
+                    model.state_dict(),
                 )
                 model.load_state_dict(model_state_dict)
             else:

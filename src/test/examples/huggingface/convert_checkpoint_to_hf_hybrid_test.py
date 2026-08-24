@@ -326,7 +326,7 @@ def test_convert_olmo_ddp_checkpoint_to_hf(
     save_state_dict(
         checkpoint_path / "model_and_optim",
         {
-            f"module.{name}.main": parameter.detach().float()
+            f"module.{name}.main": parameter.detach().float().flatten()
             for name, parameter in hybrid_model.named_parameters()
         },
     )
