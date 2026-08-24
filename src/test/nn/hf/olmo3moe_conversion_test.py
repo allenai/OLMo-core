@@ -8,14 +8,15 @@ faithful bijection (including the fused ``w_up_gate`` split and the mixed dense/
 
 import types
 
+import pytest
 import torch
 
 from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_from_hf,
     convert_olmo3moe_state_to_hf,
 )
-from olmo_core.nn.moe.v2.weight_stream import iter_olmo3moe_tensor_to_hf
 from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.nn.moe.v2.weight_stream import iter_olmo3moe_tensor_to_hf
 
 
 def _fake_config():
