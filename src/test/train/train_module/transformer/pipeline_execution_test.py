@@ -40,8 +40,11 @@ class ToyStage(nn.Module):
         self.stage_index = stage_index
         self.is_last = is_last
         self.bias = nn.Parameter(torch.full((self.d_model,), 0.01 * (stage_index + 1)))
+        self.seen_segment_ids: list[torch.Tensor] = []
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, segment_ids: torch.Tensor | None = None):
+        if segment_ids is not None:
+            self.seen_segment_ids.append(segment_ids)
         if x.dtype == torch.long:
             h = x.to(torch.float32).unsqueeze(-1).expand(-1, -1, self.d_model).to(torch.bfloat16)
         else:
@@ -121,6 +124,77 @@ def _run_rma_transport():
     dist.barrier()
 
     transport.close()
+
+
+def _run_segment_ids_reach_every_stage():
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device = torch.device("cuda", rank)
+    torch.cuda.set_device(device)
+
+    num_stages = 4
+    n_microbatches = 2
+    batch_size, seq_len = 4, 4
+
+    stages = []
+    modules = []
+    for stage_index in (rank, rank + world_size):
+        module = ToyStage(stage_index, is_last=stage_index == num_stages - 1).to(device)
+        modules.append(module)
+        stages.append(
+            CustomPipelineStage(
+                module,
+                stage_index,
+                num_stages,
+                device,
+                group=dist.group.WORLD,
+                p2p_backend="nccl",
+            )
+        )
+
+    schedule = CustomScheduleInterleaved1F1B(stages, n_microbatches=n_microbatches)
+    schedule.prepare_step(global_batch_size=batch_size, seqlen=seq_len)
+
+    # One distinct document ID per instance, so a chunk identifies exactly which microbatch it
+    # belongs to and a misaligned split can't go unnoticed.
+    segment_ids = (
+        torch.arange(batch_size, device=device)
+        .unsqueeze(1)
+        .expand(batch_size, seq_len)
+        .contiguous()
+    )
+    micro_batch_size = batch_size // n_microbatches
+    expected = [
+        segment_ids[i * micro_batch_size : (i + 1) * micro_batch_size]
+        for i in range(n_microbatches)
+    ]
+
+    if rank == 0:
+        input_ids = torch.arange(batch_size * seq_len, device=device, dtype=torch.long).view(
+            batch_size, seq_len
+        )
+        schedule.step(input_ids, segment_ids=segment_ids)
+    else:
+        # Later stages get no token IDs at all, which is exactly why segment IDs have to be
+        # supplied as a side input rather than derived from the stage's own input.
+        schedule.step(segment_ids=segment_ids)
+
+    for module in modules:
+        assert (
+            len(module.seen_segment_ids) == n_microbatches
+        ), f"rank {rank} stage {module.stage_index} saw {len(module.seen_segment_ids)} microbatches"
+        for seen, want in zip(module.seen_segment_ids, expected):
+            assert torch.equal(seen, want), f"rank {rank} stage {module.stage_index} got {seen}"
+
+
+@requires_multi_gpu
+def test_segment_ids_reach_every_stage():
+    run_distributed_test(
+        _run_segment_ids_reach_every_stage,
+        world_size=2,
+        backend="nccl",
+        start_method="spawn",
+    )
 
 
 @requires_multi_gpu

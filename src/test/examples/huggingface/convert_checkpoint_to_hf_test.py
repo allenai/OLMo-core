@@ -20,8 +20,8 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
-from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.hf import convert_checkpoint as convert_checkpoint_module
+from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 

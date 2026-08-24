@@ -1,7 +1,8 @@
 import logging
-from typing import List, Optional, TypeVar, cast
+from typing import Iterable, List, Optional, TypeVar, cast
 
 import torch
+import torch.nn as nn
 from torch.distributed import DeviceMesh
 
 from olmo_core.distributed.parallel import (
@@ -16,6 +17,7 @@ from olmo_core.distributed.parallel import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.float8 import Float8Config
 from olmo_core.nn.transformer import MoETransformer, Transformer
+from olmo_core.ops.moe import segment_ids_from_eos
 
 from .config import (
     TransformerActivationCheckpointingConfig,
@@ -29,6 +31,36 @@ log = logging.getLogger(__name__)
 
 
 M = TypeVar("M", Transformer, List[Transformer])
+
+
+def get_emo_segment_ids(
+    model_parts: Iterable[nn.Module], input_ids: torch.Tensor
+) -> Optional[torch.Tensor]:
+    """
+    Derive the per-token document segment IDs needed by document-routed (EMo) blocks.
+
+    Only the first pipeline stage receives token IDs, so under pipeline parallelism the segment IDs
+    must be derived from the full batch here and passed to every stage as a side input.
+
+    :param model_parts: The local model parts, which may be wrapped for distributed training.
+    :param input_ids: The full-batch token IDs, shape ``(batch_size, seq_len)``.
+
+    :returns: The segment IDs, shape ``(batch_size, seq_len)``, or ``None`` if none of the local
+        blocks route by document.
+
+    :raises OLMoConfigurationError: If the local model parts disagree on the EOS token ID. Each part
+        validates its own blocks, so this covers the disagreements that survive a pipeline split.
+    """
+    eos_token_ids = {
+        eos_token_id
+        for model in model_parts
+        if (eos_token_id := getattr(model, "emo_eos_token_id", None)) is not None
+    }
+    if not eos_token_ids:
+        return None
+    if len(eos_token_ids) != 1:
+        raise OLMoConfigurationError("All EMO routers in a model must use the same eos_token_id")
+    return segment_ids_from_eos(input_ids, eos_token_ids.pop())
 
 
 def parallelize_model(

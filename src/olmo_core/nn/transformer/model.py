@@ -230,6 +230,51 @@ class Transformer(nn.Module):
     def is_moe(self) -> bool:
         return False
 
+    @cached_property
+    def emo_block_indices(self) -> List[int]:
+        """
+        The indices of the blocks in this model whose routed-expert router routes by document and
+        therefore requires per-token segment IDs.
+        """
+        return [
+            int(block_idx)
+            for block_idx, block in self.blocks.items()
+            if getattr(getattr(block, "routed_experts_router", None), "requires_segment_ids", False)
+        ]
+
+    @cached_property
+    def emo_eos_token_id(self) -> Optional[int]:
+        """
+        The EOS token ID that document segment IDs are derived from, or ``None`` if this model has
+        no document-routed blocks.
+
+        :raises OLMoConfigurationError: If the document-routed blocks disagree on the EOS token ID.
+        """
+        eos_token_ids = {
+            router.eos_token_id
+            for block in self.blocks.values()
+            if (router := getattr(block, "routed_experts_router", None)) is not None
+            and getattr(router, "requires_segment_ids", False)
+        }
+        if not eos_token_ids:
+            return None
+        if len(eos_token_ids) != 1:
+            raise OLMoConfigurationError(
+                "All EMO routers in a model must use the same eos_token_id"
+            )
+        return eos_token_ids.pop()
+
+    def invalidate_block_topology_caches(self) -> None:
+        """
+        Drop the cached properties derived from the block list.
+
+        Must be called after blocks are added or removed, such as when splitting a model into
+        pipeline stages. Deliberately leaves the parameter-count caches alone: those are populated
+        up-front precisely so they survive having their parameters removed.
+        """
+        self.__dict__.pop("emo_block_indices", None)
+        self.__dict__.pop("emo_eos_token_id", None)
+
     @property
     def device(self) -> torch.device:
         if self._device is None:
@@ -616,29 +661,30 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
-        emo_blocks = []
-        emo_eos_token_ids = set()
-        for block_idx, block in self.blocks.items():
-            router = getattr(block, "routed_experts_router", None)
-            if router is not None and getattr(router, "requires_segment_ids", False):
-                emo_blocks.append(int(block_idx))
-                emo_eos_token_ids.add(router.eos_token_id)
-        if emo_blocks:
-            if self._pp_enabled:
-                raise OLMoConfigurationError(
-                    "EMO routing does not currently support pipeline parallelism because "
-                    "token-derived segment IDs are not carried between pipeline stages"
-                )
+        segment_ids: Optional[torch.Tensor] = kwargs.pop("segment_ids", None)
+        if emo_block_indices := self.emo_block_indices:
             if self._cp_load_balancer is not None:
                 raise OLMoConfigurationError(
                     "EMO routing does not currently support context parallelism"
                 )
-            if len(emo_eos_token_ids) != 1:
-                raise OLMoConfigurationError(
-                    "All EMO routers in a model must use the same eos_token_id"
-                )
-            segment_ids = moe_ops.segment_ids_from_eos(input_ids, emo_eos_token_ids.pop())
-            for block_idx in emo_blocks:
+            if segment_ids is None:
+                # Only the first pipeline stage receives token IDs; later stages get hidden states,
+                # so under PP the caller derives the segment IDs once and passes them to every stage.
+                if self._pp_enabled:
+                    raise OLMoConfigurationError(
+                        "EMO routing with pipeline parallelism requires 'segment_ids' to be passed "
+                        "in, because only the first stage receives token IDs"
+                    )
+                assert self.emo_eos_token_id is not None
+                segment_ids = moe_ops.segment_ids_from_eos(input_ids, self.emo_eos_token_id)
+            else:
+                segment_ids = move_to_device(segment_ids, self.device)
+                if segment_ids.shape != (B, S):
+                    raise ValueError(
+                        f"'segment_ids' shape {tuple(segment_ids.shape)} must match the input "
+                        f"batch and sequence dimensions {(B, S)}"
+                    )
+            for block_idx in emo_block_indices:
                 per_block_kwargs[block_idx]["segment_ids"] = segment_ids
 
         if "cu_doc_lens" in all_block_kwargs:
@@ -770,13 +816,6 @@ class Transformer(nn.Module):
         """
         Prepare the model for pipeline parallelism after it's been split into stages.
         """
-        for block in self.blocks.values():
-            router = getattr(block, "routed_experts_router", None)
-            if router is not None and getattr(router, "requires_segment_ids", False):
-                raise OLMoConfigurationError(
-                    "EMO routing does not currently support pipeline parallelism because "
-                    "token-derived segment IDs are not carried between pipeline stages"
-                )
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
@@ -910,14 +949,7 @@ class Transformer(nn.Module):
         # EMO samples a routed-expert pool size for each document. Recompute must replay those
         # samples so it routes through the same experts as the original checkpointed forward.
         # TODO: also preserve RNG state if dropout is active.
-        preserve_rng_state = any(
-            getattr(
-                getattr(block, "routed_experts_router", None),
-                "requires_segment_ids",
-                False,
-            )
-            for block in self.blocks.values()
-        )
+        preserve_rng_state = bool(self.emo_block_indices)
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
