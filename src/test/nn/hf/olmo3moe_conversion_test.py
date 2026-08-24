@@ -184,3 +184,33 @@ def test_legacy_latent_moe_dimension_is_normalized():
     }
     _normalize_legacy_latent_moe_config(config)
     assert config["block"]["latent_moe"] == {"latent_dim": 320, "bias": False}
+
+
+def test_inactive_newer_router_fields_are_normalized():
+    config = {
+        "block": {
+            "routed_experts_router": {
+                "global_load_balancing": False,
+                "emo": None,
+                "top_k": 4,
+            }
+        }
+    }
+
+    _normalize_legacy_latent_moe_config(config)
+
+    assert config["block"]["routed_experts_router"] == {"top_k": 4}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("global_load_balancing", True, "active global_load_balancing"),
+        ("emo", {"min_document_expert_pool": 8}, "active EMO routing"),
+    ],
+)
+def test_active_newer_router_fields_fail_closed(field, value, message):
+    config = {"block": {"routed_experts_router": {field: value}}}
+
+    with pytest.raises(ValueError, match=message):
+        _normalize_legacy_latent_moe_config(config)

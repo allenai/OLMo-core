@@ -48,7 +48,7 @@ log = logging.getLogger(__name__)
 
 
 def _normalize_legacy_latent_moe_config(value: Any) -> None:
-    """Normalize the pre-PR-799 LatentMoE field name in saved experiment configs."""
+    """Normalize harmless fields from newer experimental checkpoint configs."""
     if isinstance(value, dict):
         latent = value.get("latent_moe")
         if isinstance(latent, dict) and "routed_expert_dim" in latent:
@@ -57,6 +57,20 @@ def _normalize_legacy_latent_moe_config(value: Any) -> None:
                     "LatentMoE config contains both 'routed_expert_dim' and 'latent_dim'."
                 )
             latent["latent_dim"] = latent.pop("routed_expert_dim")
+        if "global_load_balancing" in value:
+            if value["global_load_balancing"] is not False:
+                raise ValueError(
+                    "Cannot export a checkpoint with active global_load_balancing using a "
+                    "router implementation that does not support it."
+                )
+            value.pop("global_load_balancing")
+        if "emo" in value:
+            if value["emo"] is not None:
+                raise ValueError(
+                    "Cannot export a checkpoint with active EMO routing using a router "
+                    "implementation that does not support it."
+                )
+            value.pop("emo")
         for child in value.values():
             _normalize_legacy_latent_moe_config(child)
     elif isinstance(value, list):
