@@ -405,6 +405,20 @@ def validate_conversion(
     B, T = 1, 60
     input_ids = torch.randint(0, vocab_size, (B, T)).to(device)
 
+    # When the model's kernels allow it, compare in full precision: both models keep the
+    # saved (possibly low-precision-rounded) weights but compute in fp32. This makes the
+    # check about weight fidelity rather than about dtype-dependent kernel rounding (e.g.
+    # RoPE cos/sin tables computed at bf16 on one side and fp32 on the other), which
+    # legitimately diverges past tight tolerances on deep trained models. Flash attention
+    # kernels don't support fp32, so those models keep the old same-dtype comparison.
+    requires_low_precision = any(
+        "flash" in type(getattr(block.attention, "backend", None)).__name__.lower()
+        for block in model.blocks.values()
+    )
+    compare_fp32 = not requires_low_precision
+    if compare_fp32:
+        log.info("Comparing models in fp32 (weights keep their saved precision)")
+
     is_sliding = any(
         hasattr(block.attention, "window_size") and block.attention.window_size != (-1, -1)
         for block in model.blocks.values()
@@ -428,6 +442,8 @@ def validate_conversion(
         .to(device)
         .eval()
     )
+    if compare_fp32:
+        hf_model = hf_model.float()
     hf_config = hf_model.config
 
     olmo_core_state, hf_state = {}, {}
@@ -446,7 +462,10 @@ def validate_conversion(
             if block.attention.window_size != (-1, -1):
                 block.attention.window_size = (sliding_window - 1, 0)
     if dtype:
+        # Round the weights through the saved dtype so both models see identical values.
         model = model.to(dtype.as_pt())
+    if compare_fp32:
+        model = model.float()
     model = model.to(device=device)
     model.eval()
     with torch.no_grad():
