@@ -58,6 +58,15 @@ def parse_args() -> argparse.Namespace:
         help="List which checkpoints would be converted or skipped, then exit.",
     )
     parser.add_argument(
+        "--min-step",
+        type=int,
+        default=1,
+        help=(
+            "Skip checkpoints below this step (default: 1, which skips the step0 "
+            "initialization checkpoints). Set to 0 to convert those too."
+        ),
+    )
+    parser.add_argument(
         "--final-only",
         action="store_true",
         help="Convert only the highest-numbered step of each run instead of every checkpoint.",
@@ -194,6 +203,11 @@ def main() -> int:
         raise SystemExit(f"checkpoint root does not exist: {root}")
 
     step_dirs = find_checkpoint_dirs(root)
+    step_dirs = [
+        d
+        for d in step_dirs
+        if int(_STEP_DIR_RE.match(d.name).group(1)) >= args.min_step  # type: ignore[union-attr]
+    ]
     if args.final_only:
         step_dirs = keep_final_steps(step_dirs)
     if not step_dirs:
