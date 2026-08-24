@@ -259,9 +259,17 @@ def convert_checkpoint_to_hf(
                         model_and_optim_dir,
                         work_dir=work_dir,
                     ),
-                    model.state_dict(),
+                    dict(model.named_parameters()),
                 )
-                model.load_state_dict(model_state_dict)
+                incompatible = model.load_state_dict(model_state_dict, strict=False)
+                invalid_missing = [
+                    name for name in incompatible.missing_keys if not name.endswith("._extra_state")
+                ]
+                if invalid_missing or incompatible.unexpected_keys:
+                    raise RuntimeError(
+                        "Could not load normalized OLMoDDP parameters: "
+                        f"missing={invalid_missing}, unexpected={incompatible.unexpected_keys}"
+                    )
             else:
                 load_model_and_optim_state(
                     model_and_optim_dir,
