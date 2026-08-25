@@ -211,7 +211,9 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     ddp_blocks = [block for block in blocks if isinstance(block, OLMoDDPTransformerBlock)]
     use_peri_ln = moe_block.use_peri_norm
     if any(block.use_peri_norm != use_peri_ln for block in ddp_blocks):
-        raise NotImplementedError("All OLMoDDP blocks must use the same peri-LN setting for export.")
+        raise NotImplementedError(
+            "All OLMoDDP blocks must use the same peri-LN setting for export."
+        )
     if use_peri_ln and dense_block is not None:
         raise NotImplementedError(
             "Peri-LN olmo3moe export requires dense layers to use shared-only OLMoDDP blocks."

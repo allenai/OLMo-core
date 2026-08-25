@@ -10,7 +10,13 @@ import torch
 import torch.nn as nn
 from torch.autograd.graph import saved_tensors_hooks
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import DTensor, Placement, Replicate, Shard, distribute_tensor
+from torch.distributed.tensor import (
+    DTensor,
+    Placement,
+    Replicate,
+    Shard,
+    distribute_tensor,
+)
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum

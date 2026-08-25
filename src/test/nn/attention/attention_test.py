@@ -974,7 +974,7 @@ def test_scalable_softmax_scale_is_initialized_to_one():
     torch.testing.assert_close(attention.ssmax_scale, torch.ones(2))
 
 
-def test_scalable_softmax_is_applied_after_qk_norm():
+def test_scalable_softmax_is_applied_after_qk_norm(monkeypatch):
     class ConstantNorm(nn.Module):
         def forward(self, x):
             return torch.full_like(x, 3.0)
@@ -1001,7 +1001,7 @@ def test_scalable_softmax_is_applied_after_qk_norm():
         captured_q = q
         return torch.zeros_like(q)
 
-    attention.sdpa = capture_sdpa
+    monkeypatch.setattr(attention, "sdpa", capture_sdpa)
     attention(torch.randn(1, 3, 8))
 
     assert captured_q is not None

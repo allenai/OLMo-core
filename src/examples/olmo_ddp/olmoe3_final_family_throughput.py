@@ -25,16 +25,14 @@ from olmo_core.data import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.common import get_beaker_username
+from olmo_core.internal.experiment import CliContext, CommonComponents, DataComponents
 from olmo_core.internal.experiment import (
-    CliContext,
-    CommonComponents,
-    DataComponents,
     build_common_components as build_default_common_components,
-    build_config,
-    main,
 )
+from olmo_core.internal.experiment import build_config, main
 from olmo_core.launch.beaker import BeakerEnvSecret, BeakerEnvVar
 from olmo_core.launch.beaker_presets import get_preset
+from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.optim import OLMoDDPOptimizerConfig, OptimGroupOverride
 from olmo_core.optim.scheduler import CosWithWarmup
 from olmo_core.train import Duration, TrainerConfig
@@ -107,7 +105,6 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         launch.budget = "ai2/oe-other"
         launch.gh_token_secret = f"{secret_prefix}_GITHUB_TOKEN"
         launch.beaker_image = BEAKER_IMAGE
-        launch.no_python = True
         env = dict(PRESET.env_vars)
         env.update({"S3_PROFILE": "default", "PYTHONPATH": "src"})
         # The train subcommand rebuilds its config inside the Beaker container,
@@ -119,9 +116,7 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         ):
             if value := os.environ.get(name):
                 env[name] = value
-        launch.env_vars = [
-            BeakerEnvVar(name=name, value=value) for name, value in env.items()
-        ]
+        launch.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
         launch.post_setup = PRESET.post_setup
         launch.env_secrets = [
             BeakerEnvSecret(
@@ -174,9 +169,7 @@ def build_data_components(common: CommonComponents) -> DataComponents:
     )
 
 
-def build_model_config_from_common(
-    common: CommonComponents, model_size: str
-):
+def build_model_config_from_common(common: CommonComponents, model_size: str):
     model = build_model_config(
         model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
@@ -188,8 +181,10 @@ def build_model_config_from_common(
     # training setting rather than baking it into the architecture definition.
     if model_size == "3p8b":
         model.recompute_each_block = True
-        for block in [model.block, *model.block_overrides.values()]:
+        for block in [model.block, *(model.block_overrides or {}).values()]:
+            assert isinstance(block, OLMoDDPTransformerBlockConfig)
             if block.routed_experts is not None:
+                assert block.ep is not None
                 block.ep.share_dispatch_out = True
                 block.ep.share_combine_out = True
                 block.ep.capacity_factor = EP_CAPACITY_FACTOR
@@ -202,9 +197,7 @@ def build_train_module_config(
     system = SYSTEMS[model_size]
     ep = system["ep"]
     return OLMoDDPTrainModuleConfig(
-        rank_microbatch_size=(
-            system["rank_microbatch_sequences"] * common.max_sequence_length
-        ),
+        rank_microbatch_size=(system["rank_microbatch_sequences"] * common.max_sequence_length),
         max_sequence_length=common.max_sequence_length,
         optim=OLMoDDPOptimizerConfig(
             lr=8e-4,
@@ -299,16 +292,12 @@ def parse_model_size(value: str) -> str:
     for model_size in MODEL_SIZES:
         if f"-{model_size}-" in padded:
             return model_size
-    raise ValueError(
-        f"Run name {value!r} must contain one of these model sizes: {MODEL_SIZES}"
-    )
+    raise ValueError(f"Run name {value!r} must contain one of these model sizes: {MODEL_SIZES}")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        raise SystemExit(
-            f"Usage: {sys.argv[0]} <subcmd> <run_name> <cluster> [overrides...]"
-        )
+        raise SystemExit(f"Usage: {sys.argv[0]} <subcmd> <run_name> <cluster> [overrides...]")
 
     model_size = parse_model_size(sys.argv[2])
     config_builder = partial(

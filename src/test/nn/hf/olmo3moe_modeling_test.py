@@ -402,13 +402,9 @@ def test_olmo3moe_router_uses_float32_projection():
     hidden_states = torch.randn(2, 5, config.hidden_size, dtype=torch.bfloat16)
 
     actual_weights, actual_indices = router(hidden_states)
-    logits = torch.nn.functional.linear(
-        hidden_states.float(), router.gate.weight.float()
-    )
+    logits = torch.nn.functional.linear(hidden_states.float(), router.gate.weight.float())
     scores = logits.softmax(dim=-1)
-    expected_weights, expected_indices = torch.topk(
-        scores, config.num_experts_per_tok, dim=-1
-    )
+    expected_weights, expected_indices = torch.topk(scores, config.num_experts_per_tok, dim=-1)
     if config.normalize_expert_weights is not None:
         expected_weights = expected_weights.div(
             torch.norm(
