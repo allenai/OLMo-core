@@ -55,7 +55,9 @@ TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
+TORCH_CUDA_ARCH_LIST = 9.0 10.0
 FLASH_ATTN_VERSION = 2.8.2
+FLASH_ATTN_CUDA_ARCHS = 90;100
 FLASH_ATTN_3_SHA = "060c9188beec3a8b62b33a3bfa6d5d2d44975fab"
 FA3_MAX_JOBS = 64
 TE_VERSION = 2.9
@@ -72,7 +74,8 @@ QUACK_VERSION = ""
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_SUFFIX = $(shell date "+%Y-%m-%d")
-IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)-$(IMAGE_SUFFIX)
+IMAGE_VARIANT =
+IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(IMAGE_VARIANT)-$(IMAGE_SUFFIX)
 
 .PHONY : docker-image
 docker-image :
@@ -84,7 +87,9 @@ docker-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
+		--build-arg TORCH_CUDA_ARCH_LIST="$(TORCH_CUDA_ARCH_LIST)" \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
+		--build-arg FLASH_ATTN_CUDA_ARCHS="$(FLASH_ATTN_CUDA_ARCHS)" \
 		--build-arg FLASH_ATTN_3_SHA=$(FLASH_ATTN_3_SHA) \
 		--build-arg FA3_MAX_JOBS=$(FA3_MAX_JOBS) \
 		--build-arg TE_VERSION=$(TE_VERSION) \
@@ -102,6 +107,13 @@ docker-image :
 	@echo "✓ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
 	@echo ""
 
+.PHONY : docker-image-sm80
+docker-image-sm80 :
+	$(MAKE) docker-image \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
+		IMAGE_VARIANT=-sm80
+
 .PHONY : ghcr-image
 ghcr-image : docker-image
 	docker tag olmo-core:$(IMAGE_TAG) ghcr.io/allenai/olmo-core:$(IMAGE_TAG)
@@ -116,6 +128,13 @@ BEAKER_USER = $(shell beaker account whoami --format=json | jq -r '.[0].name')
 beaker-image : docker-image
 	@./src/scripts/beaker/create_beaker_image.sh olmo-core:$(IMAGE_TAG) olmo-core-$(IMAGE_TAG) $(BEAKER_WORKSPACE)
 	@echo "✓ Done"
+
+.PHONY : beaker-image-sm80
+beaker-image-sm80 :
+	$(MAKE) beaker-image \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
+		IMAGE_VARIANT=-sm80
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :
