@@ -25,6 +25,7 @@ _MIXER_ABBREVIATIONS = {
     "NormalizedAttention": "attn",
     "FusedAttention": "attn",
     "GatedDeltaNet": "gdn",
+    "KimiDeltaAttention": "kda",
 }
 
 # (block attribute, label used in the marker name), in forward order.
@@ -302,8 +303,12 @@ class ProfilerAnnotationCallback(Callback):
             # so it's where the backward ranges get closed out.
             if model.embeddings is not None:
                 handles.append(model.embeddings.register_forward_hook(self._embeddings_post))
-            handles.append(train_module.optim.register_step_pre_hook(self._optim_step_pre))
-            handles.append(train_module.optim.register_step_post_hook(self._optim_step_post))
+            # 'optim' is None on an eval-only train module, which has no optimizer step to name.
+            if train_module.optim is not None:
+                handles.append(train_module.optim.register_step_pre_hook(self._optim_step_pre))
+                handles.append(train_module.optim.register_step_post_hook(self._optim_step_post))
+            else:
+                log.warning("train module has no optimizer, skipping 'optim_step' annotations")
 
         if self.annotate_blocks:
             index_width = max(2, len(str(max(0, model.n_layers - 1))))
