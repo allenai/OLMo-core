@@ -21,6 +21,7 @@ Typical usage, on a weka-mounted GPU machine (the olmo-core Beaker image). Insta
 land in the container and die with the session, so run this once per session::
 
     command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
     uv pip install --python "$(which python)" -e '.[fla]'
     uv pip install --python "$(which python)" --no-deps -e /weka/oe-training-default/tf-fork
 
