@@ -511,6 +511,43 @@ def test_eval_checkpoint_load_rejects_missing_model_parameters():
         train_module._get_model_state_dict_for_eval_load(Metadata(state_dict_metadata={}))
 
 
+def test_failed_direct_checkpoint_save_restores_optimizer_state(monkeypatch):
+    class FakeOptimizer:
+        def __init__(self):
+            self.state_was_restored = False
+
+        def state_dict(self):
+            return {"weight.main": torch.ones(1)}
+
+        def load_state_dict(self, state_dict, *, reset_optimizer_moments_on_load):
+            del state_dict, reset_optimizer_moments_on_load
+            self.state_was_restored = True
+
+    optimizer = FakeOptimizer()
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module.model_parts = cast(Any, [])
+    monkeypatch.setattr(train_module, "_require_optimizer", lambda: optimizer)
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.ddp_train_module._prepare_env_for_save",
+        lambda path, **kwargs: path,
+    )
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.ddp_train_module.RemoteFileSystemWriter",
+        lambda *args, **kwargs: object(),
+    )
+
+    def fail_save(*args, **kwargs):
+        del args, kwargs
+        raise OSError("checkpoint upload failed")
+
+    monkeypatch.setattr(dist_cp.state_dict_saver, "save", fail_save)
+
+    with pytest.raises(OSError, match="checkpoint upload failed"):
+        train_module.save_state_dict_direct("/tmp/checkpoint")
+
+    assert optimizer.state_was_restored
+
+
 def _run_global_lb_group_is_stage_local():
     train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
     train_module.world_mesh = {}

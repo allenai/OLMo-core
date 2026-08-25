@@ -1160,46 +1160,50 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         optim = self._require_optimizer()
         state_dict = optim.state_dict()  # this will free optim states, need to load back after save
+        try:
+            # this is count the param size of the global dtensor, not the local shard
+            main_param_sz = 0
+            for key, value in state_dict.items():
+                if key.endswith(".main"):
+                    main_param_sz += value.numel()
 
-        # this is count the param size of the global dtensor, not the local shard
-        main_param_sz = 0
-        for key, value in state_dict.items():
-            if key.endswith(".main"):
-                main_param_sz += value.numel()
+            # this is the theretical model param size calculated from config before PP split
+            # model_param_sz = self.model_parts[0].num_params
 
-        # this is the theretical model param size calculated from config before PP split
-        # model_param_sz = self.model_parts[0].num_params
+            # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
 
-        # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
+            # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not
+            # optimizer state, so they must be added to the checkpoint explicitly.
+            save_dict = dict(state_dict)
+            for key, buffer in self._persistent_model_buffer_state_dict().items():
+                assert (
+                    key not in save_dict
+                ), f"Buffer key '{key}' collides with an optimizer state key"
+                save_dict[key] = buffer
 
-        # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not optimizer
-        # state, so they must be added to the checkpoint explicitly; optim.load_state_dict() below
-        # only round-trips the optimizer keys.
-        save_dict = dict(state_dict)
-        for key, buffer in self._persistent_model_buffer_state_dict().items():
-            assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
-            save_dict[key] = buffer
-
-        dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-        planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
-        dist_cp.state_dict_saver.save(
-            save_dict,
-            storage_writer=RemoteFileSystemWriter(
-                dir,
-                thread_count=thread_count,
+            dir = _prepare_env_for_save(
+                dir, process_group=process_group, save_overwrite=save_overwrite
+            )
+            planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
+            dist_cp.state_dict_saver.save(
+                save_dict,
+                storage_writer=RemoteFileSystemWriter(
+                    dir,
+                    thread_count=thread_count,
+                    process_group=process_group,
+                    throttle_uploads=throttle_uploads,
+                ),
                 process_group=process_group,
-                throttle_uploads=throttle_uploads,
-            ),
-            process_group=process_group,
-            planner=planner,
-        )
-
-        optim.load_state_dict(
-            state_dict,
-            reset_optimizer_moments_on_load=False,
-        )  # load back the optim state after save
-
-        torch.cuda.empty_cache()
+                planner=planner,
+            )
+        finally:
+            # ``optim.state_dict()`` temporarily frees some live state shards. Always restore them,
+            # including when checkpoint preparation, I/O, or upload fails.
+            optim.load_state_dict(
+                state_dict,
+                reset_optimizer_moments_on_load=False,
+            )
+            torch.cuda.empty_cache()
 
         return
 
