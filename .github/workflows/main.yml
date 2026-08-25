@@ -284,7 +284,7 @@ jobs:
             --priority normal \
             --preemptible \
             --gpus ${{ matrix.task.gpus }} \
-            --task-timeout 10m \
+            --task-timeout 14m \
             --host-networking \
             ${{ matrix.task.gpu_types }} \
             --system-python \
