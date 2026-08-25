@@ -70,6 +70,10 @@ class Attention(_FakeMixer):  # noqa: D101 - stands in for the real class by nam
     pass
 
 
+class KimiDeltaAttention(_FakeMixer):  # noqa: D101 - stands in for the real class by name
+    pass
+
+
 class _FakeBlock(nn.Module):
     def __init__(self, mixer: nn.Module, is_moe: bool = False):
         super().__init__()
@@ -85,6 +89,7 @@ def test_block_annotation_names():
     assert block_annotation_name(_FakeBlock(GatedDeltaNet()), 0) == "block00.gdn"
     assert block_annotation_name(_FakeBlock(Attention()), 4) == "block04.attn"
     assert block_annotation_name(_FakeBlock(Attention()), 4, index_width=3) == "block004.attn"
+    assert block_annotation_name(_FakeBlock(KimiDeltaAttention()), 2) == "block02.kda"
     assert block_annotation_name(_FakeBlock(GatedDeltaNet(), is_moe=True), 7) == "block07.gdn+moe"
 
 
