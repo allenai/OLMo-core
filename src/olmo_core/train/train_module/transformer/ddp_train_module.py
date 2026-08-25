@@ -1232,6 +1232,11 @@ class OLMoDDPTrainModule(TrainModule):
                 storage_reader=reader,
                 process_group=process_group,
             )
+            # Eval-only construction initializes rowwise FP8 caches before checkpoint loading.
+            # Refresh them now so they reflect the checkpoint parameters rather than the random
+            # initialization they were originally quantized from.
+            for model_part in self.model_parts:
+                model_part.refresh_rowwise_fp8_cache()
         else:
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
@@ -1357,11 +1362,13 @@ class OLMoDDPTrainModule(TrainModule):
     def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
         model_state: Dict[str, Any] = {}
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
+        missing_parameters: List[str] = []
 
         for model_part in self.model_parts:
             for name, param in model_part.named_parameters():
                 checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
                 if checkpoint_key is None:
+                    missing_parameters.append(name)
                     continue
 
                 tensor_meta = metadata.state_dict_metadata[checkpoint_key]
@@ -1410,8 +1417,11 @@ class OLMoDDPTrainModule(TrainModule):
                         run_check=False,
                     )
 
-        if not model_state:
-            raise RuntimeError("Did not find any model weights to load in eval mode")
+        if missing_parameters:
+            missing = ", ".join(sorted(set(missing_parameters)))
+            raise RuntimeError(
+                "Checkpoint is missing model parameters required for eval-only loading: " + missing
+            )
 
         return model_state
 

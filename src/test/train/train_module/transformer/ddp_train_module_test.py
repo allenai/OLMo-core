@@ -7,6 +7,8 @@ from typing import Any, Optional, cast
 import pytest
 import torch
 import torch.distributed as dist
+import torch.distributed.checkpoint as dist_cp
+from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
@@ -462,6 +464,51 @@ def test_pipeline_eval_does_not_forward_training_only_loss_kwarg(monkeypatch):
 
     assert output is not None
     assert "batch_num_tokens_for_loss" not in forwarded_kwargs
+
+
+def test_eval_checkpoint_load_refreshes_rowwise_fp8_caches(monkeypatch):
+    class FakeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+            self.refresh_count = 0
+
+        def refresh_rowwise_fp8_cache(self):
+            self.refresh_count += 1
+
+    class FakeReader:
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+
+        def read_metadata(self):
+            return Metadata(state_dict_metadata={})
+
+    model = FakeModel()
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module.eval_only = True
+    train_module.model_parts = cast(Any, [model])
+    monkeypatch.setattr(
+        train_module,
+        "_get_model_state_dict_for_eval_load",
+        lambda metadata: {"model.weight": model.weight},
+    )
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.ddp_train_module.RemoteFileSystemReader",
+        FakeReader,
+    )
+    monkeypatch.setattr(dist_cp.state_dict_loader, "load", lambda *args, **kwargs: None)
+
+    train_module.load_state_dict_direct("/tmp/checkpoint")
+
+    assert model.refresh_count == 1
+
+
+def test_eval_checkpoint_load_rejects_missing_model_parameters():
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module.model_parts = cast(Any, [torch.nn.Linear(2, 2)])
+
+    with pytest.raises(RuntimeError, match="missing model parameters"):
+        train_module._get_model_state_dict_for_eval_load(Metadata(state_dict_metadata={}))
 
 
 def _run_global_lb_group_is_stage_local():
