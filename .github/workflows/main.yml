@@ -279,7 +279,6 @@ jobs:
             --task-timeout 10m \
             --host-networking \
             --gpu-type h100 \
-            --gpu-type a100 \
             --system-python \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
