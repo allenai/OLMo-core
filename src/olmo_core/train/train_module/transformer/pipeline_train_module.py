@@ -335,6 +335,7 @@ class TransformerPipelineTrainModule(TrainModule):
             stages=self._pp_stages,
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
+            loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
             forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
             save_plot=self._pp_config.save_schedule_plot,

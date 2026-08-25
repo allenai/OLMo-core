@@ -929,7 +929,7 @@ def _parse_args():
     parser.add_argument(
         "--beaker-image",
         type=str,
-        default=OLMoCoreBeakerImage.stable,
+        default=None,
         help="""The Beaker image to use.""",
     )
     parser.add_argument(
@@ -1034,21 +1034,31 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
         secret_map[name] = secret
     env_secrets = [BeakerEnvSecret(name=name, secret=secret) for name, secret in secret_map.items()]
 
-    # Setup steps: chain preset step(s) then the explicit flag, joined with '&&'.
+    # Setup steps from multiple presets are chained, while an explicit setup flag replaces the
+    # corresponding preset steps entirely.
     def _chain(*parts: str | None) -> str | None:
         return " && ".join(p for p in parts if p) or None
 
-    pre_setup = _chain(*[preset.pre_setup for preset in presets], opts.pre_setup)
-    post_setup = _chain(*[preset.post_setup for preset in presets], opts.post_setup)
+    pre_setup = (
+        opts.pre_setup
+        if opts.pre_setup is not None
+        else _chain(*[preset.pre_setup for preset in presets])
+    )
+    post_setup = (
+        opts.post_setup
+        if opts.post_setup is not None
+        else _chain(*[preset.post_setup for preset in presets])
+    )
 
-    # Image precedence: explicit --beaker-image > preset > stable default. --beaker-image defaults
-    # to the stable image, so treat "still equal to stable" as "not explicitly set" and let a
-    # preset's image win; an explicit non-stable value always wins.
+    # Image precedence: explicit --beaker-image > last preset image > stable default. The parser
+    # uses None for omission so an explicit request for the stable image remains distinguishable.
     beaker_image = opts.beaker_image
-    if beaker_image == OLMoCoreBeakerImage.stable:
+    if beaker_image is None:
         for preset in presets:
             if preset.beaker_image:
                 beaker_image = preset.beaker_image
+    if beaker_image is None:
+        beaker_image = OLMoCoreBeakerImage.stable
 
     return BeakerLaunchConfig(
         name=f"{opts.name}-{generate_uuid()[:8]}",

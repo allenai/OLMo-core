@@ -730,30 +730,38 @@ class OLMoDDPTrainModule(TrainModule):
         if self.pp_enabled:
             # Initialize pipeline schedule.
             assert self._train_pp_schedule is None  # make sure we don't initialize this twice
-            assert self._pp_stages is not None
-            assert self._pp_config is not None
-            assert self.world_mesh["dense"] is not None
-            pp_mesh = self.world_mesh["dense"]["pp"]
-            assert pp_mesh is not None
-
-            # Determine the number of micro-batches.
-            rank_batch_size = self.trainer.global_batch_size // dp_ws
-            num_microbatches = rank_batch_size // self.rank_microbatch_size
-
-            self._train_pp_schedule = PipelineSchedule(
-                model_parts=self.model_parts,  # type: ignore[arg-type]
-                stages=self._pp_stages,
-                pp_mesh=pp_mesh,
-                schedule_name=self._pp_config.schedule,
-                forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
-                num_microbatches=num_microbatches,
-            )
+            self.rebuild_train_pp_schedule(self.trainer.global_batch_size)
             if not self._rowwise_lifetime_lease_slots_env_is_set():
                 self._prewarm_ep_no_sync_symm_buffers(
                     model_parts=self.model_parts,
                     rank_microbatch_size=self.rank_microbatch_size,
                     rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(),
                 )
+
+    def rebuild_train_pp_schedule(self, global_batch_size: int) -> None:
+        """Rebuild the PP schedule for ``global_batch_size`` after batch-size changes."""
+        if not self.pp_enabled:
+            return
+        dp_ws = get_world_size(self.trainer.dp_process_group)
+        divisor = self.rank_microbatch_size * dp_ws
+        if global_batch_size % divisor != 0:
+            raise OLMoConfigurationError(
+                f"global batch size ({global_batch_size:,d}) must be divisible by micro-batch "
+                f"size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
+            )
+        assert self._pp_stages is not None
+        assert self._pp_config is not None
+        assert self.world_mesh["dense"] is not None
+        pp_mesh = self.world_mesh["dense"]["pp"]
+        assert pp_mesh is not None
+        self._train_pp_schedule = PipelineSchedule(
+            model_parts=self.model_parts,  # type: ignore[arg-type]
+            stages=self._pp_stages,
+            pp_mesh=pp_mesh,
+            schedule_name=self._pp_config.schedule,
+            forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
+            num_microbatches=global_batch_size // dp_ws // self.rank_microbatch_size,
+        )
 
     @staticmethod
     def _rowwise_lifetime_lease_slots_env_is_set() -> bool:
@@ -1962,7 +1970,49 @@ class OLMoDDPTrainModule(TrainModule):
                     # no last stage output
                     final_lm_output = None
 
-                return final_lm_output
+                return self._broadcast_pp_eval_output(final_lm_output)
+
+    def _broadcast_pp_eval_output(self, output: Optional[LMOutputWithLoss]) -> LMOutputWithLoss:
+        """Broadcast the final PP stage's evaluation output to every rank in its PP group."""
+        if self.pp_group is None:
+            raise RuntimeError("PP process group has not been initialized")
+        src = dist.get_global_rank(self.pp_group, self.pp_final_stage_rank)
+        is_src = self.pp_group_rank == self.pp_final_stage_rank
+        if is_src:
+            if output is None:
+                raise RuntimeError("The final PP stage did not produce an evaluation output")
+            tensors: List[Optional[torch.Tensor]] = list(output)
+            metadata: List[Optional[Tuple[Tuple[int, ...], torch.dtype]]] = [
+                None if tensor is None else (tuple(tensor.shape), tensor.dtype)
+                for tensor in tensors
+            ]
+            metadata_container: List[Any] = [metadata]
+        else:
+            tensors = [None, None, None, None]
+            metadata_container = [None]
+
+        dist.broadcast_object_list(
+            metadata_container,
+            src=src,
+            group=self.pp_group,
+            device=self.device,
+        )
+        received_metadata = metadata_container[0]
+        assert isinstance(received_metadata, list)
+        for idx, tensor_metadata in enumerate(received_metadata):
+            if tensor_metadata is None:
+                continue
+            shape, dtype = tensor_metadata
+            tensor = tensors[idx]
+            if tensor is None:
+                tensor = torch.empty(shape, dtype=dtype, device=self.device)
+                tensors[idx] = tensor
+            dist.broadcast(tensor, src=src, group=self.pp_group)
+
+        logits, loss, ce_loss, z_loss = tensors
+        assert loss is not None
+        assert ce_loss is not None
+        return LMOutputWithLoss(logits, loss, ce_loss, z_loss)
 
     def run_pipeline_eval(
         self,

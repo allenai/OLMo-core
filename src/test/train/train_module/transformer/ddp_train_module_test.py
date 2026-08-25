@@ -1,5 +1,6 @@
 """Tests for :class:`OLMoDDPTrainModule` config and construction."""
 
+from types import SimpleNamespace
 from typing import Optional
 
 import pytest
@@ -12,7 +13,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.lm_head import LMHeadConfig, LMOutputWithLoss
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
@@ -334,6 +335,74 @@ def test_split_pp_dry_run_model_kwargs_slices_batch_leading_values():
     assert split[1]["max_doc_lens"] == [3, 4]
     # Scalars are broadcast rather than sliced.
     assert split[0]["cp_original_seq_len"] == split[1]["cp_original_seq_len"] == 2
+
+
+def test_rebuild_train_pp_schedule_uses_new_batch_size(monkeypatch):
+    built_with = {}
+
+    class FakeSchedule:
+        def __init__(self, **kwargs):
+            built_with.update(kwargs)
+
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module._trainer = SimpleNamespace(dp_process_group=None)
+    train_module._pp_config = SimpleNamespace(
+        schedule="schedule", forward_pull_ahead_extra_activations=None
+    )
+    train_module._pp_stages = [object()]
+    train_module.model_parts = [object()]
+    train_module.rank_microbatch_size = 4
+    train_module.world_mesh = {"dense": {"pp": object()}}
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.ddp_train_module.get_world_size", lambda _: 2
+    )
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.ddp_train_module.PipelineSchedule", FakeSchedule
+    )
+
+    train_module.rebuild_train_pp_schedule(24)
+
+    assert built_with["num_microbatches"] == 3
+
+
+def test_broadcast_pp_eval_output_reconstructs_on_non_final_rank(monkeypatch):
+    expected = [
+        torch.full((2, 3), 1.0),
+        torch.full((2,), 2.0),
+        torch.full((2,), 3.0),
+        None,
+    ]
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module.pp_group = object()
+    train_module.pp_group_rank = 0
+    train_module.pp_final_stage_rank = 1
+    train_module.device = torch.device("cpu")
+
+    monkeypatch.setattr(dist, "get_global_rank", lambda group, rank: 7)
+
+    def fake_broadcast_object_list(values, **kwargs):
+        del kwargs
+        values[0] = [
+            None if tensor is None else (tuple(tensor.shape), tensor.dtype) for tensor in expected
+        ]
+
+    broadcasts = iter(tensor for tensor in expected if tensor is not None)
+
+    def fake_broadcast(tensor, **kwargs):
+        del kwargs
+        tensor.copy_(next(broadcasts))
+
+    monkeypatch.setattr(dist, "broadcast_object_list", fake_broadcast_object_list)
+    monkeypatch.setattr(dist, "broadcast", fake_broadcast)
+
+    output = train_module._broadcast_pp_eval_output(None)
+
+    assert isinstance(output, LMOutputWithLoss)
+    for actual, wanted in zip(output, expected):
+        if wanted is None:
+            assert actual is None
+        else:
+            assert torch.equal(actual, wanted)
 
 
 def _run_global_lb_group_is_stage_local():
