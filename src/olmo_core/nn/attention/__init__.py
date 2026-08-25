@@ -518,6 +518,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         elif self.name != AttentionType.default:
             raise OLMoConfigurationError("attention_sinks are only supported by default attention")
 
+        # Scalable softmax is implemented by the default attention module. Drop the disabled
+        # dataclass default before dispatch so legacy fused and normalized configurations do not
+        # receive a constructor option they do not support.
+        if not kwargs.get("scalable_softmax", False):
+            kwargs.pop("scalable_softmax", None)
+        elif self.name != AttentionType.default:
+            raise OLMoConfigurationError("scalable_softmax is only supported by default attention")
+
         # The MXFP8 packed-projection options are only wired up for fused_v2 attention; route them
         # there and reject them for any other implementation. A disabled (falsy) flag is a no-op, so
         # only reject when one is actually enabled.
