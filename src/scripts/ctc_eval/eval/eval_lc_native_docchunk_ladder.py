@@ -152,11 +152,17 @@ def build_ladders(args):
         # tasks v3 does not have.
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
+        # v2 -> `both`-mode contradiction gold; v3 -> `realistic`, matching the training generator.
+        # KEEP IN SYNC with eval_lc_native.py, which got this v3 renaming first: with `both`
+        # hardcoded, every v3 contra rung resolved to a filename the v3 bundle does not have, so the
+        # whole task MISSING-skipped and the job exited 0 with an empty JSON (the 2026-08-16
+        # summtoken v3c sweep lost all nine contra cells this way).
+        _CM = "realistic" if args.ladder_version == "v3" else "both"
         ladders_v2 = {
-            "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
-                ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
-                ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
+            "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
+                ("8k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n190_k3.jsonl"),
+                ("16k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n385_k3.jsonl"),
+                ("32k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl")],
             "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
                 ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
                 ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
@@ -198,7 +204,7 @@ def build_ladders(args):
             import glob as _glob
 
             _XL = {
-                "contradiction": ("contra", "contradiction_eval_pubmed_both_n*_k3_xlong_{s}.jsonl"),
+                "contradiction": ("contra", f"contradiction_eval_pubmed_{_CM}_n*_k3_xlong_{{s}}.jsonl"),
                 "nq": ("nq", "nq_validation_k*_xlong_{s}.jsonl"),
                 "outlier": ("outlier", "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
             }
