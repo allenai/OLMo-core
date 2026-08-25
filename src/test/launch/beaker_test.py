@@ -1,10 +1,13 @@
 import os
 
 import pytest
-
 from gantry.api import GitRepoState
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+    get_beaker_client,
+)
 
 
 def test_get_beaker_client_caching():

@@ -380,19 +380,14 @@ class Olmo3MoeExperts(nn.ModuleList):
             map_type="index",
         )
 
-        batch_size_per_expert = torch.bincount(
-            routing_map.reshape(-1), minlength=num_experts
-        )
+        batch_size_per_expert = torch.bincount(routing_map.reshape(-1), minlength=num_experts)
         if requires_host_side_split_sizes():
             batch_size_per_expert = batch_size_per_expert.to(device="cpu", dtype=torch.int64)
         else:
             batch_size_per_expert = batch_size_per_expert.to(dtype=torch.int32)
 
         w_up_gate = torch.stack(
-            [
-                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
-                for expert in self
-            ]
+            [torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0) for expert in self]
         )
         up_gate = gmm(
             permuted,
@@ -1103,9 +1098,7 @@ class Olmo3MoeAttention(nn.Module):
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        query_states = self._apply_scalable_softmax(
-            query_states, position_ids, cache_position
-        )
+        query_states = self._apply_scalable_softmax(query_states, position_ids, cache_position)
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}
