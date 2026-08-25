@@ -7,9 +7,24 @@ port has one written contract. All logs are base-2 (fla multiplies the raw log-s
 the chunk size (64), `BC = 16` the sub-chunk. Per (batch b, value-head hv); q/k live at head
 `h = hv // (HV//H)`. `scale = K^-0.5`.
 
-This package ports two things out of fla: the forward scan+readout (`kernel_fwd.py`) and the
-backward's `bwd_intra` stage (`kernel_intra_cute.py`, with `kernel_intra.py` as the Triton
-fallback). Everything else is fla's, called stage by stage from `chunk.py`.
+This package ports the forward scan+readout and four of the backward's seven stages out of
+fla. Everything else is fla's, called stage by stage from `kda/chain.py` — which is the
+authoritative table of who owns what; this file is the math each stage implements.
+
+| where | module | replaces |
+|---|---|---|
+| fwd, Aqk zero-fill | `kda/_kernels/fwd_intra_triton.py` | a `masked_fill` over the whole tile |
+| fwd, scan + o | `kda/_kernels/fwd_state.py` | `chunk_gated_delta_rule_fwd_h` + the o stage |
+| bwd 2, re-scan (B1) | `kda/_kernels/bwd_scan.py` | `chunk_gated_delta_rule_fwd_h` |
+| bwd 4, dhu (B2a) | `kda/_kernels/bwd_dhu.py` | `chunk_gated_delta_rule_bwd_dhu` |
+| bwd 5, wy_dqkg (B2b) | `kda/_kernels/bwd_wy.py` | `chunk_kda_bwd_wy_dqkg_fused` |
+| bwd 6, intra | `kda/_kernels/bwd_intra.py` (+`bwd_intra_triton.py`) | `chunk_kda_bwd_intra` |
+| bwd 7, dg cumsum | — | folded into stage 6's epilogue |
+
+The gate activation (`-exp(A_log)·softplus(g + dt_bias)`, when `use_gate_in_kernel`) is
+fused into stage 1's cumsum via fla's `kda_gate_chunk_cumsum`, not run as eager fp32 torch
+ops. At prod8192 the eager form is four passes over a [B,T,HV,K] fp32 tensor — ~2ms and
+~2GiB of saved activations *per layer*, against 1.9ms for the entire fused stage.
 
 ---
 
@@ -43,7 +58,7 @@ Two things to internalize:
   computes Aqk in sub-chunks (BC=16) where relative gates stay bounded. That is Triton work
   worth keeping: the CuTe kernel LOADS Aqk instead of computing it.
 
-## Stage 3+4 — scan + o (`kernel_fwd.py`, fused)
+## Stage 3+4 — scan + o (`kda/_kernels/fwd_state.py`, fused)
 
 Serial over chunks c, state h [K, V] fp32:
 
@@ -67,6 +82,11 @@ autograd Function saves when `disable_recompute=False`. The forward must preserv
 rounding contract: Aqk/Akk stored bf16 by intra, g2 the fla cumsum, v_new/h recomputed by
 the backward itself.
 
+One deliberate deviation, and it is fla's own behaviour rather than ours: under
+`use_gate_in_kernel`, **g2 is not saved**. The backward recomputes it from the raw (and
+half-size) `g` with one kernel launch, which is what fla's recompute path does — saving it
+would cost 1GiB per layer at prod8192 for something a single launch reproduces.
+
 ## The seven launches
 
 1. **recompute** (`recompute_w_u_fwd`): w = Akk @ (β·exp2(g2)·k), u = Akk @ (β·v),
@@ -86,9 +106,16 @@ the backward itself.
    - dgk[d] += exp2(G[d])·Σ_v h_c[d,v]·dh_c[d,v] (last row of chunk)       (both)
    - dv2 = β·(Akk^T @ dv); db += rowsum terms; dAkk (strict lower, fp32)
    - dg[r,d] = q·dq − k·dk + last-row dgk + kg·(Akk@dw)·β  (the inter-chunk part)
-6. **intra** (`chunk_kda_bwd_intra`): the intra-chunk dAqk/dAkk consumers — **this is the
-   stage this package replaces**; see below.
+6. **intra** (`chunk_kda_bwd_intra`): the intra-chunk dAqk/dAkk consumers — **the dominant
+   stage, half of fla's backward**; see below.
 7. **dg cumsum**: dg = chunk-local REVERSE cumsum of dg (fp32).
+
+Ours are 2, 4, 5 and 6, and 7 disappears into 6's epilogue. Stages 2/4/5 are the "B1/B2"
+fusions listed as standing headroom in the first version of this file: B1 re-runs the
+forward scan with h checkpointed via TMA store off the critical path, B2a keeps dh^T
+tmem-resident through the reverse scan, and B2b is a full-K restructure of fla's fused
+kernel — the same math over one K slab instead of NK, so v_new/do/dv are read once each
+instead of four times.
 
 GVA (HV > H): dq/dk are produced at HV and reduced to H after stage 6.
 
@@ -144,7 +171,7 @@ Grid (NK·NC, NT, B·HV) = (16, 128, 256) → **524k CTAs of [BC=16, BK=32] work
 Floors: traffic ~7.5GB at one-read-one-write → ~1.1ms; exp2 ~0.6ms (overlappable). The
 honest target is ~2.5–3ms; fla is 5× above it.
 
-### What `kernel_intra_cute.py` does instead (6.34ms)
+### What `kda/_kernels/bwd_intra.py` does instead (6.34ms SIMT; ~5.0ms with the MMA path)
 
 One CTA per (chunk, b·hv), 512 threads as (32 d-lanes) × (16 row-lanes) — one warp spans a
 full row. Each thread walks one row per 16-block with mirror pairing (even blocks r0+rlane,
@@ -162,29 +189,41 @@ phase up front, so the two sweeps fuse per block with no inter-sweep barrier.
 
 Outputs land ~1e-7..2e-6 abs of a fp64 reference, where fla's tf32 `tl.dot`s land 3e-4..1.3e-3.
 
+The shipped kernel additionally runs the **cross-sub-chunk** blocks on tcgen05 MMAs rather
+than SIMT (the diagonals stay scalar j-loops — see the numerics law above, which is not
+negotiable), and folds two things into its epilogue that fla spends separate work on: the
+chunk-local reverse cumsum of dg (deleting stage 7 entirely) and the bf16 cast of dq/dk,
+which makes the wrapper's casts no-ops. The dg fold is unconditional; the bf16 emit is
+gated on `HV == H`, because the GVA reduction that follows must sum in fp32.
+
 Constraints: K=128, BT=64, fixed-length, no `safe_gate`, and a grid of at least 1024 CTAs
 (smaller grids underfill a 148-SM box and the per-call marshaling isn't amortized — T512
 regressed to 0.90× without the gate). Off that box the wrapper falls back to
-`kernel_intra.py` (the same math restructured in Triton, 9.26ms, K ≤ 128), which falls back
-to fla's kernel for varlen/`safe_gate`.
+`bwd_intra_triton.py` (the same math restructured in Triton, 9.26ms, K ≤ 128), which falls
+back to fla's kernel for varlen/`safe_gate`. **That floor is per stage, not per call**: a
+shape can clear `is_supported` and still run this one stage on Triton, which is why the
+test arms in `src/test/nn/attention/kda_test.py` are sized to clear it explicitly.
 
 ### Register-pressure notes for whoever edits the CuTe kernel
 
 ptxas left alone targets 64 registers (dynamic smem hides the 1-CTA/SM cap from it) and
-spills 1–2KB/thread. `min_blocks_per_mp=1` plus `--maxrregcount=128` (`OLMO_CUTE_KDA_INTRA_MAXREG`) and
-*un*-unrolling the inner 16-iteration loops (`cutlass.range(unroll=4..8)`; full unroll lets
-ptxas hoist whole load batches) gets `LOCAL_SIZE_BYTES=0`. The incoming-grad gmem reads cost
-3.25ms read-at-use; prefetching them a compute-section ahead is worth ~3ms. 1024 threads was
-falsified twice (0.45×, 64-reg spills), as was holding P1/P2 in smem (27.5ms).
+spills 1–2KB/thread. `min_blocks_per_mp=1` plus `--maxrregcount=128` (frozen as `_MAXREG`)
+and *un*-unrolling the inner 16-iteration loops (`cutlass.range(unroll=4..8)`; full unroll
+lets ptxas hoist whole load batches) gets `LOCAL_SIZE_BYTES=0`. The incoming-grad gmem reads
+cost 3.25ms read-at-use; prefetching them a compute-section ahead is worth ~3ms. 1024
+threads was falsified twice (0.45×, 64-reg spills), as was holding P1/P2 in smem (27.5ms).
 
-## Not ported (the standing headroom)
+## Standing headroom
 
-- **B1, forward sweep**: rerun the forward scan pipeline in the backward, storing h
-  checkpoints (TMA store off the critical path) + v_new, and computing
-  `dq = scale·exp2(g2)⊙(do @ h^T)` while h is tmem-resident — dq's only h dependence.
-  Replaces stage 2 and the dq part of stage 5.
-- **B2, reverse sweep**: the dhu scan fused with wy_dqkg's dh consumers (dk, dw, the h⊙dh dg
-  term, dv2) so the 2.1GB dh tensor is never materialized. The open design question: dh is
-  both scan state and MMA operand, so it needs a tmem residency plan.
+The B1/B2 fusions listed here originally are now stages 2, 4 and 5. What is left, in the
+order the ladder is working on it:
+
+- **recompute_w_u** (stage 1, 2 × 1.17ms) and the forward cumsum (0.32ms) — both fla's,
+  both counter-blocked on the profiling box.
+- **wy_dqkg** at 4.99ms is now the largest single stage.
 - Remaining intra headroom is ~4ms (latency-bound loads/prescale/epilogue at 16 warps/SM).
+
+None of these are edited here. This directory is a vendored snapshot; kernel work happens
+in the `kernel-fun-2` ladder, where a bench row can say whether an idea was worth keeping —
+three of idea 004's did not survive that test.
 - `recompute_w_u`/`dAv`/cumsum (2.4ms combined) are near their traffic floor — leave them.
