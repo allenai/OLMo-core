@@ -10,7 +10,13 @@ import torch
 import torch.nn as nn
 from torch.autograd.graph import saved_tensors_hooks
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard
+from torch.distributed.tensor import (
+    DTensor,
+    Placement,
+    Replicate,
+    Shard,
+    distribute_tensor,
+)
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
@@ -18,6 +24,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
+from olmo_core.nn.attention.kda import KimiDeltaAttention, KimiDeltaAttentionConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.recurrent import (
     GatedDeltaNet,
@@ -88,6 +95,8 @@ __all__ = [
     "UlyssesContextParallelStyle",
     "GatedDeltaNetConfig",
     "GatedDeltaNet",
+    "KimiDeltaAttentionConfig",
+    "KimiDeltaAttention",
     "NemotronMamba2Config",
     "NemotronMamba2Mixer",
 ]
@@ -332,6 +341,11 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     n_heads: int = 16
     n_kv_heads: Optional[int] = None
     head_dim: Optional[int] = None
+    d_attn: Optional[int] = None
+    """
+    Deprecated total query-attention width. Kept for compatibility with native checkpoints
+    serialized before ``head_dim`` replaced it.
+    """
     bias: Optional[bool] = None
     gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None
@@ -343,6 +357,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    scalable_softmax: bool = False
     attention_sinks: bool = False
     """
     Add a per-head learnable "attention sink" logit (as in GPT-OSS). Only supported by the default
@@ -376,6 +391,21 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         transposes Q/K/V (a view -> still packed) but for GQA (``n_kv_heads < n_heads``) it also
         repeats K/V into fresh storage before SDPA, so only Q is packed for GQA on that backend.
     """
+
+    def __post_init__(self, *_: Any) -> None:
+        if self.d_attn is None:
+            return
+        if self.d_attn % self.n_heads:
+            raise OLMoConfigurationError(
+                f"d_attn ({self.d_attn}) must be divisible by n_heads ({self.n_heads})"
+            )
+        legacy_head_dim = self.d_attn // self.n_heads
+        if self.head_dim is not None and self.head_dim != legacy_head_dim:
+            raise OLMoConfigurationError(
+                f"Conflicting attention dimensions: head_dim={self.head_dim}, "
+                f"d_attn={self.d_attn}, n_heads={self.n_heads}"
+            )
+        self.head_dim = legacy_head_dim
 
     def num_params(self, d_model: int) -> int:
         """
@@ -433,6 +463,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if self.attention_sinks:
             params += n_heads
 
+        # Per-head scalable-softmax factors.
+        if self.scalable_softmax:
+            params += n_heads
+
         return params
 
     def build(
@@ -452,6 +486,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         """
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
+        kwargs.pop("d_attn", None)
 
         sliding_window_config: Optional[SlidingWindowAttentionConfig] = kwargs.pop(
             "sliding_window", None
@@ -459,6 +494,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
+            if self.scalable_softmax:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
         else:  # global (non-SWA) layer
             rope_config: Optional[RoPEConfig] = kwargs.get("rope")
@@ -478,6 +517,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             kwargs.pop("attention_sinks", None)
         elif self.name != AttentionType.default:
             raise OLMoConfigurationError("attention_sinks are only supported by default attention")
+
+        # Scalable softmax is implemented by the default attention module. Drop the disabled
+        # dataclass default before dispatch so legacy fused and normalized configurations do not
+        # receive a constructor option they do not support.
+        if not kwargs.get("scalable_softmax", False):
+            kwargs.pop("scalable_softmax", None)
+        elif self.name != AttentionType.default:
+            raise OLMoConfigurationError("scalable_softmax is only supported by default attention")
 
         # The MXFP8 packed-projection options are only wired up for fused_v2 attention; route them
         # there and reject them for any other implementation. A disabled (falsy) flag is a no-op, so
@@ -575,6 +622,7 @@ class Attention(SequenceMixer):
     :param dropout: Dropout probability.
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
+    :param scalable_softmax: Use Scalable-Softmax with a learned scale for each query head.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -603,6 +651,7 @@ class Attention(SequenceMixer):
         attention_sinks: bool = False,
         use_recompute_qkv_prep: bool = False,
         mxfp8_save_qkv_for_backward: bool = False,
+        scalable_softmax: bool = False,
     ):
         super().__init__()
 
@@ -649,6 +698,14 @@ class Attention(SequenceMixer):
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
+        self.scalable_softmax = scalable_softmax
+        self.ssmax_scale: Optional[nn.Parameter] = None
+        if scalable_softmax:
+            if window_size is not None:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
+            self.ssmax_scale = nn.Parameter(torch.ones(n_heads, dtype=dtype, device=init_device))
 
         # Per-head learnable attention-sink logits (GPT-OSS). See :meth:`sdpa`.
         self.sinks: Optional[nn.Parameter] = (
@@ -756,6 +813,9 @@ class Attention(SequenceMixer):
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
+        sinks = self.sinks
+        if isinstance(sinks, DTensor):
+            sinks = sinks.to_local()
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.backend(
             (q, k, v),
@@ -767,11 +827,43 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
-            sinks=self.sinks,
+            sinks=sinks,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
+
+    def _apply_scalable_softmax(
+        self,
+        q: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if not self.scalable_softmax:
+            return q
+        if self.cp_enabled:
+            raise NotImplementedError("Scalable-Softmax is not supported with context parallelism")
+        if self.kv_cache_manager is not None:
+            raise NotImplementedError("Scalable-Softmax is not supported with KV caching")
+
+        if cu_doc_lens is None:
+            visible_lengths = torch.arange(1, q.shape[1] + 1, device=q.device)
+            visible_lengths = visible_lengths.unsqueeze(0).expand(q.shape[0], -1)
+        else:
+            boundaries = cu_doc_lens.to(device=q.device)
+            token_indices = torch.arange(
+                q.shape[0] * q.shape[1], device=q.device, dtype=boundaries.dtype
+            )
+            document_indices = torch.searchsorted(boundaries[1:], token_indices, right=True)
+            document_starts = boundaries[document_indices]
+            visible_lengths = (token_indices - document_starts + 1).view(q.shape[0], q.shape[1])
+
+        assert self.ssmax_scale is not None
+        ssmax_scale = self.ssmax_scale
+        if isinstance(ssmax_scale, DTensor):
+            ssmax_scale = ssmax_scale.to_local()
+        scale = visible_lengths.log().to(q.dtype).unsqueeze(-1)
+        scale = scale * ssmax_scale.to(q.dtype).view(1, 1, -1)
+        return q * scale.unsqueeze(-1)
 
     def _apply_rope(
         self,
@@ -862,6 +954,7 @@ class Attention(SequenceMixer):
 
             q, k = self._apply_rope(q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens)
 
+        q = self._apply_scalable_softmax(q, cu_doc_lens)
         return q, k, v
 
     def forward(
@@ -1019,6 +1112,17 @@ class Attention(SequenceMixer):
             #    which will be reshaped into (B, T, H [sharded], D)
             # if head-wise norm: output is sharded on the head dimension (B, T, H [sharded], D)
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+
+        if self.ssmax_scale is not None:
+            self.register_parameter(
+                "ssmax_scale",
+                nn.Parameter(distribute_tensor(self.ssmax_scale, tp_mesh, [Shard(0)])),
+            )
+        if self.sinks is not None:
+            self.register_parameter(
+                "sinks",
+                nn.Parameter(distribute_tensor(self.sinks, tp_mesh, [Shard(0)])),
+            )
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
 
@@ -1057,6 +1161,9 @@ class Attention(SequenceMixer):
         generator: Optional[torch.Generator] = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if self.ssmax_scale is not None:
+            nn.init.ones_(self.ssmax_scale)
 
         # Compute std for Q/K/V initialization
         if init_method == InitMethod.fan_in:

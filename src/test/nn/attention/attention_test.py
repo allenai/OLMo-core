@@ -1,7 +1,8 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 import pytest
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.tensor import Shard, init_device_mesh
 
@@ -26,12 +27,14 @@ from olmo_core.nn.attention import (
     SlidingWindowAttentionConfig,
     _causal_attention_positions,
 )
+from olmo_core.nn.attention.backend import TorchAttentionBackend
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.transformer.init import InitMethod
 from olmo_core.testing import (
     BACKENDS,
     DEVICES,
@@ -886,6 +889,15 @@ def test_attention_leftpad_shift_equivalence(use_rope):
             ),
             id="headwise-gating",
         ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                bias=False,
+                scalable_softmax=True,
+            ),
+            id="scalable-softmax",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
@@ -897,6 +909,141 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
+
+@pytest.mark.parametrize(
+    "cu_doc_lens,expected_lengths",
+    [
+        pytest.param(None, [[1, 2, 3, 4], [1, 2, 3, 4]], id="causal"),
+        pytest.param(
+            torch.tensor([0, 2, 4, 7, 8], dtype=torch.int32),
+            [[1, 2, 1, 2], [1, 2, 3, 1]],
+            id="packed-documents",
+        ),
+    ],
+)
+def test_scalable_softmax_query_scaling(cu_doc_lens, expected_lengths):
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.copy_(torch.tensor([0.5, 2.0]))
+
+    q = torch.ones(2, 4, 2, 4)
+    scaled_q = attention._apply_scalable_softmax(q, cu_doc_lens)
+    expected = torch.tensor(expected_lengths, dtype=q.dtype).log()
+    expected = expected[:, :, None, None] * torch.tensor([0.5, 2.0])[None, None, :, None]
+
+    torch.testing.assert_close(scaled_q, expected.expand_as(q))
+    scaled_q.sum().backward()
+    assert attention.ssmax_scale.grad is not None
+    assert torch.all(attention.ssmax_scale.grad > 0)
+
+
+def test_scalable_softmax_disabled_is_identity():
+    attention = Attention(d_model=8, n_heads=2, head_dim=4, bias=False)
+    q = torch.randn(2, 4, 2, 4)
+
+    assert attention.ssmax_scale is None
+    assert attention._apply_scalable_softmax(q, None) is q
+
+
+def test_scalable_softmax_scale_is_initialized_to_one():
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.fill_(float("nan"))
+
+    attention.init_weights(
+        init_method=InitMethod.normal,
+        d_model=8,
+        block_idx=0,
+        num_blocks=1,
+    )
+
+    torch.testing.assert_close(attention.ssmax_scale, torch.ones(2))
+
+
+def test_scalable_softmax_is_applied_after_qk_norm(monkeypatch):
+    class ConstantNorm(nn.Module):
+        def forward(self, x):
+            return torch.full_like(x, 3.0)
+
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        qk_norm=LayerNormConfig(),
+        use_head_qk_norm=True,
+        scalable_softmax=True,
+    )
+    attention.q_norm = ConstantNorm()
+    attention.k_norm = ConstantNorm()
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.fill_(2.0)
+
+    captured_q = None
+
+    def capture_sdpa(q, k, v, **kwargs):
+        nonlocal captured_q
+        captured_q = q
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(attention, "sdpa", capture_sdpa)
+    attention(torch.randn(1, 3, 8))
+
+    assert captured_q is not None
+    expected = 6.0 * torch.arange(1, 4, dtype=captured_q.dtype).log()
+    expected = expected.view(1, 3, 1, 1).expand_as(captured_q)
+    torch.testing.assert_close(captured_q, expected)
+
+
+@pytest.mark.parametrize("unsupported_mode", ["kv-cache", "context-parallel"])
+def test_scalable_softmax_rejects_unsupported_runtime_modes(unsupported_mode):
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    if unsupported_mode == "kv-cache":
+        attention.kv_cache_manager = nn.Identity()
+        match = "KV caching"
+    else:
+        attention.backend.cp_enabled = True
+        match = "context parallelism"
+
+    with pytest.raises(NotImplementedError, match=match):
+        attention._apply_scalable_softmax(torch.ones(1, 2, 2, 4), None)
+
+
+def test_scalable_softmax_rejects_sliding_window_attention():
+    config = AttentionConfig(
+        n_heads=2,
+        scalable_softmax=True,
+        sliding_window=SlidingWindowAttentionConfig(
+            pattern=[128],
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=False,
+        ),
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="scalable_softmax"):
+        config.build(d_model=8, layer_idx=0, n_layers=2)
 
 
 @pytest.mark.parametrize(
@@ -1113,6 +1260,15 @@ def _run_tensor_parallel_attention(
             {"gate": GateConfig(granularity=GateGranularity.headwise)},
             id="headwise-gating",
         ),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "scalable_softmax": True,
+            },
+            id="scalable-softmax",
+        ),
+        pytest.param({"attention_sinks": True}, id="attention-sinks"),
     ],
 )
 def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tmp_path):
@@ -1258,15 +1414,18 @@ def _run_context_parallel_attention_ulysses(
 
 @requires_multi_gpu
 @pytest.mark.parametrize(
-    "attn_backend",
+    ("attn_backend", "attention_sinks"),
     [
-        pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
-        pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
-        pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+        pytest.param(AttentionBackendName.torch, False, id="torch-SDPA"),
+        pytest.param(AttentionBackendName.torch, True, id="torch-SDPA-sinks"),
+        pytest.param(AttentionBackendName.flash_2, False, id="flash-attn-2", marks=FLASH_2_MARKS),
+        pytest.param(AttentionBackendName.flash_3, False, id="flash-attn-3", marks=FLASH_3_MARKS),
+        pytest.param(AttentionBackendName.te, False, id="te-attn", marks=TE_MARKS),
     ],
 )
-def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBackendName):
+def test_context_parallel_attention_ulysses(
+    tmp_path, attn_backend: AttentionBackendName, attention_sinks: bool
+):
     """
     Test Ulysses-style context parallelism.
 
@@ -1279,7 +1438,12 @@ def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBac
     device = get_default_device()
 
     # n_heads must be divisible by CP degree (world_size).
-    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "backend": attn_backend}
+    attn_kwargs: Dict[str, Any] = {
+        "d_model": 128,
+        "n_heads": 8,
+        "backend": attn_backend,
+        "attention_sinks": attention_sinks,
+    }
     attn = Attention(init_device=device.type, **attn_kwargs)
     if device.type == "cpu":
         attn = attn.to(dtype=torch.bfloat16)
@@ -1465,6 +1629,39 @@ def test_attention_sinks_softmax_matches_sdpa_when_inactive():
         sink_out = with_sinks(x)
         plain_out = without_sinks(x)
     torch.testing.assert_close(sink_out, plain_out, rtol=1e-4, atol=1e-4)
+
+
+def test_attention_sinks_with_ulysses_use_global_sequence_and_local_heads(monkeypatch):
+    backend = TorchAttentionBackend(head_dim=4, n_heads=4)
+    backend.cp_enabled = True
+    backend.uly = UlyssesContextParallelStyle()
+    backend.cp_pg = cast(Any, object())
+    q = torch.randn(1, 2, 4, 4)
+    k = torch.randn(1, 2, 4, 4)
+    v = torch.randn(1, 2, 4, 4)
+
+    def cp2hp(tensor, group):
+        del group
+        return tensor.repeat(1, 2, 1, 1)[:, :, :2]
+
+    monkeypatch.setattr(
+        "olmo_core.nn.attention.backend.all_to_all_single_cp2hp",
+        cp2hp,
+    )
+    monkeypatch.setattr(
+        "olmo_core.nn.attention.backend.all_to_all_cp2hp",
+        lambda tensors, group: [cp2hp(tensor, group) for tensor in tensors],
+    )
+    monkeypatch.setattr(
+        "olmo_core.nn.attention.backend.all_to_all_single_hp2cp",
+        lambda tensor, group: tensor[:, :2].repeat(1, 1, 2, 1),
+    )
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda group: 2)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda group: 0)
+
+    output = backend((q, k, v), sinks=torch.zeros(4))
+
+    assert output.shape == q.shape
 
 
 def test_fused_attention_v2_matches_standard_attention():

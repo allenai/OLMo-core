@@ -72,11 +72,9 @@ fa4 = [
     # breaks `import olmo_core.nn`.
     "nvidia-cutlass-dsl<4.6.0 ; sys_platform == 'linux'",
 ]
-# NOTE: fla 0.5.2 requires triton >= 3.7.1 (a hard guard on Hopper) and pulls torchaudio 2.11,
-# but no released torch bundles triton >= 3.7.1 (torch 2.10/2.11 pin 3.6.0, 2.12 pins 3.7.0) and
-# the CI/beaker image ships torch 2.10 / triton 3.6.0. Stay on 0.4.1 until the GPU image moves to a
-# torch that bundles triton >= 3.7.1 (or a validated forced-triton image), then match main's 0.5.2.
-fla = ["flash-linear-attention==0.4.1"]
+# Match the dense ladder's current OLMo Core dependency. The MoE ladder validates
+# this against its Torch 2.11 / CUDA 13 Beaker image before production use.
+fla = ["flash-linear-attention==0.5.2"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]

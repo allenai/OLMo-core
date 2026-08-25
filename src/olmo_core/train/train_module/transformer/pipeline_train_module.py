@@ -51,7 +51,7 @@ from olmo_core.utils import (
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
-from .common import parallelize_model
+from .common import get_emo_segment_ids, parallelize_model
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -335,6 +335,7 @@ class TransformerPipelineTrainModule(TrainModule):
             stages=self._pp_stages,
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
+            loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
             forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
             save_plot=self._pp_config.save_schedule_plot,
@@ -769,4 +770,6 @@ class TransformerPipelineTrainModule(TrainModule):
             log_once(log, "intra-document masking enabled")
             kwargs["doc_lens"] = batch["doc_lens"]
             kwargs["max_doc_lens"] = batch["max_doc_lens"]
+        if (segment_ids := get_emo_segment_ids(self.model_parts, input_ids)) is not None:
+            kwargs["segment_ids"] = segment_ids
         return input_ids, labels, kwargs

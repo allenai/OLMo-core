@@ -1,6 +1,7 @@
 from typing import Literal
 
 import torch
+import torch.nn.functional as F
 
 try:
     import fla
@@ -39,6 +40,105 @@ def dispatch_chunk_gated_delta_rule(
         output_final_state=output_final_state,
         use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
         cu_seqlens=cu_seqlens,
+    )
+
+
+def dispatch_chunk_kda(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+    scale: float | None = None,
+    initial_state: torch.Tensor | None = None,
+    output_final_state: bool = False,
+    use_qk_l2norm_in_kernel: bool = True,
+    use_gate_in_kernel: bool = True,
+    cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+    use_cute_kernel: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Dispatch Moonshot's pinned Triton KDA training kernel lazily.
+
+    With ``use_cute_kernel=True``, calls the **experimental** CuTe/Triton kernels from
+    :mod:`olmo_core.nn.attention.kda_cute` instead whenever they support the call
+    (fixed-length, chunk-size-64, Blackwell), falling back to FLA otherwise. Those
+    kernels are not numerically identical to FLA's, so opt in only when you are
+    deliberately testing them.
+    """
+    assert has_fla()
+    if use_cute_kernel:
+        from olmo_core.nn.attention.kda_cute import cute_chunk_kda, cute_kda_supported
+
+        if cute_kda_supported(q=q, v=v, cu_seqlens=cu_seqlens):
+            return cute_chunk_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                A_log=A_log,
+                dt_bias=dt_bias,
+                scale=scale,
+                initial_state=initial_state,
+                output_final_state=output_final_state,
+                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+                use_gate_in_kernel=use_gate_in_kernel,
+            )
+
+    from fla.ops.kda import chunk_kda
+
+    return chunk_kda(
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        A_log=A_log,
+        dt_bias=dt_bias,
+        scale=scale,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        use_gate_in_kernel=use_gate_in_kernel,
+        cu_seqlens=cu_seqlens,
+    )
+
+
+def dispatch_fused_recurrent_kda(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+    scale: float | None = None,
+    initial_state: torch.Tensor | None = None,
+    output_final_state: bool = False,
+    use_qk_l2norm_in_kernel: bool = True,
+    use_gate_in_kernel: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Dispatch Moonshot's pinned recurrent KDA inference kernel lazily."""
+    assert has_fla()
+    from fla.ops.kda import fused_recurrent_kda
+
+    if use_gate_in_kernel:
+        g = -A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
+            g.float() + dt_bias.float().view(1, 1, A_log.shape[0], -1)
+        )
+
+    return fused_recurrent_kda(
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        scale=scale,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
     )
 
 

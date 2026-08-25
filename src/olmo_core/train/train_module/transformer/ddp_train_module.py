@@ -80,6 +80,7 @@ from olmo_core.utils import get_default_device, log_once, move_to_device
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
+from .common import get_emo_segment_ids
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -88,6 +89,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .pipeline.pipeline_schedule import SUPPORTED_MODEL_KWARGS
 
 log = logging.getLogger(__name__)
 
@@ -728,30 +730,38 @@ class OLMoDDPTrainModule(TrainModule):
         if self.pp_enabled:
             # Initialize pipeline schedule.
             assert self._train_pp_schedule is None  # make sure we don't initialize this twice
-            assert self._pp_stages is not None
-            assert self._pp_config is not None
-            assert self.world_mesh["dense"] is not None
-            pp_mesh = self.world_mesh["dense"]["pp"]
-            assert pp_mesh is not None
-
-            # Determine the number of micro-batches.
-            rank_batch_size = self.trainer.global_batch_size // dp_ws
-            num_microbatches = rank_batch_size // self.rank_microbatch_size
-
-            self._train_pp_schedule = PipelineSchedule(
-                model_parts=self.model_parts,  # type: ignore[arg-type]
-                stages=self._pp_stages,
-                pp_mesh=pp_mesh,
-                schedule_name=self._pp_config.schedule,
-                forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
-                num_microbatches=num_microbatches,
-            )
+            self.rebuild_train_pp_schedule(self.trainer.global_batch_size)
             if not self._rowwise_lifetime_lease_slots_env_is_set():
                 self._prewarm_ep_no_sync_symm_buffers(
                     model_parts=self.model_parts,
                     rank_microbatch_size=self.rank_microbatch_size,
                     rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(),
                 )
+
+    def rebuild_train_pp_schedule(self, global_batch_size: int) -> None:
+        """Rebuild the PP schedule for ``global_batch_size`` after batch-size changes."""
+        if not self.pp_enabled:
+            return
+        dp_ws = get_world_size(self.trainer.dp_process_group)
+        divisor = self.rank_microbatch_size * dp_ws
+        if global_batch_size % divisor != 0:
+            raise OLMoConfigurationError(
+                f"global batch size ({global_batch_size:,d}) must be divisible by micro-batch "
+                f"size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
+            )
+        assert self._pp_stages is not None
+        assert self._pp_config is not None
+        assert self.world_mesh["dense"] is not None
+        pp_mesh = self.world_mesh["dense"]["pp"]
+        assert pp_mesh is not None
+        self._train_pp_schedule = PipelineSchedule(
+            model_parts=self.model_parts,  # type: ignore[arg-type]
+            stages=self._pp_stages,
+            pp_mesh=pp_mesh,
+            schedule_name=self._pp_config.schedule,
+            forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
+            num_microbatches=global_batch_size // dp_ws // self.rank_microbatch_size,
+        )
 
     @staticmethod
     def _rowwise_lifetime_lease_slots_env_is_set() -> bool:
@@ -873,6 +883,28 @@ class OLMoDDPTrainModule(TrainModule):
         )
 
     @staticmethod
+    def _pad_pp_batch_dim(value: Any, multiple: int) -> Any:
+        """
+        Pad a batch-leading value up to a multiple of ``multiple`` by repeating its last instance.
+
+        Handles the Python lists used for per-instance metadata such as ``max_doc_lens`` as well as
+        tensors, so that all batch-leading inputs stay the same length after padding.
+        """
+        if isinstance(value, torch.Tensor):
+            if value.size(0) % multiple == 0:
+                return value
+            pad_size = multiple - (value.size(0) % multiple)
+            padding = value[-1].unsqueeze(0).expand(pad_size, *value.size()[1:])
+            return torch.cat([value, padding], dim=0).contiguous()
+        if isinstance(value, (list, tuple)):
+            if len(value) % multiple == 0:
+                return value
+            pad_size = multiple - (len(value) % multiple)
+            padded = list(value) + [value[-1]] * pad_size
+            return tuple(padded) if isinstance(value, tuple) else padded
+        return value
+
+    @staticmethod
     def _slice_pp_batch_dim(value: Any, original_batch_size: int, batch_size: int) -> Any:
         if isinstance(value, torch.Tensor) and value.size(0) == original_batch_size:
             return value[:batch_size].contiguous()
@@ -943,8 +975,8 @@ class OLMoDDPTrainModule(TrainModule):
         if callable(clear_step_info):
             clear_step_info()
 
+    @staticmethod
     def _split_pp_dry_run_model_kwargs(
-        self,
         kwargs: Dict[str, Any],
         *,
         original_batch_size: int,
@@ -958,6 +990,12 @@ class OLMoDDPTrainModule(TrainModule):
                     start = mb_idx * micro_batch_size
                     end = start + micro_batch_size
                     kwargs_mbs[mb_idx][key] = value[start:end].contiguous()
+            elif isinstance(value, (list, tuple)) and len(value) == original_batch_size:
+                # Per-instance metadata such as 'max_doc_lens' is a Python list, so it has to be
+                # sliced on the same boundaries rather than handed whole to every microbatch.
+                for mb_idx in range(num_microbatches):
+                    start = mb_idx * micro_batch_size
+                    kwargs_mbs[mb_idx][key] = value[start : start + micro_batch_size]
             else:
                 for kwargs_mb in kwargs_mbs:
                     kwargs_mb[key] = value
@@ -989,8 +1027,7 @@ class OLMoDDPTrainModule(TrainModule):
                 "Cannot run independent PP dry-run with empty pipeline microbatches"
             )
 
-        supported_model_kwargs = {"cp_already_sharded", "cp_original_seq_len"}
-        unexpected_model_kwargs = set(kwargs) - supported_model_kwargs
+        unexpected_model_kwargs = set(kwargs) - SUPPORTED_MODEL_KWARGS
         if unexpected_model_kwargs:
             raise OLMoConfigurationError(
                 "Independent PP dry-run only supports the same model kwargs as the PP "
@@ -1123,46 +1160,50 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         optim = self._require_optimizer()
         state_dict = optim.state_dict()  # this will free optim states, need to load back after save
+        try:
+            # this is count the param size of the global dtensor, not the local shard
+            main_param_sz = 0
+            for key, value in state_dict.items():
+                if key.endswith(".main"):
+                    main_param_sz += value.numel()
 
-        # this is count the param size of the global dtensor, not the local shard
-        main_param_sz = 0
-        for key, value in state_dict.items():
-            if key.endswith(".main"):
-                main_param_sz += value.numel()
+            # this is the theretical model param size calculated from config before PP split
+            # model_param_sz = self.model_parts[0].num_params
 
-        # this is the theretical model param size calculated from config before PP split
-        # model_param_sz = self.model_parts[0].num_params
+            # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
 
-        # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
+            # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not
+            # optimizer state, so they must be added to the checkpoint explicitly.
+            save_dict = dict(state_dict)
+            for key, buffer in self._persistent_model_buffer_state_dict().items():
+                assert (
+                    key not in save_dict
+                ), f"Buffer key '{key}' collides with an optimizer state key"
+                save_dict[key] = buffer
 
-        # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not optimizer
-        # state, so they must be added to the checkpoint explicitly; optim.load_state_dict() below
-        # only round-trips the optimizer keys.
-        save_dict = dict(state_dict)
-        for key, buffer in self._persistent_model_buffer_state_dict().items():
-            assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
-            save_dict[key] = buffer
-
-        dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-        planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
-        dist_cp.state_dict_saver.save(
-            save_dict,
-            storage_writer=RemoteFileSystemWriter(
-                dir,
-                thread_count=thread_count,
+            dir = _prepare_env_for_save(
+                dir, process_group=process_group, save_overwrite=save_overwrite
+            )
+            planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
+            dist_cp.state_dict_saver.save(
+                save_dict,
+                storage_writer=RemoteFileSystemWriter(
+                    dir,
+                    thread_count=thread_count,
+                    process_group=process_group,
+                    throttle_uploads=throttle_uploads,
+                ),
                 process_group=process_group,
-                throttle_uploads=throttle_uploads,
-            ),
-            process_group=process_group,
-            planner=planner,
-        )
-
-        optim.load_state_dict(
-            state_dict,
-            reset_optimizer_moments_on_load=False,
-        )  # load back the optim state after save
-
-        torch.cuda.empty_cache()
+                planner=planner,
+            )
+        finally:
+            # ``optim.state_dict()`` temporarily frees some live state shards. Always restore them,
+            # including when checkpoint preparation, I/O, or upload fails.
+            optim.load_state_dict(
+                state_dict,
+                reset_optimizer_moments_on_load=False,
+            )
+            torch.cuda.empty_cache()
 
         return
 
@@ -1195,6 +1236,11 @@ class OLMoDDPTrainModule(TrainModule):
                 storage_reader=reader,
                 process_group=process_group,
             )
+            # Eval-only construction initializes rowwise FP8 caches before checkpoint loading.
+            # Refresh them now so they reflect the checkpoint parameters rather than the random
+            # initialization they were originally quantized from.
+            for model_part in self.model_parts:
+                model_part.refresh_rowwise_fp8_cache()
         else:
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
@@ -1320,11 +1366,13 @@ class OLMoDDPTrainModule(TrainModule):
     def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
         model_state: Dict[str, Any] = {}
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
+        missing_parameters: List[str] = []
 
         for model_part in self.model_parts:
             for name, param in model_part.named_parameters():
                 checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
                 if checkpoint_key is None:
+                    missing_parameters.append(name)
                     continue
 
                 tensor_meta = metadata.state_dict_metadata[checkpoint_key]
@@ -1373,8 +1421,11 @@ class OLMoDDPTrainModule(TrainModule):
                         run_check=False,
                     )
 
-        if not model_state:
-            raise RuntimeError("Did not find any model weights to load in eval mode")
+        if missing_parameters:
+            missing = ", ".join(sorted(set(missing_parameters)))
+            raise RuntimeError(
+                "Checkpoint is missing model parameters required for eval-only loading: " + missing
+            )
 
         return model_state
 
@@ -1874,7 +1925,6 @@ class OLMoDDPTrainModule(TrainModule):
                 lm_output = self.run_pipeline_eval(
                     input_ids,
                     labels,
-                    batch_num_tokens_for_loss=None,
                     ignore_index=self.label_ignore_index,
                     loss_reduction="none",
                     **model_kwargs,
@@ -1933,7 +1983,49 @@ class OLMoDDPTrainModule(TrainModule):
                     # no last stage output
                     final_lm_output = None
 
-                return final_lm_output
+                return self._broadcast_pp_eval_output(final_lm_output)
+
+    def _broadcast_pp_eval_output(self, output: Optional[LMOutputWithLoss]) -> LMOutputWithLoss:
+        """Broadcast the final PP stage's evaluation output to every rank in its PP group."""
+        if self.pp_group is None:
+            raise RuntimeError("PP process group has not been initialized")
+        src = dist.get_global_rank(self.pp_group, self.pp_final_stage_rank)
+        is_src = self.pp_group_rank == self.pp_final_stage_rank
+        if is_src:
+            if output is None:
+                raise RuntimeError("The final PP stage did not produce an evaluation output")
+            tensors: List[Optional[torch.Tensor]] = list(output)
+            metadata: List[Optional[Tuple[Tuple[int, ...], torch.dtype]]] = [
+                None if tensor is None else (tuple(tensor.shape), tensor.dtype)
+                for tensor in tensors
+            ]
+            metadata_container: List[Any] = [metadata]
+        else:
+            tensors = [None, None, None, None]
+            metadata_container = [None]
+
+        dist.broadcast_object_list(
+            metadata_container,
+            src=src,
+            group=self.pp_group,
+            device=self.device,
+        )
+        received_metadata = metadata_container[0]
+        assert isinstance(received_metadata, list)
+        for idx, tensor_metadata in enumerate(received_metadata):
+            if tensor_metadata is None:
+                continue
+            shape, dtype = tensor_metadata
+            tensor = tensors[idx]
+            if tensor is None:
+                tensor = torch.empty(shape, dtype=dtype, device=self.device)
+                tensors[idx] = tensor
+            dist.broadcast(tensor, src=src, group=self.pp_group)
+
+        logits, loss, ce_loss, z_loss = tensors
+        assert loss is not None
+        assert ce_loss is not None
+        return LMOutputWithLoss(logits, loss, ce_loss, z_loss)
 
     def run_pipeline_eval(
         self,
@@ -1942,25 +2034,18 @@ class OLMoDDPTrainModule(TrainModule):
         **kwargs,
     ) -> List[List[Optional[LMOutputWithLoss]]]:
         # the micro-batch size should be a multiple of pp degree
-        def pad_dim_0_to_multiple_of(tensor: torch.Tensor, multiple: int) -> torch.Tensor:
-            bsz = tensor.size(0)
-            if bsz % multiple == 0:
-                return tensor
-            pad_size = multiple - (bsz % multiple)
-            padding_tensor = (
-                tensor[-1].unsqueeze(0).expand(pad_size, *tensor.size()[1:])
-            )  # repeat last element
-            padded_tensor = torch.cat([tensor, padding_tensor], dim=0).contiguous()
-            return padded_tensor
-
+        multiple = self.train_pp_schedule.pp_mesh.size()
         original_batch_size = input_ids.size(0)
-        padded_input_ids = pad_dim_0_to_multiple_of(
-            input_ids, self.train_pp_schedule.pp_mesh.size()
-        )
-        padded_labels = pad_dim_0_to_multiple_of(labels, self.train_pp_schedule.pp_mesh.size())
+        padded_input_ids = self._pad_pp_batch_dim(input_ids, multiple)
+        padded_labels = self._pad_pp_batch_dim(labels, multiple)
         for k, v in kwargs.items():
-            if isinstance(v, torch.Tensor) and v.size(0) == original_batch_size:
-                kwargs[k] = pad_dim_0_to_multiple_of(v, self.train_pp_schedule.pp_mesh.size())
+            length = (
+                v.size(0)
+                if isinstance(v, torch.Tensor)
+                else (len(v) if isinstance(v, (list, tuple)) else None)
+            )
+            if length == original_batch_size:
+                kwargs[k] = self._pad_pp_batch_dim(v, multiple)
 
         with self._model_forward_context():
             schedule_outputs = self.train_pp_schedule.step(
@@ -2464,6 +2549,8 @@ class OLMoDDPTrainModule(TrainModule):
                 log_once(log, "intra-document masking enabled")
                 kwargs["doc_lens"] = batch["doc_lens"]
                 kwargs["max_doc_lens"] = batch["max_doc_lens"]
+            if (segment_ids := get_emo_segment_ids(self.model_parts, input_ids)) is not None:
+                kwargs["segment_ids"] = segment_ids
             return input_ids, labels, kwargs
         else:
             input_ids = batch.pop("input_ids")
