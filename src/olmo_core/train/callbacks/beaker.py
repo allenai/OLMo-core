@@ -69,11 +69,18 @@ class BeakerCallback(Callback):
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
                     if callback.enabled and callback.run is not None:
+                        # allow_val_change: these two keys are provenance, not hyperparameters,
+                        # and one training run legitimately spans several Beaker experiments --
+                        # the W&B run id is keyed to the save folder so a resume continues one
+                        # curve, while a resumed job always carries a new Beaker id. Without this
+                        # W&B rejects the write and takes the whole run down at startup. Scoped to
+                        # these keys, so a genuine config drift elsewhere still errors.
                         callback.run.config.update(
                             {
                                 "beaker_experiment_url": beaker_url,
                                 "beaker_experiment_id": self.experiment_id,
-                            }
+                            },
+                            allow_val_change=True,
                         )
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
                         log.info(f"Added beaker_experiment_id to W&B config: {self.experiment_id}")
