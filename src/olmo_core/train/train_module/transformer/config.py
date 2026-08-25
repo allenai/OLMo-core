@@ -552,6 +552,15 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
         """
         from .ddp_train_module import OLMoDDPTrainModule
 
+        if self.pp_config is not None and self.pp_config.schedule not in {
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        }:
+            raise OLMoConfigurationError(
+                "OLMoDDPTrainModule pipeline parallelism requires a custom pipeline schedule; "
+                f"got {self.pp_config.schedule.value!r}"
+            )
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
