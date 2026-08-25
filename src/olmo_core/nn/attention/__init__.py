@@ -813,6 +813,9 @@ class Attention(SequenceMixer):
     ) -> torch.Tensor:
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.record_leftpad(cache_leftpad)
+        sinks = self.sinks
+        if isinstance(sinks, DTensor):
+            sinks = sinks.to_local()
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = self.backend(
             (q, k, v),
@@ -824,7 +827,7 @@ class Attention(SequenceMixer):
             max_doc_len_k=max_doc_len_k,
             local_k_slice=local_k_slice,
             kv_cache_manager=self.kv_cache_manager,
-            sinks=self.sinks,
+            sinks=sinks,
         )
         if self.kv_cache_manager is not None:
             self.kv_cache_manager.update_seqlen(q.shape[1])
@@ -1114,6 +1117,11 @@ class Attention(SequenceMixer):
             self.register_parameter(
                 "ssmax_scale",
                 nn.Parameter(distribute_tensor(self.ssmax_scale, tp_mesh, [Shard(0)])),
+            )
+        if self.sinks is not None:
+            self.register_parameter(
+                "sinks",
+                nn.Parameter(distribute_tensor(self.sinks, tp_mesh, [Shard(0)])),
             )
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
