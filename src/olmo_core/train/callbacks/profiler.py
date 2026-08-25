@@ -180,6 +180,17 @@ class ProfilerCallback(Callback):
     """
     Whether to record source information (file and line number) for the ops.
     """
+    record_shapes: bool = False
+    """
+    Whether to record operator input shapes and dtypes. Needed to attribute GEMM time to
+    specific matmul shapes; adds CPU overhead on every op. Implied by
+    :attr:`export_distributed_event_summary`, which groups its events by input shape.
+    """
+    with_flops: bool = False
+    """
+    Whether to estimate FLOPs from operator shapes. Only covers matmuls and 2D convolutions
+    -- custom Triton/CUTLASS kernels (linear attention, flash-attn) report nothing.
+    """
     profile_memory: bool = False
     """
     Whether to track tensor memory allocation/deallocation
@@ -254,7 +265,8 @@ class ProfilerCallback(Callback):
         self._profiler = self._exit_stack.enter_context(
             profile(
                 activities=activities,
-                record_shapes=self.export_distributed_event_summary,
+                record_shapes=self.record_shapes or self.export_distributed_event_summary,
+                with_flops=self.with_flops,
                 profile_memory=self.profile_memory,
                 with_stack=self.with_stack,
                 schedule=profiling_schedule,
