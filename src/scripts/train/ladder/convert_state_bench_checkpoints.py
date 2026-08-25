@@ -17,7 +17,13 @@ gated-attention/peri-norm/embed-scale backbone is not expressible as ``Olmo2Conf
 (This branch extends yashassamaga/transformers@olmo-3.5-hybrid with support for the
 homogeneous layer_types the pure-transformer and pure-GDN StateBench variants need.)
 
-Typical usage, on a weka-mounted GPU machine::
+Typical usage, on a weka-mounted GPU machine (the olmo-core Beaker image). Installs
+land in the container and die with the session, so run this once per session::
+
+    uv pip install --python "$(which python)" -e '.[fla]'
+    uv pip install --python "$(which python)" --no-deps -e /weka/oe-training-default/tf-fork
+
+then::
 
     python src/scripts/train/ladder/convert_state_bench_checkpoints.py --dry-run
     python src/scripts/train/ladder/convert_state_bench_checkpoints.py
