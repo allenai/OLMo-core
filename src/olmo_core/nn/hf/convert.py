@@ -1031,7 +1031,8 @@ def convert_qwen3_5_state_to_hf(
                 "Qwen3.5 config ties word embeddings, but embeddings.weight and "
                 "lm_head.w_out.weight have different dtype or device"
             )
-        if not torch.equal(embeddings, lm_head):
+        # Meta states are used for structural export preflight and have no values to compare.
+        if not embeddings.is_meta and not torch.equal(embeddings, lm_head):
             raise ValueError(
                 "Qwen3.5 config ties word embeddings, but embeddings.weight and "
                 "lm_head.w_out.weight differ"

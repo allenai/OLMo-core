@@ -417,6 +417,29 @@ def test_qwen3_5_tied_embeddings_must_agree():
         convert_qwen3_5_state_to_hf(config, state)
 
 
+def test_qwen3_5_tied_embeddings_support_meta_preflight():
+    config = _text_config(tie_word_embeddings=True)
+    expected = convert_state_to_hf(config, _olmo_state(tied=True))
+    meta_state = {key: tensor.to(device="meta") for key, tensor in _olmo_state(tied=True).items()}
+
+    actual = convert_state_to_hf(config, meta_state)
+
+    assert actual.keys() == expected.keys()
+    for key, tensor in actual.items():
+        assert tensor.is_meta
+        assert tensor.shape == expected[key].shape
+        assert tensor.dtype == expected[key].dtype
+
+
+def test_qwen3_5_tied_embeddings_reject_mixed_meta_state():
+    config = _text_config(tie_word_embeddings=True)
+    state = {key: tensor.to(device="meta") for key, tensor in _olmo_state(tied=True).items()}
+    state["lm_head.w_out.weight"] = torch.empty_like(state["lm_head.w_out.weight"], device="cpu")
+
+    with pytest.raises(ValueError, match="different dtype or device"):
+        convert_qwen3_5_state_to_hf(config, state)
+
+
 def test_qwen3_5_does_not_implicitly_resize_vocabulary():
     config = _text_config()
     state = _olmo_state()
