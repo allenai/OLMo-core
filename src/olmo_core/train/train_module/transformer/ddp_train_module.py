@@ -1911,7 +1911,6 @@ class OLMoDDPTrainModule(TrainModule):
                 lm_output = self.run_pipeline_eval(
                     input_ids,
                     labels,
-                    batch_num_tokens_for_loss=None,
                     ignore_index=self.label_ignore_index,
                     loss_reduction="none",
                     **model_kwargs,

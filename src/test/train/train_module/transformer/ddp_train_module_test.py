@@ -1,14 +1,15 @@
 """Tests for :class:`OLMoDDPTrainModule` config and construction."""
 
+import contextlib
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional, cast
 
 import pytest
 import torch
 import torch.distributed as dist
 
 from olmo_core.config import DType
-from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
@@ -56,6 +57,22 @@ def test_moe_v2_train_module_config_roundtrips_with_parallelism():
     assert restored == config
     assert restored.dp_config is not None and restored.dp_config.reduce_grads_in_fp32 is False
     assert restored.pp_config is not None and restored.pp_config.degree == 2
+
+
+def test_olmo_ddp_pipeline_parallelism_requires_custom_schedule():
+    model = _tiny_model_config().build(init_device="cpu")
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=512,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        pp_config=TransformerPipelineParallelConfig(
+            degree=2,
+            schedule=PipelineScheduleType.interleaved_1F1B,
+        ),
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="requires a custom pipeline schedule"):
+        config.build(model, device=torch.device("cpu"), eval_only=True)
 
 
 def _tiny_model_config(
@@ -345,12 +362,13 @@ def test_rebuild_train_pp_schedule_uses_new_batch_size(monkeypatch):
             built_with.update(kwargs)
 
     train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
-    train_module._trainer = SimpleNamespace(dp_process_group=None)
-    train_module._pp_config = SimpleNamespace(
-        schedule="schedule", forward_pull_ahead_extra_activations=None
+    train_module._trainer = cast(Any, SimpleNamespace(dp_process_group=None))
+    train_module._pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        schedule=PipelineScheduleType.custom_interleaved_1F1B,
     )
-    train_module._pp_stages = [object()]
-    train_module.model_parts = [object()]
+    train_module._pp_stages = cast(Any, [object()])
+    train_module.model_parts = cast(Any, [object()])
     train_module.rank_microbatch_size = 4
     train_module.world_mesh = {"dense": {"pp": object()}}
     monkeypatch.setattr(
@@ -373,7 +391,7 @@ def test_broadcast_pp_eval_output_reconstructs_on_non_final_rank(monkeypatch):
         None,
     ]
     train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
-    train_module.pp_group = object()
+    train_module.pp_group = cast(Any, object())
     train_module.pp_group_rank = 0
     train_module.pp_final_stage_rank = 1
     train_module.device = torch.device("cpu")
@@ -403,6 +421,47 @@ def test_broadcast_pp_eval_output_reconstructs_on_non_final_rank(monkeypatch):
             assert actual is None
         else:
             assert torch.equal(actual, wanted)
+
+
+def test_pipeline_eval_does_not_forward_training_only_loss_kwarg(monkeypatch):
+    train_module = OLMoDDPTrainModule.__new__(OLMoDDPTrainModule)
+    train_module._cp_config = None
+    train_module._tp_config = None
+    train_module._pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        schedule=PipelineScheduleType.custom_interleaved_1F1B,
+    )
+    train_module.model_parts = cast(Any, [torch.nn.Identity()])
+    train_module.label_ignore_index = -100
+    input_ids = torch.ones((2, 3), dtype=torch.long)
+    labels = input_ids.clone()
+    microbatch_output = LMOutputWithLoss(
+        logits=torch.ones((2, 3, 4)),
+        loss=torch.ones((2, 3)),
+        ce_loss=torch.ones((2, 3)),
+        z_loss=None,
+    )
+    forwarded_kwargs = {}
+
+    monkeypatch.setattr(
+        train_module,
+        "_prepare_batch",
+        lambda batch, labels: (input_ids, labels, {}),
+    )
+    monkeypatch.setattr(train_module, "_eval_batch_context", contextlib.nullcontext)
+
+    def fake_run_pipeline_eval(input_ids, labels, **kwargs):
+        del input_ids, labels
+        forwarded_kwargs.update(kwargs)
+        return [[microbatch_output]]
+
+    monkeypatch.setattr(train_module, "run_pipeline_eval", fake_run_pipeline_eval)
+    monkeypatch.setattr(train_module, "_broadcast_pp_eval_output", lambda output: output)
+
+    output = train_module.eval_batch({}, labels)
+
+    assert output is not None
+    assert "batch_num_tokens_for_loss" not in forwarded_kwargs
 
 
 def _run_global_lb_group_is_stage_local():
