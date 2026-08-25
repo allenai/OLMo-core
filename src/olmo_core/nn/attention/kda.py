@@ -80,9 +80,10 @@ class KimiDeltaAttention(SequenceMixer):
                 "KDA is running with the EXPERIMENTAL cute-kda kernels "
                 "(use_cute_kernel=True). These are new, are not numerically identical to "
                 "FLA's kernels, and only engage on Blackwell at chunk size 64 without "
-                "packed-document cu_seqlens; every other shape silently falls back to FLA. "
-                "See olmo_core.nn.attention.kda_cute for the supported box and its "
-                "OLMO_CUTE_KDA_* bisection knobs.",
+                "packed-document cu_seqlens; every other shape falls back to FLA — which "
+                "the kernels log, with the reason, once per process. Set "
+                "KERNEL_FUN_DISABLE=1 to force FLA everywhere without a config change. "
+                "See olmo_core.nn.attention.kda_cute for the supported box.",
                 level=logging.WARNING,
             )
 
@@ -315,12 +316,14 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
         silently falls back to FLA's kernel.
 
         These kernels are faster but newer and far less exercised than FLA's: they are
-        not bit-identical to FLA's monolith, so loss curves will not match a run with
-        this turned off, and only the fixed-length forward and the ``bwd_intra`` backward
-        stage are swapped. Leave this off unless you are deliberately testing the kernels,
-        and check the ``cute-kda`` lines in the training log to confirm which arms actually
-        ran. The module docstring of :mod:`olmo_core.nn.attention.kda_cute` documents the
-        ``OLMO_CUTE_KDA_*`` environment variables for isolating a suspect stage.
+        not bit-identical to FLA's monolith, so loss curves will not match a run with this
+        turned off. Swapped in are the forward scan+readout, the gate activation (fused
+        into the cumsum rather than run as eager fp32 ops), and four of the backward's
+        seven stages; the rest are FLA's own kernels at FLA's own stage boundaries. At the
+        production shape this measured 1.545x on the op. Leave it off unless you are
+        deliberately testing the kernels, and check the ``kernel-fun kda`` lines in the
+        training log to confirm they engaged — the fallback is silent by design and reads
+        as a correct 1.00x. ``KERNEL_FUN_DISABLE=1`` forces FLA everywhere at runtime.
     :param dtype: The parameter dtype.
     """
 
