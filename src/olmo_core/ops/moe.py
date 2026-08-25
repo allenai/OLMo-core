@@ -359,7 +359,7 @@ class AllToAllAsyncOp(torch.autograd.Function):
             )
         handle.wait()
         del x_grad._a2a_handle
-        return x_grad, None, None, None, None
+        return x_grad, None, None, None
 
 
 class AllToAllWaitOp(torch.autograd.Function):

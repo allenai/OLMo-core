@@ -160,6 +160,12 @@ class BatchSizeSchedulerCallback(Callback):
         log.info(f"Changing global batch size to {batch_size:,d}...")
         ratio = batch_size / self.current_batch_size
         lr_adjustment_factor = math.sqrt(ratio)
+
+        # Pipeline schedules capture the number of microbatches at construction time. Rebuild the
+        # schedule before exposing the new data-loader batch size so an invalid size fails without
+        # leaving the trainer partially updated.
+        if isinstance(self.trainer.train_module, OLMoDDPTrainModule):
+            self.trainer.train_module.rebuild_train_pp_schedule(batch_size)
         self.trainer.data_loader.global_batch_size = batch_size
 
         # Heterogeneous: OLMoDDPOptimizer isn't a torch.optim.Optimizer subclass (it exposes the

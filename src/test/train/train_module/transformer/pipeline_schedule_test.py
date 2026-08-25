@@ -4,6 +4,10 @@ from typing import Any, Dict
 
 import pytest
 import torch
+from torch.distributed.pipelining.schedules import (
+    PipelineScheduleMulti,
+    PipelineScheduleSingle,
+)
 
 from olmo_core.distributed.parallel.pipeline_parallel import (
     PipelineSchedule,
@@ -11,7 +15,6 @@ from olmo_core.distributed.parallel.pipeline_parallel import (
     get_pipeline_activation_stats,
     get_pipeline_tick_exchange_stats,
 )
-from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.train_module.transformer.pipeline.helpers import (
     generate_stage_to_rank_mapping,
 )
@@ -340,23 +343,47 @@ def test_local_middle_boundary_skips_p2p_without_touching_buffers():
 
 
 @pytest.mark.parametrize(
-    "schedule_name",
+    ("schedule_name", "schedule_base", "num_parts"),
     [
-        PipelineScheduleType.single_1F1B,
-        PipelineScheduleType.interleaved_1F1B,
-        PipelineScheduleType.gpipe,
+        (PipelineScheduleType.single_1F1B, PipelineScheduleSingle, 1),
+        (PipelineScheduleType.interleaved_1F1B, PipelineScheduleMulti, 2),
+        (PipelineScheduleType.gpipe, PipelineScheduleSingle, 1),
     ],
 )
-def test_pipeline_schedule_rejects_standard_schedules(schedule_name: PipelineScheduleType):
-    # This train module only wires up the custom schedules; selecting a standard PyTorch schedule
-    # should fail fast with a clear configuration error (the check runs before any mesh is used).
-    with pytest.raises(OLMoConfigurationError):
-        PipelineSchedule(
-            model_parts=[],
-            stages=[],
-            pp_mesh=None,  # type: ignore[arg-type]
-            schedule_name=schedule_name,
-        )
+def test_pipeline_schedule_builds_standard_schedules(
+    monkeypatch, schedule_name: PipelineScheduleType, schedule_base: type, num_parts: int
+):
+    class FakeSchedule(schedule_base):
+        def __init__(self, stages, *, n_microbatches, loss_fn):
+            self.stages = stages
+            self._n_microbatches = n_microbatches
+            self._loss_fn = loss_fn
+
+        def _step_microbatches(self, *args, **kwargs):
+            del args, kwargs
+
+    monkeypatch.setattr(
+        "olmo_core.distributed.parallel.pipeline_parallel.get_schedule_class",
+        lambda _: FakeSchedule,
+    )
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    stages = [SimpleNamespace(is_first=True, is_last=True) for _ in range(num_parts)]
+
+    def loss_fn(output, target):
+        del target
+        return output
+
+    schedule = PipelineSchedule(
+        model_parts=[torch.nn.Identity() for _ in range(num_parts)],
+        stages=stages,  # type: ignore[arg-type]
+        pp_mesh=SimpleNamespace(size=lambda: 2),  # type: ignore[arg-type]
+        schedule_name=schedule_name,
+        loss_fn=loss_fn,
+    )
+
+    assert isinstance(schedule.schedule_impl, FakeSchedule)
+    assert schedule.num_microbatches == 2
+    assert schedule.schedule_impl._loss_fn is loss_fn
 
 
 def _build_splitter(n_microbatches: int) -> CustomScheduleInterleaved1F1B:
