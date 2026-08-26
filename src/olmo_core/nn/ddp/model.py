@@ -388,7 +388,13 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         param = next((p for p in self.parameters() if p.is_floating_point()), None)
         if param is None:
             raise RuntimeError("Cannot infer dtype/device for EP no-sync symmetric prewarm")
-        dtype = param.dtype
+        # This prewarm runs before apply_dp(), which currently casts the model to
+        # BF16 for forward/backward. Using param.dtype here therefore allocates
+        # FP32 lifetime-lease slots that the BF16 rowwise runtime cannot reuse.
+        # A non-PP dry run can hide the mismatch by resizing one slot, but PP can
+        # retain several concurrent forward activations and needs every prewarmed
+        # slot to match the eventual activation dtype.
+        dtype = torch.bfloat16
         device = param.device
         d_model = self.d_model
         prewarm_local_microbatch_size = max_local_microbatch_size
