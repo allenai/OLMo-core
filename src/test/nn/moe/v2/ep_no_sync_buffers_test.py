@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 import torch
 
+from olmo_core.nn.ddp import model as ddp_model
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig
 from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
     _cached_symm_tensor_covers,
@@ -53,3 +54,68 @@ def test_compute_ep_no_sync_rank_capacity():
     assert compute_ep_no_sync_rank_capacity(block, 0) == 1  # floored to at least 1
     block2: Any = SimpleNamespace(ep=ExpertParallelConfig(capacity_factor=2.0))
     assert compute_ep_no_sync_rank_capacity(block2, 4) == 8
+
+
+def test_ep_no_sync_prewarm_uses_runtime_bf16_dtype(monkeypatch):
+    recorded_dtypes = []
+
+    def record_dtype(*args, dtype, **kwargs):
+        del args, kwargs
+        recorded_dtypes.append(dtype)
+
+    monkeypatch.setattr(ddp_model, "get_ep_no_sync_buffers", record_dtype)
+    monkeypatch.setattr(
+        ddp_model,
+        "prewarm_ep_no_sync_rowwise_lifetime_leases",
+        record_dtype,
+    )
+    monkeypatch.setattr(
+        ddp_model,
+        "use_ep_no_sync_rowwise_symm_dispatch_in",
+        lambda block: False,
+    )
+    monkeypatch.setattr(
+        ddp_model,
+        "use_ep_no_sync_rowwise_symm_combine_out",
+        lambda block: False,
+    )
+    monkeypatch.setattr(
+        ddp_model,
+        "use_ep_no_sync_rowwise_symm_combine_gather",
+        lambda block: False,
+    )
+
+    block = SimpleNamespace(
+        routed_experts_router=SimpleNamespace(top_k=2),
+        ep_pg=object(),
+        ep=SimpleNamespace(
+            uses_rowwise_buffers=True,
+            rowwise_transport="pytorch",
+            shared_slots=1,
+            capacity_factor=1.25,
+        ),
+        rowwise_fp8=None,
+        checkpoint_attn=False,
+        checkpoint_permute_moe_unpermute=False,
+    )
+    model = SimpleNamespace(
+        named_ep_no_sync_blocks=lambda: [("0", block)],
+        parameters=lambda: iter([torch.nn.Parameter(torch.empty(1, dtype=torch.float32))]),
+        tbo=False,
+        d_model=4,
+        recompute_all_blocks_by_chunk=False,
+        recompute_each_block=False,
+        recompute_block_keys=None,
+        compile_enabled=False,
+        _compile_requested=False,
+        _ep_no_sync_dummy_symm_tensors=[],
+    )
+
+    ddp_model.OLMoDDPModel.prewarm_ep_no_sync_symm_buffers(
+        model,
+        max_local_microbatch_size=8,
+        pad_to_block_count=1,
+        rowwise_lifetime_lease_slots=4,
+    )
+
+    assert recorded_dtypes == [torch.bfloat16, torch.bfloat16]
