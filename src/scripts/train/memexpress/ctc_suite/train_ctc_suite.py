@@ -51,6 +51,8 @@ from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     ComposableDataLoaderConfig,
+    LandmarkPackingInstanceSourceConfig,
+    NumpyDocumentSourceConfig,
     PackingInstanceSourceConfig,
     PadToLengthInstanceSourceConfig,
 )
@@ -58,7 +60,7 @@ from olmo_core.data.document_chunk_landmark import RESERVED_IDS  # canonical ids
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.float8 import Float8Config
-from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention import AttentionBackendName, AttentionType
 from olmo_core.nn.attention.chunked_mask import mask_mix_standard_prob
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
@@ -267,6 +269,9 @@ WORK_DIR = "/scratch/users/prasann/longctx_sft_qwen/dataset-cache-ctc-suite"
 
 # Hyperparams inherited from the source attn_explore scripts (NOT contradiction-specific).
 LR = 5e-5
+MEM_FREQ_SPARSE = (
+    63  # landmark block = 64 (63 content + 1 landmark), matches every landmark lineage
+)
 NUM_EPOCHS = 3
 WANDB_PROJECT = "memory-networks"
 
@@ -425,11 +430,24 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # for large (>=8x) extensions where YaRN was found to plateau.
     if opts.rope_theta and opts.rope_theta > 0:
         qwen_kwargs["rope_theta"] = opts.rope_theta
-    if opts.variant != "full":
+    if opts.variant in ("chunked", "chunked-mix"):
         # Chunked mask on the full-attention blocks only; GDN blocks ignore chunk_ids.
         qwen_kwargs["document_chunked"] = True
         qwen_kwargs["cross_doc_mode"] = "chunked"
     model_config = factory(**qwen_kwargs)
+    if opts.variant == "sparselandmark":
+        # Swap the full-attention mixer for sparse landmark attention (same swap as
+        # cpt/Qwen3.5-4B-sparse-landmark-dolma3longmino.py): full attention within a 64-token
+        # block, past blocks visible only through their single landmark token. The qwen3_5
+        # elementwise output gate on the mixer is KEPT (sparse landmark applies it, and w_g loads
+        # from the base checkpoint). GDN blocks are untouched. Data must be landmark-inserted
+        # (LandmarkPackingInstanceSource below), and the base checkpoint must have the landmark
+        # embedding row (ids.landmark) repaired -- it is untrained in the raw conversion.
+        blk = model_config.block
+        mixer = blk["attn"].sequence_mixer if isinstance(blk, dict) else blk.sequence_mixer
+        mixer.name = AttentionType.sparse_landmark
+        mixer.mem_freq = MEM_FREQ_SPARSE
+        mixer.num_landmarks = 1
     # YaRN RoPE context extension for long-context runs (base native ctx is 32k for Qwen3; the
     # 256k rung needs factor ~8). Off by default (--rope-yarn-factor 0) so short-rung runs are
     # byte-identical. Mirrors sft_longctx/Qwen3-4B-dense-longctx-SFT.py (factor=2 for 64k).
@@ -456,7 +474,7 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # 40960 the unfused path needs ~38 GiB per rank just for logits.float() and OOMs H200s
     # (same setting as the proven 40k-seq sft_docchunk Beaker scripts).
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    if opts.variant != "full":
+    if opts.variant in ("chunked", "chunked-mix"):
         mix_keys: Dict[str, Any] = {}
         if opts.variant == "chunked-mix":
             mix_keys = dict(
@@ -695,7 +713,29 @@ def resolve_plan(opts: argparse.Namespace, world_size: int) -> Dict[str, Any]:
     # option for a mixed 8k..256k length distribution, where padding every short example up to a
     # 256k seq_len would be a ~32x compute waste. Packing composes with CP (proven in the
     # sft_longctx -packed- scripts: "Packing is supported under CP"). Same npy format either way.
-    if opts.pack:
+    if opts.variant == "sparselandmark":
+        # Landmark-packed data path (mirrors the proven singletask_ladder 3variant script):
+        # first-fit bin-packs whole SFT examples into block-aligned landmark windows and inserts
+        # the landmark token every MEM_FREQ_SPARSE content tokens, emitting doc_lens so the sparse
+        # kernel's doc_id keeps examples from attending each other's landmarks.
+        if opts.seq_len % (MEM_FREQ_SPARSE + 1) != 0:
+            raise SystemExit(
+                f"--variant sparselandmark requires --seq-len divisible by the landmark block "
+                f"({MEM_FREQ_SPARSE + 1}); got {opts.seq_len}."
+            )
+        instance_source_config = LandmarkPackingInstanceSourceConfig(
+            source=NumpyDocumentSourceConfig(
+                source_paths=[f"{opts.data}/token_ids_part_*.npy"],
+                tokenizer=tokenizer_config,
+                label_mask_paths=[f"{opts.data}/labels_mask_*.npy"],
+                expand_glob=True,
+            ),
+            sequence_length=opts.seq_len,
+            mem_freq=MEM_FREQ_SPARSE,
+            mem_id=ids.landmark,
+            pad_id=ids.pad,
+        )
+    elif opts.pack:
         # HARD GUARD: the packer builds a SegmentTree over max_sequence_length, which asserts
         # log2(N) is an integer. A non-power-of-2 --seq-len (e.g. 40960) therefore dies with a bare
         # "N should be a power of 2" -- but only AFTER the base checkpoint loads and the mesh is
@@ -871,7 +911,18 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # step*/ dirs that nothing reads, since eval loads the model-only `model_and_optim` saved
         # after fit(). Default to no mid-run checkpoints; pass --save-interval N to get resume
         # points back for a long run on a preemptible queue.
-        .with_callback("checkpointer", CheckpointerCallback(save_interval=opts.save_interval))
+        # ``enabled=False`` when --no-final-checkpoint: CheckpointerCallback.post_train()
+        # otherwise saves a FULL model+optim+train-state checkpoint unconditionally at the end —
+        # 82G and ~25 min over lambda's ~60MB/s NFS, for state nothing downstream reads (eval and
+        # rebasing both use the model-only export from the --save-checkpoint block after fit()).
+        # The base-checkpoint LOAD is unaffected: trainer.fit gates it on ``no_checkpoints``, not
+        # on this callback (see the note above).
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=opts.save_interval, enabled=not opts.no_final_checkpoint
+            ),
+        )
     )
     if opts.wandb:
         trainer_config = trainer_config.with_callback(
@@ -960,10 +1011,10 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--variant",
-        choices=["full", "chunked", "chunked-mix"],
+        choices=["full", "chunked", "chunked-mix", "sparselandmark"],
         required=True,
         help="full = plain causal (no document_chunk_attention); chunked = pure document-chunked "
-        "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p)",
+        "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p); sparselandmark = AttentionType.sparse_landmark on the full-attn blocks + landmark-packed data",
     )
     ap.add_argument(
         "--seq-len", type=int, default=40960, help="fits the 32k rung + prompt/CoT overhead"
@@ -1102,6 +1153,14 @@ def parse_args() -> argparse.Namespace:
         "needs the post-fit model-only save, and at 4B each mid-run checkpoint costs ~55G). Set an "
         "integer to get resume points for a long run on a preemptible queue.",
     )
+    ap.add_argument(
+        "--no-final-checkpoint",
+        action="store_true",
+        help="skip the checkpointer's end-of-training FULL (model+optim+train-state) save; the "
+        "post-fit model-only export from --save-checkpoint still runs. Use on lambda, where the "
+        "full save costs ~82G of user quota and ~25 min of NFS writes that nothing reads. "
+        "Incompatible with resuming the run later.",
+    )
     ap.add_argument("--no-compile", dest="compile", action="store_false")
     ap.add_argument(
         "--dry-run",
@@ -1138,6 +1197,12 @@ def parse_args() -> argparse.Namespace:
     if opts.variant == "chunked-mix" and opts.compile:
         # The python-seeded mix coin + counter are not torch.compile-capturable.
         print("[ctc-suite] chunked-mix: forcing --no-compile (mix coin is not compilable)")
+        opts.compile = False
+    if opts.variant == "sparselandmark" and opts.compile:
+        # SparseLandmarkAttention is a Triton custom-autograd Function; keep compile off (same
+        # posture as every sparse-landmark CPT/SFT script) rather than risk AC+compile metadata
+        # mismatches mid-sweep.
+        print("[ctc-suite] sparselandmark: forcing --no-compile (triton custom-autograd mixer)")
         opts.compile = False
     return opts
 

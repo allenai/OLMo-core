@@ -1,0 +1,110 @@
+[
+  {
+    "model": "qwen3_4b",
+    "attn": "dense",
+    "seq_len": 65536,
+    "batch": 1,
+    "ms_per_step": 21213.571924017742,
+    "tokens_per_sec": 3089.3430033723344,
+    "peak_mem_gb": 38.348808704
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "sparse",
+    "seq_len": 65536,
+    "batch": 1,
+    "ms_per_step": 5591.182986740023,
+    "tokens_per_sec": 11721.311957670556,
+    "peak_mem_gb": 39.709335552
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "dense",
+    "seq_len": 65536,
+    "batch": 1,
+    "ms_per_step": 9473.739630775526,
+    "tokens_per_sec": 6917.648421232279,
+    "peak_mem_gb": 37.87704832
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "sparse",
+    "seq_len": 65536,
+    "batch": 1,
+    "ms_per_step": 5342.632427345961,
+    "tokens_per_sec": 12266.612178774962,
+    "peak_mem_gb": 39.236526592
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "dense",
+    "seq_len": 32768,
+    "batch": 1,
+    "ms_per_step": 6660.136914812028,
+    "tokens_per_sec": 4920.0189754544745,
+    "peak_mem_gb": 25.30583552
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "sparse",
+    "seq_len": 32768,
+    "batch": 1,
+    "ms_per_step": 2765.2723626233637,
+    "tokens_per_sec": 11849.827323668615,
+    "peak_mem_gb": 25.984525824
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "dense",
+    "seq_len": 32768,
+    "batch": 1,
+    "ms_per_step": 3755.594830494374,
+    "tokens_per_sec": 8725.115854866199,
+    "peak_mem_gb": 26.033315328
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "sparse",
+    "seq_len": 32768,
+    "batch": 1,
+    "ms_per_step": 2742.9013086948544,
+    "tokens_per_sec": 11946.474303004321,
+    "peak_mem_gb": 26.708859392
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "dense",
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 2325.1208239234984,
+    "tokens_per_sec": 7046.515532192004,
+    "peak_mem_gb": 21.100259328
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "sparse",
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1399.5440229773521,
+    "tokens_per_sec": 11706.669980373408,
+    "peak_mem_gb": 21.44196352
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "dense",
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1732.518846169114,
+    "tokens_per_sec": 9456.751386126469,
+    "peak_mem_gb": 21.978871808
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "sparse",
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1492.9348467849195,
+    "tokens_per_sec": 10974.3570091377,
+    "peak_mem_gb": 22.016744448
+  }
+]

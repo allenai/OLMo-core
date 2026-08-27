@@ -1,0 +1,42 @@
+[
+  {
+    "model": "qwen3_4b",
+    "attn": "dense",
+    "ac": false,
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1842.725242022425,
+    "tokens_per_sec": 8891.179013762387,
+    "peak_mem_gb": 114.838294016
+  },
+  {
+    "model": "qwen3_4b",
+    "attn": "sparse",
+    "ac": false,
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1109.306753380224,
+    "tokens_per_sec": 14769.584652825284,
+    "peak_mem_gb": 127.072404992
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "dense",
+    "ac": false,
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1420.611622510478,
+    "tokens_per_sec": 11533.06064823439,
+    "peak_mem_gb": 115.708851712
+  },
+  {
+    "model": "qwen3_5_4b",
+    "attn": "sparse",
+    "ac": false,
+    "seq_len": 16384,
+    "batch": 1,
+    "ms_per_step": 1240.0896076578647,
+    "tokens_per_sec": 13211.948474388211,
+    "peak_mem_gb": 118.42688768
+  }
+]

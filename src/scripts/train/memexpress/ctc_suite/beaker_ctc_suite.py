@@ -41,7 +41,11 @@ from olmo_core.launch.beaker import BeakerEnvVar, OLMoCoreBeakerImage
 WANDB_ENTITY = "prasanns-allen-institute-for-ai"
 WANDB_PROJECT = "memory-networks"
 
-# GPUs/node for every scale in this family (H100 80GB jupiter nodes).
+# GPUs/node default for this family (H100 80GB jupiter nodes). Overridable per launch: sub-node
+# slots (2/4 GPUs) backfill into freed slices far faster than whole nodes when the cluster is
+# packed -- the 2026-08-17 wave sat queued for hours behind 975/975 slots. Wall-clock scales
+# ~linearly with fewer GPUs (global batch is held at 8 instances via grad accum), so 2-GPU is only
+# viable for short-seq tasks; seq-40960 runs need >=4 GPUs to finish inside a day.
 NUM_GPUS = 8
 
 
@@ -130,6 +134,13 @@ def parse_args() -> argparse.Namespace:
         "--shard-degree", type=int, default=0, help="FSDP shard_degree override (0=auto)"
     )
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
+    ap.add_argument(
+        "--num-gpus",
+        type=int,
+        default=NUM_GPUS,
+        help="GPUs per node (default 8). 2/4-GPU slots backfill a packed cluster much faster; "
+        "pass a matching --shard-degree and keep --global-batch fixed for optimizer parity.",
+    )
     ap.add_argument("--num-nodes", type=int, default=2, help="2 nodes for 4B, 4 for 9B per plan §4")
     ap.add_argument("--epochs", type=int, default=1, help="plan directive: 1 epoch at 20k examples")
     ap.add_argument("--seq-len", type=int, default=40960)
@@ -200,7 +211,7 @@ def main() -> None:
     run_name = f"{opts.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     save_folder = f"{root_dir}/checkpoints/prasanns/ctc_suite/ckpts/{run_name}"
     wandb_group = opts.wandb_group or f"ctc-suite-{opts.task}"
-    world_size = opts.num_nodes * NUM_GPUS
+    world_size = opts.num_nodes * opts.num_gpus
     global_batch = opts.global_batch or world_size  # 1 instance/GPU/step, grad-accum 1
 
     cmd = [
@@ -274,7 +285,7 @@ def main() -> None:
         workspace="ai2/flex2",
         budget="ai2/oe-other",
         num_nodes=opts.num_nodes,
-        num_gpus=NUM_GPUS,
+        num_gpus=opts.num_gpus,
     )
     launch_config.priority = opts.priority
     launch_config.allow_dirty = opts.allow_dirty
