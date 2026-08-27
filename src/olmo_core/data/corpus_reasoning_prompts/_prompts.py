@@ -180,6 +180,43 @@ QDMATCH_INSTRUCTION = (
     "If no pairs are relevant, output: []"
 )
 
+# ── Transform-matching task (xformmatch — query-position experiment) ──
+# A numbered list mixing original passages and rewrites (single shared index,
+# each line tagged Original:/Rewrite:). Every original has several rewrites,
+# each produced by a different deterministic rewriting procedure; the query
+# names ONE procedure and asks for every (original, rewrite) pair related by
+# exactly that procedure. Ordered pairs — original id first (qdmatch-style).
+XFORMMATCH_INSTRUCTION = (
+    "Below is a numbered list of items. Each item is labeled either 'Original:' "
+    "(a source passage) or 'Rewrite:' (a passage produced by applying a "
+    "rewriting procedure to one of the originals). Each original has several "
+    "rewrites, each made by a different procedure. A target procedure is "
+    "specified. Identify every (original, rewrite) pair where the rewrite was "
+    "produced from that original by exactly the target procedure.\n\n"
+    "Output your answer as a JSON list of pairs, where each pair is "
+    "[original_id, rewrite_id] \u2014 the original's number first, then the "
+    "rewrite's number. For example: [[2, 9], [5, 3]]\n"
+    "If no pairs match, output: []"
+)
+
+# ── Record-matching task (recmatch — query-relative pairing) ──
+# Numbered synthetic records, each a bundle of labeled fields. Every attribute
+# induces its own planted pairing (disjoint 1-factorization matchings), so the
+# same record pairs with a DIFFERENT partner depending on which attribute the
+# query names. Unordered pairs, contradiction-style pair metrics.
+RECMATCH_INSTRUCTION = (
+    "Below is a numbered list of records. Each record is a set of labeled "
+    "fields. A query names one field (or a property computed from it); exactly "
+    "the queried relationship links certain pairs of records.\n\n"
+    "Output your answer as a JSON list of pairs, where each pair is a list of "
+    "two record IDs. For example: [[2, 9], [5, 13]]\n"
+    "If no pairs match, output: []"
+)
+
+
+RECORD_TEMPLATE = "Record {id}: {text}"
+
+
 # ── Redundancy-detection task ──
 # Mirror of contradiction: find all pairs of claims that are REDUNDANT (state
 # the same fact / are paraphrases of each other). Reuses CLAIM_TEMPLATE and the
@@ -232,6 +269,36 @@ XABSENCE_INSTRUCTION = (
     "are UNMATCHED: they have no paraphrase anywhere in the other corpus. "
     "Identify the unmatched claims.\n"
     "Write your answer in the following format:\nUnmatched: [id1], [id2], ..."
+)
+
+# One-sided variant (--orphan-side A): EVERY orphan lives in corpus A, and the count k is stated
+# explicitly in the prompt. That fixes the candidate set (the A block) and the answer-set size, so
+# the model scans A and checks membership in B and never the reverse. Style-matched to
+# ABSENCE_INSTRUCTION, the sibling task that demonstrably works; the answer anchor is "Missing:"
+# to match it (the legacy two-sided prompt/target/parser keep "Unmatched:").
+XABSENCE_ONESIDED_INSTRUCTION = (
+    "Below are two corpora of numbered claims, A and B. Every claim in corpus A "
+    "appears again, word for word, in corpus B — except for exactly {n} claims. "
+    "Those {n} claims from corpus A are MISSING from corpus B. Find them. "
+    "Only claims from corpus A can be missing; every claim in corpus B also "
+    "appears in corpus A.\n"
+    "Write your answer in the following format:\nMissing: [id1], [id2], ..."
+)
+
+# Prose-corpus flavour of the one-sided variant (e.g. --src-tag gutenberg): the items are
+# narrative PASSAGES, not claims, so calling them "claims" is simply false about the context --
+# the same class of prompt/data mismatch as the "paraphrase" wording that was fixed earlier.
+# Word-for-word identical to XABSENCE_ONESIDED_INSTRUCTION except "claims" -> "passages"; the
+# {n} substitution and the "Missing: [id1], [id2], ..." answer format are unchanged, so the
+# target builder (_build_output, anchored on orphan_side) and the grader (_parse_id_set) are
+# untouched by this variant.
+XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION = (
+    "Below are two corpora of numbered passages, A and B. Every passage in corpus A "
+    "appears again, word for word, in corpus B — except for exactly {n} passages. "
+    "Those {n} passages from corpus A are MISSING from corpus B. Find them. "
+    "Only passages from corpus A can be missing; every passage in corpus B also "
+    "appears in corpus A.\n"
+    "Write your answer in the following format:\nMissing: [id1], [id2], ..."
 )
 
 # ── Cycle-comparison task ──

@@ -249,6 +249,14 @@ class AttentionType(StrEnum):
     analogue of ``document_landmark``)
     """
 
+    pooled_doc_kv = "pooled_doc_kv"
+    """
+    ➡️ :class:`PooledDocKVAttention` (full causal attention where most context documents' per-token
+    K/V are replaced -- for queries outside the document -- by a single mean-pooled KV slot with a
+    ``+log(doc_len)`` logit bias; gold documents plus a random subset of negatives keep real KV.
+    A train-time-only compression: inference is ordinary full attention)
+    """
+
     dilated_sliding_window = "dilated_sliding_window"
     """
     ➡️ :class:`DilatedSlidingWindowAttention` (dilated causal sliding window whose dilation stride
@@ -506,6 +514,25 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     the whole sequence while the rest stay document-chunked. Negative indices count from the end
     (``-1`` = last layer). ``None`` / empty (default) -> every layer uses the chunked mask.
     """
+    pooled_keep_prob: Optional[float] = None
+    """
+    For :class:`PooledDocKVAttention` (``name="pooled_doc_kv"``) only: the fallback Bernoulli
+    probability that a context document keeps its real per-token KV when no gold keep-set hook
+    (:func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep`) is active. Defaults to
+    0.1. The draw is a deterministic seeded hash of the example's chunk layout and the document
+    index, so it is identical across layers and epochs.
+    """
+    pooled_keep_seed: Optional[int] = None
+    """
+    For :class:`PooledDocKVAttention` only: seed for the fallback keep draw. Defaults to 42.
+    """
+    pooled_len_bias: Optional[bool] = None
+    """
+    For :class:`PooledDocKVAttention` only: add ``+log(doc_len)`` to each pooled slot's attention
+    logit, making the slot exactly equivalent to ``doc_len`` copies of the document's mean KV entry
+    (the principled "sum of attention mass" form). Defaults to ``True``. ``False`` gives the slot
+    the mass of a single average token.
+    """
     dilated_window_k: Optional[int] = None
     """
     For :class:`DilatedSlidingWindowAttention` (``name="dilated_sliding_window"``) only: the number of
@@ -662,6 +689,9 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         gold_hops = kwargs.pop("gold_hops", None)
         gold_decoys = kwargs.pop("gold_decoys", None)
         flex_block_size = kwargs.pop("flex_block_size", None)
+        pooled_keep_prob = kwargs.pop("pooled_keep_prob", None)
+        pooled_keep_seed = kwargs.pop("pooled_keep_seed", None)
+        pooled_len_bias = kwargs.pop("pooled_len_bias", None)
         dilated_window_k = kwargs.pop("dilated_window_k", None)
         dilated_window_num_configs = kwargs.pop("dilated_window_num_configs", None)
         dilated_window_base = kwargs.pop("dilated_window_base", None)
@@ -746,10 +776,21 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 "'dilated_window_k' / 'dilated_window_num_configs' / 'dilated_window_base' are only "
                 f"supported with dilated_sliding_window attention (got name='{self.name}')"
             )
-        if full_attention_layers is not None and AttentionType.document_chunked not in possible_types:
+        if full_attention_layers is not None and not (
+            possible_types & {AttentionType.document_chunked, AttentionType.pooled_doc_kv}
+        ):
             raise OLMoConfigurationError(
                 "'full_attention_layers' (hybrid full/chunked layers) is only supported with "
-                f"document_chunked attention (got name='{self.name}')"
+                f"document_chunked or pooled_doc_kv attention (got name='{self.name}')"
+            )
+        if (
+            pooled_keep_prob is not None
+            or pooled_keep_seed is not None
+            or pooled_len_bias is not None
+        ) and AttentionType.pooled_doc_kv not in possible_types:
+            raise OLMoConfigurationError(
+                "'pooled_keep_prob' / 'pooled_keep_seed' / 'pooled_len_bias' are only supported "
+                f"with pooled_doc_kv attention (got name='{self.name}')"
             )
         if (
             summary_every_k is not None
@@ -918,6 +959,21 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
                 return DocumentChunkedAttention(**kwargs)
+            elif effective_name == "pooled_doc_kv":
+                # Train-time per-document KV pooling; the non-pooled topology is plain causal.
+                if pooled_keep_prob is not None:
+                    kwargs["keep_prob"] = pooled_keep_prob
+                if pooled_keep_seed is not None:
+                    kwargs["keep_seed"] = pooled_keep_seed
+                if pooled_len_bias is not None:
+                    kwargs["len_bias"] = pooled_len_bias
+                if flex_block_size is not None:
+                    kwargs["flex_block_size"] = flex_block_size
+                if full_attention_layers is not None:
+                    kwargs["full_attention_layers"] = full_attention_layers
+                kwargs["layer_idx"] = layer_idx
+                kwargs["n_layers"] = n_layers
+                return PooledDocKVAttention(**kwargs)
             elif effective_name == "dilated_sliding_window":
                 # Dilated causal sliding window with a per-layer rotating dilation stride.
                 if dilated_window_k is not None:
@@ -2316,3 +2372,4 @@ from .landmark_multi import (  # noqa: E402
     MultiLandmarkAttention,
 )
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
+from .pooled_doc_kv import PooledDocKVAttention  # noqa: E402
