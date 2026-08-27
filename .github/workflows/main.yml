@@ -282,9 +282,9 @@ jobs:
             --pre-setup 'python -m pip uninstall -y torchaudio' \
             --budget ai2/oe-other \
             --priority normal \
-            --preemptible \
+            --min-runtime 15m \
             --gpus ${{ matrix.task.gpus }} \
-            --task-timeout 14m \
+            --task-timeout 15m \
             --host-networking \
             ${{ matrix.task.gpu_types }} \
             --system-python \
