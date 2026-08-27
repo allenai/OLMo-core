@@ -152,3 +152,108 @@ def test_landmark_generation_requires_cache():
     gm = _build_module()
     with pytest.raises(OLMoConfigurationError, match="use_cache"):
         gm.generate_batch(torch.randint(2, 400, (1, 14)), use_cache=False, log_timing=False)
+
+
+@pytest.mark.parametrize("decode_mode", ["extend_last_block", "generation_only"])
+def test_sparse_decode_generation_matches_shipped_decode(decode_mode):
+    """``GenerationConfig.landmark_sparse_decode`` (default on) must not change what is generated.
+
+    It swaps a dense-scan-then-mask decode for one that scores only the unmasked keys, so the
+    generated ids must be identical to the shipped path token for token.
+    """
+    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
+    prompt = torch.randint(2, 400, (1, 37))
+
+    shipped = _build_module(decode_mode=decode_mode, landmark_sparse_decode=False)
+    ref, _, _ = shipped.generate_batch(prompt, completions_only=True, log_timing=False)
+    assert shipped._sparse_decode_layers is None  # never installed
+
+    fast = _build_module(decode_mode=decode_mode, landmark_sparse_decode=True)
+    got, _, _ = fast.generate_batch(prompt, completions_only=True, log_timing=False)
+    assert fast._sparse_decode_layers == 2  # both layers patched
+
+    assert torch.equal(got, ref)
+
+    # A second call reuses the installed patch and stays correct (the hoisted landmark-row cache
+    # must not leak across examples).
+    other = torch.randint(2, 400, (1, 23))
+    again_ref, _, _ = shipped.generate_batch(other, completions_only=True, log_timing=False)
+    again_got, _, _ = fast.generate_batch(other, completions_only=True, log_timing=False)
+    assert torch.equal(again_got, again_ref)
+
+
+def test_sparse_decode_env_var_escape_hatch():
+    os.environ["LM_SPARSE_KERNEL"] = "0"
+    try:
+        os.environ["OLMO_LANDMARK_SPARSE_DECODE"] = "0"
+        gm = _build_module(landmark_sparse_decode=True)
+        gm.generate_batch(torch.randint(2, 400, (1, 14)), log_timing=False)
+        assert gm._sparse_decode_layers is None  # env var wins over the config field
+    finally:
+        os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
+
+
+def _trim_eos(ids, eos=1):
+    out = []
+    for t in ids:
+        if t == eos:
+            break
+        out.append(t)
+    return out
+
+
+def test_sparse_landmark_ragged_batch_matches_per_row_bs1():
+    """Right-padded CROSS-LENGTH batching for sparse-landmark models.
+
+    Chunk boundaries are tied to absolute position, so the legacy path can only batch prompts of
+    exactly equal length -- i.e. effective batch size ~= 1 on any variable-length eval. The ragged
+    path batches different-length prompts by right-padding; this pins that it changes throughput
+    only, not output: each row must match its own bs=1 generation.
+    """
+    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
+    gm = _build_module(max_new_tokens=8)
+    assert gm.supports_landmark_ragged_batch()
+
+    prompts = [torch.randint(2, 400, (1, n)).tolist()[0] for n in (11, 26, 19, 40)]
+    batched = gm.generate_landmark_batch(prompts, max_new_tokens=8)
+
+    for row, comp in zip(prompts, batched):
+        ref, _, _ = gm.generate_batch(
+            torch.tensor([row]), completions_only=True, log_timing=False, max_new_tokens=8
+        )
+        assert _trim_eos(comp) == _trim_eos(ref[0].tolist()), f"row of length {len(row)}"
+
+
+def test_landmark_generation_rejects_multi_landmark_prompts():
+    # ``_insert_landmark_tokens`` places exactly one landmark per block, so a num_landmarks > 1
+    # mixer would silently see landmarks at the wrong positions.
+    os.environ["LM_SPARSE_KERNEL"] = "0"
+    seed_all(0)
+    cfg = TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
+    assert not isinstance(cfg.block, dict)
+    sm = cfg.block.sequence_mixer
+    assert isinstance(sm, AttentionConfig)
+    cfg.block.sequence_mixer = AttentionConfig(
+        name=AttentionType.sparse_landmark,
+        n_heads=4,
+        head_dim=32,
+        mem_freq=MEM_FREQ,
+        num_landmarks=2,
+        rope=sm.rope,
+    )
+    gm = TransformerGenerationModule(
+        model=cfg.build(),
+        generation_config=GenerationConfig(
+            max_new_tokens=4,
+            pad_token_id=0,
+            eos_token_id=1,
+            do_sample=False,
+            use_cache=True,
+            landmark_mem_id=MEM_ID,
+        ),
+        device=torch.device("cpu"),
+    )
+    with pytest.raises(OLMoConfigurationError, match="num_landmarks=1"):
+        gm.generate_batch(torch.randint(2, 400, (1, 14)), log_timing=False)

@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import os
 import tempfile
 import time
 from pathlib import Path
@@ -150,6 +151,9 @@ class TransformerGenerationModule(GenerationModule):
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(strict=True)
         self.load_key_mapping = load_key_mapping
         self._generation_config = generation_config
+        # Whether the sparse landmark decode patch has been installed on this model (see
+        # :meth:`_maybe_enable_sparse_decode`). Installed lazily on the first landmark generate.
+        self._sparse_decode_layers: Optional[int] = None
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -239,6 +243,63 @@ class TransformerGenerationModule(GenerationModule):
     def _clear_landmark_eval_decode(self):
         for attn in self._landmark_attention_layers():
             attn.clear_landmark_eval_decode()  # type: ignore[attr-defined]
+
+    def _landmark_block_size(self, layers: List[Attention]) -> int:
+        """Common landmark block size across ``layers``.
+
+        The prompt-side landmark insertion (:func:`_insert_landmark_tokens`) places exactly ONE
+        landmark at the end of each block, so a mixer configured with ``num_landmarks > 1`` (only
+        :class:`~olmo_core.nn.attention.SparseLandmarkAttention` can be) would be fed a prompt whose
+        landmarks sit at the wrong positions -- silently, and looking like a modeling result. Reject
+        it instead.
+        """
+        n_lm = {int(getattr(a, "num_landmarks", 1)) for a in layers}
+        if n_lm != {1}:
+            raise OLMoConfigurationError(
+                f"Landmark generation supports num_landmarks=1 only (got {sorted(n_lm)}); the "
+                "prompt-side landmark insertion places one landmark per block."
+            )
+        sizes = {int(getattr(a, "block_size", int(getattr(a, "mem_freq")) + 1)) for a in layers}
+        if len(sizes) != 1:
+            raise OLMoConfigurationError(
+                f"Landmark layers have inconsistent block sizes: {sorted(sizes)}"
+            )
+        return sizes.pop()
+
+    def _sparse_decode_requested(self) -> bool:
+        """:data:`GenerationConfig.landmark_sparse_decode`, with the ``OLMO_LANDMARK_SPARSE_DECODE``
+        environment variable as an override (``0``/``false``/``no`` disables, anything else enables).
+        """
+        env = os.environ.get("OLMO_LANDMARK_SPARSE_DECODE")
+        if env is not None:
+            return env.strip().lower() not in ("0", "false", "no", "off", "")
+        return self._generation_config.landmark_sparse_decode
+
+    def _maybe_enable_sparse_decode(self):
+        """Install the genuinely sparse landmark decode (idempotent, inference-only).
+
+        The shipped landmark decode expands the KV cache with ``repeat_kv`` and scores every cached
+        key before masking almost all of them away; the patched one scores only the keys that
+        survive the mask. Same outputs, far less work -- so it is on by default for the attention
+        families that support it, and a no-op for every other model.
+        """
+        if self._sparse_decode_layers is not None or not self._sparse_decode_requested():
+            return
+        from olmo_core.nn.attention.landmark_sparse_decode import (
+            enable_sparse_decode,
+            reset_sparse_decode_cache,
+        )
+
+        try:
+            n = enable_sparse_decode(self.model, strict=False)
+        except Exception as e:  # never let an optimization break generation
+            log.warning(f"Sparse landmark decode not installed ({e}); using the shipped decode.")
+            self._sparse_decode_layers = 0
+            return
+        self._sparse_decode_layers = n
+        if n:
+            reset_sparse_decode_cache(self.model)
+            log_or_print(log, f"Sparse landmark decode enabled on {n} attention layers.")
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         if self._model_mode != mode:
@@ -338,6 +399,7 @@ class TransformerGenerationModule(GenerationModule):
                 raise OLMoConfigurationError(
                     f"Landmark layers have inconsistent mem_freq values: {sorted(mem_freqs)}"
                 )
+            self._landmark_block_size(landmark_layers)  # rejects num_landmarks > 1
             pad_id = generation_config.landmark_pad_id
             if pad_id is None:
                 pad_id = generation_config.pad_token_id
@@ -365,6 +427,7 @@ class TransformerGenerationModule(GenerationModule):
                 top_k=top_k,
                 nonselected_landmark_mass=generation_config.landmark_nonselected_mass,
             )
+            self._maybe_enable_sparse_decode()
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -585,9 +648,7 @@ class TransformerGenerationModule(GenerationModule):
         """True if every landmark layer supports the right-padded cross-length batched decode
         (:meth:`generate_landmark_batch`)."""
         layers = self._landmark_attention_layers()
-        return bool(layers) and all(
-            getattr(a, "_supports_ragged_decode", False) for a in layers
-        )
+        return bool(layers) and all(getattr(a, "_supports_ragged_decode", False) for a in layers)
 
     @torch.inference_mode()
     def generate_landmark_batch(
@@ -626,7 +687,7 @@ class TransformerGenerationModule(GenerationModule):
         if not self.supports_landmark_ragged_batch():
             raise OLMoConfigurationError(
                 "generate_landmark_batch requires a landmark model whose layers support ragged "
-                "decode (FastLandmarkAttention)."
+                "decode (FastLandmarkAttention / SparseLandmarkAttention)."
             )
         self._set_model_mode("eval")
         gen_cfg = self._generation_config
@@ -637,9 +698,12 @@ class TransformerGenerationModule(GenerationModule):
         if len(mem_freqs) != 1:
             raise OLMoConfigurationError(f"Inconsistent mem_freq: {sorted(mem_freqs)}")
         mem_freq = mem_freqs.pop()
-        block_size = mem_freq + 1
+        block_size = self._landmark_block_size(layers)  # rejects num_landmarks > 1
+        self._maybe_enable_sparse_decode()
         mem_id = gen_cfg.landmark_mem_id
-        pad_id = gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        pad_id = (
+            gen_cfg.landmark_pad_id if gen_cfg.landmark_pad_id is not None else gen_cfg.pad_token_id
+        )
         eos = gen_cfg.eos_token_id
         dev = self.device
         B = len(prompts)

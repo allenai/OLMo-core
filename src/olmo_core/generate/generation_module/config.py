@@ -118,6 +118,22 @@ class GenerationConfig(Config):
     and when top-k retrieval is disabled.
     """
 
+    landmark_sparse_decode: bool = True
+    """
+    For landmark-attention models only: route each decode step through the genuinely sparse decode
+    in :mod:`olmo_core.nn.attention.landmark_sparse_decode` instead of the shipped dense-masked one.
+
+    The shipped decode ``repeat_kv``-expands the whole KV cache and scores every cached key, then
+    masks all but the local section and the (top-k) landmarks to ``-inf`` -- so it pays dense cost
+    for a sparse attention pattern. The sparse path scores only the keys that survive that mask,
+    which is the same arithmetic on far fewer elements (validated against the shipped decode; see
+    ``debug/sparse_landmark_inference/``).
+
+    ``True`` (the default) enables it wherever it applies and is a no-op for non-landmark models.
+    The environment variable ``OLMO_LANDMARK_SPARSE_DECODE=0`` force-disables it without touching
+    eval drivers -- the escape hatch for A/B-ing a suspicious number against the shipped decode.
+    """
+
     def __post_init__(self):
         self.validate()
 

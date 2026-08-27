@@ -146,6 +146,33 @@ def sparse_landmark_attention(
     return out.reshape(B, H, T, D)
 
 
+def landmark_chunk_topk_keep(
+    lm_scores: torch.Tensor, chunk_ids: torch.Tensor, n_chunks: int, top_k: int
+) -> torch.Tensor:
+    """
+    Per-head "keep" mask for hard top-k *chunk* retrieval over landmark scores.
+
+    A chunk's score is the max over its landmark keys' scores; the ``top_k`` highest-scoring chunks
+    are kept and every other chunk's landmark keys are dropped. Shared by the dense-masked decode
+    (:meth:`SparseLandmarkAttention._apply_topk_landmark_retrieval`) and the genuinely sparse decode
+    (:func:`~olmo_core.nn.attention.landmark_sparse_decode.sparse_chunk_decode`) so both make
+    *bit-identical* selections.
+
+    :param lm_scores: ``(B, H, 1, n_lm)`` scores of the landmark keys, in ascending position order.
+    :param chunk_ids: ``(1, 1, 1, n_lm)`` (broadcastable) chunk index of each landmark key.
+    :param n_chunks: One past the largest chunk id.
+    :param top_k: Number of chunks to keep.
+
+    :returns: ``(B, H, 1, n_lm)`` bool mask, ``True`` for landmark keys of retained chunks.
+    """
+    chunk_ids = chunk_ids.expand_as(lm_scores)
+    chunk_scores = lm_scores.new_full((*lm_scores.shape[:-1], n_chunks), float("-inf"))
+    chunk_scores.scatter_reduce_(-1, chunk_ids, lm_scores, reduce="amax", include_self=True)
+    keep_chunks = torch.zeros_like(chunk_scores, dtype=torch.bool)
+    keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
+    return keep_chunks.gather(-1, chunk_ids)
+
+
 def attended_key_count(T: int, block_size: int, num_landmarks: int = 1) -> float:
     """Average #keys a query attends (vs T for full causal) -- a FLOP proxy."""
     L, C, G = block_size, T // block_size, num_landmarks
@@ -162,6 +189,11 @@ class SparseLandmarkAttention(Attention):
     intra-document sequence packing (``cu_doc_lens``). Supports the optional output gate inherited
     from :class:`Attention` (``att * sigmoid(w_g(x))``), so it drops into gated models like Qwen3.5.
     """
+
+    # Right-padded cross-length batched decode (:meth:`_decode_ragged`) is supported, so
+    # ``TransformerGenerationModule.generate_landmark_batch`` can batch variable-length prompts
+    # instead of falling back to exact-length bucketing (effective batch size ~= 1).
+    _supports_ragged_decode: bool = True
 
     def __init__(
         self,
@@ -198,6 +230,49 @@ class SparseLandmarkAttention(Attention):
         self._eval_prompt_len: Optional[int] = None
         self._eval_decode_mode: str = "extend_last_block"
         self._eval_top_k: Optional[int] = None
+        # Ragged (cross-length, right-padded) batched-decode state. When ``_ragged_qpos`` is not None
+        # the decode step is batched but each row carries its OWN absolute query position, prompt
+        # length and top-k, which is what lets variable-length prompts share a batch even though
+        # chunk boundaries are tied to absolute position (the content of row ``b`` still starts at
+        # position 0; only the pad TAIL differs). All-None == the legacy bs=1 path (unchanged).
+        self._ragged_qpos: Optional[torch.Tensor] = None  # (B,) per-row query/write position
+        self._ragged_prompt_lens: Optional[torch.Tensor] = None  # (B,) per-row prompt length
+        self._ragged_top_k: Optional[torch.Tensor] = None  # (B,) per-row top-k, or None
+
+    def set_landmark_ragged_decode(
+        self,
+        prompt_lens: torch.Tensor,
+        mode: str = "extend_last_block",
+        top_k: Optional[torch.Tensor] = None,
+    ) -> None:
+        """Enable ragged (per-row) decoding for right-padded cross-length batches.
+
+        :param prompt_lens: ``(B,)`` per-row landmark-prompt length.
+        :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+        :param top_k: ``(B,)`` per-row chunk budget, or ``None`` for every past chunk.
+
+        ``_ragged_qpos`` must be set (per step) before each decode forward; see
+        :meth:`set_ragged_qpos`.
+        """
+        if mode not in ("extend_last_block", "generation_only"):
+            raise OLMoConfigurationError(
+                f"Unknown landmark decode mode {mode!r} "
+                "(expected 'extend_last_block' or 'generation_only')."
+            )
+        self._eval_decode_mode = mode
+        self._ragged_prompt_lens = prompt_lens
+        self._ragged_top_k = top_k
+        self._ragged_qpos = prompt_lens.new_zeros(prompt_lens.shape)  # placeholder until step 1
+
+    def set_ragged_qpos(self, qpos: torch.Tensor) -> None:
+        """Set the current per-row absolute query/write position ``(B,)`` for the next decode step."""
+        self._ragged_qpos = qpos
+
+    def clear_ragged_decode(self) -> None:
+        """Disable ragged decoding, restoring the single-position path."""
+        self._ragged_qpos = None
+        self._ragged_prompt_lens = None
+        self._ragged_top_k = None
 
     def set_landmark_eval_decode(
         self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
@@ -432,6 +507,9 @@ class SparseLandmarkAttention(Attention):
         """
         kvm = self.kv_cache_manager
         assert kvm is not None
+        # Ragged (right-padded cross-length) decode: each row decodes at its OWN absolute position.
+        if self._ragged_qpos is not None and x.shape[1] == 1:
+            return self._forward_generate_ragged(x, pos_sin, pos_cos, freqs_cis)
         if cache_leftpad is not None and bool(cache_leftpad.ne(0).any()):
             raise NotImplementedError(
                 "Sparse landmark generation requires batch_size=1 / no left-padding "
@@ -525,6 +603,119 @@ class SparseLandmarkAttention(Attention):
         p = torch.softmax(scores, dim=-1)
         return torch.matmul(p, v)
 
+    # ---- Ragged (right-padded, cross-length) batched decode -------------------------------------
+    def _ragged_section_start(self) -> torch.Tensor:
+        """Per-row local-section start ``(B, 1)`` for the current ragged decode step.
+
+        Rows past their own prompt use the "one long local block" rule (from ``prompt_len``); rows
+        still inside the prompt keep the per-chunk rule (from ``qpos``) -- exactly the branch
+        :meth:`_decode_one` takes per row.
+        """
+        assert self._ragged_qpos is not None and self._ragged_prompt_lens is not None
+        L = self.block_size
+        qpos = self._ragged_qpos.long()[:, None]
+        plen = self._ragged_prompt_lens.to(qpos.device).long()[:, None]
+        sec_eval = (plen // L) * L if self._eval_decode_mode == "extend_last_block" else plen
+        return torch.where(qpos >= plen, sec_eval, (qpos // L) * L)
+
+    def _forward_generate_ragged(
+        self,
+        x: torch.Tensor,
+        pos_sin: Optional[torch.Tensor],
+        pos_cos: Optional[torch.Tensor],
+        freqs_cis: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Single-token decode where each row sits at its OWN absolute position ``self._ragged_qpos``
+        (right-padded cross-length batch). RoPE is applied per row via ``position_ids``; the row's
+        K/V is scattered into the cache at its position; the decode uses per-row ``qpos`` /
+        ``prompt_len`` / ``top_k``. Numerically identical, row-for-row, to running each prompt alone
+        through the legacy bs=1 decode."""
+        kvm = self.kv_cache_manager
+        assert kvm is not None
+        qpos = self._ragged_qpos
+        assert qpos is not None
+        B = x.shape[0]
+        q, k, v = self._prepare_qkv(
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=None,
+            position_ids=qpos.view(B, 1),
+        )
+        bidx = torch.arange(B, device=x.device)
+        kvm.k_cache[bidx, qpos] = k[:, 0]
+        kvm.v_cache[bidx, qpos] = v[:, 0]
+        total = int(qpos.max().item()) + 1
+
+        n_rep = q.shape[2] // k.shape[2]
+        qh = q.transpose(1, 2)  # (B, H, 1, D)
+        kh = repeat_kv(kvm.k_cache[:, :total].transpose(1, 2), n_rep)
+        vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
+        att = self._decode_ragged(qh, kh, vh)
+        att = att.transpose(1, 2).contiguous().view(B, 1, -1)
+        att = self._apply_gate(att, x)
+        return self.w_out(att)
+
+    def _decode_ragged(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """Per-row decode. ``q``: ``(B,H,1,D)``; ``k``/``v``: ``(B,H,total,D)``. Each row ``b``
+        queries at absolute position ``qpos[b]`` with its own ``prompt_len[b]`` and ``top_k[b]``;
+        reproduces :meth:`_decode_one` row by row. Keys past a row's own ``qpos`` (the right-pad
+        tail) are masked, so a shared cache is safe."""
+        L, G = self.block_size, self.num_landmarks
+        total = k.shape[2]
+        dev = q.device
+        assert self._ragged_qpos is not None
+        qpos = self._ragged_qpos.to(dev).long()[:, None]  # (B,1)
+        sec = self._ragged_section_start().to(dev)  # (B,1)
+        j = torch.arange(total, device=dev)[None, :]  # (1,total)
+        is_lm = (j % L) >= (L - G)
+
+        allowed = ((j >= sec) & (j <= qpos)) | (is_lm & (j < sec))  # (B,total)
+        retrievable = is_lm & (j < sec)
+
+        scores = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale  # (B,H,1,total)
+        scores = scores.masked_fill(~allowed[:, None, None, :], float("-inf"))
+        scores = self._decode_topk_ragged(scores, retrievable.expand(sec.shape[0], total), sec)
+        return torch.matmul(torch.softmax(scores, dim=-1), v)
+
+    def _decode_topk_ragged(
+        self, scores: torch.Tensor, retrievable: torch.Tensor, sec: torch.Tensor
+    ) -> torch.Tensor:
+        """Per-row hard top-k *chunk* retrieval (ragged analogue of
+        :meth:`_apply_topk_landmark_retrieval`). ``scores``: ``(B,H,1,total)``; ``retrievable``:
+        ``(B,total)`` past-chunk landmark keys; ``sec``: ``(B,1)`` local-section start. Rows whose
+        past-chunk count is ``<= top_k[b]`` are left untouched, matching the scalar path."""
+        top_k = self._ragged_top_k
+        if top_k is None:
+            return scores
+        L, G = self.block_size, self.num_landmarks
+        B, H, _, total = scores.shape
+        dev = scores.device
+        k_b = top_k.to(dev).long().view(B, 1, 1, 1)
+        n_chunk_slots = (total + L - 1) // L
+        chunk_ids = (
+            (torch.arange(total, device=dev) // L).view(1, 1, 1, total).expand(B, H, 1, total)
+        )
+
+        neg = torch.finfo(scores.dtype).min
+        lm_scores = torch.where(retrievable[:, None, None, :], scores, scores.new_full((), neg))
+        chunk_scores = scores.new_full((B, H, 1, n_chunk_slots), float("-inf"))
+        chunk_scores.scatter_reduce_(-1, chunk_ids, lm_scores, reduce="amax", include_self=True)
+
+        order = chunk_scores.argsort(dim=-1, descending=True)
+        ranks = torch.empty_like(order)
+        ranks.scatter_(-1, order, torch.arange(n_chunk_slots, device=dev).expand_as(order))
+
+        # Per-row past-chunk count: a trailing partial chunk counts only if the section boundary
+        # reaches its landmarks (same rule as the scalar path's ``max(chunk id) + 1``).
+        n_full = sec // L
+        n_chunks = (n_full + ((sec - n_full * L - (L - G)) > 0).long()).view(B, 1, 1, 1)
+
+        drop_chunk = (ranks >= k_b) & (n_chunks > k_b)  # (B,H,1,n_chunk_slots)
+        drop = retrievable[:, None, None, :] & drop_chunk.gather(-1, chunk_ids)
+        return scores.masked_fill(drop, float("-inf"))
+
     def _apply_topk_landmark_retrieval(
         self, scores: torch.Tensor, retrievable: torch.Tensor
     ) -> torch.Tensor:
@@ -550,12 +741,7 @@ class SparseLandmarkAttention(Attention):
         if n_chunks <= top_k:
             return scores
         lm_scores = scores[..., lm_idx]  # (B, H, 1, n_lm)
-        chunk_ids = chunk_ids.expand_as(lm_scores)
-        chunk_scores = lm_scores.new_full((*lm_scores.shape[:-1], n_chunks), float("-inf"))
-        chunk_scores.scatter_reduce_(-1, chunk_ids, lm_scores, reduce="amax", include_self=True)
-        keep_chunks = torch.zeros_like(chunk_scores, dtype=torch.bool)
-        keep_chunks.scatter_(-1, chunk_scores.topk(top_k, dim=-1).indices, True)
-        keep = keep_chunks.gather(-1, chunk_ids)
+        keep = landmark_chunk_topk_keep(lm_scores, chunk_ids, n_chunks, top_k)
         scores = scores.clone()
         scores[..., lm_idx] = lm_scores.masked_fill(~keep, float("-inf"))
         return scores
