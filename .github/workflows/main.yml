@@ -177,7 +177,7 @@ jobs:
                 src/test/
 
           - name: Test (GPU, torch 2.11)
-            image: akshitab/olmo-core-tch2110cu128-2026-08-04
+            image: akshitab/olmo-core-tch2110cu128-2026-08-28
             gpus: 2
             gpu_types: --gpu-type h100
             run: |
