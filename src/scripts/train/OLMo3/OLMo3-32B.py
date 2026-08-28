@@ -176,6 +176,8 @@ if __name__ == "__main__":
         model_config_builder=build_model_config,
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
+        # Preserve the original training environment. Run this historical script from its
+        # corresponding OLMo-core revision, whose dependencies match this image.
         beaker_image=OLMoCoreBeakerImage.tch270_cu128,
         include_instance_filter=True,
         flight_recorder=True,
