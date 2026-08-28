@@ -151,7 +151,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
         | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
     && apt-get update \
-    && apt-get install -y google-cloud-sdk \
+    && apt-get install -y google-cloud-cli \
     && rm -rf /var/lib/apt/lists/* \
     # GitHub CLI \
     && curl -sS https://webi.sh/gh | sh \
