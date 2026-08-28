@@ -277,6 +277,9 @@ SSMAX_BEAKER_WORKSPACE = "ai2/scaling-ladders"
 BEAKER_BUDGET = "ai2/oe-other"
 SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 4 origin "$GIT_REF"'
 SSMAX_EXPLORATORY_JOINT_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 4 origin "$GIT_REF"'
+SSMAX_EXPLORATORY_WAIVER_JOINT_GIT_HISTORY_POST_SETUP = (
+    'git fetch --no-tags --depth 5 origin "$GIT_REF"'
+)
 WANDB_PROJECT: Optional[str] = "vision-alignment"
 SSMAX_WANDB_PROJECT: Optional[str] = "vision-ssmax-molmofication"
 WANDB_ENTITY: Optional[str] = None
@@ -1362,6 +1365,8 @@ def _configure_ssmax_direct_joint_git_history(config: ExperimentConfig) -> None:
         config.launch.post_setup = SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP
     elif gate_version == 8:
         config.launch.post_setup = SSMAX_EXPLORATORY_JOINT_GIT_HISTORY_POST_SETUP
+    elif gate_version == 9:
+        config.launch.post_setup = SSMAX_EXPLORATORY_WAIVER_JOINT_GIT_HISTORY_POST_SETUP
 
 
 def _is_secretless_ssmax_smoke_request(
@@ -2080,6 +2085,49 @@ def _validate_parent_gate(
         "approved_at",
         "waivers",
     }
+    # The evaluation-complete exploratory waiver preserves all direct evaluation evidence while
+    # explicitly limiting run-health evidence to step 0. Its distinct schema cannot be confused
+    # with the six-receipt v8 exploratory admission and may authorize only SSMax joint training.
+    version_9_fields = {
+        "format",
+        "version",
+        "status",
+        "scope",
+        "recipe_version",
+        "formatter_version",
+        "phase",
+        "model_variant",
+        "lineage_kind",
+        "run_id",
+        "checkpoint",
+        "checkpoint_config_sha256",
+        "checkpoint_identity_sha256",
+        "data_contract_sha256",
+        "trainable_contract_sha256",
+        "global_step",
+        "metrics_artifact_sha256",
+        "evidence_report_path",
+        "evidence_report_sha256",
+        "evidence_report_content_sha256",
+        "evidence_report_status",
+        "evidence_receipts",
+        "acknowledged_deviations",
+        "manifest_path",
+        "manifest_sha256",
+        "manifest_content_sha256",
+        "protocol_amendment_path",
+        "protocol_amendment_sha256",
+        "protocol_amendment_content_sha256",
+        "authorization",
+        "training_git_ref",
+        "evidence_git_ref",
+        "admission_git_ref",
+        "approved_by",
+        "approved_at",
+        "waivers",
+        "promotion_decision",
+        "winner_selection",
+    }
     gate_schemas = {
         1: version_1_fields,
         2: version_2_fields,
@@ -2089,12 +2137,13 @@ def _validate_parent_gate(
         6: version_6_fields,
         7: version_7_fields,
         8: version_8_fields,
+        9: version_9_fields,
     }
     gate_version = gate.get("version")
     allowed_fields = gate_schemas.get(gate_version) if type(gate_version) is int else None
     if allowed_fields is None:
         raise ValueError(
-            "Parent-quality gate version must be exactly integer 1, 2, 3, 4, 5, 6, 7, or 8"
+            "Parent-quality gate version must be exactly integer 1, 2, 3, 4, 5, 6, 7, 8, or 9"
         )
     if set(gate) != allowed_fields:
         raise ValueError(
@@ -2105,7 +2154,7 @@ def _validate_parent_gate(
     parent_meta = parent_config.get("vision_alignment")
     expected_parent_phase = config.initialization.expected_parent_phase
     assert isinstance(parent_meta, Mapping)
-    if gate_version in (3, 4, 5, 6, 7, 8):
+    if gate_version in (3, 4, 5, 6, 7, 8, 9):
         expected_recipe_version = parent_meta.get("recipe_version")
         expected_formatter_version = parent_meta.get("formatter_version")
         if type(expected_recipe_version) is not int or not isinstance(
@@ -2185,12 +2234,22 @@ def _validate_parent_gate(
         raise ValueError(
             "A v8 exploratory SSMax perception parent gate may only authorize SSMax joint"
         )
-    expected_joint_gates = {5, 6, 7, 8} if _is_ssmax_variant(model_variant) else {3}
+    if gate_version == 9 and (
+        getattr(config, "phase", None) is not VisionAlignmentPhase.joint
+        or not _is_ssmax_variant(model_variant)
+        or expected_parent_phase is not VisionAlignmentPhase.perception
+    ):
+        raise ValueError(
+            "A v9 exploratory-waiver SSMax perception parent gate may only authorize SSMax joint"
+        )
+    expected_joint_gates = {5, 6, 7, 8, 9} if _is_ssmax_variant(model_variant) else {3}
     if production_joint and (
         gate_version not in expected_joint_gates
         or expected_parent_phase is not VisionAlignmentPhase.perception
     ):
-        expected_joint_gate_text = "v5, v6, v7, or v8" if _is_ssmax_variant(model_variant) else "v3"
+        expected_joint_gate_text = (
+            "v5, v6, v7, v8, or v9" if _is_ssmax_variant(model_variant) else "v3"
+        )
         raise ValueError(
             f"Production joint requires a {expected_joint_gate_text} perception parent gate and "
             "perception parent phase"
@@ -2409,6 +2468,28 @@ def _validate_parent_gate(
         except ssmax_perception_exploratory.SSMaxPerceptionExploratoryEvidenceError as error:
             raise ValueError(
                 f"SSMax exploratory perception parent gate failed validation: {error}"
+            ) from error
+    elif gate_version == 9:
+        from olmo_core.eval import (
+            vision_alignment_ssmax_perception_exploratory_waiver as ssmax_perception_exploratory_waiver,
+        )
+
+        try:
+            ssmax_perception_exploratory_waiver.validate_ssmax_perception_exploratory_waiver_parent_gate(
+                gate,
+                expected_checkpoint=Path(parent).resolve(),
+                expected_checkpoint_config_sha256=parent_config_sha256,
+                expected_model_variant=model_variant.value,
+                expected_data_contract_sha256=str(parent_meta.get("data_contract_sha256")),
+                expected_trainable_contract_sha256=str(
+                    parent_meta.get("trainable_contract_sha256")
+                ),
+            )
+        except (
+            ssmax_perception_exploratory_waiver.SSMaxPerceptionExploratoryWaiverEvidenceError
+        ) as error:
+            raise ValueError(
+                f"SSMax exploratory-waiver perception parent gate failed validation: {error}"
             ) from error
     marker_path = Path(parent) / ".metadata.json"
     try:
@@ -5381,6 +5462,8 @@ def _validate_phase_contract(
         expected_ssmax_post_setup = SSMAX_DIRECT_JOINT_GIT_HISTORY_POST_SETUP
     elif ssmax_parent_gate_version == 8:
         expected_ssmax_post_setup = SSMAX_EXPLORATORY_JOINT_GIT_HISTORY_POST_SETUP
+    elif ssmax_parent_gate_version == 9:
+        expected_ssmax_post_setup = SSMAX_EXPLORATORY_WAIVER_JOINT_GIT_HISTORY_POST_SETUP
     else:
         expected_ssmax_post_setup = None
     if _is_ssmax_variant(config.model_variant) and (

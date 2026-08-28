@@ -2577,7 +2577,8 @@ def test_production_ssmax_joint_rejects_legacy_s002_v3_gate(tmp_path):
     case.config.model_variant = vision_alignment.VisionAlignmentModelVariant.ssmax_head_qknorm
 
     with pytest.raises(
-        ValueError, match="Production joint requires a v5, v6, v7, or v8 perception parent gate"
+        ValueError,
+        match="Production joint requires a v5, v6, v7, v8, or v9 perception parent gate",
     ):
         vision_alignment._validate_parent_gate(
             case.config,
@@ -2893,6 +2894,106 @@ def test_v8_exploratory_joint_configures_exact_four_commit_history_fetch(tmp_pat
         case.config.launch.post_setup
         == vision_alignment.SSMAX_EXPLORATORY_JOINT_GIT_HISTORY_POST_SETUP
     )
+
+
+def _ssmax_v9_parent_gate_case(tmp_path, vision_alignment):
+    from olmo_core.eval import (
+        vision_alignment_ssmax_perception_exploratory_waiver as exploratory_waiver,
+    )
+
+    case = _ssmax_v8_parent_gate_case(tmp_path, vision_alignment)
+    gate = case.gate
+    gate["version"] = exploratory_waiver.PARENT_GATE_VERSION
+    gate["scope"] = "exploratory_joint_only_evaluation_complete_step0_health"
+    gate.pop("strict_report_path")
+    gate.pop("strict_report_sha256")
+    gate.pop("strict_report_content_sha256")
+    gate.pop("strict_report_status")
+    gate.pop("strict_receipts")
+    gate.update(
+        {
+            "evidence_report_path": str(tmp_path / "evidence-report.json"),
+            "evidence_report_sha256": gate["metrics_artifact_sha256"],
+            "evidence_report_content_sha256": "8" * 64,
+            "evidence_report_status": "eligible",
+            "evidence_receipts": {},
+            "admission_git_ref": "9" * 40,
+            "promotion_decision": False,
+            "winner_selection": False,
+        }
+    )
+    gate_path = tmp_path / "perception-parent-gate-v9.json"
+    gate_path.write_text(json.dumps(gate) + "\n")
+    case.config.initialization.parent_gate_path = str(gate_path)
+    case.config.initialization.parent_gate_sha256 = vision_alignment._sha256_file(gate_path)
+    return SimpleNamespace(
+        config=case.config,
+        exploratory_waiver=exploratory_waiver,
+        gate=gate,
+        gate_path=gate_path,
+        parent=case.parent,
+        parent_config=case.parent_config,
+        parent_config_sha=case.parent_config_sha,
+    )
+
+
+def test_production_ssmax_joint_routes_exact_v9_exploratory_waiver_gate(tmp_path, monkeypatch):
+    vision_alignment = _load_module()
+    case = _ssmax_v9_parent_gate_case(tmp_path, vision_alignment)
+    observed: dict[str, Any] = {}
+
+    def validate(candidate_gate, **kwargs):
+        observed["gate"] = candidate_gate
+        observed.update(kwargs)
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
+    monkeypatch.setattr(
+        case.exploratory_waiver,
+        "validate_ssmax_perception_exploratory_waiver_parent_gate",
+        validate,
+    )
+
+    assert set(case.gate) == case.exploratory_waiver._GATE_FIELDS
+    assert vision_alignment._validate_parent_gate(
+        case.config,
+        str(case.parent),
+        case.parent_config,
+        case.parent_config_sha,
+    ) == vision_alignment._sha256_file(case.gate_path)
+    assert observed["gate"] == case.gate
+    assert observed["expected_checkpoint"] == case.parent.resolve()
+    assert observed["expected_checkpoint_config_sha256"] == case.parent_config_sha
+    assert observed["expected_model_variant"] == "ssmax_head_qknorm"
+    assert observed["expected_data_contract_sha256"] == "a" * 64
+    assert observed["expected_trainable_contract_sha256"] == "b" * 64
+
+
+def test_v9_exploratory_waiver_gate_is_ssmax_joint_only(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v9_parent_gate_case(tmp_path, vision_alignment)
+    case.config.model_variant = vision_alignment.VisionAlignmentModelVariant.s002
+
+    with pytest.raises(ValueError, match="v9 exploratory-waiver SSMax.*only authorize SSMax joint"):
+        vision_alignment._validate_parent_gate(
+            case.config,
+            str(case.parent),
+            case.parent_config,
+            case.parent_config_sha,
+        )
+
+
+def test_v9_exploratory_waiver_joint_configures_exact_five_commit_history_fetch(tmp_path):
+    vision_alignment = _load_module()
+    case = _ssmax_v9_parent_gate_case(tmp_path, vision_alignment)
+    case.config.launch = SimpleNamespace(post_setup=None)
+
+    vision_alignment._configure_ssmax_direct_joint_git_history(case.config)
+
+    assert (
+        case.config.launch.post_setup
+        == vision_alignment.SSMAX_EXPLORATORY_WAIVER_JOINT_GIT_HISTORY_POST_SETUP
+    )
+    assert case.config.launch.post_setup == 'git fetch --no-tags --depth 5 origin "$GIT_REF"'
 
 
 def test_production_ssmax_joint_rejects_paired_arm_field_in_v7_schema(tmp_path):

@@ -122,7 +122,13 @@ def _perception_parent_case(
 
 @pytest.mark.parametrize(
     ("gate_version", "expected_validator"),
-    [(5, "paired"), (6, "paired"), (7, "direct"), (8, "exploratory")],
+    [
+        (5, "paired"),
+        (6, "paired"),
+        (7, "direct"),
+        (8, "exploratory"),
+        (9, "exploratory_waiver"),
+    ],
 )
 def test_perception_parent_dispatches_to_exact_versioned_validator(
     tmp_path: Path,
@@ -145,6 +151,10 @@ def test_perception_parent_dispatches_to_exact_versioned_validator(
         calls.append(("exploratory", gate, kwargs))
         return {"candidate": {"identity_sha256": "d" * 64}}
 
+    def validate_exploratory_waiver(gate: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+        calls.append(("exploratory_waiver", gate, kwargs))
+        return {"candidate": {"identity_sha256": "d" * 64}}
+
     monkeypatch.setattr(
         joint.perception,
         "validate_ssmax_perception_parent_gate",
@@ -159,6 +169,11 @@ def test_perception_parent_dispatches_to_exact_versioned_validator(
         joint.exploratory_perception,
         "validate_ssmax_perception_exploratory_parent_gate",
         validate_exploratory,
+    )
+    monkeypatch.setattr(
+        joint.exploratory_waiver_perception,
+        "validate_ssmax_perception_exploratory_waiver_parent_gate",
+        validate_exploratory_waiver,
     )
 
     result = joint._validate_perception_parent(
@@ -201,7 +216,7 @@ def test_perception_parent_rejects_unsupported_or_aliased_gate_version(
 
     with pytest.raises(
         joint.SSMaxJointEvidenceError,
-        match="version must be exactly integer 5, 6, 7, or 8",
+        match="version must be exactly integer 5, 6, 7, 8, or 9",
     ):
         joint._validate_perception_parent(
             config_summary,
