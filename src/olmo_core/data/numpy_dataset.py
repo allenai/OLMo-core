@@ -1250,25 +1250,37 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             )
         return out
 
+    @property
+    def _packing_cache_extra_ids(self) -> Tuple[str, ...]:
+        # These key the on-disk packing caches, which are looked up by path and never compared
+        # against `fingerprint`. Anything that changes the packing result therefore has to appear
+        # here as well, or a stale cache from a previous run would be reused.
+        extra_ids: Tuple[str, ...] = (self._long_doc_strategy, self.indices_dtype.__name__)
+        # For backwards compat, only add this when it's not the default, so existing caches
+        # built before the option existed are still found.
+        if self._use_array_if_local is not None:
+            extra_ids = extra_ids + (f"use_array_if_local={self._use_array_if_local}",)
+        return extra_ids
+
     def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "document-indices",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _get_instance_offsets_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "instance-offsets",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _get_docs_by_instance_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "documents-by-instance",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _pack_documents_from_source_into_instances(
