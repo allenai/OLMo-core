@@ -22,7 +22,7 @@
     "windows": ["first_1", "first_8", "first_32", "all"]
   },
   "evidence_git": {
-    "branch": "rustin/vision-ssmax-direct-alignment-v3",
+    "branch": "rustin/vision-ssmax-molmofication",
     "ref": "__CLEAN_EVIDENCE_COMMIT_SHA__",
     "repo": "allenai/OLMo-core",
     "repo_url": "https://github.com/allenai/OLMo-core"

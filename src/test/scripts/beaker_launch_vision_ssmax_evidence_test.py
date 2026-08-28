@@ -62,6 +62,12 @@ def test_build_launch_config_fixes_operational_contract(
     assert config.cmd[0] == launcher._EVALUATORS[stage]
 
 
+def test_direct_evidence_fetches_training_base_and_published_evidence_parent() -> None:
+    assert launcher.DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP == (
+        'git fetch --no-tags --depth 3 origin "$GIT_REF"'
+    )
+
+
 def test_launch_rejects_manifest_byte_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

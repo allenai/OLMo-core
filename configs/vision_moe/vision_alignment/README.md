@@ -325,6 +325,7 @@ every frozen LM/vision tensor and non-image embedding row exactly. Do not use tr
 
 The perception directory contains the reviewed SSMax direct-treatment profiles. The joint
 directory does not yet contain concrete SSMax launch profiles: those are created only after an
-exact version-matched perception gate (paired v5/v6 or direct v7) is explicitly approved. The
-SSMax defaults therefore fail closed rather than borrowing an s002 checkpoint, waiver, or evidence
-bundle.
+exact version-matched perception gate (paired v5/v6, strict direct v7, or research-only exploratory
+v8) is explicitly approved. Version 8 preserves the rejected v7 decision and may authorize only the
+matched exploratory joint comparison. The SSMax defaults therefore fail closed rather than
+borrowing an s002 checkpoint, waiver, or evidence bundle.

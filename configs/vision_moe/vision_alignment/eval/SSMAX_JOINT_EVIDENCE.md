@@ -5,15 +5,19 @@ explicitly approved perception gate. Historical paired perception-v1 and percept
 produce v5 and v6 gates. The direct, no-control perception protocol produces a v7 gate bound to its
 single lineage, authorizing amendment, training Git ref, and evidence Git ref. Validation dispatches
 by the exact gate version and reopens that version's referenced report and manifest; no version can
-authorize another protocol's candidate. This protocol stops at the end of joint alignment; it
+authorize another protocol's candidate. A separately authorized v8 gate may admit a rejected v7
+report only to exploratory SSMax joint alignment when every deviation is a permitted short-prefix,
+source-level visual diagnostic; v7 remains rejected and unchanged. This protocol stops at the end
+of joint alignment; it
 neither selects nor starts a mid-training recipe. The historical s002 joint receipts remain
 historical evidence and are not accepted by these model-variant-aware tools.
 
 The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. For
-the current direct program, fill one copy per lineage only after its v7 gate and reviewed joint
-profile exist, together with the projection, source audit, pairings, and output root. Do not replace
-a missing artifact with a placeholder path. Historical v5/v6 gates remain accepted only through
-their original paired validators.
+the current direct program, fill one copy per lineage only after its strict v7 or exploratory v8
+gate and reviewed joint profile exist, together with the projection, source audit, pairings, and
+output root. Do not replace a missing artifact with a placeholder path. Historical v5/v6 gates
+remain accepted only through their original paired validators. The v8 admission rules and issuance
+commands are documented in `SSMAX_PERCEPTION_EXPLORATORY_JOINT.md`.
 
 Each finalized manifest binds all bytes of permanent steps 0, 4,000, 8,000, 12,000, and 16,000,
 the clean recipe/profile/git identity, the approved perception candidate, the fixed eight-source

@@ -34,6 +34,9 @@ from olmo_core.data.multimodal.vision_alignment_joint_sources import (
 from olmo_core.eval import vision_alignment_ssmax_bridge as bridge
 from olmo_core.eval import vision_alignment_ssmax_perception as perception
 from olmo_core.eval import vision_alignment_ssmax_perception_direct as direct_perception
+from olmo_core.eval import (
+    vision_alignment_ssmax_perception_exploratory as exploratory_perception,
+)
 from olmo_core.eval.matched_wrong_image import (
     matched_wrong_image_pairing_sha256,
     validate_matched_wrong_image_pairing,
@@ -57,8 +60,14 @@ SCHEMA_VERSION = 1
 LEGACY_PARENT_GATE_VERSION = 5
 PARENT_GATE_VERSION = 6
 DIRECT_PARENT_GATE_VERSION = direct_perception.PARENT_GATE_VERSION
+EXPLORATORY_PARENT_GATE_VERSION = exploratory_perception.PARENT_GATE_VERSION
 SUPPORTED_PARENT_GATE_VERSIONS = frozenset(
-    {LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION, DIRECT_PARENT_GATE_VERSION}
+    {
+        LEGACY_PARENT_GATE_VERSION,
+        PARENT_GATE_VERSION,
+        DIRECT_PARENT_GATE_VERSION,
+        EXPLORATORY_PARENT_GATE_VERSION,
+    }
 )
 
 REQUIRED_STEPS = (0, 4000, 8000, 12000, 16000)
@@ -800,7 +809,7 @@ def _validate_perception_parent(
     gate_version = gate.get("version")
     if type(gate_version) is not int or gate_version not in SUPPORTED_PARENT_GATE_VERSIONS:
         raise SSMaxJointEvidenceError(
-            "perception parent gate version must be exactly integer 5, 6, or 7"
+            "perception parent gate version must be exactly integer 5, 6, 7, or 8"
         )
     validator_kwargs: dict[str, Any] = {
         "expected_checkpoint": parent,
@@ -820,7 +829,7 @@ def _validate_perception_parent(
             raise SSMaxJointEvidenceError(
                 f"paired perception parent gate failed: {error}"
             ) from error
-    else:
+    elif gate_version == DIRECT_PARENT_GATE_VERSION:
         try:
             result = direct_perception.validate_ssmax_perception_direct_parent_gate(
                 gate,
@@ -829,6 +838,16 @@ def _validate_perception_parent(
         except direct_perception.SSMaxPerceptionDirectEvidenceError as error:
             raise SSMaxJointEvidenceError(
                 f"direct perception parent gate failed: {error}"
+            ) from error
+    else:
+        try:
+            result = exploratory_perception.validate_ssmax_perception_exploratory_parent_gate(
+                gate,
+                **validator_kwargs,
+            )
+        except exploratory_perception.SSMaxPerceptionExploratoryEvidenceError as error:
+            raise SSMaxJointEvidenceError(
+                f"exploratory perception parent gate failed: {error}"
             ) from error
     candidate = _mapping(result.get("candidate"), name="perception candidate")
     return {

@@ -14,10 +14,12 @@ import os
 import subprocess
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from olmo_core.data.multimodal import MixtureDataLoader
 from olmo_core.eval import vision_alignment_ssmax_bridge as bridge
 from olmo_core.eval import vision_alignment_ssmax_perception as paired
 from olmo_core.eval.vision_alignment_ssmax_perception_direct import (
@@ -52,6 +54,16 @@ _DIRECT_SERIALIZED_CHECKPOINTER = {
     "remove": "ephemeral_only",
     "save_async": False,
 }
+
+
+@dataclass(frozen=True)
+class _ImmutableMixtureSources:
+    """One process-local, structurally immutable snapshot of the replay mixture."""
+
+    datasets: tuple[Any, ...]
+    weights: tuple[Any, ...]
+    names: tuple[str, ...]
+    contract_sha256: str
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -244,6 +256,109 @@ def _validate_trainer_cursor(
     return saved, epoch
 
 
+def _mixture_source_contract(
+    datasets: Sequence[Any], weights: Sequence[Any], names: Sequence[str]
+) -> str:
+    """Bind every source property that can affect deterministic rank replay."""
+
+    if len(datasets) != len(weights) or len(datasets) != len(names) or not datasets:
+        raise SSMaxPerceptionDirectEvidenceError(
+            "Immutable mixture sources must have equal non-empty dataset/weight/name lengths"
+        )
+    sources: list[dict[str, Any]] = []
+    for dataset, weight, name in zip(datasets, weights, names, strict=True):
+        if not isinstance(name, str) or not name:
+            raise SSMaxPerceptionDirectEvidenceError(
+                "Immutable mixture source names must be non-empty strings"
+            )
+        sources.append(
+            {
+                "name": name,
+                "dataset_type": f"{type(dataset).__module__}.{type(dataset).__qualname__}",
+                "length": len(dataset),
+                "content_fingerprint": MixtureDataLoader._dataset_fingerprint(dataset, name),
+                "weight": float(weight),
+            }
+        )
+    return canonical_sha256(sources)
+
+
+def _build_immutable_mixture_sources(
+    recipe: Any, config: Any, tokenizer: Any, token_ids: Any
+) -> _ImmutableMixtureSources:
+    """Build the expensive audited mixture once and freeze its structural contract."""
+
+    datasets, weights, names = recipe._build_mixture_sources(tokenizer, token_ids, config)
+    frozen = _ImmutableMixtureSources(
+        datasets=tuple(datasets),
+        weights=tuple(weights),
+        names=tuple(names),
+        contract_sha256="",
+    )
+    if frozen.names != SOURCES:
+        raise SSMaxPerceptionDirectEvidenceError(
+            f"Perception source order differs: {list(frozen.names)!r}"
+        )
+    contract_sha256 = _mixture_source_contract(frozen.datasets, frozen.weights, frozen.names)
+    return _ImmutableMixtureSources(
+        datasets=frozen.datasets,
+        weights=frozen.weights,
+        names=frozen.names,
+        contract_sha256=contract_sha256,
+    )
+
+
+def _validate_immutable_mixture_sources(sources: _ImmutableMixtureSources) -> None:
+    """Fail if a rank replay changes a source's length, type, fingerprint, or weight."""
+
+    observed = _mixture_source_contract(sources.datasets, sources.weights, sources.names)
+    if observed != sources.contract_sha256:
+        raise SSMaxPerceptionDirectEvidenceError(
+            "Immutable mixture source contract changed during rank replay"
+        )
+
+
+def _build_rank_loader(
+    config: Any,
+    sources: _ImmutableMixtureSources,
+    *,
+    rank: int,
+    world_size: int,
+    work_dir: Path,
+    prefetch_workers: int,
+) -> MixtureDataLoader:
+    """Construct one rank-local loader over the shared immutable source bundle."""
+
+    _validate_immutable_mixture_sources(sources)
+    loader = MixtureDataLoader(
+        sources.datasets,
+        sources.weights,
+        config.collator.build(),
+        work_dir=work_dir / f"rank{rank}",
+        global_batch_size=config.global_batch_size,
+        seed=config.data_seed,
+        pack=False,
+        pack_max_crops=None,
+        pack_buffer_size=0,
+        prefetch_workers=prefetch_workers,
+        dataset_names=sources.names,
+        allow_legacy_state_without_dataset_fingerprints=False,
+        dp_world_size=world_size,
+        dp_rank=rank,
+    )
+    expected_fingerprints = [
+        MixtureDataLoader._dataset_fingerprint(dataset, name)
+        for dataset, name in zip(sources.datasets, sources.names, strict=True)
+    ]
+    if paired_runner._jsonable(loader.dataset_fingerprints) != paired_runner._jsonable(
+        expected_fingerprints
+    ):
+        raise SSMaxPerceptionDirectEvidenceError(
+            "Rank loader dataset fingerprints differ from immutable mixture sources"
+        )
+    return loader
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     if args.prefetch_workers < 0 or args.checkpoint_hash_workers <= 0:
@@ -314,6 +429,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SSMaxPerceptionDirectEvidenceError(
             f"Checkpoint health ledgers are invalid: {error}"
         ) from error
+    try:
+        mixture_sources = _build_immutable_mixture_sources(recipe, config, tokenizer, token_ids)
+    except paired.SSMaxPerceptionEvidenceError as error:
+        raise SSMaxPerceptionDirectEvidenceError(str(error)) from error
     stats = paired_runner._empty_stats()
     rank_receipts: list[dict[str, Any]] = []
     dataset_fingerprints: Any = None
@@ -326,11 +445,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         ledger = ledger_summary["rank_ledgers"][rank]
         health_ledgers.append(ledger)
         try:
-            loader = paired_runner._build_loader(
-                recipe,
+            loader = _build_rank_loader(
                 config,
-                tokenizer,
-                token_ids,
+                mixture_sources,
                 rank=rank,
                 world_size=world_size,
                 work_dir=work_dir,
@@ -356,6 +473,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             close = getattr(iterator, "close", None)
             if close is not None:
                 close()
+        _validate_immutable_mixture_sources(mixture_sources)
         if replayed != paired_runner._jsonable(loader.state_dict()) or replayed != saved:
             raise SSMaxPerceptionDirectEvidenceError(f"Trainer rank{rank} replay cursor differs")
         rank_receipts.append(

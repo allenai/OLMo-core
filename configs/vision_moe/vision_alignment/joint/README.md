@@ -26,21 +26,24 @@ shares the exact replay windows across QK arms without conflating their model ch
 reusing optimizer/data cursors. Any corpus, ordering, fingerprint, or dataset-config difference
 fails closed.
 
-The generic dense-HSDP model-only loader and shared replay path are ready. Production SSMax joint
-remains fail-closed until each selected direct perception treatment passes the no-control protocol
-and a human creates its waiver-free, lineage-bound v7 gate. Historical paired perception v5/v6
-gates remain accepted through their original versioned validators, but the current direct program
-does not require or infer a frozen-vision control. The existing v3 perception gate authenticates
-one exact s002 experiment and cannot authorize either SSMax lineage.
+The generic dense-HSDP model-only loader and shared replay path are ready. Strict SSMax joint
+admission requires each direct perception treatment to pass the no-control protocol and receive a
+waiver-free, lineage-bound v7 gate. A separately authorized rejected report may instead receive a
+research-only v8 gate when its deviations are limited to the checked-in short-prefix source policy.
+That path preserves the v7 rejection and cannot make a promotion or winner decision. Historical
+paired perception v5/v6 gates remain accepted through their original versioned validators, but the
+current direct program does not require or infer a frozen-vision control. The existing v3 perception
+gate authenticates one exact s002 experiment and cannot authorize either SSMax lineage.
 
 Only after the direct perception evidence is produced and explicitly human-approved should one
 concrete joint profile per SSMax treatment lineage be added to `approved_profiles.json`. Each
-profile must retain its own exact model parent and v7 gate while pointing both lineages at the same
-reviewed compact replay paths and pins. Do not add placeholder profiles or gates.
+profile must retain its own exact model parent and version-matched v7 or v8 gate while pointing both
+lineages at the same reviewed compact replay paths and pins. Add both profiles atomically; do not
+add placeholder profiles or gates.
 
 The generic post-hoc joint evidence implementation and deliberately non-runnable per-lineage
 manifest templates are documented in
 [`../eval/SSMAX_JOINT_EVIDENCE.md`](../eval/SSMAX_JOINT_EVIDENCE.md). They bind steps
 0/4000/8000/12000/16000 and remain descriptive-only; they do not authorize joint training before
-the required live lineage-matched v7 perception approvals, and they do not choose or launch
+the required live lineage-matched v7 or v8 perception approvals, and they do not choose or launch
 mid-training.

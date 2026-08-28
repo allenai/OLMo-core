@@ -29,7 +29,7 @@ BEAKER_CLUSTER = "ai2/holmes"
 MIN_RUNTIME = "8h"
 NUM_NODES = 2
 GPUS_PER_NODE = 8
-DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 2 origin "$GIT_REF"'
+DIRECT_EVIDENCE_GIT_HISTORY_POST_SETUP = 'git fetch --no-tags --depth 3 origin "$GIT_REF"'
 EVIDENCE_ROOT = Path(
     "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/"
     "vision-alignment/evidence"

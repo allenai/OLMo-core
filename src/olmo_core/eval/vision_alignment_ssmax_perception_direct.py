@@ -56,6 +56,14 @@ AMENDMENT_RECORDED_AT = "2026-08-22T01:53:30Z"
 AMENDMENT_APPROVED_BY = "rustins"
 TRAINING_GIT_BRANCH = "rustin/vision-ssmax-molmofication"
 TRAINING_GIT_REF = "1826b78105858a2163cb7689b151fadefa538bbc"
+BASE_EVIDENCE_GIT_REF = "8bf81eb368e1ad33a5570cba4f5f5fff236760c3"
+LEGACY_EVIDENCE_GIT_REFS = frozenset(
+    {
+        "86f170e72d68ffb46ed5f04390dc901cd41d3097",
+        "197407c9db0aa1eb1120ed416ed002b236f113da",
+        BASE_EVIDENCE_GIT_REF,
+    }
+)
 
 DIRECT_RUN_IDENTITIES: Mapping[str, Mapping[str, str]] = {
     "ssmax_head_qknorm": {
@@ -157,6 +165,11 @@ PRODUCER_RELATIVE_PATHS: Mapping[str, str] = {
 EVIDENCE_GIT_DIFF_ALLOWLIST = frozenset(
     {
         AMENDMENT_RELATIVE_PATH,
+        (
+            "configs/vision_moe/vision_alignment/eval/"
+            "ssmax_perception_exploratory_joint_authorization_v1.json"
+        ),
+        ("configs/vision_moe/vision_alignment/eval/" "SSMAX_PERCEPTION_EXPLORATORY_JOINT.md"),
         "configs/vision_moe/vision_alignment/eval/SSMAX_JOINT_EVIDENCE.md",
         "configs/vision_moe/vision_alignment/eval/SSMAX_PERCEPTION_DIRECT_EVALUATION.md",
         (
@@ -171,6 +184,7 @@ EVIDENCE_GIT_DIFF_ALLOWLIST = frozenset(
         "configs/vision_moe/vision_alignment/README.md",
         "configs/vision_moe/vision_alignment/joint/README.md",
         "src/olmo_core/eval/vision_alignment_ssmax_perception_direct.py",
+        "src/olmo_core/eval/vision_alignment_ssmax_perception_exploratory.py",
         "src/olmo_core/eval/vision_alignment_ssmax_joint.py",
         "src/scripts/beaker_launch_vision_ssmax_evidence.py",
         "src/scripts/eval/vision_alignment_ssmax_perception_direct.py",
@@ -178,10 +192,13 @@ EVIDENCE_GIT_DIFF_ALLOWLIST = frozenset(
         "src/scripts/eval/vision_alignment_ssmax_perception_direct_health.py",
         "src/scripts/eval/vision_alignment_ssmax_perception_direct_manifest.py",
         "src/scripts/eval/vision_alignment_ssmax_perception_direct_promotion.py",
+        "src/scripts/eval/vision_alignment_ssmax_perception_exploratory.py",
         "src/scripts/train/Vision-Alignment.py",
         "src/test/eval/vision_alignment_ssmax_perception_direct_test.py",
+        "src/test/eval/vision_alignment_ssmax_perception_exploratory_test.py",
         "src/test/eval/vision_alignment_ssmax_joint_test.py",
         "src/test/scripts/beaker_launch_vision_ssmax_evidence_test.py",
+        ("src/test/scripts/" "vision_alignment_ssmax_perception_direct_health_optimized_test.py"),
         "src/test/scripts/vision_alignment_test.py",
     }
 )
@@ -592,12 +609,29 @@ def validate_evidence_git_compatibility(
             "Training and evidence Git identities name different repositories"
         )
     root = repository_root.expanduser().resolve()
-    _require_exact_git_parent(
-        repository_root=root,
-        child_ref=evidence["ref"],
-        parent_ref=training["ref"],
-        name="evidence revision",
-    )
+    if evidence["ref"] in LEGACY_EVIDENCE_GIT_REFS:
+        _require_exact_git_parent(
+            repository_root=root,
+            child_ref=evidence["ref"],
+            parent_ref=training["ref"],
+            name="legacy evidence revision",
+        )
+    else:
+        # The exploratory continuation is additive to the already published direct-v3 evidence
+        # revision. Preserve that immutable revision, require one new non-merge evidence commit,
+        # and still prove the original evidence commit is a direct child of the training ref.
+        _require_exact_git_parent(
+            repository_root=root,
+            child_ref=evidence["ref"],
+            parent_ref=BASE_EVIDENCE_GIT_REF,
+            name="exploratory evidence revision",
+        )
+        _require_exact_git_parent(
+            repository_root=root,
+            child_ref=BASE_EVIDENCE_GIT_REF,
+            parent_ref=training["ref"],
+            name="base evidence revision",
+        )
     try:
         output = subprocess.check_output(
             [
@@ -3119,6 +3153,7 @@ def validate_ssmax_perception_direct_parent_gate(
 __all__ = [
     "AMENDMENT_RELATIVE_PATH",
     "AMENDMENT_SHA256",
+    "BASE_EVIDENCE_GIT_REF",
     "DIRECT_POLICY",
     "DIRECT_RUN_IDENTITIES",
     "DIRECT_TEXT_SENTINEL_PROTOCOL",
@@ -3129,6 +3164,7 @@ __all__ = [
     "HEALTH_PRODUCER",
     "HEALTH_RECEIPT_FORMAT",
     "JOINT_CONSUMER_GIT_DIFF",
+    "LEGACY_EVIDENCE_GIT_REFS",
     "LINEAGE_KIND",
     "MANIFEST_FORMAT",
     "MANIFEST_SPEC_FORMAT",

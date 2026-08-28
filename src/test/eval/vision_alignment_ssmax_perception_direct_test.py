@@ -146,7 +146,12 @@ def test_evidence_git_diff_is_restricted_to_additive_consumers(
     def output(command: list[str], **kwargs: Any) -> str:
         del kwargs
         if "rev-list" in command:
-            return f"{evidence['ref']} {training['ref']}\n"
+            child = command[-1]
+            if child == evidence["ref"]:
+                return f"{evidence['ref']} {direct.BASE_EVIDENCE_GIT_REF}\n"
+            if child == direct.BASE_EVIDENCE_GIT_REF:
+                return f"{direct.BASE_EVIDENCE_GIT_REF} {training['ref']}\n"
+            raise AssertionError(command)
         if "diff" in command:
             return diff_output[0]
         raise AssertionError(command)
@@ -169,7 +174,7 @@ def test_evidence_git_diff_is_restricted_to_additive_consumers(
         )
 
     def wrong_parent(command: list[str], **kwargs: Any) -> str:
-        if "rev-list" in command:
+        if "rev-list" in command and command[-1] == evidence["ref"]:
             return f"{evidence['ref']} {'d' * 40}\n"
         return output(command, **kwargs)
 
@@ -178,6 +183,38 @@ def test_evidence_git_diff_is_restricted_to_additive_consumers(
         direct.validate_evidence_git_compatibility(
             training_git=training, evidence_git=evidence, repository_root=tmp_path
         )
+
+    def wrong_base_parent(command: list[str], **kwargs: Any) -> str:
+        if "rev-list" in command and command[-1] == direct.BASE_EVIDENCE_GIT_REF:
+            return f"{direct.BASE_EVIDENCE_GIT_REF} {'e' * 40}\n"
+        return output(command, **kwargs)
+
+    monkeypatch.setattr(direct.subprocess, "check_output", wrong_base_parent)
+    with pytest.raises(direct.SSMaxPerceptionDirectEvidenceError, match="directly after"):
+        direct.validate_evidence_git_compatibility(
+            training_git=training, evidence_git=evidence, repository_root=tmp_path
+        )
+
+
+def test_published_base_evidence_keeps_its_direct_training_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    training = _git(direct.TRAINING_GIT_REF)
+    evidence = _git(direct.BASE_EVIDENCE_GIT_REF)
+    protocol = "src/olmo_core/eval/vision_alignment_ssmax_perception_direct.py"
+
+    def output(command: list[str], **kwargs: Any) -> str:
+        del kwargs
+        if "rev-list" in command:
+            return f"{evidence['ref']} {training['ref']}\n"
+        if "diff" in command:
+            return f"A\t{protocol}\nA\t{direct.AMENDMENT_RELATIVE_PATH}\n"
+        raise AssertionError(command)
+
+    monkeypatch.setattr(direct.subprocess, "check_output", output)
+    assert direct.validate_evidence_git_compatibility(
+        training_git=training, evidence_git=evidence, repository_root=tmp_path
+    ) == (("A", protocol), ("A", direct.AMENDMENT_RELATIVE_PATH))
 
 
 def test_joint_consumer_checkout_allows_only_the_exact_profile_commit(
