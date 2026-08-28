@@ -30,6 +30,27 @@ from .pipeline_stage import CustomPipelineStage
 logger = logging.getLogger(__name__)
 
 
+BATCH_LEADING_MODEL_KWARGS = ("labels", "segment_ids", "doc_lens", "max_doc_lens")
+"""Model kwargs carrying one entry per instance, split alongside ``input_ids`` into microbatches."""
+
+SUPPORTED_MODEL_KWARGS = frozenset(BATCH_LEADING_MODEL_KWARGS) | {
+    "loss_div_factor",
+    "ignore_index",
+    "loss_reduction",
+    "z_loss_multiplier",
+    "return_logits",
+    "cp_already_sharded",
+    "cp_original_seq_len",
+}
+"""
+Every model kwarg the pipeline schedule knows how to split into microbatches.
+
+Anything that splits a batch for the pipeline outside of
+:meth:`CustomScheduleInterleaved1F1B._split_inputs` -- such as the independent PP dry run -- must
+accept the same set, or configurations that train fine will fail there instead.
+"""
+
+
 # Helper to parse an action string like 1F0 into a tuple of (stage_index, computation_type, microbatch_index)
 _action_regex = re.compile(r"(\d+)(F|I|B|W|SEND_F|RECV_F|SEND_B|RECV_B)(\d*)")
 
@@ -377,54 +398,87 @@ class CustomScheduleInterleaved1F1B:
             if len(args) > 1:
                 raise ValueError(f"Expected zero or one positional tensor arg, got {len(args)}")
 
+            batch_leading_keys = BATCH_LEADING_MODEL_KWARGS
+
             input_ids: Optional[torch.Tensor] = None
-            args_split: List[Tuple[Any, ...]]
             if len(args) == 1:
                 input_ids = args[0]
                 if not isinstance(input_ids, torch.Tensor) or input_ids.dim() == 0:
                     raise TypeError(
                         "args must be empty or a tuple containing one non-scalar tensor"
                     )
-                if input_ids.size(0) < self._n_microbatches:
+
+            # Every batch-leading value is split on the same equal boundaries so that each stage's
+            # side inputs stay aligned with the activations it receives. Ranks that don't own the
+            # first stage have empty positional args, so the batch size may have to come from any
+            # one of the batch-leading kwargs instead.
+            batch_size: Optional[int] = None
+            if input_ids is not None:
+                batch_size = input_ids.size(0)
+            else:
+                for key in batch_leading_keys:
+                    value = (kwargs or {}).get(key)
+                    if isinstance(value, torch.Tensor):
+                        batch_size = value.size(0)
+                        break
+                    if isinstance(value, (list, tuple)):
+                        batch_size = len(value)
+                        break
+
+            bounds: Optional[List[Tuple[int, int]]] = None
+            if batch_size is not None:
+                if batch_size < self._n_microbatches:
                     raise ValueError(
-                        f"input batch size {input_ids.size(0)} is smaller than num_microbatches={self._n_microbatches}"
+                        f"input batch size {batch_size} is smaller than num_microbatches={self._n_microbatches}"
                     )
-                input_id_chunks = list(torch.tensor_split(input_ids, self._n_microbatches, dim=0))
-                args_split = [(chunk,) for chunk in input_id_chunks]
+                # Uneven microbatches are unsupported: stages size their P2P buffers from a single
+                # floor-divided microbatch shape, so larger leading chunks would overrun them.
+                if batch_size % self._n_microbatches != 0:
+                    raise ValueError(
+                        f"input batch size {batch_size} is not divisible by "
+                        f"num_microbatches={self._n_microbatches}"
+                    )
+                micro_batch_size = batch_size // self._n_microbatches
+                bounds = [
+                    (i * micro_batch_size, (i + 1) * micro_batch_size)
+                    for i in range(self._n_microbatches)
+                ]
+
+            def split_batch_dim(key: str, value: Any) -> List[Any]:
+                if bounds is None:
+                    raise ValueError(f"cannot split {key!r} without knowing the batch size")
+                length = value.size(0) if isinstance(value, torch.Tensor) else len(value)
+                if length != batch_size:
+                    raise ValueError(
+                        f"{key!r} batch size {length} does not match input batch size {batch_size}"
+                    )
+                return [value[start:stop] for start, stop in bounds]
+
+            args_split: List[Tuple[Any, ...]]
+            if input_ids is not None:
+                args_split = [(chunk,) for chunk in split_batch_dim("input_ids", input_ids)]
             else:
                 args_split = [()] * self._n_microbatches
             kwargs_split: List[Dict[str, Any]] = [{} for _ in range(self._n_microbatches)]
 
-            supported_keys = {
-                "loss_div_factor",
-                "labels",
-                "ignore_index",
-                "loss_reduction",
-                "z_loss_multiplier",
-                "return_logits",
-                "cp_already_sharded",
-                "cp_original_seq_len",
-            }
-            unexpected_keys = set(kwargs) - supported_keys
+            unexpected_keys = set(kwargs) - SUPPORTED_MODEL_KWARGS
             if unexpected_keys:
                 raise ValueError(
                     f"Unsupported kwargs for pipeline splitting: {sorted(unexpected_keys)}"
                 )
 
             for key, value in kwargs.items():
-                if key == "labels":
+                if key in batch_leading_keys and key != "max_doc_lens":
                     if not isinstance(value, torch.Tensor) or value.dim() == 0:
-                        raise TypeError("'labels' must be a non-scalar tensor")
-                    if value.size(0) < self._n_microbatches:
-                        raise ValueError(
-                            f"'labels' batch size {value.size(0)} is smaller than num_microbatches={self._n_microbatches}"
-                        )
-                    if input_ids is not None and value.size(0) != input_ids.size(0):
-                        raise ValueError(
-                            f"'labels' batch size {value.size(0)} does not match input batch size {input_ids.size(0)}"
-                        )
-                    value_chunks = list(torch.tensor_split(value, self._n_microbatches, dim=0))
-                    for i, chunk in enumerate(value_chunks):
+                        raise TypeError(f"{key!r} must be a non-scalar tensor")
+                    for i, chunk in enumerate(split_batch_dim(key, value)):
+                        kwargs_split[i][key] = chunk
+                elif key == "max_doc_lens":
+                    # A per-instance Python list, so it's sliced on the same boundaries rather than
+                    # passed through the tensor branch.
+                    if not isinstance(value, (list, tuple)):
+                        raise TypeError("'max_doc_lens' must be a list or tuple")
+                    for i, chunk in enumerate(split_batch_dim(key, value)):
                         kwargs_split[i][key] = chunk
                 elif key == "loss_div_factor":
                     if isinstance(value, torch.Tensor):

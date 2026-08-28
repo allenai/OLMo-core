@@ -2,7 +2,17 @@ import os
 
 import pytest
 
-from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+    get_beaker_client,
+)
+
+
+def test_launch_config_accepts_min_runtime():
+    config = BeakerLaunchConfig(name="test", cmd=["true"], min_runtime="1h")
+    assert config.min_runtime == "1h"
+    assert config.as_dict()["min_runtime"] == "1h"
 
 
 def test_get_beaker_client_caching():

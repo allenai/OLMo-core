@@ -28,7 +28,11 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
-from olmo_core.distributed.checkpoint import load_model_and_optim_state
+from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
+    load_keys,
+    load_model_and_optim_state,
+)
 from olmo_core.io import file_exists, join_path
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.conversion.state_mapping import StateType, TemplatePlaceholder
@@ -41,6 +45,95 @@ from .config import is_olmo_hybrid_model
 from .convert import get_converter_to_hf
 
 log = logging.getLogger(__name__)
+
+
+def _load_ddp_optimizer_model_state(
+    checkpoint_dir: PathOrStr,
+    model: Transformer,
+    *,
+    work_dir: str | Path,
+) -> Dict[str, Any] | None:
+    """Load weights from an OLMo DDP optimizer-backed checkpoint.
+
+    ``OLMoDDPTrainModule`` checkpoints store the authoritative model weights as flattened
+    optimizer ``<parameter>.main`` tensors instead of under ``model.<parameter>``.  The normal
+    distributed-checkpoint loader cannot load those tensors into a bare Transformer, which is
+    what offline HF conversion builds.
+
+    Returns ``None`` for conventional model checkpoints so callers can use the normal loader.
+    """
+    metadata = get_checkpoint_metadata(checkpoint_dir)
+    checkpoint_keys = set(metadata.state_dict_metadata)
+    if not any(key.endswith(".main") for key in checkpoint_keys):
+        return None
+
+    keys_to_load: list[str] = []
+    destinations: list[tuple[str, torch.Tensor]] = []
+    missing: list[str] = []
+
+    for name, param in model.named_parameters():
+        candidates = (
+            f"model.{name}",
+            f"model.module.{name}",
+            name,
+            f"module.{name}",
+            f"{name}.main",
+            f"module.{name}.main",
+        )
+        checkpoint_key = next((key for key in candidates if key in checkpoint_keys), None)
+        if checkpoint_key is None:
+            missing.append(name)
+            continue
+        keys_to_load.append(checkpoint_key)
+        destinations.append((name, param))
+
+    if missing:
+        raise RuntimeError(
+            "DDP checkpoint is missing weights for model parameters: " + ", ".join(missing)
+        )
+
+    loaded = load_keys(checkpoint_dir, keys_to_load, work_dir=work_dir)
+    with torch.no_grad():
+        for checkpoint_key, (name, destination), value in zip(
+            keys_to_load, destinations, loaded, strict=True
+        ):
+            if not isinstance(value, torch.Tensor):
+                raise TypeError(f"Checkpoint value '{checkpoint_key}' is not a tensor")
+            if value.numel() != destination.numel():
+                raise RuntimeError(
+                    f"Checkpoint value '{checkpoint_key}' has {value.numel()} elements, but "
+                    f"model parameter '{name}' has {destination.numel()}"
+                )
+            destination.copy_(value.reshape(destination.shape).to(destination.dtype))
+
+        for name, buffer in model.named_buffers():
+            checkpoint_key = f"model_buffer.{name}"
+            if checkpoint_key not in checkpoint_keys:
+                continue
+            value = next(load_keys(checkpoint_dir, [checkpoint_key], work_dir=work_dir))
+            if not isinstance(value, torch.Tensor):
+                raise TypeError(f"Checkpoint value '{checkpoint_key}' is not a tensor")
+            buffer.copy_(value.reshape(buffer.shape).to(buffer.dtype))
+
+    options = dist_cp_sd.StateDictOptions(full_state_dict=True, cpu_offload=True)
+    return dist_cp_sd.get_model_state_dict(model, options=options)
+
+
+def _normalize_legacy_latent_moe_config(value: Any) -> None:
+    """Normalize the pre-PR-799 LatentMoE field name in saved experiment configs."""
+    if isinstance(value, dict):
+        latent = value.get("latent_moe")
+        if isinstance(latent, dict) and "routed_expert_dim" in latent:
+            if "latent_dim" in latent:
+                raise ValueError(
+                    "LatentMoE config contains both 'routed_expert_dim' and 'latent_dim'."
+                )
+            latent["latent_dim"] = latent.pop("routed_expert_dim")
+        for child in value.values():
+            _normalize_legacy_latent_moe_config(child)
+    elif isinstance(value, list):
+        for child in value:
+            _normalize_legacy_latent_moe_config(child)
 
 
 def convert_checkpoint_to_hf(
@@ -86,6 +179,7 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    _normalize_legacy_latent_moe_config(transformer_config_dict)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
 
@@ -202,16 +296,23 @@ def convert_checkpoint_to_hf(
             assert original_checkpoint_path is not None
             model_and_optim_dir = join_path(original_checkpoint_path, "model_and_optim")
             log.info(f"Loading checkpoint from '{model_and_optim_dir}'")
-            load_model_and_optim_state(
-                model_and_optim_dir,
-                model,
-                work_dir=work_dir,
+            model_state_dict = _load_ddp_optimizer_model_state(
+                model_and_optim_dir, model, work_dir=work_dir
             )
+            if model_state_dict is None:
+                load_model_and_optim_state(
+                    model_and_optim_dir,
+                    model,
+                    work_dir=work_dir,
+                )
             log.info(f"Saving checkpoint to '{output_path}'")
-            state_dict_options = dist_cp_sd.StateDictOptions(
-                flatten_optimizer_state_dict=True, cpu_offload=True
-            )
-            model_state_dict = dist_cp_sd.get_model_state_dict(model, options=state_dict_options)
+            if model_state_dict is None:
+                state_dict_options = dist_cp_sd.StateDictOptions(
+                    flatten_optimizer_state_dict=True, cpu_offload=True
+                )
+                model_state_dict = dist_cp_sd.get_model_state_dict(
+                    model, options=state_dict_options
+                )
         else:
             log.info(f"Using provided model state dict, saving to '{output_path}'")
             # Load the provided state dict into the model so that validation works.

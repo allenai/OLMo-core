@@ -1,7 +1,11 @@
+import json
 import logging
+import math
 import os
+from collections import defaultdict
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+from typing import Any, Iterable
 
 import torch
 
@@ -18,6 +22,86 @@ from olmo_core.distributed.utils import get_rank
 from .callback import Callback
 
 log = logging.getLogger(__name__)
+
+
+_COLLECTIVE_EVENT_MARKERS = (
+    "all_reduce",
+    "allreduce",
+    "all_gather",
+    "allgather",
+    "reduce_scatter",
+    "reducescatter",
+    "all_to_all",
+    "alltoall",
+    "broadcast",
+    "c10d::",
+    "nccl",
+    "gloo",
+)
+_SYNC_EVENT_MARKERS = (
+    "synchronize",
+    "streamwait",
+    "eventwait",
+)
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    values = sorted(values)
+    position = (len(values) - 1) * percentile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[lower]
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
+
+
+def _summarize_distributed_events(events: Iterable[Any]) -> list[dict[str, Any]]:
+    """Aggregate profiler events for distributed collectives and device synchronization."""
+    grouped: dict[tuple[str, str, str], dict[str, list[float]]] = defaultdict(
+        lambda: {"cpu_us": [], "device_us": []}
+    )
+    for event in events:
+        name = str(event.name)
+        normalized_name = name.lower().replace(" ", "")
+        if any(marker in normalized_name for marker in _COLLECTIVE_EVENT_MARKERS):
+            category = "collective"
+        elif any(marker in normalized_name for marker in _SYNC_EVENT_MARKERS):
+            category = "synchronization"
+        else:
+            continue
+
+        input_shapes = repr(getattr(event, "input_shapes", None))
+        timings = grouped[(category, name, input_shapes)]
+        timings["cpu_us"].append(float(getattr(event, "cpu_time_total", 0.0) or 0.0))
+        timings["device_us"].append(float(getattr(event, "device_time_total", 0.0) or 0.0))
+
+    summary = []
+    for (category, name, input_shapes), timings in sorted(grouped.items()):
+        cpu_us = timings["cpu_us"]
+        device_us = timings["device_us"]
+        summary.append(
+            {
+                "category": category,
+                "name": name,
+                "input_shapes": input_shapes,
+                "count": len(cpu_us),
+                "cpu_us": {
+                    "mean": sum(cpu_us) / len(cpu_us),
+                    "p50": _percentile(cpu_us, 0.50),
+                    "p95": _percentile(cpu_us, 0.95),
+                    "total": sum(cpu_us),
+                },
+                "device_us": {
+                    "mean": sum(device_us) / len(device_us),
+                    "p50": _percentile(device_us, 0.50),
+                    "p95": _percentile(device_us, 0.95),
+                    "total": sum(device_us),
+                },
+            }
+        )
+    return summary
 
 
 @dataclass
@@ -59,6 +143,13 @@ class ProfilerCallback(Callback):
     """
     Whether to enable recording of CUDA sync events. Useful for critical-path analysis with
         https://hta.readthedocs.io/en/latest/source/features/lightweight_critical_path_analysis.html
+    """
+    export_distributed_event_summary: bool = False
+    """
+    Export a JSON summary of distributed collective and synchronization events for each trace.
+    This is model-agnostic and includes event counts plus mean, p50, p95, and total CPU/device
+    durations. Set :attr:`enable_cuda_sync_events` as well when synchronization attribution is
+    important.
     """
     enabled: bool = True
     """
@@ -155,7 +246,7 @@ class ProfilerCallback(Callback):
         self._profiler = self._exit_stack.enter_context(
             profile(
                 activities=activities,
-                record_shapes=False,
+                record_shapes=self.export_distributed_event_summary,
                 profile_memory=self.profile_memory,
                 with_stack=self.with_stack,
                 schedule=profiling_schedule,
@@ -189,6 +280,21 @@ class ProfilerCallback(Callback):
         prof.export_chrome_trace(str(trace_path))
         final_path = self.trainer.persist_working_file(trace_path)
         log.info(f"Chrome trace saved to '{final_path}'")
+
+        if self.export_distributed_event_summary:
+            summary_path = (
+                output_dir / f"rank-{get_rank()}-step-{prof.step_num}.distributed-events.json"
+            )
+            summary = {
+                "rank": get_rank(),
+                "step": prof.step_num,
+                "time_unit": "microseconds",
+                "events": _summarize_distributed_events(prof.events()),
+            }
+            with summary_path.open("w") as f:
+                json.dump(summary, f, indent=2)
+            final_summary_path = self.trainer.persist_working_file(summary_path)
+            log.info(f"Distributed event summary saved to '{final_summary_path}'")
 
 
 @dataclass

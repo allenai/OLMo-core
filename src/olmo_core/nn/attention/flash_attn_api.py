@@ -23,7 +23,10 @@ except ImportError:
 
 try:
     import flash_attn.cute as flash_attn_4  # type: ignore
-except ImportError:
+except (ImportError, AttributeError):
+    # CUTLASS DSL 4.6 removed symbols used by older flash-attn CUTE builds.
+    # FA4 is optional, so treat that incompatibility like an unavailable FA4
+    # installation instead of breaking unrelated HF/vLLM model imports.
     flash_attn_4 = None  # type: ignore
 
 try:

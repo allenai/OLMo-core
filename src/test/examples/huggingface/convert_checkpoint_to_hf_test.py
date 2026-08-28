@@ -1,6 +1,7 @@
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -19,6 +20,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
+from olmo_core.nn.hf import convert_checkpoint as convert_checkpoint_module
 from olmo_core.nn.hf import convert_checkpoint_to_hf
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
@@ -151,6 +153,40 @@ def _validate_models_match(hf_model: PreTrainedModel, olmo_core_model: Transform
     # Using torch backend w/ validation on cpu we get bitwise identical results when comparing
     # logit outputs from an OlmoCore model and its HF-converted counterpart
     assert torch.equal(hf_logits[..., :min_vocab_size], logits[..., :min_vocab_size])
+
+
+def test_load_ddp_optimizer_model_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    class TiedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embeddings = torch.nn.Embedding(4, 3)
+            self.lm_head = torch.nn.Linear(3, 4, bias=False)
+            self.lm_head.weight = self.embeddings.weight
+            self.register_buffer("score_bias", torch.zeros(2))
+
+    model = TiedModel()
+    main = torch.arange(12, dtype=torch.float32)
+    score_bias = torch.tensor([2.0, 3.0])
+    values = {
+        "embeddings.weight.main": main,
+        "model_buffer.score_bias": score_bias,
+    }
+    metadata = SimpleNamespace(state_dict_metadata={key: object() for key in values})
+    monkeypatch.setattr(convert_checkpoint_module, "get_checkpoint_metadata", lambda _: metadata)
+    monkeypatch.setattr(
+        convert_checkpoint_module,
+        "load_keys",
+        lambda _, keys, **__: (values[key] for key in keys),
+    )
+
+    state = convert_checkpoint_module._load_ddp_optimizer_model_state(
+        tmp_path, model, work_dir=tmp_path
+    )
+
+    assert state is not None
+    assert torch.equal(state["embeddings.weight"], main.reshape(4, 3))
+    assert torch.equal(state["lm_head.weight"], main.reshape(4, 3))
+    assert torch.equal(state["score_bias"], score_bias)
 
 
 def test_convert_checkpoint_to_hf_correct_config(

@@ -153,6 +153,11 @@ def _check_rowwise_tbo_supported(block: "OLMoDDPTransformerBlock") -> None:
         raise RuntimeError(
             "Rowwise no-sync TBO requires " f"path={ExpertParallelPath.rowwise_nvshmem!r}"
         )
+    if getattr(block.routed_experts_router, "requires_segment_ids", False):
+        raise NotImplementedError(
+            "EMO routing is not implemented for two-batch overlap because per-token segment "
+            "IDs are not split between TBO lanes"
+        )
     if block.rowwise_fp8 is not None and block.rowwise_fp8.enabled:
         raise NotImplementedError(
             "Rowwise FP8 is not implemented for no-sync TBO yet. "
@@ -184,6 +189,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
     # _tbo_debug_print(self, f"A{lane_id}:enter slot={slot_idx} group={group_name}", x=x)
     block_inp = x
     del x
+    segment_ids = kwargs.pop("segment_ids", None)
 
     with nvtx.annotate("RowwiseTBO-A-AttnRouter", color="purple"):
         # _tbo_debug_print(self, f"A{lane_id}:attn-router-enter", block_inp=block_inp)
@@ -198,6 +204,7 @@ def ep_no_sync_rowwise_tbo_stage_a(
             moe_inp_3d,
             False,
             loss_div_factor=loss_div_factor,
+            **({"segment_ids": segment_ids} if segment_ids is not None else {}),
         )
         # _tbo_debug_print(
         #     self,

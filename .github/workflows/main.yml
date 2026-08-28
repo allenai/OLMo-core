@@ -11,12 +11,18 @@ on:
       # Temporary: run CI for the incremental MoE PRs landing into this integration branch.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
+      # Temporary: run CI for the PRs landing into this integration branch.
+      # Remove before merging akshitab/global-lb-emo-router into main.
+      - akshitab/global-lb-emo-router
   push:
     branches:
       - main
       # Temporary: keep the MoE integration branch continuously tested as PRs merge in.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
+      # Temporary: keep this integration branch continuously tested as PRs merge in.
+      # Remove before merging akshitab/global-lb-emo-router into main.
+      - akshitab/global-lb-emo-router
     tags:
       - "v*.*.*"
 
@@ -246,7 +252,7 @@ jobs:
           # run here since they need TransformerEngine + the same custom kernels, which the torch
           # 2.9 image lacks.
           - name: Test MoE kernels (GPU, torch 2.10)
-            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-08
+            image: akshitab/olmo-core-tch2100cu128-rma-2026-07-28
             gpus: 2
             # This image's kernels (grouped_gemm, symm_mem_vdev2d, FP8) are built for sm_90 only
             # (`-gencode arch=compute_90,code=sm_90`), so pin to h100 — on a100/b200 grouped_gemm
@@ -256,7 +262,7 @@ jobs:
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
             run: |
-              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
+              bash -c 'unset TRITON_PTXAS_PATH TRITON_PTXAS_BLACKWELL_PATH; python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -316,8 +322,8 @@ jobs:
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
-            --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
-            --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
+            --env-secret 'AWS_ACCESS_KEY_ID=olmocore_AWS_ACCESS_KEY_ID' \
+            --env-secret 'AWS_SECRET_ACCESS_KEY=olmocore_AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}
 
   release:
