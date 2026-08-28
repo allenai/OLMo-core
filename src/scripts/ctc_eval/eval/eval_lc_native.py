@@ -69,6 +69,13 @@ def main():
                     help="chat = Qwen3 apply_chat_template (matches SFT training); "
                          "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
                          "alpaca = legacy alpaca-instruction wrap.")
+    ap.add_argument("--landmark-mem-id", type=int, default=None,
+                    help="Landmark token id for landmark-attention ckpts (Qwen3.5: 248200).")
+    ap.add_argument("--landmark-pad-id", type=int, default=None,
+                    help="Landmark pad id (Qwen3.5: 248203).")
+    ap.add_argument("--eos-token-id", type=int, default=None,
+                    help="Override the generation stop token (SFT-trained eos, e.g. 248044 for "
+                         "shards built with convert_unified_to_sft --eos 248044).")
     ap.add_argument("--query-position", choices=["both", "after", "before"], default="both",
                     help="Where the task ask is rendered relative to the corpus. MUST match the "
                          "shards the model was SFT'd on: the xlong5_2k256k_qwen35 build is 'both', "
@@ -122,7 +129,7 @@ def main():
     from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         load_unified_examples, _eval_ruler, _eval_contradiction, _eval_retrieval,
-        _eval_oolong, _eval_rerank, _eval_outlier,
+        _eval_oolong, _eval_rerank, _eval_outlier, _eval_qdmatch,
     )
 
     # ---- data-parallel across N GPUs (torchrun): each rank loads a full model copy + evaluates a
@@ -147,8 +154,14 @@ def main():
     device = torch.device(f"cuda:{local_rank}")
 
     t0 = time.time()
-    gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
-                               max_length=args.max_length, use_cache=True)
+    _lm_kwargs = {}
+    if args.landmark_mem_id is not None:
+        _lm_kwargs = dict(landmark_mem_id=args.landmark_mem_id,
+                          landmark_pad_id=args.landmark_pad_id)
+    _eos = args.eos_token_id if args.eos_token_id is not None else tok.eos_token_id
+    _pad = tok.pad_token_id if tok.pad_token_id != _eos else tok.eos_token_id
+    gen_cfg = GenerationConfig(eos_token_id=_eos, pad_token_id=_pad,
+                               max_length=args.max_length, use_cache=True, **_lm_kwargs)
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)
@@ -414,6 +427,20 @@ def main():
                     ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
                     ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
             }
+            # qdmatch_nq: ordered (query_id, doc_id) pair matching, graded by _eval_qdmatch.
+            # Added conditionally -- most eval bundles predate these rungs, and an unconditional
+            # entry would print a MISSING warning on every unrelated ladder run. Rungs are the
+            # 600-example HELD-OUT files built by
+            # debug/outlier_lengthmix_scaling/build_qdmatch_pools.py (eval units come from the p10
+            # NQ *validation* split, disjoint from the train pool -- the shipped CTC-suite
+            # qdmatch_nq ladder drew train and eval from one shared unit pool).
+            if os.path.isdir(f"{E5}/qdmatch_nq"):
+                LADDERS["qdmatch_nq"] = [
+                    (_lab, f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
+                    for _lab, _tok in (("3k", 2048), ("8k", 8192), ("16k", 16384),
+                                       ("32k", 32768))
+                    if os.path.exists(f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
+                ]
         else:
             # v1 = the original independently-generated per-rung eval files. DISABLED 2026-07-29:
             # each rung drew its OWN questions, so every rung-to-rung delta carried eval-set
@@ -507,6 +534,7 @@ def main():
             "scifact": ("retrieval", _eval_retrieval, "f1", 64),
             "outlier_review": ("outlier", _eval_outlier, "f1", 200),
             "contra_fever": ("contradiction", _eval_contradiction, "f1", 200),
+            "qdmatch_nq": ("qdmatch", _eval_qdmatch, "f1", 200),
         }
         task_filter = set(args.ladder_tasks.split(",")) if args.ladder_tasks else None
         rung_filter = set(args.ladder_rungs.split(",")) if args.ladder_rungs else None

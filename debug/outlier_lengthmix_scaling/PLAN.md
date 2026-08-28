@@ -46,6 +46,27 @@ streams contain landmark tokens).
 4. **id-digit trap not exposed** at rungs ≤16k (n≤220, ids ≤3 digits, train covers eval range).
    Do not extend to 256k+ xlong rungs without an id-range audit (train n=220 vs eval n≥1802).
 
+## THE CHECK THREAD (user protocol 2026-08-27 — supersedes the run matrix below where they differ)
+
+Sparse and full arms run each check IN PARALLEL; all evals on rungs 2k/4k/8k/16k/32k, native
+backend, eval_size 600.
+
+* **Check #1 (LR):** best LR for outlier @ 2k ctx, 5k examples — the lmx-* sweep (3 LRs x 2 arch).
+* **Check #2 (Data mix):** compare (a) 4000x8k [arm p8k_4000], (b) 4000x8k + 4000x2k [m8k_mix],
+  (c) 8000x8k [p8k_8000]. If b≈a: mixing doesn't matter. If b sits predictably between a and c:
+  quantify the 2k->8k exchange rate, then run the FLOP-matched test — b (~40M tokens) vs
+  p8k_5000 (~40M tokens): does a cheap-mix beat pure-8k at equal FLOPs?
+* **Check #3 (Data scaling):** scale the #2-winning 8k mix by 0.25/0.5/1/2/4x; same for pure-2k
+  (p2k_{1250,2500,5000,10000,20000}). Fit the saturating law per context length; locate the
+  asymptote; fit the cross-length trend (asymptote + tau vs context length) to PREDICT 32k.
+* **Check #4 (Length extrapolation):** run 32k-ctx runs (n=220 pool), compare against the #3
+  prediction; if it holds, invert the law for 256k/1M data requirements (paper-level inference,
+  no 256k runs).
+* **Check #5:** all of the above for sparselandmark (runs concurrently from Check #1 on).
+
+Pool sizes to support 4x scaling: n14 -> 24,000; n57 -> 33,000; n220 (32k rung) -> 10,000.
+Pools EXTEND by appending (never regenerate): prefixes stay stable so arms remain nested subsets.
+
 ## Run matrix
 
 Unit = examples (tokens reported alongside). 1 epoch, LR annealed to 0 per run

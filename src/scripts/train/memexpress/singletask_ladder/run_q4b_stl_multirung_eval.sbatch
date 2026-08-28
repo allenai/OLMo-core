@@ -2,7 +2,7 @@
 # MULTI-RUNG native eval for the overnight 10k matrix checkpoints, on ONE H200 node. Native olmo_core
 # generate (NO HF/vLLM) so it works for dense / compressive / landmark / docchunk. Reads the larger
 # (_600/_500) per-rung eval files from /scratch/users/prasann/cpt_data/eval500 via the LADDERS map in
-# scripts/eval/eval_lc_native.py; rerank uses the CE-graded eval files (NDCG@10 + Kendall-tau).
+# $REPO/src/scripts/ctc_eval/eval/eval_lc_native.py; rerank uses the CE-graded eval files (NDCG@10 + Kendall-tau).
 #
 # NOTE: eval DATA (cpt_data/eval500, corpus-reasoning/data/*.jsonl, the CE files) lives on LOCAL
 # /scratch + the corpus-reasoning checkout, NOT on weka/Beaker -- so this runs LOCALLY after the Beaker
@@ -35,11 +35,17 @@ VARIANT="${VARIANT:?set VARIANT=dense|compressive|landmark|docchunk}"
 CKPT="${CKPT:?set CKPT=<step dir with config.json + model_and_optim/>}"
 MAX_TEST="${MAX_TEST:-600}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
+# Landmark/compressive generation is bs=1 only (blocks tied to absolute position; no left-pad).
+case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 MAX_LENGTH="${MAX_LENGTH:-40960}"
 TOKENIZER="${TOKENIZER:-Qwen/Qwen3-4B}"
-CKPT="${CKPT%/}"; RUN_DIR="$(dirname "$CKPT")"; RUN="$(basename "$RUN_DIR")"
+CKPT="${CKPT%/}"; RUN_DIR="$(dirname "$CKPT")"; RUN="${RUN_OVERRIDE:-$(basename "$RUN_DIR")}"
+# RUNGS accepts '+' as a comma stand-in (sbatch --export cannot carry literal commas).
+RUNGS="${RUNGS:-}"; [ -n "$RUNGS" ] && RUNGS="${RUNGS//+/,}"
 RESULTS_SHARED=/scratch/users/prasann/stl_eval_results
-OUT="$RUN_DIR/eval/${TASK}_multirung.json"; mkdir -p "$(dirname "$OUT")" "$RESULTS_SHARED"
+# With RUN_OVERRIDE, CKPT is the run ROOT -- keep eval output inside it (collision-free).
+if [ -n "${RUN_OVERRIDE:-}" ]; then OUT="$CKPT/eval/${TASK}_multirung.json"; else OUT="$RUN_DIR/eval/${TASK}_multirung.json"; fi
+mkdir -p "$(dirname "$OUT")" "$RESULTS_SHARED"
 
 # Default rungs per task (contra/rerank base rung is 2k, not 3k; the 8k/16k/32k files are _600/_500).
 case "$TASK" in
@@ -64,7 +70,7 @@ if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
 fi
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 conda activate "$OLMOENV"
-export PYTHONPATH="$REPO/src:$CR"   # olmo-core src (custom attn) shadows the editable install
+export PYTHONPATH="$REPO/src:$REPO/src/scripts:$CR"   # olmo-core src (custom attn) shadows the editable install
 cd "$CR"
 PORT=$(( 20000 + RANDOM % 20000 ))
 
@@ -97,7 +103,7 @@ if [ "$TASK" = "rerank" ]; then
     CEF="${CE[$r]}"; [ -f "$CR/$CEF" ] || { echo "MISSING $CEF, skipping"; continue; }
     O="$RUN_DIR/eval/rerank_ce_${r}.json"
     echo "=== rerank CE @${r} ($CEF) -> $O ==="
-    torchrun --nproc_per_node="$NGPU" --master_port="$PORT" scripts/eval/eval_lc_native.py \
+    torchrun --nproc_per_node="$NGPU" --master_port="$PORT" $REPO/src/scripts/ctc_eval/eval/eval_lc_native.py \
       --model-path "$CKPT" --out "$O" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \
       --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
       --ladder --ladder-tasks rerank --ladder-rungs 2k --rerank-data "$CEF"
@@ -109,7 +115,11 @@ fi
 # ---- dense / compressive / landmark: standard multi-rung ladder (NDCG/F1/score per rung). ----
 COMMON="--model-path $CKPT --out $OUT --tokenizer $TOKENIZER --max-length $MAX_LENGTH \
         --max-test-samples $MAX_TEST --batch-size $BATCH_SIZE --skip-ruler --skip-gen \
-        --ladder --ladder-tasks $TASK --ladder-rungs $RUNGS"
+        --ladder --ladder-tasks $TASK --ladder-rungs $RUNGS \
+        --prompt-format ${PROMPT_FORMAT:-chat} --query-position ${QUERY_POSITION:-after} \
+        ${EOS_TOKEN_ID:+--eos-token-id $EOS_TOKEN_ID}"
+# Landmark checkpoints cannot generate without the landmark token ids (family-specific).
+[ -n "${LANDMARK_MEM_ID:-}" ] && COMMON="$COMMON --landmark-mem-id $LANDMARK_MEM_ID --landmark-pad-id ${LANDMARK_PAD_ID:-}"
 case "$TASK" in
   contra)  LTASK=contradiction; EXTRA="--contra-data data/contradiction_eval_pubmed_both_n100_k3.jsonl --contra-max-new-tokens 512" ;;
   nq)      LTASK=nq;            EXTRA="--nq-data data/n2ified_eval_nq_q50.jsonl" ;;
@@ -119,7 +129,7 @@ esac
 # --ladder-tasks uses the loadtask name (contradiction/nq/oolong/outlier).
 COMMON="${COMMON/--ladder-tasks $TASK/--ladder-tasks $LTASK}"
 echo "=== EVAL $(date '+%T') -> $OUT ==="
-torchrun --nproc_per_node="$NGPU" --master_port="$PORT" scripts/eval/eval_lc_native.py $COMMON $EXTRA
+torchrun --nproc_per_node="$NGPU" --master_port="$PORT" $REPO/src/scripts/ctc_eval/eval/eval_lc_native.py $COMMON $EXTRA
 rc=$?
 [ -f "$OUT" ] && { cp "$OUT" "$RESULTS_SHARED/${RUN}_${TASK}_multirung.json"; echo "--- $OUT ---"; cat "$OUT"; }
 echo "=== DONE rc=$rc result=$RESULTS_SHARED/${RUN}_${TASK}_multirung.json $(date '+%F %T') ==="

@@ -31,6 +31,23 @@ ARMS = {
     "t16k_4k1000": {111: 500, 28: 1000},
     "t16k_4k4000": {111: 500, 28: 4000},
     "v_mix": {111: 1000, 28: 2000, 14: 2000},
+    # ---- check thread v2 (2026-08-27) ----
+    "m8k_mix": {57: 4000, 14: 4000},   # check2 (b)
+    "p8k_5000": {57: 5000},            # check2 FLOP-matched control for (b)
+    "p8k_8000": {57: 8000},            # check2 (c)
+    "p2k_1250": {14: 1250},            # check3 2k scaling (0.25x of 5000)
+    "p2k_2500": {14: 2500},
+    "p2k_10000": {14: 10000},
+    "p2k_20000": {14: 20000},
+    "p32k_2000": {220: 2000},          # check4 32k candidate
+    # ---- wave 3: scaling families for BOTH possible check-2 winners ----
+    "msb_1000": {57: 1000, 14: 1000},   # 0.25x of mix (b)
+    "msb_2000": {57: 2000, 14: 2000},   # 0.5x
+    "msb_8000": {57: 8000, 14: 8000},   # 2x
+    "msb_16000": {57: 16000, 14: 16000},# 4x
+    "p8k_2000": {57: 2000},             # 0.25x of (c)
+    "p8k_16000": {57: 16000},           # 2x
+    "p8k_32000": {57: 32000},           # 4x
 }
 SHUFFLE_SEED = 7113
 
@@ -44,7 +61,7 @@ def main() -> None:
     out_root.mkdir(exist_ok=True)
 
     pools = {}
-    for n in (14, 28, 57, 111):
+    for n in (14, 28, 57, 111, 220):
         path = work / f"outlier_lm_n{n}_train.jsonl"
         pools[n] = path.read_text().splitlines()
         print(f"pool n{n}: {len(pools[n])} examples")

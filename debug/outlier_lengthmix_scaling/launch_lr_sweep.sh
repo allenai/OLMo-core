@@ -21,13 +21,15 @@ lr_tag () { case "$1" in 2e-5) echo lr2e5;; 5e-5) echo lr5e5;; 1.2e-4) echo lr1p
 n=0
 for variant in full sparselandmark; do
   vtag=full; [ "$variant" = "sparselandmark" ] && vtag=slm
+  PACK_FLAG=""
+  [ "$variant" = "full" ] && PACK_FLAG="--pack"
   for lr in 2e-5 5e-5 1.2e-4; do
     tag=$(lr_tag "$lr")
     RUN="lmx-${vtag}-${tag}-4b"
     echo "=== [$CMD] $RUN (variant=$variant lr=$lr) ==="
     timeout 240 $PY -u src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py \
       --task outlier --variant "$variant" --model-scale 4b --model-family qwen3_5 \
-      --run-name "$RUN" --num-nodes 1 --epochs 1 --seq-len 4096 --lr "$lr" \
+      --run-name "$RUN" --num-nodes 1 --epochs 1 --seq-len 4096 --lr "$lr" $PACK_FLAG \
       --global-batch 8 --micro-batch-instances 1 \
       --data-root "$DATA" --base-checkpoint "$BASE" \
       --wandb-group outlier-lengthmix-lr \

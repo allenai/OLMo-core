@@ -1,0 +1,59 @@
+version: v2
+tasks:
+  - name: main
+    image:
+      beaker: 01KAY1JXJFCPQ1J5W61E2D2Q8V
+    command: [bash, /gantry/entrypoint.sh]
+    arguments: [bash, -c, "\nset -e\nmkdir -p ~/.aws; printenv AWS_CREDS > ~/.aws/credentials; printenv AWS_CFG > ~/.aws/config\ncommand -v aws >/dev/null 2>&1 || pip install -q awscli\nexport AWS_PROFILE=S3\nROOT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts\nfor RUN in RUNPLACEHOLDER; do\n  SRC=$(ls -d \"$ROOT\"/${RUN}-2* | head -1)\n  echo \"pushing $SRC\"\n  aws s3 sync \"$SRC\" \"s3://ai2-llm/checkpoints/prasanns/outlier_lengthmix/ckpt_relay/$RUN\" --only-show-errors --exclude \"wandb/*\" || [ $? -eq 2 ]\ndone\necho ALL-PUSH-OK\n"]
+    envVars:
+      - name: GANTRY_VERSION
+        value: 3.7.0
+      - name: GITHUB_REPO
+        value: allenai/OLMo-core
+      - name: GIT_REF
+        value: 4e7b0e96e79ca680c1ab19c843b25ba4771dadfb
+      - name: GANTRY_TASK_NAME
+        value: main
+      - name: RESULTS_DIR
+        value: /results
+      - name: GANTRY_RUNTIME_DIR
+        value: /gantry-runtime
+      - name: GANTRY_EXEC_METHOD
+        value: exec
+      - name: GIT_BRANCH
+        value: prasann/landmark
+      - name: GANTRY_DEFAULT_PYTHON_VERSION
+        value: "3.12"
+      - name: GANTRY_PYTHON_MANAGER
+        value: uv
+      - name: GANTRY_UV_ALL_EXTRAS
+        value: "1"
+      - name: GANTRY_INSTALL_CMD
+        value: "true"
+      - name: AWS_CREDS
+        secret: PRASANNS_AWS_CREDENTIALS
+      - name: AWS_CFG
+        secret: PRASANNS_AWS_CONFIG
+    datasets:
+      - mountPath: /gantry
+        source:
+          beaker: 01KNQSJ27JZEM2Z9KQ191P0JJY
+      - mountPath: /weka/oe-training-default
+        source:
+          weka: oe-training-default
+    result:
+      path: /results
+    resources:
+      cpuCount: 8
+    context:
+      priority: urgent
+      minRuntime: 0s
+      autoResume: true
+    constraints:
+      cluster:
+        - ai2/saturn
+        - ai2/neptune
+        - ai2/ceres
+    hostNetworking: false
+    propagateFailure: false
+    propagatePreemption: false
