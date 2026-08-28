@@ -1,3 +1,4 @@
+import gzip
 import math
 from pathlib import Path
 from typing import List
@@ -944,3 +945,37 @@ def test_guess_dtype():
         paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
     )
     assert config.get_dtype() == np.uint32
+
+
+def test_numpy_packed_fsl_dataset_use_array_if_local_not_served_from_stale_cache(tmp_path: Path):
+    """Preparing with the inferred boundaries and then again with the metadata boundaries, in the
+    same work_dir, must not serve the second run from the first run's packing caches."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 0].
+    data = [1, 2, 3, 4, 5, 6, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,7\n")
+
+    work_dir = tmp_path / "work"
+
+    def prepare(use_array_if_local):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=4,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = work_dir
+        ds.prepare()
+        return sum(int((ds[i]["label_mask"]).sum()) for i in range(len(ds)))
+
+    # Inferred boundaries merge the two documents and truncate to 4, dropping the second.
+    assert prepare(None) == 4
+    # Same work_dir, so the caches from the run above are present. The metadata boundaries must
+    # still be honored rather than the stale packing cache being reused.
+    assert prepare(False) == len(data)
