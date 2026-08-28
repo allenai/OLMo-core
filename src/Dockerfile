@@ -48,6 +48,13 @@ ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
     torch==${TORCH_VERSION} torchvision
 
+# Install ptxas for Triton and expose it at a stable path that is copied into the release image.
+ARG CUDA_NVCC_VERSION=12.8.93
+RUN pip install --no-cache-dir nvidia-cuda-nvcc-cu12==${CUDA_NVCC_VERSION} && \
+    ln -s /opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia/cuda_nvcc/bin/ptxas \
+        /opt/conda/bin/ptxas && \
+    /opt/conda/bin/ptxas --version
+
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
@@ -170,6 +177,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
+ENV TRITON_PTXAS_PATH=/opt/conda/bin/ptxas
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core

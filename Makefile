@@ -50,6 +50,7 @@ build :
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
+CUDA_NVCC_VERSION = 12.8.93
 PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
@@ -84,6 +85,7 @@ docker-image :
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
+		--build-arg CUDA_NVCC_VERSION=$(CUDA_NVCC_VERSION) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
