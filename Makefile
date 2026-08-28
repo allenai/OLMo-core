@@ -50,14 +50,16 @@ build :
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
 CUDA_VERSION = 12.8.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
+CUDA_NVCC_VERSION = 12.8.93
 PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
+DION_SHA = "7452a5823cf9655b93c3f1d8020b4ebb2535239b"
+GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 # Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine, ...) are
 # built for. The CUDA-13 targets (beaker-image-cu130*) extend these with sm_103 (B300 / Blackwell Ultra).
 TORCH_CUDA_ARCH_LIST = 9.0 10.0
-GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 FLASH_ATTN_VERSION = 2.8.2
 # Archs flash-attn 2 is compiled for (it reads FLASH_ATTN_CUDA_ARCHS, not TORCH_CUDA_ARCH_LIST).
 FLASH_ATTN_CUDA_ARCHS = 90;100
@@ -101,13 +103,16 @@ NVSHMEM_PIP_SPEC =
 VERSION = $(shell python src/olmo_core/version.py)
 VERSION_SHORT = $(shell python src/olmo_core/version.py short)
 IMAGE_SUFFIX = $(shell date "+%Y-%m-%d")
+# Build-variant marker ('-sm80', ...) set by the specialized image targets; combined with the FA4/RMA
+# matrix suffixes below.
+IMAGE_VARIANT =
 # '-fa4' marker in the tag when flash-attn 4 is baked in (empty otherwise; see FLASH_ATTN_4_VERSION).
 FA4_TAG = $(if $(FLASH_ATTN_4_VERSION),-fa4,)
 # '-rma' marker when the symm-mem/RMA stack (NVSHMEM + RMA-capable NCCL on a devel base) is baked in.
 RMA_TAG = $(if $(NVSHMEM_PIP_SPEC),-rma,)
 # Image tag omits the GPU generation: a CUDA-13 image is built for sm_90/100/103, so one image
 # serves H100 + B200 + B300 (naming stays consistent with the older CUDA-12 images).
-IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(FA4_TAG)$(RMA_TAG)-$(IMAGE_SUFFIX)
+IMAGE_TAG = tch$(TORCH_VERSION_SHORT)$(CUDA_VERSION_PATH)$(IMAGE_VARIANT)$(FA4_TAG)$(RMA_TAG)-$(IMAGE_SUFFIX)
 
 # Imports the built image is smoke-tested against. The CUDA-13 targets override this to drop
 # flash_attn_3, which isn't built on CUDA 13 (see CUDA13_ARGS).
@@ -120,6 +125,7 @@ docker-image :
 		--build-arg BUILDKIT_INLINE_CACHE=1 \
 		--build-arg CUDA_VERSION=$(CUDA_VERSION) \
 		--build-arg CUDA_VERSION_PATH=$(CUDA_VERSION_PATH) \
+		--build-arg CUDA_NVCC_VERSION=$(CUDA_NVCC_VERSION) \
 		--build-arg PYTHON_VERSION=$(PYTHON_VERSION) \
 		--build-arg UBUNTU_VERSION=$(UBUNTU_VERSION) \
 		--build-arg BASE_IMAGE=$(BASE_IMAGE) \
@@ -128,6 +134,7 @@ docker-image :
 		--build-arg TORCH_VERSION=$(TORCH_VERSION) \
 		--build-arg TORCH_CUDA_ARCH_LIST="$(TORCH_CUDA_ARCH_LIST)" \
 		--build-arg INSTALL_CHANNEL=$(INSTALL_CHANNEL) \
+		--build-arg DION_SHA=$(DION_SHA) \
 		--build-arg GROUPED_GEMM_SHA=$(GROUPED_GEMM_SHA) \
 		--build-arg FLASH_ATTN_VERSION=$(FLASH_ATTN_VERSION) \
 		--build-arg FLASH_ATTN_CUDA_ARCHS="$(FLASH_ATTN_CUDA_ARCHS)" \
@@ -151,6 +158,13 @@ docker-image :
 	@echo ""
 	@echo "✓ Build complete: olmo-core:$(IMAGE_TAG) (size=$$(docker inspect -f '{{ .Size }}' olmo-core:$(IMAGE_TAG) | numfmt --to=si))"
 	@echo ""
+
+.PHONY : docker-image-sm80
+docker-image-sm80 :
+	$(MAKE) docker-image \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
+		IMAGE_VARIANT=-sm80
 
 .PHONY : ghcr-image
 ghcr-image : docker-image
@@ -250,6 +264,14 @@ beaker-image-cu130-rma :
 .PHONY : beaker-image-cu130-fa4-rma
 beaker-image-cu130-fa4-rma :
 	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS) $(RMA_CU13_ARGS)
+
+# ---- sm_80 (A100) variant ----------------------------------------------------------------------
+.PHONY : beaker-image-sm80
+beaker-image-sm80 :
+	$(MAKE) beaker-image \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
+		IMAGE_VARIANT=-sm80
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :

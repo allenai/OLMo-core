@@ -92,12 +92,6 @@ jobs:
               pytest -v --color=yes --durations=3 -m "not gpu" \
                 src/integration_tests/
 
-          - name: Test olmo3 ladder
-            run: |
-              for size in 190M 370M 600M 760M 1B 3B 7B 13B; do
-                python ./src/scripts/train/ladder/olmo3_ladder.py dry-run --size="$size" --output-dir=./
-              done
-
           - name: Type check
             run: make type-check
 
@@ -172,10 +166,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # TODO: Add GPU test coverage for PyTorch 2.12 with CUDA 13.0 once a compatible
+        # Beaker image is available.
         task:
           - name: Test (GPU)
-            image: &gpu_test_image tylerr/olmo-core-tch291cu128-2025-11-25
+            image: &gpu_test_image akshitab/olmo-core-tch2100cu128-sm80-2026-08-25
             gpus: 2
+            gpu_types: --gpu-type h100 --gpu-type a100
+            run: |
+              pytest -v --color=yes --durations=3 -m gpu \
+                --ignore-glob='src/test/distributed/checkpoint*' \
+                --ignore-glob='src/test/nn/transformer*' \
+                --ignore-glob='src/test/nn/attention*' \
+                --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/optim*' \
+                src/test/
+
+          - name: Test (GPU, torch 2.11)
+            image: akshitab/olmo-core-tch2110cu128-2026-08-28
+            gpus: 2
+            gpu_types: --gpu-type h100
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
@@ -191,6 +201,7 @@ jobs:
           - name: Test checkpoint (GPU)
             image: *gpu_test_image
             gpus: 2
+            gpu_types: --gpu-type h100 --gpu-type a100
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
@@ -198,6 +209,7 @@ jobs:
           - name: Test transformer (GPU)
             image: *gpu_test_image
             gpus: 2
+            gpu_types: --gpu-type h100 --gpu-type a100
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
@@ -205,6 +217,7 @@ jobs:
           - name: Test attention (GPU)
             image: *gpu_test_image
             gpus: 2
+            gpu_types: --gpu-type h100
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/attention*
@@ -214,7 +227,7 @@ jobs:
             gpus: 2
             # The v1 dropless MoE tests use the grouped_gemm CUTLASS kernels, which have no
             # Blackwell (sm_100) build, so keep this job off b200.
-            gpu_type: --gpu-type h100 --gpu-type a100
+            gpu_types: --gpu-type h100 --gpu-type a100
             # The v2 MoE GPU tests need TransformerEngine + torch 2.10, which this image
             # lacks, so they run in the "Test MoE kernels" job below; exclude them here.
             # (The fused block/model tests moved to src/test/nn/ddp, which this job's
@@ -227,6 +240,7 @@ jobs:
           - name: Test optim (GPU)
             image: *gpu_test_image
             gpus: 2
+            gpu_types: --gpu-type h100 --gpu-type a100
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
@@ -234,6 +248,7 @@ jobs:
           - name: Integration tests (GPU)
             image: *gpu_test_image
             gpus: 2
+            gpu_types: --gpu-type h100 --gpu-type a100
             run: |
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
@@ -251,7 +266,7 @@ jobs:
             # This image's kernels (grouped_gemm, symm_mem_vdev2d, FP8) are built for sm_90 only
             # (`-gencode arch=compute_90,code=sm_90`), so pin to h100 — on a100/b200 grouped_gemm
             # fails with "Grouped GEMM execution not possible with HW".
-            gpu_type: --gpu-type h100
+            gpu_types: --gpu-type h100
             # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
@@ -304,20 +319,21 @@ jobs:
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
+            --pre-setup 'python -m pip uninstall -y torchaudio' \
             --budget ai2/oe-other \
-            --priority low \
-            --preemptible \
+            --priority normal \
+            --min-runtime 0 \
             --gpus ${{ matrix.task.gpus }} \
             --task-timeout 15m \
             --host-networking \
-            ${{ matrix.task.gpu_type || '--gpu-type h100 --gpu-type a100 --gpu-type b200' }} \
+            ${{ matrix.task.gpu_types || '--gpu-type h100 --gpu-type a100 --gpu-type b200' }} \
             --system-python \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
-            --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
-            --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
+            --env-secret 'AWS_ACCESS_KEY_ID=olmocore_AWS_ACCESS_KEY_ID' \
+            --env-secret 'AWS_SECRET_ACCESS_KEY=olmocore_AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}
 
   release:

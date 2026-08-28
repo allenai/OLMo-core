@@ -56,7 +56,13 @@ from olmo_core.testing import (
     requires_multi_gpu,
     run_distributed_test,
 )
-from olmo_core.testing.utils import FLA_MARKS, has_fla, requires_fla, requires_gpu
+from olmo_core.testing.utils import (
+    FLA_MARKS,
+    compute_capability,
+    has_fla,
+    requires_fla,
+    requires_gpu,
+)
 from olmo_core.train.train_module.transformer.config import (
     TransformerPipelineParallelConfig,
 )
@@ -369,7 +375,18 @@ def run_context_parallel_transformer_ulysses(
     [
         pytest.param("olmo2", AttentionBackendName.flash_2, id="olmo2-fa2", marks=FLASH_2_MARKS),
         pytest.param("olmo2", AttentionBackendName.flash_3, id="olmo2-fa3", marks=FLASH_3_MARKS),
-        pytest.param("olmo2", AttentionBackendName.te, id="olmo2-te-attn", marks=TE_MARKS),
+        pytest.param(
+            "olmo2",
+            AttentionBackendName.te,
+            id="olmo2-te-attn",
+            marks=(
+                *TE_MARKS,
+                pytest.mark.skipif(
+                    compute_capability is None or compute_capability < 9,
+                    reason="TE Ulysses attention requires compute capability >=9",
+                ),
+            ),
+        ),
         pytest.param("gdn", None, id="gdn", marks=FLA_MARKS),
     ],
 )
