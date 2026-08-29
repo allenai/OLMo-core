@@ -814,6 +814,87 @@ def test_mixture_data_loader_prefetch_skips_errors_in_reference_order(tmp_path):
     )
 
 
+def test_mixture_data_loader_nonpacked_prefetch_preserves_order_and_errors(tmp_path):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+
+    def build_loader(work_dir, workers):
+        dataset = _FailingFakeDataset(200, 1000)
+        loader = MixtureDataLoader(
+            [dataset],
+            [1.0],
+            collator,
+            work_dir=work_dir,
+            global_batch_size=2 * _SEQ,
+            seed=47,
+            prefetch_workers=workers,
+            max_consecutive_data_errors=0,
+            max_total_data_errors=0,
+            dataset_names=["audited-test"],
+        )
+        loader.reshuffle(epoch=3)
+        assert loader._order is not None
+        failed_ref = loader._order[1]
+        dataset.fail_indices = {failed_ref[1]}
+        loader.allowed_data_error_signatures = {
+            ("audited-test", failed_ref[1], failed_ref[2]): (
+                ValueError,
+                f"synthetic failure for {failed_ref[1]}",
+            )
+        }
+        return loader
+
+    sync = build_loader(tmp_path / "sync-nonpacked", 0)
+    sync_iter = iter(sync)
+    expected = [next(sync_iter), next(sync_iter)]
+    sync_state = sync.state_dict()
+    expected_after_resume = next(sync_iter)
+    sync_iter.close()
+
+    threaded = build_loader(tmp_path / "threaded-nonpacked", 4)
+    threaded_iter = iter(threaded)
+    actual = [next(threaded_iter), next(threaded_iter)]
+    threaded_state = threaded.state_dict()
+    threaded_iter.close()
+
+    restored = build_loader(tmp_path / "restored-nonpacked", 4)
+    restored.load_state_dict(threaded_state)
+    restored.reshuffle()
+    restored_iter = iter(restored)
+    actual_after_resume = next(restored_iter)
+    restored_iter.close()
+
+    for actual_batch, expected_batch in zip(actual, expected):
+        for key in ("input_ids", "loss_masks", "position_ids"):
+            np.testing.assert_array_equal(actual_batch[key], expected_batch[key])
+    assert sync_state["batches_processed"] == threaded_state["batches_processed"] == 2
+    assert sync_state["total_data_errors"] == threaded_state["total_data_errors"] == 1
+    for key in ("input_ids", "loss_masks", "position_ids"):
+        np.testing.assert_array_equal(actual_after_resume[key], expected_after_resume[key])
+
+
+def test_mixture_data_loader_allowlist_requires_exact_error_signature(tmp_path, caplog):
+    collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()
+    loader = MixtureDataLoader(
+        [_FakeDataset(10, 1)],
+        [1.0],
+        collator,
+        work_dir=tmp_path,
+        global_batch_size=2 * _SEQ,
+        max_consecutive_data_errors=0,
+        max_total_data_errors=0,
+        dataset_names=["audited-test"],
+        allowed_data_error_signatures={("audited-test", 7, 0): (ValueError, "known malformed row")},
+    )
+
+    loader._handle_data_error((0, 7, 0), ValueError("known malformed row"))
+    assert loader.total_data_errors == 1
+    assert "explicitly allowlisted data error" in caplog.text
+
+    with pytest.raises(ValueError, match="different failure"):
+        loader._handle_data_error((0, 7, 0), ValueError("different failure"))
+    assert loader.total_data_errors == 2
+
+
 @pytest.mark.parametrize("restored_workers", [0, 4])
 def test_mixture_data_loader_resume_preserves_tolerated_errors(tmp_path, restored_workers):
     collator = MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=_SEQ).build()

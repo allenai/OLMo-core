@@ -588,6 +588,21 @@ class VisionAlignmentModelVariant(StrEnum):
     ssmax_no_qknorm = "ssmax_no_qknorm"
 
 
+_SSMAX_JOINT_DATA_ERROR_QUARANTINE_RUNS = {
+    VisionAlignmentModelVariant.ssmax_head_qknorm: ("vision-ssmax-head-qknorm-1p4b-cx8-joint-v1"),
+    VisionAlignmentModelVariant.ssmax_no_qknorm: ("vision-ssmax-no-qknorm-1p4b-cx8-joint-v1"),
+}
+_SSMAX_JOINT_DATA_ERROR_QUARANTINE_PROJECTION_SHA256 = (
+    "11c1df56d7fbc270a9eff999193476c0c578c6964017d217a320b3d39305a730"
+)
+_SSMAX_JOINT_DATA_ERROR_QUARANTINE = {
+    ("audited_alignment", 100000, 0): (
+        ValueError,
+        "no usable (user, assistant) turn in row",
+    )
+}
+
+
 class VisionAlignmentPhase(StrEnum):
     """The three optimizer/data phases of vision alignment."""
 
@@ -6278,6 +6293,23 @@ def _mixture_data_error_policy(
     return {}
 
 
+def _mixture_allowed_data_error_signatures(
+    config: ExperimentConfig,
+) -> Dict[Tuple[str, int, int], Tuple[type[Exception], str]]:
+    """Return the one audited source defect quarantined for the matched SSMax comparison."""
+
+    expected_run_name = _SSMAX_JOINT_DATA_ERROR_QUARANTINE_RUNS.get(config.model_variant)
+    if (
+        expected_run_name is not None
+        and config.phase is VisionAlignmentPhase.joint
+        and config.required_run_name == expected_run_name
+        and config.data.joint_visual_projection_sha256
+        == _SSMAX_JOINT_DATA_ERROR_QUARANTINE_PROJECTION_SHA256
+    ):
+        return dict(_SSMAX_JOINT_DATA_ERROR_QUARANTINE)
+    return {}
+
+
 def _write_immutable_json_receipt(path: Path, payload: Mapping[str, Any]) -> None:
     """Create one canonical receipt, accepting only a byte-identical existing file."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -6575,6 +6607,7 @@ def train(config: ExperimentConfig) -> None:
         prefetch_workers=config.data.prefetch_workers,
         dataset_names=names,
         allow_legacy_state_without_dataset_fingerprints=False,
+        allowed_data_error_signatures=_mixture_allowed_data_error_signatures(config),
         dp_world_size=dp_world_size,
         dp_rank=dp_rank,
         **data_error_policy,

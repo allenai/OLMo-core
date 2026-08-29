@@ -1246,6 +1246,38 @@ def test_ssmax_data_errors_are_immediately_fatal_without_changing_s002_defaults(
     )
 
 
+def test_ssmax_joint_quarantine_is_exactly_scoped_to_the_matched_comparison():
+    vision_alignment = _load_module()
+    projection_sha = vision_alignment._SSMAX_JOINT_DATA_ERROR_QUARANTINE_PROJECTION_SHA256
+
+    def config(variant, run_name, *, phase="joint", sha=projection_sha):
+        return SimpleNamespace(
+            model_variant=variant,
+            phase=vision_alignment.VisionAlignmentPhase(phase),
+            required_run_name=run_name,
+            data=SimpleNamespace(joint_visual_projection_sha256=sha),
+        )
+
+    for variant, run_name in vision_alignment._SSMAX_JOINT_DATA_ERROR_QUARANTINE_RUNS.items():
+        assert vision_alignment._mixture_allowed_data_error_signatures(
+            config(variant, run_name)
+        ) == {
+            ("audited_alignment", 100000, 0): (
+                ValueError,
+                "no usable (user, assistant) turn in row",
+            )
+        }
+        assert not vision_alignment._mixture_allowed_data_error_signatures(
+            config(variant, f"{run_name}-different")
+        )
+        assert not vision_alignment._mixture_allowed_data_error_signatures(
+            config(variant, run_name, phase="perception")
+        )
+        assert not vision_alignment._mixture_allowed_data_error_signatures(
+            config(variant, run_name, sha="0" * 64)
+        )
+
+
 def test_ssmax_projection_full_replay_is_rank_zero_only_and_rank_divergence_fails(monkeypatch):
     import torch.distributed as dist
 

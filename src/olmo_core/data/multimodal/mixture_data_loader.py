@@ -15,7 +15,17 @@ from __future__ import annotations
 import itertools
 import logging
 import math
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 
@@ -43,6 +53,7 @@ __all__ = ["MixtureDataLoader"]
 
 ExampleRef = Tuple[int, int, int]
 LoadedExample = Tuple[ExampleRef, Optional[Dict[str, Any]], Optional[Exception]]
+AllowedDataErrorSignatures = Mapping[Tuple[str, int, int], Tuple[type[Exception], str]]
 
 
 class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
@@ -166,6 +177,10 @@ class MixtureDataLoader(DataLoaderBase):
     :param global_batch_size: global batch size in *tokens* (= global instances × seq len).
     :param epoch_instances: number of (global) instances that make up one epoch; defaults to
         the sum of the source lengths.
+    :param allowed_data_error_signatures: Exact data errors that may be skipped even when they
+        exceed the generic error limits. Keys are ``(dataset_name, example_index,
+        source_epoch)`` and values are ``(exception_type, exact_message)``. This is intended
+        only for narrowly audited, immutable source defects.
     :param allow_legacy_state_without_dataset_fingerprints: Allow restoring version 3 or 4
         buffered-packing cursor state, which predates per-source content fingerprints. This
         remains enabled by default for existing recipes and emits a warning. New recipes that
@@ -199,6 +214,7 @@ class MixtureDataLoader(DataLoaderBase):
         fs_local_rank: Optional[int] = None,
         dataset_names: Optional[Sequence[str]] = None,
         allow_legacy_state_without_dataset_fingerprints: bool = True,
+        allowed_data_error_signatures: Optional[AllowedDataErrorSignatures] = None,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -234,6 +250,9 @@ class MixtureDataLoader(DataLoaderBase):
             )
         else:
             self.dataset_names = list(dataset_names)
+        self.allowed_data_error_signatures = self._validate_allowed_data_error_signatures(
+            allowed_data_error_signatures or {}
+        )
         self.dataset_fingerprints = [
             self._dataset_fingerprint(dataset, name)
             for dataset, name in zip(self.datasets, self.dataset_names)
@@ -266,6 +285,41 @@ class MixtureDataLoader(DataLoaderBase):
         self._order: Optional[List[ExampleRef]] = None
         self._active_packer: Optional[_BufferedPackingIterator] = None
         self._packing_state: Optional[Dict[str, Any]] = None
+
+    def _validate_allowed_data_error_signatures(
+        self, signatures: AllowedDataErrorSignatures
+    ) -> Dict[Tuple[str, int, int], Tuple[type[Exception], str]]:
+        """Validate and freeze exact data-error exceptions before iteration."""
+        validated: Dict[Tuple[str, int, int], Tuple[type[Exception], str]] = {}
+        for key, signature in signatures.items():
+            if (
+                not isinstance(key, tuple)
+                or len(key) != 3
+                or not isinstance(key[0], str)
+                or key[0] not in self.dataset_names
+                or any(
+                    isinstance(value, bool) or not isinstance(value, int) or value < 0
+                    for value in key[1:]
+                )
+            ):
+                raise OLMoConfigurationError(
+                    "Allowed data-error keys must be (known_dataset_name, "
+                    f"non_negative_index, non_negative_source_epoch); got {key!r}"
+                )
+            if (
+                not isinstance(signature, tuple)
+                or len(signature) != 2
+                or not isinstance(signature[0], type)
+                or not issubclass(signature[0], Exception)
+                or not isinstance(signature[1], str)
+                or not signature[1]
+            ):
+                raise OLMoConfigurationError(
+                    "Allowed data-error signatures must be (Exception subclass, "
+                    f"non-empty exact message); got {signature!r}"
+                )
+            validated[key] = signature
+        return validated
 
     @staticmethod
     def _dataset_fingerprint(dataset: Any, dataset_name: str) -> Optional[Dict[str, Any]]:
@@ -419,9 +473,10 @@ class MixtureDataLoader(DataLoaderBase):
 
         if self._order is None:
             raise RuntimeError("call reshuffle() before iterating")
+        order = self._order
         n_batches = self.total_batches or 0
         if self.pack:
-            rank_refs = self._order[self.dp_rank :: self.dp_world_size]
+            rank_refs = order[self.dp_rank :: self.dp_world_size]
             gen = iter_packs(
                 self._example_stream(rank_refs),
                 self.seq_len,
@@ -435,12 +490,45 @@ class MixtureDataLoader(DataLoaderBase):
                 yield self.collator([next(gen) for _ in range(ri)])
             return
         gi = self._global_instances
-        for b in range(self.batches_processed, n_batches):
-            global_slice = self._order[b * gi : (b + 1) * gi]
-            rank_slice = global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
-            ref_iter: Iterator = itertools.chain(rank_slice, itertools.cycle(self._order))
-            examples = [self._load_example(ref_iter) for _ in range(ri)]
-            yield self.collator(examples)
+        start_batch = self.batches_processed
+
+        def remaining_rank_refs() -> Iterator[ExampleRef]:
+            for batch_idx in range(start_batch, n_batches):
+                global_slice = order[batch_idx * gi : (batch_idx + 1) * gi]
+                yield from global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
+
+        # Keep one ordered stream alive across batches. Its bounded read-ahead overlaps image
+        # preprocessing for the next batch with the current GPU step, while results and data
+        # errors are still consumed in precisely the original reference order.
+        results = iter(
+            prefetch_map(
+                self._try_load_ref,
+                remaining_rank_refs(),
+                num_workers=self.prefetch_workers,
+            )
+        )
+        try:
+            for _ in range(start_batch, n_batches):
+                examples = []
+                for _ in range(ri):
+                    ref, example, error = next(results)
+                    if error is None:
+                        assert example is not None
+                        self._consecutive_data_errors = 0
+                        examples.append(example)
+                    else:
+                        self._handle_data_error(ref, error)
+
+                # Match the previous chain(rank_slice, cycle(order)) behavior exactly: any
+                # invalid scheduled refs are replaced from a fresh cycle of the global order.
+                fallback_refs = itertools.cycle(order)
+                while len(examples) < ri:
+                    examples.append(self._load_example(fallback_refs))
+                yield self.collator(examples)
+        finally:
+            close = getattr(results, "close", None)
+            if close is not None:
+                close()
 
     def _try_load_example(self, ref) -> Dict[str, Any]:
         src_idx, example_idx, source_epoch = ref
@@ -520,6 +608,14 @@ class MixtureDataLoader(DataLoaderBase):
             f"(consecutive_data_errors={self._consecutive_data_errors}, "
             f"total_data_errors={self._total_data_errors})"
         )
+        allowed_signature = self.allowed_data_error_signatures.get(
+            (self.dataset_names[src_idx], example_idx, source_epoch)
+        )
+        if allowed_signature is not None and (
+            type(error) is allowed_signature[0] and str(error) == allowed_signature[1]
+        ):
+            log.warning("Skipping explicitly allowlisted data error loading %s: %r", context, error)
+            return
         if (
             self._consecutive_data_errors > self.max_consecutive_data_errors
             or self._total_data_errors > self.max_total_data_errors
