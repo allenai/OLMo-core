@@ -40,6 +40,31 @@ ARMS = {
     "p2k_10000": {14: 10000},
     "p2k_20000": {14: 20000},
     "p32k_2000": {220: 2000},          # check4 32k candidate
+    "p32k_8000": {220: 8000},          # 32k ceiling/K anchor (pool max 8200)
+    "p16k_8000": {111: 8000},          # sparse takeoff probe at 16k
+    "p16k_16000": {111: 16000},        # sparse takeoff probe at 16k
+
+    # --- length-mix scaling-law wave (token-budget-matched shapes; 2026-08-28) ---
+    # U: uniform tokens over 2k/4k/8k/16k/32k; S: short-heavy 45/27/16/8/4; L: long-heavy reverse;
+    # T: two-point 50% 2k + 50% 32k. Budget suffix = total tokens.
+    "mix_u16M":  {14: 1540, 28: 770,  57: 385,  111: 205,  220: 105},
+    "mix_u32M":  {14: 3080, 28: 1540, 57: 770,  111: 410,  220: 210},
+    "mix_u64M":  {14: 6160, 28: 3080, 57: 1540, 111: 820,  220: 420},
+    "mix_u128M": {14: 12320,28: 6160, 57: 3080, 111: 1640, 220: 840},
+    "mix_s16M":  {14: 3460, 28: 1040, 57: 308,  111: 82,   220: 21},
+    "mix_s32M":  {14: 6920, 28: 2080, 57: 616,  111: 164,  220: 42},
+    "mix_s64M":  {14: 13840,28: 4160, 57: 1232, 111: 328,  220: 84},
+    "mix_l16M":  {14: 308,  28: 308,  57: 308,  111: 277,  220: 236},
+    "mix_l32M":  {14: 616,  28: 616,  57: 616,  111: 554,  220: 472},
+    "mix_l64M":  {14: 1232, 28: 1232, 57: 1232, 111: 1108, 220: 944},
+    "mix_l128M": {14: 2464, 28: 2464, 57: 2464, 111: 2216, 220: 1888},
+    "mix_t16M":  {14: 3850, 220: 262},
+    "mix_t32M":  {14: 7700, 220: 524},
+    "mix_t64M":  {14: 15400,220: 1048},
+    "mix_s96M":  {14: 20770,28: 6230, 57: 1850, 111: 492,  220: 126},
+    "mix_s160M": {14: 34615,28: 10385,57: 3084, 111: 820,  220: 210},
+    "p64k_1500": {440: 1500},          # 64k transfer test: pure arm (~96M tok)
+    "mix_s64k96M": {14: 19400,28: 5800,57: 1730, 111: 460, 220: 118, 440: 90},  # short-heavy w/ 64k tail (~96M)
     # ---- wave 3: scaling families for BOTH possible check-2 winners ----
     "msb_1000": {57: 1000, 14: 1000},   # 0.25x of mix (b)
     "msb_2000": {57: 2000, 14: 2000},   # 0.5x
@@ -61,7 +86,7 @@ def main() -> None:
     out_root.mkdir(exist_ok=True)
 
     pools = {}
-    for n in (14, 28, 57, 111, 220):
+    for n in (14, 28, 57, 111, 220, 440):
         path = work / f"outlier_lm_n{n}_train.jsonl"
         pools[n] = path.read_text().splitlines()
         print(f"pool n{n}: {len(pools[n])} examples")

@@ -1,0 +1,18 @@
+[17:07:23] calibrating on 120 rows from nq_validation_k25-202_600.jsonl; docs/row min=27 max=201
+    k     p10  median     p90  clamped
+   12    1831    1907    2004      0.0
+   50    7166    7828    8027    0.133
+{
+  "12": {
+    "p10": 1831,
+    "median": 1907,
+    "p90": 2004,
+    "clamped_frac": 0.0
+  },
+  "50": {
+    "p10": 7166,
+    "median": 7828,
+    "p90": 8027,
+    "clamped_frac": 0.133
+  }
+}

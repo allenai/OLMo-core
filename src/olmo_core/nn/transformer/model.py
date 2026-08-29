@@ -970,6 +970,29 @@ class Transformer(nn.Module):
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
+        # NOTE: blocks get a policy with 'cast_forward_inputs' DISABLED, which is required for
+        # correctness whenever activation checkpointing wraps a block (the AC wrapper sits
+        # *outside* the block, so FSDP's pre-forward hook runs *inside* the checkpointed region).
+        # FSDP2 only casts forward inputs in 'FSDPState._pre_forward', which early-returns when
+        # the state is 'PRE_BACKWARD' -- i.e. exactly during the AC recompute. So any float32
+        # tensor passed to a block as an argument reaches the block as 'param_dtype' in the
+        # forward but as float32 in the recompute. Under context parallelism that's precisely the
+        # CP-sharded RoPE buffers ('pos_sin'/'pos_cos', built in fp32 by '_prepare_inputs'), and
+        # since torch.compile guards on input dtypes the recompute recompiles the block into a
+        # differently-partitioned graph that saves a different sequence of tensors. The result is
+        #   CheckpointError: torch.utils.checkpoint: Recomputed values for the following tensors
+        #   have different metadata than during the forward pass.
+        # on the very first backward (seen on 128k-context CP=2 runs; see
+        # 'debug/cp_ac_rope_dtype/').
+        # Disabling the cast is safe: the hidden state entering a block is already in
+        # 'param_dtype' (the embedding layer is sharded with the same policy and every layer norm
+        # preserves its input dtype), and the RoPE buffers are meant to stay in fp32 anyway --
+        # 'RotaryEmbedding.forward' casts them itself with 'type_as'.
+        block_mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype or self.dtype,
+            reduce_dtype=reduce_dtype,
+            cast_forward_inputs=False,
+        )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
         # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
         # which can be expensive and non-overlapped
@@ -982,7 +1005,7 @@ class Transformer(nn.Module):
                 prefetch_factor=prefetch_factor,
                 wrapping_strategy=wrapping_strategy,
                 reshard_after_forward=reshard_after_forward,
-                mp_policy=mp_policy,
+                mp_policy=block_mp_policy,
             )
 
         if self.embeddings is not None:

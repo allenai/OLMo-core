@@ -396,7 +396,15 @@ def main():
                 "outlier": [("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
                     ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
                     ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
-                    ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
+                    ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
+                    # 64k transfer-test rung (n=440 docs), same scale-K builder/pool as 3k-32k.
+                    ("64k", f"{E5}/outlier/outlier_wiki100w_n440_k3_eval_600.jsonl"),
+                    # 128k transfer-test rung (n=880 docs, median 128,335 tok). Built by the same
+                    # scale-K builder/pool as 3k-32k, so it extends THIS ladder rather than the
+                    # xlong distractor-recycling one. Selected only when --ladder-rungs asks for
+                    # 128k, so existing runs are unaffected; needs --max-length >= 146227 and
+                    # --batch-size 1.
+                    ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl")],
                 # CE-graded (NDCG@10 + Kendall-tau), shared 500 queries; tops out at k100 (~16k) —
                 # no CE-graded pool larger than k100 exists, so rerank has no 32k rung.
                 "rerank": [("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
@@ -440,6 +448,20 @@ def main():
                     for _lab, _tok in (("3k", 2048), ("8k", 8192), ("16k", 16384),
                                        ("32k", 32768))
                     if os.path.exists(f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
+                ]
+            # nq LENGTH-MIX rungs (2k/8k). The shipped nq ladder above is named by doc count
+            # (nq_validation_k{20,50,100,200}_600.jsonl); the length-mix bundle instead ships
+            # rung_{2048,8192}.jsonl, 600 held-out examples each, built by
+            # debug/outlier_lengthmix_scaling/build_nq_pools.py from the p10 NQ *validation*
+            # split (0 shared queries with the nq2k_*/nq8k_* training arms; k=12 -> median 1907
+            # tokens, k=48 -> median 7509, both MEASURED with Qwen3.5-0.8B-Base at
+            # --query-position after). Conditional and file-gated, so it overrides the shipped
+            # entry ONLY when pointed at that bundle; every other EVAL500_ROOT is untouched.
+            if os.path.exists(f"{E5}/nq/rung_2048.jsonl"):
+                LADDERS["nq"] = [
+                    (_lab, f"{E5}/nq/rung_{_tok}.jsonl")
+                    for _lab, _tok in (("2k", 2048), ("8k", 8192))
+                    if os.path.exists(f"{E5}/nq/rung_{_tok}.jsonl")
                 ]
         else:
             # v1 = the original independently-generated per-rung eval files. DISABLED 2026-07-29:

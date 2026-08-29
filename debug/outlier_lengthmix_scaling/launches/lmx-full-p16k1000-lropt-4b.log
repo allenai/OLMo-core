@@ -1,0 +1,28 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+[beaker_ctc_suite] task=outlier variant=full scale=4b run_name=lmx-full-p16k1000-lropt-4b-20260828T090431-0700 nodes=1 world_size=8 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/p16k_1000
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/lmx-full-p16k1000-lropt-4b-20260828T090431-0700
+[beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/outlier-lengthmix-checks
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task outlier --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/p16k_1000 --variant full --model-scale 4b --seq-len 32768 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/lmx-full-p16k1000-lropt-4b-20260828T090431-0700 --run-name lmx-full-p16k1000-lropt-4b-20260828T090431-0700 --wandb-group outlier-lengthmix-checks --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --pack
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: 
+prasanns/lmx-full-p16k1000-lropt-4b-20260828T090431-0700-6e73177a-e0c0 → 
+https://beaker.org/ex/01M14HVB3NHG9C4Q6P58BQVD1K
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: d8682fa outlier length-mix: wave-3 orchestration + qdmatc… → 
+https://github.com/allenai/OLMo-core/commit/d8682fa
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+✓ job created
+✓ job scheduled
+✓ resources acquired: 8 GPU, 192.0 CPU
+✓ downloaded dataset "01KNQSJ27JZEM2Z9KQ191P0JJY" in 816.244625ms
+✓ pulling image
+✓ local healthcheck started
+✓ local healthcheck succeeded

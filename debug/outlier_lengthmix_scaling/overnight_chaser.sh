@@ -84,7 +84,7 @@ cd /scratch/users/prasann/corpus-reasoning
 export PYTHONPATH=$REPO/src:$REPO/src/scripts:/scratch/users/prasann/corpus-reasoning
 export EVAL500_ROOT=/data/prasann/outlier_lengthmix/eval500_local/outlier
 PY=/data/prasann/conda/envs/corpus-reasoning-olmo/bin/python
-OLMO_LANDMARK_SPARSE_DECODE=1 $PY -m torch.distributed.run --nproc_per_node=2 --master_port=0 $REPO/src/scripts/ctc_eval/eval/eval_lc_native.py \
+OLMO_LANDMARK_SPARSE_DECODE=1 $PY -m torch.distributed.run --nproc_per_node=2 --master_port=$((20000 + SLURM_JOB_ID % 10000)) $REPO/src/scripts/ctc_eval/eval/eval_lc_native.py \
   --model-path "$DST" --out "$DST/eval_outlier_multirung.json" --tokenizer Qwen/Qwen3.5-0.8B \
   --max-length 40960 --max-test-samples 600 --batch-size 1 --skip-ruler --skip-gen \
   --landmark-mem-id 248200 --landmark-pad-id 248203 --eos-token-id 248044 \
@@ -125,7 +125,7 @@ for i in $(seq 1 120); do
     esac
   done
   N_LEFT=$(ls "$STATE" 2>/dev/null | wc -l)
-  N_EVAL=$(grep -l '^EVAL$' "$STATE"/* 2>/dev/null | wc -l)
+  N_EVAL=$(grep -l '^EVAL$' "$STATE"/*lropt* "$STATE"/*p32k2000* 2>/dev/null | wc -l)
   echo "[chaser tick $i] $N_EVAL/16 chained $(date '+%T')"
   [ "$N_EVAL" -ge 16 ] && { echo "[chaser] all 16 chained"; break; }
   sleep 300
