@@ -70,6 +70,67 @@ def test_template_and_materialized_spec_satisfy_exact_contract() -> None:
     module.validate_spec(_materialize(payload), allow_placeholders=False)
 
 
+def test_single_arm_staging_is_explicit_and_exact() -> None:
+    module = _module()
+    payload = _materialize(_template(module))
+    payload["tasks"] = [payload["tasks"][0]]
+
+    with pytest.raises(module.SpecValidationError, match="two model-arm tasks"):
+        module.validate_spec(payload, allow_placeholders=False)
+
+    module.validate_spec(
+        payload,
+        allow_placeholders=False,
+        expected_single_arm="ssmax_head_qknorm",
+    )
+    with pytest.raises(module.SpecValidationError, match="unexpected SSMax variant"):
+        module.validate_spec(
+            payload,
+            allow_placeholders=False,
+            expected_single_arm="ssmax_no_qknorm",
+        )
+
+
+def test_single_arm_cli_submits_validated_spec(tmp_path, monkeypatch) -> None:
+    module = _module()
+    payload = _materialize(_template(module))
+    payload["tasks"] = [payload["tasks"][0]]
+    spec_path = tmp_path / "single-arm.yaml"
+    spec_path.write_text(yaml.safe_dump(payload))
+    calls = []
+    monkeypatch.setattr(
+        module.subprocess, "run", lambda *args, **kwargs: calls.append((args, kwargs))
+    )
+
+    assert (
+        module.main(
+            [
+                str(spec_path),
+                "--single-arm",
+                "ssmax_head_qknorm",
+                "--name",
+                "ssmax-head-eval",
+            ]
+        )
+        == 0
+    )
+    assert calls == [
+        (
+            (
+                [
+                    "beaker",
+                    "experiment",
+                    "create",
+                    str(spec_path),
+                    "--workspace=ai2/scaling-ladders",
+                    "--name=ssmax-head-eval",
+                ],
+            ),
+            {"check": True, "shell": False},
+        )
+    ]
+
+
 @pytest.mark.parametrize(
     ("path", "value", "message"),
     [

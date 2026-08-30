@@ -94,6 +94,20 @@ python src/scripts/beaker_submit_vision_ssmax_eval.py MATERIALIZED_SPEC.yaml \
   --name vision-ssmax-PHASE-stepN-downstream-fast-v1
 ```
 
+When one matched checkpoint finishes first, its exact task may be staged without bypassing the
+submission validator. Materialize a spec containing only that task and name the expected arm
+explicitly:
+
+```bash
+python src/scripts/beaker_submit_vision_ssmax_eval.py MATERIALIZED_SINGLE_ARM_SPEC.yaml \
+  --single-arm ssmax_head_qknorm \
+  --name vision-ssmax-PHASE-stepN-head-downstream-fast-v1
+```
+
+Submit the other exact arm the same way when its checkpoint is complete. This changes only job
+timing: the comparator still requires both complete, same-phase, same-step results and their full
+checkpoint identities.
+
 For a local one-example mechanics smoke on a B300, use the exact command from either task and add
 `--limit 1`. Any limited output is marked partial and the comparator rejects it.
 

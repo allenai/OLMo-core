@@ -1,9 +1,10 @@
-"""Validate and submit only the reviewed dense-SSMax downstream evaluation spec.
+"""Validate and submit only a reviewed dense-SSMax downstream evaluation spec.
 
-The wrapper fixes the workspace to ``ai2/scaling-ladders`` and rejects specs that weaken
-urgent priority, the eight-hour minimum runtime, Holmes-only placement, immutable checkpoint
-identity, or the exact two-arm evaluator protocol.  Template validation is read-only and never
-invokes Beaker.
+The wrapper fixes the workspace to ``ai2/scaling-ladders`` and rejects specs that weaken urgent
+priority, the eight-hour minimum runtime, Holmes-only placement, immutable checkpoint identity,
+or the exact evaluator protocol. Paired submission remains the default; ``--single-arm`` permits
+an explicitly named arm to be staged while its matched checkpoint is still training. Template
+validation is read-only and never invokes Beaker.
 """
 
 from __future__ import annotations
@@ -79,6 +80,11 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-placeholders",
         action="store_true",
         help="Validate a .template file structurally; requires --validate-only",
+    )
+    parser.add_argument(
+        "--single-arm",
+        choices=SSMAX_VARIANTS,
+        help="Explicitly validate and submit exactly one staged model arm",
     )
     return parser
 
@@ -161,15 +167,28 @@ def _is_placeholder(value: str) -> bool:
     return _PLACEHOLDER.fullmatch(value) is not None
 
 
-def validate_spec(spec: Mapping[str, Any], *, allow_placeholders: bool) -> None:
-    """Validate the complete two-arm Beaker experiment contract."""
+def validate_spec(
+    spec: Mapping[str, Any],
+    *,
+    allow_placeholders: bool,
+    expected_single_arm: str | None = None,
+) -> None:
+    """Validate the complete paired or explicitly staged Beaker experiment contract."""
     if spec.get("version") != "v2":
         raise SpecValidationError("spec version must be v2")
     if spec.get("budget") != BEAKER_BUDGET:
         raise SpecValidationError(f"spec budget must be {BEAKER_BUDGET}")
     tasks = spec.get("tasks")
-    if not isinstance(tasks, list) or len(tasks) != 2:
-        raise SpecValidationError("spec must contain exactly the two model-arm tasks")
+    if not isinstance(tasks, list):
+        raise SpecValidationError("spec tasks must be a list")
+    if expected_single_arm is None:
+        expected_variants = set(SSMAX_VARIANTS)
+        if len(tasks) != 2:
+            raise SpecValidationError("spec must contain exactly the two model-arm tasks")
+    else:
+        expected_variants = {expected_single_arm}
+        if len(tasks) != 1:
+            raise SpecValidationError("single-arm staging must contain exactly one model-arm task")
 
     seen_variants: set[str] = set()
     seen_outputs: set[str] = set()
@@ -190,7 +209,7 @@ def validate_spec(spec: Mapping[str, Any], *, allow_placeholders: bool) -> None:
                 "task must use the exact reviewed evaluator argument surface and order"
             )
         variant = _argument_value(arguments, "--expected-model-variant")
-        if variant not in SSMAX_VARIANTS:
+        if variant not in expected_variants:
             raise SpecValidationError(f"unexpected SSMax variant {variant!r}")
         if variant in seen_variants:
             raise SpecValidationError(f"duplicate model-arm task {variant}")
@@ -309,8 +328,10 @@ def validate_spec(spec: Mapping[str, Any], *, allow_placeholders: bool) -> None:
         ):
             raise SpecValidationError("task must mount oe-training-default Weka")
 
-    if seen_variants != set(SSMAX_VARIANTS):
-        raise SpecValidationError("spec must cover QK-norm and no-QK-norm exactly once")
+    if seen_variants != expected_variants:
+        if expected_single_arm is None:
+            raise SpecValidationError("spec must cover QK-norm and no-QK-norm exactly once")
+        raise SpecValidationError(f"single-arm spec must cover only {expected_single_arm!r}")
     if len(seen_phases) != 1:
         raise SpecValidationError("paired model arms must evaluate the same declared phase")
     if len(seen_steps) != 1:
@@ -345,7 +366,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     path = _validated_path(_parser(), args.spec, template=args.allow_placeholders)
     with path.open() as file_handle:
         payload = yaml.safe_load(file_handle)
-    validate_spec(_mapping(payload, name="spec"), allow_placeholders=args.allow_placeholders)
+    validate_spec(
+        _mapping(payload, name="spec"),
+        allow_placeholders=args.allow_placeholders,
+        expected_single_arm=args.single_arm,
+    )
     if args.validate_only:
         return 0
     subprocess.run(
