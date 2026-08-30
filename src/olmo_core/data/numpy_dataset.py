@@ -47,7 +47,7 @@ from ..io import (
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
 from .tokenizer import TokenizerConfig
-from .types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
+from .types import DocumentBoundaryMode, LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
 from .utils import (
     bucket_documents,
     chunk_array,
@@ -60,6 +60,7 @@ from .utils import (
     load_array_slice_into_tensor,
     memmap_to_write,
     pack_documents_into_instances,
+    resolve_document_boundary_mode,
     run_worker_func,
     segment_documents_into_instances,
     write_array_to_disk,
@@ -220,7 +221,16 @@ class NumpyDatasetBase(ABC):
             sha256_hash.update(f"{field_name}={field_value},".encode())
         for path, size in zip(self.paths, self.file_sizes):
             sha256_hash.update(f"path={os.path.basename(path)},size={size},".encode())
+        for path, size in self.fingerprint_extra_sources:
+            sha256_hash.update(f"path={path},size={size},".encode())
         return sha256_hash.hexdigest()
+
+    @property
+    def fingerprint_extra_sources(self) -> Tuple[Tuple[PathOrStr, int], ...]:
+        """
+        Extra path/size pairs to include in the dataset fingerprint.
+        """
+        return ()
 
     @property
     def fs_local_rank(self) -> int:
@@ -442,10 +452,15 @@ class NumpyFSLDatasetBase(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 source_path = self._label_mask_path_to_source_path[source_path]
             sha256_hash.update(str(source_path).encode())
             sha256_hash.update(str(self._get_file_size(source_path)).encode())
+        for extra_id in self._get_indices_path_extra_ids(*source_paths):
+            sha256_hash.update(str(extra_id).encode())
         for extra_id in extra_ids or []:
             sha256_hash.update(extra_id.encode())
         path_hash = sha256_hash.hexdigest()
         return self.work_dir / "dataset-common" / f"{name}-{self.sequence_length}-{path_hash}.npy"
+
+    def _get_indices_path_extra_ids(self, *source_paths: PathOrStr) -> Tuple[str, ...]:
+        return ()
 
 
 class NumpyFSLDataset(NumpyFSLDatasetBase):
@@ -860,6 +875,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         include_instance_metadata: Optional[bool] = None,
         instance_filter_config: Optional[InstanceFilterConfig] = None,
         label_mask_paths: Optional[List[PathOrStr]] = None,
+        document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto,
     ):
         super().__init__(
             *paths,
@@ -874,6 +890,11 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             instance_filter_config=instance_filter_config,
             label_mask_paths=label_mask_paths,
         )
+        (
+            self._document_boundaries,
+            self._document_boundary_metadata_paths,
+            self._document_boundary_metadata_sizes,
+        ) = self._resolve_document_boundaries(document_boundaries)
         self._array_instance_offsets: Optional[Tuple[Tuple[int, int], ...]] = None
 
     @property
@@ -886,6 +907,20 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
             "max_target_sequence_length",
             "bos_token_id",
             "sequence_length",
+            "document_boundaries",
+        )
+
+    @property
+    def fingerprint_extra_sources(self) -> Tuple[Tuple[PathOrStr, int], ...]:
+        if self.document_boundaries != DocumentBoundaryMode.metadata:
+            return ()
+        return tuple(
+            (
+                self._document_boundary_metadata_paths[path],
+                self._document_boundary_metadata_sizes[path],
+            )
+            for path in self.paths
+            if path in self._document_boundary_metadata_sizes
         )
 
     @property
@@ -909,6 +944,10 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
         self,
     ) -> NumpyUIntTypes:
         return np.uint32
+
+    @property
+    def document_boundaries(self) -> DocumentBoundaryMode:
+        return self._document_boundaries
 
     def prepare(self):
         if self.fs_local_rank == 0:
@@ -941,6 +980,36 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
     def _get_instance_indices_path(self, source_path: PathOrStr) -> Path:
         return self._get_indices_path("instance-indices", source_path)
 
+    def _resolve_document_boundaries(
+        self, document_boundaries: DocumentBoundaryMode
+    ) -> Tuple[DocumentBoundaryMode, Dict[PathOrStr, PathOrStr], Dict[PathOrStr, int]]:
+        document_boundaries, metadata_paths = resolve_document_boundary_mode(
+            self.paths, document_boundaries=document_boundaries
+        )
+        metadata_path_by_source = dict(zip(self.paths, metadata_paths))
+        metadata_sizes: Dict[PathOrStr, int] = {}
+        if document_boundaries == DocumentBoundaryMode.metadata:
+            metadata_sizes = {
+                path: get_file_size(metadata_path_by_source[path]) for path in self.paths
+            }
+        log.info("Resolved document boundaries for %s to '%s'", self.__class__.__name__, document_boundaries)
+        return document_boundaries, metadata_path_by_source, metadata_sizes
+
+    def _get_indices_path_extra_ids(self, *source_paths: PathOrStr) -> Tuple[str, ...]:
+        extra_ids = [f"document_boundaries={self.document_boundaries}"]
+        if self.document_boundaries == DocumentBoundaryMode.metadata:
+            for source_path in source_paths:
+                source_path = self._label_mask_path_to_source_path.get(source_path, source_path)
+                metadata_path = self._document_boundary_metadata_paths[source_path]
+                metadata_size = self._document_boundary_metadata_sizes[source_path]
+                extra_ids.extend(
+                    [
+                        f"metadata_path={metadata_path}",
+                        f"metadata_size={metadata_size}",
+                    ]
+                )
+        return tuple(extra_ids)
+
     def _write_instance_indices(self):
         paths_needed: List[PathOrStr] = []
         for path in self.paths:
@@ -962,9 +1031,11 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         path,
                         indices_path,
                         max_sequence_length=self.sequence_length,
+                        document_boundaries=self.document_boundaries,
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
+                        bos_token_id=self.bos_token_id,
                     )
                     futures.append(future)
 
@@ -1014,6 +1085,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         label_mask_paths: Optional[List[PathOrStr]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
+        document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto,
     ):
         super().__init__(
             *paths,
@@ -1034,6 +1106,11 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         self._long_doc_strategy = long_doc_strategy
         self._source_group_size = source_group_size
+        (
+            self._document_boundaries,
+            self._document_boundary_metadata_paths,
+            self._document_boundary_metadata_sizes,
+        ) = self._resolve_document_boundaries(document_boundaries)
 
         self._source_path_groups = list(chunked(self.paths, self.source_group_size))
         self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
@@ -1059,6 +1136,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             "long_doc_strategy",
             "bos_token_id",
             "sequence_length",
+            "document_boundaries",
         )
         # For backwards compat, only add this when it's not the default.
         if self._source_group_size > 1:
@@ -1072,6 +1150,23 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     @property
     def source_group_size(self) -> int:
         return self._source_group_size
+
+    @property
+    def document_boundaries(self) -> DocumentBoundaryMode:
+        return self._document_boundaries
+
+    @property
+    def fingerprint_extra_sources(self) -> Tuple[Tuple[PathOrStr, int], ...]:
+        if self.document_boundaries != DocumentBoundaryMode.metadata:
+            return ()
+        return tuple(
+            (
+                self._document_boundary_metadata_paths[path],
+                self._document_boundary_metadata_sizes[path],
+            )
+            for path in self.paths
+            if path in self._document_boundary_metadata_sizes
+        )
 
     @property
     def indices_dtype(
@@ -1176,6 +1271,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         # Load token IDs and maybe label masks for each document.
         document_token_ids: List[torch.Tensor] = []
+        document_lengths: List[int] = []
         document_label_masks: Optional[List[torch.Tensor]] = (
             None if label_mask_paths is None else []
         )
@@ -1203,6 +1299,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 raise RuntimeError("we shouldn't be here!")
 
             assert source_path is not None
+            document_lengths.append(document_end - document_start)
             document_token_ids.append(
                 load_array_slice_into_tensor(source_path, document_start, document_end, self.dtype)
             )
@@ -1234,10 +1331,38 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata = self._metadata_groups[source_group_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(
-                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
-            )
+            out["doc_lens"] = torch.tensor(document_lengths, dtype=torch.int32)
         return out
+
+    def _resolve_document_boundaries(
+        self, document_boundaries: DocumentBoundaryMode
+    ) -> Tuple[DocumentBoundaryMode, Dict[PathOrStr, PathOrStr], Dict[PathOrStr, int]]:
+        document_boundaries, metadata_paths = resolve_document_boundary_mode(
+            self.paths, document_boundaries=document_boundaries
+        )
+        metadata_path_by_source = dict(zip(self.paths, metadata_paths))
+        metadata_sizes: Dict[PathOrStr, int] = {}
+        if document_boundaries == DocumentBoundaryMode.metadata:
+            metadata_sizes = {
+                path: get_file_size(metadata_path_by_source[path]) for path in self.paths
+            }
+        log.info("Resolved document boundaries for %s to '%s'", self.__class__.__name__, document_boundaries)
+        return document_boundaries, metadata_path_by_source, metadata_sizes
+
+    def _get_indices_path_extra_ids(self, *source_paths: PathOrStr) -> Tuple[str, ...]:
+        extra_ids = [f"document_boundaries={self.document_boundaries}"]
+        if self.document_boundaries == DocumentBoundaryMode.metadata:
+            for source_path in source_paths:
+                source_path = self._label_mask_path_to_source_path.get(source_path, source_path)
+                metadata_path = self._document_boundary_metadata_paths[source_path]
+                metadata_size = self._document_boundary_metadata_sizes[source_path]
+                extra_ids.extend(
+                    [
+                        f"metadata_path={metadata_path}",
+                        f"metadata_size={metadata_size}",
+                    ]
+                )
+        return tuple(extra_ids)
 
     def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
@@ -1270,6 +1395,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         instances, document_indices, total_tokens = pack_documents_into_instances(
             *source_paths,
             max_sequence_length=self.sequence_length,
+            document_boundaries=self.document_boundaries,
             eos_token_id=self.eos_token_id,
             bos_token_id=self.bos_token_id,
             dtype=self.dtype,
@@ -2630,6 +2756,10 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The paths/URLs to numpy bool files indicating which tokens should be masked.
     """
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto
+    """
+    How to resolve document boundaries for padded document-aware datasets.
+    """
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2652,6 +2782,7 @@ class NumpyPaddedFSLDatasetConfig(NumpyDatasetConfig):
             include_instance_metadata=self.include_instance_metadata,
             instance_filter_config=self.instance_filter_config,
             label_mask_paths=label_masks,
+            document_boundaries=self.document_boundaries,
         )
         return self._finalize(dataset)
 
@@ -2678,6 +2809,10 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     source_group_size: int = 1
     """
     The number of source npy files to process together when packing.
+    """
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto
+    """
+    How to resolve document boundaries for packed document-aware datasets.
     """
 
     def validate(self):
@@ -2708,6 +2843,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
             long_doc_strategy=self.long_doc_strategy,
             label_mask_paths=label_masks,
             source_group_size=self.source_group_size,
+            document_boundaries=self.document_boundaries,
         )
         return self._finalize(dataset)
 

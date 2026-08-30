@@ -1,3 +1,4 @@
+import gzip
 import math
 from pathlib import Path
 from typing import List
@@ -6,6 +7,7 @@ import numpy as np
 import pytest
 
 from olmo_core.data import (
+    DocumentBoundaryMode,
     LongDocStrategy,
     NumpyFSLDataset,
     NumpyFSLDatasetConfig,
@@ -24,6 +26,12 @@ from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
 
 from .utils import mk_mmaps
+
+
+def _write_metadata(path: Path, *spans: tuple[int, int]):
+    with gzip.open(path.with_suffix(".csv.gz"), "wt") as f:
+        for start, end in spans:
+            f.write(f"{start},{end}\n")
 
 
 def test_numpy_fsl_dataset(tmp_path: Path):
@@ -210,6 +218,49 @@ def test_numpy_padded_fsl_dataset(tmp_path: Path):
     assert len(ds) == 4
 
 
+def test_numpy_padded_fsl_dataset_prefers_metadata(tmp_path: Path):
+    data = [1, 0, 2, 0, 3, 0]
+    path = tmp_path / "mmap.npy"
+    mmap = np.memmap(path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    _write_metadata(path, (0, len(data)))
+
+    ds = NumpyPaddedFSLDataset(
+        path,
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+    )
+    ds.prepare()
+
+    assert len(ds) == 1
+    assert ds[0]["input_ids"].tolist() == [1, 0, 2, 0, 3, 0, 0, 0]
+    assert ds[0]["label_mask"].tolist() == [True] * 6 + [False] * 2
+
+
+def test_numpy_padded_fsl_dataset_rejects_mixed_metadata_presence(tmp_path: Path):
+    data = [1, 0, 2, 0]
+    path1 = tmp_path / "mmap1.npy"
+    path2 = tmp_path / "mmap2.npy"
+    for path in (path1, path2):
+        mmap = np.memmap(path, mode="w+", dtype=np.uint16, shape=(len(data),))
+        mmap[:] = data
+        mmap.flush()
+    _write_metadata(path1, (0, len(data)))
+
+    with pytest.raises(RuntimeError, match="some source files"):
+        NumpyPaddedFSLDataset(
+            path1,
+            path2,
+            sequence_length=8,
+            pad_token_id=0,
+            eos_token_id=0,
+            vocab_size=32_000,
+        )
+
+
 def test_numpy_padded_fsl_dataset_with_label_mask(tmp_path: Path):
     data1 = [1, 2, 3, 4, 5, 6, 7, 0, 8, 9, 10, 0]
     mmap1 = np.memmap(tmp_path / "mmap1.npy", mode="w+", dtype=np.uint16, shape=(len(data1),))
@@ -305,6 +356,64 @@ def test_numpy_packed_fsl_dataset(tmp_path: Path, long_doc_strategy):
         assert ds[5]["label_mask"].tolist() == [True] * 6 + [False] * 2
     else:
         raise ValueError(long_doc_strategy)
+
+
+def test_numpy_packed_fsl_dataset_doc_lens_use_metadata_spans(tmp_path: Path):
+    data = [1, 0, 2, 0, 3, 0]
+    path = tmp_path / "mmap.npy"
+    mmap = np.memmap(path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    _write_metadata(path, (0, len(data)))
+
+    ds = NumpyPackedFSLDataset(
+        path,
+        sequence_length=8,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        generate_doc_lengths=True,
+    )
+    ds.prepare()
+
+    assert len(ds) == 1
+    assert ds[0]["input_ids"].tolist() == [1, 0, 2, 0, 3, 0, -1, -1]
+    assert ds[0]["doc_lens"].tolist() == [6]
+
+
+def test_numpy_padded_fsl_dataset_fingerprint_and_cache_track_metadata(tmp_path: Path):
+    data = [1, 0, 2, 0]
+    path = tmp_path / "mmap.npy"
+    mmap = np.memmap(path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+
+    _write_metadata(path, (0, len(data)))
+    ds1 = NumpyPaddedFSLDataset(
+        path,
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+        document_boundaries=DocumentBoundaryMode.metadata,
+    )
+    fingerprint1 = ds1.fingerprint
+    indices_path1 = ds1._get_instance_indices_path(path)
+
+    _write_metadata(path, (0, 2), (2, len(data)))
+    ds2 = NumpyPaddedFSLDataset(
+        path,
+        sequence_length=8,
+        pad_token_id=0,
+        eos_token_id=0,
+        vocab_size=32_000,
+        document_boundaries=DocumentBoundaryMode.metadata,
+    )
+    fingerprint2 = ds2.fingerprint
+    indices_path2 = ds2._get_instance_indices_path(path)
+
+    assert fingerprint1 != fingerprint2
+    assert indices_path1 != indices_path2
 
 
 @pytest.mark.parametrize("long_doc_strategy", [LongDocStrategy.truncate, LongDocStrategy.fragment])

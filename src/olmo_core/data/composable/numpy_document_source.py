@@ -16,12 +16,13 @@ from olmo_core.utils import log_once
 
 from ..mixes import DataMix, DataMixBase
 from ..tokenizer import TokenizerConfig
-from ..types import LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
+from ..types import DocumentBoundaryMode, LongDocStrategy, NumpyDatasetDType, NumpyUIntTypes
 from ..utils import (
     chunked,
     iter_document_indices,
     iter_document_indices_with_max_sequence_length,
     load_array_slice,
+    resolve_document_boundary_mode,
 )
 from .token_source import DocumentSource, DocumentSourceConfig, TokenRange
 from .utils import path_map, resolve_seed
@@ -52,6 +53,10 @@ class NumpyDocumentSourceConfigBase(DocumentSourceConfig):
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate
     """
     How to handle long documents when ``max_document_length`` is set.
+    """
+    document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto
+    """
+    How to resolve document boundaries for document-aware iteration.
     """
 
     def __post_init__(self):
@@ -218,6 +223,7 @@ class NumpyDocumentSourceConfig(NumpyDocumentSourceConfigBase):
             label=label,
             max_document_length=self.max_document_length,
             long_doc_strategy=self.long_doc_strategy,
+            document_boundaries=self.document_boundaries,
         )
 
         if self.source_group_size > 0:
@@ -337,6 +343,7 @@ class NumpyDocumentSource(DocumentSource):
         label: Optional[str] = None,
         max_document_length: Optional[int] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
+        document_boundaries: DocumentBoundaryMode = DocumentBoundaryMode.auto,
         _source_sizes: Optional[Sequence[int]] = None,
         _label_mask_sizes: Optional[Sequence[int]] = None,
     ):
@@ -360,6 +367,11 @@ class NumpyDocumentSource(DocumentSource):
         self._tokenizer = tokenizer
         self._max_document_length = max_document_length
         self._long_doc_strategy = long_doc_strategy
+        (
+            self._document_boundaries,
+            self._document_boundary_metadata_paths,
+            self._document_boundary_metadata_sizes,
+        ) = self._resolve_document_boundaries(document_boundaries)
 
         source_sizes: Sequence[int]
         if _source_sizes is not None:
@@ -443,6 +455,10 @@ class NumpyDocumentSource(DocumentSource):
     def long_doc_strategy(self) -> LongDocStrategy:
         return self._long_doc_strategy
 
+    @property
+    def document_boundaries(self) -> DocumentBoundaryMode:
+        return self._document_boundaries
+
     @ft.cached_property
     def fingerprint(self) -> str:
         sha256_hash = hashlib.sha256()
@@ -452,6 +468,7 @@ class NumpyDocumentSource(DocumentSource):
                 f"{self.dtype=},"
                 f"{self.eos_token_id=},"
                 f"{self.bos_token_id=},"
+                f"{self.document_boundaries=},"
             ).encode()
         )
 
@@ -462,6 +479,11 @@ class NumpyDocumentSource(DocumentSource):
         # by hashing their paths and sizes instead. This should be sufficient to detect changes 99.99% of the time.
         for path, size in zip(self.source_paths, self.source_sizes):
             sha256_hash.update(f"{path=},{size=},".encode())
+        if self.document_boundaries == DocumentBoundaryMode.metadata:
+            for path in self.source_paths:
+                metadata_path = self._document_boundary_metadata_paths[path]
+                metadata_size = self._document_boundary_metadata_sizes[path]
+                sha256_hash.update(f"{metadata_path=},{metadata_size=},".encode())
         if self.label_mask_paths is not None:
             for label_path, size in zip(self.label_mask_paths, self.source_sizes):
                 sha256_hash.update(f"{label_path=},{size=},".encode())
@@ -500,6 +522,9 @@ class NumpyDocumentSource(DocumentSource):
                 tokenizer=self.tokenizer,
                 label_mask_paths=label_mask_paths,
                 label=self.label,
+                max_document_length=self.max_document_length,
+                long_doc_strategy=self.long_doc_strategy,
+                document_boundaries=self.document_boundaries,
                 _source_sizes=source_sizes,
                 _label_mask_sizes=label_mask_sizes,
             )
@@ -562,6 +587,7 @@ class NumpyDocumentSource(DocumentSource):
             if self.max_document_length is None:
                 indices = iter_document_indices(
                     source_path,
+                    document_boundaries=self.document_boundaries,
                     eos_token_id=self.eos_token_id,
                     bos_token_id=self.bos_token_id,
                     dtype=self.dtype,
@@ -570,6 +596,7 @@ class NumpyDocumentSource(DocumentSource):
                 indices = iter_document_indices_with_max_sequence_length(
                     source_path,
                     self.max_document_length,
+                    document_boundaries=self.document_boundaries,
                     eos_token_id=self.eos_token_id,
                     bos_token_id=self.bos_token_id,
                     dtype=self.dtype,
@@ -591,3 +618,18 @@ class NumpyDocumentSource(DocumentSource):
 
     def children(self):
         return []
+
+    def _resolve_document_boundaries(
+        self, document_boundaries: DocumentBoundaryMode
+    ) -> Tuple[DocumentBoundaryMode, Dict[PathOrStr, PathOrStr], Dict[PathOrStr, int]]:
+        document_boundaries, metadata_paths = resolve_document_boundary_mode(
+            self.source_paths, document_boundaries=document_boundaries
+        )
+        metadata_path_by_source = dict(zip(self.source_paths, metadata_paths))
+        metadata_sizes: Dict[PathOrStr, int] = {}
+        if document_boundaries == DocumentBoundaryMode.metadata:
+            metadata_sizes = {
+                path: io.get_file_size(metadata_path_by_source[path]) for path in self.source_paths
+            }
+        log.info("Resolved document boundaries for %s to '%s'", self.__class__.__name__, document_boundaries)
+        return document_boundaries, metadata_path_by_source, metadata_sizes

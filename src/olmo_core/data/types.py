@@ -7,6 +7,28 @@ from olmo_core.config import StrEnum
 NumpyUIntTypes = Union[Type[np.uint8], Type[np.uint16], Type[np.uint32], Type[np.uint64]]
 
 
+class DocumentBoundaryMode(StrEnum):
+    """
+    Specifies how document boundaries should be resolved for document-aware datasets.
+    """
+
+    auto = "auto"
+    """
+    Prefer explicit metadata when it exists for every source, otherwise fall back to tokenizer
+    boundary detection.
+    """
+
+    metadata = "metadata"
+    """
+    Require explicit metadata files for every source.
+    """
+
+    tokenizer = "tokenizer"
+    """
+    Infer document boundaries from tokenizer EOS/BOS tokens.
+    """
+
+
 class LongDocStrategy(StrEnum):
     """
     Specifies how to handle documents that are longer than the max sequence length when packing.

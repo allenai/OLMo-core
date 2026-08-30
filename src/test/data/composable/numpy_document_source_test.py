@@ -1,3 +1,4 @@
+import gzip
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,12 @@ def _write_mmap(path, data, dtype):
     mmap = np.memmap(path, mode="w+", dtype=dtype, shape=(len(data),))
     mmap[:] = data
     mmap.flush()
+
+
+def _write_metadata(path: Path, *spans: tuple[int, int]):
+    with gzip.open(path.with_suffix(".csv.gz"), "wt") as f:
+        for start, end in spans:
+            f.write(f"{start},{end}\n")
 
 
 def test_numpy_document_source(tmp_path: Path):
@@ -57,6 +64,25 @@ def test_numpy_document_source(tmp_path: Path):
     assert list(source[-3:]["input_ids"]) == [21, 22, 0]
 
     assert list(source.get_document_offsets()) == [(0, 2), (2, 12), (12, 23), (23, 26)]
+
+
+def test_numpy_document_source_prefers_metadata(tmp_path: Path):
+    dtype = np.uint16
+    tokenizer = TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1)
+
+    path = tmp_path / "mmap.npy"
+    data = [1, 0, 2, 0, 3, 0]
+    _write_mmap(path, data, dtype)
+    _write_metadata(path, (0, len(data)))
+
+    source = NumpyDocumentSource(
+        source_paths=[path],
+        dtype=dtype,
+        tokenizer=tokenizer,
+        work_dir=tmp_path,
+    )
+
+    assert list(source.get_document_offsets()) == [(0, len(data))]
 
 
 def test_numpy_document_source_concatenated(tmp_path: Path):

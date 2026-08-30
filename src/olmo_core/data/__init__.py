@@ -48,7 +48,7 @@ from .numpy_dataset import (
     VSLNaturalCurriculum,
 )
 from .tokenizer import TokenizerConfig, TokenizerName
-from .types import LongDocStrategy, NumpyDatasetDType
+from .types import DocumentBoundaryMode, LongDocStrategy, NumpyDatasetDType
 
 __all__ = [
     "composable",
@@ -73,6 +73,7 @@ __all__ = [
     "VSLCurriculumType",
     "VSLCurriculumConfig",
     "NumpyDatasetDType",
+    "DocumentBoundaryMode",
     "TokenizerConfig",
     "TokenizerName",
     "DataMixBase",
