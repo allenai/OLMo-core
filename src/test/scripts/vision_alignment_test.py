@@ -1262,10 +1262,18 @@ def test_ssmax_joint_quarantine_is_exactly_scoped_to_the_matched_comparison():
         assert vision_alignment._mixture_allowed_data_error_signatures(
             config(variant, run_name)
         ) == {
+            ("audited_alignment", 46333, 0): (
+                ValueError,
+                "no usable (user, assistant) turn in row",
+            ),
+            ("audited_alignment", 86346, 0): (
+                ValueError,
+                "no usable (user, assistant) turn in row",
+            ),
             ("audited_alignment", 100000, 0): (
                 ValueError,
                 "no usable (user, assistant) turn in row",
-            )
+            ),
         }
         assert not vision_alignment._mixture_allowed_data_error_signatures(
             config(variant, f"{run_name}-different")

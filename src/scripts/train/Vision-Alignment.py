@@ -596,10 +596,18 @@ _SSMAX_JOINT_DATA_ERROR_QUARANTINE_PROJECTION_SHA256 = (
     "11c1df56d7fbc270a9eff999193476c0c578c6964017d217a320b3d39305a730"
 )
 _SSMAX_JOINT_DATA_ERROR_QUARANTINE = {
+    ("audited_alignment", 46333, 0): (
+        ValueError,
+        "no usable (user, assistant) turn in row",
+    ),
+    ("audited_alignment", 86346, 0): (
+        ValueError,
+        "no usable (user, assistant) turn in row",
+    ),
     ("audited_alignment", 100000, 0): (
         ValueError,
         "no usable (user, assistant) turn in row",
-    )
+    ),
 }
 
 
