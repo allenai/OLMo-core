@@ -42,6 +42,7 @@ from olmo_core.eval.vision_alignment_ssmax_joint import (
     VISUAL_SOURCES,
     SSMaxJointEvidenceError,
     canonical_sha256,
+    evaluator_source_reference,
     load_json,
     load_manifest,
     manifest_reference,
@@ -500,11 +501,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "pairings": {source: dict(manifest["pairings"][source]) for source in VISUAL_SOURCES},
             "results": results,
             "attention_diagnostics": attention_diagnostics,
-            "evaluator": {
-                "path": str(Path(__file__).resolve()),
-                "sha256": sha256_file(Path(__file__).resolve()),
-                "git_ref": git["revision"],
-            },
+            "evaluator": evaluator_source_reference(Path(__file__), git_ref=str(git["revision"])),
         }
         payload["content_sha256"] = canonical_sha256(payload)
         bridge_runner._write_distributed(output_path, payload)

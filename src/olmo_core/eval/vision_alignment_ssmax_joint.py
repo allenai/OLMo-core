@@ -10,6 +10,7 @@ All task-quality and retention measurements remain descriptive.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -59,7 +60,8 @@ EVALUATION_RECEIPT_FORMAT = "vision_alignment_ssmax_joint_evaluation_receipt"
 HEALTH_RECEIPT_FORMAT = "vision_alignment_ssmax_joint_health_receipt"
 TRAJECTORY_REPORT_FORMAT = "vision_alignment_ssmax_joint_trajectory_report"
 PAIR_COMPARISON_FORMAT = "vision_alignment_ssmax_joint_pair_comparison"
-SCHEMA_VERSION = 1
+MANIFEST_SPEC_VERSION = 2
+SCHEMA_VERSION = 2
 LEGACY_PARENT_GATE_VERSION = 5
 PARENT_GATE_VERSION = 6
 DIRECT_PARENT_GATE_VERSION = direct_perception.PARENT_GATE_VERSION
@@ -96,12 +98,78 @@ ELIGIBLE_VISUAL_ROWS = {
     "pixmo_points_high_frequency": 509,
     "pixmo_transcript": 508,
 }
+BUILDER_REPO_RELATIVE_PATH = "src/olmo_core/eval/vision_alignment_ssmax_joint.py"
+EVALUATOR_REPO_RELATIVE_PATH = "src/scripts/eval/vision_alignment_ssmax_joint.py"
+STRUCTURAL_CONFIG_PROTOCOL = "joint-resume-structural-config-canonical-json-v1"
+STRUCTURAL_CONFIG_IGNORED_PATHS = ("launch.name", "launch.git.ref")
+CROSS_ARM_SCHEDULE_CLASSIFICATION = {
+    "schedule": "asymmetric_code_transition",
+    "causal_interpretation": "confounded",
+    "decision_scope": "descriptive_only",
+}
+TRAINING_RESUME_SCHEDULES = {
+    "ssmax_head_qknorm": {
+        "0": {
+            "config_sha256": "18b0ce331150767c71ead409c116f75cb3d1fa4c163365b80b06a43b51eb8d4e",
+            "launch_name": "vision-ssmax-head-qknorm-1p4b-cx8-joint-v1-cf5067c3",
+            "git_ref": "7cc97a77cbfe9a625531653ac6ec64382a56e56c",
+        },
+        "4000": {
+            "config_sha256": "18b0ce331150767c71ead409c116f75cb3d1fa4c163365b80b06a43b51eb8d4e",
+            "launch_name": "vision-ssmax-head-qknorm-1p4b-cx8-joint-v1-cf5067c3",
+            "git_ref": "7cc97a77cbfe9a625531653ac6ec64382a56e56c",
+        },
+        "8000": {
+            "config_sha256": "3a7b54a6f6e313f9d9288a1e177c21dfca434bc42f60cc48d7e7a0c30031ac14",
+            "launch_name": "vision-ssmax-head-qknorm-1p4b-cx8-joint-v1-2ccabac1",
+            "git_ref": "e53e8ee6db022366790e5a4ef3a94c62ab50928f",
+        },
+        "12000": {
+            "config_sha256": "3cdc518325fd9c02cddb52c4803253b7525dd12dab11ebd5ff151f98d9f8b4b3",
+            "launch_name": "vision-ssmax-head-qknorm-1p4b-cx8-joint-v1-cadcf2ef",
+            "git_ref": "26eebf08c91caf407bdae31fb989c02682946a3c",
+        },
+        "16000": {
+            "config_sha256": "3cdc518325fd9c02cddb52c4803253b7525dd12dab11ebd5ff151f98d9f8b4b3",
+            "launch_name": "vision-ssmax-head-qknorm-1p4b-cx8-joint-v1-cadcf2ef",
+            "git_ref": "26eebf08c91caf407bdae31fb989c02682946a3c",
+        },
+    },
+    "ssmax_no_qknorm": {
+        "0": {
+            "config_sha256": "991eb1f631c99d82b791b52f37ebb9d1fe31a35b342aece9b29eaa0edc0edbe2",
+            "launch_name": "vision-ssmax-no-qknorm-1p4b-cx8-joint-v1-06daa088",
+            "git_ref": "7cc97a77cbfe9a625531653ac6ec64382a56e56c",
+        },
+        "4000": {
+            "config_sha256": "a11bc8da1699c012972b00cb6943e71668ac82e4762090695531bd99dfe5eaf7",
+            "launch_name": "vision-ssmax-no-qknorm-1p4b-cx8-joint-v1-89a4e0b1",
+            "git_ref": "7cc97a77cbfe9a625531653ac6ec64382a56e56c",
+        },
+        "8000": {
+            "config_sha256": "a11bc8da1699c012972b00cb6943e71668ac82e4762090695531bd99dfe5eaf7",
+            "launch_name": "vision-ssmax-no-qknorm-1p4b-cx8-joint-v1-89a4e0b1",
+            "git_ref": "7cc97a77cbfe9a625531653ac6ec64382a56e56c",
+        },
+        "12000": {
+            "config_sha256": "17493e32d50252fc314d6eb7c1cb14576bb45ab37b8280428eafe6af6cc0afba",
+            "launch_name": "vision-ssmax-no-qknorm-1p4b-cx8-joint-v1-043301f2",
+            "git_ref": "26eebf08c91caf407bdae31fb989c02682946a3c",
+        },
+        "16000": {
+            "config_sha256": "17493e32d50252fc314d6eb7c1cb14576bb45ab37b8280428eafe6af6cc0afba",
+            "launch_name": "vision-ssmax-no-qknorm-1p4b-cx8-joint-v1-043301f2",
+            "git_ref": "26eebf08c91caf407bdae31fb989c02682946a3c",
+        },
+    },
+}
 
 MIN_EXAMPLES_PER_SOURCE = 8
 MIN_NATIVE_HOLDOUT_EXAMPLES = 1
 
 _SHA_RE = re.compile(r"[0-9a-f]{64}")
 _ARTIFACT_REF_FIELDS = frozenset({"path", "sha256"})
+_REPOSITORY_ARTIFACT_REF_FIELDS = frozenset({"path", "sha256", "repo_relative_path"})
 _MANIFEST_REF_FIELDS = frozenset({"path", "sha256", "content_sha256"})
 _CHECKPOINT_FIELDS = frozenset(
     {
@@ -125,6 +193,8 @@ _SPEC_FIELDS = frozenset(
         "model_variant",
         "run_name",
         "checkpoint_root",
+        "checkpoint_config_sha256s",
+        "evidence_git",
         "training_profile",
         "recipe",
         "perception_parent_gate",
@@ -138,6 +208,16 @@ _SPEC_FIELDS = frozenset(
         "companion_protocols",
     }
 )
+_EVIDENCE_GIT_FIELDS = frozenset({"repo", "repo_url", "ref"})
+_EVIDENCE_GIT_REF_PLACEHOLDER = "<FILL_WITH_CLEAN_EVIDENCE_COMMIT_SHA>"
+_MANIFEST_SPEC_REFERENCE_FIELDS = frozenset({"path", "sha256", "semantic_sha256"})
+_BUILDER_SOURCE_FIELDS = frozenset({"repo_relative_path", "sha256", "git_ref"})
+_EVALUATOR_SOURCE_FIELDS = frozenset({"repo_relative_path", "sha256", "git_ref"})
+_TRAINING_RESUME_LINEAGE_FIELDS = frozenset({"cross_arm_schedule", "structural_config", "steps"})
+_CROSS_ARM_SCHEDULE_FIELDS = frozenset({"schedule", "causal_interpretation", "decision_scope"})
+_STRUCTURAL_CONFIG_FIELDS = frozenset({"protocol", "ignored_paths", "sha256"})
+_RESUME_STEP_FIELDS = frozenset({"config_sha256", "launch_name", "training_git"})
+_TRAINING_GIT_FIELDS = frozenset({"repo", "repo_url", "branch", "ref"})
 _MANIFEST_FIELDS = frozenset(
     {
         "format",
@@ -147,6 +227,9 @@ _MANIFEST_FIELDS = frozenset(
         "model_variant",
         "run_name",
         "git",
+        "manifest_spec",
+        "manifest_builder",
+        "training_resume_lineage",
         "recipe",
         "training_profile",
         "perception_parent",
@@ -331,6 +414,7 @@ _REPORT_FIELDS = frozenset(
         "version",
         "status",
         "decision_scope",
+        "cross_arm_schedule",
         "created_at",
         "manifest",
         "run_id",
@@ -466,6 +550,128 @@ def artifact_reference(path: Path) -> dict[str, str]:
     return {"path": str(resolved), "sha256": sha256_file(resolved)}
 
 
+def _builder_source_path() -> Path:
+    return Path(__file__).resolve()
+
+
+def _repository_root() -> Path:
+    source = _builder_source_path()
+    root = source
+    for _ in Path(BUILDER_REPO_RELATIVE_PATH).parts:
+        root = root.parent
+    if source != (root / BUILDER_REPO_RELATIVE_PATH).resolve():
+        raise SSMaxJointEvidenceError("joint manifest builder is outside its canonical repository")
+    return root
+
+
+def evaluator_source_reference(source_path: Path, *, git_ref: str) -> dict[str, str]:
+    """Create a portable receipt reference to the canonical joint evaluator source."""
+
+    source = source_path.expanduser().resolve()
+    expected = (_repository_root() / EVALUATOR_REPO_RELATIVE_PATH).resolve()
+    if source != expected or not source.is_file():
+        raise SSMaxJointEvidenceError("joint evaluator source path is non-canonical")
+    if re.fullmatch(r"[0-9a-f]{40}", git_ref) is None:
+        raise SSMaxJointEvidenceError("joint evaluator git ref is invalid")
+    return {
+        "repo_relative_path": EVALUATOR_REPO_RELATIVE_PATH,
+        "sha256": sha256_file(source),
+        "git_ref": git_ref,
+    }
+
+
+def _validate_evaluator_source_reference(
+    value: Any, *, evidence_git: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Prove a portable evaluator ref against this clean evidence checkout and Git blob."""
+
+    reference = _exact(value, _EVALUATOR_SOURCE_FIELDS, name="joint evaluator")
+    evidence_identity = _git_identity(evidence_git)
+    if (
+        reference["repo_relative_path"] != EVALUATOR_REPO_RELATIVE_PATH
+        or reference["git_ref"] != evidence_identity["ref"]
+    ):
+        raise SSMaxJointEvidenceError("joint evaluator path or git ref differs")
+    expected_sha256 = _sha(reference["sha256"], name="joint evaluator SHA")
+    repository_root = _repository_root()
+    source = (repository_root / EVALUATOR_REPO_RELATIVE_PATH).resolve()
+    if not source.is_file() or not source.is_relative_to(repository_root):
+        raise SSMaxJointEvidenceError("joint evaluator is absent from the evidence checkout")
+    try:
+        bridge._validate_repository_checkout(
+            evidence_identity,
+            repository_root=repository_root,
+        )
+        blob = bridge._git_blob_bytes(
+            evidence_identity,
+            repository_root=repository_root,
+            repo_relative_path=EVALUATOR_REPO_RELATIVE_PATH,
+            name="joint evaluator",
+        )
+    except bridge.SSMaxBridgeEvidenceError as error:
+        raise SSMaxJointEvidenceError(str(error)) from error
+    if (
+        sha256_file(source) != expected_sha256
+        or hashlib.sha256(blob).hexdigest() != expected_sha256
+    ):
+        raise SSMaxJointEvidenceError(
+            "joint evaluator differs from the executing checkout or evidence Git blob"
+        )
+    return reference
+
+
+def repository_artifact_reference(path: Path) -> dict[str, str]:
+    """Pin build-time bytes and their portable path inside the builder repository."""
+
+    reference = artifact_reference(path)
+    resolved = Path(reference["path"])
+    root = _repository_root()
+    if not resolved.is_relative_to(root):
+        raise SSMaxJointEvidenceError("repository artifact is outside the builder repository")
+    return {**reference, "repo_relative_path": resolved.relative_to(root).as_posix()}
+
+
+def resolve_repository_artifact(value: Any, *, name: str) -> Path:
+    """Resolve a raw-pinned repository artifact under this executing module's checkout."""
+
+    reference = _exact(value, _REPOSITORY_ARTIFACT_REF_FIELDS, name=f"{name} reference")
+    _sha(reference["sha256"], name=f"{name} SHA")
+    relative = reference["repo_relative_path"]
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        raise SSMaxJointEvidenceError(f"{name} repository-relative path is invalid")
+    path = (_repository_root() / relative).resolve()
+    if not path.is_relative_to(_repository_root()) or not path.is_file():
+        raise SSMaxJointEvidenceError(f"{name} is absent from the executing repository")
+    if sha256_file(path) != reference["sha256"]:
+        raise SSMaxJointEvidenceError(f"{name} executing-repository bytes differ")
+    return path
+
+
+def _repository_artifact_shape(
+    value: Any, *, name: str, verify_stored_bytes: bool
+) -> Mapping[str, Any]:
+    reference = _exact(value, _REPOSITORY_ARTIFACT_REF_FIELDS, name=f"{name} reference")
+    if verify_stored_bytes:
+        validate_artifact_reference(
+            {"path": reference["path"], "sha256": reference["sha256"]}, name=name
+        )
+    else:
+        _artifact_shape({"path": reference["path"], "sha256": reference["sha256"]}, name=name)
+    relative = reference["repo_relative_path"]
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        raise SSMaxJointEvidenceError(f"{name} repository-relative path is invalid")
+    return reference
+
+
+def _manifest_spec_reference(path: Path, spec: Mapping[str, Any]) -> dict[str, str]:
+    reference = artifact_reference(path)
+    live_spec = _validate_spec(load_json(Path(reference["path"])))
+    expected_semantic_sha256 = canonical_sha256(spec)
+    if canonical_sha256(live_spec) != expected_semantic_sha256:
+        raise SSMaxJointEvidenceError("joint manifest spec source differs semantically")
+    return {**reference, "semantic_sha256": expected_semantic_sha256}
+
+
 def validate_artifact_reference(value: Any, *, name: str) -> Path:
     """Re-open an artifact and prove its raw-byte identity."""
 
@@ -591,13 +797,41 @@ def _validate_policy(value: Any) -> Mapping[str, Any]:
 
 def _validate_spec(value: Any) -> Mapping[str, Any]:
     spec = _exact(value, _SPEC_FIELDS, name="joint manifest spec")
-    if spec["format"] != MANIFEST_SPEC_FORMAT or spec["version"] != SCHEMA_VERSION:
+    if spec["format"] != MANIFEST_SPEC_FORMAT or spec["version"] != MANIFEST_SPEC_VERSION:
         raise SSMaxJointEvidenceError("joint manifest spec is incompatible")
     for field in ("run_id", "run_name", "checkpoint_root", "training_profile", "recipe"):
         if not isinstance(spec[field], str) or not spec[field]:
             raise SSMaxJointEvidenceError(f"spec {field} must be non-empty")
     if spec["model_variant"] not in MODEL_VARIANTS:
         raise SSMaxJointEvidenceError("unsupported SSMax model variant")
+    config_sha256s = _exact(
+        spec["checkpoint_config_sha256s"],
+        frozenset(str(step) for step in REQUIRED_STEPS),
+        name="checkpoint config SHA-256 pins",
+    )
+    for step in REQUIRED_STEPS:
+        _sha(config_sha256s[str(step)], name=f"step{step} checkpoint config SHA")
+    expected_config_sha256s = {
+        step: row["config_sha256"]
+        for step, row in TRAINING_RESUME_SCHEDULES[str(spec["model_variant"])].items()
+    }
+    if dict(config_sha256s) != expected_config_sha256s:
+        raise SSMaxJointEvidenceError(
+            "checkpoint config SHA-256 pins differ from the reviewed resume schedule"
+        )
+    evidence_git = _exact(spec["evidence_git"], _EVIDENCE_GIT_FIELDS, name="evidence git")
+    if evidence_git["repo"] != "allenai/OLMo-core" or evidence_git["repo_url"] != (
+        "https://github.com/allenai/OLMo-core"
+    ):
+        raise SSMaxJointEvidenceError("evidence git names a different repository")
+    evidence_ref = evidence_git["ref"]
+    if not isinstance(evidence_ref, str) or (
+        evidence_ref != _EVIDENCE_GIT_REF_PLACEHOLDER
+        and re.fullmatch(r"[0-9a-f]{40}", evidence_ref) is None
+    ):
+        raise SSMaxJointEvidenceError(
+            "evidence git ref must be the template placeholder or a 40-character commit SHA"
+        )
     for field in (
         "perception_parent_gate",
         "joint_visual_projection",
@@ -774,8 +1008,248 @@ def _validate_saved_config(
         "evaluation": dict(_mapping(config.get("evaluation"), name="joint evaluation config")),
         "loss_mass_targets": normalized_targets,
         "single_response_projection_contract": projection_contract,
-        "git": {field: git.get(field) for field in ("repo", "repo_url", "ref")},
+        "git": {field: git.get(field) for field in ("repo", "repo_url", "branch", "ref")},
     }
+
+
+def _resume_structural_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove only separately recorded Gantry identities for a structural comparison."""
+
+    normalized = copy.deepcopy(dict(config))
+    launch = dict(_mapping(normalized.get("launch"), name="joint resume launch"))
+    if "name" not in launch:
+        raise SSMaxJointEvidenceError("joint resume config omits launch.name")
+    git = dict(_mapping(launch.get("git"), name="joint resume git"))
+    if "ref" not in git:
+        raise SSMaxJointEvidenceError("joint resume config omits launch.git.ref")
+    del launch["name"]
+    del git["ref"]
+    launch["git"] = git
+    normalized["launch"] = launch
+    return normalized
+
+
+def _validate_resume_config_set(
+    configs: Mapping[str, Mapping[str, Any]],
+    checkpoints: Mapping[str, Mapping[str, Any]],
+    *,
+    spec: Mapping[str, Any],
+    profile: Mapping[str, str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind every retained step to exact source lineage and one structural config."""
+
+    step_keys = frozenset(str(step) for step in REQUIRED_STEPS)
+    configs = _exact(configs, step_keys, name="joint checkpoint configs")
+    checkpoints = _exact(checkpoints, step_keys, name="joint checkpoints")
+    expected_sha256s = _exact(
+        spec["checkpoint_config_sha256s"],
+        step_keys,
+        name="checkpoint config SHA-256 pins",
+    )
+    summaries: dict[str, dict[str, Any]] = {}
+    structural_sha256: str | None = None
+    resume_steps = {}
+    expected_schedule = TRAINING_RESUME_SCHEDULES[str(spec["model_variant"])]
+    for step in REQUIRED_STEPS:
+        key = str(step)
+        expected_sha256 = _sha(expected_sha256s[key], name=f"step{step} checkpoint config SHA")
+        if checkpoints[key].get("config_sha256") != expected_sha256:
+            raise SSMaxJointEvidenceError(
+                f"step{step} checkpoint config differs from its reviewed raw SHA-256 pin"
+            )
+        config = _mapping(configs[key], name=f"step{step} joint saved config")
+        summaries[key] = _validate_saved_config(config, spec=spec, profile=profile)
+        launch = _mapping(config.get("launch"), name=f"step{step} joint launch")
+        launch_name = launch.get("name")
+        raw_git = _mapping(launch.get("git"), name=f"step{step} joint training git")
+        training_git = {field: raw_git.get(field) for field in _TRAINING_GIT_FIELDS}
+        if any(
+            not isinstance(training_git[field], str) or not training_git[field]
+            for field in training_git
+        ):
+            raise SSMaxJointEvidenceError(f"step{step} joint training git identity is incomplete")
+        if re.fullmatch(r"[0-9a-f]{40}", training_git["ref"]) is None:
+            raise SSMaxJointEvidenceError(f"step{step} joint training git ref is invalid")
+        expected = expected_schedule[key]
+        if (
+            launch_name != expected["launch_name"]
+            or training_git["ref"] != expected["git_ref"]
+            or expected_sha256 != expected["config_sha256"]
+        ):
+            raise SSMaxJointEvidenceError(
+                f"step{step} launch identity differs from the reviewed resume schedule"
+            )
+        current_structural_sha256 = canonical_sha256(_resume_structural_config(config))
+        if structural_sha256 is None:
+            structural_sha256 = current_structural_sha256
+        elif current_structural_sha256 != structural_sha256:
+            raise SSMaxJointEvidenceError(
+                "joint checkpoint configs differ structurally outside launch.name and "
+                "launch.git.ref"
+            )
+        resume_steps[key] = {
+            "config_sha256": expected_sha256,
+            "launch_name": launch_name,
+            "training_git": training_git,
+        }
+    assert structural_sha256 is not None
+    lineage = {
+        "cross_arm_schedule": dict(CROSS_ARM_SCHEDULE_CLASSIFICATION),
+        "structural_config": {
+            "protocol": STRUCTURAL_CONFIG_PROTOCOL,
+            "ignored_paths": list(STRUCTURAL_CONFIG_IGNORED_PATHS),
+            "sha256": structural_sha256,
+        },
+        "steps": resume_steps,
+    }
+    return summaries[str(REQUIRED_STEPS[-1])], lineage
+
+
+def _validate_evidence_git_checkout(
+    value: Any, *, recipe_path: Path, profile_path: Path
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Bind evidence production to the separately pinned clean evidence checkout."""
+
+    evidence_git = dict(_git_identity(value))
+    repository_root = _repository_root()
+    recipe = recipe_path.expanduser().resolve()
+    profile = profile_path.expanduser().resolve()
+    for path, name in ((recipe, "recipe"), (profile, "reviewed profile")):
+        if not path.is_file() or not path.is_relative_to(repository_root):
+            raise SSMaxJointEvidenceError(
+                f"{name} must be a file inside the manifest builder repository"
+            )
+    recipe_relative = recipe.relative_to(repository_root).as_posix()
+    profile_relative = profile.relative_to(repository_root).as_posix()
+    if recipe_relative != "src/scripts/train/Vision-Alignment.py":
+        raise SSMaxJointEvidenceError("manifest recipe is not the canonical training script")
+    try:
+        bridge._validate_repository_checkout(evidence_git, repository_root=repository_root)
+        for path, relative, name in (
+            (recipe, recipe_relative, "recipe"),
+            (profile, profile_relative, "reviewed profile"),
+        ):
+            blob = bridge._git_blob_bytes(
+                evidence_git,
+                repository_root=repository_root,
+                repo_relative_path=relative,
+                name=name,
+            )
+            if hashlib.sha256(blob).hexdigest() != sha256_file(path):
+                raise SSMaxJointEvidenceError(f"live {name} differs from the evidence Git blob")
+    except bridge.SSMaxBridgeEvidenceError as error:
+        raise SSMaxJointEvidenceError(str(error)) from error
+    builder_source = _builder_source_path()
+    if builder_source != (repository_root / BUILDER_REPO_RELATIVE_PATH).resolve():
+        raise SSMaxJointEvidenceError("running joint manifest builder source is non-canonical")
+    try:
+        builder_blob = bridge._git_blob_bytes(
+            evidence_git,
+            repository_root=repository_root,
+            repo_relative_path=BUILDER_REPO_RELATIVE_PATH,
+            name="joint manifest builder",
+        )
+    except bridge.SSMaxBridgeEvidenceError as error:
+        raise SSMaxJointEvidenceError(str(error)) from error
+    builder_sha256 = sha256_file(builder_source)
+    if hashlib.sha256(builder_blob).hexdigest() != builder_sha256:
+        raise SSMaxJointEvidenceError("joint manifest builder differs from the evidence Git blob")
+    return evidence_git, {
+        "repo_relative_path": BUILDER_REPO_RELATIVE_PATH,
+        "sha256": builder_sha256,
+        "git_ref": evidence_git["ref"],
+    }
+
+
+def _consume_issued_v9_perception_parent_gate(
+    gate: Any,
+    *,
+    expected_checkpoint: Path,
+    expected_checkpoint_config_sha256: str,
+    expected_model_variant: str,
+    expected_parent_metadata: Mapping[str, Any],
+    verify_live_checkpoint: bool,
+    hash_workers: int,
+) -> dict[str, Any]:
+    """Consume one immutable, raw-SHA-pinned v9 authorization for joint evidence."""
+
+    if not verify_live_checkpoint:
+        raise SSMaxJointEvidenceError(
+            "issued v9 perception authorization requires live checkpoint verification"
+        )
+    value = _exact(
+        gate,
+        exploratory_waiver_perception._GATE_FIELDS,
+        name="issued v9 perception parent gate",
+    )
+    checkpoint = expected_checkpoint.expanduser().resolve()
+    if checkpoint.name != "step4000":
+        raise SSMaxJointEvidenceError("issued v9 perception parent must be step4000")
+    recipe_version = expected_parent_metadata.get("recipe_version")
+    formatter_version = expected_parent_metadata.get("formatter_version")
+    if type(recipe_version) is not int or not isinstance(formatter_version, str):
+        raise SSMaxJointEvidenceError("perception parent recipe identity is malformed")
+    data_contract_sha256 = _sha(
+        expected_parent_metadata.get("data_contract_sha256"),
+        name="perception parent data contract",
+    )
+    trainable_contract_sha256 = _sha(
+        expected_parent_metadata.get("trainable_contract_sha256"),
+        name="perception parent trainable contract",
+    )
+    expected_values = {
+        "format": "vision_alignment_parent_gate",
+        "version": EXPLORATORY_WAIVER_PARENT_GATE_VERSION,
+        "status": "approved",
+        "scope": exploratory_waiver_perception.GATE_SCOPE,
+        "recipe_version": recipe_version,
+        "formatter_version": formatter_version,
+        "phase": "perception",
+        "model_variant": expected_model_variant,
+        "lineage_kind": direct_perception.LINEAGE_KIND,
+        "checkpoint_config_sha256": expected_checkpoint_config_sha256,
+        "data_contract_sha256": data_contract_sha256,
+        "trainable_contract_sha256": trainable_contract_sha256,
+        "global_step": 4000,
+        "evidence_report_status": exploratory_waiver_perception.REPORT_STATUS,
+        "promotion_decision": False,
+        "winner_selection": False,
+    }
+    for field, expected in expected_values.items():
+        if type(value[field]) is not type(expected) or value[field] != expected:
+            raise SSMaxJointEvidenceError(f"issued v9 perception parent gate {field} differs")
+    if (
+        not isinstance(value["run_id"], str)
+        or not value["run_id"]
+        or not isinstance(value["checkpoint"], str)
+        or Path(value["checkpoint"]).expanduser().resolve() != checkpoint
+    ):
+        raise SSMaxJointEvidenceError("issued v9 perception parent identity differs")
+    gate_identity_sha256 = _sha(
+        value["checkpoint_identity_sha256"],
+        name="issued v9 perception checkpoint identity",
+    )
+    try:
+        candidate = _mapping(
+            bridge.checkpoint_identity(checkpoint, workers=hash_workers),
+            name="live perception checkpoint identity",
+        )
+    except bridge.SSMaxBridgeEvidenceError as error:
+        raise SSMaxJointEvidenceError(f"live perception checkpoint failed: {error}") from error
+    live_identity_sha256 = _sha(
+        candidate.get("identity_sha256"), name="live perception checkpoint identity"
+    )
+    if (
+        candidate.get("path") != str(checkpoint)
+        or type(candidate.get("global_step")) is not int
+        or candidate.get("global_step") != 4000
+        or candidate.get("config_sha256") != expected_checkpoint_config_sha256
+        or live_identity_sha256 != gate_identity_sha256
+    ):
+        raise SSMaxJointEvidenceError(
+            "live perception checkpoint identity differs from the issued v9 gate"
+        )
+    return {"candidate": dict(candidate)}
 
 
 def _validate_perception_parent(
@@ -784,6 +1258,7 @@ def _validate_perception_parent(
     gate_reference: Mapping[str, str],
     model_variant: str,
     verify_live_checkpoint: bool,
+    hash_workers: int = 8,
 ) -> dict[str, Any]:
     initialization = _mapping(config_summary["initialization"], name="joint initialization")
     parent = Path(str(initialization.get("checkpoint"))).expanduser().resolve()
@@ -808,6 +1283,8 @@ def _validate_perception_parent(
         parent_config.get("model_variant") != model_variant
         or parent_config.get("phase") != "perception"
         or parent_config.get("perception_trainability_arm") != perception.TREATMENT_ARM
+        or parent_metadata.get("model_variant") != model_variant
+        or parent_metadata.get("phase") != "perception"
     ):
         raise SSMaxJointEvidenceError("joint parent is not the selected perception treatment")
     gate = _mapping(load_json(gate_path), name="perception parent gate")
@@ -816,12 +1293,19 @@ def _validate_perception_parent(
         raise SSMaxJointEvidenceError(
             "perception parent gate version must be exactly integer 5, 6, 7, 8, or 9"
         )
+    data_contract_sha256 = _sha(
+        parent_metadata.get("data_contract_sha256"), name="perception data contract"
+    )
+    trainable_contract_sha256 = _sha(
+        parent_metadata.get("trainable_contract_sha256"),
+        name="perception trainable contract",
+    )
     validator_kwargs: dict[str, Any] = {
         "expected_checkpoint": parent,
         "expected_checkpoint_config_sha256": expected_config_sha,
         "expected_model_variant": model_variant,
-        "expected_data_contract_sha256": str(parent_metadata.get("data_contract_sha256")),
-        "expected_trainable_contract_sha256": str(parent_metadata.get("trainable_contract_sha256")),
+        "expected_data_contract_sha256": data_contract_sha256,
+        "expected_trainable_contract_sha256": trainable_contract_sha256,
         "verify_live_checkpoint": verify_live_checkpoint,
     }
     if gate_version in (LEGACY_PARENT_GATE_VERSION, PARENT_GATE_VERSION):
@@ -855,15 +1339,15 @@ def _validate_perception_parent(
                 f"exploratory perception parent gate failed: {error}"
             ) from error
     else:
-        try:
-            result = exploratory_waiver_perception.validate_ssmax_perception_exploratory_waiver_parent_gate(
-                gate,
-                **validator_kwargs,
-            )
-        except exploratory_waiver_perception.SSMaxPerceptionExploratoryWaiverEvidenceError as error:
-            raise SSMaxJointEvidenceError(
-                f"exploratory-waiver perception parent gate failed: {error}"
-            ) from error
+        result = _consume_issued_v9_perception_parent_gate(
+            gate,
+            expected_checkpoint=parent,
+            expected_checkpoint_config_sha256=expected_config_sha,
+            expected_model_variant=model_variant,
+            expected_parent_metadata=parent_metadata,
+            verify_live_checkpoint=verify_live_checkpoint,
+            hash_workers=hash_workers,
+        )
     candidate = _mapping(result.get("candidate"), name="perception candidate")
     return {
         "checkpoint": str(parent),
@@ -871,24 +1355,20 @@ def _validate_perception_parent(
         "checkpoint_identity_sha256": _sha(
             candidate.get("identity_sha256"), name="perception checkpoint identity"
         ),
-        "data_contract_sha256": _sha(
-            parent_metadata.get("data_contract_sha256"), name="perception data contract"
-        ),
-        "trainable_contract_sha256": _sha(
-            parent_metadata.get("trainable_contract_sha256"),
-            name="perception trainable contract",
-        ),
+        "data_contract_sha256": data_contract_sha256,
+        "trainable_contract_sha256": trainable_contract_sha256,
         "gate": dict(gate_reference),
         "gate_semantic_sha256": canonical_sha256(gate),
     }
 
 
 def build_manifest(
-    spec: Mapping[str, Any], *, created_at: str, hash_workers: int = 8
+    spec: Mapping[str, Any], *, spec_path: Path, created_at: str, hash_workers: int = 8
 ) -> dict[str, Any]:
     """Finalize one arm manifest after all five permanent joint checkpoints exist."""
 
     spec = _validate_spec(spec)
+    spec_reference = _manifest_spec_reference(spec_path, spec)
     _timestamp(created_at, name="manifest created_at")
     if hash_workers <= 0:
         raise SSMaxJointEvidenceError("hash_workers must be positive")
@@ -904,31 +1384,40 @@ def build_manifest(
         str(step): bridge.checkpoint_identity(root / f"step{step}", workers=hash_workers)
         for step in REQUIRED_STEPS
     }
-    if len({item["config_sha256"] for item in checkpoints.values()}) != 1:
-        raise SSMaxJointEvidenceError("joint checkpoints do not share one saved config")
     if {item["trainer_state_count"] for item in checkpoints.values()} != {
         spec["topology"]["world_size"]
     }:
         raise SSMaxJointEvidenceError("joint trainer-state topology differs")
-    profile = artifact_reference(Path(str(spec["training_profile"])))
-    recipe = artifact_reference(Path(str(spec["recipe"])))
-    config = _mapping(load_json(root / "step0" / "config.json"), name="joint saved config")
-    summary = _validate_saved_config(config, spec=spec, profile=profile)
-    git = _git_identity(summary["git"])
-    try:
-        bridge._validate_saved_git_checkout(
-            git,
-            recipe_path=Path(recipe["path"]),
-            profile_path=Path(profile["path"]),
+    profile = repository_artifact_reference(Path(str(spec["training_profile"])))
+    recipe = repository_artifact_reference(Path(str(spec["recipe"])))
+    configs = {
+        str(step): _mapping(
+            load_json(root / f"step{step}" / "config.json"),
+            name=f"step{step} joint saved config",
         )
-    except bridge.SSMaxBridgeEvidenceError as error:
-        raise SSMaxJointEvidenceError(str(error)) from error
+        for step in REQUIRED_STEPS
+    }
+    summary, training_resume_lineage = _validate_resume_config_set(
+        configs,
+        checkpoints,
+        spec=spec,
+        profile=profile,
+    )
+    git, manifest_builder = _validate_evidence_git_checkout(
+        spec["evidence_git"],
+        recipe_path=Path(recipe["path"]),
+        profile_path=Path(profile["path"]),
+    )
+    training_git = _mapping(summary["git"], name="final training git")
+    if any(training_git.get(field) != git[field] for field in ("repo", "repo_url")):
+        raise SSMaxJointEvidenceError("training and evidence git name different repositories")
     gate_ref = artifact_reference(Path(str(spec["perception_parent_gate"])))
     perception_parent = _validate_perception_parent(
         summary,
         gate_reference=gate_ref,
         model_variant=str(spec["model_variant"]),
         verify_live_checkpoint=True,
+        hash_workers=hash_workers,
     )
     data = _mapping(summary["data"], name="joint data")
     projection = artifact_reference(Path(str(spec["joint_visual_projection"])))
@@ -1007,6 +1496,9 @@ def build_manifest(
         "model_variant": spec["model_variant"],
         "run_name": spec["run_name"],
         "git": dict(git),
+        "manifest_spec": spec_reference,
+        "manifest_builder": manifest_builder,
+        "training_resume_lineage": training_resume_lineage,
         "recipe": recipe,
         "training_profile": profile,
         "perception_parent": perception_parent,
@@ -1055,6 +1547,153 @@ def _native_shape(value: Any, *, verify_live: bool) -> Mapping[str, Any]:
     return native
 
 
+def _manifest_spec_reference_shape(
+    value: Any, *, verify_live: bool
+) -> tuple[Mapping[str, Any], Mapping[str, Any] | None]:
+    reference = _exact(value, _MANIFEST_SPEC_REFERENCE_FIELDS, name="manifest spec reference")
+    if not isinstance(reference["path"], str) or not reference["path"]:
+        raise SSMaxJointEvidenceError("manifest spec path must be non-empty")
+    _sha(reference["sha256"], name="manifest spec raw SHA")
+    semantic_sha256 = _sha(reference["semantic_sha256"], name="manifest spec semantic SHA")
+    if verify_live:
+        path = validate_artifact_reference(
+            {"path": reference["path"], "sha256": reference["sha256"]},
+            name="manifest spec",
+        )
+        live_spec = _validate_spec(load_json(path))
+        if canonical_sha256(live_spec) != semantic_sha256:
+            raise SSMaxJointEvidenceError("live manifest spec semantic SHA differs")
+        return reference, live_spec
+    return reference, None
+
+
+def _builder_source_shape(value: Any, *, evidence_git: Mapping[str, str]) -> Mapping[str, Any]:
+    source = _exact(value, _BUILDER_SOURCE_FIELDS, name="manifest builder source")
+    if source["repo_relative_path"] != BUILDER_REPO_RELATIVE_PATH:
+        raise SSMaxJointEvidenceError("manifest builder source path is non-canonical")
+    _sha(source["sha256"], name="manifest builder source SHA")
+    if source["git_ref"] != evidence_git["ref"]:
+        raise SSMaxJointEvidenceError("manifest builder source Git ref differs")
+    return source
+
+
+def _training_resume_lineage_shape(value: Any, *, model_variant: str) -> Mapping[str, Any]:
+    lineage = _exact(value, _TRAINING_RESUME_LINEAGE_FIELDS, name="training resume lineage")
+    classification = _exact(
+        lineage["cross_arm_schedule"],
+        _CROSS_ARM_SCHEDULE_FIELDS,
+        name="cross-arm resume schedule",
+    )
+    if canonical_sha256(classification) != canonical_sha256(CROSS_ARM_SCHEDULE_CLASSIFICATION):
+        raise SSMaxJointEvidenceError("cross-arm resume schedule classification differs")
+    structural = _exact(
+        lineage["structural_config"],
+        _STRUCTURAL_CONFIG_FIELDS,
+        name="resume structural config",
+    )
+    if structural["protocol"] != STRUCTURAL_CONFIG_PROTOCOL or structural["ignored_paths"] != list(
+        STRUCTURAL_CONFIG_IGNORED_PATHS
+    ):
+        raise SSMaxJointEvidenceError("resume structural config contract differs")
+    _sha(structural["sha256"], name="resume structural config SHA")
+    steps = _exact(
+        lineage["steps"],
+        frozenset(str(step) for step in REQUIRED_STEPS),
+        name="training resume steps",
+    )
+    expected_schedule = TRAINING_RESUME_SCHEDULES[model_variant]
+    for step in REQUIRED_STEPS:
+        key = str(step)
+        row = _exact(steps[key], _RESUME_STEP_FIELDS, name=f"step{step} resume lineage")
+        expected = expected_schedule[key]
+        if (
+            row["config_sha256"] != expected["config_sha256"]
+            or row["launch_name"] != expected["launch_name"]
+        ):
+            raise SSMaxJointEvidenceError(f"step{step} resume lineage schedule differs")
+        _sha(row["config_sha256"], name=f"step{step} resume config SHA")
+        training_git = _exact(
+            row["training_git"], _TRAINING_GIT_FIELDS, name=f"step{step} training git"
+        )
+        if (
+            training_git["repo"] != "allenai/OLMo-core"
+            or training_git["repo_url"] != "https://github.com/allenai/OLMo-core"
+            or training_git["branch"] != "rustin/vision-ssmax-molmofication"
+            or training_git["ref"] != expected["git_ref"]
+        ):
+            raise SSMaxJointEvidenceError(f"step{step} training Git lineage differs")
+    return lineage
+
+
+def _validate_finalized_manifest_against_spec(
+    manifest: Mapping[str, Any], spec: Mapping[str, Any]
+) -> None:
+    """Rebind every spec-derived finalized-manifest field to the pinned live spec."""
+
+    for field in ("run_id", "model_variant", "run_name"):
+        if manifest[field] != spec[field]:
+            raise SSMaxJointEvidenceError(f"finalized manifest {field} differs from its spec")
+    if canonical_sha256(manifest["git"]) != canonical_sha256(spec["evidence_git"]):
+        raise SSMaxJointEvidenceError("finalized manifest evidence Git differs from its spec")
+    repository_root = _repository_root()
+
+    def spec_repository_path(value: Any) -> Path:
+        path = Path(str(value)).expanduser()
+        return (path if path.is_absolute() else repository_root / path).resolve()
+
+    for manifest_field, spec_field in (
+        ("recipe", "recipe"),
+        ("training_profile", "training_profile"),
+    ):
+        if Path(str(manifest[manifest_field]["path"])).resolve() != spec_repository_path(
+            spec[spec_field]
+        ):
+            raise SSMaxJointEvidenceError(
+                f"finalized manifest {manifest_field} path differs from its spec"
+            )
+    for manifest_field, spec_field in (
+        ("joint_visual_projection", "joint_visual_projection"),
+        ("source_audit", "source_audit"),
+        ("attention_probe", "attention_probe"),
+    ):
+        if (
+            Path(str(manifest[manifest_field]["path"])).resolve()
+            != Path(str(spec[spec_field])).expanduser().resolve()
+        ):
+            raise SSMaxJointEvidenceError(
+                f"finalized manifest {manifest_field} path differs from its spec"
+            )
+    if (
+        Path(str(manifest["perception_parent"]["gate"]["path"])).resolve()
+        != Path(str(spec["perception_parent_gate"])).expanduser().resolve()
+    ):
+        raise SSMaxJointEvidenceError("finalized perception gate path differs from its spec")
+    for source in VISUAL_SOURCES:
+        if (
+            Path(str(manifest["pairings"][source]["path"])).resolve()
+            != Path(str(spec["pairing_paths"][source])).expanduser().resolve()
+        ):
+            raise SSMaxJointEvidenceError(f"finalized {source} pairing path differs from its spec")
+    companion = manifest["companion_protocols"]["downstream_fast_pair"]
+    if Path(str(companion["path"])).resolve() != spec_repository_path(
+        spec["companion_protocols"]["downstream_fast_pair"]
+    ):
+        raise SSMaxJointEvidenceError("finalized companion protocol path differs from its spec")
+    for field in ("evaluation", "topology", "policy"):
+        if canonical_sha256(manifest[field]) != canonical_sha256(spec[field]):
+            raise SSMaxJointEvidenceError(f"finalized manifest {field} differs from its spec")
+    checkpoint_root = Path(str(spec["checkpoint_root"])).expanduser().resolve()
+    for step in REQUIRED_STEPS:
+        key = str(step)
+        if (
+            Path(str(manifest["checkpoints"][key]["path"])).resolve()
+            != checkpoint_root / f"step{step}"
+            or manifest["checkpoints"][key]["config_sha256"]
+            != spec["checkpoint_config_sha256s"][key]
+        ):
+            raise SSMaxJointEvidenceError(f"finalized step{step} checkpoint differs from its spec")
+
+
 def validate_manifest(
     value: Any, *, verify_live: bool = True, hash_workers: int = 8
 ) -> Mapping[str, Any]:
@@ -1069,10 +1708,21 @@ def validate_manifest(
     for field in ("run_id", "run_name"):
         if not isinstance(manifest[field], str) or not manifest[field]:
             raise SSMaxJointEvidenceError(f"manifest {field} must be non-empty")
-    _git_identity(manifest["git"])
+    evidence_git = dict(_git_identity(manifest["git"]))
+    _, live_spec = _manifest_spec_reference_shape(
+        manifest["manifest_spec"], verify_live=verify_live
+    )
+    builder_source = _builder_source_shape(manifest["manifest_builder"], evidence_git=evidence_git)
+    resume_lineage = _training_resume_lineage_shape(
+        manifest["training_resume_lineage"], model_variant=str(manifest["model_variant"])
+    )
+    for field in ("recipe", "training_profile"):
+        _repository_artifact_shape(manifest[field], name=field, verify_stored_bytes=verify_live)
+    runtime_recipe = resolve_repository_artifact(manifest["recipe"], name="recipe")
+    runtime_profile = resolve_repository_artifact(
+        manifest["training_profile"], name="training profile"
+    )
     for field in (
-        "recipe",
-        "training_profile",
         "joint_visual_projection",
         "source_audit",
         "attention_probe",
@@ -1081,6 +1731,13 @@ def validate_manifest(
             validate_artifact_reference(manifest[field], name=field)
         else:
             _artifact_shape(manifest[field], name=field)
+    live_git, live_builder_source = _validate_evidence_git_checkout(
+        evidence_git,
+        recipe_path=runtime_recipe,
+        profile_path=runtime_profile,
+    )
+    if live_git != evidence_git or live_builder_source != builder_source:
+        raise SSMaxJointEvidenceError("live manifest builder identity differs")
     _sha(manifest["source_audit_fingerprint"], name="source audit fingerprint")
     parent = _exact(manifest["perception_parent"], _PARENT_FIELDS, name="perception parent")
     if not isinstance(parent["checkpoint"], str) or not parent["checkpoint"]:
@@ -1151,6 +1808,10 @@ def validate_manifest(
         )
         if reference["trainer_state_count"] != topology["world_size"]:
             raise SSMaxJointEvidenceError(f"step{step} trainer-state topology differs")
+        if reference["config_sha256"] != resume_lineage["steps"][str(step)]["config_sha256"]:
+            raise SSMaxJointEvidenceError(f"step{step} checkpoint and resume config pins differ")
+    if live_spec is not None:
+        _validate_finalized_manifest_against_spec(manifest, live_spec)
     expected_run_contract = canonical_sha256(
         {
             key: item
@@ -1388,13 +2049,9 @@ def _validate_evaluation_receipt(
         raise SSMaxJointEvidenceError(str(error)) from error
     if receipt["pairings"] != manifest["pairings"]:
         raise SSMaxJointEvidenceError("evaluation changes fixed pairings")
-    evaluator = _exact(
-        receipt["evaluator"], frozenset({"path", "sha256", "git_ref"}), name="evaluator"
-    )
-    if evaluator["git_ref"] != manifest["git"]["ref"]:
-        raise SSMaxJointEvidenceError("evaluator git ref differs from training")
-    validate_artifact_reference(
-        {"path": evaluator["path"], "sha256": evaluator["sha256"]}, name="joint evaluator"
+    _validate_evaluator_source_reference(
+        receipt["evaluator"],
+        evidence_git=_mapping(manifest["git"], name="manifest evidence git"),
     )
     results = _exact(receipt["results"], frozenset(VISUAL_SOURCES), name="visual results")
     rows = {}
@@ -1776,6 +2433,7 @@ def build_trajectory_report(
         "version": SCHEMA_VERSION,
         "status": "passed_hard_invariants" if all_hard else "failed_hard_invariants",
         "decision_scope": "descriptive_non_promotion",
+        "cross_arm_schedule": dict(manifest["training_resume_lineage"]["cross_arm_schedule"]),
         "created_at": created_at,
         "manifest": manifest_reference(manifest_path, manifest),
         "run_id": manifest["run_id"],
@@ -1805,6 +2463,8 @@ def validate_trajectory_report(
         report["format"] != TRAJECTORY_REPORT_FORMAT
         or report["version"] != SCHEMA_VERSION
         or report["decision_scope"] != "descriptive_non_promotion"
+        or canonical_sha256(report["cross_arm_schedule"])
+        != canonical_sha256(CROSS_ARM_SCHEDULE_CLASSIFICATION)
         or report["status"] not in ("passed_hard_invariants", "failed_hard_invariants")
     ):
         raise SSMaxJointEvidenceError("joint trajectory report identity differs")
@@ -1870,6 +2530,10 @@ def compare_trajectory_reports(left: Mapping[str, Any], right: Mapping[str, Any]
         _exact(report, _REPORT_FIELDS, name=f"{name} trajectory report")
         if report["decision_scope"] != "descriptive_non_promotion":
             raise SSMaxJointEvidenceError(f"{name} report is not descriptive-only")
+        if canonical_sha256(report["cross_arm_schedule"]) != canonical_sha256(
+            CROSS_ARM_SCHEDULE_CLASSIFICATION
+        ):
+            raise SSMaxJointEvidenceError(f"{name} report omits the confounded resume schedule")
         _exact(
             report["trajectory"],
             frozenset(str(step) for step in REQUIRED_STEPS),
@@ -2042,6 +2706,7 @@ def compare_trajectory_reports(left: Mapping[str, Any], right: Mapping[str, Any]
         "format": PAIR_COMPARISON_FORMAT,
         "version": SCHEMA_VERSION,
         "decision_scope": "descriptive_non_promotion",
+        "cross_arm_schedule": dict(CROSS_ARM_SCHEDULE_CLASSIFICATION),
         "winner": None,
         "left": {
             "run_id": left["run_id"],

@@ -1,13 +1,25 @@
 {
   "format": "vision_alignment_ssmax_joint_manifest_spec",
-  "version": 1,
+  "version": 2,
   "run_id": "ssmax-no-qknorm-joint-v1",
   "model_variant": "ssmax_no_qknorm",
   "run_name": "<FILL_WITH_REVIEWED_JOINT_RUN_NAME_AFTER_APPROVED_PARENT>",
   "checkpoint_root": "<FILL_AFTER_JOINT_RUN_COMPLETES>",
+  "checkpoint_config_sha256s": {
+    "0": "991eb1f631c99d82b791b52f37ebb9d1fe31a35b342aece9b29eaa0edc0edbe2",
+    "4000": "a11bc8da1699c012972b00cb6943e71668ac82e4762090695531bd99dfe5eaf7",
+    "8000": "a11bc8da1699c012972b00cb6943e71668ac82e4762090695531bd99dfe5eaf7",
+    "12000": "17493e32d50252fc314d6eb7c1cb14576bb45ab37b8280428eafe6af6cc0afba",
+    "16000": "17493e32d50252fc314d6eb7c1cb14576bb45ab37b8280428eafe6af6cc0afba"
+  },
+  "evidence_git": {
+    "repo": "allenai/OLMo-core",
+    "repo_url": "https://github.com/allenai/OLMo-core",
+    "ref": "<FILL_WITH_CLEAN_EVIDENCE_COMMIT_SHA>"
+  },
   "training_profile": "<FILL_WITH_REVIEWED_JOINT_PROFILE>",
   "recipe": "src/scripts/train/Vision-Alignment.py",
-  "perception_parent_gate": "<FILL_WITH_APPROVED_V7_OR_EXPLORATORY_V8_PERCEPTION_GATE>",
+  "perception_parent_gate": "<FILL_WITH_APPROVED_V7_V8_OR_V9_PERCEPTION_GATE>",
   "joint_visual_projection": "<FILL_WITH_PINNED_JOINT_PROJECTION>",
   "source_audit": "<FILL_WITH_PINNED_JOINT_SOURCE_AUDIT>",
   "attention_probe": "/weka/oe-training-default/rustin/experiments/vision-ssmax-molmofication/vision-alignment/artifacts/ssmax-joint-attention-probe-v1/ssmax-joint-attention-probe.json",

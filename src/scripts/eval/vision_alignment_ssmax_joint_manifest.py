@@ -25,9 +25,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
-    spec = load_manifest_spec(args.spec.expanduser().resolve())
+    spec_path = args.spec.expanduser().resolve()
+    spec = load_manifest_spec(spec_path)
     manifest = build_manifest(
         spec,
+        spec_path=spec_path,
         created_at=args.created_at or datetime.now(timezone.utc).isoformat(),
         hash_workers=args.hash_workers,
     )

@@ -12,12 +12,40 @@ of joint alignment; it
 neither selects nor starts a mid-training recipe. The historical s002 joint receipts remain
 historical evidence and are not accepted by these model-variant-aware tools.
 
-The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. For
-the current direct program, fill one copy per lineage only after its strict v7 or exploratory v8
-gate and reviewed joint profile exist, together with the projection, source audit, pairings, and
-output root. Do not replace a missing artifact with a placeholder path. Historical v5/v6 gates
-remain accepted only through their original paired validators. The v8 admission rules and issuance
-commands are documented in `SSMAX_PERCEPTION_EXPLORATORY_JOINT.md`.
+The two checked-in `.json.template` files under `eval/joint/` are deliberately non-runnable. Their
+manifest-spec schema and the finalized manifest/receipt schema are version 2.
+For the current direct program, fill one copy per lineage only after its strict v7, exploratory v8,
+or exploratory-waiver v9 gate and reviewed joint profile exist, together with the projection,
+source audit, pairings, output root, and clean evidence commit. Do not replace a missing artifact
+with a placeholder path.
+Historical v5/v6 gates remain accepted only through their original paired validators. The v8
+admission rules and issuance commands are documented in
+`SSMAX_PERCEPTION_EXPLORATORY_JOINT.md`.
+
+The version-2 spec pins the raw `config.json` SHA-256 independently at every retained step. This is
+intentional: both completed lineages crossed reviewed exact-resume launches, so their raw configs
+do not all have identical bytes. Finalization validates every saved config against its step pin.
+It also performs a narrowly named *structural* comparison by removing only `launch.name` and
+`launch.git.ref` and comparing canonical-JSON SHA-256 values. This structural comparison cannot
+alias JSON booleans, integers, and floats, and it does not claim that Git refs are semantically
+interchangeable. The manifest preserves every raw config SHA, launch name, branch, and training Git
+ref in `training_resume_lineage`.
+
+The observed source schedule is asymmetric: head-QK uses `7cc97a77` at steps 0/4,000,
+`e53e8ee6` at 8,000, and `26eebf08` at 12,000/16,000; no-QK uses `7cc97a77` through step 8,000 and
+`26eebf08` at 12,000/16,000. The finalized manifest therefore classifies the cross-arm schedule as
+`asymmetric_code_transition`, its causal interpretation as `confounded`, and its decision scope as
+`descriptive_only`. The comparison must not be presented as a clean causal estimate of QK norm.
+
+The separately pinned `evidence_git` is the clean commit used to build the manifest and launch the
+evaluator. Checkout attribution is derived from the imported manifest-builder module, never from a
+caller-supplied recipe path. The recipe and profile must resolve inside that exact repository, and
+the manifest pins the builder's repository-relative path, evidence Git ref, and raw source SHA.
+Recipe/profile references retain their build-time raw artifact pins plus repository-relative paths;
+an evaluator resolves the latter under its own imported-module checkout and proves the same blobs,
+so the build worktree path is never treated as the Beaker clone. The manifest also pins the
+finalized input spec by absolute path, raw SHA, and canonical semantic SHA, then rebinds all
+spec-derived finalized fields to that live-pinned spec during validation.
 
 Each finalized manifest binds all bytes of permanent steps 0, 4,000, 8,000, 12,000, and 16,000,
 the clean recipe/profile/git identity, the approved perception candidate, the fixed eight-source

@@ -34,8 +34,8 @@ from olmo_core.eval.vision_alignment_ssmax_joint import (
     load_json,
     load_manifest,
     manifest_reference,
+    resolve_repository_artifact,
     sha256_file,
-    validate_artifact_reference,
     write_json_once,
 )
 from olmo_core.train.callbacks import (
@@ -197,7 +197,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     output = args.output.expanduser().resolve()
     if output.exists():
         raise FileExistsError(f"refusing to overwrite immutable health receipt {output}")
-    recipe_path = validate_artifact_reference(manifest["recipe"], name="training recipe")
+    recipe_path = resolve_repository_artifact(manifest["recipe"], name="training recipe")
     recipe = _load_recipe(recipe_path)
     raw_config = load_json(Path(str(candidate["path"])) / "config.json")
     if not isinstance(raw_config, Mapping):
