@@ -15,6 +15,8 @@ import torch
 
 from olmo_core.config import Config
 
+from .packing import REF_CURSOR_KEY
+
 __all__ = ["MultimodalCollator", "MultimodalCollatorConfig"]
 
 
@@ -144,8 +146,13 @@ class MultimodalCollator:
             batch["example_ids"] = self._pad_1d(example_arrays, -1, max_len, np.int64)
 
         if any("pack_source_names" in ex for ex in examples):
-            batch["pack_source_names"] = [
-                ex.get("pack_source_names", []) for ex in examples
-            ]
+            batch["pack_source_names"] = [ex.get("pack_source_names", []) for ex in examples]
+
+        # Ref cursor for O(1) resume: the furthest point any pack in this batch reached in
+        # its worker's ref stream. Not model input -- MixtureDataLoader strips it before
+        # the batch reaches the train module.
+        cursors = [ex[REF_CURSOR_KEY] for ex in examples if REF_CURSOR_KEY in ex]
+        if cursors:
+            batch[REF_CURSOR_KEY] = max(cursors)
 
         return batch

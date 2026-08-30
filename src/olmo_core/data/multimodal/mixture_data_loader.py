@@ -28,7 +28,7 @@ from .packed_mixture_iterable import (
     mixture_epoch_pairs,
     worker_init_fn,
 )
-from .packing import iter_dynamic_packs, iter_packs
+from .packing import REF_CURSOR_KEY, iter_dynamic_packs, iter_packs
 from .prefetch import prefetch_map
 
 log = logging.getLogger(__name__)
@@ -156,6 +156,11 @@ class MixtureDataLoader(DataLoaderBase):
         self._sizes = [len(d) for d in self.datasets]
         self.epoch_instances = epoch_instances or sum(self._sizes)
         self._order: Optional[List] = None  # list of (src_idx, example_idx)
+        # Refs each DataLoader worker had consumed as of the last batch handed to the
+        # trainer. Persisted in the checkpoint so a resume can fast-forward the *ref*
+        # stream instead of rebuilding every consumed batch. None => unknown (fresh run,
+        # or a checkpoint written before this field existed) => fall back to replay.
+        self._refs_consumed: Optional[int] = None
 
     @property
     def _global_instances(self) -> int:
@@ -238,6 +243,11 @@ class MixtureDataLoader(DataLoaderBase):
         """mm_olmo parity: preprocess + pack + collate in DataLoader worker processes."""
         import torch.utils.data
 
+        # O(1) resume: every worker fast-forwards its own ref stream to where it stopped,
+        # which costs RNG draws rather than image loads. The cursor is a per-worker count
+        # (workers own disjoint strided slices), so it applies to each worker as-is.
+        skip_refs = self._refs_consumed or 0
+
         dataset = PackedMixtureIterableDataset(
             self.datasets,
             self.dataset_names,
@@ -248,6 +258,7 @@ class MixtureDataLoader(DataLoaderBase):
             dp_rank=self.dp_rank,
             dp_world_size=self.dp_world_size,
             epoch_instances=self.epoch_instances,
+            skip_refs=skip_refs,
             seq_len=self.seq_len,
             pack_max_crops=self.pack_max_crops,
             pack_buffer_size=self.pack_buffer_size,
@@ -280,10 +291,26 @@ class MixtureDataLoader(DataLoaderBase):
         )
         it = iter(inner_dl)
         try:
-            for _ in range(self.batches_processed):
-                next(it)
+            if self.batches_processed and skip_refs == 0:
+                # No stored cursor (pre-existing checkpoint): fall back to the old
+                # O(resume_step) replay. It rebuilds every consumed batch -- image decode,
+                # preprocess and packing -- and on the multi-image tier that outruns the
+                # 60-minute distributed timeout, so this path is a compatibility shim, not
+                # a supported way to resume a long run.
+                log.warning(
+                    "Resuming by replaying %d batches (no ref cursor in checkpoint). This is "
+                    "O(resume step) and may exceed the collective timeout; checkpoints written "
+                    "from now on resume in O(1).",
+                    self.batches_processed,
+                )
+                for _ in range(self.batches_processed):
+                    next(it)
             for _ in range(self.batches_processed, n_batches):
-                yield next(it)
+                batch = next(it)
+                cursor = batch.pop(REF_CURSOR_KEY, None)
+                if cursor is not None:
+                    self._refs_consumed = int(cursor)
+                yield batch
         finally:
             # Drop the iterator so worker processes exit if the epoch ends early.
             # PyTorch's DataLoader __del__ method handles cleanup of worker processes.
@@ -399,6 +426,10 @@ class MixtureDataLoader(DataLoaderBase):
             "epoch": self._epoch,
             "seed": self.seed,
             "shuffle_algo_version": self.SHUFFLE_ALGO_VERSION,
+            # Per-worker consumed-ref count as of the last batch handed to the trainer.
+            # Absent in checkpoints written before O(1) resume existed; `load_state_dict`
+            # treats that as "unknown" and falls back to replaying the stream.
+            "refs_consumed": self._refs_consumed,
         }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
@@ -424,3 +455,10 @@ class MixtureDataLoader(DataLoaderBase):
         self.batches_processed = state_dict.get("batches_processed", 0)
         self._epoch = state_dict.get("epoch")
         self.seed = state_dict.get("seed", self.seed)
+        self._refs_consumed = state_dict.get("refs_consumed")
+        if self.batches_processed and self._refs_consumed is None:
+            log.warning(
+                "Checkpoint has no 'refs_consumed'; this resume will replay %d batches "
+                "(slow, and can exceed the collective timeout on image-heavy mixtures).",
+                self.batches_processed,
+            )
