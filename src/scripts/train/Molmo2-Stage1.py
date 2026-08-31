@@ -231,9 +231,18 @@ MAX_STEPS = 32000
 # distribution for pointing evals -- worth ~11 f1 on pixmo_point_eval_v3_mp, most of it
 # abstention, because the "Please say 'There are none.'" instruction only exists in the
 # stage-2 template.
-POINTING_PROMPT_FAMILY = {
+POINTING_DATASET_KWARGS = {
     "prompt_templates": "none",
     "system_prompt": "style_and_length_v2",
+    # The pointing/counting dataset classes default to `root_subsegments`, which scales an
+    # example's loss by 1/sqrt(n_labels). The released run leaves this unset for every dataset
+    # (`mm_preprocessor.loss_token_weighting: None`, `message_weight: None` on all four pointing
+    # entries), so it weights every response token equally. Our pointing rows carry ~12.5 labels
+    # per example and counting ~2.8, so the default silently gave that data ~3.5x / ~1.7x less
+    # gradient weight per token than captions -- for exactly the reason the caption dataset's
+    # own comment gives: the factor does not cancel out of the global sum(CE*w)/sum(w) divisor
+    # when branch counts differ across examples.
+    "loss_token_weighting": "none",
 }
 
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
@@ -694,13 +703,17 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
     if p > 0:
         pointing = [
             PixMoPointsDatasetConfig(
-                kind="basic", max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY
+                kind="basic", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
             ).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY).build(tokenizer),
+            PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                tokenizer
+            ),
             PixMoPointsDatasetConfig(
-                kind="high_frequency", max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY
+                kind="high_frequency", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
             ).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_PROMPT_FAMILY).build(tokenizer),
+            CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                tokenizer
+            ),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()
