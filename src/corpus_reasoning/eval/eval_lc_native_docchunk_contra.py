@@ -163,6 +163,9 @@ def main():
     ap.add_argument("--doc-start-id", type=int, default=DOC_START_ID, help="<|box_start|> id")
     ap.add_argument("--doc-end-id", type=int, default=DOC_END_ID, help="<|box_end|> id")
     ap.add_argument("--eos-token-id", type=int, default=EOS_TOKEN_ID, help="document-separator EOS id")
+    ap.add_argument("--ffn-gate-start-layer", type=int, default=-1,
+                    help="mirror the training-time role-gated FFN (context-doc tokens skip the "
+                    "full FFN from this layer on); -1 disables")
     ap.add_argument("--pad-fallback-id", type=int, default=151645,
                     help="generation pad id when the tokenizer pad == eos (Qwen3 default 151645).")
     ap.add_argument("--contra-data", default="data/contradiction_eval_pubmed_both_n100_k3.jsonl")
@@ -331,6 +334,17 @@ def main():
     # left-pads the prompt with this id, and chunk_ids reconstruction must mark it PAD (non-
     # attendable) rather than FREE. At --batch-size 1 no such token ever appears in the dense/full
     # prefill, so this is bit-identical to the old ``pad_id=None`` behavior for those variants.
+    if args.ffn_gate_start_layer >= 0:
+        # Flexible-compute FFN: must mirror the training-time gate (see enable_role_gated_ffn).
+        # No new params, so it composes with any checkpoint; PAD must be excluded from "full"
+        # under batched left-padding, hence pad_id.
+        gm.model.enable_role_gated_ffn(
+            ds_id,
+            de_id,
+            eos_id,
+            start_layer=args.ffn_gate_start_layer,
+            pad_id=PAD_TOKEN_ID,
+        )
     if args.variant != "full":
         gm.model.enable_document_chunk_attention(
             doc_start_id=ds_id,

@@ -276,6 +276,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             distill_weight=opts.distill_weight,
             oracle_cache=oracle_cache,
         )
+    if opts.ffn_gate_start_layer >= 0:
+        # Flexible-compute FFN: context-doc tokens skip the full FFN from this layer on (both
+        # the full arm and the softtoken arm's kept-doc tokens). No new params.
+        model.enable_role_gated_ffn(
+            DOC_START_ID, DOC_END_ID, EOS_TOKEN_ID, start_layer=opts.ffn_gate_start_layer
+        )
     train_module = train_module_config.build(model)
 
     if arm in ("pooledkv", "softtoken") and not opts.gold_blind:
@@ -386,6 +392,11 @@ def main() -> None:
         help="softtoken arm: directory of precomputed oracle log-mass slots "
         "(build_oracle_slot_cache.py); pooled slots' per-layer K/V are overridden with the "
         "cached slots (max-fidelity static KV, no full-context forwards)",
+    )
+    ap.add_argument(
+        "--ffn-gate-start-layer", type=int, default=-1,
+        help="enable role-gated FFN (context-doc tokens skip the full FFN) from this layer on; "
+        "-1 disables. The matching eval must pass the same flag.",
     )
     ap.add_argument(
         "--aux-weight", type=float, default=0.0,

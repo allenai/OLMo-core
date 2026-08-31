@@ -115,7 +115,7 @@ def main():
     ap.add_argument("--base", default="/data/prasann/pooledkv_exp/q4b-dense-cpt-fixmark-b1")
     ap.add_argument("--rank", type=int, default=0)
     ap.add_argument("--world", type=int, default=1)
-    ap.add_argument("--batch-rows", type=int, default=48)
+    ap.add_argument("--batch-rows", type=int, default=128)
     ap.add_argument("--queries", type=int, default=256, help="query-stash size M per layer")
     ap.add_argument("--warm-instances", type=int, default=48)
     ap.add_argument("--delta-min", type=int, default=256)
@@ -235,20 +235,23 @@ def main():
         n_kv = cap.layers[0][1].shape[2]
         slots = torch.zeros(B, n_layers, 2, n_kv, head_dim, dtype=torch.float16)
         biases = torch.zeros(B, n_layers, dtype=torch.float16)
-        # Flatten every row's doc tokens into one (Nt,) stream with doc_of = row index.
+        # Flatten every row's doc tokens into one (Nt,) index set ONCE (not per layer): the
+        # per-row python loop was launch-bound (~8k kernel launches/batch -> 34 docs/s/GPU).
+        row_l, col_l, ctr_l = [], [], []
+        for bi, (pre_len, doc_len, center) in enumerate(pending_meta):
+            row_l.append(torch.full((doc_len,), bi, dtype=torch.long))
+            col_l.append(torch.arange(pre_len, pre_len + doc_len, dtype=torch.long))
+            ctr_l.append(torch.full((doc_len,), center, dtype=torch.long))
+        row_idx = torch.cat(row_l).to(device)
+        col_idx = torch.cat(col_l).to(device)
+        centers = torch.cat(ctr_l).to(device)
+        sin_c, cos_c = pos_sin[centers], pos_cos[centers]
         for li, (_, k, v) in enumerate(cap.layers):
-            keys_l, vals_l, doc_of_l = [], [], []
-            for bi, (pre_len, doc_len, center) in enumerate(pending_meta):
-                kd = k[bi, pre_len : pre_len + doc_len].float()
-                vd = v[bi, pre_len : pre_len + doc_len].float()
-                c = torch.full((doc_len,), center, dtype=torch.long, device=device)
-                keys_l.append(derotate_keys(kd, pos_sin[c], pos_cos[c]))
-                vals_l.append(vd)
-                doc_of_l.append(torch.full((doc_len,), bi, dtype=torch.long, device=device))
+            keys_cf = derotate_keys(k[row_idx, col_idx].float(), sin_c, cos_c)
             ks, vs, bias, diags = fit_oracle_slots_layer(
-                torch.cat(keys_l),
-                torch.cat(vals_l),
-                torch.cat(doc_of_l),
+                keys_cf,
+                v[row_idx, col_idx].float(),
+                row_idx,
                 B,
                 q_stash[li],
                 delta_sin[li],

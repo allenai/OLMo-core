@@ -140,6 +140,8 @@ class Transformer(nn.Module):
         self._pooled_soft_tokens: Optional[Dict[str, Any]] = None
         self.pooled_projector: Optional[nn.Module] = None
         self._pooled_keep_holder: Optional[Any] = None
+        # Role-gated FFN ("flexible-compute FFN"): set by ``enable_role_gated_ffn``.
+        self._role_gated_ffn: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -374,6 +376,63 @@ class Transformer(nn.Module):
             "oracle_cache": oracle_cache,
             "_oracle_stats": {"hits": 0, "misses": 0, "calls": 0},
         }
+
+    def enable_role_gated_ffn(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        *,
+        start_layer: int = 4,
+        pad_id: Optional[int] = None,
+    ) -> None:
+        """
+        Enable role-gated FFN compute (see :mod:`olmo_core.nn.role_gated_ffn`): context-document
+        tokens (between ``<|doc_start|>``/``<|doc_end|>`` markers) skip the full FFN from
+        ``start_layer`` on -- identity residual -- while free/query/answer tokens (and generated
+        tokens at decode time) keep it. The gate applies to EVERY forward (train, eval, prefill),
+        so training and inference see identical routing; no new parameters, so base checkpoints
+        load untouched.
+
+        Call BEFORE building the optimizer / applying data parallelism.
+
+        :param start_layer: First gated layer (earlier layers keep the full FFN everywhere).
+        """
+        from ..role_gated_ffn import RoleGateHolder, install_role_gated_ffn
+
+        holder = RoleGateHolder()
+        gated = install_role_gated_ffn(self.blocks, holder, start_layer=start_layer)
+        if not gated:
+            raise OLMoConfigurationError("enable_role_gated_ffn gated no blocks")
+        self._role_gated_ffn = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "pad_id": pad_id,
+            "start_layer": int(start_layer),
+            "holder": holder,
+        }
+        log.info(
+            "Role-gated FFN enabled on %d blocks (start_layer=%d)", len(gated), start_layer
+        )
+
+    def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
+        """Recompute the FFN gate mask from the (possibly compacted) token stream."""
+        cfg = self._role_gated_ffn
+        assert cfg is not None
+        holder = cfg["holder"]
+        if input_ids.is_floating_point():
+            holder.clear()  # PP hidden states: cannot derive roles here
+            return
+        chunk_ids = build_chunk_ids_from_tokens(
+            input_ids,
+            doc_start_id=cfg["doc_start_id"],
+            doc_end_id=cfg["doc_end_id"],
+            eos_id=cfg["eos_id"],
+            mode="chunked",
+            pad_id=cfg["pad_id"],
+        )
+        holder.set_from_chunk_ids(move_to_device(chunk_ids, self.device))
 
     def _compact_pooled_soft_tokens(
         self,
@@ -1093,6 +1152,11 @@ class Transformer(nn.Module):
                             "layers": [],
                         }
                         kwargs["aux_capture"] = aux_ctx
+        # Role-gated FFN: gate mask from the FINAL token stream (post-compaction when the
+        # soft-token path rewrote input_ids), so kept-doc tokens are gated in compacted rows too.
+        if self._role_gated_ffn is not None:
+            self._set_role_gate_mask(input_ids)
+
         (
             input_ids,
             labels,
