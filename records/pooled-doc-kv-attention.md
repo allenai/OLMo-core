@@ -300,6 +300,30 @@ fraction). v26 = gate from layer 12 (docs get 1/3 of the stack at full compute) 
 walls too, the next shape is a LEARNED null-expert router (AdaMoE-style) that lets the model
 protect the tokens it needs rather than a role-blind gate.
 
+**v26 (gate from layer 12) result: trains (CE → 0.247, no wall) but eval f1 = 0.316** (scored
+WITH the matching gate). Role-blind FFN gating is dead in both configurations: layer-4 can't
+even fit the training data; layer-12 fits but collapses at 500-candidate eval. The FFN axis now
+requires the learned-router shape (null/tiny experts with load balancing, router baked into the
+base like the B1 projector) — parked as the next build.
+
+## PARITY (2026-08-31): v25 = 0.927 vs baseline 0.939 — within noise, zero full attention
+
+**v25 (--n-random-range 128,512, detach, p=0): f1 0.927 @ ~13.8k TPS/dev (~2.8x at 32k).**
+Gap to the 0.939 full baseline is 0.012 with SE ~±0.012 — statistical parity under the hard
+no-full-attention-at-32k constraint. Final frontier for the 32k campaign:
+
+| arm | breadth | f1 | speedup @32k |
+|---|---|---|---|
+| v21 | rand 16-256 | 0.857 | ~7.3x |
+| v22 | fixed 256 | 0.916 | ~3.8x |
+| **v25** | **rand 128-512** | **0.927** | **~2.8x** |
+
+Breadth buys accuracy, randomization buys scale-invariance, and BOTH are cheap at longer
+contexts: the same 128-512-doc breadth is ~26% of a 64k corpus and ~13% of 128k, so the v25
+recipe projects to ~4-5x at 64k and ~7-10x at 128k at (presumably) the same parity — the next
+campaign. Train data for 64k already exists
+(`/scratch/users/prasann/corpus-reasoning/data/contradiction_train_pubmed_both_ctx64k.jsonl`).
+
 ### Local-cluster scheduling (why jobs pended; now fixed)
 
 `pick_pooledkv_node.sh` picks among the three staged nodes (horton/mooney/sneetches all hold
