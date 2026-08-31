@@ -318,7 +318,7 @@ def _evaluate_native(
 
 def _load_visual_datasets(
     raw_config: Mapping[str, Any], manifest: Mapping[str, Any], tokenizer: Any, token_ids: Any
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, tuple[str, ...]]]:
     projection_ref = manifest["joint_visual_projection"]
     projection = load_joint_visual_projection_manifest(
         projection_ref["path"],
@@ -340,7 +340,7 @@ def _load_visual_datasets(
         raise SSMaxJointEvidenceError(
             "checkpoint and manifest single-response projection seeds differ"
         )
-    return {
+    datasets = {
         source: _UnpackedModelInputDataset(
             SSMaxSingleResponseDataset(
                 build_selected_joint_dataset(
@@ -360,6 +360,34 @@ def _load_visual_datasets(
         )
         for source in VISUAL_SOURCES
     }
+    content_ids = {
+        source: tuple(projection.selection(source, "validation").row_image_content_sha256)
+        for source in VISUAL_SOURCES
+    }
+    return datasets, content_ids
+
+
+def _run_attention_diagnostics(
+    train_module: Any,
+    visual: Mapping[str, Any],
+    content_ids: Mapping[str, tuple[str, ...]],
+    *,
+    manifest: Mapping[str, Any],
+    collator: MultimodalCollator,
+    checkpoint_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    attention_probe_path = validate_artifact_reference(
+        manifest["attention_probe"], name="SSMax attention probe"
+    )
+    return bridge_runner._run_attention_probe(
+        train_module,
+        visual["pixmo_caption"],
+        content_ids=content_ids["pixmo_caption"],
+        probe_path=attention_probe_path,
+        probe_sha256=manifest["attention_probe"]["sha256"],
+        collator=collator,
+        checkpoint_identity=checkpoint_identity,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -428,7 +456,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             expected_fingerprint=artifacts["tokenizer_fingerprint"],
             cache_dir=artifacts["hf_cache_dir"],
         )
-        visual = _load_visual_datasets(raw_config, manifest, tokenizer, token_ids)
+        visual, content_ids = _load_visual_datasets(raw_config, manifest, tokenizer, token_ids)
         pairings = {
             source: load_json(
                 validate_artifact_reference(manifest["pairings"][source], name=f"{source} pairing")
@@ -455,14 +483,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         }
         for result in results.values():
             result.pop("elapsed_seconds")
-        attention_probe_path = validate_artifact_reference(
-            manifest["attention_probe"], name="SSMax attention probe"
-        )
-        attention_diagnostics = bridge_runner._run_attention_probe(
+        attention_diagnostics = _run_attention_diagnostics(
             train_module,
-            visual["pixmo_caption"],
-            probe_path=attention_probe_path,
-            probe_sha256=manifest["attention_probe"]["sha256"],
+            visual,
+            content_ids,
+            manifest=manifest,
             collator=collator,
             checkpoint_identity=candidate,
         )

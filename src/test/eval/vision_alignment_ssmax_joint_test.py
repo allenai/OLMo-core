@@ -740,6 +740,91 @@ def test_evaluator_source_reference_rejects_git_blob_drift(
         joint._validate_evaluator_source_reference(reference, evidence_git=evidence_git)
 
 
+def test_joint_attention_probe_uses_projection_pixmo_content_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts.eval import vision_alignment_ssmax_joint as evaluator
+
+    expected_content_ids = {
+        source: (f"{index + 1:064x}", f"{index + 101:064x}")
+        for index, source in enumerate(joint.VISUAL_SOURCES)
+    }
+
+    class Projection:
+        def selection(self, source: str, logical_split: str) -> Any:
+            assert logical_split == "validation"
+            return type(
+                "Selection",
+                (),
+                {"row_image_content_sha256": expected_content_ids[source]},
+            )()
+
+    monkeypatch.setattr(
+        evaluator,
+        "load_joint_visual_projection_manifest",
+        lambda *args, **kwargs: Projection(),
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "build_selected_joint_dataset",
+        lambda projection, tokenizer, token_ids, source, **kwargs: f"dataset:{source}",
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "SSMaxSingleResponseDataset",
+        lambda dataset, **kwargs: dataset,
+    )
+    monkeypatch.setattr(
+        evaluator,
+        "_UnpackedModelInputDataset",
+        lambda dataset, *, source: dataset,
+    )
+    raw_config = {
+        "data": {
+            "joint_visual_projection_path": "/projection.json",
+            "joint_visual_projection_sha256": ZERO,
+            "ssmax_single_response_projection": {"seed": 95818},
+            "loss_token_weighting": "root_subsegments_root_tokens",
+        }
+    }
+    manifest = {
+        "joint_visual_projection": {"path": "/projection.json", "sha256": ZERO},
+        "evaluation": {"single_response_projection_seed": 95818},
+        "attention_probe": {"path": "/probe.json", "sha256": "a" * 64},
+    }
+
+    visual, content_ids = evaluator._load_visual_datasets(
+        raw_config, manifest, tokenizer=object(), token_ids=object()
+    )
+
+    assert content_ids == expected_content_ids
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        evaluator,
+        "validate_artifact_reference",
+        lambda value, *, name: tmp_path / "probe.json",
+    )
+
+    def run_attention_probe(train_module: Any, dataset: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update({"train_module": train_module, "dataset": dataset, **kwargs})
+        return {"status": "passed"}
+
+    monkeypatch.setattr(evaluator.bridge_runner, "_run_attention_probe", run_attention_probe)
+    result = evaluator._run_attention_diagnostics(
+        "module",
+        visual,
+        content_ids,
+        manifest=manifest,
+        collator="collator",  # type: ignore[arg-type]
+        checkpoint_identity={"identity_sha256": "b" * 64},
+    )
+
+    assert result == {"status": "passed"}
+    assert captured["dataset"] == "dataset:pixmo_caption"
+    assert captured["content_ids"] == expected_content_ids["pixmo_caption"]
+    assert captured["probe_sha256"] == "a" * 64
+
+
 def test_manifest_spec_reference_pins_raw_and_canonical_semantic_identity(tmp_path: Path) -> None:
     spec = _spec()
     path = tmp_path / "manifest-spec.json"
