@@ -271,6 +271,35 @@ top-doc ~0.9 where meanpool cannot — injected as static KV at slot columns.
 - Also constraint-compatible if this stalls: compressed teachers (pooled forward with a different
   keep draw), breadth curriculum. Distill-style anything at full context stays banned.
 
+**RESULT (v23, 2026-08-31): oracle slots HURT — f1 0.809 vs v21's 0.857 at the same randomized
+16-256 breadth, at half the throughput (~18k TPS/dev, bias-SDPA path + per-step slot gather).**
+Training was healthy (CE 0.0030, 100% cache-hit, fit R² 0.965), so the slots did what they were
+built to do — and it didn't matter. This CONFIRMS the output-equivalence probe's conclusion from
+the failure side too: slot fidelity is not the binding constraint; kept-real-doc breadth is. Best
+explanation for the regression: cached slots are frozen in the BASE model's K/V frame and go
+stale as training drifts, while the projector's detached-but-live slots are recomputed from
+current embeddings every forward and track the model. The fidelity axis is closed (don't revisit
+with a mid-training cache refresh unless breadth saturates below parity — refresh costs ~90 min
+per epoch and the probe says the ceiling isn't here). Round 6: v24 = n256 + role-gated FFN
+(flexible-compute composition), v25 = randomized breadth 128-512 (v22's mean, v21's invariance).
+
+## Flexible-compute FFN (role-gated): first capacity result
+
+Implementation (commits 75fc194d0, ce540001a): context-doc tokens skip the full MLP from
+``start_layer`` on — deterministic marker-based gate, identical at train/eval/prefill, no new
+params, gather-based real-FLOP saving; ``--ffn-gate-start-layer`` on trainer + eval driver,
+``FFN_GATE`` env on the eval sbatch (an arm MUST be scored with its training gate).
+
+**v24 (n256 + gate from layer 4/36): train CE WALLS at ~0.95-0.97** (flat steps ~50-252;
+healthy v22 was far below by then) — killed at step 252 without eval. Attention over doc tokens
+that stopped getting FFN refinement at layer 4 cannot extract what the task needs: doc READING
+requires early-mid FFN capacity, the same lesson as the 0.66 starved-keep floor but for compute
+instead of visibility. Throughput was only +15% over v22 anyway (18.9k vs 16.4k TPS/dev — the
+32/36-layer × 52%-token FFN skip is diluted by attention + gather overhead at this keep
+fraction). v26 = gate from layer 12 (docs get 1/3 of the stack at full compute) queued; if that
+walls too, the next shape is a LEARNED null-expert router (AdaMoE-style) that lets the model
+protect the tokens it needs rather than a role-blind gate.
+
 ### Local-cluster scheduling (why jobs pended; now fixed)
 
 `pick_pooledkv_node.sh` picks among the three staged nodes (horton/mooney/sneetches all hold
