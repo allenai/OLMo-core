@@ -1340,11 +1340,35 @@ class Attention(SequenceMixer):
         freqs_cis: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         chunk_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        attn_bias: Optional[torch.Tensor] = None,
+        aux_capture: Optional[dict] = None,
+        kv_grad_mask: Optional[torch.Tensor] = None,
+        soft_kv_override: Optional[dict] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
 
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
+        :param position_ids: Optional explicit per-token positions ``(batch_size, seq_len)`` for
+            RoPE (e.g. soft-token pooled sequences where kept tokens keep their original
+            positions). ``None`` (default) uses contiguous positions.
+        :param attn_bias: Optional ``(B, 1, T, T)`` additive attention bias replacing the causal
+            mask (soft-token aux matching: position-causality + shadow-column blocking). Runs a
+            direct masked SDPA instead of the configured backend.
+        :param aux_capture: Optional shared dict; when given, post-RoPE q/k/v slices at the
+            requested indices are appended to ``aux_capture["layers"]`` for the soft-token
+            attention-contribution matching loss.
+        :param kv_grad_mask: Optional ``(B, T)`` bool; ``False`` columns have their K/V DETACHED
+            (static-KV semantics for pooled soft tokens: forward identical, no LM gradient
+            through those columns).
+        :param soft_kv_override: Optional dict replacing this layer's K/V at pooled soft-token
+            columns with precomputed oracle slots (see :mod:`olmo_core.nn.oracle_slot`). Keys:
+            ``rows``/``cols`` ``(S,)`` batch/column indices, ``pos`` ``(S,)`` absolute doc-center
+            positions, ``k`` ``(S, n_kv_heads, head_dim)`` center-frame keys (rotated to ``pos``
+            here with this layer's own RoPE), and ``v`` ``(S, n_kv_heads, head_dim)``. The
+            override values are constants, so these columns are static KV regardless of
+            ``kv_grad_mask``.
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
@@ -1369,23 +1393,86 @@ class Attention(SequenceMixer):
         #        (batch_size, seq_len, n_kv_heads (local), head_dim),
         #        (batch_size, seq_len, n_kv_heads (local), head_dim)
         q, k, v = self._prepare_qkv(
-            x, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis, cu_doc_lens=cu_doc_lens
+            x,
+            pos_sin=pos_sin,
+            pos_cos=pos_cos,
+            freqs_cis=freqs_cis,
+            cu_doc_lens=cu_doc_lens,
+            position_ids=position_ids,
         )
 
-        # shape: (batch_size, seq_len, n_heads, head_dim)
-        att = self.sdpa(
-            q,
-            k,
-            v,
-            cu_doc_lens=cu_doc_lens,
-            cu_doc_lens_q=cu_doc_lens_q,
-            cu_doc_lens_k=cu_doc_lens_k,
-            max_doc_len=max_doc_len,
-            max_doc_len_q=max_doc_len_q,
-            max_doc_len_k=max_doc_len_k,
-            local_k_slice=local_k_slice,
-            cache_leftpad=cache_leftpad,
-        )
+        if soft_kv_override is not None and soft_kv_override["rows"].numel() > 0:
+            # Oracle slots: rotate the cached center-frame keys to each slot's doc-center position
+            # with this layer's own RoPE (buffers already warmed by the main _prepare_qkv call),
+            # then overwrite the slot columns' K/V. Values are position-free.
+            assert self.rope is not None and isinstance(self.rope, RotaryEmbedding)
+            ovr_k = soft_kv_override["k"].to(k.dtype)
+            _, ovr_k = self.rope(
+                ovr_k[None],
+                ovr_k[None],
+                head_first=False,
+                position_ids=soft_kv_override["pos"][None],
+            )
+            k = torch.index_put(
+                k, (soft_kv_override["rows"], soft_kv_override["cols"]), ovr_k[0].to(k.dtype)
+            )
+            v = torch.index_put(
+                v,
+                (soft_kv_override["rows"], soft_kv_override["cols"]),
+                soft_kv_override["v"].to(v.dtype),
+            )
+            if soft_kv_override.get("bias") is not None:
+                # Per-slot scalar logit bias (the constant part of the doc's log-mass, which a
+                # bias-free linear slot cannot carry). Requires the additive-bias SDPA path.
+                if attn_bias is None:
+                    raise RuntimeError(
+                        "soft_kv_override with slot biases requires attn_bias (the "
+                        "position-causal masked-SDPA path)"
+                    )
+                col_bias = torch.zeros(
+                    (B, 1, 1, T), dtype=attn_bias.dtype, device=attn_bias.device
+                )
+                col_bias[soft_kv_override["rows"], 0, 0, soft_kv_override["cols"]] = (
+                    soft_kv_override["bias"].to(attn_bias.dtype)
+                )
+                attn_bias = attn_bias + col_bias
+
+        if kv_grad_mask is not None:
+            from .gold_grad_mask import detach_kv
+
+            k, v = detach_kv(k, v, kv_grad_mask)
+
+        if aux_capture is not None:
+            aux_capture["layers"].append(
+                (
+                    q[aux_capture["rows_q"], aux_capture["cols_q"]],
+                    k[aux_capture["rows_kv"], aux_capture["cols_kv"]],
+                    v[aux_capture["rows_kv"], aux_capture["cols_kv"]],
+                    k[aux_capture["rows_sh"], aux_capture["cols_sh"]],
+                    v[aux_capture["rows_sh"], aux_capture["cols_sh"]],
+                )
+            )
+
+        if attn_bias is not None:
+            # Soft-token aux path: position-causal + shadow-blocked masked SDPA.
+            from ..pooled_soft_token import masked_sdpa
+
+            att = masked_sdpa(q, k, v, attn_bias, self.head_dim**-0.5)
+        else:
+            # shape: (batch_size, seq_len, n_heads, head_dim)
+            att = self.sdpa(
+                q,
+                k,
+                v,
+                cu_doc_lens=cu_doc_lens,
+                cu_doc_lens_q=cu_doc_lens_q,
+                cu_doc_lens_k=cu_doc_lens_k,
+                max_doc_len=max_doc_len,
+                max_doc_len_q=max_doc_len_q,
+                max_doc_len_k=max_doc_len_k,
+                local_k_slice=local_k_slice,
+                cache_leftpad=cache_leftpad,
+            )
 
         # shape: (batch_size, seq_len, n_heads * head_dim)
         att = att.view(B, T, -1)

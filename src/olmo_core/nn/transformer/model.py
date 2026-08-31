@@ -136,6 +136,10 @@ class Transformer(nn.Module):
         # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
         # forwards them to every block (for :class:`DocumentLandmarkAttention`).
         self._document_chunk_attention: Optional[Dict[str, Any]] = None
+        # Soft-token document pooling ("B1"): set by ``enable_pooled_soft_tokens``.
+        self._pooled_soft_tokens: Optional[Dict[str, Any]] = None
+        self.pooled_projector: Optional[nn.Module] = None
+        self._pooled_keep_holder: Optional[Any] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -276,6 +280,250 @@ class Transformer(nn.Module):
             "mix": mix,
         }
 
+    def enable_pooled_soft_tokens(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        *,
+        placeholder_id: int,
+        keep_prob: float = 0.1,
+        keep_seed: int = 42,
+        projector_hidden: Optional[int] = None,
+        aux_match_weight: float = 0.0,
+        aux_queries: int = 16,
+        aux_max_shadows: int = 8,
+        detach_soft_kv: bool = False,
+        distill_prob: float = 0.0,
+        distill_weight: float = 1.0,
+        distill_layer_stride: int = 4,
+        oracle_cache: Optional[Any] = None,
+    ) -> None:
+        """
+        Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
+
+        During **training** forwards, each context document (identified from the
+        ``<|doc_start|>``/``<|doc_end|>`` markers) is either kept (real tokens) or replaced by a
+        single soft token -- the :class:`~olmo_core.nn.pooled_soft_token.PooledDocProjector` output
+        on the document's mean input embedding -- at the document's center position, with original
+        ``position_ids`` threaded to RoPE. The keep set is gold + random negatives via
+        :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep`, or a seeded random
+        ``keep_prob`` fraction as fallback. Eval/generation forwards are untouched (full attention
+        over real tokens -- the transfer condition), as are rows without markers.
+
+        Creates the ``pooled_projector`` submodule -- call this BEFORE building the optimizer, and
+        call ``pooled_projector.reset_parameters()`` after loading a base checkpoint without
+        projector keys. Not supported together with context/pipeline parallelism or
+        ``enable_document_chunk_attention``.
+
+        :param placeholder_id: Token id emitted at soft slots (embedding is overwritten; use a
+            repaired reserved id, e.g. the landmark id).
+        """
+        if self._document_chunk_attention is not None:
+            raise OLMoConfigurationError(
+                "enable_pooled_soft_tokens is mutually exclusive with "
+                "enable_document_chunk_attention (the compacted sequence is plain causal)."
+            )
+        from ..pooled_soft_token import PooledDocProjector
+
+        emb_weight = self.embeddings.weight  # type: ignore[union-attr]
+        self.pooled_projector = PooledDocProjector(
+            self.d_model,
+            hidden=projector_hidden,
+            dtype=emb_weight.dtype,
+            init_device="meta" if emb_weight.device.type == "meta" else str(emb_weight.device),
+        )
+        self._pooled_soft_tokens = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "placeholder_id": int(placeholder_id),
+            "keep_prob": float(keep_prob),
+            "keep_seed": int(keep_seed),
+            # Aux attention-contribution matching (see pooled_soft_token.aux_matching_loss): train
+            # the projector ONLINE so a soft token's per-layer KV reproduces its doc's real
+            # attention behavior, using the keep set as the supervision source. > 0 enables
+            # shadows + the position-causal masked attention path.
+            "aux_match_weight": float(aux_match_weight),
+            "aux_queries": int(aux_queries),
+            "aux_max_shadows": int(aux_max_shadows),
+            # Treat pooled slots as STATIC KV: sever the LM loss's backward through the slot
+            # columns' K/V at EVERY layer (and their input injection), so the main model receives
+            # task gradient only through real tokens and cannot co-invent a private "summary
+            # language" (the co-drift channel). The projector then trains ONLY via the aux
+            # shadow objective (frozen if aux_match_weight == 0).
+            "detach_soft_kv": bool(detach_soft_kv),
+            # Paired consistency distillation: with probability distill_prob a training forward
+            # runs BOTH the full pass (LM gradient -> protects the full-attention pathway from
+            # co-drift) and the compressed pass, matching the student's hidden states at the
+            # divergence layers (probe: L16+) to the DETACHED teacher at answer positions.
+            # The coin is seeded on a shared forward counter so every FSDP rank takes the same
+            # branch (asymmetric double-forwards would desynchronize the collectives).
+            "distill_prob": float(distill_prob),
+            "distill_weight": float(distill_weight),
+            "distill_layers": sorted(
+                set(range(int(self.n_layers * 0.4), self.n_layers, max(1, distill_layer_stride)))
+                | {self.n_layers - 1}
+            ),
+            "_distill_counter": 0,
+            # Oracle slot cache (olmo_core.nn.oracle_slot.OracleSlotCache): when set, pooled
+            # slots' per-layer K/V are OVERRIDDEN with precomputed oracle log-mass slots instead
+            # of whatever the network computes from the projected soft token -- the
+            # maximal-fidelity static slot. Docs missing from the cache fall back to the
+            # projector path.
+            "oracle_cache": oracle_cache,
+            "_oracle_stats": {"hits": 0, "misses": 0, "calls": 0},
+        }
+
+    def _compact_pooled_soft_tokens(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        ignore_index: int,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[Tuple]]:
+        """
+        Apply soft-token compaction for this training forward. Returns
+        ``(input_ids, labels, position_ids, soft_inject)`` -- unchanged inputs and ``None``s when
+        the batch has no context documents. ``soft_inject = (rows, cols, mean_embeds)`` is consumed
+        after the embedding lookup.
+        """
+        from ..attention.pooled_doc_kv import resolve_keep_docs
+        from ..pooled_soft_token import compact_pooled_rows
+
+        cfg = self._pooled_soft_tokens
+        assert cfg is not None
+        if self._cp_load_balancer is not None or self._pp_enabled:
+            raise OLMoConfigurationError(
+                "pooled soft tokens are not supported with context/pipeline parallelism"
+            )
+        chunk_ids = build_chunk_ids_from_tokens(
+            input_ids,
+            doc_start_id=cfg["doc_start_id"],
+            doc_end_id=cfg["doc_end_id"],
+            eos_id=cfg["eos_id"],
+            mode="chunked",
+        )
+        n_docs = int(chunk_ids.max().item()) + 1
+        if n_docs <= 0:
+            return None
+        keep = resolve_keep_docs(
+            chunk_ids,
+            n_docs,
+            holder=self._pooled_keep_holder,
+            keep_prob=cfg["keep_prob"],
+            keep_seed=cfg["keep_seed"],
+        )
+        # Mean input embedding per pooled doc (from the ORIGINAL row), the projector's feature.
+        emb = self.embeddings(input_ids)  # type: ignore[misc]
+        B, T, D = emb.shape
+        cid = chunk_ids.to(torch.long)
+        is_ctx = cid >= 0
+        flat = (torch.arange(B, device=emb.device)[:, None] * n_docs + cid.clamp(min=0)).reshape(
+            -1
+        )[is_ctx.reshape(-1)]
+        sums = torch.zeros(B * n_docs, D, dtype=emb.dtype, device=emb.device).index_add(
+            0, flat, emb.reshape(B * T, D)[is_ctx.reshape(-1)]
+        )
+        counts = (
+            torch.zeros(B * n_docs, dtype=torch.float32, device=emb.device)
+            .index_add(0, flat, torch.ones_like(flat, dtype=torch.float32))
+            .clamp(min=1.0)
+        )
+        doc_means = (sums / counts.unsqueeze(-1).to(emb.dtype)).reshape(B, n_docs, D)
+
+        cb = compact_pooled_rows(
+            input_ids,
+            labels,
+            chunk_ids,
+            keep,
+            placeholder_id=cfg["placeholder_id"],
+            pad_token_id=cfg["eos_id"],
+            ignore_index=ignore_index,
+            add_shadows=cfg["aux_match_weight"] > 0.0,
+            max_shadows_per_row=cfg["aux_max_shadows"],
+        )
+        # Projector features for pooled slots AND (when aux is on) the shadow candidates -- both
+        # are P(mean input embeds of the doc), same distribution, same module.
+        inj_rows = torch.cat([cb.soft_rows, cb.shadow_rows])
+        inj_cols = torch.cat([cb.soft_cols, cb.shadow_cols])
+        inj_docs = torch.cat([cb.soft_docs, cb.shadow_docs])
+        mean_feats = doc_means[inj_rows, inj_docs]
+
+        # Oracle slot lookup: hash each pooled doc's token span, gather its cached per-layer
+        # slots. Docs missing from the cache stay on the projector path.
+        oracle_ovr = None
+        cache = cfg.get("oracle_cache")
+        if cache is not None and cb.soft_rows.numel() > 0:
+            import numpy as np
+
+            from ..oracle_slot import doc_hash64
+
+            ids_np = input_ids.cpu().numpy()
+            cid_np = cid.cpu().numpy()
+            s_rows = cb.soft_rows.cpu().numpy()
+            s_docs = cb.soft_docs.cpu().numpy()
+            row_order: Dict[int, Tuple[Any, Any]] = {}
+            hashes = []
+            for b, d in zip(s_rows.tolist(), s_docs.tolist()):
+                if b not in row_order:
+                    order = np.argsort(cid_np[b], kind="stable")
+                    row_order[b] = (order, cid_np[b][order])
+                order, srt = row_order[b]
+                span_lo = int(np.searchsorted(srt, d))
+                span_hi = int(np.searchsorted(srt, d, side="right"))
+                hashes.append(doc_hash64(ids_np[b][order[span_lo:span_hi]]))
+            idx = cache.lookup(hashes)
+            found = idx >= 0
+            st = cfg["_oracle_stats"]
+            st["hits"] += int(found.sum())
+            st["misses"] += int((~found).sum())
+            st["calls"] += 1
+            if st["misses"] > 0 and st["calls"] % 100 == 1:
+                log.warning(
+                    "[oracle-slot] cache misses so far: %d / %d slots (missing docs fall back "
+                    "to the projector)",
+                    st["misses"],
+                    st["hits"] + st["misses"],
+                )
+            if st["calls"] >= 10 and st["hits"] == 0:
+                raise RuntimeError(
+                    "[oracle-slot] 0 cache hits after 10 forwards -- the doc-hash scheme "
+                    "almost certainly mismatches the cache builder; refusing to silently "
+                    "train plain B1"
+                )
+            if found.any():
+                sel = torch.from_numpy(np.flatnonzero(found)).to(cb.soft_rows.device)
+                slots, biases = cache.gather(idx[found])
+                rows = cb.soft_rows[sel]
+                cols = cb.soft_cols[sel]
+                oracle_ovr = {
+                    "rows": rows,
+                    "cols": cols,
+                    "pos": cb.position_ids[rows, cols],
+                    "slots": slots.to(input_ids.device, non_blocking=True),
+                    "biases": biases.to(input_ids.device, non_blocking=True),
+                }
+        return cb, (inj_rows, inj_cols, mean_feats), oracle_ovr
+
+    def _run_blocks(
+        self,
+        h: torch.Tensor,
+        all_block_kwargs: Dict[str, Any],
+        per_block_kwargs: Dict[int, Dict[str, Any]],
+        capture_layers: Optional[Set[int]] = None,
+    ) -> Tuple[torch.Tensor, Dict[int, torch.Tensor]]:
+        """Run the block stack; optionally capture (attached) hidden states at given layer indices."""
+        captured: Dict[int, torch.Tensor] = {}
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
+            block_kwargs = per_block_kwargs.get(block_idx, {})
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            h = block(h, **all_block_kwargs, **block_kwargs)
+            if capture_layers is not None and block_idx in capture_layers:
+                captured[block_idx] = h
+        return h, captured
+
     def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
         """
         Enable inference-only hard top-k landmark retrieval on every eager landmark attention layer
@@ -395,9 +643,11 @@ class Transformer(nn.Module):
                 self.embeddings,
                 d_model=self.d_model,
                 embed_scale=self.embed_scale,
-                std=self.embedding_init_std
-                if self.embedding_init_std is not None
-                else self.init_std,
+                std=(
+                    self.embedding_init_std
+                    if self.embedding_init_std is not None
+                    else self.init_std
+                ),
                 generator=generator,
             )
 
@@ -504,6 +754,38 @@ class Transformer(nn.Module):
         cu_doc_lens: Optional[torch.Tensor] = None
         doc_lens: Optional[torch.Tensor] = None
         cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
+
+        # Explicit per-token positions (soft-token pooling: kept tokens keep their ORIGINAL
+        # positions so RoPE geometry matches full-attention inference). Threaded to every block.
+        if (position_ids := kwargs.pop("position_ids", None)) is not None:
+            if self._cp_load_balancer is not None:
+                raise NotImplementedError("position_ids is not supported with context parallelism")
+            all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
+        # Soft-token aux matching: the position-causal masked-attention bias + the shared per-layer
+        # capture dict (each Attention appends its q/k/v slices for the matching loss).
+        if (attn_bias := kwargs.pop("attn_bias", None)) is not None:
+            all_block_kwargs["attn_bias"] = move_to_device(attn_bias, self.device)
+        if (aux_capture := kwargs.pop("aux_capture", None)) is not None:
+            all_block_kwargs["aux_capture"] = aux_capture
+        if (kv_grad_mask := kwargs.pop("kv_grad_mask", None)) is not None:
+            all_block_kwargs["kv_grad_mask"] = move_to_device(kv_grad_mask, self.device)
+        # Oracle slot K/V overrides (soft-token pooling): one gathered slot stack for the batch,
+        # sliced per layer into per-block kwargs (each Attention rotates + injects its own slice).
+        if (oracle_ovr := kwargs.pop("soft_kv_override_layers", None)) is not None:
+            slots = move_to_device(oracle_ovr["slots"], self.device)
+            biases = move_to_device(oracle_ovr["biases"], self.device)
+            rows = move_to_device(oracle_ovr["rows"], self.device)
+            cols = move_to_device(oracle_ovr["cols"], self.device)
+            slot_pos = move_to_device(oracle_ovr["pos"], self.device)
+            for li in range(slots.shape[1]):
+                per_block_kwargs[li]["soft_kv_override"] = {
+                    "rows": rows,
+                    "cols": cols,
+                    "pos": slot_pos,
+                    "k": slots[:, li, 0],
+                    "v": slots[:, li, 1],
+                    "bias": biases[:, li],
+                }
 
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
@@ -635,7 +917,9 @@ class Transformer(nn.Module):
                     new_chunk_ids = collapse_roles_to_causal(
                         chunk_ids, p, forward_idx=mix["forward_idx"], mix_seed=mix["mix_seed"]
                     )
-                    if new_chunk_ids is not chunk_ids:  # at least one example collapsed this forward
+                    if (
+                        new_chunk_ids is not chunk_ids
+                    ):  # at least one example collapsed this forward
                         mix["n_collapsed"] += 1
                     chunk_ids = new_chunk_ids
                     if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
@@ -684,6 +968,131 @@ class Transformer(nn.Module):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        # Soft-token document pooling ("B1"): during training, compact the sequence (pooled docs ->
+        # one placeholder each) BEFORE anything else sees it. Eval/generation forwards untouched.
+        soft_inject: Optional[Tuple] = None
+        aux_ctx: Optional[Dict[str, Any]] = None
+        distill_teacher: Optional[Dict[str, Any]] = None
+        if (
+            self._pooled_soft_tokens is not None
+            and self.training
+            and not input_ids.is_floating_point()  # PP passes hidden states; only act on token ids
+        ):
+            # Paired-distillation coin: synchronized across ranks via the shared forward counter.
+            pst0 = self._pooled_soft_tokens
+            paired = False
+            if pst0["distill_prob"] > 0.0 and labels is not None:
+                import random as _random
+
+                cnt = pst0["_distill_counter"]
+                pst0["_distill_counter"] = cnt + 1
+                paired = (
+                    _random.Random(f"distill:{pst0['keep_seed']}:{cnt}").random()
+                    < pst0["distill_prob"]
+                )
+            if paired:
+                # TEACHER pass: the ORIGINAL row, plain full attention, WITH LM gradient.
+                t_ids, t_labels, t_abk, t_pbk, t_lmk = self._prepare_inputs(
+                    input_ids,
+                    labels,
+                    ignore_index=ignore_index,
+                    loss_reduction=loss_reduction,
+                    z_loss_multiplier=z_loss_multiplier,
+                    loss_div_factor=loss_div_factor,
+                    return_logits=False,
+                )
+                h_t = self.embeddings(t_ids)  # type: ignore[misc]
+                if self.embed_scale is not None:
+                    h_t = h_t * self.embed_scale
+                if self.embedding_norm is not None:
+                    h_t = self.embedding_norm(h_t)
+                h_t, t_caps = self._run_blocks(
+                    h_t, t_abk, t_pbk, capture_layers=set(pst0["distill_layers"])
+                )
+                t_lmk["labels"] = t_labels
+                t_out = self.lm_head(h_t, **t_lmk)  # type: ignore[misc]
+                # Distill positions: every labeled (answer) position PLUS sampled FREE-region
+                # positions -- free tokens survive compaction, so both passes have them, and
+                # matching across the whole row constrains the pathway far more per teacher
+                # than answer positions alone (the 32k signal-density fix).
+                ans_r, ans_c = (t_labels != ignore_index).nonzero(as_tuple=True)
+                roles_t = build_chunk_ids_from_tokens(
+                    t_ids,
+                    doc_start_id=pst0["doc_start_id"],
+                    doc_end_id=pst0["doc_end_id"],
+                    eos_id=pst0["eos_id"],
+                    mode="chunked",
+                )
+                free_r, free_c = (roles_t == -1).nonzero(as_tuple=True)
+                n_extra = min(96 * t_ids.shape[0], int(free_r.numel()))
+                if n_extra > 0:
+                    sel_f = torch.randperm(free_r.numel(), device=free_r.device)[:n_extra]
+                    d_rows = torch.cat([ans_r, free_r[sel_f]])
+                    d_pos = torch.cat([ans_c, free_c[sel_f]])
+                else:
+                    d_rows, d_pos = ans_r, ans_c
+                distill_teacher = {
+                    "loss_full": t_out.loss,
+                    "rows": d_rows,
+                    "pos": d_pos,
+                    "caps": {li: t_caps[li][d_rows, d_pos].detach() for li in t_caps},
+                }
+            compacted = self._compact_pooled_soft_tokens(input_ids, labels, ignore_index)
+            if compacted is not None:
+                cb, soft_inject, oracle_ovr = compacted
+                input_ids, labels = cb.input_ids, cb.labels
+                kwargs["position_ids"] = cb.position_ids
+                if oracle_ovr is not None:
+                    kwargs["soft_kv_override_layers"] = oracle_ovr
+                    # Slot biases need the additive-bias SDPA path: position-causality is
+                    # equivalent to sequence-causality on the compacted row (content is sorted
+                    # by original position), so this only changes the kernel, not the math.
+                    from ..pooled_soft_token import build_position_causal_bias
+
+                    kwargs.setdefault(
+                        "attn_bias",
+                        build_position_causal_bias(
+                            cb,
+                            dtype=self.embeddings.weight.dtype,  # type: ignore[union-attr]
+                            device=input_ids.device,
+                        ),
+                    )
+                pst = self._pooled_soft_tokens
+                if pst["detach_soft_kv"] and cb.soft_rows.numel() > 0:
+                    kv_grad_mask = torch.ones_like(cb.input_ids, dtype=torch.bool)
+                    kv_grad_mask[cb.soft_rows, cb.soft_cols] = False
+                    kwargs["kv_grad_mask"] = kv_grad_mask
+                if (
+                    pst["aux_match_weight"] > 0.0
+                    and cb.shadow_rows.numel() > 0
+                    and labels is not None
+                ):
+                    from ..pooled_soft_token import build_position_causal_bias
+
+                    kwargs["attn_bias"] = build_position_causal_bias(
+                        cb, dtype=self.embeddings.weight.dtype, device=input_ids.device  # type: ignore[union-attr]
+                    )
+                    lab_rows, lab_cols = (labels != ignore_index).nonzero(as_tuple=True)
+                    if lab_rows.numel() > 0:
+                        nq = min(
+                            pst["aux_queries"] * cb.input_ids.shape[0], int(lab_rows.numel())
+                        )
+                        sel = torch.randperm(lab_rows.numel(), device=lab_rows.device)[:nq]
+                        valid = cb.shadow_doc_cols >= 0
+                        n_sh = cb.shadow_rows.numel()
+                        aux_ctx = {
+                            "rows_q": lab_rows[sel],
+                            "cols_q": lab_cols[sel],
+                            "rows_kv": cb.shadow_rows[:, None].expand_as(cb.shadow_doc_cols)[valid],
+                            "cols_kv": cb.shadow_doc_cols[valid],
+                            "doc_of_kv": torch.arange(n_sh, device=lab_rows.device)[:, None]
+                            .expand_as(cb.shadow_doc_cols)[valid],
+                            "rows_sh": cb.shadow_rows,
+                            "cols_sh": cb.shadow_cols,
+                            "log_len": cb.shadow_log_len,
+                            "layers": [],
+                        }
+                        kwargs["aux_capture"] = aux_ctx
         (
             input_ids,
             labels,
@@ -705,19 +1114,53 @@ class Transformer(nn.Module):
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+        if soft_inject is not None:
+            # Overwrite the placeholder embeddings with the projector's soft doc tokens. Under
+            # detach_soft_kv the POOLED slots are injected detached (static-KV semantics; the
+            # per-layer K/V cut happens in Attention via kv_grad_mask) while SHADOW candidates
+            # stay attached so the aux objective can train the projector.
+            s_rows, s_cols, mean_feats = soft_inject
+            assert self.pooled_projector is not None
+            h = h.clone()
+            soft_vecs = self.pooled_projector(mean_feats).to(h.dtype)
+            if self._pooled_soft_tokens["detach_soft_kv"]:  # type: ignore[index]
+                n_slots = s_rows.shape[0] - (
+                    aux_ctx["rows_sh"].shape[0] if aux_ctx is not None else 0
+                )
+                soft_vecs = torch.cat(
+                    [soft_vecs[:n_slots].detach(), soft_vecs[n_slots:]], dim=0
+                )
+            h[s_rows, s_cols] = soft_vecs
         if self.embeddings is not None and self.embed_scale is not None:
             h = h * self.embed_scale
         if self.embedding_norm is not None:
             h = self.embedding_norm(h)
 
-        # Run each block.
-        for block_key, block in self.blocks.items():
-            block_idx = int(block_key)
-            block_kwargs = per_block_kwargs.get(block_idx, {})
-            # Mark sizes as dynamic for torch.compile().
-            if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+        # Run each block (capturing student hiddens at the distill layers on paired forwards).
+        cap_set = (
+            set(self._pooled_soft_tokens["distill_layers"])  # type: ignore[index]
+            if distill_teacher is not None
+            else None
+        )
+        h, s_caps = self._run_blocks(h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set)
+
+        # Aux attention-contribution matching loss (soft-token pooling; see aux_matching_loss).
+        aux_loss: Optional[torch.Tensor] = None
+        if aux_ctx is not None and aux_ctx["layers"]:
+            from ..pooled_soft_token import aux_matching_loss
+
+            first_block = next(iter(self.blocks.values()))
+            scale = first_block.attention.head_dim**-0.5  # type: ignore[union-attr]
+            aux_loss = aux_matching_loss(
+                [
+                    (qs, kd, vd, aux_ctx["doc_of_kv"], ksh, vsh)
+                    for (qs, kd, vd, ksh, vsh) in aux_ctx["layers"]
+                ],
+                q_rows=aux_ctx["rows_q"],
+                shadow_rows=aux_ctx["rows_sh"],
+                shadow_log_len=aux_ctx["log_len"],
+                scale=scale,
+            )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -729,7 +1172,38 @@ class Transformer(nn.Module):
             # will throw an exception.
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
-            return self.lm_head(h, **lm_head_kwargs)
+            out = self.lm_head(h, **lm_head_kwargs)
+            if isinstance(out, LMOutputWithLoss) and out.loss is not None:
+                loss = out.loss
+                if aux_loss is not None:
+                    w = self._pooled_soft_tokens["aux_match_weight"]  # type: ignore[index]
+                    loss = loss + w * aux_loss.to(loss.dtype)
+                if distill_teacher is not None and labels is not None:
+                    # Map teacher (row, ORIGINAL position) -> student compacted column via the
+                    # per-row ascending position_ids (free/answer tokens survive compaction).
+                    pos_ids_s = all_block_kwargs.get("position_ids")
+                    s_r = distill_teacher["rows"]
+                    if pos_ids_s is not None:
+                        s_c = torch.searchsorted(
+                            pos_ids_s[s_r].contiguous(),
+                            distill_teacher["pos"][:, None].contiguous(),
+                        ).squeeze(-1).clamp(max=pos_ids_s.shape[1] - 1)
+                    else:
+                        s_c = distill_teacher["pos"]
+                    terms = []
+                    for li, t_h in distill_teacher["caps"].items():
+                        s_h = s_caps[li][s_r, s_c].float()
+                        t_f = t_h.float()
+                        terms.append(
+                            ((s_h - t_f) ** 2).sum(-1).mean()
+                            / t_f.pow(2).sum(-1).mean().clamp(min=1e-6)
+                        )
+                    d_loss = torch.stack(terms).mean()
+                    w_d = self._pooled_soft_tokens["distill_weight"]  # type: ignore[index]
+                    loss = loss + distill_teacher["loss_full"] + w_d * d_loss.to(loss.dtype)
+                if loss is not out.loss:
+                    out = LMOutputWithLoss(out.logits, loss, out.ce_loss, out.z_loss)
+            return out
         else:
             return h
 
