@@ -341,6 +341,10 @@ def main():
                     help="landmark variant: keep only top-k landmark BLOCKS per query (exact if unset).")
     ap.add_argument("--landmark-top-k-fraction", type=float, default=None,
                     help="landmark variant: top-k = ceil(fraction * num_prompt_blocks) (reference: 0.1).")
+    ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
+                    help="Dump per-example (prompt tail, generation, gold/pred detail) to "
+                         "<out>.generations.jsonl for error inspection. On by default; "
+                         "--no-save-generations to skip.")
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     if args.root:
@@ -557,6 +561,27 @@ def main():
             with open(args.out, "w") as f:
                 json.dump(summary, f, indent=2)
 
+    # Per-example generation dump (for error inspection), same schema/convention as
+    # eval_lc_native.py's _record_gens: {task, rung, idx, generation, prompt_tail, detail}, one
+    # JSON object per line, appended incrementally after each rung so a preempted/OOM-killed job
+    # doesn't lose everything already decoded. Deliberately does NOT merge with a pre-existing
+    # dump (unlike the summary JSON above) -- a rerun must fully replace stale generations, not
+    # silently inherit them, so the file is truncated once at process startup.
+    gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
+    gen_dump = []
+    gens_written = 0
+    if is_main and args.save_generations:
+        open(gen_path, "w").close()
+
+    def flush_gens():
+        nonlocal gens_written
+        if not (is_main and args.save_generations) or len(gen_dump) <= gens_written:
+            return
+        with open(gen_path, "a") as gf:
+            for rec in gen_dump[gens_written:]:
+                gf.write(json.dumps(rec) + "\n")
+        gens_written = len(gen_dump)
+
     ladders = build_ladders(args)
     task_spec = build_task_spec(args)
     task_filter = [t.strip() for t in args.tasks.split(",") if t.strip()]
@@ -603,21 +628,38 @@ def main():
                     gm.model.set_landmark_eval_top_k(
                         max(1, math.ceil(args.landmark_top_k_fraction * n_blocks))
                     )
-                local.append((gi, generate_one(prefill, max_new_tokens, answer_complete)))
+                # Prompt tail for the generations dump: decode a bounded window of the ACTUAL
+                # token-level prefill (box markers / landmark / summary tokens included), not the
+                # raw example text -- that's what the model was really shown. Gathering the full
+                # prefill (up to ~250k tokens at the long rungs) across ranks would be enormous;
+                # a decoded tail is a few hundred chars.
+                ptail = tok.decode(prefill[-512:], skip_special_tokens=False)[-1200:]
+                local.append((gi, generate_one(prefill, max_new_tokens, answer_complete), ptail))
 
             full = [None] * len(examples)
+            prompt_tails = [None] * len(examples)
             if world > 1:
                 parts = [None] * world
                 torch.distributed.all_gather_object(parts, local)
                 for part in parts:
-                    for gi, resp in part:
+                    for gi, resp, ptail in part:
                         full[gi] = resp
+                        prompt_tails[gi] = ptail
             else:
-                for gi, resp in local:
+                for gi, resp, ptail in local:
                     full[gi] = resp
+                    prompt_tails[gi] = ptail
 
             if is_main:
-                res, _ = score_fn(examples, full)
+                res, det = score_fn(examples, full)
+                if args.save_generations:
+                    for i, resp in enumerate(full):
+                        rec = {"task": task, "rung": label, "idx": i, "generation": resp,
+                               "prompt_tail": prompt_tails[i]}
+                        if det is not None and i < len(det):
+                            rec["detail"] = det[i]
+                        gen_dump.append(rec)
+                    flush_gens()
                 if primary_key is not None:
                     prim = res.get(primary_key)
                 else:  # rerank -> first mrr* metric
@@ -635,6 +677,8 @@ def main():
         print(f"\n[docchunk-ladder] WROTE {args.out} in {time.time()-t0:.1f}s", flush=True)
         keys = sorted(k for k in summary if any(k.startswith(t + "_") for t in ALL_TASKS))
         print(f"[docchunk-ladder] ladder keys present: {keys}", flush=True)
+        if args.save_generations and gen_dump:
+            print(f"[docchunk-ladder] wrote {len(gen_dump)} generations -> {gen_path}", flush=True)
     if world > 1:
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
