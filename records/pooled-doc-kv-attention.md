@@ -224,17 +224,22 @@ method at 128k/1M. The full-attention BASELINE (comparison) and full-attention E
 target, inference-time) remain allowed; full attention *within kept docs* is fine. Round 5 is the
 all-zero-full-attention slate:
 
-| arm | config | distill | TPS/dev | speedup |
-|---|---|---|---|---|
-| v20-nodistill | n_random=128 | p=0 | ~34,600 | **~7.1x** |
-| v21-rb-nodist | n_random-range 16-256 | p=0 | ~35,600 | **~7.3x** |
-| v22-n256-nodist | n_random=256 | p=0 | ~18,300 | ~3.8x |
-| 1/3-baseline | full attn, 166 steps | — | ~4,850 | 1x (iso-FLOP ref) |
+| arm | config | distill | f1 | TPS/dev | speedup |
+|---|---|---|---|---|---|
+| v20-nodistill | n_random=128 | p=0 | 0.797 | ~34,600 | **~7.1x** |
+| v21-rb-nodist | n_random-range 16-256 | p=0 | 0.857 | ~35,600 | **~7.3x** |
+| **v22-n256-nodist** | **n_random=256** | p=0 | **0.916** | ~18,300 | ~3.8x |
+| 1/3-baseline | full attn, 166 steps | — | 0.542 | ~4,850 | 1x (iso-budget ref) |
 
 Dropping the distill term alone bought ~2.5x throughput at fixed keep breadth (v16 13.5k → v20
-34.6k TPS/dev), confirming the 1/p ceiling analysis. None of the three trained CE anywhere near
-the 0.66 starved-keep floor (all ≤0.10-0.28 by mid-run). The open question is eval F1: does
-kept-doc breadth alone protect the full-attention pathway from co-drift without a teacher?
+34.6k TPS/dev), confirming the 1/p ceiling analysis. **Answer: kept-doc breadth alone DOES
+protect the pathway — and scales past what distillation ever reached.** v22 (256 negs, no
+teacher) beats v16 (128 negs + p=0.2 distill, 0.891) and sits 0.023 from the 0.939 full baseline
+(SE ~±0.013). The 1/3-budget full baseline (schedule fully annealed over its 166 steps, so fair)
+collapses to 0.542 — compressed training dominates per FLOP, not just per second. Frontier:
+0.797@7.1x / 0.857@7.3x / 0.916@3.8x; randomized breadth (v21) dominates fixed-128 (v20) at
+equal speed. Since speedup at fixed ABSOLUTE breadth grows with context length (256 kept docs is
+52% of a 32k row but ~13% of a 128k row), the frontier should improve at longer contexts.
 
 ## Oracle log-mass slot cache (2026-08-31): max KV fidelity without full-context forwards
 
