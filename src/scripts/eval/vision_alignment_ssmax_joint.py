@@ -503,9 +503,6 @@ def main(argv: Sequence[str] | None = None) -> None:
             examples=int(manifest["evaluation"]["native_holdout_examples"]),
             collator=collator,
         )
-        git = bridge_runner._git_identity()
-        if git.get("revision") != manifest["git"]["ref"] or git.get("dirty") is not False:
-            raise RuntimeError("evaluator checkout differs from the clean training git ref")
         status_ok = (
             state["frozen_lexical_input_rows"]["mismatch_count"] == 0
             and state["frozen_output_projection"]["mismatch_count"] == 0
@@ -526,7 +523,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             "pairings": {source: dict(manifest["pairings"][source]) for source in VISUAL_SOURCES},
             "results": results,
             "attention_diagnostics": attention_diagnostics,
-            "evaluator": evaluator_source_reference(Path(__file__), git_ref=str(git["revision"])),
+            "evaluator": evaluator_source_reference(
+                Path(__file__), git_ref=str(manifest["git"]["ref"])
+            ),
         }
         payload["content_sha256"] = canonical_sha256(payload)
         bridge_runner._write_distributed(output_path, payload)

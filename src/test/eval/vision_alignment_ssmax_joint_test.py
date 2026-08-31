@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import math
@@ -823,6 +824,21 @@ def test_joint_attention_probe_uses_projection_pixmo_content_ids(
     assert captured["dataset"] == "dataset:pixmo_caption"
     assert captured["content_ids"] == expected_content_ids["pixmo_caption"]
     assert captured["probe_sha256"] == "a" * 64
+
+
+def test_joint_evaluator_bridge_runner_dependencies_exist() -> None:
+    from scripts.eval import vision_alignment_ssmax_joint as evaluator
+
+    source = ast.parse(Path(evaluator.__file__).read_text())
+    dependencies = {
+        node.attr
+        for node in ast.walk(source)
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "bridge_runner"
+    }
+
+    assert sorted(name for name in dependencies if not hasattr(evaluator.bridge_runner, name)) == []
 
 
 def test_manifest_spec_reference_pins_raw_and_canonical_semantic_identity(tmp_path: Path) -> None:
