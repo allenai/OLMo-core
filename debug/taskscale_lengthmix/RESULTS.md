@@ -112,6 +112,13 @@ Neither arm was trained at 64k; both are 32k pure-length arms scored on the 64k 
 q32k_16000 (16,000 examples, ~487M tokens) -> **.706**, q32k_32000 (32,000 examples, ~975M) ->
 .713. Doubling the corpus buys +.007 at 64k, the same flat tail the 32k ladder shows.
 
+## outlier p32k_4000 (pure-length 32k arm, 4,000 examples)
+
+Its 16k rung -- a DOWNWARD transfer, since every training example sits at ~32k -- scores **.119**
+(eval_size 600), against .453 for the 64M short-heavy mix at the same rung. Training entirely at
+one length does not buy the shorter rung; the short-heavy recipe exists for exactly this reason.
+The 32k rung, which supplies the third point for the outlier 32k K refit, is still running.
+
 ## Prior-campaign anchors
 
 - qdmatch_nq dense short-heavy mixes @8k/16k/32k, eval_size 600: 64M .949/.883/.676,
