@@ -60,10 +60,13 @@ def main():
     root = get_root_dir(args.cluster)
     ckpt = f"{root}/checkpoints/prasanns/ctc_suite/ckpts/{args.savedir}"
     ev500 = f"{root}/checkpoints/prasanns/{args.eval500_root or 'outlier_lengthmix/eval_rungs'}"
+    # `export VAR=...;` rather than a `VAR=x cmd` prefix. The prefix form binds only to the FIRST
+    # command in the chain, so once the scipy guard below was added ahead of torchrun, the eval ran
+    # without PYTHONPATH and died on `No module named 'ctc_eval'`.
     inner = (
-        f"PYTHONPATH=$PWD/src/scripts:$PWD/src "
-        f"EVAL500_ROOT={ev500} "
-        + ("" if args.no_sparse_decode else "OLMO_LANDMARK_SPARSE_DECODE=1 ")
+        "export PYTHONPATH=$PWD/src/scripts:$PWD/src; "
+        f"export EVAL500_ROOT={ev500}; "
+        + ("" if args.no_sparse_decode else "export OLMO_LANDMARK_SPARSE_DECODE=1; ")
         # reorder's grader imports scipy (kendalltau/spearmanr) and the stable image does not ship
         # it, so that ladder died with ModuleNotFoundError after the checkpoint had already loaded.
         # Guarded so every other task pays only an import check.
