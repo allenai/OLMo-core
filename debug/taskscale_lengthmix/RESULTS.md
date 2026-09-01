@@ -145,10 +145,17 @@ contradiction joins qdmatch as a task landmark compression cannot do at all.
 | xabsence | near-floor, decaying to zero | .217/.145/.061/.026 @20M (4k/8k/16k/32k) |
 | qdmatch_nq | dead | floor at every tested scale |
 | contradiction | dead | .001/.000/.000/.000 vs dense .909/.836/.751/.592 |
-| reorder | dead (at chance) | kendall_tau .009 @2k, -.004 @4k -- tau 0 IS chance |
+| reorder | dead (at chance) | kendall_tau .009 @2k, -.004 @4k -- tau 0 IS chance; dense .686 @2k |
+| absence | dead | .017 / .005 @20M (2k/4k) where dense scores .983 / .983 |
+| grouping | at the degenerate floor | pairwise_f1 .419 @2k @20M -- BELOW the .44 that a
+  single-cluster prediction scores, so it is not "44% right", it is chance; dense .794 |
 
-Five of seven sparse arms are at or near their task's floor. No task has yet shown sparse leading
-dense at any rung or budget.
+**Seven of nine sparse arms are at or near their task's floor**, and no task has shown sparse
+leading dense at any rung or any budget. Read grouping's number against its floor, not against
+zero: `pairwise_f1` gives ~0.44 for a degenerate all-one-cluster answer (ARI 0), so sparse
+grouping's .419 is chance, not partial credit -- the same reason the metric is never quoted without
+ARI. Contradiction sparse is confirmed dead at a second budget (28M: .001/.000/.000), so it is not
+a data-starvation artifact of the smallest arm.
 
 ### Dense, first rungs across the four new tasks (eval_size 500 each)
 
