@@ -71,6 +71,7 @@ def axes(xlo, xhi, ylab, yticks, ylo, yhi, xticks):
 
 
 def data_panel(task, variant, rungs):
+    err = task != "reorder"          # kendall tau has no binomial standard error
     fits, allB = {}, []
     for lab, pts in rungs.items():
         if lab not in RUNG_TOK or len(pts) < 2:
@@ -95,8 +96,16 @@ def data_panel(task, variant, rungs):
         body.append(f'<polyline points="{dash}" fill="none" stroke="{col}" stroke-width="1.2" '
                     f'stroke-dasharray="3 3" opacity=".8"/>')
         for b, s_ in zip(bs, scores):
-            body.append(f'<circle cx="{sx(b, xlo, xhi):.1f}" cy="{sy(s_, ylo, yhi):.1f}" r="3" '
-                        f'fill="{col}"/>')
+            x = sx(b, xlo, xhi)
+            # +-1 binomial SE at eval_size 500 -- the eval noise floor. It is an approximation for
+            # oolong's `score` and does not apply to reorder's kendall tau, so those panels say so
+            # in the caption rather than drawing a bar that means something else.
+            if err:
+                se = (max(s_, 0.0) * (1 - max(min(s_, 1.0), 0.0)) / 500) ** 0.5
+                y1, y2 = sy(min(s_ + se, 1.0), ylo, yhi), sy(max(s_ - se, 0.0), ylo, yhi)
+                body.append(f'<line x1="{x:.1f}" y1="{y1:.1f}" x2="{x:.1f}" y2="{y2:.1f}" '
+                            f'stroke="{col}" stroke-width="1.1" opacity=".75"/>')
+            body.append(f'<circle cx="{x:.1f}" cy="{sy(s_, ylo, yhi):.1f}" r="3" fill="{col}"/>')
     legend = " ".join(
         f'<span style="color:{RUNG_COLOR.get(l, "#888")}">&#9679; {l}</span>'
         for l in sorted(fits, key=lambda x: RUNG_TOK[x]))
@@ -202,11 +211,21 @@ svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
             'Solid line and filled markers cover the range we actually trained; dashed line and '
             'hollow markers are extrapolation.</p>',
             '<div class="key"><b>How to read it.</b> Panel set A is the data law per rung: score '
-            'against training tokens. Panel set B is the length law: tokens needed for '
-            f'score={a.target} against context length, log-log, with the slope being the length '
-            'exponent &beta;. A rung only appears in B if the target is reachable within 20&times; '
-            'the budgets we ran &mdash; otherwise the "budget" would be the fit running away rather '
-            'than a measurement.</div>',
+            'against training tokens, with a vertical bar at &plusmn;1 binomial SE for '
+            'eval_size 500 (&plusmn;.022 near .5, &plusmn;.013 near .9) &mdash; that bar is the '
+            'noise floor, so a gap smaller than two of them is not a result. Panel set B is the '
+            f'length law: tokens needed for score={a.target} against context length, log-log, with '
+            'the slope being the length exponent &beta;. A rung only appears in B if the target is '
+            'reachable within 20&times; the budgets we ran &mdash; otherwise the "budget" would be '
+            'the fit running away rather than a measurement.</div>'
+            '<div class="key"><b>Where the panels look noisy, they are.</b> Three separate causes, '
+            'worth telling apart: near a ceiling (xabsence, absence dense) the points sit inside '
+            'each other\'s error bars and the fit is unidentifiable; near a floor (textgroups both '
+            'variants, grouping sparse) the scores are small multiples of the SE and the curve is '
+            'fitting noise; and a two-budget rung pins fmax by assumption rather than measuring it, '
+            'so its curvature is imposed. The dense-vs-sparse verdicts in the main report rest on '
+            'gaps of .1&ndash;.9, far outside these bars; the extrapolated budgets do not, which is '
+            'why they are labelled as extrapolation everywhere they appear.</div>',
             "<h2>A. Data laws — score vs training tokens</h2>",
             f'<div class="grid">{"".join(dpanels)}</div>',
             f"<h2>B. Length laws — tokens for score={a.target} vs context length</h2>",
