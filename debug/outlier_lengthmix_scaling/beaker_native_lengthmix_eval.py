@@ -67,10 +67,12 @@ def main():
         "export PYTHONPATH=$PWD/src/scripts:$PWD/src; "
         f"export EVAL500_ROOT={ev500}; "
         + ("" if args.no_sparse_decode else "export OLMO_LANDMARK_SPARSE_DECODE=1; ")
-        # reorder's grader imports scipy (kendalltau/spearmanr) and the stable image does not ship
-        # it, so that ladder died with ModuleNotFoundError after the checkpoint had already loaded.
-        # Guarded so every other task pays only an import check.
-        + 'python -c "import scipy" 2>/dev/null || pip install -q scipy; '
+        # Grader dependencies the stable image does not ship: reorder needs scipy
+        # (kendalltau/spearmanr), grouping needs sklearn (adjusted_rand/NMI). Both used to surface
+        # as ModuleNotFoundError AFTER the checkpoint had loaded -- minutes of GPU time to learn
+        # about a missing wheel. Guarded, so a task that needs neither pays two import checks.
+        + 'python -c "import scipy, sklearn" 2>/dev/null '
+        + '|| pip install -q scipy scikit-learn; '
         + f"python -m torch.distributed.run --nproc_per_node={args.ngpu} --master_port=29513 "
         f"src/scripts/ctc_eval/eval/eval_lc_native.py --model-path {ckpt} "
         f"--out /results/{args.run_name}_native_multirung.json --tokenizer Qwen/Qwen3.5-0.8B "
