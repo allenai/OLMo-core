@@ -28,6 +28,7 @@ Task-specific hazards this build is written around:
   * oolong -- items are drawn WITHOUT replacement and the generator silently emits a SHORT example
     when a pool runs dry, so `measure` doubles as the realized-band check; never pass --item-regex.
 """
+
 import argparse
 import json
 import os
@@ -39,17 +40,20 @@ import time
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 GEN = REPO / "src" / "corpus_reasoning" / "data"
-WEKA = pathlib.Path(os.environ.get(
-    "TASKSCALE_ROOT",
-    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix"))
-SRC = WEKA / "src"          # staged inputs -- fixed, so --smoke reroutes only the OUTPUTS
+WEKA = pathlib.Path(
+    os.environ.get(
+        "TASKSCALE_ROOT",
+        "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix",
+    )
+)
+SRC = WEKA / "src"  # staged inputs -- fixed, so --smoke reroutes only the OUTPUTS
 
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base"
 EOS = 248044
 MAX_SEQ = 40960
 QUERY_POSITION = "after"
 SHUFFLE_SEED = 7113
-SHARES = (0.616, 0.219, 0.110, 0.055)   # short-heavy, renormalized to four rungs
+SHARES = (0.616, 0.219, 0.110, 0.055)  # short-heavy, renormalized to four rungs
 
 # rung key -> (generator knob, pool examples to generate)
 TASKS = {
@@ -66,10 +70,37 @@ TASKS = {
     "oolong": {
         # narrow bands around each target so a rung is a LENGTH, not a range: the shipped
         # ctc bands span an octave (2k-4k, 8k-16k, ...) which smears the length axis.
-        "rungs": [("2k", (1800, 2400), 29000), ("8k", (7200, 9200), 2600),
-                  ("16k", (14500, 18500), 650), ("32k", (29000, 36000), 170)],
+        "rungs": [
+            ("2k", (1800, 2400), 29000),
+            ("8k", (7200, 9200), 2600),
+            ("16k", (14500, 18500), 650),
+            ("32k", (29000, 36000), 170),
+        ],
         "budgets": [20e6, 40e6, 80e6],
         "prompt_task": "oolong",
+    },
+    "grouping": {
+        # docs-per-example -> MEASURED medians 1964 / 8042 / 16692 / 32808 (rung_token_audit.json).
+        # Well-calibrated: labels are within 4% of measurement, unusual for this suite.
+        "rungs": [("2k", 10, 30000), ("8k", 43, 2600), ("16k", 88, 640), ("32k", 176, 170)],
+        "budgets": [20e6, 40e6, 80e6],
+        "prompt_task": "grouping",
+        "max_seq": 49152,       # p90 at n=176 runs past the 40960 default
+    },
+    "reorder": {
+        # n-chunks at --target-words 100 -> MEASURED 1912 / ~4k / 9002 / 17505. No 32k rung exists
+        # on the eval side (the ladder was capped at 16k), so this mix is 2k/4k/8k/16k.
+        "rungs": [("2k", 12, 24000), ("4k", 27, 3800), ("8k", 57, 900), ("16k", 116, 220)],
+        "budgets": [15e6, 30e6, 60e6],
+        "prompt_task": "reorder",
+    },
+    "textgroups": {
+        # num-docs -> MEASURED 1829 / 4817 / 10344 / 21416. The shipped n=210 rung measures 50.8k
+        # tokens, past our 40960 window, so the ladder tops out at n=103 and the arms use the same
+        # n values the eval rungs were built at rather than interpolated ones.
+        "rungs": [("2k", 11, 30000), ("4k", 24, 4000), ("8k", 50, 950), ("16k", 103, 230)],
+        "budgets": [20e6, 40e6, 80e6],
+        "prompt_task": "textgroups",
     },
 }
 
@@ -81,6 +112,10 @@ def log(m):
 def run(cmd, **kw):
     log("$ " + " ".join(str(c) for c in cmd))
     subprocess.run([str(c) for c in cmd], check=True, **kw)
+
+
+def max_seq(task):
+    return TASKS[task].get("max_seq", MAX_SEQ)
 
 
 def pool_dir(task, label):
@@ -109,12 +144,28 @@ def build_pools(task, force=False):
                 pass
         d.mkdir(parents=True, exist_ok=True)
         if task == "xabsence":
-            run([sys.executable, GEN / "generate_xabsence_data.py",
-                 "--pool", SRC / "xabsence" / "pool_exact_train.jsonl",
-                 "--num-pairs", knob, "--num-unmatched", 3,
-                 "--num-train", count, "--num-eval", 0,
-                 "--src-tag", "pubmed",
-                 "--output-dir", d, "--seed", 1300 + knob])
+            run(
+                [
+                    sys.executable,
+                    GEN / "generate_xabsence_data.py",
+                    "--pool",
+                    SRC / "xabsence" / "pool_exact_train.jsonl",
+                    "--num-pairs",
+                    knob,
+                    "--num-unmatched",
+                    3,
+                    "--num-train",
+                    count,
+                    "--num-eval",
+                    0,
+                    "--src-tag",
+                    "pubmed",
+                    "--output-dir",
+                    d,
+                    "--seed",
+                    1300 + knob,
+                ]
+            )
         elif task == "contradiction":
             # disjoint row slice per rung -> a gold pair appears in at most one rung
             full = SRC / "contradiction" / "contradiction_train_pubmed_realistic_n50-950_k3.jsonl"
@@ -133,17 +184,66 @@ def build_pools(task, force=False):
                     out.write(line)
             got = sum(1 for _ in open(slice_path))
             assert got == count, f"{label}: source exhausted, got {got} of {count} rows"
-            run([sys.executable, GEN / "generate_pubmed_contradiction_data.py",
-                 "--expand-from-train", slice_path,
-                 "--num-docs", knob, "--num-contradictions", 3, "--mode", "realistic",
-                 "--pool-abstracts", 200000, "--seed", 42, "--filler-pool-seed", 43,
-                 "--output-dir", d])
+            run(
+                [
+                    sys.executable,
+                    GEN / "generate_pubmed_contradiction_data.py",
+                    "--expand-from-train",
+                    slice_path,
+                    "--num-docs",
+                    knob,
+                    "--num-contradictions",
+                    3,
+                    "--mode",
+                    "realistic",
+                    "--pool-abstracts",
+                    200000,
+                    "--seed",
+                    42,
+                    "--filler-pool-seed",
+                    43,
+                    "--output-dir",
+                    d,
+                ]
+            )
         elif task == "oolong":
             lo, hi = knob
-            run([sys.executable, GEN / "generate_oolong_ladder_data.py",
-                 "--num-examples", count, "--len-min", lo, "--len-max", hi,
-                 "--pool-max-ctx", 262144, "--tokenizer", TOKENIZER,
-                 "--seed", 3000 + lo, "--output-dir", d])
+            run(
+                [
+                    sys.executable,
+                    GEN / "generate_oolong_ladder_data.py",
+                    "--num-examples",
+                    count,
+                    "--len-min",
+                    lo,
+                    "--len-max",
+                    hi,
+                    "--pool-max-ctx",
+                    262144,
+                    "--tokenizer",
+                    TOKENIZER,
+                    "--seed",
+                    3000 + lo,
+                    "--output-dir",
+                    d,
+                ]
+            )
+        elif task == "grouping":
+            run([sys.executable, GEN / "generate_arxiv_grouping_data.py",
+                 "--compact-in", SRC / "grouping" / "openalex_compact.jsonl",
+                 "--num-train", count, "--num-eval", 0,
+                 "--docs-per-example", knob, "--out-dir", d, "--seed", 0])
+        elif task == "reorder":
+            # --max-books-to-scan 20000 is NOT a performance knob: the eval split was drawn from
+            # books 20,001+, so scanning past 20k walks into the eval books.
+            run([sys.executable, GEN / "generate_reorder_data.py",
+                 "--n-chunks", knob, "--num-examples", count + 1, "--eval-frac", 0,
+                 "--target-words", 100, "--out-suffix", "100w", "--examples-per-book", 2,
+                 "--max-books-to-scan", 20000, "--out-dir", d, "--seed", 42])
+        elif task == "textgroups":
+            run([sys.executable, GEN / "generate_textgroups_data.py",
+                 "--num-docs", knob, "--num-groups", 2, "--group-size", 3, "--target", 70,
+                 "--num-train", count, "--num-eval", 0, "--output-dir", d, "--seed", 42])
         log(f"{task} {label}: pool -> {pool_file(task, label)}")
 
 
@@ -153,10 +253,28 @@ def measure(task):
     for label, _knob, _count in TASKS[task]["rungs"]:
         probe = WEKA / "probe" / task / label
         probe.mkdir(parents=True, exist_ok=True)
-        run([sys.executable, GEN / "convert_unified_to_sft.py",
-             "--task", TASKS[task]["prompt_task"], "--input", pool_file(task, label),
-             "--out-dir", probe, "--tokenizer", TOKENIZER, "--max-seq-len", MAX_SEQ,
-             "--eos", EOS, "--query-position", QUERY_POSITION, "--limit", 200])
+        run(
+            [
+                sys.executable,
+                GEN / "convert_unified_to_sft.py",
+                "--task",
+                TASKS[task]["prompt_task"],
+                "--input",
+                pool_file(task, label),
+                "--out-dir",
+                probe,
+                "--tokenizer",
+                TOKENIZER,
+                "--max-seq-len",
+                MAX_SEQ,
+                "--eos",
+                EOS,
+                "--query-position",
+                QUERY_POSITION,
+                "--limit",
+                200,
+            ]
+        )
         meta = json.loads((probe / "metadata.json").read_text())
         assert meta["num_skipped"] == 0, f"{task} {label}: {meta['num_skipped']} skipped at 200"
         out[label] = meta["median_len"]
@@ -185,9 +303,15 @@ def compose(task):
         d.mkdir(parents=True, exist_ok=True)
         (d / "arm.jsonl").write_text("\n".join(lines) + "\n")
         tokens = sum(med[lab] * c for lab, c in spec.items())
-        manifest[arm] = {"spec": spec, "n_examples": len(lines), "target_tokens": B,
-                         "measured_tokens": tokens, "medians": med,
-                         "shares": dict(zip(rungs, SHARES)), "shuffle_seed": SHUFFLE_SEED}
+        manifest[arm] = {
+            "spec": spec,
+            "n_examples": len(lines),
+            "target_tokens": B,
+            "measured_tokens": tokens,
+            "medians": med,
+            "shares": dict(zip(rungs, SHARES)),
+            "shuffle_seed": SHUFFLE_SEED,
+        }
         log(f"{arm}: {len(lines)} ex, {tokens/1e6:.1f}M tok (target {B/1e6:.0f}M) {spec}")
     (WEKA / "arms" / f"MANIFEST_{task}.json").write_text(json.dumps(manifest, indent=2))
     return list(manifest)
@@ -202,24 +326,46 @@ def tokenize(task):
             log(f"[skip] tokenize {arm}")
             continue
         d.mkdir(parents=True, exist_ok=True)
-        run([sys.executable, GEN / "convert_unified_to_sft.py",
-             "--task", TASKS[task]["prompt_task"], "--input", WEKA / "arms" / arm / "arm.jsonl",
-             "--out-dir", d, "--tokenizer", TOKENIZER, "--max-seq-len", MAX_SEQ,
-             "--eos", EOS, "--query-position", QUERY_POSITION])
+        run(
+            [
+                sys.executable,
+                GEN / "convert_unified_to_sft.py",
+                "--task",
+                TASKS[task]["prompt_task"],
+                "--input",
+                WEKA / "arms" / arm / "arm.jsonl",
+                "--out-dir",
+                d,
+                "--tokenizer",
+                TOKENIZER,
+                "--max-seq-len",
+                MAX_SEQ,
+                "--eos",
+                EOS,
+                "--query-position",
+                QUERY_POSITION,
+            ]
+        )
         meta = json.loads((d / "metadata.json").read_text())
-        log(f"{arm}: {meta['num_instances']} instances, {meta['num_tokens']/1e6:.1f}M tokens, "
-            f"skipped {meta['num_skipped']}")
+        log(
+            f"{arm}: {meta['num_instances']} instances, {meta['num_tokens']/1e6:.1f}M tokens, "
+            f"skipped {meta['num_skipped']}"
+        )
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--task", required=True, choices=sorted(TASKS))
-    ap.add_argument("--stage", default="all",
-                    choices=["pools", "measure", "arms", "tokenize", "all"])
+    ap.add_argument(
+        "--stage", default="all", choices=["pools", "measure", "arms", "tokenize", "all"]
+    )
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--smoke", action="store_true",
-                    help="tiny pools under <root>/smoke -- proves the generator CLIs and the "
-                         "prompt/tokenize path before spending hours on the real build")
+    ap.add_argument(
+        "--smoke",
+        action="store_true",
+        help="tiny pools under <root>/smoke -- proves the generator CLIs and the "
+        "prompt/tokenize path before spending hours on the real build",
+    )
     a = ap.parse_args()
     if a.smoke:
         global WEKA

@@ -12,6 +12,7 @@ Loads an olmo-core distcp checkpoint directly via olmo_core.generate and scores 
 
 Run on a GPU node, env corpus-reasoning-olmo (has olmo_core + transformers), PYTHONPATH=corpus-reasoning.
 """
+
 import argparse
 import json
 import os
@@ -22,78 +23,135 @@ import torch
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-path", required=True, help="step dir: has config.json + model_and_optim/")
+    ap.add_argument(
+        "--model-path", required=True, help="step dir: has config.json + model_and_optim/"
+    )
     ap.add_argument("--out", required=True)
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
     ap.add_argument("--max-test-samples", type=int, default=100)
     ap.add_argument("--max-length", type=int, default=16384)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--ruler-lengths", default="L1024,L2048")
-    ap.add_argument("--ruler-subtasks",
-                    default="niah_single,niah_multikey,niah_multivalue,niah_multiquery,vt,cwe,fwe")
+    ap.add_argument(
+        "--ruler-subtasks",
+        default="niah_single,niah_multikey,niah_multivalue,niah_multiquery,vt,cwe,fwe",
+    )
     ap.add_argument("--contra-data", default="data/contradiction_eval_pubmed_both_n100_k3.jsonl")
-    ap.add_argument("--contra-max-new-tokens", type=int, default=200,
-                    help="generation budget for contradiction; enumerate-CoT answers on large-N "
-                         "(e.g. n250) need ~2200 to reach the final 'Contradicting pairs:' line.")
-    ap.add_argument("--nq-data", default="data/nq_validation_k20_hn2_600.jsonl")  # p10: 10% hard + CE filter
+    ap.add_argument(
+        "--contra-max-new-tokens",
+        type=int,
+        default=200,
+        help="generation budget for contradiction; enumerate-CoT answers on large-N "
+        "(e.g. n250) need ~2200 to reach the final 'Contradicting pairs:' line.",
+    )
+    ap.add_argument(
+        "--nq-data", default="data/nq_validation_k20_hn2_600.jsonl"
+    )  # p10: 10% hard + CE filter
     ap.add_argument("--rerank-data", default="data/msmarco_dev_rerank_k20_1000.jsonl")
     ap.add_argument("--outlier-data", default="data/outlier_wiki100w_n20_k3_eval_100.jsonl")
     ap.add_argument("--data-dir", default="data")
     ap.add_argument("--rerank-root", default="/scratch/users/prasann/cpt_data/rerank_ladder_src")
-    ap.add_argument("--root", default=None,
-                    help="chdir here before resolving relative data paths (on-cluster: mount the "
-                         "eval dataset and pass its mountpoint so data/... and rerank_ladder_src/... resolve).")
-    ap.add_argument("--ladder", action="store_true",
-                    help="evaluate each task across its LENGTH LADDER (2k..64k); reports <task>_<rung>.")
-    ap.add_argument("--ladder-tasks", default=None,
-                    help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).")
-    ap.add_argument("--ladder-rungs", default=None,
-                    help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).")
-    ap.add_argument("--ladder-version", choices=["v2", "v3", "fast"], default="v2",
-                    help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
-                         "500 questions/answers and only the distractor documents vary, read "
-                         "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
-                         "bundle). v1 (independently-generated per-rung files) is REMOVED -- "
-                         "passing it raises NotImplementedError, because per-rung question "
-                         "resampling put eval-set noise into every rung-to-rung delta.")
-    ap.add_argument("--xlong", action="store_true",
-                    default=os.environ.get("LADDER_XLONG") == "1",
-                    help="OPT-IN: append the ultra-long 64k..2M rungs (built offline by "
-                         "scripts/data/build_xlong_rungs.py) to each task's v2 ladder. OFF by "
-                         "default; also honors env LADDER_XLONG=1. Auto-raises --max-length to fit "
-                         "the largest selected xlong rung (else long prompts get truncated).")
+    ap.add_argument(
+        "--root",
+        default=None,
+        help="chdir here before resolving relative data paths (on-cluster: mount the "
+        "eval dataset and pass its mountpoint so data/... and rerank_ladder_src/... resolve).",
+    )
+    ap.add_argument(
+        "--ladder",
+        action="store_true",
+        help="evaluate each task across its LENGTH LADDER (2k..64k); reports <task>_<rung>.",
+    )
+    ap.add_argument(
+        "--ladder-tasks",
+        default=None,
+        help="comma list restricting --ladder to a subset of tasks (split into per-task jobs).",
+    )
+    ap.add_argument(
+        "--ladder-rungs",
+        default=None,
+        help="comma list restricting --ladder to a subset of rungs (e.g. 16k,32k).",
+    )
+    ap.add_argument(
+        "--ladder-version",
+        choices=["v2", "v3", "fast"],
+        default="v2",
+        help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
+        "500 questions/answers and only the distractor documents vary, read "
+        "entirely from $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 "
+        "bundle). v1 (independently-generated per-rung files) is REMOVED -- "
+        "passing it raises NotImplementedError, because per-rung question "
+        "resampling put eval-set noise into every rung-to-rung delta.",
+    )
+    ap.add_argument(
+        "--xlong",
+        action="store_true",
+        default=os.environ.get("LADDER_XLONG") == "1",
+        help="OPT-IN: append the ultra-long 64k..2M rungs (built offline by "
+        "scripts/data/build_xlong_rungs.py) to each task's v2 ladder. OFF by "
+        "default; also honors env LADDER_XLONG=1. Auto-raises --max-length to fit "
+        "the largest selected xlong rung (else long prompts get truncated).",
+    )
     ap.add_argument("--skip-ruler", action="store_true")
-    ap.add_argument("--skip-gen", action="store_true",
-                    help="skip held-out retrieval generalization probes")
-    ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat",
-                    help="chat = Qwen3 apply_chat_template (matches SFT training); "
-                         "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
-                         "alpaca = legacy alpaca-instruction wrap.")
-    ap.add_argument("--landmark-mem-id", type=int, default=None,
-                    help="Landmark token id for landmark-attention ckpts (Qwen3.5: 248200).")
-    ap.add_argument("--landmark-pad-id", type=int, default=None,
-                    help="Landmark pad id (Qwen3.5: 248203).")
-    ap.add_argument("--eos-token-id", type=int, default=None,
-                    help="Override the generation stop token (SFT-trained eos, e.g. 248044 for "
-                         "shards built with convert_unified_to_sft --eos 248044).")
-    ap.add_argument("--query-position", choices=["both", "after", "before"], default="both",
-                    help="Where the task ask is rendered relative to the corpus. MUST match the "
-                         "shards the model was SFT'd on: the xlong5_2k256k_qwen35 build is 'both', "
-                         "the ..._qafter build is 'after'. Evaluating a query-after model with "
-                         "'both' shows it a second copy of the ask it never saw in training, which "
-                         "reads as a capability gap rather than a prompt mismatch. Default 'both' "
-                         "keeps every existing result reproducible. RULER is exempt -- it is not "
-                         "from the 5-task mix and is always rendered query-after.")
-    ap.add_argument("--save-generations", action=argparse.BooleanOptionalAction, default=True,
-                    help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
-                         "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.")
+    ap.add_argument(
+        "--skip-gen", action="store_true", help="skip held-out retrieval generalization probes"
+    )
+    ap.add_argument(
+        "--prompt-format",
+        choices=["chat", "raw", "alpaca"],
+        default="chat",
+        help="chat = Qwen3 apply_chat_template (matches SFT training); "
+        "raw = bare build_prompt, no wrapping (for BASE/CPT models); "
+        "alpaca = legacy alpaca-instruction wrap.",
+    )
+    ap.add_argument(
+        "--landmark-mem-id",
+        type=int,
+        default=None,
+        help="Landmark token id for landmark-attention ckpts (Qwen3.5: 248200).",
+    )
+    ap.add_argument(
+        "--landmark-pad-id", type=int, default=None, help="Landmark pad id (Qwen3.5: 248203)."
+    )
+    ap.add_argument(
+        "--eos-token-id",
+        type=int,
+        default=None,
+        help="Override the generation stop token (SFT-trained eos, e.g. 248044 for "
+        "shards built with convert_unified_to_sft --eos 248044).",
+    )
+    ap.add_argument(
+        "--query-position",
+        choices=["both", "after", "before"],
+        default="both",
+        help="Where the task ask is rendered relative to the corpus. MUST match the "
+        "shards the model was SFT'd on: the xlong5_2k256k_qwen35 build is 'both', "
+        "the ..._qafter build is 'after'. Evaluating a query-after model with "
+        "'both' shows it a second copy of the ask it never saw in training, which "
+        "reads as a capability gap rather than a prompt mismatch. Default 'both' "
+        "keeps every existing result reproducible. RULER is exempt -- it is not "
+        "from the 5-task mix and is always rendered query-after.",
+    )
+    ap.add_argument(
+        "--save-generations",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="dump per-example model generations (+ gold/per-example metrics) to a sidecar "
+        "<out>.generations.jsonl for error inspection. On by default; --no-save-generations to skip.",
+    )
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner truncates prompts to (max_length - max_new_tokens), so max_length
     # MUST cover the largest selected ultra-long rung, and it feeds the gen budget built below.
     if args.xlong:
-        _XL_TOK = {"64k": 65536, "128k": 131072, "256k": 262144,
-                   "512k": 524288, "1M": 1048576, "2M": 2097152}
+        _XL_TOK = {
+            "64k": 65536,
+            "128k": 131072,
+            "256k": 262144,
+            "512k": 524288,
+            "1M": 1048576,
+            "2M": 2097152,
+        }
         _sel = set(args.ladder_rungs.split(",")) if args.ladder_rungs else set(_XL_TOK)
         _need = max((t for r, t in _XL_TOK.items() if r in _sel), default=0)
         # A rung's LABEL is its nominal token budget, but the built prompt reliably lands slightly
@@ -107,8 +165,11 @@ def main():
         # which covers the per-example max above the median with room to spare.
         _budget = int(_need * 1.10) + 2048 if _need else 0
         if _budget and args.max_length < _budget:
-            print(f"[xlong] raising --max-length {args.max_length} -> {_budget} "
-                  f"(rung label {_need} + 10% margin; prompts run ~0.4-3.3% over label)", flush=True)
+            print(
+                f"[xlong] raising --max-length {args.max_length} -> {_budget} "
+                f"(rung label {_need} + 10% margin; prompts run ~0.4-3.3% over label)",
+                flush=True,
+            )
             args.max_length = _budget
         # Rungs past 262,144 exceed Qwen3.5's native max_position_embeddings. Scoring them at all
         # requires a RoPE-extended (YaRN) copy of the checkpoint -- without one the model silently
@@ -116,25 +177,38 @@ def main():
         # config error. Warn loudly; the caller is responsible for pointing --model-path at the
         # extended copy (debug/ctx_ceiling_4b/make_yarn_copy.py).
         if _need > 262144:
-            print(f"[xlong] ⚠ selected rungs reach {_need} tokens, PAST the Qwen3.5 native "
-                  f"262144 position limit -- this measures RoPE-EXTENDED extrapolation. Point "
-                  f"--model-path at a YaRN serving copy and label every >256k number as such.",
-                  flush=True)
+            print(
+                f"[xlong] ⚠ selected rungs reach {_need} tokens, PAST the Qwen3.5 native "
+                f"262144 position limit -- this measures RoPE-EXTENDED extrapolation. Point "
+                f"--model-path at a YaRN serving copy and label every >256k number as such.",
+                flush=True,
+            )
     if args.root:
         os.chdir(args.root)
-
-    from transformers import AutoTokenizer
-    from olmo_core.config import DType
-    from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
-    from ctc_eval.eval.evaluate import (
-        load_unified_examples, _eval_ruler, _eval_contradiction, _eval_retrieval,
-        _eval_oolong, _eval_rerank, _eval_outlier, _eval_qdmatch, _eval_absence,
-    )
 
     # ---- data-parallel across N GPUs (torchrun): each rank loads a full model copy + evaluates a
     # SHARD of every example list; rank 0 gathers, scores, writes. world=1 -> single-GPU as before.
     import sys
+
+    from ctc_eval.eval.evaluate import (
+        _eval_absence,
+        _eval_contradiction,
+        _eval_oolong,
+        _eval_outlier,
+        _eval_qdmatch,
+        _eval_rerank,
+        _eval_retrieval,
+        _eval_ruler,
+        load_unified_examples,
+    )
+    from transformers import AutoTokenizer
+
+    from olmo_core.config import DType
+    from olmo_core.generate.generation_module.config import GenerationConfig
+    from olmo_core.generate.generation_module.transformer import (
+        TransformerGenerationModuleConfig,
+    )
+
     world = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     rank = int(os.environ.get("RANK", "0"))
@@ -142,7 +216,7 @@ def main():
         torch.distributed.init_process_group(backend="nccl")
         rank = torch.distributed.get_rank()
         world = torch.distributed.get_world_size()
-    is_main = (rank == 0)
+    is_main = rank == 0
     if not is_main:
         sys.stdout = open(os.devnull, "w")
 
@@ -156,16 +230,28 @@ def main():
     t0 = time.time()
     _lm_kwargs = {}
     if args.landmark_mem_id is not None:
-        _lm_kwargs = dict(landmark_mem_id=args.landmark_mem_id,
-                          landmark_pad_id=args.landmark_pad_id)
+        _lm_kwargs = dict(
+            landmark_mem_id=args.landmark_mem_id, landmark_pad_id=args.landmark_pad_id
+        )
     _eos = args.eos_token_id if args.eos_token_id is not None else tok.eos_token_id
     _pad = tok.pad_token_id if tok.pad_token_id != _eos else tok.eos_token_id
-    gen_cfg = GenerationConfig(eos_token_id=_eos, pad_token_id=_pad,
-                               max_length=args.max_length, use_cache=True, **_lm_kwargs)
+    gen_cfg = GenerationConfig(
+        eos_token_id=_eos,
+        pad_token_id=_pad,
+        max_length=args.max_length,
+        use_cache=True,
+        **_lm_kwargs,
+    )
     gm = TransformerGenerationModuleConfig(
-        gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
+        gen_cfg,
+        float8_config=None,
+        dtype=DType("bfloat16"),
+        compile_model=False,
     ).build(checkpoint_dir=args.model_path, device=device)
-    print(f"[native] built generation module from {args.model_path} in {time.time()-t0:.1f}s", flush=True)
+    print(
+        f"[native] built generation module from {args.model_path} in {time.time()-t0:.1f}s",
+        flush=True,
+    )
 
     def strip_think(s):
         return s.split("</think>", 1)[1] if "</think>" in s else s
@@ -176,13 +262,20 @@ def main():
         #   chat  -> Qwen3 chat template over the raw build_prompt (matches SFT training)
         #   raw   -> bare build_prompt, fed as a completion (BASE/CPT models)
         #   alpaca-> legacy alpaca-instruction wrap (build_prompt use_alpaca=True)
-        ex = load_unified_examples(path, args.max_test_samples, task=task,
-                                   query_position=qp, use_alpaca=(args.prompt_format == "alpaca"))
+        ex = load_unified_examples(
+            path,
+            args.max_test_samples,
+            task=task,
+            query_position=qp,
+            use_alpaca=(args.prompt_format == "alpaca"),
+        )
         if args.prompt_format == "chat":
             for e in ex:
                 e["prompt"] = tok.apply_chat_template(
                     [{"role": "user", "content": e["prompt"]}],
-                    tokenize=False, add_generation_prompt=True)
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
         return ex
 
     @torch.no_grad()
@@ -192,20 +285,34 @@ def main():
         lp = [prompts[i] for i in my_gidx]
         lout = []
         for i in range(0, len(lp), args.batch_size):
-            chunk = lp[i:i + args.batch_size]
-            enc = tok(chunk, return_tensors="pt", padding=True, truncation=True,
-                      max_length=args.max_length - max_new_tokens, add_special_tokens=False)
+            chunk = lp[i : i + args.batch_size]
+            enc = tok(
+                chunk,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=args.max_length - max_new_tokens,
+                add_special_tokens=False,
+            )
             ids = enc["input_ids"].to(device)
             mask = enc["attention_mask"].to(device)
             # Per-row string early-stop (stops near the actual answer length instead of running to
             # max_new_tokens). Decode-check runs every 16 steps to keep the loop GPU-bound.
             gen_kw = {}
             if stop_strings:
-                gen_kw = dict(stop_strings=stop_strings, stop_string_check_interval=16,
-                              stop_string_tokenizer=tok)
-            cont, _, _ = gm.generate_batch(input_ids=ids, attention_mask=mask,
-                                           completions_only=False, log_timing=False,
-                                           max_new_tokens=max_new_tokens, **gen_kw)
+                gen_kw = dict(
+                    stop_strings=stop_strings,
+                    stop_string_check_interval=16,
+                    stop_string_tokenizer=tok,
+                )
+            cont, _, _ = gm.generate_batch(
+                input_ids=ids,
+                attention_mask=mask,
+                completions_only=False,
+                log_timing=False,
+                max_new_tokens=max_new_tokens,
+                **gen_kw,
+            )
             ctx_len = ids.shape[1]
             for row in cont.tolist():
                 gen = row[ctx_len:]
@@ -227,9 +334,14 @@ def main():
                 full[gi] = resp
         return full
 
-    summary = {"model_path": args.model_path, "query_position": args.query_position,
-               "prompt_format": args.prompt_format,
-               "ruler": {}, "contradiction": {}, "nq": {}}
+    summary = {
+        "model_path": args.model_path,
+        "query_position": args.query_position,
+        "prompt_format": args.prompt_format,
+        "ruler": {},
+        "contradiction": {},
+        "nq": {},
+    }
 
     # Per-example generation dump (for error inspection). Each _eval_* returns (metrics, details);
     # we pair the FULL model generation with its per-example detail (parsed pred, gold, metrics) and
@@ -242,9 +354,13 @@ def main():
         for i, resp in enumerate(responses):
             ex_i = examples[i] if i < len(examples) else None
             prompt = ex_i.get("prompt", "") if isinstance(ex_i, dict) else ""
-            rec = {"task": task, "rung": label, "idx": i,
-                   "generation": resp,
-                   "prompt_tail": prompt[-1200:] if prompt else None}
+            rec = {
+                "task": task,
+                "rung": label,
+                "idx": i,
+                "generation": resp,
+                "prompt_tail": prompt[-1200:] if prompt else None,
+            }
             if details is not None and i < len(details):
                 rec["detail"] = details[i]
             gen_dump.append(rec)
@@ -267,7 +383,11 @@ def main():
 
     if not args.ladder:
         ex = _load(args.contra_data, task="contradiction")
-        resp = generate([e["prompt"] for e in ex], args.contra_max_new_tokens, stop_strings=["contradicting pairs:"])
+        resp = generate(
+            [e["prompt"] for e in ex],
+            args.contra_max_new_tokens,
+            stop_strings=["contradicting pairs:"],
+        )
         res, det = _eval_contradiction(ex, resp)
         _record_gens("contradiction", "single", ex, resp, det)
         summary["contradiction"] = res
@@ -317,13 +437,16 @@ def main():
         # are already in-distribution (see records/contradiction-train-eval-non-iid.md §2b).
         # v3 contradiction numbers are NOT comparable to v2 ones -- different eval set, report in
         # its own column.
-        _V3_BUNDLE = ("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
-                      "_eval_bundle_eval500_v3")
+        _V3_BUNDLE = (
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/" "_eval_bundle_eval500_v3"
+        )
         E5 = os.environ.get("EVAL500_ROOT")
         if not E5:
             E5 = next((p for p in _V2_BUNDLES if os.path.isdir(p)), _V2_BUNDLES[-1])
-            print(f"[ladder] EVAL500_ROOT unset -> {E5} "
-                  f"(ladder_version={args.ladder_version})", flush=True)
+            print(
+                f"[ladder] EVAL500_ROOT unset -> {E5} " f"(ladder_version={args.ladder_version})",
+                flush=True,
+            )
         # v3 is a SELF-CONTAINED bundle: contra and outlier are real directories holding the rebuilt
         # files, and nq/rerank/oolong are directory symlinks to v2_clean (so "identical to v2" is
         # true by construction rather than a claim to re-verify, and no multi-GB file is duplicated).
@@ -335,16 +458,20 @@ def main():
         # redirect would have quietly served those K-frozen outlier rungs under a v3 tag.
         if args.ladder_version == "v3" and not os.environ.get("EVAL500_ROOT"):
             E5 = os.environ.get("EVAL500_CONTRA_ROOT", _V3_BUNDLE)  # legacy name, still honored
-            print(f"[ladder] ladder_version=v3 -> {E5} (contra + outlier rebuilt; "
-                  f"nq/rerank/oolong symlinked to v2_clean)", flush=True)
+            print(
+                f"[ladder] ladder_version=v3 -> {E5} (contra + outlier rebuilt; "
+                f"nq/rerank/oolong symlinked to v2_clean)",
+                flush=True,
+            )
         # ---- FAST (shared-corpus) bundle -------------------------------------------------
         # Many queries share one corpus, so the shared part is prefilled once. NOT comparable to a
         # v2 number: rebuilding an eval set this way moves scores on its own (outlier +0.215/+0.261
         # and contradiction -0.102..-0.175 for the ORIGINAL prefix+tail build; the outlier rungs
         # here use a different construction that puts the answer back in the shared prefix). Report
         # fast numbers in their own column, never beside a v2 one.
-        _FAST_BUNDLE = ("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
-                        "_eval_bundle_eval500_v2_fast")
+        _FAST_BUNDLE = (
+            "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/" "_eval_bundle_eval500_v2_fast"
+        )
         if args.ladder_version == "fast" and not os.environ.get("EVAL500_ROOT"):
             E5 = _FAST_BUNDLE
             print(f"[ladder] ladder_version=fast -> {E5}", flush=True)
@@ -353,11 +480,21 @@ def main():
             # Filenames encode the construction, not the corpus size: contradiction is prefix+tail
             # with a 10% tail, outlier plants its candidates in the shared prefix and eliminates
             # them from the tail, and nq/rerank/oolong are query-multiplexed.
-            _FAST_SUFFIX = {"contradiction": "tail10", "outlier": "planted",
-                            "nq": "mux", "rerank": "mux", "oolong": "mux"}
+            _FAST_SUFFIX = {
+                "contradiction": "tail10",
+                "outlier": "planted",
+                "nq": "mux",
+                "rerank": "mux",
+                "oolong": "mux",
+            }
             _FAST_BASE = [("8k", 8192), ("16k", 16384), ("32k", 32768)]
-            _FAST_XL = [("64k", 65536), ("128k", 131072), ("256k", 262144),
-                        ("512k", 524288), ("1M", 1048576)]
+            _FAST_XL = [
+                ("64k", 65536),
+                ("128k", 131072),
+                ("256k", 262144),
+                ("512k", 524288),
+                ("1M", 1048576),
+            ]
             _rungs = _FAST_BASE + (_FAST_XL if args.xlong else [])
             LADDERS = {}
             for _t, _sfx in _FAST_SUFFIX.items():
@@ -385,15 +522,20 @@ def main():
             # generator. This one token is the whole v2/v3 difference.
             _CM = "realistic" if args.ladder_version == "v3" else "both"
             LADDERS = {
-                "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
+                "contradiction": [
+                    ("2k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n100_k3.jsonl"),
                     ("8k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n190_k3.jsonl"),
                     ("16k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n385_k3.jsonl"),
-                    ("32k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl")],
-                "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
+                    ("32k", f"{E5}/contra/contradiction_eval_pubmed_{_CM}_n765_k3.jsonl"),
+                ],
+                "nq": [
+                    ("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
                     ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
                     ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
-                    ("32k", f"{E5}/nq/nq_validation_k200_600.jsonl")],
-                "outlier": [("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
+                    ("32k", f"{E5}/nq/nq_validation_k200_600.jsonl"),
+                ],
+                "outlier": [
+                    ("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
                     ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
                     ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
                     ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
@@ -404,36 +546,49 @@ def main():
                     # xlong distractor-recycling one. Selected only when --ladder-rungs asks for
                     # 128k, so existing runs are unaffected; needs --max-length >= 146227 and
                     # --batch-size 1.
-                    ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl")],
+                    ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl"),
+                ],
                 # CE-graded (NDCG@10 + Kendall-tau), shared 500 queries; tops out at k100 (~16k) —
                 # no CE-graded pool larger than k100 exists, so rerank has no 32k rung.
-                "rerank": [("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
+                "rerank": [
+                    ("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
                     ("8k", f"{E5}/rerank/msmarco_trainhn_eval_k50_500.jsonl"),
-                    ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl")],
-                "oolong": [("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
+                    ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl"),
+                ],
+                "oolong": [
+                    ("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
                     ("16k", f"{E5}/oolong/oolong_test_synth_ctx16384_spliteval.jsonl"),
-                    ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl")],
+                    ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl"),
+                ],
                 # OOD generalization (held-out BEIR retrieval, graded as retrieval f1). Version-agnostic:
                 # rungs are fixed doc-pool sizes subsampled from the k100 CE pools (subsample_beir_ladder.py),
                 # labelled by median prompt length. fiqa docs are short -> tops ~16k; scifact ~32k.
-                "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
+                "fiqa": [
+                    ("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
                     ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
                     ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
-                    ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
-                "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
+                    ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl"),
+                ],
+                "scifact": [
+                    ("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
                     ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
                     ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
-                    ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
+                    ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl"),
+                ],
                 # OOD generalization for the outlier + contradiction tasks (different passage/sentence
                 # source than the in-distribution wiki100w / pubmed). Graded identically (gold_doc_indices).
-                "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
+                "outlier_review": [
+                    ("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
                     ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
                     ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
-                    ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
-                "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
+                    ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl"),
+                ],
+                "contra_fever": [
+                    ("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
                     ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
                     ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
-                    ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
+                    ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
+                ],
             }
             # qdmatch_nq: ordered (query_id, doc_id) pair matching, graded by _eval_qdmatch.
             # Added conditionally -- most eval bundles predate these rungs, and an unconditional
@@ -458,10 +613,34 @@ def main():
             if os.path.isdir(f"{E5}/qdmatch_nq"):
                 LADDERS["qdmatch_nq"] = [
                     (_lab, f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
-                    for _lab, _tok in (("3k", 2048), ("8k", 8192), ("16k", 16384),
-                                       ("32k", 32768), ("64k", 65536))
+                    for _lab, _tok in (
+                        ("3k", 2048),
+                        ("8k", 8192),
+                        ("16k", 16384),
+                        ("32k", 32768),
+                        ("64k", 65536),
+                    )
                     if os.path.exists(f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
                 ]
+            # CTC-suite rungs for the cross-task data-scaling wave, file-gated per task so a
+            # bundle without them is untouched. All are the shipped 500-example ladders.
+            # Labels vs MEASURED medians: grouping 1964/8042/16692/32808 (accurate);
+            # reorder 1912/~4k/9002/17505 and it has NO 32k rung; textgroups 1829/4817/10344/21416
+            # with its n=210 rung at 50.8k, past our training window, so it stops at 16k.
+            # grouping reads `grouping_fixedmix`, NOT `grouping`: the shipped grouping ladder was
+            # built before the 2026-08-10 level-mix fix, and its concept level drifts with length
+            # (L0 share .57 -> .00 across 2k -> 32k), so a length curve on it is really a
+            # granularity curve. The fixed-mix rebuild holds ~.25 per level at every rung.
+            for _t, _dir, _toks in (("grouping", "grouping_fixedmix",
+                                     (2048, 4096, 8192, 16384, 32768)),
+                                    ("reorder", "reorder", (2048, 4096, 8192, 16384)),
+                                    ("textgroups", "textgroups", (2048, 4096, 8192, 16384))):
+                if os.path.isdir(f"{E5}/{_dir}"):
+                    _rl = [(f"{_tok // 1024}k", f"{E5}/{_dir}/rung_{_tok}.jsonl")
+                           for _tok in _toks
+                           if os.path.exists(f"{E5}/{_dir}/rung_{_tok}.jsonl")]
+                    if _rl:
+                        LADDERS[_t] = _rl
             # xabsence EXACT rungs (2k/4k/8k/16k/32k), file-gated like qdmatch_nq above.
             # ⚠ EXACT ONLY. Two different tasks ship under the name "xabsence": EXACT (the twin
             # is the IDENTICAL string in corpus B; the CTC suite row) and PARAPHRASE (an LLM
@@ -475,8 +654,13 @@ def main():
             if os.path.isdir(f"{E5}/xabsence_exact"):
                 LADDERS["xabsence"] = [
                     (_lab, f"{E5}/xabsence_exact/rung_{_tok}.jsonl")
-                    for _lab, _tok in (("2k", 2048), ("4k", 4096), ("8k", 8192),
-                                       ("16k", 16384), ("32k", 32768))
+                    for _lab, _tok in (
+                        ("2k", 2048),
+                        ("4k", 4096),
+                        ("8k", 8192),
+                        ("16k", 16384),
+                        ("32k", 32768),
+                    )
                     if os.path.exists(f"{E5}/xabsence_exact/rung_{_tok}.jsonl")
                 ]
             # nq LENGTH-MIX rungs (2k/8k/16k). The shipped nq ladder above is named by doc count
@@ -501,8 +685,13 @@ def main():
             if os.path.exists(f"{E5}/nq/rung_2048.jsonl"):
                 LADDERS["nq"] = [
                     (_lab, f"{E5}/nq/rung_{_tok}.jsonl")
-                    for _lab, _tok in (("2k", 2048), ("8k", 8192), ("16k", 16384),
-                                       ("32k", 32768), ("64k", 65536))
+                    for _lab, _tok in (
+                        ("2k", 2048),
+                        ("8k", 8192),
+                        ("16k", 16384),
+                        ("32k", 32768),
+                        ("64k", 65536),
+                    )
                     if os.path.exists(f"{E5}/nq/rung_{_tok}.jsonl")
                 ]
         else:
@@ -539,6 +728,7 @@ def main():
         # complete is worse than a crash.
         if args.xlong and args.ladder_version in ("v2", "v3"):
             import glob as _glob
+
             # rerank and oolong were originally excluded: no CE-graded rerank pool above k100
             # existed, and oolong is not a doc pool. Both now have xlong rungs (built 2026-07-27),
             # so they are wired here. oolong does NOT use the `_xlong_` convention -- it is a packed
@@ -547,19 +737,28 @@ def main():
                 # _CM, not a hardcoded "both": v3's contra files are named ..._realistic_..., so a
                 # literal "both" here would match nothing and drop every contra xlong rung while the
                 # base rungs still resolved -- a silently short ladder.
-                "contradiction": ("contra",  f"contradiction_eval_pubmed_{_CM}_n*_k3_xlong_{{s}}.jsonl"),
-                "nq":            ("nq",       "nq_validation_k*_xlong_{s}.jsonl"),
-                "outlier":       ("outlier",  "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
+                "contradiction": (
+                    "contra",
+                    f"contradiction_eval_pubmed_{_CM}_n*_k3_xlong_{{s}}.jsonl",
+                ),
+                "nq": ("nq", "nq_validation_k*_xlong_{s}.jsonl"),
+                "outlier": ("outlier", "outlier_wiki100w_n*_k3_eval_xlong_{s}.jsonl"),
                 # ⚠ APPROXIMATE above k100: the added negatives are random non-gold docs carrying
                 # ce=None, not CE-mined hard negatives. The grader scores ce=None as gain 0 and
                 # excludes them from the Kendall-tau reference, so NDCG@10 still measures "surface
                 # the CE-relevant docs among far more noise" -- but it is MORE noise, not HARDER
                 # noise. Flag that next to any rerank number at 64k+.
-                "rerank":        ("rerank",  "msmarco_trainhn_eval_k*_xlong_{s}.jsonl"),
+                "rerank": ("rerank", "msmarco_trainhn_eval_k*_xlong_{s}.jsonl"),
             }
             # oolong: token-budget-labelled files rather than a calibrated doc count.
-            _XL_OOLONG = {"64k": 65536, "128k": 131072, "256k": 262144,
-                          "512k": 524288, "1M": 1048576, "2M": 2097152}
+            _XL_OOLONG = {
+                "64k": 65536,
+                "128k": 131072,
+                "256k": 262144,
+                "512k": 524288,
+                "1M": 1048576,
+                "2M": 2097152,
+            }
             for _t, (_sub, _pat) in _XL.items():
                 if _t not in LADDERS:
                     continue
@@ -577,16 +776,21 @@ def main():
         # ---- Resolve check: a missing rung file must not pass silently ----
         # The rungs are literal paths; if the bundle is the wrong version (or not staged) the
         # runner would otherwise skip rungs and report a partial ladder as if it were complete.
-        _missing = [(t, lab, p) for t, rl in LADDERS.items() for lab, p in rl
-                    if not os.path.exists(p)]
+        _missing = [
+            (t, lab, p) for t, rl in LADDERS.items() for lab, p in rl if not os.path.exists(p)
+        ]
         if _missing:
             print(f"[ladder] WARNING: {len(_missing)} rung file(s) MISSING under {E5}:", flush=True)
             for _t, _lab, _p in _missing[:20]:
                 print(f"    {_t:>14} {_lab:>5}  {_p}", flush=True)
-            print("[ladder] set EVAL500_ROOT to a bundle containing these rungs, or restrict with "
-                  "--ladder-tasks / --ladder-rungs.", flush=True)
-            LADDERS = {t: [(lab, p) for lab, p in rl if os.path.exists(p)]
-                       for t, rl in LADDERS.items()}
+            print(
+                "[ladder] set EVAL500_ROOT to a bundle containing these rungs, or restrict with "
+                "--ladder-tasks / --ladder-rungs.",
+                flush=True,
+            )
+            LADDERS = {
+                t: [(lab, p) for lab, p in rl if os.path.exists(p)] for t, rl in LADDERS.items()
+            }
             LADDERS = {t: rl for t, rl in LADDERS.items() if rl}
         LSPEC = {
             "contradiction": ("contradiction", _eval_contradiction, "f1", 200),
@@ -600,6 +804,11 @@ def main():
             "contra_fever": ("contradiction", _eval_contradiction, "f1", 200),
             "qdmatch_nq": ("qdmatch", _eval_qdmatch, "f1", 200),
             "xabsence": ("xabsence", _eval_absence, "f1", 200),
+            # grouping needs a big budget: the gold partition alone runs ~1000 tokens
+            # at 32k, and a 256-token cap silently truncated it in an earlier wave.
+            "grouping": ("grouping", _eval_grouping, "pairwise_f1", 2048),
+            "reorder": ("reorder", _eval_reorder, "kendall_tau", 1024),
+            "textgroups": ("textgroups", _eval_cycle, "f1", 200),
         }
         task_filter = set(args.ladder_tasks.split(",")) if args.ladder_tasks else None
         rung_filter = set(args.ladder_rungs.split(",")) if args.ladder_rungs else None
@@ -617,28 +826,36 @@ def main():
                 gkw = {"stop_strings": ["contradicting pairs:"]}
             for label, path in rungs:
                 if not path or not os.path.exists(path):
-                    print(f"[ladder:{task}@{label}] MISSING {path}, skipping"); continue
+                    print(f"[ladder:{task}@{label}] MISSING {path}, skipping")
+                    continue
                 ex = _load(path, task=loadtask)
                 resp = generate([e["prompt"] for e in ex], maxtok, **gkw)
                 res, det = fn(ex, resp)
                 _record_gens(task, label, ex, resp, det)
-                prim = res.get(pkey) if pkey else next(
-                    (v for k, v in res.items() if k.startswith("mrr")), None)
+                prim = (
+                    res.get(pkey)
+                    if pkey
+                    else next((v for k, v in res.items() if k.startswith("mrr")), None)
+                )
                 summary[f"{task}_{label}"] = prim
-                print(f"[ladder:{task}@{label}] {pkey or 'mrr'}="
-                      f"{prim if prim is None else round(prim,3)} (n={len(ex)})", flush=True)
+                print(
+                    f"[ladder:{task}@{label}] {pkey or 'mrr'}="
+                    f"{prim if prim is None else round(prim,3)} (n={len(ex)})",
+                    flush=True,
+                )
 
     # held-out retrieval generalization probes (eval-only) — same task="retrieval" path as NQ.
     if not args.skip_gen and not args.ladder:
         gen = [
-            ("hpqa",    "data/n2ified_eval_hpqa_q20.jsonl",       256),
-            ("fiqa",    "data/beir_fiqa_ce_test_k20_648.jsonl",    64),
-            ("msmarco", "data/msmarco_trecdl2019_k20_43.jsonl",    64),
-            ("scifact", "data/beir_scifact_test_k20_300.jsonl",    64),
+            ("hpqa", "data/n2ified_eval_hpqa_q20.jsonl", 256),
+            ("fiqa", "data/beir_fiqa_ce_test_k20_648.jsonl", 64),
+            ("msmarco", "data/msmarco_trecdl2019_k20_43.jsonl", 64),
+            ("scifact", "data/beir_scifact_test_k20_300.jsonl", 64),
         ]
         for gname, gpath, gmax in gen:
             if not os.path.exists(gpath):
-                print(f"[gen:{gname}] MISSING {gpath}, skipping"); continue
+                print(f"[gen:{gname}] MISSING {gpath}, skipping")
+                continue
             # BEHAVIOUR CHANGE (2026-08-11): these OOD probes used to call load_unified_examples
             # directly with use_alpaca=True and NO chat template, while every other task in the same
             # run went through _load and got the chat template. One model, one run, two prompt
@@ -677,8 +894,10 @@ def main():
                 for rec in gen_dump:
                     gf.write(json.dumps(rec) + "\n")
             print(f"[native] wrote {len(gen_dump)} generations -> {gen_path}", flush=True)
-        print(f"\n[native] TOTAL {time.time()-t0:.1f}s | RULER {summary.get('ruler_avg_recall')} "
-              f"contra {summary['contradiction'].get('f1')} nq {summary['nq'].get('f1')}\nWROTE {args.out}")
+        print(
+            f"\n[native] TOTAL {time.time()-t0:.1f}s | RULER {summary.get('ruler_avg_recall')} "
+            f"contra {summary['contradiction'].get('f1')} nq {summary['nq'].get('f1')}\nWROTE {args.out}"
+        )
     if world > 1:
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
