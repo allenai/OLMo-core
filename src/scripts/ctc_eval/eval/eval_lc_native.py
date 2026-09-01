@@ -638,11 +638,12 @@ def main():
             # (outlier_wiki100w_n{22,55,110,220}_k3_eval_600.jsonl); the length-mix bundle instead
             # ships rung_{2048,...,32768}.jsonl, 600 held-out examples each, built alongside the
             # length-mix training pools. File-gated, so every other EVAL500_ROOT is untouched.
-            # NOTE the length-mix bundle nests these one level deeper than you would expect --
-            # eval_rungs/outlier/outlier/rung_*.jsonl -- so point EVAL500_ROOT at
-            # outlier_lengthmix/eval_rungs/outlier, not at eval_rungs. Without this entry an
-            # outlier ladder run against that bundle MISSING-skips every rung and exits 0 with an
-            # empty result.
+            # EVAL500_ROOT stays outlier_lengthmix/eval_rungs (the same root nq and qdmatch_nq
+            # use): on weka the files sit at eval_rungs/outlier/rung_*.jsonl. The mooney mirror
+            # nests them one level deeper (eval_rungs/outlier/outlier/), which is a property of
+            # that copy, not of the bundle -- do not re-root the eval to match it. Without this
+            # entry an outlier ladder run against this bundle MISSING-skips every rung and exits 0
+            # with an empty result.
             if os.path.exists(f"{E5}/outlier/rung_2048.jsonl"):
                 LADDERS["outlier"] = [
                     (_lab, f"{E5}/outlier/rung_{_tok}.jsonl")
