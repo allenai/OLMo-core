@@ -12,6 +12,7 @@ S3 round trip.
 Anything the command prints lands in the job log; anything it writes under /results is fetchable
 with `beaker experiment results`.
 """
+
 import argparse
 
 from olmo_core.internal.common import build_launch_config
@@ -30,7 +31,10 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    inner = f"PYTHONPATH=$PWD/src/scripts:$PWD/src {args.cmd}"
+    # `export ...;` rather than a `VAR=x cmd` prefix: the prefix form binds only to the first
+    # command in the chain, so a --cmd that opens with its own `export` silently ran the
+    # python that followed WITHOUT src on the path.
+    inner = f"export PYTHONPATH=$PWD/src/scripts:$PWD/src; {args.cmd}"
     lc = build_launch_config(
         name=args.name,
         cmd=["bash", "-lc", inner],
