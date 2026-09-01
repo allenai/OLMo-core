@@ -121,7 +121,7 @@ not yet shown its ceiling.
 | budget | 2k | 8k | 16k | 32k |
 |---|---|---|---|---|
 | 14M | .909 | .836 | .751 | .592 |
-| 28M | .967 | .932 | pending | pending |
+| 28M | .967 | .932 | .873 | pending |
 | 56M | .982 | .971 | .941 | .881 |
 
 The middle budget lands where a smooth curve wants it (2k .967 between .909 and .982), so the
@@ -166,6 +166,16 @@ zero: `pairwise_f1` gives ~0.44 for a degenerate all-one-cluster answer (ARI 0),
 grouping's .419 is chance, not partial credit -- the same reason the metric is never quoted without
 ARI. Contradiction sparse is confirmed dead at a second budget (28M: .001/.000/.000), so it is not
 a data-starvation artifact of the smallest arm.
+
+### reorder + grouping, dense (eval_size 500)
+
+reorder (kendall tau): 2k .359/.610/.686, 4k .124/.356/.457, 8k .001/--/.050 across 15/30/50M.
+Both short rungs scale cleanly; **8k is a cliff** -- .050 at the largest budget, against .686 at 2k
+for the same checkpoint. Reorder is a short-context task at these budgets no matter the data.
+
+grouping (pairwise_f1, floor .44): 80M gives .794 / .569 / .417 at 2k/8k/16k. The 16k cell is AT
+the degenerate floor, so grouping's usable range under this recipe ends between 8k and 16k. Sparse
+sits at .419/.187 -- the 2k cell is already at the floor and 8k is below it.
 
 ### Dense, first rungs across the four new tasks (eval_size 500 each)
 
