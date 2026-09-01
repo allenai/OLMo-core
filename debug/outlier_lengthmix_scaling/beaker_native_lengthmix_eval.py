@@ -64,6 +64,10 @@ def main():
         f"PYTHONPATH=$PWD/src/scripts:$PWD/src "
         f"EVAL500_ROOT={ev500} "
         + ("" if args.no_sparse_decode else "OLMO_LANDMARK_SPARSE_DECODE=1 ")
+        # reorder's grader imports scipy (kendalltau/spearmanr) and the stable image does not ship
+        # it, so that ladder died with ModuleNotFoundError after the checkpoint had already loaded.
+        # Guarded so every other task pays only an import check.
+        + 'python -c "import scipy" 2>/dev/null || pip install -q scipy; '
         + f"python -m torch.distributed.run --nproc_per_node={args.ngpu} --master_port=29513 "
         f"src/scripts/ctc_eval/eval/eval_lc_native.py --model-path {ckpt} "
         f"--out /results/{args.run_name}_native_multirung.json --tokenizer Qwen/Qwen3.5-0.8B "
