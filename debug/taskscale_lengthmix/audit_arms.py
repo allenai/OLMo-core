@@ -28,8 +28,14 @@ for d in sorted(glob.glob(f"{ROOT}/*")):
     parts = len(glob.glob(os.path.join(d, "token_ids_part_*.npy")))
     masks = len(glob.glob(os.path.join(d, "labels_mask_*.npy")))
     flags = []
-    if j["max_example_len"] > SEQ_LEN:
-        flags.append(f"max_example_len {j['max_example_len']} > seq-len {SEQ_LEN}")
+    # A shard written before max_example_len existed is the dangerous case, not a cosmetic one:
+    # the trainer guards --seq-len with meta.get("max_example_len", 0), so a missing key means the
+    # guard reads 0, never fires, and PadToLength silently DROPS every over-length example.
+    mx = j.get("max_example_len", j.get("max_len"))
+    if mx is None:
+        flags.append("no max_example_len -- the trainer's seq-len guard cannot fire")
+    elif mx > SEQ_LEN:
+        flags.append(f"max_example_len {mx} > seq-len {SEQ_LEN}")
     if j["eos"] != EOS:
         flags.append(f"eos {j['eos']} != {EOS}")
     if j["num_skipped"]:
@@ -40,6 +46,6 @@ for d in sorted(glob.glob(f"{ROOT}/*")):
     print(
         f"{name:34s} task={j['task']:13s} inst={j['num_instances']:6d} "
         f"tok={j['num_tokens'] / 1e6:6.1f}M median={j['median_len']:6d} "
-        f"max={j['max_example_len']:6d}  {'; '.join(flags) if flags else 'OK'}"
+        f"max={mx if mx is not None else -1:6d}  {'; '.join(flags) if flags else 'OK'}"
     )
 print(f"\n{bad} arm(s) flagged")
