@@ -94,21 +94,27 @@ THIRD distinct sparse shape: a step down from 2k to 8k, then near-flat -- 8k/16k
 .072-.096 at a given budget, where nq sparse fell .728 -> .248 over the same span. So sparse
 degradation is not one phenomenon; it is task-specific.
 
-### oolong, dense vs sparse
+### oolong, dense vs sparse -- FIRST COMPLETE 3x4 GRID, BOTH VARIANTS
 
-Dense (2k/8k complete at all three budgets; 40M complete at all four rungs):
+Dense:
 
 | budget | 2k | 8k | 16k | 32k |
 |---|---|---|---|---|
-| 20M | .865 | .639 | pending | pending |
+| 20M | .865 | .639 | .576 | .564 |
 | 40M | .886 | .672 | .643 | .607 |
-| 80M | .913 | .692 | pending | pending |
+| 80M | .913 | .692 | .668 | .617 |
 
-Head to head at 40M: **.886/.672/.643/.607 dense vs .823/.564/.532/.503 sparse** -- dense leads by
-.063/.108/.111/.104. Dense at the SMALLEST budget (20M) already beats sparse at the LARGEST (80M)
-at 8k (.639 vs .631), so on oolong sparse is not within a 4x budget of dense at length. Both are
-still climbing, but the dense per-doubling gain at 8k (+.038) roughly matches sparse's (+.067)
-only if sparse's flat tail keeps holding -- and it starts .108 behind.
+Dense leads sparse at all 12 cells, by .053-.111. **Dense at the SMALLEST budget beats sparse at
+the LARGEST at every rung except 2k**: 8k .639 vs .631, 16k .576 vs .589 (the one exception),
+32k .564 vs .535. So sparse is roughly a 4x-data deficit behind dense on oolong, and the deficit
+does not shrink with budget.
+
+VERDICT (oolong): no crossover in the measured range. `fit_crossover.py` reports one at 301M (8k)
+and 460M (16k), but both are 4-6x beyond the largest measured budget and both are driven by
+sparse's fitted ceiling running into its 1.05 bound while dense's bends to .72/.68 -- i.e. the
+extrapolation says "the curve still rising will pass the curve that is saturating", which three
+points cannot support. Treat as NOT a prediction of crossover; it is a prediction that sparse has
+not yet shown its ceiling.
 
 ### contradiction, dense -- COMPLETE (2 budgets)
 

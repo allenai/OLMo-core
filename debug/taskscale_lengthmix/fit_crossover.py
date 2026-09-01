@@ -73,11 +73,12 @@ def main():
                 if not pts or len(pts) < 3:
                     continue
                 budgets = sorted(float(b) for b in pts)
-                fits[variant] = (fit(budgets, [pts[f"{int(b)}"] for b in budgets]), max(budgets))
+                fits[variant] = (fit(budgets, [pts[f"{int(b)}"] for b in budgets]),
+                                 max(budgets), min(budgets))
             if not fits:
                 continue
             line = [f"  {rung:>4s}"]
-            for variant, ((p, rmse), bmax) in fits.items():
+            for variant, ((p, rmse), bmax, _bmin) in fits.items():
                 bits = []
                 for t in TARGETS:
                     b = budget_for(p, t)
@@ -88,11 +89,28 @@ def main():
                 line.append(f"{variant[:1]}[fmax {p[0]:.2f} g {p[1]:.2f} K {p[2] / 1e6:.0f}M "
                             f"rmse {rmse:.3f}] " + " ".join(bits))
             if len(fits) == 2:
-                (pd, _), bd = fits["dense"]
-                (ps, _), bs = fits["sparse"]
-                x = crossover(pd, ps, min(bd, bs) / 10, a.max_budget)
-                line.append("CROSSOVER " + (f"{x / 1e6:.0f}M" if x else
-                                            f"none below {a.max_budget / 1e9:.0f}B"))
+                (pd, _), bd, bdlo = fits["dense"]
+                (ps, _), bs, bslo = fits["sparse"]
+                # Search from the smallest MEASURED budget, not below it: two 3-point fits diverge
+                # freely outside their data, and starting the search an order of magnitude low
+                # manufactured a "crossover" at 8M on a rung where sparse trails at every measured
+                # point.
+                lo = max(bdlo, bslo)
+                x = crossover(pd, ps, lo, a.max_budget)
+                bmax = max(bd, bs)
+                if x is None:
+                    line.append(f"CROSSOVER none below {a.max_budget / 1e9:.0f}B")
+                elif x <= bmax:
+                    line.append(f"CROSSOVER {x / 1e6:.0f}M (inside measured range)")
+                else:
+                    # A crossover past the last measured point is usually an artifact of the
+                    # loser's fmax being unconstrained: a curve still in its rising phase gets a
+                    # high fitted ceiling, while the leader's bends and pins a low one. Say so
+                    # rather than printing a number that reads like a prediction.
+                    line.append(f"CROSSOVER {x / 1e6:.0f}M = {x / bmax:.1f}x PAST the largest "
+                                f"measured budget ({bmax / 1e6:.0f}M) -- EXTRAPOLATION, and the "
+                                f"fitted ceilings driving it are dense {pd[0]:.2f} / sparse "
+                                f"{ps[0]:.2f}")
             print("\n        ".join(line))
 
 
