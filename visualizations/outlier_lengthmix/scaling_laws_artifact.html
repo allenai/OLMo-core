@@ -335,6 +335,57 @@ into its 1.05 bound while dense's bends to .72. That is a statement about which 
 its ceiling, not a prediction of crossover, and the tool now labels it as such.</p>
 </div></div>
 
+<div class="step"><div class="step-n">04c</div><div>
+<h2>Sparse holds up on low-CTC tasks and falls apart on high-CTC ones</h2>
+<p>Averaging the nine ladders by the suite's CTC class — O<sub>T</sub>(N) is <em>low</em>,
+O<sub>T</sub>(NM) and O<sub>T</sub>(N²)+ are <em>high</em> — each task contributing its largest
+measured budget. The class split is much sharper than any individual task suggests.</p>
+<div class="tblwrap"><table>
+<tr><th>rung</th><th class="n"><span class="d">dense</span> high</th><th class="n"><span class="d">dense</span> low</th>
+<th class="n"><span class="s">sparse</span> high</th><th class="n"><span class="s">sparse</span> low</th>
+<th class="n">sparse/dense high</th><th class="n">sparse/dense low</th></tr>
+<tr><td>2k</td><td class="n">.640</td><td class="n">.943</td><td class="n">.113</td><td class="n">.711</td>
+<td class="n"><span class="conf-c">0.22</span></td><td class="n"><span class="conf-a">0.94</span></td></tr>
+<tr><td>8k</td><td class="n">.596</td><td class="n">.812</td><td class="n">.178</td><td class="n">.536</td>
+<td class="n"><span class="conf-c">0.24</span></td><td class="n"><span class="conf-a">0.85</span></td></tr>
+<tr><td>16k</td><td class="n">.935</td><td class="n">.789</td><td class="n">.289</td><td class="n">.599</td>
+<td class="n"><span class="conf-c">0.32</span></td><td class="n"><span class="conf-b">0.77</span></td></tr>
+<tr><td>32k</td><td class="n">.719</td><td class="n">.745</td><td class="n">.123</td><td class="n">.392</td>
+<td class="n"><span class="conf-c">0.28</span></td><td class="n"><span class="conf-b">0.58</span></td></tr>
+</table></div>
+<p><strong>Sparse keeps 77–94% of dense on low-CTC tasks and 14–32% on high-CTC ones.</strong> The
+ratio columns compare only tasks where both variants were measured at that rung, so they are
+like-for-like; the dense/sparse level columns average different task sets per rung and should be
+read as a class summary, not a trend. Note the low-CTC ratio does decay with length (0.94 → 0.58),
+driven almost entirely by nq (0.94 → 0.28) while oolong holds at 0.87 — so "low-CTC is safe for
+sparse" is a statement about 2k–8k, not about 32k.</p>
+
+<h3>Extrapolating to 64k / 128k / 256k / 1M</h3>
+<p>Two fits compose here: the per-rung data law gives the tokens for a target score at each
+measured length, then log-budget is regressed on log-length to get the task's length exponent β
+(B ∝ L<sup>β</sup>). Only tasks that actually <em>reach</em> f1=0.8 somewhere in the measured range
+get a prediction — the other five would be extrapolating a curve that never approached the target.</p>
+<div class="tblwrap"><table>
+<tr><th>task</th><th class="n">β</th><th class="n">r²</th><th class="n">64k</th><th class="n">128k</th><th class="n">256k</th><th class="n">1M</th></tr>
+<tr><td>contradiction <span class="chip">high-CTC</span></td><td class="n">0.56</td><td class="n">.96</td>
+<td class="n">0.05B</td><td class="n">0.07B</td><td class="n">0.11B</td><td class="n"><strong>0.23B</strong></td></tr>
+<tr><td>nq <span class="chip">low-CTC</span></td><td class="n">1.77</td><td class="n">.95</td>
+<td class="n">0.08B</td><td class="n">0.26B</td><td class="n">0.89B</td><td class="n"><strong>10.4B</strong></td></tr>
+<tr><td>xabsence <span class="chip">high-CTC</span></td><td class="n">1.92</td><td class="n"><span class="conf-b">.64</span></td>
+<td class="n">0.11B</td><td class="n">0.43B</td><td class="n">1.6B</td><td class="n"><strong>23B</strong></td></tr>
+<tr><td>outlier <span class="chip">high-CTC</span></td><td class="n">2.70</td><td class="n">1.00</td>
+<td class="n">16B</td><td class="n">101B</td><td class="n">657B</td><td class="n"><strong>28T</strong> <span class="conf-c">†</span></td></tr>
+<tr><td>qdmatch_nq <span class="chip">high-CTC</span></td><td class="n">4.87</td><td class="n">.90</td>
+<td class="n">44B</td><td class="n">1.3T</td><td class="n">37T</td><td class="n"><strong>3×10<sup>7</sup>B</strong> <span class="conf-c">†</span></td></tr>
+</table></div>
+<p><span class="conf-c">†</span> the anchor rung's own budget is already 4–5× past anything we ran,
+so these two rows compound an extrapolated anchor with an extrapolated exponent — treat them as
+"astronomically expensive", not as numbers. The spread in β is the real finding: <strong>the same
+target at the same length costs contradiction 0.23B tokens and qdmatch effectively infinity</strong>,
+so a single suite-wide budget is meaningless. β is not predicted by CTC class either — the cheapest
+(contradiction, β=0.56) and the most expensive (qdmatch, β=4.87) are both high-CTC.</p>
+</div></div>
+
 <div class="step"><div class="step-n">05</div><div>
 <h2>Where sparse works at all</h2>
 <div class="tblwrap"><table>
