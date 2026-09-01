@@ -35,7 +35,7 @@ for f in $L/tsl-full-*.log $L/tsl-slm-*.log $L/tsl4-*.log $L/tslS-*.log $L/tslJ-
   [ -z "$ex" ] && continue
   st=$(timeout 15 beaker experiment get "$ex" --format json 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); s=(d[0]['jobs'][-1] if d[0].get('jobs') else {}).get('status',{}); print(s.get('exitCode') if 'exited' in s else 'live')" 2>/dev/null)
   [ "$st" != "0" ] && continue
-  sd=$(timeout 30 beaker experiment logs "$ex" 2>/dev/null | grep -oE "ctc_suite/ckpts/tsl-[a-z0-9-]+-4b-[0-9T-]+" | tail -1 | sed 's|.*/||')
+  sd=$(timeout 30 beaker experiment logs "$ex" 2>/dev/null | grep -oE "ctc_suite/ckpts/tsl-[A-Za-z0-9-]+-4b-[0-9T-]+" | tail -1 | sed 's|.*/||')
   [ -z "$sd" ] && continue
   run=$(echo "$sd" | sed -E 's/-[0-9]{8}T[0-9]{6}-[0-9]{4}$//')
   ls $EL/ev*-$run.log >/dev/null 2>&1 && continue          # already evaluated
