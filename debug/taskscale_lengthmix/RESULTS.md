@@ -39,6 +39,9 @@ Every mix share is computed from these, never from the rung label.
 | contradiction | n docs | measured | — | measured | measured | 32811 |
 | xabsence (EXACT) | P pairs | — | ~4.5k | ~8.7k | 15625 | 30989 |
 | reorder | n chunks | measured | measured | 8812 | 17842 | no rung |
+| textgroups | n docs | 1762 | (4k) 4361 | 9302 | 23429 | past window |
+| grouping | docs/example | 2002 | — | 8272 | 16570 | 32696 |
+| absence | n sents | (n90) 5604 | (n180) 11186 | (n360) 26811 | — | — |
 
 ## Arms built
 
@@ -46,7 +49,10 @@ Every mix share is computed from these, never from the rung label.
 |---|---|---|
 | oolong | 20.3M / 40.6M / 81.3M | 6,711 / 13,422 / 26,844 |
 | contradiction | 14.0M / 28.0M / 56.0M | 3,994 / 7,988 / 15,976 |
-| reorder | 15M / 30M / 50M | 5,835 / 11,670 / — |
+| reorder | 15M / 30M / 50M | 5,835 / 11,670 / 19,451 |
+| xabsence | 20.0M / 40.1M / 80.2M | 3,570 / 7,141 / 14,280 |
+| textgroups | 20.0M / 40.0M / 80.2M | 8,357 / 16,717 / 33,435 |
+| absence | 20M / 40M / 80M | 2,832 / 5,666 / 11,330 |
 
 reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
 20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
