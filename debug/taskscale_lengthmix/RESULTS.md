@@ -63,9 +63,16 @@ reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples i
 
 ## Scheduling note (2026-09-01)
 
-jupiter sat at 0 of our 43 arms running for ~9 hours even while it reported free slots: the free
-capacity is FRAGMENTED (single-node 8-GPU requests need a node with 8 free GPUs, and 54 nodes were
-cordoned), and same-priority jobs drain FIFO behind our own head-of-queue job. **ai2/saturn
+**Root cause of the 9-hour stall: another user's stuck job, not our queue.** Every placement
+message named the same head-of-queue blocker, `registry-mirror` (author shashankg, urgent, no GPU
+request), pending from 06:29 UTC. Under jupiter's strict-priority policy everything behind it
+waits. It was cancelled around 16:10 and our arms began placing within minutes. Diagnose this with
+`beaker job get <id>` on the ID the launcher prints in "waiting for at least 1 job higher in the
+queue" -- it is not necessarily ours.
+
+Secondary observation, still true: jupiter reported free slots throughout, because that
+capacity is FRAGMENTED -- a single-node 8-GPU request needs one node with 8 free GPUs, and 54 nodes
+were cordoned. **ai2/saturn
 (A100-80GB, eager scheduling) places the identical 8-GPU config in seconds once it has room** --
 migrating an arm there is a stop-on-jupiter + relaunch with `--cluster ai2/saturn`, no config
 change. Five dense arms moved and started immediately.
