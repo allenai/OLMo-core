@@ -13,7 +13,6 @@ from olmo_core.config import StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.transformer import Transformer
 
-from ..train_module import TransformerTrainModule
 from .callback import Callback
 from .profiler import ProfilerCallback, should_profile_rank
 
@@ -29,6 +28,12 @@ _MIXER_ABBREVIATIONS = {
 }
 
 # (block attribute, label used in the marker name), in forward order.
+#
+# NOTE: these tables are per block *shape*, not one flat table, because the same attribute
+# name sits at different points in the forward pass depending on the block. On the standard
+# block 'attention_norm' is the pre-norm; on 'OLMoDDPTransformerBlock', which runs peri-norm,
+# it is the *post*-norm and 'attention_input_norm' is the pre-norm. A single table would have
+# to mislabel one of them.
 _SUBMODULE_LABELS = (
     ("attention_norm", "norm_pre_mixer"),
     ("attention", "mixer"),
@@ -38,6 +43,26 @@ _SUBMODULE_LABELS = (
     ("post_feed_forward_norm", "norm_post_ffn"),
     ("feed_forward_moe_norm", "norm_pre_moe"),
     ("feed_forward_moe", "moe"),
+)
+
+# The fused MoE-v2 block ('olmo_core.nn.ddp.block.OLMoDDPTransformerBlock'), which runs
+# peri-norm and reaches its experts through 'routed_experts' / 'shared_experts' rather than a
+# single 'feed_forward_moe'. Order follows '_res_norm_attn' and the 'combined_forward_*'
+# functions in 'olmo_core.nn.moe.v2'.
+#
+# Two members of that forward pass are deliberately absent because no forward hook can see
+# them: the shared expert is invoked as 'shared_experts.forward1(...)' / '.forward2(...)',
+# bypassing '__call__', and the attention sublayer is reached through the compiled
+# '_res_norm_attn' method. Both are covered by nvtx ranges in the MoE code instead.
+_OLMO_DDP_SUBMODULE_LABELS = (
+    ("attention_input_norm", "norm_pre_mixer"),
+    ("attention", "mixer"),
+    ("attention_norm", "norm_post_mixer"),
+    ("feed_forward_input_norm", "norm_pre_moe"),
+    ("routed_experts_router", "router"),
+    ("shared_experts_router", "shared_router"),
+    ("routed_experts", "experts"),
+    ("feed_forward_norm", "norm_post_moe"),
 )
 
 
@@ -88,6 +113,23 @@ def block_annotation_name(block: nn.Module, block_idx: int, index_width: int = 2
     if getattr(inner, "is_moe", False):
         kind = f"{kind}+moe"
     return f"block{block_idx:0{index_width}d}.{kind}"
+
+
+def submodule_labels(block: nn.Module) -> tuple[tuple[str, str], ...]:
+    """
+    Pick the ``(attribute, label)`` table describing the inside of ``block``, in forward order.
+
+    Selection is by attribute shape rather than by class, so a block that grows out of either
+    layout keeps working without importing it here. Attributes the block doesn't have are
+    skipped by the caller, so a table may name more than a given block carries (e.g. the dense
+    first layer of an MoE model has no router or routed experts).
+
+    :param block: The block, already unwrapped by :func:`unwrap_block`.
+    """
+    # 'attention_input_norm' is the peri-norm pre-norm, which only the fused MoE-v2 block has.
+    if hasattr(block, "attention_input_norm") or hasattr(block, "routed_experts"):
+        return _OLMO_DDP_SUBMODULE_LABELS
+    return _SUBMODULE_LABELS
 
 
 def _grad_output_tensor(output: Any) -> Optional[torch.Tensor]:
@@ -257,13 +299,22 @@ class ProfilerAnnotationCallback(Callback):
     _use_rf: bool = dataclasses.field(default=True, repr=False)
     _use_nvtx: bool = dataclasses.field(default=False, repr=False)
     _active: bool = dataclasses.field(default=False, repr=False)
+    _optim_step_hooks: bool = dataclasses.field(default=False, repr=False)
 
     def post_attach(self):
         if not self.enabled:
             return
-        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+        # NOTE: duck-typed rather than an isinstance check against TransformerTrainModule.
+        # Everything this callback touches is 'train_module.model' (a Transformer, whose
+        # '.blocks' / '.embeddings' / '.lm_head' it hooks) plus an optional '.optim'. Several
+        # train modules satisfy that without sharing a base class -- OLMoDDPTrainModule, which
+        # trains the fused MoE-v2 stack, derives straight from TrainModule.
+        model = getattr(self.trainer.train_module, "model", None)
+        if not isinstance(model, Transformer):
             raise OLMoConfigurationError(
-                f"{type(self).__name__} only works with the TransformerTrainModule."
+                f"{type(self).__name__} needs a train module exposing a 'model' of type "
+                f"Transformer, but {type(self.trainer.train_module).__name__} exposes "
+                f"{type(model).__name__}."
             )
         if self.depth not in (1, 2):
             raise OLMoConfigurationError(f"'depth' must be 1 or 2, got {self.depth}")
@@ -276,7 +327,7 @@ class ProfilerAnnotationCallback(Callback):
         if not self.enabled or not should_profile_rank(self.ranks):
             return
 
-        train_module = cast(TransformerTrainModule, self.trainer.train_module)
+        train_module = self.trainer.train_module
         model = cast(Transformer, train_module.model)
         self._model = model
         self._use_rf = self.backend in (AnnotationBackend.record_function, AnnotationBackend.both)
@@ -303,12 +354,27 @@ class ProfilerAnnotationCallback(Callback):
             # so it's where the backward ranges get closed out.
             if model.embeddings is not None:
                 handles.append(model.embeddings.register_forward_hook(self._embeddings_post))
-            # 'optim' is None on an eval-only train module, which has no optimizer step to name.
-            if train_module.optim is not None:
-                handles.append(train_module.optim.register_step_pre_hook(self._optim_step_pre))
-                handles.append(train_module.optim.register_step_post_hook(self._optim_step_post))
-            else:
+            # 'optim' is None on an eval-only train module, which has no optimizer step to
+            # name, and absent entirely on a train module that doesn't own one.
+            #
+            # NOTE: the step hooks come from torch.optim.Optimizer, and not every optimizer
+            # here is one. 'OLMoDDPOptimizer' (the fused MoE-v2 optimizer) is deliberately a
+            # plain class, so it has no 'register_step_pre_hook'. Without this guard attaching
+            # the callback to that train module raises AttributeError. The coarse 'optim_step'
+            # range still works: 'pre_optim_step' opens it and 'post_step' drains it. Only the
+            # inner 'optim_step/pre' split (grad clipping, LR scheduling) is lost.
+            optim = getattr(train_module, "optim", None)
+            if optim is None:
                 log.warning("train module has no optimizer, skipping 'optim_step' annotations")
+            elif not hasattr(optim, "register_step_pre_hook"):
+                log.warning(
+                    f"{type(optim).__name__} is not a torch.optim.Optimizer, so it has no step "
+                    "hooks; skipping the 'optim_step/pre' annotation"
+                )
+            else:
+                handles.append(optim.register_step_pre_hook(self._optim_step_pre))
+                handles.append(optim.register_step_post_hook(self._optim_step_post))
+                self._optim_step_hooks = True
 
         if self.annotate_blocks:
             index_width = max(2, len(str(max(0, model.n_layers - 1))))
@@ -328,7 +394,7 @@ class ProfilerAnnotationCallback(Callback):
                 )
                 if self.depth >= 2:
                     inner = unwrap_block(block)
-                    for attr, label in _SUBMODULE_LABELS:
+                    for attr, label in submodule_labels(inner):
                         child = getattr(inner, attr, None)
                         if not isinstance(child, nn.Module):
                             continue
@@ -386,8 +452,18 @@ class ProfilerAnnotationCallback(Callback):
 
     def _end(self, range_: _Range):
         if range_.thread_id != threading.get_ident():
-            # Closing another thread's range would corrupt the NVTX / profiler stack.
-            log.warning(f"dropping annotation range '{range_.name}' opened on another thread")
+            # Closing another thread's range would corrupt that thread's NVTX / profiler
+            # stack, so drop it instead. In the normal case this never fires: backward ranges
+            # are opened and closed on the autograd thread (the '_bwd_end' grad hook on the
+            # embeddings output runs '_bwd_finish' there), and '_drain' from '_fwd_pre' only
+            # meets them if a backward never reached the embeddings -- an error, or the
+            # annotation window closing mid-step. Under the nvtx backend a dropped range
+            # leaves its push unmatched, which shows up in nsys as a range on that thread
+            # running to the end of the capture.
+            log.warning(
+                f"dropping annotation range '{range_.name}' opened on another thread; "
+                "under backend='nvtx' this leaves an unclosed range in the trace"
+            )
             return
         range_.close()
 
@@ -501,7 +577,11 @@ class ProfilerAnnotationCallback(Callback):
             return
         self._bwd_finish()  # The backward pass is definitely over by now.
         self._push(f"{self.name_prefix}optim_step")
-        self._push(f"{self.name_prefix}optim_step/pre")
+        # NOTE: '_optim_step_pre' is what closes this, so without the optimizer step hooks it
+        # would stay open until 'post_step' drains it -- reporting the whole optimizer step as
+        # "pre". Better to omit the sub-range than to report a wrong one.
+        if self._optim_step_hooks:
+            self._push(f"{self.name_prefix}optim_step/pre")
 
     def post_step(self):
         if self._handles is not None:
@@ -527,6 +607,7 @@ class ProfilerAnnotationCallback(Callback):
         self._fwd_stack = None
         self._bwd_open = None
         self._active = False
+        self._optim_step_hooks = False
 
     def _annotating(self) -> bool:
         if self.annotate_eval:

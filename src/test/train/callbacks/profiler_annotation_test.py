@@ -15,7 +15,12 @@ from olmo_core.nn.transformer import (
     TransformerConfig,
 )
 from olmo_core.train.callbacks import ProfilerAnnotationCallback
-from olmo_core.train.callbacks.profiler_annotation import block_annotation_name
+from olmo_core.train.callbacks.profiler_annotation import (
+    _OLMO_DDP_SUBMODULE_LABELS,
+    _SUBMODULE_LABELS,
+    block_annotation_name,
+    submodule_labels,
+)
 
 VOCAB_SIZE = 128
 SEQ_LEN = 8
@@ -259,3 +264,76 @@ def test_compiled_blocks_have_no_graph_breaks():
     names = {event.key for event in prof.key_averages()}
     assert "fwd/block00.attn" in names
     assert "bwd/block00.attn" in names
+
+
+class _FakeOLMoDDPBlock(nn.Module):
+    """
+    Stands in for 'olmo_core.nn.ddp.block.OLMoDDPTransformerBlock': peri-norm, and experts
+    reached through 'routed_experts' rather than a single 'feed_forward_moe'.
+    """
+
+    def __init__(self, mixer: nn.Module, *, dense: bool = False):
+        super().__init__()
+        self.attention_input_norm = nn.Identity()
+        self.attention = mixer
+        self.attention_norm = nn.Identity()
+        self.feed_forward_input_norm = nn.Identity()
+        self.feed_forward_norm = nn.Identity()
+        # The dense first layer of an OLMoE3 model carries no router or routed experts.
+        if not dense:
+            self.routed_experts_router = nn.Identity()
+            self.shared_experts_router = nn.Identity()
+            self.routed_experts = nn.Identity()
+
+    @property
+    def is_moe(self) -> bool:
+        return hasattr(self, "routed_experts")
+
+
+def _resolved_labels(block: nn.Module) -> list[str]:
+    """The labels that depth=2 would actually emit for 'block', in order."""
+    return [
+        label
+        for attr, label in submodule_labels(block)
+        if isinstance(getattr(block, attr, None), nn.Module)
+    ]
+
+
+def test_submodule_labels_picks_the_olmo_ddp_layout():
+    ddp_block = _FakeOLMoDDPBlock(KimiDeltaAttention())
+    assert submodule_labels(ddp_block) is _OLMO_DDP_SUBMODULE_LABELS
+    # The standard block must be untouched by the new table.
+    assert submodule_labels(_FakeBlock(Attention())) is _SUBMODULE_LABELS
+
+
+def test_olmo_ddp_labels_follow_forward_order():
+    labels = _resolved_labels(_FakeOLMoDDPBlock(KimiDeltaAttention()))
+    assert labels == [
+        "norm_pre_mixer",
+        "mixer",
+        "norm_post_mixer",
+        "norm_pre_moe",
+        "router",
+        "shared_router",
+        "experts",
+        "norm_post_moe",
+    ]
+
+
+def test_olmo_ddp_peri_norm_puts_attention_norm_after_the_mixer():
+    # The crux of having a second table: on the standard block 'attention_norm' is the
+    # pre-norm, but under peri-norm it runs *after* the mixer. A single flat table keyed on
+    # attribute name would have to mislabel one of the two.
+    labels = _resolved_labels(_FakeOLMoDDPBlock(KimiDeltaAttention()))
+    assert labels.index("norm_post_mixer") > labels.index("mixer")
+    assert dict(_OLMO_DDP_SUBMODULE_LABELS)["attention_norm"] == "norm_post_mixer"
+    assert dict(_SUBMODULE_LABELS)["attention_norm"] == "norm_pre_mixer"
+
+
+def test_olmo_ddp_dense_first_block_skips_missing_experts():
+    dense = _FakeOLMoDDPBlock(KimiDeltaAttention(), dense=True)
+    labels = _resolved_labels(dense)
+    assert labels == ["norm_pre_mixer", "mixer", "norm_post_mixer", "norm_pre_moe", "norm_post_moe"]
+    # A dense layer 0 must not pick up the '+moe' suffix.
+    assert block_annotation_name(dense, 0) == "block00.kda"
+    assert block_annotation_name(_FakeOLMoDDPBlock(KimiDeltaAttention()), 4) == "block04.kda+moe"

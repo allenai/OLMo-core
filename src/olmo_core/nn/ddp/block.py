@@ -17,6 +17,7 @@ try:
 except ImportError:
     _symm_mem = None  # type: ignore[assignment]
 
+from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.kernels import ScaledGroupedMMPrequantizedRHS, olmo_symm_mem
@@ -1544,16 +1545,29 @@ class OLMoDDPTransformerBlock(olmo_core.nn.transformer.block.TransformerBlockBas
         return attn_res_out
 
     def _checkpointed_res_norm_attn(self, block_inp, **kwargs) -> torch.Tensor:
-        if self.checkpoint_attn:
-            out = checkpoint(
-                self._res_norm_attn,
-                block_inp,
-                use_reentrant=False,
-                **kwargs,
-            )
-            return cast(torch.Tensor, out)
-        else:
-            return self._res_norm_attn(block_inp, **kwargs)
+        # NOTE: annotated here rather than inside '_res_norm_attn' because 'apply_compile'
+        # wraps that method in its own torch.compile(), and a range inside a compiled region is
+        # stripped by inductor. This wrapper sits outside it.
+        #
+        # It is still inside the block's own compiled region ('apply_compile' also calls
+        # 'self.compile(fullgraph=False)'), so with nvtx installed this becomes a graph break,
+        # like every other 'nvtx.annotate' in the MoE forward paths. That is the accepted cost
+        # of an annotated run and the reason nvtx is opt-in -- see NVTX_DISABLE. This is
+        # nonetheless the only seam that names the attention sublayer:
+        # ProfilerAnnotationCallback can reach it only by hooking 'attention' /
+        # 'attention_norm' as child modules, which breaks the same graph without being any
+        # cheaper.
+        with nvtx.annotate("res_norm_attn", color="blue"):
+            if self.checkpoint_attn:
+                out = checkpoint(
+                    self._res_norm_attn,
+                    block_inp,
+                    use_reentrant=False,
+                    **kwargs,
+                )
+                return cast(torch.Tensor, out)
+            else:
+                return self._res_norm_attn(block_inp, **kwargs)
 
     def post_batch(self, dry_run: bool = False):
         """

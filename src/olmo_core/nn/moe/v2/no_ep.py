@@ -43,7 +43,10 @@ def combined_forward_no_ep(
     del x
 
     segment_ids = kwargs.pop("segment_ids", None)
-    attn_res_out = self._res_norm_attn(block_inp, **kwargs)
+    # NOTE: the no-EP path calls '_res_norm_attn' directly rather than going through
+    # '_checkpointed_res_norm_attn', which carries this range for the EP paths.
+    with nvtx.annotate("res_norm_attn", color="blue"):
+        attn_res_out = self._res_norm_attn(block_inp, **kwargs)
     kwargs.pop("max_doc_len", None)
     kwargs.pop("cu_doc_lens", None)
     moe_inp = self._prepare_moe_input(attn_res_out)

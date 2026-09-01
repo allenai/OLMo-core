@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `ProfilerAnnotationCallback` now annotates the inside of the OLMoDDP fused MoE-v2 block at `depth=2`, naming the router, routed experts, shared-expert router, and the peri-norm layer norms (e.g. `fwd/block04.kda+moe/router`). The per-block child table is now selected per block shape, because the same attribute sits at different points in the forward pass depending on the block: on the standard block `attention_norm` is the pre-norm, while under the OLMoDDP block's peri-norm it is the post-norm and `attention_input_norm` is the pre-norm.
+- Added an `nvtx` range around the OLMoDDP block's attention sublayer (`res_norm_attn`). It is the only seam that names that sublayer: a profiler hook on `attention` / `attention_norm` would have to sit inside the separately compiled `_res_norm_attn`.
+
+### Fixed
+
+- `olmo_core._nvtx.nvtx` now resolves to the real `nvtx` module when it is installed, instead of always being the no-op stand-in. The ~20 modules that annotate hot paths with `from olmo_core._nvtx import nvtx` (the MoE-v2 router, experts, shared experts, EP dispatch/combine, per-block forward in `OLMoDDPModel`, the LM head, the fused MoE optimizer, and the grouped-matmul kernels) were therefore emitting nothing at all, so installing the `profiling` extra had no effect and every one of those ranges was dead code. Only `maybe_nvtx_annotate` was going live.
+- `ProfilerAnnotationCallback` now accepts any train module exposing a `Transformer` as `.model`, rather than requiring `TransformerTrainModule`, so it works with `OLMoDDPTrainModule` (which derives directly from `TrainModule`) instead of failing to attach. This mirrors the same fix previously made to `EvaluatorCallback` and `BatchSizeSchedulerCallback`.
+- `ProfilerAnnotationCallback` no longer raises `AttributeError` when the train module's optimizer is not a `torch.optim.Optimizer`. `OLMoDDPOptimizer` is deliberately a plain class and has no `register_step_pre_hook`; the callback now skips the inner `optim_step/pre` range in that case rather than reporting it as spanning the whole optimizer step.
+
 ## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
 
 ### Added

@@ -6,14 +6,13 @@ Nsight Systems, so it is declared as an optional dependency (the ``profiling`` e
 annotate hot paths should go through :func:`maybe_nvtx_annotate`, which emits a real nvtx range when
 nvtx is installed and otherwise returns a no-op range.
 
-Modules that need the raw API can still import it defensively::
+Modules that want the raw API should just do::
 
-    try:
-        import nvtx
-    except ImportError:
-        from olmo_core._nvtx import nvtx
+    from olmo_core._nvtx import nvtx
 
-so the ``@nvtx.annotate(...)`` annotations become no-ops when nvtx is not installed.
+which is the real ``nvtx`` module when it is installed and a no-op stand-in otherwise, so
+``@nvtx.annotate(...)`` annotations cost nothing when nvtx is absent. A defensive
+``try: import nvtx / except ImportError:`` around it is unnecessary.
 """
 
 from __future__ import annotations
@@ -43,13 +42,21 @@ class _NoOpNvtx:
         return _NoOpRange()
 
 
-nvtx = _NoOpNvtx()
+_no_op_nvtx = _NoOpNvtx()
 
-# The active nvtx used by maybe_nvtx_annotate: real nvtx when installed, else the no-op above.
 try:
     import nvtx as _active_nvtx
 except ImportError:
-    _active_nvtx = nvtx  # type: ignore[assignment]
+    _active_nvtx = _no_op_nvtx  # type: ignore[assignment]
+
+# The exported 'nvtx': the real module when installed, else the no-op above.
+#
+# NOTE: this binding is load-bearing. ~20 modules annotate their hot paths with
+# 'from olmo_core._nvtx import nvtx' + '@nvtx.annotate(...)' / 'with nvtx.annotate(...)'.
+# Binding this name to the no-op unconditionally would make every one of those ranges a
+# permanent no-op, so installing the 'profiling' extra would buy nothing -- the ranges would
+# be dead code. Point it at the real module so the extra is what actually decides.
+nvtx = _active_nvtx
 
 
 def maybe_nvtx_annotate(label: str, color: Optional[str] = None):
