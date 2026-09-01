@@ -634,7 +634,14 @@ def main():
             # built before the 2026-08-10 level-mix fix, and its concept level drifts with length
             # (L0 share .57 -> .00 across 2k -> 32k), so a length curve on it is really a
             # granularity curve. The fixed-mix rebuild holds ~.25 per level at every rung.
-            for _t, _dir, _toks in (("grouping", "grouping_fixedmix",
+            # absence (Gutenberg text-diff). Its labels are the loosest in the suite -- measured
+            # eval-path medians are 7.5k / 14.5k / 24.4k / 48.7k against labels 2k / 4k / 8k / 16k
+            # -- because queries[0] is the whole corpus minus K sentences, so the prompt is ~2x the
+            # document text. Quote the measurement, not the label. The 16k file holds only 148
+            # examples (source cap, not truncation): flag its eval_size inline.
+            for _t, _dir, _toks in (("absence", "absence_gutenberg",
+                                     (2048, 4096, 8192, 16384)),
+                                    ("grouping", "grouping_fixedmix",
                                      (2048, 4096, 8192, 16384, 32768)),
                                     ("reorder", "reorder", (2048, 4096, 8192, 16384)),
                                     ("textgroups", "textgroups", (2048, 4096, 8192, 16384))):
@@ -807,6 +814,9 @@ def main():
             "contra_fever": ("contradiction", _eval_contradiction, "f1", 200),
             "qdmatch_nq": ("qdmatch", _eval_qdmatch, "f1", 200),
             "xabsence": ("xabsence", _eval_absence, "f1", 200),
+            # same grader, different data family: absence dispatches to the textdiff path on
+            # meta.format and grades first-four-word snippets, not document ids.
+            "absence": ("absence", _eval_absence, "f1", 200),
             # grouping needs a big budget: the gold partition alone runs ~1000 tokens
             # at 32k, and a 256-token cap silently truncated it in an earlier wave.
             "grouping": ("grouping", _eval_grouping, "pairwise_f1", 2048),

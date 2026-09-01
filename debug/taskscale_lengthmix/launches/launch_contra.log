@@ -1,0 +1,7 @@
+[tsl] launch tsl-full-contradiction-s14M-4b (contradiction_mix_s14M, full)
+[tsl] launch tsl-slm-contradiction-s14M-4b (contradiction_mix_s14M, sparselandmark)
+[tsl] launch tsl-full-contradiction-s28M-4b (contradiction_mix_s28M, full)
+[tsl] launch tsl-slm-contradiction-s28M-4b (contradiction_mix_s28M, sparselandmark)
+[tsl] launch tsl-full-contradiction-s56M-4b (contradiction_mix_s56M, full)
+[tsl] launch tsl-slm-contradiction-s56M-4b (contradiction_mix_s56M, sparselandmark)
+[tsl] contradiction: submitted 3 budgets x 2 variants 00:04:24

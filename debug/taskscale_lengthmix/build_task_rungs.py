@@ -88,10 +88,13 @@ TASKS = {
         # Yield collapses with N -- 4000 examples cost 2,512 books at n=90 but only 168 examples
         # came out of 20,000 books at n=720 -- so the big budgets may not compose; compose() skips
         # what the pools cannot cover.
-        "rungs": [("2k", 90, 20000), ("4k", 180, 3000), ("8k", 360, 900), ("16k", 720, 200)],
+        # MEASURED SFT-path medians: n90 -> 5602, n180 -> 10896, n360 -> 26811. The shipped n=720
+        # rung is dropped: it tokenizes past 49k (5 of 8 probe examples skipped), and its eval file
+        # holds only 148 examples anyway. Absence carries a ~21k intercept -- queries[0] is the
+        # whole corpus minus K sentences -- so its lengths run far above its rung labels.
+        "rungs": [("2k", 90, 20000), ("4k", 180, 3000), ("8k", 360, 900)],
         "budgets": [20e6, 40e6, 80e6],
         "prompt_task": "absence",
-        "max_seq": 49152,
     },
     "grouping": {
         # docs-per-example -> MEASURED medians 1964 / 8042 / 16692 / 32808 (rung_token_audit.json).
@@ -310,7 +313,12 @@ def compose(task):
     rungs = [r[0] for r in TASKS[task]["rungs"]]
     manifest = {}
     for B in TASKS[task]["budgets"]:
-        counts = [max(1, round(s * B / med[lab])) for s, lab in zip(SHARES, rungs)]
+        # SHARES is written for four rungs; a task with fewer (absence tops out at three usable
+        # lengths) keeps the same short-heavy SHAPE by renormalizing the prefix rather than
+        # silently dropping the tail's token share.
+        _sh = SHARES[:len(rungs)]
+        _sh = [x / sum(_sh) for x in _sh]
+        counts = [max(1, round(s * B / med[lab])) for s, lab in zip(_sh, rungs)]
         lines, spec, short = [], {}, None
         for lab, c in zip(rungs, counts):
             pool = open(pool_file(task, lab)).read().splitlines()
@@ -338,7 +346,7 @@ def compose(task):
             "target_tokens": B,
             "measured_tokens": tokens,
             "medians": med,
-            "shares": dict(zip(rungs, SHARES)),
+            "shares": dict(zip(rungs, _sh)),
             "shuffle_seed": SHUFFLE_SEED,
         }
         log(f"{arm}: {len(lines)} ex, {tokens/1e6:.1f}M tok (target {B/1e6:.0f}M) {spec}")

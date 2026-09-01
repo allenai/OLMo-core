@@ -1,0 +1,7 @@
+[tsl] launch tsl-full-reorder-s15M-4b (reorder_mix_s15M, full)
+[tsl] launch tsl-slm-reorder-s15M-4b (reorder_mix_s15M, sparselandmark)
+[tsl] launch tsl-full-reorder-s30M-4b (reorder_mix_s30M, full)
+[tsl] launch tsl-slm-reorder-s30M-4b (reorder_mix_s30M, sparselandmark)
+[tsl] launch tsl-full-reorder-s50M-4b (reorder_mix_s50M, full)
+[tsl] launch tsl-slm-reorder-s50M-4b (reorder_mix_s50M, sparselandmark)
+[tsl] reorder: submitted 3 budgets x 2 variants 00:22:36

@@ -1,0 +1,7 @@
+[tsl] launch tsl-full-oolong-s20M-4b (oolong_mix_s20M, full)
+[tsl] launch tsl-slm-oolong-s20M-4b (oolong_mix_s20M, sparselandmark)
+[tsl] launch tsl-full-oolong-s40M-4b (oolong_mix_s40M, full)
+[tsl] launch tsl-slm-oolong-s40M-4b (oolong_mix_s40M, sparselandmark)
+[tsl] launch tsl-full-oolong-s80M-4b (oolong_mix_s80M, full)
+[tsl] launch tsl-slm-oolong-s80M-4b (oolong_mix_s80M, sparselandmark)
+[tsl] oolong: submitted 3 budgets x 2 variants 23:41:19

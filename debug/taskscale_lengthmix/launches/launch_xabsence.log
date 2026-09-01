@@ -1,0 +1,6 @@
+[tsl] launch tsl-full-xabsence-s20M-4b (xabsence_mix_s20M, full)
+[tsl] launch tsl-slm-xabsence-s20M-4b (xabsence_mix_s20M, sparselandmark)
+[tsl] launch tsl-full-xabsence-s40M-4b (xabsence_mix_s40M, full)
+[tsl] launch tsl-slm-xabsence-s40M-4b (xabsence_mix_s40M, sparselandmark)
+[tsl] launch tsl-full-xabsence-s80M-4b (xabsence_mix_s80M, full)
+[tsl] launch tsl-slm-xabsence-s80M-4b (xabsence_mix_s80M, sparselandmark)

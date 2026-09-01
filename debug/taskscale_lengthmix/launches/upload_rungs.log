@@ -1,2 +1,7 @@
 grouping ok
 reorder ok
+textgroups ok
+rerank ok
+absence_gutenberg ok
+qdmatch_hpqa ok
+ALL_RUNGS_UPLOADED
