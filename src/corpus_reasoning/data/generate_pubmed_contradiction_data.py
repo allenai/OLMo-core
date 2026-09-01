@@ -49,7 +49,8 @@ from collections import defaultdict
 from datasets import load_dataset
 from tqdm import tqdm
 
-from corpus_reasoning.lib.io import load_jsonl, save_jsonl, print_dataset_stats
+from corpus_reasoning.lib.io import load_jsonl, print_dataset_stats, save_jsonl
+
 # Deferred: scripts.lib.llm_request_client pulls in openai, which the train
 # conda env lacks. Expansion mode doesn't need the LLM, so import lazily in
 # generate_perturbations() instead.
@@ -74,9 +75,7 @@ LEADING_BAD = re.compile(
     re.IGNORECASE,
 )
 
-DANGLING = re.compile(
-    r"\(Fig\.?|\(Table|\[\d+\]|\bet\s+al\.|supplement", re.IGNORECASE
-)
+DANGLING = re.compile(r"\(Fig\.?|\(Table|\[\d+\]|\bet\s+al\.|supplement", re.IGNORECASE)
 
 
 def is_claim_sentence(s):
@@ -102,6 +101,7 @@ def is_claim_sentence(s):
 
 
 # ────────────────────────── PubMed sentence pool ───────────────────────────
+
 
 def load_pubmed_pool(num_abstracts, seed):
     """Load PubMed abstracts from PubMedQA; return (claim_pool, filler_pool).
@@ -138,8 +138,7 @@ def load_pubmed_pool(num_abstracts, seed):
             if is_claim_sentence(s):
                 claim_pool.append((s, aid))
 
-    print(f"  Abstracts: {len(filler_pool)}, "
-          f"claim-bearing sentences: {len(claim_pool)}")
+    print(f"  Abstracts: {len(filler_pool)}, " f"claim-bearing sentences: {len(claim_pool)}")
     return claim_pool, filler_pool
 
 
@@ -193,33 +192,47 @@ Contradicting:"""
 # tell that made simple-mode pairs solvable by string matching rather than
 # reasoning. Pairs are still validity-judged AND overlap-filtered (--max-overlap).
 CONTRADICTION_TYPES = [
-    ("direction",
-     "the original reports an effect in one direction (e.g. increase, benefit, "
-     "protection); yours reports the OPPOSITE direction for the same "
-     "relationship, phrased as a different study would — do NOT just insert "
-     "'not' or swap a single antonym"),
-    ("magnitude",
-     "yours reports a substantially different effect size for the same "
-     "relationship (e.g. a large/clinically-meaningful effect vs a negligible "
-     "one), with a different number where natural"),
-    ("number",
-     "yours states a different concrete count, sample size, dose, threshold, or "
-     "measured value that is logically incompatible with the original"),
-    ("scope",
-     "yours changes the population, subgroup, or setting so the claims become "
-     "incompatible (e.g. the original's finding is contradicted within a group "
-     "it explicitly covered)"),
-    ("temporal",
-     "yours reports a conflicting timing, duration, or follow-up window (e.g. an "
-     "effect the original places at one timepoint is reported absent or reversed "
-     "at that timepoint)"),
-    ("significance",
-     "yours flips the statistical conclusion (significant<->not significant, "
-     "independent<->dependent, correlated<->uncorrelated) using different "
-     "numbers, p-values, and wording"),
-    ("comparator",
-     "yours reverses which group, treatment, or condition is higher/better "
-     "relative to the comparator in the original"),
+    (
+        "direction",
+        "the original reports an effect in one direction (e.g. increase, benefit, "
+        "protection); yours reports the OPPOSITE direction for the same "
+        "relationship, phrased as a different study would — do NOT just insert "
+        "'not' or swap a single antonym",
+    ),
+    (
+        "magnitude",
+        "yours reports a substantially different effect size for the same "
+        "relationship (e.g. a large/clinically-meaningful effect vs a negligible "
+        "one), with a different number where natural",
+    ),
+    (
+        "number",
+        "yours states a different concrete count, sample size, dose, threshold, or "
+        "measured value that is logically incompatible with the original",
+    ),
+    (
+        "scope",
+        "yours changes the population, subgroup, or setting so the claims become "
+        "incompatible (e.g. the original's finding is contradicted within a group "
+        "it explicitly covered)",
+    ),
+    (
+        "temporal",
+        "yours reports a conflicting timing, duration, or follow-up window (e.g. an "
+        "effect the original places at one timepoint is reported absent or reversed "
+        "at that timepoint)",
+    ),
+    (
+        "significance",
+        "yours flips the statistical conclusion (significant<->not significant, "
+        "independent<->dependent, correlated<->uncorrelated) using different "
+        "numbers, p-values, and wording",
+    ),
+    (
+        "comparator",
+        "yours reverses which group, treatment, or condition is higher/better "
+        "relative to the comparator in the original",
+    ),
 ]
 
 REALISTIC_PROMPT = """You are building a benchmark for detecting contradictions in biomedical literature. Given a real sentence from a paper, write ONE sentence that a DIFFERENT study might report which genuinely CONTRADICTS the original — both cannot be true of the same underlying finding.
@@ -269,8 +282,7 @@ def clean_response(text):
     if text.startswith(('"', "'")) and text.endswith(('"', "'")):
         text = text[1:-1].strip()
     # Some models echo "Flipped:" / "Modified:" — strip that too
-    text = re.sub(r"^(Flipped|Modified|Contradicting):\s*", "",
-                  text, flags=re.IGNORECASE)
+    text = re.sub(r"^(Flipped|Modified|Contradicting):\s*", "", text, flags=re.IGNORECASE)
     # Keep only the first line if the model generated multiple
     text = text.splitlines()[0].strip() if text else text
     if not text or len(text.split()) < 4:
@@ -278,8 +290,9 @@ def clean_response(text):
     return text
 
 
-def generate_perturbations(sentences, modes, model, max_concurrent,
-                           base_url=None, max_overlap=1.0, type_seed=42):
+def generate_perturbations(
+    sentences, modes, model, max_concurrent, base_url=None, max_overlap=1.0, type_seed=42
+):
     """Generate S' for each (sentence, mode) pair via ParallelResponsesClient.
 
     Returns list of S' aligned with `sentences` (same length). None for
@@ -291,8 +304,11 @@ def generate_perturbations(sentences, modes, model, max_concurrent,
     name to the local server). None -> use the API client / env default.
     """
     from corpus_reasoning.lib.llm_request_client import ParallelResponsesClient
+
     client = ParallelResponsesClient(
-        max_concurrent=max_concurrent, use_cache=True, local_base_url=base_url,
+        max_concurrent=max_concurrent,
+        use_cache=True,
+        local_base_url=base_url,
     )
     # For 'realistic' mode, assign a contradiction type per pair (deterministic).
     trng = random.Random(type_seed)
@@ -310,11 +326,15 @@ def generate_perturbations(sentences, modes, model, max_concurrent,
             chosen_types.append("subtle")
             prompts.append(SUBTLE_PROMPT.format(sentence=s))
 
-    print(f"Perturbing {len(prompts)} sentences with {model}"
-          f"{' @ '+base_url if base_url else ''}...")
+    print(
+        f"Perturbing {len(prompts)} sentences with {model}"
+        f"{' @ '+base_url if base_url else ''}..."
+    )
     responses = client.run(
-        model=model, prompts=prompts,
-        temperature=0.7, max_output_tokens=200,
+        model=model,
+        prompts=prompts,
+        temperature=0.7,
+        max_output_tokens=200,
     )
     out = []
     n_fail = n_overlap = 0
@@ -332,26 +352,32 @@ def generate_perturbations(sentences, modes, model, max_concurrent,
             n_overlap += 1
         else:
             out.append(cleaned)
-    print(f"  {len(out) - n_fail - n_overlap} usable perturbations, "
-          f"{n_fail} failures/dupes, {n_overlap} rejected for overlap>{max_overlap}")
+    print(
+        f"  {len(out) - n_fail - n_overlap} usable perturbations, "
+        f"{n_fail} failures/dupes, {n_overlap} rejected for overlap>{max_overlap}"
+    )
     return out
 
 
-def filter_valid_contradictions(sentences, perturbations, model, max_concurrent,
-                                base_url=None):
+def filter_valid_contradictions(sentences, perturbations, model, max_concurrent, base_url=None):
     """LLM-judge each (S, S') pair; null out the ones that aren't real
     contradictions (paraphrases, or a shift to a non-conflicting
     timepoint/subgroup). Returns perturbations with rejects set to None.
     """
     from corpus_reasoning.lib.llm_request_client import ParallelResponsesClient
-    client = ParallelResponsesClient(max_concurrent=max_concurrent, use_cache=True,
-                                     local_base_url=base_url)
+
+    client = ParallelResponsesClient(
+        max_concurrent=max_concurrent, use_cache=True, local_base_url=base_url
+    )
 
     idx = [i for i, p in enumerate(perturbations) if p is not None]
     prompts = [JUDGE_PROMPT.format(a=sentences[i], b=perturbations[i]) for i in idx]
     print(f"Validity filter: judging {len(prompts)} candidate contradictions...")
     responses = client.run(
-        model=model, prompts=prompts, temperature=0.0, max_output_tokens=10,
+        model=model,
+        prompts=prompts,
+        temperature=0.0,
+        max_output_tokens=10,
     )
 
     out = list(perturbations)
@@ -361,12 +387,15 @@ def filter_valid_contradictions(sentences, perturbations, model, max_concurrent,
         if not r.get("success", True) or not verdict.startswith("YES"):
             out[i] = None
             n_rejected += 1
-    print(f"  {len(prompts) - n_rejected}/{len(prompts)} kept as genuine "
-          f"contradictions, {n_rejected} rejected")
+    print(
+        f"  {len(prompts) - n_rejected}/{len(prompts)} kept as genuine "
+        f"contradictions, {n_rejected} rejected"
+    )
     return out
 
 
 # ───────────────────────────── example builder ─────────────────────────────
+
 
 def build_example(pairs_info, filler_pool, num_docs, rng):
     """Build one example with K (S, S') contradiction pairs.
@@ -414,9 +443,7 @@ def build_example(pairs_info, filler_pool, num_docs, rng):
     old_to_new = {old: new + 1 for new, old in enumerate(order)}
 
     documents = [{"text": statements[order[i]]} for i in range(len(order))]
-    gold_pairs = sorted(
-        sorted([old_to_new[a], old_to_new[b]]) for a, b in pair_indices
-    )
+    gold_pairs = sorted(sorted([old_to_new[a], old_to_new[b]]) for a, b in pair_indices)
 
     return {
         "documents": documents,
@@ -428,6 +455,7 @@ def build_example(pairs_info, filler_pool, num_docs, rng):
 
 
 # ─────────────────────── expansion of existing examples ───────────────────
+
 
 def expand_example(example, filler_pool, num_docs, rng):
     """Resize an existing n=N0 example to `num_docs` claims.
@@ -454,16 +482,15 @@ def expand_example(example, filler_pool, num_docs, rng):
     orig_docs = example["documents"]
     N0 = len(orig_docs)
     min_docs = 2 * len(example["gold_doc_indices"])
-    assert num_docs >= min_docs, (
-        f"num_docs={num_docs} < 2*K={min_docs}; every gold slot must be kept."
-    )
+    assert (
+        num_docs >= min_docs
+    ), f"num_docs={num_docs} < 2*K={min_docs}; every gold slot must be kept."
 
     # Snapshot gold texts — referenced by 1-indexed positions in orig_docs.
     # Used for both (a) remapping gold_doc_indices after shuffle and (b)
     # protecting gold docs from being dropped in the shrink path.
     gold_texts = [
-        [orig_docs[a - 1]["text"], orig_docs[b - 1]["text"]]
-        for a, b in example["gold_doc_indices"]
+        [orig_docs[a - 1]["text"], orig_docs[b - 1]["text"]] for a, b in example["gold_doc_indices"]
     ]
     gold_text_set = {t for pair in gold_texts for t in pair}
 
@@ -510,9 +537,7 @@ def expand_example(example, filler_pool, num_docs, rng):
     # example (dedupe above, plus generator invariant), so text->pos is
     # well-defined.
     text_to_pos = {d["text"]: i + 1 for i, d in enumerate(shuffled)}
-    new_pairs = sorted(
-        sorted([text_to_pos[ta], text_to_pos[tb]]) for ta, tb in gold_texts
-    )
+    new_pairs = sorted(sorted([text_to_pos[ta], text_to_pos[tb]]) for ta, tb in gold_texts)
 
     out = dict(example)
     out["documents"] = shuffled
@@ -527,13 +552,19 @@ def run_expansion(args):
     (num_docs < N0) just subsets the existing non-gold distractors and
     skips the pool load.
     """
-    # Peek at the input to decide whether we actually need the filler pool.
-    # Shrink-only invocations skip the PubMed dataset load entirely.
+    # Decide whether we actually need the filler pool. Shrink-only invocations skip the PubMed
+    # dataset load entirely.
+    #
+    # This used to peek at the FIRST ROW only. Source files are mixed-size (the shipped realistic
+    # pool spans n=50..950), so a file whose first row already held >= --num-docs claims set
+    # need_pool=False, and the first SMALLER row downstream then hit the expand path with an empty
+    # pool and died on "Ran out of filler sentences; only added 0/N". Take the minimum over every
+    # row instead: one row shorter than the target is enough to need fillers.
     need_pool = False
     for src_path in [args.expand_from_train, args.expand_from_eval]:
         if src_path:
-            first = load_jsonl(src_path)[0]
-            if args.num_docs > len(first["documents"]):
+            sizes = [len(ex["documents"]) for ex in load_jsonl(src_path)]
+            if sizes and args.num_docs > min(sizes):
                 need_pool = True
                 break
 
@@ -546,24 +577,32 @@ def run_expansion(args):
         filler_pool = {}
 
     K = args.num_contradictions  # only used in the output filename tag
-    for split_label, src_path in [("train", args.expand_from_train),
-                                  ("eval", args.expand_from_eval)]:
+    for split_label, src_path in [
+        ("train", args.expand_from_train),
+        ("eval", args.expand_from_eval),
+    ]:
         if not src_path:
             continue
         src_examples = load_jsonl(src_path)
-        print(f"\nExpanding {split_label}: {len(src_examples)} examples "
-              f"from {src_path} -> num_docs={args.num_docs}")
+        print(
+            f"\nExpanding {split_label}: {len(src_examples)} examples "
+            f"from {src_path} -> num_docs={args.num_docs}"
+        )
 
         out_examples = []
-        for i, ex in enumerate(tqdm(src_examples,
-                                     desc=f"  expand {split_label}")):
+        for i, ex in enumerate(tqdm(src_examples, desc=f"  expand {split_label}")):
             # Per-example deterministic seed so shuffles are reproducible AND
             # identical across different target sizes — the only thing that
             # varies between n=250/500/1000 is the filler count.
             ex_rng = random.Random(args.seed * 1_000_003 + i)
-            out_examples.append(expand_example(
-                ex, filler_pool, args.num_docs, ex_rng,
-            ))
+            out_examples.append(
+                expand_example(
+                    ex,
+                    filler_pool,
+                    args.num_docs,
+                    ex_rng,
+                )
+            )
 
         tag = f"pubmed_{args.mode}_n{args.num_docs}_k{K}"
         path = f"{args.output_dir}/contradiction_{split_label}_{tag}.jsonl"
@@ -573,69 +612,113 @@ def run_expansion(args):
 
 # ───────────────────────────────── main ────────────────────────────────────
 
+
 def main():
     ap = argparse.ArgumentParser(
         description="Generate PubMed synthetic-perturbation contradiction data"
     )
-    ap.add_argument("--num-docs", type=int, default=100,
-                    help="Total sentences (documents) per example. Ignored in "
-                         "the FRESH path when --num-docs-min/--num-docs-max are "
-                         "set (a per-example length is sampled instead).")
-    ap.add_argument("--num-docs-min", type=int, default=None,
-                    help="FRESH path only: sample a per-example length "
-                         "uniformly in [min, max] (continuous-length data, "
-                         "like the other long-context tasks). ~43 Qwen "
-                         "tokens/doc: 50->2k, 190->8k, 385->16k, 765->32k. "
-                         "Requires --num-docs-max; falls back to fixed "
-                         "--num-docs when unset.")
-    ap.add_argument("--num-docs-max", type=int, default=None,
-                    help="FRESH path only: upper bound for per-example length "
-                         "sampling. See --num-docs-min.")
-    ap.add_argument("--num-contradictions", type=int, default=3,
-                    help="Number of contradicting pairs per example")
+    ap.add_argument(
+        "--num-docs",
+        type=int,
+        default=100,
+        help="Total sentences (documents) per example. Ignored in "
+        "the FRESH path when --num-docs-min/--num-docs-max are "
+        "set (a per-example length is sampled instead).",
+    )
+    ap.add_argument(
+        "--num-docs-min",
+        type=int,
+        default=None,
+        help="FRESH path only: sample a per-example length "
+        "uniformly in [min, max] (continuous-length data, "
+        "like the other long-context tasks). ~43 Qwen "
+        "tokens/doc: 50->2k, 190->8k, 385->16k, 765->32k. "
+        "Requires --num-docs-max; falls back to fixed "
+        "--num-docs when unset.",
+    )
+    ap.add_argument(
+        "--num-docs-max",
+        type=int,
+        default=None,
+        help="FRESH path only: upper bound for per-example length " "sampling. See --num-docs-min.",
+    )
+    ap.add_argument(
+        "--num-contradictions",
+        type=int,
+        default=3,
+        help="Number of contradicting pairs per example",
+    )
     ap.add_argument("--num-train", type=int, default=2000)
     ap.add_argument("--num-eval", type=int, default=300)
-    ap.add_argument("--mode",
-                    choices=["simple", "subtle", "both", "realistic"],
-                    default="both",
-                    help="Perturbation style. 'both' splits gold pairs evenly "
-                         "between simple+subtle. 'realistic' (recommended) draws "
-                         "a contradiction TYPE per pair and fully rephrases — no "
-                         "near-duplicate tells.")
-    ap.add_argument("--base-url", type=str, default=None,
-                    help="Local vLLM OpenAI-compatible endpoint (e.g. "
-                         "http://127.0.0.1:8765/v1). Routes a local --model "
-                         "(e.g. Qwen2.5-14B-Instruct) instead of a paid API.")
-    ap.add_argument("--max-overlap", type=float, default=1.0,
-                    help="Reject a gold pair if word-Jaccard(S, S') exceeds this "
-                         "(realistic-mode near-duplicate backstop). Try 0.5.")
-    ap.add_argument("--pool-abstracts", type=int, default=20000,
-                    help="How many PubMed abstracts to load as the sentence "
-                         "pool. Must supply enough claim sentences and "
-                         "fillers for all examples.")
+    ap.add_argument(
+        "--mode",
+        choices=["simple", "subtle", "both", "realistic"],
+        default="both",
+        help="Perturbation style. 'both' splits gold pairs evenly "
+        "between simple+subtle. 'realistic' (recommended) draws "
+        "a contradiction TYPE per pair and fully rephrases — no "
+        "near-duplicate tells.",
+    )
+    ap.add_argument(
+        "--base-url",
+        type=str,
+        default=None,
+        help="Local vLLM OpenAI-compatible endpoint (e.g. "
+        "http://127.0.0.1:8765/v1). Routes a local --model "
+        "(e.g. Qwen2.5-14B-Instruct) instead of a paid API.",
+    )
+    ap.add_argument(
+        "--max-overlap",
+        type=float,
+        default=1.0,
+        help="Reject a gold pair if word-Jaccard(S, S') exceeds this "
+        "(realistic-mode near-duplicate backstop). Try 0.5.",
+    )
+    ap.add_argument(
+        "--pool-abstracts",
+        type=int,
+        default=20000,
+        help="How many PubMed abstracts to load as the sentence "
+        "pool. Must supply enough claim sentences and "
+        "fillers for all examples.",
+    )
     ap.add_argument("--model", type=str, default="gemini-2.5-flash")
     ap.add_argument("--max-concurrent", type=int, default=25)
     ap.add_argument("--output-dir", type=str, default="data")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--no-validity-filter", dest="validity_filter",
-                    action="store_false",
-                    help="skip the LLM judge that drops generated pairs which "
-                         "are not genuine contradictions (on by default)")
+    ap.add_argument(
+        "--no-validity-filter",
+        dest="validity_filter",
+        action="store_false",
+        help="skip the LLM judge that drops generated pairs which "
+        "are not genuine contradictions (on by default)",
+    )
     ap.set_defaults(validity_filter=True)
     # Expansion mode — keeps gold pairs from an existing n=N0 dataset and
     # adds distractors to reach --num-docs. Useful for scaling studies where
     # the task is held fixed while context size varies.
-    ap.add_argument("--expand-from-train", type=str, default="",
-                    help="Expansion mode: existing train JSONL whose gold "
-                         "pairs are preserved while fillers are added to "
-                         "reach --num-docs. Skips the LLM perturbation step.")
-    ap.add_argument("--expand-from-eval", type=str, default="",
-                    help="Expansion mode: same as --expand-from-train but "
-                         "for the eval split.")
-    ap.add_argument("--filler-pool-seed", type=int, default=43,
-                    help="Seed for the filler PubMed pool in expansion "
-                         "mode. Defaults to 43 so it's disjoint from the "
-                         "original generator's seed=42 pool.")
+    ap.add_argument(
+        "--expand-from-train",
+        type=str,
+        default="",
+        help="Expansion mode: existing train JSONL whose gold "
+        "pairs are preserved while fillers are added to "
+        "reach --num-docs. Skips the LLM perturbation step.",
+    )
+    ap.add_argument(
+        "--expand-from-eval",
+        type=str,
+        default="",
+        help="Expansion mode: same as --expand-from-train but " "for the eval split.",
+    )
+    ap.add_argument(
+        "--filler-pool-seed",
+        type=int,
+        default=43,
+        help="Seed for the filler PubMed pool in expansion "
+        "mode. Defaults to 43 so it's disjoint from the "
+        "original generator's seed=42 pool.",
+    )
     args = ap.parse_args()
 
     # Expansion mode short-circuits: no LLM calls, reuse existing golds.
@@ -650,13 +733,12 @@ def main():
         raise ValueError("--num-docs-min and --num-docs-max must be set together")
     min_docs = 2 * args.num_contradictions
     if sample_len:
-        assert args.num_docs_min <= args.num_docs_max, \
-            "--num-docs-min must be <= --num-docs-max"
-        assert args.num_docs_min >= min_docs, \
-            f"--num-docs-min must hold all gold pair slots (>= {min_docs})"
+        assert args.num_docs_min <= args.num_docs_max, "--num-docs-min must be <= --num-docs-max"
+        assert (
+            args.num_docs_min >= min_docs
+        ), f"--num-docs-min must hold all gold pair slots (>= {min_docs})"
     else:
-        assert min_docs <= args.num_docs, \
-            "num_docs must hold all gold pair slots"
+        assert min_docs <= args.num_docs, "num_docs must hold all gold pair slots"
 
     rng = random.Random(args.seed)
     claim_pool, filler_pool = load_pubmed_pool(args.pool_abstracts, args.seed)
@@ -687,13 +769,21 @@ def main():
 
     sentences = [s for s, _ in selected]
     perturbations = generate_perturbations(
-        sentences, modes, args.model, args.max_concurrent,
-        base_url=args.base_url, max_overlap=args.max_overlap, type_seed=args.seed,
+        sentences,
+        modes,
+        args.model,
+        args.max_concurrent,
+        base_url=args.base_url,
+        max_overlap=args.max_overlap,
+        type_seed=args.seed,
     )
 
     if args.validity_filter:
         perturbations = filter_valid_contradictions(
-            sentences, perturbations, args.model, args.max_concurrent,
+            sentences,
+            perturbations,
+            args.model,
+            args.max_concurrent,
             base_url=args.base_url,
         )
 
@@ -706,34 +796,31 @@ def main():
         pair_tuples.append((s, s_prime, aid, m))
 
     if len(pair_tuples) < total_pairs:
-        print(f"  Note: {total_pairs - len(pair_tuples)} pairs dropped due "
-              f"to API failures; examples may get fewer pairs.")
+        print(
+            f"  Note: {total_pairs - len(pair_tuples)} pairs dropped due "
+            f"to API failures; examples may get fewer pairs."
+        )
 
     # Slice into examples of K pairs each
     examples = []
     cursor = 0
-    for split_label, count in [("train", args.num_train),
-                               ("eval", args.num_eval)]:
+    for split_label, count in [("train", args.num_train), ("eval", args.num_eval)]:
         split_ex = []
-        ndesc = (f"n{args.num_docs_min}-{args.num_docs_max}" if sample_len
-                 else f"n{args.num_docs}")
-        for _ in tqdm(range(count),
-                      desc=f"Building {split_label} {ndesc} k{K}"):
+        ndesc = f"n{args.num_docs_min}-{args.num_docs_max}" if sample_len else f"n{args.num_docs}"
+        for _ in tqdm(range(count), desc=f"Building {split_label} {ndesc} k{K}"):
             if cursor + K > len(pair_tuples):
                 break
-            picked = pair_tuples[cursor:cursor + K]
+            picked = pair_tuples[cursor : cursor + K]
             cursor += K
             info = [(s, sp, aid) for s, sp, aid, _ in picked]
             # Continuous length: sample a per-example doc count when bounds are
             # set, else the fixed --num-docs. build_example already supports
             # arbitrary num_docs.
-            nd = (rng.randint(args.num_docs_min, args.num_docs_max)
-                  if sample_len else args.num_docs)
+            nd = rng.randint(args.num_docs_min, args.num_docs_max) if sample_len else args.num_docs
             split_ex.append(build_example(info, filler_pool, nd, rng))
         examples.append((split_label, split_ex))
 
-    ntag = (f"n{args.num_docs_min}-{args.num_docs_max}" if sample_len
-            else f"n{args.num_docs}")
+    ntag = f"n{args.num_docs_min}-{args.num_docs_max}" if sample_len else f"n{args.num_docs}"
     tag = f"pubmed_{args.mode}_{ntag}_k{K}"
     for split_label, split_ex in examples:
         if not split_ex:
