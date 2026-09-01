@@ -117,3 +117,129 @@ C. NQ ladders complete (11/11) + 3-task generality:
   SPARSE taxonomy: nq@2k WORKS (.927 at 20k ex — first sparse retrieval success); nq@8k floors at
   8k ex (pre-takeoff, consistent w/ threshold model); qdmatch never; outlier late-takeoff.
   K@8k across tasks spans ~5-10x (outlier hardest). Law SHAPE generalizes; constants are per-task.
+
+## SNQ + 16K-ARMS delivered (2026-08-29 ~10:30 PT)
+Sparse nq@2k ladder: 1250 .087 | 2500 .087 | 5000 .215 | 10000 .152 | 20000 .927 — takeoff 10-20k ex
+(outlier's 2k takeoff was ~2.5-5k): the sparse bootstrap threshold is TASK-dependent, and once crossed
+sparse lands near dense (.927 vs .980).
+16k task arms (dense, f1@16k): q16k 2000 .875 / 8000 .927 ; nq16k 2000 .895 / 8000 .922.
+K(16k): qdmatch ~190-440, nq ~150-460 — FLAT vs their K(8k) (~250-300). vs outlier K: 559→2.9k→11k.
+=> The length exponent is a TASK PROPERTY: outlier (cross-document aggregation) N(.9) ∝ L^1.5;
+qdmatch/nq (retrieval) β≈0 — length is ~free once the task is learned. Practical: outlier-type
+tasks dominate the long-context data bill; retrieval-type tasks need almost nothing extra.
+128k relay: template quoting fixed (YAML-validated), 4 fx2 pushes running, serialized lean evals chained.
+
+## mixs64k96M dense: ABANDONED (2026-08-29 ~10:50 PT)
+NaN at step 128 (lr 5e-6) and step 127 (lr 4e-6 retry) — same packed data window both times ⇒
+data-driven, LR-independent. Suspect: a pathological packed window in the 64k-tail region
+(dense --pack has no cu_doc_lens masking; a 64k example + shorts in one causal stream).
+Sparse twin (properly masked landmark packing) trained fine — consistent with the packing-mask
+asymmetry. D64 readout will use: p64k_1500 profile + sparse mixs64k96M + existing mixs64M
+(no 64k tail). Root-cause belongs with the cu_doc_lens packing fix (known open item), not
+another retry. 64k-rung comparisons remain undersized regardless (K(64k)≈40-50k examples).
+
+## Sparse ceiling RESOLVED (2026-08-30 ~17:00 PT)
+slm p8k_64000 (lr 1e-5): f1@8k = .967 (3k rung .246). vs 32k-ex .923 and dense .980.
+=> Sparse landmark reaches the SAME asymptote as dense at 8k length; the 2k plateau gap (~.52 vs
+.75) was the anomaly. Refit (fmax<=1.05): fmax .985, K 14.8k, gamma 2.55; N(0.9) ~ 38k examples
+(dense 8.7k) — a 4.4x data penalty to 0.9, pure-length.
+Extended length laws (in-length, dense, RAW f1 with lexical baseline in parens):
+qdmatch: 32k 2000->.735 / 8000->.793 (baseline .55); 64k 1000->.518 / 4000->.656 (baseline .365
+on the de-correlated rung) — NOT flat anymore: K and ceiling both degrade once the shortcut dies.
+nq deep: 32k-trained 2000->.865 / 8000->.910 (baseline .27); 64k-trained 1000->.788 (baseline .21);
+nqD32k8000 scores .863@64k OOD — NQ stays cheap and generalizes; K(32k)~2-4k ex, still tiny in tokens.
+nq-18k (clamped arms) models score .89-.91 on the REAL 32k rung — length generalization, not memorized length.
+
+## EXTENSION WAVE COMPLETE (2026-08-30 ~18:00 PT) — final per-task length laws
+nqD64k_4000 landed .857@64k, closing the last eval. Final N(0.9) per length (dense, in-length):
+outlier 8.7k/29k/70k/~150k† ex @8k/16k/32k/64k† (beta 1.5); nq-deep 0.9k/3k/7.5k/~10k† (beta ~1.1,
+task constant ~15x below outlier); qdmatch 0.8k/5k/unreached(.79 max)/unreached(.66 max) — its
+apparent beta=0 was the lexical shortcut (baseline .97/.83/.70/.55/.37 across 2k-64k); the real
+pairwise task surfaces at 32k+ with rising K AND falling ceiling. († = one-octave extrapolation.)
+REVISED HEADLINE: N0.9(L) = C_task * L^beta with beta ~ 1-1.5 for every real task; C spans ~15-50x;
+apparent beta=0 = saturation or shortcut artifact. The data bill for a long-context mix is set by
+its highest C*L^beta task. Sparse: same ceiling as dense (.967 vs .980 at 8k), 4.4x data to 0.9.
+Deep-NQ source regen (10 min GPU) unlocked real 32k/64k NQ + de-correlated qdmatch 64k evals.
+
+## Certainty wave, verdict 2: the qdmatch 32k ceiling is REAL (2026-08-31)
+
+Question: does qdmatch_nq@32k break past f1=.793 given 16x the training data?
+Run: lmx-full-q32k32000-qd-4b — q32k_32000 pure-length arm (M=N=172, 32,000 examples,
+974.8M tokens, seq 32768 --pack, lr 5e-6, diagnostic exception to the short-heavy recipe).
+Eval: held-out qdmatch_nq rungs, eval_size=600 each (binomial SE ~±0.016 at f1≈0.8).
+
+  32k ladder (dense): 2,000 ex -> .735 | 8,000 -> .793 | 32,000 -> .812
+  64k transfer:       q64k_1000 -> .518 | q64k_4000 -> .656 | q32k_32000 -> .713 (!)
+
+VERDICT: 4x more data past the previous best buys +.019 (~1.2 SE) — the increments decay ~3x per
+4x data, extrapolating to an asymptote of ~.83-.84 at 32k. Combined with the ambiguity audit
+(AMBIGUITY_AUDIT.json: resolvable-adjusted ceiling is flat .970-.983 at every rung, and the model
+BEATS the uniform-ambiguity ceiling at 8k/16k), label noise does not explain the gap: qdmatch has
+a real, mid-band performance ceiling at long context that data cannot buy through. The artifact's
+"above ceiling" cells for qdmatch at >=32k are correct and now measured, not extrapolated.
+
+Bonus: the 32k-trained big arm TRANSFERS UP — .713@64k beats every 64k-trained arm (best .656 at
+4,000 ex, the pool-feasible max). Upward length transfer with a big in-distribution corpus
+outperforms small in-length training, consistent with the outlier catalytic-mass findings.
+
+Caveat noted in-file: the q32k pool extension placed the old 300-example heldout inside the new
+train prefix — heldout-CE for this arm is contaminated; the graded rungs above are from the
+disjoint validation units and unaffected.
+
+## Certainty wave, verdict 1: NO sparse token-crossover in the measured range (2026-08-31)
+
+Question: does sparse beat dense on TOKENS at 16k/32k inside the measured range, as the earlier
+slope-based extrapolation (sparse B∝L^1.2-1.4 vs dense L^1.8-2.0) implied?
+New runs: mix_s320M + mix_s640M, both archs, short-heavy, optimal LRs. All rungs eval_size=600.
+
+  @16k: dense .453(64M) .659(160M) .753(320M) .894(640M) | sparse .216(64M) .363(96M) .497(160M) .700(320M) .816(640M)
+  @32k: dense .107 .266 .352 .532                        | sparse .054 .102 .186 .254 .386
+
+VERDICT: NO. Sparse never beats dense on tokens at any rung/budget through 640M. The sparse/dense
+score ratio converges (~2x -> 0.91@16k, 0.73@32k) then PLATEAUS — the convergence that motivated
+the crossover hypothesis stalls short of parity. At matched score sparse needs ~1.5-1.7x tokens
+(measured, no fit: dense reaches sparse-640M's .816@16k at ~410M; its .386@32k at ~370M).
+
+Hill refits with the extended range (fmax free <=1.05):
+  dense @16k: fmax 1.03 g .85 K 86M  -> B(.8)=371M  B(.9)=834M   (rmse .017)
+  sparse@16k: fmax 0.90 g 1.45 K 133M -> B(.8)=557M  B(.9) at/above ceiling (fmax≈target)
+  dense @32k: fmax 1.01 g .90 K 586M -> B(.8)=2.6B  B(.9)=6.1B   (rmse .018)
+  sparse@32k: reaches only .386 in-range; >=1.7x dense at matched f; ceiling unconstrained.
+Seed-replicate error bars (this wave + prior): +-.02-.03 per point — the .078 gap at 640M@16k is ~4 SE.
+
+Artifact updated: 16k row now MEASURED both archs at f=.8; sparse .9@16k flagged ceiling≈.90;
+sparse >=64k cells recomputed as ~1.6x dense tokens with wall-clock from the throughput model
+(sparse GPU-h parity ~64-128k, decisive win >=256k — a FLOP advantage, not data efficiency).
+The old "sparse crossover at 16-32k" paragraph replaced with the measured refutation.
+
+## nq law MEASURED, derived cells retired (2026-09-01)
+
+The nq mix ladder is complete at every rung (short-heavy, eval_size 600/rung):
+
+  2k:  16M .977 | 32M .977 | 48M .973      (saturated, no slope -- 2k DRIFTS -.004 over 3x data)
+  8k:  16M .917 | 32M .930 | 48M .933
+  16k: 16M .857 | 32M .885 | 48M .910      (+.028 then +.043 per doubling)
+  32k: 16M .760 | 32M .837 | 48M .873      (+.077 then +.062 per doubling)
+
+Hill fits: 16k g=.45 K=0.3M -> B(.8)=6M, B(.9)=41M; 32k g=.70 K=3.1M -> B(.8)=22M, B(.9)=71M.
+fmax hits its 1.0 bound at both rungs, so the .9 budgets are the soft end. The artifact's derived
+cells (25M/190M/0.95B/1.5B for f=.8) were 8-40x PESSIMISTIC -- the same failure mode as the
+qdmatch derived cells, and for the same reason: dividing a pure-length need by the target rung's
+token share ignores how much the short rungs transfer.
+
+Pure-length anchors: nqD32k_4000 .888@32k, nqD64k_2000 .875@32k / .838@64k. Spending every token
+at the scored rung buys ~+.015 over the mix -- the mix is nearly free at length on this task.
+
+SPARSE vs dense at a matched 48M: .912/.728/.608/.248 against .973/.933/.910/.873. Sparse holds
+94% of dense at 2k and 28% at 32k; the deficit compounds with length. Two of the three tasks now
+measured head-to-head (qdmatch, nq) show that collapse; only outlier shows the constant-factor
+penalty that the "sparse just needs more tokens" story assumes.
+
+qdmatch 64k transfer (neither arm trained at 64k): q32k_16000 (487M tok) -> .706,
+q32k_32000 (975M) -> .713. +.007 for a doubling, the same flat tail as its 32k ladder.
+
+outlier 32k pure-length ladder completed by p32k_4000: 2,000 ex/66M -> .209, 4,000/131M -> .302,
+8,000/262M -> .472. Increments ACCELERATE (+.093 then +.170) -- still in takeoff, unlike qdmatch.
+Refit fmax 1.05 g .88 K 339M (rmse .011) -> B(.5)=304M, B(.7)=742M, B(.8)=1.26B, all extrapolated
+from inside a rising regime. Its 16k rung reads .119 -- a downward transfer from 32k-only training,
+against .453 for the 64M short-heavy mix, which is the clearest single argument for the mix recipe.

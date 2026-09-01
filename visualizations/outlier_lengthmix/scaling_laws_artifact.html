@@ -1,0 +1,442 @@
+<title>Length-Mix Scaling Laws</title>
+<style>
+:root{
+  --paper:#F7F8F6; --panel:#FFFFFF; --ink:#1A2129; --ink-soft:#4A5560; --hairline:#D9DED9;
+  --dense:#2B5FB8; --sparse:#C0442A; --teal:#5E7370; --good:#2E7D4F; --warn:#A6690F;
+  --chip:#EDF0EC; --accent-wash:#EAF0F9;
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#12171C; --panel:#1A2129; --ink:#DEE4E0; --ink-soft:#9BA8A3; --hairline:#2C353D;
+    --dense:#6FA0E8; --sparse:#E57050; --teal:#8FA5A0; --good:#5CB884; --warn:#D9A050;
+    --chip:#232C33; --accent-wash:#1D2733;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#12171C; --panel:#1A2129; --ink:#DEE4E0; --ink-soft:#9BA8A3; --hairline:#2C353D;
+  --dense:#6FA0E8; --sparse:#E57050; --teal:#8FA5A0; --good:#5CB884; --warn:#D9A050;
+  --chip:#232C33; --accent-wash:#1D2733;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:Charter,'Iowan Old Style',Georgia,serif;font-size:17px;line-height:1.55;}
+main{max-width:900px;margin:0 auto;padding:48px 24px 96px;}
+h1,h2,h3{font-family:'Avenir Next',Seravek,'Gill Sans','Trebuchet MS',system-ui,sans-serif;
+  text-wrap:balance;line-height:1.15;}
+h1{font-size:2.4rem;font-weight:600;margin:.2em 0 .1em;letter-spacing:-.015em;}
+h2{font-size:1.45rem;font-weight:600;margin:2.6em 0 .4em;}
+h3{font-size:1.05rem;font-weight:600;margin:1.6em 0 .3em;color:var(--ink-soft);
+  text-transform:uppercase;letter-spacing:.06em;}
+.kicker{font-family:'Avenir Next',Seravek,'Gill Sans',system-ui,sans-serif;
+  text-transform:uppercase;letter-spacing:.14em;font-size:.72rem;color:var(--teal);font-weight:600;}
+.sub{color:var(--ink-soft);max-width:64ch;margin-top:.4em}
+p{max-width:68ch}
+mono,code,.num{font-family:'SF Mono','Cascadia Code',Menlo,Consolas,monospace;font-size:.86em;}
+.step{display:grid;grid-template-columns:56px 1fr;gap:18px;margin-top:3em;
+  border-top:1px solid var(--hairline);padding-top:1.6em;}
+.step-n{font-family:'SF Mono',Menlo,Consolas,monospace;color:var(--teal);font-size:1.4rem;
+  padding-top:.2em;}
+.step h2{margin-top:0}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;
+  font-size:.92rem;margin:1em 0;}
+.tblwrap{overflow-x:auto;margin:1em 0;}
+th{font-family:'Avenir Next',Seravek,'Gill Sans',system-ui,sans-serif;font-weight:600;
+  font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);
+  text-align:left;padding:8px 12px;border-bottom:2px solid var(--hairline);}
+td{padding:7px 12px;border-bottom:1px solid var(--hairline);}
+td.n,th.n{text-align:right;font-family:'SF Mono',Menlo,Consolas,monospace;font-size:.85rem;}
+.answer{background:var(--panel);border:1px solid var(--hairline);border-radius:6px;
+  padding:22px 26px;margin-top:2em;box-shadow:0 1px 3px rgba(0,0,0,.05);}
+.answer h2{margin-top:0;font-size:1.25rem}
+.d{color:var(--dense);font-weight:600}
+.s{color:var(--sparse);font-weight:600}
+.chip{display:inline-block;background:var(--chip);border-radius:3px;padding:1px 8px;
+  font-family:'SF Mono',Menlo,Consolas,monospace;font-size:.74rem;color:var(--ink-soft);
+  margin-left:6px;vertical-align:middle;}
+.conf-a{color:var(--good);font-weight:600}.conf-b{color:var(--warn);font-weight:600}
+.conf-c{color:var(--sparse);font-weight:600}
+.note{background:var(--accent-wash);border-left:3px solid var(--teal);padding:12px 16px;
+  font-size:.92rem;max-width:66ch;margin:1.2em 0;border-radius:0 4px 4px 0;}
+.note p{margin:.3em 0}
+figure{margin:1.6em 0;background:var(--panel);border:1px solid var(--hairline);
+  border-radius:6px;padding:16px 16px 8px;}
+figcaption{font-size:.82rem;color:var(--ink-soft);padding:8px 6px 6px;max-width:70ch;
+  font-family:'Avenir Next',Seravek,'Gill Sans',system-ui,sans-serif;}
+svg text{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:10.5px;fill:var(--ink-soft);}
+svg .axis{stroke:var(--hairline);stroke-width:1}
+svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
+.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:.8rem;
+  font-family:'Avenir Next',Seravek,'Gill Sans',system-ui,sans-serif;color:var(--ink-soft);
+  padding:2px 6px 0;}
+.sw{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px;}
+.formula{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:.95rem;background:var(--chip);
+  padding:10px 16px;border-radius:4px;display:inline-block;margin:.6em 0;}
+footer{margin-top:4em;border-top:1px solid var(--hairline);padding-top:1.4em;
+  font-size:.84rem;color:var(--ink-soft);}
+footer p{max-width:76ch}
+@media (max-width:640px){.step{grid-template-columns:1fr}.step-n{padding-top:0}}
+</style>
+<main>
+<div class="kicker">Qwen3.5-4B · outlier / qdmatch_nq / nq · 2026-08-27→30</div>
+<h1>Length-Mix Scaling Laws</h1>
+<p class="sub">How much training data dense and sparse-landmark attention need to reach a given
+performance at a given context length — measured on three tasks, ~90 training runs, 600-example
+evals throughout, and reduced to a small set of fitted laws.</p>
+
+<div class="answer">
+<h2>How much data and compute, for how much performance</h2>
+<p style="font-size:.95rem">All numbers use the recommended recipe — <strong>short-heavy length
+mix</strong> (45/27/16/8/4% of tokens at 2k→32k, geometric tail extended when targeting longer) at
+each architecture's optimal LR (<span class="d">dense 5e-6</span>, <span class="s">sparse
+1e-5</span>). Cell format: <strong>training tokens / H200-GPU-hours</strong> (GPU-hours from the
+measured throughput model — dense pays attention on the mix's token-weighted length, sparse pays
+~1/64th of it, which is why sparse wins compute at length even where it needs more tokens).</p>
+
+<h3>outlier — the hard task that sizes a multi-task budget</h3>
+<div class="tblwrap"><table>
+<tr><th>eval length</th><th class="n"><span class="d">dense</span> f1=0.8</th><th class="n"><span class="d">dense</span> f1=0.9</th>
+<th class="n"><span class="s">sparse</span> f1=0.8</th><th class="n"><span class="s">sparse</span> f1=0.9</th></tr>
+<tr><td>3k</td><td class="n">23M / 1h</td><td class="n">54M / 1.5h</td><td class="n">52M / 1h</td><td class="n">104M / 2h</td></tr>
+<tr><td>8k</td><td class="n"><strong>100M / 3h</strong></td><td class="n"><strong>244M / 7h</strong></td><td class="n"><strong>206M / 5h</strong></td><td class="n"><strong>370M / 9h</strong></td></tr>
+<tr><td>16k</td><td class="n"><strong>370M / 10h</strong> <span class="conf-a">measured</span></td><td class="n">0.83B / 23h <span class="conf-b">†</span></td><td class="n"><strong>560M / 13h</strong> <span class="conf-a">measured</span></td><td class="n">&ge;1.5B / &ge;36h <span class="conf-b">†⚠ ceiling&asymp;.90</span></td></tr>
+<tr><td>32k</td><td class="n">2.6B / ~70h <span class="conf-b">††</span></td><td class="n">6.1B / ~165h <span class="conf-b">††</span></td><td class="n">&ge;4.4B / ~110h <span class="conf-b">††⚠</span></td><td class="n">&ge;10B / ~250h <span class="conf-b">††⚠</span></td></tr>
+<tr><td>64k</td><td class="n">5–9B / ~200h <span class="conf-c">†††</span></td><td class="n">11–22B / ~450h <span class="conf-c">†††</span></td><td class="n">8–15B / ~250h <span class="conf-c">†††</span></td><td class="n">18–35B / ~550h <span class="conf-c">†††</span></td></tr>
+<tr><td>128k</td><td class="n">15–38B / ~750h <span class="conf-c">†††</span></td><td class="n">38–91B / ~1.8kh <span class="conf-c">†††</span></td><td class="n">24–61B / ~750h <span class="conf-c">†††</span></td><td class="n">61–146B / ~1.8kh <span class="conf-c">†††</span></td></tr>
+<tr><td>256k</td><td class="n">51–158B / ~3kh <span class="conf-c">†††</span></td><td class="n">0.13–0.37T / ~7.6kh <span class="conf-c">†††</span></td><td class="n">82–253B / ~2.2kh <span class="conf-c">†††</span></td><td class="n">0.2–0.6T / ~5.5kh <span class="conf-c">†††</span></td></tr>
+<tr><td>1M</td><td class="n">0.6–2.7T / ~65kh <span class="conf-c">†††</span></td><td class="n">1.5–6.3T / ~160kh <span class="conf-c">†††</span></td><td class="n">1–4.3T / ~26kh <span class="conf-c">†††</span></td><td class="n">2.4–10T / ~64kh <span class="conf-c">†††</span></td></tr>
+</table></div>
+<p style="font-size:.88rem;color:var(--ink-soft)">Bold = inside the measured 16–640M budget curves
+(now 6–7 points/arch, seed-replicated ±0.03); † = modest extrapolation; †† = deep; <span
+class="conf-c">†††</span> = scenario numbers. <strong>The token crossover claimed in an earlier
+version of this table did not survive its validation runs</strong>: with 320M and 640M short-heavy
+arms measured on both architectures, sparse never beats dense on tokens anywhere in range — the
+sparse/dense score ratio converges to ~0.9 at 16k and ~0.73 at 32k and then plateaus, and at
+matched score sparse needs ~1.5–1.7× the tokens (16k f1=.8: 560M vs 370M, both measured). Sparse
+f1=.9 at 16k may sit above its mix ceiling (fit fmax ≈ .90). What survives is the
+<em>wall-clock</em> story: sparse tokens get cheaper with length (1.16× @16k → 1.77× @64k →
+~30× @1M against full attention), so sparse loses GPU-hours at short lengths, reaches rough parity
+around 64–128k targets, and wins decisively at 256k+ — a FLOP advantage, not a data-efficiency
+advantage.</p>
+
+<h3>Sparse vs dense, head to head — same data in tokens and in wall-clock</h3>
+<figure><svg id="c4" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend">
+<span><span class="sw" style="background:var(--dense)"></span>dense @16k</span>
+<span><span class="sw" style="background:var(--sparse)"></span>sparse @16k</span>
+<span><span class="sw" style="background:repeating-linear-gradient(90deg,var(--dense) 0 6px,transparent 6px 10px)"></span>dense @32k</span>
+<span><span class="sw" style="background:repeating-linear-gradient(90deg,var(--sparse) 0 6px,transparent 6px 10px)"></span>sparse @32k</span>
+</div>
+<figcaption>Outlier f1 vs <strong>training tokens</strong> (short-heavy mix, log-x; solid = 16k
+rung, dashed = 32k rung; curves are the Hill fits). The sparse curve approaches dense as budget
+grows but never crosses it: at every measured budget, dense is above sparse on both rungs, and
+past 320M the gap stops closing (.894 vs .816 @16k, .532 vs .386 @32k at 640M; seed-replicate
+error ±.02–.03).</figcaption></figure>
+
+<figure><svg id="c5" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend">
+<span><span class="sw" style="background:var(--dense)"></span>dense @16k</span>
+<span><span class="sw" style="background:var(--sparse)"></span>sparse @16k</span>
+<span><span class="sw" style="background:repeating-linear-gradient(90deg,var(--dense) 0 6px,transparent 6px 10px)"></span>dense @32k</span>
+<span><span class="sw" style="background:repeating-linear-gradient(90deg,var(--sparse) 0 6px,transparent 6px 10px)"></span>sparse @32k</span>
+</div>
+<figcaption>The same runs vs <strong>H200 GPU-hours</strong>. On the ≤32k short-heavy mix, sparse
+tokens are only 1.16× cheaper (27.1 vs 23.4 GPU-h per billion — short lengths dominate the mix, so
+the flat-attention FLOP edge barely engages), which is not enough to pay for the ~1.5–1.7× token
+penalty: sparse loses on wall-clock too at these targets. The wall-clock win only appears for
+mixes with heavy ≥64k tails, where sparse's per-token speedup (1.77× @64k → ~30× @1M) outgrows the
+token penalty.</figcaption></figure>
+
+<div class="tblwrap"><table>
+<tr><th>matched point</th><th class="n"><span class="d">dense</span> tokens</th><th class="n"><span class="s">sparse</span> tokens</th><th class="n">token ×</th><th class="n"><span class="d">dense</span> GPU-h</th><th class="n"><span class="s">sparse</span> GPU-h</th><th class="n">wall-clock ×</th></tr>
+<tr><td>f1 = .80 @16k</td><td class="n">371M</td><td class="n">557M</td><td class="n">1.50×</td><td class="n">10.1h</td><td class="n">13.0h</td><td class="n">1.29×</td></tr>
+<tr><td>f1 = .816 @16k <span class="chip">sparse 640M best</span></td><td class="n">~410M</td><td class="n">640M</td><td class="n">1.56×</td><td class="n">11.1h</td><td class="n">15.0h</td><td class="n">1.35×</td></tr>
+<tr><td>f1 = .386 @32k <span class="chip">sparse 640M best</span></td><td class="n">~370M</td><td class="n">640M</td><td class="n">1.73×</td><td class="n">10.0h</td><td class="n">15.0h</td><td class="n">1.50×</td></tr>
+<tr><td>f1 = .80 @32k</td><td class="n">2.6B <span class="conf-b">††</span></td><td class="n">≥4.4B <span class="conf-b">††⚠</span></td><td class="n">≥1.7×</td><td class="n">~70h</td><td class="n">≥103h</td><td class="n">≥1.5×</td></tr>
+<tr><td>f1 = .90 @16k</td><td class="n">0.83B <span class="conf-b">†</span></td><td class="n">≥1.5B <span class="conf-b">⚠ ceiling≈.90</span></td><td class="n">≥1.8×</td><td class="n">23h</td><td class="n">≥36h</td><td class="n">≥1.6×</td></tr>
+</table></div>
+<p style="font-size:.88rem;color:var(--ink-soft)">Every "×" is sparse ÷ dense at equal score.
+Token multipliers at the sparse-best rows are fit-free (read off where the dense curve crosses the
+sparse 640M score). Wall-clock uses the measured mix throughput above; it softens the token
+penalty by 1.16× but never flips it at ≤32k targets.</p>
+
+<h3>nq (deep source) — cheap, length-robust</h3>
+<div class="tblwrap"><table>
+<tr><th>eval length</th><th class="n"><span class="d">dense</span> f1=0.8</th><th class="n"><span class="d">dense</span> f1=0.9</th><th><span class="s">sparse</span></th></tr>
+<tr><td>8k</td><td class="n">5M / 0.1h <span class="conf-a">measured</span></td><td class="n">11M / 0.3h <span class="conf-a">measured</span></td><td rowspan="4" style="vertical-align:middle">measured at a matched 48M:<br>.912 / .728 / .608 / .248<br>(2k / 8k / 16k / 32k)<br>— reaches f1=0.8 at 2k only,<br>and the deficit compounds<br>with length</td></tr>
+<tr><td>16k</td><td class="n">6M / 0.2h <span class="conf-a">measured</span></td><td class="n">41M / 1.1h <span class="conf-a">measured</span></td></tr>
+<tr><td>32k</td><td class="n">22M / 0.6h <span class="conf-a">measured</span></td><td class="n">71M / 1.9h <span class="conf-a">measured</span></td></tr>
+<tr><td>64k</td><td class="n" colspan="2">not laddered — a 32k pure-length arm transfers up to <b>.838</b> @64k <span class="conf-a">measured</span></td></tr>
+</table></div>
+<p style="font-size:.88rem;color:var(--ink-soft)">These cells were <span class="conf-b">°</span>
+derived at 25M/190M/0.95B/1.5B for f1=0.8; the measured short-heavy mix ladder (16M / 32M / 48M
+tokens, eval_size 600 per rung) came in <b>8–40× cheaper</b>. Raw f1 — 2k: .977 / .977 / .973 ·
+8k: .917 / .930 / .933 · 16k: .857 / .885 / .910 · 32k: .760 / .837 / .873. The two short rungs
+were already saturated and carry no slope (2k drifts −.004 across a 3× budget); the 16k and 32k
+columns are the informative ones, moving +.028/+.043 and +.077/+.062 per doubling. Hill fits:
+16k g=.45 K=0.3M, 32k g=.70 K=3.1M — fmax runs into its 1.0 bound at both, so the f1=0.9 budgets
+are the soft end of these numbers. Two pure-length anchors agree with the mix: 4,000 examples at
+~31.4k tokens score .888 @32k and 2,000 at ~62.8k score .875 @32k / .838 @64k, i.e. spending every
+token at the scored rung buys ≈+.015 over the mix.</p>
+
+<h3>qdmatch_nq — easy while its shortcut lives, then capped</h3>
+<div class="tblwrap"><table>
+<tr><th>eval length</th><th class="n"><span class="d">dense</span> f1=0.8</th><th class="n"><span class="d">dense</span> f1=0.9</th><th><span class="s">sparse</span></th></tr>
+<tr><td>8k</td><td class="n">13M / 0.4h <span class="conf-b">°</span></td><td class="n">38M / 1h <span class="conf-b">°</span></td><td rowspan="4" style="vertical-align:middle"><span class="conf-c">never</span> — pairwise matching<br>dies in landmark compression<br>at every tested scale</td></tr>
+<tr><td>16k</td><td class="n">190M / 5h <span class="conf-b">°</span></td><td class="n">0.94B / 26h <span class="conf-b">°</span></td></tr>
+<tr><td>32k</td><td class="n">~0.4B / ~11h <span class="conf-a">measured</span></td><td class="n"><span class="conf-c">above ceiling (asymptote ≈.83)</span></td></tr>
+<tr><td>64k</td><td class="n"><span class="conf-c">above ceiling (.71 best)</span></td><td class="n"><span class="conf-c">above ceiling</span></td></tr>
+</table></div>
+<p style="font-size:.88rem;color:var(--ink-soft)"><span class="conf-b">°</span> = derived, not yet
+run: these two tasks' mix budgets are their measured pure-length need ÷ the target length's token
+share in the mix (4–16%); transfer only helps, so they are upper bounds. In any outlier-sized
+budget both tasks ride along free — their whole requirement is a few percent of the mix. For a
+single cheap task at one length, pure-length training is ~6–25× cheaper (component table below).
+"Above ceiling" = the asymptote at that length sits below the target — now <em>measured</em>, not
+suspected: a 16× claim-validation arm (32,000 examples, 975M tokens at 32k) scored .812, only
++.019 over the 8,000-example arm (~1.2 SE at eval_size 600). The ladder .735 → .793 → .812
+decays ~3× per 4× data, an asymptote of ≈.83–.84. A gold-ambiguity audit rules OUT label noise:
+the resolvable-adjusted ceiling is flat .97–.98 at every length, and the model beats the
+uniform-ambiguity bound at 8k/16k. The cap is a genuine capability limit of the pairwise task at
+high distractor counts, not data starvation and not annotation noise. One upside: the big 32k arm
+transfers UP — .713@64k, beating every 64k-trained arm (best .656).</p>
+
+<h3>Component measurements: pure-length tokens (dense), the fits everything derives from</h3>
+<div class="tblwrap"><table>
+<tr><th>length</th><th class="n">outlier .8 / .9</th><th class="n">nq (deep) .8 / .9</th><th class="n">qdmatch .8 / .9</th></tr>
+<tr><td>8k</td><td class="n">27M / 71M</td><td class="n">4M / 7M</td><td class="n">2M / 6M</td></tr>
+<tr><td>16k</td><td class="n">200M / 0.5B</td><td class="n">15M / 45M</td><td class="n">15M / 75M</td></tr>
+<tr><td>32k</td><td class="n">1.2B / 2.3B</td><td class="n">38M / 0.24B</td><td class="n">0.3–0.4B <span class="conf-b">⚠</span> / <span class="conf-c">—</span></td></tr>
+<tr><td>64k</td><td class="n">~6B / ~10B <span class="conf-b">†</span></td><td class="n">90M / 0.6B <span class="conf-b">†</span></td><td class="n"><span class="conf-c">—</span></td></tr>
+</table></div>
+<p style="font-size:.88rem;color:var(--ink-soft)">Sparse pure-length (outlier @8k): 215M for 0.8,
+315M for 0.9 — same ceiling as dense (.967 vs .980 at 64k examples), 8×/4.4× the data. All f1
+from 600-example evals (binomial SE ±0.010–0.021).</p>
+</div>
+
+<div class="step"><div class="step-n">01</div><div>
+<h2>Fix the learning rates first</h2>
+<p>Everything downstream compares architectures, so each got its own LR sweep (outlier, 2k data,
+5,000 examples, f1@3k): dense peaks at <span class="d">5e-6 → 0.781</span> (two seeds: .781/.752),
+sparse at <span class="s">1e-5 → 0.578</span>. Sparse wants ~2× the LR — its landmark pathway is
+freshly initialized and needs the update budget. All fitted runs below use these optima; the
+earlier matched-LR (2e-5) copies exist only for the mix-vs-pure control.</p>
+</div></div>
+
+<div class="step"><div class="step-n">02</div><div>
+<h2>Pure-length ladders → the Hill law</h2>
+<p>For each length L, train on N examples of pure length-L data and score at the length-L rung.
+Every curve fits a saturating Hill form:</p>
+<div class="formula">f1(N) = f<sub>max</sub> · N<sup>γ</sup> / (N<sup>γ</sup> + K<sup>γ</sup>)</div>
+<p><strong>K</strong> is the data constant (examples to half-max) and <strong>γ</strong> the
+steepness. Dense is a gentle γ≈0.6 curve that learns from the first 250 examples; sparse is a
+sharp γ≈2.7 sigmoid — near-floor until a takeoff threshold, then a rapid climb to (nearly)
+dense's ceiling. The sigmoid is a protocol-learning signature: landmark <em>writing</em>
+(compress a chunk) and <em>reading</em> (retrieve from summaries) are useless separately, so no
+gradual reward exists until both co-emerge.</p>
+<figure><svg id="c1" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend"><span><span class="sw" style="background:var(--dense)"></span>dense (K=559, γ=0.57)</span>
+<span><span class="sw" style="background:var(--sparse)"></span>sparse landmark (K≈15k, γ≈2.6)</span></div>
+<figcaption>Outlier, trained and scored at 8k. Points are single runs (600-example evals,
+binomial SE ≤ ±0.021); lines are the Hill fits. The 64,000-example probe settles the ceiling
+question: sparse reaches 0.967 vs dense's 0.980 — the SAME asymptote, at ~4–8× the data.
+N(0.9): dense ≈8.7k examples, sparse ≈38k.</figcaption></figure>
+<figure><svg id="c1b" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend"><span><span class="sw" style="background:var(--dense)"></span>outlier</span>
+<span><span class="sw" style="background:var(--good)"></span>qdmatch_nq</span>
+<span><span class="sw" style="background:var(--teal)"></span>nq</span></div>
+<figcaption>The same measurement across all three tasks (dense, 8k-length training, own-rung f1).
+qdmatch and nq sit in a different regime entirely — above 0.9 from the first measured point
+(K below 1,000 examples, unresolvable from above), which is why the length axis, not the data
+axis, is where those tasks are interesting. Task difficulty sets K; the Hill <em>shape</em> is
+shared.</figcaption></figure>
+</div></div>
+
+<div class="step"><div class="step-n">03</div><div>
+<h2>The length exponent is a task property</h2>
+<p>Refit K at each length. On <strong>outlier</strong> (find 3 outlier docs among hundreds —
+cross-document aggregation) the constant explodes: K = 559 → 2,899 → 10,989 examples across
+8k → 16k → 32k. Solving each fit for f1 = 0.9 gives the campaign's central law:</p>
+<div class="formula">N<sub>0.9</sub>(L) ∝ L<sup>1.5</sup>&nbsp;&nbsp;⇒&nbsp;&nbsp;tokens<sub>0.9</sub>(L) ∝ L<sup>2.5</sup></div>
+<p>On <strong>nq</strong>, N<sub>0.9</sub> grows from ~0.9k to ~10k examples across 8k→64k —
+<strong>β ≈ 1.1 at a task constant ~15× smaller than outlier's</strong>. On
+<strong>qdmatch_nq</strong>, apparent flatness at short lengths was its lexical shortcut: once
+bag-of-words stops working (0.55@32k, 0.37@64k), the true pairwise task surfaces with a rising K
+and a falling ceiling. Refined law: <span class="num">N<sub>0.9</sub>(L) = C<sub>task</sub> ·
+L<sup>β</sup></span> with β ≈ 1–1.5 for every <em>real</em> task and C spanning ~15–50× — apparent
+β≈0 is a saturation or shortcut artifact, and the data bill is always dominated by the
+highest-C·L<sup>β</sup> task in the mix.</p>
+<figure><svg id="c2" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend"><span><span class="sw" style="background:var(--dense)"></span>outlier — N<sub>0.9</sub> ∝ L<sup>1.5</sup></span>
+<span><span class="sw" style="background:var(--teal)"></span>nq (deep) — ∝ L<sup>1.1</sup>, ~15× cheaper</span>
+<span><span class="sw" style="background:var(--good)"></span>qdmatch — curve ends where 0.9 exceeds its ceiling</span></div>
+<figcaption>Examples needed for f1 = 0.9 vs target length (dense, in-length training; final points
+one-octave extrapolations). Same slope family, very different constants — and qdmatch's line stops
+at 16k because past there the genuine task's ceiling drops below 0.9 entirely.</figcaption></figure>
+</div></div>
+
+<div class="step"><div class="step-n">04</div><div>
+<h2>Mix shapes, then scale the winner</h2>
+<p>Four token-budget-matched length distributions were raced (uniform, short-heavy, long-heavy,
+two-point) at 16–128M tokens. <strong>Short-heavy wins or ties for dense and wins decisively for
+sparse</strong> — short data is the fuel for sparse's bootstrap, and dense is nearly
+shape-indifferent (only two-point fails: without mid-length coverage the middle rungs never
+form). Scaling short-heavy across five budgets, each arch gets a clean budget law:</p>
+<figure><svg id="c3" viewBox="0 0 560 300" width="100%"></svg>
+<div class="legend"><span><span class="sw" style="background:var(--dense)"></span>dense @8k rung — B(0.9) ≈ 244M tokens</span>
+<span><span class="sw" style="background:var(--sparse)"></span>sparse @8k rung — B(0.9) ≈ 370M tokens</span></div>
+<figcaption>f1 at the 8k rung vs total short-heavy budget. Five budgets per arch
+(16/32/64/96/160M); the 64M sparse point is seed-replicated (Δ ≤ 0.03 per rung). These curves
+generate the answer table at the top.</figcaption></figure>
+<div class="note"><p><strong>Transfer rules learned along the way</strong> — ρ(ℓ→L) = ℓ/L
+additively for dense, <em>but only catalytically</em>: a rung with zero direct mass stays at
+floor (pure-2k scores ~0.10 at 8k where the additive model predicts 0.87). Transfer is also
+non-monotonic: on qdmatch, growing 2k data from 2.5k→10k examples <em>collapses</em> the 8k rung
+from 0.62 to 0.02 (length-overfitting); NQ shows the same shape mildly. Mixes dodge both traps
+by construction, which is much of why they're the recommended recipe.</p></div>
+</div></div>
+
+<div class="step"><div class="step-n">05</div><div>
+<h2>Where sparse works at all</h2>
+<div class="tblwrap"><table>
+<tr><th>task</th><th>operation crossing chunk boundaries</th><th>sparse outcome</th></tr>
+<tr><td>nq (single-doc retrieval)</td><td>find one relevant doc</td>
+<td><span class="conf-b">works at 2k, decays with length</span> — at a matched 48M tokens sparse
+holds 94% of dense at 2k (.912 vs .973) but 28% at 32k (.248 vs .873)</td></tr>
+<tr><td>outlier (aggregation)</td><td>compare all docs to a majority topic</td>
+<td><span class="conf-b">works, late</span> — takeoff ~8–16k examples @8k; same ceiling as dense (.967 vs .980 at 64k ex)</td></tr>
+<tr><td>qdmatch_nq (pairwise matching)</td><td>exact M×N query↔doc assignment</td>
+<td><span class="conf-c">never</span> — floor at all tested scales; well-formed answers, wrong pairs</td></tr>
+</table></div>
+<p>Sparse viability is set by whether the required cross-chunk <em>operation</em> survives
+landmark compression, not by task family — but the length axis matters as much as the operation.
+Of the three tasks now measured against dense at a matched budget, two (qdmatch, nq) show sparse
+<em>collapsing</em> as context grows, and only outlier shows the stable constant-factor penalty
+(≈0.9× of dense, then a plateau) that the "sparse just needs more tokens" story assumes. And on cost: sparse's FLOP advantage (1.16× at 16k,
+~28× at 5M, ceiling 64×) is mostly <strong>neutralized by the short-heavy recipe</strong> —
+cheap short tokens are cheap for dense too. Sparse's remaining niche is where long tokens are
+unavoidable (transfer breaks, or the data must be long).</p>
+</div></div>
+
+<div class="step"><div class="step-n">06</div><div>
+<h2>Predictions by target length</h2>
+<p>Combining the budget law with the length law, for the <strong>outlier-class</strong> (hardest)
+task, dense, short-heavy recipe with the tail extended to the target length:</p>
+<div class="tblwrap"><table>
+<tr><th>target length</th><th class="n">examples for 0.9 (dense)</th><th class="n">tokens</th><th>confidence</th></tr>
+<tr><td>8k</td><td class="n">8.7k</td><td class="n">0.24B (mix)</td><td><span class="conf-a">measured</span></td></tr>
+<tr><td>16k</td><td class="n">29k</td><td class="n">0.5B</td><td><span class="conf-a">measured</span></td></tr>
+<tr><td>32k</td><td class="n">70k</td><td class="n">2.3B</td><td><span class="conf-a">measured (2-pt)</span></td></tr>
+<tr><td>64k</td><td class="n">~150k</td><td class="n">~10B</td><td><span class="conf-b">extrapolated (L<sup>1.5</sup>)</span></td></tr>
+<tr><td>128k</td><td class="n">~560k</td><td class="n">~74B</td><td><span class="conf-b">extrapolated</span></td></tr>
+<tr><td>256k</td><td class="n">~1.6M</td><td class="n">~0.4T</td><td><span class="conf-b">extrapolated</span></td></tr>
+<tr><td>1M</td><td class="n">~13M</td><td class="n">~13T</td><td><span class="conf-c">speculative</span></td></tr>
+</table></div>
+<p>Sparse multiplies the token column by <strong>1.5–4×</strong> (measured band, shrinking with
+budget) wherever the task is sparse-viable. For flat-β tasks (qdmatch/nq), replace the whole
+column with <em>a few thousand examples at any measured length</em>.</p>
+<div class="note"><p><strong>What the 64k/128k transfer runs settled</strong>: at feasible budgets
+(~190M tokens), pure ultra-long training scores ≈0 at <em>every</em> rung, while the same tokens
+as a tailed short-heavy mix deliver 0.95/0.78/0.50/0.24 up to 32k — never spend a feasible budget
+purely at an ultra-long length. The ρ-invariance is validated through 32k inside 128k-tailed
+mixes; the <em>direct</em> ≥64k-rung test needs ~0.5–10B tokens per arm and remains unfunded.</p></div>
+</div></div>
+
+<footer>
+<h3>Provenance &amp; caveats</h3>
+<p>Qwen3.5-4B (hybrid GDN 3:1) from the marker-repaired base; chat format, query-position
+<code>after</code>, eos 248044; every f1 from 600-example evals (binomial SE ±0.010–0.021).
+Sparse = <code>AttentionType.sparse_landmark</code>, block 64, evaluated natively (fast decode
+validated bit-identical vs slow path). Raw numbers: <code>debug/outlier_lengthmix_scaling/RESULTS_SNAPSHOT.md</code>;
+branch <code>prasann/landmark</code> (CP+AC+compile fix <code>24534f9f3</code>).
+Known confounds, all recorded: mix runs trained at seq 65536 (4× fewer optimizer steps/token than
+the pure ladders — shape-vs-shape comparisons clean, mix-vs-pure approximate); dense
+<code>--pack</code> emits no <code>cu_doc_lens</code>, so packed dense examples cross-attend
+(sparse packing is properly masked — asymmetric, and the likely cause of one abandoned NaN run);
+the nq 16k rung is 42% doc-clamped (inherent to the p10 source, shared by train and eval);
+single seeds except where noted.</p>
+</footer>
+</main>
+<script>
+(function(){
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+function chart(id,cfg){
+  const svg=document.getElementById(id);if(!svg)return;
+  const W=560,H=300,m={l:52,r:16,t:14,b:38};
+  const xw=W-m.l-m.r, yh=H-m.t-m.b;
+  const lx=v=>m.l+(Math.log10(v)-Math.log10(cfg.x[0]))/(Math.log10(cfg.x[1])-Math.log10(cfg.x[0]))*xw;
+  const ly=cfg.ylog?(v=>m.t+yh-(Math.log10(v)-Math.log10(cfg.y[0]))/(Math.log10(cfg.y[1])-Math.log10(cfg.y[0]))*yh)
+                   :(v=>m.t+yh-(v-cfg.y[0])/(cfg.y[1]-cfg.y[0])*yh);
+  let s='';
+  (cfg.xticks||[]).forEach(t=>{s+='<line class="grid" x1="'+lx(t[0])+'" y1="'+m.t+'" x2="'+lx(t[0])+'" y2="'+(m.t+yh)+'"/>';
+    s+='<text x="'+lx(t[0])+'" y="'+(H-m.b+16)+'" text-anchor="middle">'+t[1]+'</text>';});
+  (cfg.yticks||[]).forEach(t=>{s+='<line class="grid" x1="'+m.l+'" y1="'+ly(t[0])+'" x2="'+(m.l+xw)+'" y2="'+ly(t[0])+'"/>';
+    s+='<text x="'+(m.l-8)+'" y="'+(ly(t[0])+4)+'" text-anchor="end">'+t[1]+'</text>';});
+  s+='<line class="axis" x1="'+m.l+'" y1="'+(m.t+yh)+'" x2="'+(m.l+xw)+'" y2="'+(m.t+yh)+'"/>';
+  s+='<line class="axis" x1="'+m.l+'" y1="'+m.t+'" x2="'+m.l+'" y2="'+(m.t+yh)+'"/>';
+  cfg.series.forEach(sr=>{
+    const col=css(sr.c);
+    if(sr.fit){let p='';for(let i=0;i<=120;i++){
+      const x=Math.pow(10,Math.log10(cfg.x[0])+i/120*(Math.log10(cfg.x[1])-Math.log10(cfg.x[0])));
+      let y=sr.fit(x); y=Math.max(cfg.y[0]+(cfg.ylog?cfg.y[0]*0.001:0.001),Math.min(cfg.y[1],y));
+      p+=(i?'L':'M')+lx(x).toFixed(1)+' '+ly(y).toFixed(1)+' ';}
+      s+='<path d="'+p+'" fill="none" stroke="'+col+'" stroke-width="2" opacity="0.75"'+(sr.dash?' stroke-dasharray="6 4"':'')+'/>';}
+    else if(sr.line){let p='';sr.pts.forEach((pt,i)=>{p+=(i?'L':'M')+lx(pt[0]).toFixed(1)+' '+ly(pt[1]).toFixed(1)+' ';});
+      s+='<path d="'+p+'" fill="none" stroke="'+col+'" stroke-width="2" opacity="0.75"'+(sr.dash?' stroke-dasharray="6 4"':'')+'/>';}
+    sr.pts.forEach(pt=>{s+='<circle cx="'+lx(pt[0])+'" cy="'+ly(pt[1])+'" r="4.2" fill="'+col+'"/>';});
+  });
+  if(cfg.xlabel)s+='<text x="'+(m.l+xw/2)+'" y="'+(H-4)+'" text-anchor="middle">'+cfg.xlabel+'</text>';
+  svg.innerHTML=s;
+}
+const hill=(fm,K,g)=>N=>fm*Math.pow(N,g)/(Math.pow(N,g)+Math.pow(K,g));
+function draw(){
+chart('c1',{x:[200,50000],y:[0,1],xlabel:'training examples (8k-length)',
+  xticks:[[250,'250'],[1000,'1k'],[4000,'4k'],[16000,'16k'],[32000,'32k']],
+  yticks:[[0,'0'],[0.25,'.25'],[0.5,'.50'],[0.75,'.75'],[0.9,'.90']],
+  series:[
+   {c:'--dense',fit:hill(1.089,559,0.57),pts:[[250,.422],[1000,.629],[2000,.720],[4000,.819],[8000,.915],[16000,.952],[32000,.980]]},
+   {c:'--sparse',fit:hill(0.985,14800,2.55),pts:[[250,.051],[1000,.056],[2000,.051],[4000,.052],[8000,.224],[16000,.538],[32000,.923],[64000,.967]]}]});
+chart('c1b',{x:[700,45000],y:[0,1],xlabel:'training examples (8k-length, dense)',
+  xticks:[[1000,'1k'],[2000,'2k'],[4000,'4k'],[8000,'8k'],[16000,'16k'],[32000,'32k']],
+  yticks:[[0,'0'],[0.25,'.25'],[0.5,'.50'],[0.75,'.75'],[0.9,'.90']],
+  series:[
+   {c:'--dense',fit:hill(1.089,559,0.57),pts:[[1000,.629],[2000,.720],[4000,.819],[8000,.915],[16000,.952],[32000,.980]]},
+   {c:'--good',line:true,pts:[[1000,.920],[2000,.947],[4000,.948],[8000,.964]]},
+   {c:'--teal',line:true,pts:[[1000,.908],[2000,.928],[4000,.927],[8000,.950]]}]});
+chart('c2',{x:[6000,90000],y:[300,300000],ylog:true,xlabel:'target context length',
+  xticks:[[8192,'8k'],[16384,'16k'],[32768,'32k'],[65536,'64k']],
+  yticks:[[1000,'1k'],[10000,'10k'],[100000,'100k']],
+  series:[
+   {c:'--dense',line:true,pts:[[8192,8700],[16384,29000],[32768,70000],[65536,150000]]},
+   {c:'--teal',line:true,pts:[[8192,900],[16384,3000],[32768,7500],[65536,10000]]},
+   {c:'--good',line:true,pts:[[8192,800],[16384,5000]]}]});
+chart('c4',{x:[50e6,900e6],y:[0,1],xlabel:'training tokens (short-heavy mix, both axes log-x)',
+  xticks:[[64e6,'64M'],[160e6,'160M'],[320e6,'320M'],[640e6,'640M']],
+  yticks:[[0,'0'],[0.25,'.25'],[0.5,'.50'],[0.75,'.75'],[0.9,'.90']],
+  series:[
+   {c:'--dense',fit:hill(1.03,86e6,0.85),pts:[[64e6,.453],[160e6,.659],[320e6,.753],[640e6,.894]]},
+   {c:'--sparse',fit:hill(0.90,133e6,1.45),pts:[[64e6,.216],[96e6,.363],[160e6,.497],[320e6,.700],[640e6,.816]]},
+   {c:'--dense',dash:true,fit:hill(1.01,586e6,0.90),pts:[[64e6,.107],[160e6,.266],[320e6,.352],[640e6,.532]]},
+   {c:'--sparse',dash:true,fit:hill(0.62,413e6,1.10),pts:[[64e6,.054],[96e6,.102],[160e6,.186],[320e6,.254],[640e6,.386]]}]});
+const hd=27.1/1e9, hs=23.4/1e9; // H200-GPU-hours per token on the short-heavy <=32k mix
+const hillh=(fm,K,g,r)=>h=>fm*Math.pow(h/r,g)/(Math.pow(h/r,g)+Math.pow(K,g));
+chart('c5',{x:[1.2,26],y:[0,1],xlabel:'H200 GPU-hours (measured throughput model)',
+  xticks:[[2,'2h'],[4,'4h'],[8,'8h'],[16,'16h']],
+  yticks:[[0,'0'],[0.25,'.25'],[0.5,'.50'],[0.75,'.75'],[0.9,'.90']],
+  series:[
+   {c:'--dense',fit:hillh(1.03,86e6,0.85,hd),pts:[[64e6*hd,.453],[160e6*hd,.659],[320e6*hd,.753],[640e6*hd,.894]]},
+   {c:'--sparse',fit:hillh(0.90,133e6,1.45,hs),pts:[[64e6*hs,.216],[96e6*hs,.363],[160e6*hs,.497],[320e6*hs,.700],[640e6*hs,.816]]},
+   {c:'--dense',dash:true,fit:hillh(1.01,586e6,0.90,hd),pts:[[64e6*hd,.107],[160e6*hd,.266],[320e6*hd,.352],[640e6*hd,.532]]},
+   {c:'--sparse',dash:true,fit:hillh(0.62,413e6,1.10,hs),pts:[[64e6*hs,.054],[96e6*hs,.102],[160e6*hs,.186],[320e6*hs,.254],[640e6*hs,.386]]}]});
+chart('c3',{x:[12e6,450e6],y:[0,1],xlabel:'total training tokens (short-heavy mix)',
+  xticks:[[16e6,'16M'],[32e6,'32M'],[64e6,'64M'],[160e6,'160M'],[244e6,'244M'],[370e6,'370M']],
+  yticks:[[0,'0'],[0.25,'.25'],[0.5,'.50'],[0.75,'.75'],[0.9,'.90']],
+  series:[
+   {c:'--dense',fit:hill(1.05,19e6,0.71),pts:[[16e6,.505],[32e6,.601],[64e6,.725],[96e6,.779],[160e6,.887]]},
+   {c:'--sparse',fit:hill(1.05,70e6,1.07),pts:[[16e6,.233],[32e6,.278],[64e6,.467],[96e6,.645],[160e6,.754]]}]});
+}
+draw();
+const mq=matchMedia('(prefers-color-scheme: dark)');mq.addEventListener&&mq.addEventListener('change',draw);
+new MutationObserver(draw).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+})();
+</script>
