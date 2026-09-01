@@ -12,6 +12,7 @@ tokenizer/ids/flags/rung labels — only the paths move to weka:
 Usage:
   python beaker_native_lengthmix_eval.py RUN SAVEDIR --ladder-tasks qdmatch_nq --ladder-rungs 32k,64k
 """
+
 import argparse
 
 from olmo_core.internal.common import build_launch_config, get_root_dir
@@ -25,17 +26,29 @@ def main():
     ap.add_argument("savedir", help="ckpt dir name under ctc_suite/ckpts/ (run-name-YYYY...)")
     ap.add_argument("--ladder-tasks", required=True)
     ap.add_argument("--ladder-rungs", required=True)
-    ap.add_argument("--eval500-root", default=None,
-                    help="weka-relative rung bundle under checkpoints/prasanns/ (default: "
-                         "outlier_lengthmix/eval_rungs, which holds ONLY outlier/nq/qdmatch_nq). "
-                         "contradiction lives in _eval_bundle_eval500_v3 (realistic mode, the one "
-                         "that matches our training generator), oolong + xabsence_exact in "
-                         "_eval_bundle_eval500_v2_clean. Pointing at the wrong bundle does not "
-                         "error -- every rung MISSING-skips and the job writes an empty JSON with "
-                         "exit 0.")
-    ap.add_argument("--ladder-version", default="v2", choices=["v2", "v3"],
-                    help="v3 = realistic-mode contradiction gold. Use v3 for contradiction; the "
-                         "v2/both gold scores a realistic-trained ckpt ~0.39 f1 too low.")
+    ap.add_argument(
+        "--eval500-root",
+        default=None,
+        help="weka-relative rung bundle under checkpoints/prasanns/ (default: "
+        "outlier_lengthmix/eval_rungs, which holds ONLY outlier/nq/qdmatch_nq). "
+        "contradiction lives in _eval_bundle_eval500_v3 (realistic mode, the one "
+        "that matches our training generator), oolong + xabsence_exact in "
+        "_eval_bundle_eval500_v2_clean. Pointing at the wrong bundle does not "
+        "error -- every rung MISSING-skips and the job writes an empty JSON with "
+        "exit 0.",
+    )
+    ap.add_argument(
+        "--ladder-version",
+        default="v2",
+        choices=["v2", "v3"],
+        help="v3 = realistic-mode contradiction gold. Use v3 for contradiction; the "
+        "v2/both gold scores a realistic-trained ckpt ~0.39 f1 too low.",
+    )
+    ap.add_argument("--no-sparse-decode", action="store_true",
+                    help="drop OLMO_LANDMARK_SPARSE_DECODE=1. The fast decode kernel asks for "
+                         "104KB of shared memory, over the 99KB an L40S (sm_89) has, so a sparse "
+                         "arm evaluated on neptune dies in triton with OutOfResources. H100/A100 "
+                         "are fine; this flag trades the ~2x decode speedup for portability.")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--ngpu", type=int, default=2)
     ap.add_argument("--max-length", type=int, default=72000)
@@ -47,8 +60,9 @@ def main():
     ev500 = f"{root}/checkpoints/prasanns/{args.eval500_root or 'outlier_lengthmix/eval_rungs'}"
     inner = (
         f"PYTHONPATH=$PWD/src/scripts:$PWD/src "
-        f"EVAL500_ROOT={ev500} OLMO_LANDMARK_SPARSE_DECODE=1 "
-        f"python -m torch.distributed.run --nproc_per_node={args.ngpu} --master_port=29513 "
+        f"EVAL500_ROOT={ev500} "
+        + ("" if args.no_sparse_decode else "OLMO_LANDMARK_SPARSE_DECODE=1 ")
+        + f"python -m torch.distributed.run --nproc_per_node={args.ngpu} --master_port=29513 "
         f"src/scripts/ctc_eval/eval/eval_lc_native.py --model-path {ckpt} "
         f"--out /results/{args.run_name}_native_multirung.json --tokenizer Qwen/Qwen3.5-0.8B "
         f"--max-length {args.max_length} --max-test-samples 600 --batch-size 1 --skip-ruler --skip-gen "

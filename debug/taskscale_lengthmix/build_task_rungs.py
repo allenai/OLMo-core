@@ -95,6 +95,10 @@ TASKS = {
         "rungs": [("2k", 90, 20000), ("4k", 180, 3000), ("8k", 360, 900)],
         "budgets": [20e6, 40e6, 80e6],
         "prompt_task": "absence",
+        # The rungs are long AND wide: n=360 measures 26.8k median but its tail runs past 40k, so a
+        # 40960 window silently dropped 9 of 200 probe examples. 65536 matches the training seq-len,
+        # which is the real ceiling.
+        "max_seq": 65536,
     },
     "grouping": {
         # docs-per-example -> MEASURED medians 1964 / 8042 / 16692 / 32808 (rung_token_audit.json).
