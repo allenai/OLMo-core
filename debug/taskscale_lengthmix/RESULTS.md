@@ -79,26 +79,39 @@ change. Five dense arms moved and started immediately.
 
 ## Results
 
-### oolong, sparse-landmark (partial ladder; 32k rung still running)
+### oolong, sparse-landmark -- COMPLETE
 
-Metric is oolong's `score`. eval_size 600 at 2k, 500 at 8k/16k.
+Metric is oolong's `score`. eval_size 600 at 2k, 500 elsewhere.
+
+| budget | 2k | 8k | 16k | 32k |
+|---|---|---|---|---|
+| 20M | .812 | .535 | .509 | .463 |
+| 40M | .823 | .564 | .532 | .503 |
+| 80M | .864 | .631 | .589 | .535 |
+
+Monotone everywhere and still climbing at 80M (+.04 to +.07 per doubling). The length profile is a
+THIRD distinct sparse shape: a step down from 2k to 8k, then near-flat -- 8k/16k/32k span only
+.072-.096 at a given budget, where nq sparse fell .728 -> .248 over the same span. So sparse
+degradation is not one phenomenon; it is task-specific.
+
+Dense at 40M, for comparison: 2k .886 vs sparse .823, 8k .672 vs .564. Dense leads at every rung
+measured so far, and by MORE at 8k than at 2k.
+
+### contradiction, dense (32k rung still generating)
 
 | budget | 2k | 8k | 16k |
 |---|---|---|---|
-| 20M | .812 | .535 | .509 |
-| 40M | .823 | .564 | .532 |
-| 80M | .864 | .631 | .589 |
+| 14M | .909 | .836 | .751 |
+| 56M | .982 | .971 | .941 |
 
-Monotone at every rung and still climbing at 80M: +.041 per doubling at 2k, +.067 at 8k, +.057 at
-16k. Unlike nq and qdmatch sparse, the length penalty here does NOT keep compounding -- 8k and 16k
-sit within .04 of each other at every budget, so oolong sparse degrades from 2k to 8k and then
-roughly flattens. The dense comparison is what decides the crossover question; its 40M arm is in
-eval now.
+eval_size 500, v3 realistic-mode gold. A 4x budget buys +.073/+.135/+.190 -- the gain GROWS with
+length, the opposite of a task that is saturating.
 
-### contradiction, dense (2k rung so far)
+### contradiction, sparse -- collapse
 
-14M -> .909, 56M -> .982 (eval_size 500, v3 realistic-mode gold). The longer rungs are still
-generating.
+The 14M arm scores **.001 @2k** (eval_size 500) where its dense twin scores .909. The dense arm
+runs the same eval path against the same bundle, so this is the model, not the harness:
+contradiction joins qdmatch as a task landmark compression cannot do at all.
 
 ## Results (older)
 
