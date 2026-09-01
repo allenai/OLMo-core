@@ -59,10 +59,18 @@ def main() -> None:
                 pair_out[t] = compare_pair(group_scores[m1], group_scores[m2], task_short=t)
             pairwise[f"{m1}__vs__{m2}"] = pair_out
 
-        # ---- capped, browsable example table (only keys ALL models in the group have) ----
-        common_keys = set.intersection(*[set(group_scores[m].keys()) for m in model_keys])
+        # ---- capped, browsable example table ----
+        # UNION across the group's models, not intersection: a single model's gap (e.g. an empty
+        # generations.jsonl for one task -- happens, see summtok_causal's contra dump, 0 bytes on
+        # weka despite a real non-zero metric JSON) must not blank that task out for every OTHER
+        # pair in the group. Each row only lists the models that actually have that key; the
+        # client filters per the two runs currently selected, so a pair that both have the data
+        # (e.g. summtok_decay vs summtok_p50) still gets to browse it.
+        any_keys = set()
+        for m in model_keys:
+            any_keys |= set(group_scores[m].keys())
         by_bucket: Dict[tuple, List[ExampleKey]] = {}
-        for k in common_keys:
+        for k in any_keys:
             bucket = (k[1], k[2])  # (task_short, source_tag)
             by_bucket.setdefault(bucket, []).append(k)
 
@@ -73,7 +81,8 @@ def main() -> None:
                 keys = rng.sample(keys, args.max_per_bucket)
             for k in keys:
                 ladder_version, task_short, source_tag, rung, idx = k
-                any_v = group_scores[model_keys[0]][k]
+                present_models = [m for m in model_keys if k in group_scores[m]]
+                any_v = group_scores[present_models[0]][k]
                 row = {
                     "task": task_short,
                     "ladder_version": ladder_version,
@@ -84,7 +93,7 @@ def main() -> None:
                     "prompt_tail": (any_v["prompt_tail"] or "")[-PROMPT_TAIL_CHARS:],
                     "models": {},
                 }
-                for m in model_keys:
+                for m in present_models:
                     v = group_scores[m][k]
                     row["models"][m] = {
                         "binary": v["binary"],
@@ -94,7 +103,7 @@ def main() -> None:
                 examples.append(row)
         print(
             f"  {len(examples)} browsable examples across {len(by_bucket)} (task,source_tag) buckets "
-            f"(from {len(common_keys)} common keys)",
+            f"(from {len(any_keys)} total keys, union across {len(model_keys)} models)",
             flush=True,
         )
 

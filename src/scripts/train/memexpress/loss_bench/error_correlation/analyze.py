@@ -74,10 +74,19 @@ def load_model_scores(model_key: str) -> Dict[ExampleKey, dict]:
                     "prompt_tail": rec.get("prompt_tail"),
                 }
                 n += 1
-        print(
-            f"[{model_key}] {task_short}/{source_tag}/{ladder_version}: {n} examples from {path}",
-            flush=True,
-        )
+        if n == 0:
+            # The file exists but parsed to nothing -- distinct from MISSING, and easy to miss in
+            # a long log otherwise. Seen for real: summtok_causal's contra generations.jsonl is 0
+            # bytes on weka despite a non-trivial metric JSON alongside it (the eval ran fine; only
+            # the generation dump failed to write). Silently treating this the same as "no rows to
+            # report" let one model's empty file blank an entire task out of a whole group's
+            # browsable examples -- see export_for_artifact.py's union-not-intersection fix.
+            print(f"[{model_key}] EMPTY (0 rows parsed, file is present): {path}", flush=True)
+        else:
+            print(
+                f"[{model_key}] {task_short}/{source_tag}/{ladder_version}: {n} examples from {path}",
+                flush=True,
+            )
     return scores
 
 
