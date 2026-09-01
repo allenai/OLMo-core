@@ -128,7 +128,7 @@ def build_group_manifest(group_name: str, work_dir: str) -> None:
                     f"models.py DATA_GROUPS is expected to carry label_mask_paths."
                 )
             npz_payload[f"{key}__mask"] = np.asarray(label_mask, dtype=bool)
-            index.append({"bucket": bucket, "i": i, "task": task, "length": length})
+            index.append({"bucket": bucket, "i": i, "task": task, "length": int(length)})
 
     os.makedirs(TRAIN_MANIFEST_DIR, exist_ok=True)
     npz_path = f"{TRAIN_MANIFEST_DIR}/{group_name}.npz"
