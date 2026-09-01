@@ -91,7 +91,7 @@ TASKS = {
         # n-chunks at --target-words 100 -> MEASURED 1912 / ~4k / 9002 / 17505. No 32k rung exists
         # on the eval side (the ladder was capped at 16k), so this mix is 2k/4k/8k/16k.
         "rungs": [("2k", 12, 24000), ("4k", 27, 3800), ("8k", 57, 900), ("16k", 116, 220)],
-        "budgets": [15e6, 30e6, 60e6],
+        "budgets": [15e6, 30e6, 50e6],
         "prompt_task": "reorder",
     },
     "textgroups": {
@@ -291,12 +291,21 @@ def compose(task):
     manifest = {}
     for B in TASKS[task]["budgets"]:
         counts = [max(1, round(s * B / med[lab])) for s, lab in zip(SHARES, rungs)]
-        lines, spec = [], {}
+        lines, spec, short = [], {}, None
         for lab, c in zip(rungs, counts):
             pool = open(pool_file(task, lab)).read().splitlines()
-            assert len(pool) >= c, f"{task} {lab}: pool {len(pool)} < {c} needed for {B/1e6:.0f}M"
+            if len(pool) < c:
+                # Skip the whole budget rather than quietly building a smaller arm under its name:
+                # a short rung would change the mix's length composition, not just its size, and the
+                # scaling point would silently stop being comparable to the others.
+                short = f"{lab} pool {len(pool)} < {c}"
+                break
             lines += pool[:c]
             spec[lab] = c
+        if short:
+            log(f"[SKIP] {task} {B/1e6:.0f}M budget is not buildable: {short}. "
+                f"Generate a deeper pool or lower the budget.")
+            continue
         random.Random(SHUFFLE_SEED).shuffle(lines)
         arm = f"{task}_mix_s{int(B/1e6)}M"
         d = WEKA / "arms" / arm
