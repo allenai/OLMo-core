@@ -1,0 +1,203 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+2026-08-31 23:08:31.126	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-08-31 23:08:31.126	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+2026-08-31 23:08:31.560	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+--- tsl-sync-13f88acf
+    cmd: PYTHONPATH=$PWD/src/scripts:$PWD/src set -e; command -v aws >/dev/null || pip install -q awscli; export AWS_PROFILE=S3; S=s3://ai2-llm/checkpoints/prasanns/taskscale_lengthmix; W=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix; mkdir -p $W; aws s3 sync $S $W --only-show-errors; echo "--- staged:"; find $W -maxdepth 3 -type f | head -20; du -sh $W
+2026-08-31 23:08:32.877	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/tsl-sync-13f88acf → https://beaker.org/ex/01M1DSAWN138JDVSJ3T5APGE49
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: ab01fef lengthmix eval: xabsence_exact ladder, selectable… → https://github.com/allenai/OLMo-core/commit/ab01fef
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: experiment {
+  id: "01M1DSAWN138JDVSJ3T5APGE49"
+  name: "tsl-sync-13f88acf"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01M1DSAWNCVETA8B1N32HH2BNR"
+    experiment_id: "01M1DSAWN138JDVSJ3T5APGE49"
+    name: "build"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1788242916
+      nanos: 1681000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 0
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "bash"
+      arguments: "-lc"
+      arguments: "PYTHONPATH=$PWD/src/scripts:$PWD/src set -e; command -v aws >/dev/null || pip install -q awscli; export AWS_PROFILE=S3; S=s3://ai2-llm/checkpoints/prasanns/taskscale_lengthmix; W=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix; mkdir -p $W; aws s3 sync $S $W --only-show-errors; echo \"--- staged:\"; find $W -maxdepth 3 -type f | head -20; du -sh $W"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "ab01fefa45074af5c117a3d9ce4fdba71711081d"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "build"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/neptune"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1788242916
+    nanos: 1681000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
