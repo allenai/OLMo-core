@@ -129,7 +129,7 @@ def main():
     from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         load_unified_examples, _eval_ruler, _eval_contradiction, _eval_retrieval,
-        _eval_oolong, _eval_rerank, _eval_outlier, _eval_qdmatch,
+        _eval_oolong, _eval_rerank, _eval_outlier, _eval_qdmatch, _eval_absence,
     )
 
     # ---- data-parallel across N GPUs (torchrun): each rank loads a full model copy + evaluates a
@@ -462,6 +462,23 @@ def main():
                                        ("32k", 32768), ("64k", 65536))
                     if os.path.exists(f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
                 ]
+            # xabsence EXACT rungs (2k/4k/8k/16k/32k), file-gated like qdmatch_nq above.
+            # ⚠ EXACT ONLY. Two different tasks ship under the name "xabsence": EXACT (the twin
+            # is the IDENTICAL string in corpus B; the CTC suite row) and PARAPHRASE (an LLM
+            # rewrite; near its chance floor under full attention). They differ in pool, shape and
+            # difficulty, so a rung directory named plain `xabsence/` is NOT wired up here -- the
+            # subdir must say `xabsence_exact`. Discriminator, if a bundle's provenance is unclear:
+            # len(A_texts & B_texts) == num_pairs for EXACT, 0 for PARAPHRASE
+            # ([[xabsence-exact-vs-paraphrase-split]]). P (pairs/example) -> measured median tokens:
+            # 2 -> 2.4k, 5 -> 4.5k, 11 -> 8.7k, 23 -> 17k, 46 -> 33k, all on PubMed abstracts at
+            # ~346 tok/item -- P values calibrated on any other corpus do NOT transfer.
+            if os.path.isdir(f"{E5}/xabsence_exact"):
+                LADDERS["xabsence"] = [
+                    (_lab, f"{E5}/xabsence_exact/rung_{_tok}.jsonl")
+                    for _lab, _tok in (("2k", 2048), ("4k", 4096), ("8k", 8192),
+                                       ("16k", 16384), ("32k", 32768))
+                    if os.path.exists(f"{E5}/xabsence_exact/rung_{_tok}.jsonl")
+                ]
             # nq LENGTH-MIX rungs (2k/8k/16k). The shipped nq ladder above is named by doc count
             # (nq_validation_k{20,50,100,200}_600.jsonl); the length-mix bundle instead ships
             # rung_{2048,8192,16384}.jsonl, 600 held-out examples each, built by
@@ -582,6 +599,7 @@ def main():
             "outlier_review": ("outlier", _eval_outlier, "f1", 200),
             "contra_fever": ("contradiction", _eval_contradiction, "f1", 200),
             "qdmatch_nq": ("qdmatch", _eval_qdmatch, "f1", 200),
+            "xabsence": ("xabsence", _eval_absence, "f1", 200),
         }
         task_filter = set(args.ladder_tasks.split(",")) if args.ladder_tasks else None
         rung_filter = set(args.ladder_rungs.split(",")) if args.ladder_rungs else None
