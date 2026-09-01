@@ -22,12 +22,12 @@ suite_table.json's: N = O_T(N) = low, NM / N² = high.
 | contradiction (realistic) | high | 2k/8k/16k/32k | building |
 | xabsence (EXACT) | high | 4k/8k/16k/32k | building |
 | oolong | low | 2k/8k/16k/32k | building |
-| grouping | high | 2k-32k | registry pending |
-| reorder | high | 2k-16k | registry pending |
-| textgroups | high | 2k-32k | registry pending |
-| rerank | low | 2k-16k | registry pending |
-| absence | low | 2k-16k | registry pending |
-| qdmatch_hpqa | high | 2k-32k | registry pending |
+| grouping | high | 2k/8k/16k/32k | arms built, trains queued |
+| reorder | high | 2k/4k/8k/16k | arms built, trains queued |
+| textgroups | high | 2k/4k/8k/16k | arms built, trains queued |
+| absence | low | 5.6k/10.9k/26.8k | arms built, trains queued |
+| ~~rerank~~ | low | — | DROPPED: needs a pyserini index + a GPU cross-encoder pass, and data without CE scores is ungradeable |
+| ~~qdmatch_hpqa~~ | high | — | DROPPED: dense is flat .999->.981 across 2k->32k (bridge entity appears verbatim in its gold doc), and train/eval share one 4,000-unit pool |
 
 ## Measured rung medians (Qwen3.5-0.8B-Base tokenizer, --query-position after)
 
@@ -53,6 +53,10 @@ Every mix share is computed from these, never from the rung label.
 | xabsence | 20.0M / 40.1M / 80.2M | 3,570 / 7,141 / 14,280 |
 | textgroups | 20.0M / 40.0M / 80.2M | 8,357 / 16,717 / 33,435 |
 | absence | 20M / 40M / 80M | 2,832 / 5,666 / 11,330 |
+| grouping | 20.0M / 40.1M / 80.2M | 6,835 / 13,670 / 27,340 |
+
+All 21 tokenized arms pass the pre-flight audit (`audit_arms.py`): correct task string, Qwen3.5
+eos 248044, zero skipped examples, and every max_example_len inside the 65536 training window.
 
 reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
 20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
