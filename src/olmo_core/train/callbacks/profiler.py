@@ -346,8 +346,27 @@ class NvidiaProfilerCallback(Callback):
     """
     The ranks to profile.
     """
+    emit_nvtx: bool = True
+    """
+    Wrap the capture window in :func:`torch.autograd.profiler.emit_nvtx`, which emits an NVTX
+    range per ATen op.
 
+    Set this to ``False`` to capture only the ranges the model itself emits. ``emit_nvtx`` is
+    expensive and, on a compiled model, not very informative: the block bodies run as inductor
+    kernels rather than dispatcher calls, so it annotates mostly the eager fringe while burying
+    the model's own ranges under millions of op ranges (and :data:`emit_nvtx_record_shapes`
+    builds a shape string per op on top of that). Prefer ``False`` when the model already
+    annotates the paths you care about.
+    """
+    emit_nvtx_record_shapes: bool = True
+    """
+    Record input shapes for each ``emit_nvtx`` range. Ignored when :data:`emit_nvtx` is
+    ``False``.
+    """
+
+    # NOTE: un-annotated, like '_nvtx_ctx' above, so it stays out of the serialized config.
     _nvtx_ctx = None
+    _started = False
 
     def pre_load_batch(self):
         # `pre_load_batch` runs before the trainer increments its step counter, so `self.step`
@@ -356,8 +375,12 @@ class NvidiaProfilerCallback(Callback):
         if self.enabled and get_rank() in self.profile_ranks and self.step == self.start - 1:
             log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.start}...")
             torch.cuda.cudart().cudaProfilerStart()
-            self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
-            self._nvtx_ctx.__enter__()
+            self._started = True
+            if self.emit_nvtx:
+                self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(
+                    record_shapes=self.emit_nvtx_record_shapes
+                )
+                self._nvtx_ctx.__enter__()
 
     def post_train_batch(self):
         if self.step == self.end:
@@ -369,11 +392,17 @@ class NvidiaProfilerCallback(Callback):
         self._stop()
 
     def _stop(self):
+        # NOTE: keyed off '_started', not '_nvtx_ctx', which is never set when 'emit_nvtx' is
+        # False -- keying off it there would leave the cudaProfilerApi capture range open and
+        # nsys would record to the end of the run.
+        if not self._started:
+            return
+        log.info(f"Stopping NVIDIA profiler at rank={get_rank()}...")
         if self._nvtx_ctx is not None:
-            log.info(f"Stopping NVIDIA profiler at rank={get_rank()}...")
             self._nvtx_ctx.__exit__(None, None, None)
             self._nvtx_ctx = None
-            torch.cuda.cudart().cudaProfilerStop()
+        self._started = False
+        torch.cuda.cudart().cudaProfilerStop()
 
 
 @dataclass
