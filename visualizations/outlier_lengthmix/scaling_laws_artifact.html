@@ -296,6 +296,45 @@ from 0.62 to 0.02 (length-overfitting); NQ shows the same shape mildly. Mixes do
 by construction, which is much of why they're the recommended recipe.</p></div>
 </div></div>
 
+<div class="step"><div class="step-n">04b</div><div>
+<h2>Nine tasks, one answer: sparse never leads</h2>
+<p>The campaign above sized <em>one</em> task. This section extends it to nine, each with a
+short-heavy mix at three token budgets, dense and sparse-landmark, on the same 4B base. Every
+number below is raw, at eval_size 500–600 per rung.</p>
+<div class="tblwrap"><table>
+<tr><th>task</th><th>dense, best measured</th><th>sparse, best measured</th><th>sparse verdict</th></tr>
+<tr><td>xabsence</td><td class="n">1.000 / 1.000 (4k / 8k)</td><td class="n">.221 / .140</td>
+<td><span class="conf-c">floor, flat in budget</span> — 4× data moves .217→.221</td></tr>
+<tr><td>absence</td><td class="n">.997 / .993 (2k / 8k)</td><td class="n">.357 / .250</td>
+<td><span class="conf-b">late takeoff</span> — .017→.224→.357, still accelerating</td></tr>
+<tr><td>contradiction</td><td class="n">.982 / .881 (2k / 32k)</td><td class="n">.001 / .000</td>
+<td><span class="conf-c">dead</span> at two budgets</td></tr>
+<tr><td>reorder (τ)</td><td class="n">.686 / .457 (2k / 4k)</td><td class="n">.009 / −.010</td>
+<td><span class="conf-c">chance</span> at all three budgets</td></tr>
+<tr><td>oolong</td><td class="n">.913 / .617 (2k / 32k)</td><td class="n">.864 / .535</td>
+<td><span class="conf-b">step then flat</span> — trails in all 12 cells</td></tr>
+<tr><td>grouping</td><td class="n">.794 / .569 (2k / 8k)</td><td class="n">.419 / —</td>
+<td><span class="conf-c">at its .44 degenerate floor</span></td></tr>
+<tr><td>textgroups</td><td class="n">.096 / .015 (2k / 8k)</td><td class="n">.033 / .002</td>
+<td><span class="conf-c">both variants at floor</span> — not a usable comparison</td></tr>
+<tr><td>nq</td><td class="n">.973 / .873 (2k / 32k)</td><td class="n">.912 / .248</td>
+<td><span class="conf-c">compounding decay</span> with length</td></tr>
+<tr><td>outlier</td><td class="n">.894 / .532 (16k / 32k)</td><td class="n">.816 / .386</td>
+<td><span class="conf-b">~0.9× then plateau</span> — the mildest penalty measured</td></tr>
+</table></div>
+<p><strong>No task shows sparse ahead of dense at any rung or any budget.</strong> The failure is
+not one phenomenon: it ranges from a constant ~0.9× factor (outlier) through a step-and-flat
+penalty (oolong) and compounding decay (nq) to exact chance (reorder, contradiction). Two
+diagnostics matter when reading these: a metric floor (grouping's pairwise-F1 gives ~.44 for a
+single-cluster answer, so .419 is chance, not partial credit), and the budget axis — sparse absence
+looked dead at 20M and only revealed its takeoff at 40M and 80M, so a single small arm cannot
+distinguish "cannot learn" from "has not started".</p>
+<p>Where <code>fit_crossover.py</code> does report a crossing on oolong — 301M at 8k, 460M at 16k
+— it is 4–6× beyond the largest measured budget and is driven by sparse's fitted ceiling running
+into its 1.05 bound while dense's bends to .72. That is a statement about which curve has shown
+its ceiling, not a prediction of crossover, and the tool now labels it as such.</p>
+</div></div>
+
 <div class="step"><div class="step-n">05</div><div>
 <h2>Where sparse works at all</h2>
 <div class="tblwrap"><table>

@@ -142,10 +142,10 @@ contradiction joins qdmatch as a task landmark compression cannot do at all.
 | oolong | step down, then flat | .864/.631/.589/.535 @80M -- trails dense in all 12 cells |
 | nq | compounding decay | .912/.728/.608/.248 @48M vs dense .973/.933/.910/.873 |
 | outlier | constant ~0.9x factor, then plateau | needs ~1.5x tokens at 16k; 32k ceiling .57 |
-| xabsence | near-floor, decaying to zero | .217/.145/.061/.026 @20M (4k/8k/16k/32k) |
+| xabsence | near-floor and FLAT in budget | .217/.145/.061/.026 @20M vs .221/.140/.057/.032 @80M -- 4x data buys nothing |
 | qdmatch_nq | dead | floor at every tested scale |
 | contradiction | dead | .001/.000/.000/.000 vs dense .909/.836/.751/.592 |
-| reorder | dead (at chance) | kendall_tau .009 @2k, -.004 @4k -- tau 0 IS chance; dense .686 @2k |
+| reorder | dead at every budget | tau .009/.005/.007 @2k across 15/30/50M -- flat at chance; dense .686 @2k |
 | absence | LATE TAKEOFF, not dead | .017/.005/.001 @20M -> .224/.094/.025 @40M -> .357/.304/.250 @80M |
 | grouping | at the degenerate floor | pairwise_f1 .419 @2k @20M -- BELOW the .44 that a
   single-cluster prediction scores, so it is not "44% right", it is chance; dense .794 |
