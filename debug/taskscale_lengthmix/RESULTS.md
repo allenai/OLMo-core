@@ -55,6 +55,19 @@ reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples i
 
 (f1 per rung, eval_size stated per row; filled in as evals land)
 
+## nq dense short-heavy mix ladder (eval_size 600/rung, --query-position after)
+
+| budget | 2k | 8k | 16k | 32k |
+|---|---|---|---|---|
+| 16M | .977 | .917 | **.857** | pending |
+| 32M | .977 | .930 | **.885** | **.837** |
+| 48M | .973 | .933 | **.910** | **.873** |
+
+The 16k/32k rungs are the informative ones -- 2k and 8k were already saturated, and the 16k column
+moves +.028 then +.025 while 2k moves -.004. Pure-length anchor: nqD32k_4000 (4,000 examples at
+n=200 docs, ~31.4k tokens) scores **.888 @32k**, slightly above the 48M mix, which is what you would
+expect from spending every token at the rung being scored.
+
 ## Prior-campaign anchors
 
 - qdmatch_nq dense short-heavy mixes @8k/16k/32k, eval_size 600: 64M .949/.883/.676,
