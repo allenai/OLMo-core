@@ -193,9 +193,12 @@ def main():
     from ctc_eval.eval.evaluate import (
         _eval_absence,
         _eval_contradiction,
+        _eval_cycle,
+        _eval_grouping,
         _eval_oolong,
         _eval_outlier,
         _eval_qdmatch,
+        _eval_reorder,
         _eval_rerank,
         _eval_retrieval,
         _eval_ruler,
