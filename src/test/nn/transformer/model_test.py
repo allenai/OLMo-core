@@ -35,7 +35,7 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNorm, LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.moe import MoEConfig, MoERouterConfig, MoEType
+from olmo_core.nn.moe import LatentMoEConfig, MoEConfig, MoERouterConfig, MoEType
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
     MoEHybridTransformerBlockBase,
@@ -459,7 +459,11 @@ def test_init_with_hsdp(architecture: str):
 
 
 def run_moe_hybrid_combined_forward(
-    dropless: bool, shared_experts: bool, reordered_norm: bool, tp: bool
+    dropless: bool,
+    shared_experts: bool,
+    reordered_norm: bool,
+    tp: bool,
+    latent_moe: bool = False,
 ):
     layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False)
     config = TransformerConfig(
@@ -484,6 +488,7 @@ def run_moe_hybrid_combined_forward(
                     FeedForwardConfig(hidden_size=512, bias=False) if shared_experts else None
                 ),
                 router=MoERouterConfig(uniform_expert_assignment=True),
+                latent_moe=LatentMoEConfig(latent_dim=256) if latent_moe else None,
             ),
         ),
         lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
@@ -542,6 +547,21 @@ def test_moe_hybrid_combined_forward(
             reordered_norm,
             tp,
         ),
+    )
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize(
+    "reordered_norm",
+    [pytest.param(True, id="reordered-norm"), pytest.param(False, id="default-block")],
+)
+@pytest.mark.parametrize("tp", [pytest.param(True, id="TP"), pytest.param(False, id="EP")])
+def test_latent_moe_hybrid_combined_forward(reordered_norm: bool, tp: bool):
+    run_distributed_test(
+        run_moe_hybrid_combined_forward,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(True, True, reordered_norm, tp, True),
     )
 
 

@@ -4,7 +4,7 @@ MoE layers.
 
 from .loss import MoELoadBalancingLossGranularity
 from .mlp import DroplessMoEMLP, MoEMLP
-from .moe import DroplessMoE, MoEBase, MoEConfig, MoEType
+from .moe import DroplessMoE, LatentMoEConfig, MoEBase, MoEConfig, MoEType
 from .router import (
     MoELinearRouter,
     MoERouter,
@@ -16,6 +16,7 @@ from .router import (
 __all__ = [
     "MoEBase",
     "DroplessMoE",
+    "LatentMoEConfig",
     "MoEConfig",
     "MoEType",
     "MoEMLP",

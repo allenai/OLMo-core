@@ -98,13 +98,18 @@ def load_hf_model(
     else:
         raise NotImplementedError
 
-    # Warm up the HF local cache by downloading the model on just local rank 0
+    # Warm up the HF local cache by downloading the model on just local rank 0. ``trust_remote_code``
+    # lets us reload custom architectures (e.g. olmo3moe) whose code is bundled in the checkpoint.
     if get_fs_local_rank() == 0:
-        hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model_name_or_path, revision=revision, trust_remote_code=True
+        )
         del hf_model
     barrier(group=process_group)
 
-    hf_model = AutoModelForCausalLM.from_pretrained(model_name_or_path, revision=revision)
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_name_or_path, revision=revision, trust_remote_code=True
+    )
     log.info(f"Loaded hf model: {hf_model}")
     hf_model.resize_token_embeddings(num_embeddings)
 

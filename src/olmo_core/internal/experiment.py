@@ -44,7 +44,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -112,6 +112,7 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    eval_checkpoints = "eval_checkpoints"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
@@ -126,6 +127,8 @@ class SubCmd(StrEnum):
             prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
+        elif self == SubCmd.eval_checkpoints:
+            prepare_training_environment(backend=config.backend)
         else:
             raise NotImplementedError(self)
 
@@ -164,6 +167,9 @@ class SubCmd(StrEnum):
             prep(config)
         elif self == SubCmd.launch_prep:
             launch_prep(config)
+        elif self == SubCmd.eval_checkpoints:
+            eval_checkpoints(config)
+            teardown_training_environment()
         else:
             raise NotImplementedError(self)
 
@@ -328,7 +334,7 @@ def build_config(
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
     data_config_builder: Callable[..., DataComponents] = build_default_data_components,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
+    train_module_config_builder: Callable[[CommonComponents], TrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
@@ -355,7 +361,7 @@ def build_config(
     :param model_config_builder: Function to build the transformer model configuration. This should accept a
         ``CommonComponents`` instance and return a ``TransformerConfig`` instance.
     :param train_module_config_builder: Function to build the training module configuration. This should accept a
-        ``CommonComponents`` instance and return a ``TransformerTrainModuleConfig`` instance.
+        ``CommonComponents`` instance and return a ``TrainModuleConfig`` instance.
     :param trainer_config_builder: Function to build the trainer configuration. This should accept a
         ``CommonComponents`` instance and return a ``TrainerConfig`` instance.
     :param finalize_config: Optional function to finalize the configuration. This should accept an
@@ -473,6 +479,24 @@ def train(config: ExperimentConfig):
 
     # Train (also handles checkpoint loading)
     trainer.fit()
+
+
+def eval_checkpoints(config: ExperimentConfig):
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components in eval-only mode (no optimizer, no DP wrapping).
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model, eval_only=True)
+    data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader, eval_only=True)
+
+    # Record the config to W&B/Comet and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Eval (also handles checkpoint loading)
+    trainer.eval_checkpoints()
 
 
 def main(*, config_builder: ConfigBuilder) -> None:

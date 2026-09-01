@@ -1,5 +1,6 @@
 import os
 import time
+from typing import cast
 
 import pytest
 import torch
@@ -9,7 +10,7 @@ from olmo_core.distributed.utils import barrier, get_rank
 from olmo_core.io import dir_is_empty, file_exists, is_url, normalize_path
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.checkpoint import Checkpointer
-from olmo_core.train.train_module import BasicTrainModule
+from olmo_core.train.train_module import BasicTrainModule, TrainModule
 
 
 def run_checkpointer(base_dir, work_dir, model_factory):
@@ -142,3 +143,45 @@ def test_async_checkpointer_with_remote_gcs_dir(gcs_checkpoint_dir, tmp_path, ti
         func_args=(gcs_checkpoint_dir, tmp_path / "work_dir", tiny_model_factory),
         start_method="spawn",
     )
+
+
+class _RecordingDirectTrainModule:
+    """Minimal stand-in exposing the direct-checkpoint API used by :class:`Checkpointer`."""
+
+    def __init__(self, *, reset_optimizer_states_on_resume: bool):
+        self.reset_optimizer_states_on_resume = reset_optimizer_states_on_resume
+        self.received_reset = "unset"
+
+    def load_state_dict_direct(self, dir, *, reset_optimizer_states_on_load=None, **kwargs):
+        del dir, kwargs
+        self.received_reset = reset_optimizer_states_on_load
+
+
+@pytest.mark.parametrize("has_trainer_state", [True, False])
+def test_checkpointer_resume_reset_only_applies_on_actual_resume(
+    tmp_path, monkeypatch, has_trainer_state
+):
+    from torch.distributed.checkpoint.metadata import Metadata
+
+    from olmo_core.train import checkpoint as checkpoint_module
+
+    # Avoid needing a real distributed checkpoint on disk: the trainer-state probe is driven by the
+    # presence of train/rank0.pt, and everything else is stubbed.
+    monkeypatch.setattr(
+        checkpoint_module, "get_checkpoint_metadata", lambda _dir: Metadata(state_dict_metadata={})
+    )
+    monkeypatch.setattr(checkpoint_module, "broadcast_object", lambda obj, **_kwargs: obj)
+
+    dir = tmp_path / "checkpoint"
+    (dir / "model_and_optim").mkdir(parents=True)
+    if has_trainer_state:
+        (dir / "train").mkdir()
+        torch.save({"rank": 0}, dir / "train" / "rank0.pt")
+
+    train_module = _RecordingDirectTrainModule(reset_optimizer_states_on_resume=True)
+    checkpointer = Checkpointer(work_dir=tmp_path / "work_dir")
+    # Default load_trainer_state=None: the resume reset must apply only when trainer state is found.
+    # The fake only needs the duck-typed direct-checkpoint surface Checkpointer.load() probes for.
+    checkpointer.load(dir, cast(TrainModule, train_module))
+
+    assert train_module.received_reset is (True if has_trainer_state else None)

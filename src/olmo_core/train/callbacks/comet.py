@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, cast
 
 from olmo_core.config import StrEnum
 from olmo_core.distributed.utils import get_rank
@@ -55,6 +55,11 @@ class CometCallback(Callback):
     .. note::
         This callback logs metrics from every single step to Comet.ml, regardless of the value
         of :data:`Trainer.metrics_collect_interval <olmo_core.train.Trainer.metrics_collect_interval>`.
+    """
+
+    priority: ClassVar[int] = 3
+    """
+    Initialize before checkpointing, since pre-train checkpoint saves may flush metrics.
     """
 
     enabled: bool = True
@@ -120,6 +125,7 @@ class CometCallback(Callback):
     _exp = None
     _exp_key: Optional[str] = None
     _finalized: bool = False
+    _train_completed: bool = False
 
     @property
     def exp(self) -> "Experiment":
@@ -209,14 +215,11 @@ class CometCallback(Callback):
     def post_train(self):
         if self.enabled and get_rank() == 0:
             log.info("Finalizing successful Comet.ml experiment...")
-            if self.notifications in (
-                CometNotificationSetting.all,
-                CometNotificationSetting.end_only,
-            ):
-                self.exp.send_notification(
-                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
-                    status="completed successfully",
-                )
+            # Defer the success notification to `close()`. This callback runs at a higher
+            # priority than the checkpointer, so its `post_train` also runs *before* the
+            # checkpointer saves the final checkpoint; sending "completed successfully" here
+            # could precede a failing final save. `close()` runs after all `post_train` hooks.
+            self._train_completed = True
 
     def on_error(self, exc: BaseException):
         del exc
@@ -235,6 +238,14 @@ class CometCallback(Callback):
 
     def close(self):
         if self.enabled and get_rank() == 0:
+            if self._train_completed and self.notifications in (
+                CometNotificationSetting.all,
+                CometNotificationSetting.end_only,
+            ):
+                self.exp.send_notification(
+                    f"Experiment {self.exp.get_name()} ({self.exp.get_key()})",
+                    status="completed successfully",
+                )
             self.finalize()
 
     def check_if_canceled(self):

@@ -1,9 +1,10 @@
 import copy
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 from torch.distributed import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
@@ -13,7 +14,9 @@ from olmo_core.distributed.parallel import (
     ContextParallelConfig,
     DataParallelConfig,
     ExpertParallelConfig,
+    PipelineP2PBackend,
     PipelineParallelConfig,
+    PipelineScheduleType,
     TensorParallelConfig,
 )
 from olmo_core.doc_utils import beta_feature
@@ -30,10 +33,14 @@ from olmo_core.nn.transformer import (
     TransformerDataParallelWrappingStrategy,
 )
 from olmo_core.optim import OptimConfig
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.train.train_module.config import TrainModuleConfig
 
+from .pipeline.pipeline_schedule import CustomPipelineStage
+
 if TYPE_CHECKING:
+    from .ddp_train_module import OLMoDDPTrainModule
     from .pipeline_train_module import TransformerPipelineTrainModule
     from .train_module import TransformerTrainModule
 
@@ -45,6 +52,25 @@ log = logging.getLogger(__name__)
 class TransformerPipelineParallelConfig(PipelineParallelConfig):
     """
     Transformer-specific pipeline parallel config.
+    """
+
+    use_custom_stage_implementation: bool = False
+    """
+    False -> use PyTorch's ``PipelineStage`` implementation.
+    True -> use :class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomPipelineStage`,
+    which re-uses receive buffers across micro-batches.
+    """
+
+    save_schedule_plot: bool = False
+    """
+    If ``True``, rank 0 saves a diagnostic plot (and text dump) of the pipeline schedule when it is
+    built. Requires ``matplotlib`` (the ``dev`` extra), so it is off by default.
+    """
+
+    schedule_plot_dir: Optional[str] = None
+    """
+    Directory for the schedule plot when :data:`save_schedule_plot` is set. Defaults to a temporary
+    directory.
     """
 
     split_points: Optional[List[int]] = None
@@ -90,8 +116,31 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         return splits
 
     def split_model(
-        self, model: Transformer, *, pp_mesh: DeviceMesh, device: torch.device
+        self,
+        model: Transformer,
+        *,
+        pp_mesh: DeviceMesh,
+        device: torch.device,
+        use_ddp: bool = False,
+        p2p_group: Optional[dist.ProcessGroup] = None,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
+        if self.p2p_backend != PipelineP2PBackend.nccl and not self.use_custom_stage_implementation:
+            raise OLMoConfigurationError(
+                f"p2p_backend={self.p2p_backend.value!r} requires use_custom_stage_implementation=True"
+            )
+
+        custom_schedules = {
+            PipelineScheduleType.custom_1F1B,
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        }
+        if self.schedule in custom_schedules and not self.use_custom_stage_implementation:
+            # The custom schedule driver expects CustomPipelineStage (e.g. `group_size`,
+            # `get_fwd_send_ops`); pairing it with torch's PipelineStage fails in pre_train / step.
+            raise OLMoConfigurationError(
+                f"pipeline schedule {self.schedule.value!r} requires use_custom_stage_implementation=True"
+            )
+
         split_points = self.get_split_points(model.n_layers)
         num_stages = len(split_points) + 1
 
@@ -114,6 +163,7 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             model_chunk = copy.deepcopy(model)
             if not is_first:
                 model_chunk.embeddings = None  # type: ignore
+                model_chunk.embedding_norm = None  # type: ignore
 
             drop_layers = start_layer is not None
             for block_idx in range(model.n_layers):
@@ -128,13 +178,26 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             if not is_last:
                 model_chunk.lm_head = None  # type: ignore
 
-            stage = PipelineStage(
-                model_chunk,
-                stage_idx,
-                num_stages,
-                device,
-                group=pp_mesh.get_group("pp"),
-            )
+            if self.use_custom_stage_implementation:
+                # Custom stage implementation re-uses receive buffers across micro-batches.
+                stage = CustomPipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    is_rddp=use_ddp,
+                    group=pp_mesh.get_group("pp"),
+                    p2p_group=p2p_group,
+                    p2p_backend=self.p2p_backend.value,
+                )
+            else:
+                stage = PipelineStage(
+                    model_chunk,
+                    stage_idx,
+                    num_stages,
+                    device,
+                    group=pp_mesh.get_group("pp"),
+                )
             return stage, model_chunk
 
         stage_idx = pp_rank
@@ -175,6 +238,34 @@ class TransformerDataParallelConfig(DataParallelConfig):
     """
 
     prefetch_factor: int = 0
+
+    only_allreduce_last_microbatch: bool = True
+    """
+    Only synchronize gradients on the last micro-batch of a gradient-accumulation step (skip the
+    reduction on intermediate micro-batches). Used by :class:`OLMoDDPTrainModule` with
+    :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`. The historical name predates
+    normal-parameter reduce-scatter; this setting controls whichever DDP gradient collective is used.
+    """
+
+    reduce_grads_in_fp32: bool = True
+    """Reduce gradients in fp32 (see :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`)."""
+
+    accumulate_grads_in_fp32: bool = True
+    """Accumulate gradients in fp32 (see :class:`~olmo_core.nn.parallel.MultiGroupDistributedDataParallel`)."""
+
+    bucket_cap_mb: Optional[int] = None
+    """Gradient reduction bucket size cap in MiB (``None`` = backend default)."""
+
+    use_reduce_scatter: bool = False
+    """
+    Reduce normal-parameter gradients directly into distributed-optimizer shards.
+
+    Parameters with replicated optimizer state continue to use all-reduce. This
+    option does not change the FP8WeightStore gradient synchronization path. It
+    currently requires final-microbatch-only synchronization, does not support
+    context parallelism, and requires the custom pipeline-stage implementation
+    when pipeline parallelism is enabled.
+    """
 
 
 @dataclass
@@ -342,12 +433,14 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
         self,
         model: Transformer,
         device: Optional[torch.device] = None,
+        eval_only: bool = False,
     ) -> Union["TransformerTrainModule", "TransformerPipelineTrainModule"]:
         """
         Build the corresponding :class:`TransformerTrainModule` or :class:`TransformerPipelineTrainModule.
 
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
+        :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
@@ -364,12 +457,14 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
             return TransformerPipelineTrainModule(
                 model=model,
                 device=device,
+                eval_only=eval_only,
                 **kwargs,
             )
         else:
             return TransformerTrainModule(
                 model=model,
                 device=device,
+                eval_only=eval_only,
                 **kwargs,
             )
 
@@ -384,3 +479,86 @@ class TransformerPipelineTrainModuleConfig(TransformerTrainModuleConfig):
     def __post_init__(self):
         if self.pp_config is None:
             raise OLMoConfigurationError("'pp_config' is required")
+
+
+@beta_feature
+@dataclass
+class OLMoDDPTrainModuleConfig(TrainModuleConfig):
+    """
+    Configuration for :class:`~olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule`,
+    the train module for the fused MoE-v2 transformer (built with the fused MoE distributed
+    optimizer, :class:`~olmo_core.optim.OLMoDDPOptimizerConfig`).
+    """
+
+    rank_microbatch_size: int
+    max_sequence_length: int
+
+    # Optimizer settings.
+
+    optim: OLMoDDPOptimizerConfig
+    max_grad_norm: Optional[float] = None
+    scheduler: Optional[Scheduler] = None
+
+    # Model settings.
+
+    compile_model: bool = False
+    float8_config: Optional[Float8Config] = None
+    pp_config: Optional[TransformerPipelineParallelConfig] = None
+    dp_config: Optional[TransformerDataParallelConfig] = None
+    tp_config: Optional[TransformerTensorParallelConfig] = None
+    cp_config: Optional[TransformerContextParallelConfig] = None
+    ep_config: Optional[TransformerExpertParallelConfig] = None
+    ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+
+    grad_accum_in_fp32: Optional[bool] = None
+
+    # Loss function settings.
+
+    z_loss_multiplier: Optional[float] = None
+
+    # Checkpoint settings.
+
+    state_dict_save_opts: Optional[Dict[str, Any]] = None
+    state_dict_load_opts: Optional[Dict[str, Any]] = None
+    load_key_mapping: Optional[Dict[str, str]] = None
+    reset_optimizer_states_on_load: bool = False
+    reset_optimizer_states_on_resume: bool = False
+
+    # Other train settings.
+
+    label_ignore_index: int = -100
+
+    def build(
+        self,
+        model: Transformer,
+        device: Optional[torch.device] = None,
+        eval_only: bool = False,
+    ) -> "OLMoDDPTrainModule":
+        """
+        Build the corresponding :class:`OLMoDDPTrainModule`.
+
+        :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
+        :param device: The device to train on.
+        :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
+        """
+        from .ddp_train_module import OLMoDDPTrainModule
+
+        kwargs = self.as_dict(exclude_none=True, recurse=False)
+
+        if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
+            kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
+        if (state_dict_load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
+            kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
+
+        # `grad_accum_in_fp32` is superseded by the DP config's `accumulate_grads_in_fp32`; map the
+        # legacy field onto the DP config so migrated configs that set it aren't silently ignored.
+        grad_accum_in_fp32 = kwargs.pop("grad_accum_in_fp32", None)
+        if grad_accum_in_fp32 is not None and (dp_config := kwargs.get("dp_config")) is not None:
+            kwargs["dp_config"] = replace(dp_config, accumulate_grads_in_fp32=grad_accum_in_fp32)
+
+        return OLMoDDPTrainModule(
+            model=model,
+            device=device,
+            eval_only=eval_only,
+            **kwargs,
+        )

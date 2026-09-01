@@ -118,18 +118,29 @@ class Checkpointer:
 
             # Save model and optim state.
             train_module_dir = f"{dir}/model_and_optim" if is_url(dir) else wd / "model_and_optim"
-            save_state_dict(
-                train_module_dir,
-                train_module.state_dict_to_save(),
-                process_group=self.process_group,
-                thread_count=self.save_thread_count,
-                #  process_count=self.save_process_count,
-                throttle_uploads=self.throttle_uploads,
-                enable_plan_caching=True,
-                # NOTE: we've already checked and cleared the directory at this point so we can skip
-                # the extra synchronization.
-                _skip_prepare=True,
-            )
+            if hasattr(train_module, "save_state_dict_direct"):
+                # Some train modules (e.g. OLMoDDPTrainModule) manage the distributed
+                # checkpoint save/load themselves instead of exposing a flat state dict.
+                train_module.save_state_dict_direct(  # type: ignore[attr-defined]
+                    train_module_dir,
+                    process_group=self.process_group,
+                    save_overwrite=self.save_overwrite,
+                    thread_count=self.save_thread_count,
+                    throttle_uploads=self.throttle_uploads,
+                )
+            else:
+                save_state_dict(
+                    train_module_dir,
+                    train_module.state_dict_to_save(),
+                    process_group=self.process_group,
+                    thread_count=self.save_thread_count,
+                    #  process_count=self.save_process_count,
+                    throttle_uploads=self.throttle_uploads,
+                    enable_plan_caching=True,
+                    # NOTE: we've already checked and cleared the directory at this point so we can skip
+                    # the extra synchronization.
+                    _skip_prepare=True,
+                )
 
         self._save_metadata(dir, CheckpointMetadata(ephemeral=ephemeral))
 
@@ -146,6 +157,11 @@ class Checkpointer:
         if is_distributed() and self.process_group is None:
             raise OLMoConfigurationError(
                 "a checkpointer process group is required for async checkpointing!"
+            )
+        if hasattr(train_module, "save_state_dict_direct"):
+            raise OLMoConfigurationError(
+                f"{type(train_module).__name__} does not support async checkpointing. "
+                "Set save_async=False for this train module."
             )
 
         if torch.cuda.is_available():
@@ -187,10 +203,17 @@ class Checkpointer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Load model, optim, and other training state from a local or remote checkpoint directory
         created via :meth:`save()` or :meth:`save_async()`.
+
+        :param reset_optimizer_states_on_load: Only honored by train modules that implement the
+            direct checkpoint API (:meth:`load_state_dict_direct`). When ``True``, optimizer moments
+            are discarded on load and only the main params are restored. When left ``None`` it
+            defaults, on an actual resume (i.e. only when trainer state is found), to the train
+            module's ``reset_optimizer_states_on_resume`` setting.
         """
         dir = normalize_path(dir)
 
@@ -208,6 +231,14 @@ class Checkpointer:
 
             if load_trainer_state is True and trainer_state is None:
                 raise FileNotFoundError(f"Missing trainer state in checkpoint dir '{dir}'")
+
+        # The resume-specific optimizer reset only applies to an actual resume, so derive it here
+        # (after the trainer-state probe) rather than for every non-``False`` load: loading a
+        # standalone model/optimizer checkpoint that has no trainer state must keep its moments.
+        if reset_optimizer_states_on_load is None and trainer_state is not None:
+            reset_optimizer_states_on_load = getattr(
+                train_module, "reset_optimizer_states_on_resume", None
+            )
 
         # Load train module state.
         train_module_dir = f"{dir}/model_and_optim"
@@ -228,16 +259,29 @@ class Checkpointer:
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
-        state_dict = train_module.state_dict_to_load(metadata, optim=load_optim_state)
-        load_state_dict(
-            train_module_dir,
-            state_dict,
-            process_group=self.process_group,
-            pre_download=is_url(dir) and self.pre_download,
-            work_dir=self.work_dir,
-            thread_count=self.load_thread_count,
-        )
-        train_module.load_state_dict(state_dict)
+        if hasattr(train_module, "load_state_dict_direct"):
+            # Some train modules (e.g. OLMoDDPTrainModule) manage the distributed
+            # checkpoint save/load themselves instead of exposing a flat state dict.
+            train_module.load_state_dict_direct(  # type: ignore[attr-defined]
+                train_module_dir,
+                process_group=self.process_group,
+                pre_download=is_url(dir) and self.pre_download,
+                work_dir=self.work_dir,
+                thread_count=self.load_thread_count,
+                load_optim_state=load_optim_state,
+                reset_optimizer_states_on_load=reset_optimizer_states_on_load,
+            )
+        else:
+            state_dict = train_module.state_dict_to_load(metadata, optim=load_optim_state)
+            load_state_dict(
+                train_module_dir,
+                state_dict,
+                process_group=self.process_group,
+                pre_download=is_url(dir) and self.pre_download,
+                work_dir=self.work_dir,
+                thread_count=self.load_thread_count,
+            )
+            train_module.load_state_dict(state_dict)
 
         return trainer_state
 

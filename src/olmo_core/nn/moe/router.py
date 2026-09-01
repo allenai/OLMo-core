@@ -73,6 +73,7 @@ class MoERouterType(StrEnum):
 
 class MoERouterGatingFunction(StrEnum):
     softmax = "softmax"
+    topk_softmax = "topk_softmax"
     sigmoid = "sigmoid"
 
 
@@ -90,6 +91,7 @@ class MoERouterConfig(ModuleConfig):
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
     uniform_expert_assignment: bool = False
+    random_expert_assignment: bool = False
     bias_gamma: Optional[float] = None
     gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax
     dtype: Optional[DType] = None
@@ -163,6 +165,8 @@ class MoERouter(nn.Module):
     :param normalize_expert_weights: The type of norm (e.g. ``2.0`` for L2 norm) to use to normalize
         the expert weights.
     :param uniform_expert_assignment: Force uniform assignment. Useful for benchmarking.
+    :param random_expert_assignment: Replace learned routing scores with random scores while
+        retaining the router's autograd graph. Useful for throughput benchmarking.
     :param bias_gamma: If set to a positive float, experts scores for top-k routing will be adjusted
         by a bias following the "auxiliary-loss-free load balancing" strategy from DeepSeek-v3.
         A reasonable value is on the order of 0.0001.
@@ -177,6 +181,7 @@ class MoERouter(nn.Module):
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
         uniform_expert_assignment: bool = False,
+        random_expert_assignment: bool = False,
         bias_gamma: Optional[float] = None,
         gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
         lb_loss_weight: Optional[float] = None,
@@ -191,6 +196,7 @@ class MoERouter(nn.Module):
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
         self.uniform_expert_assignment = uniform_expert_assignment
+        self.random_expert_assignment = random_expert_assignment
         self.bias_gamma = bias_gamma
         self.gating_function = gating_function
         self.lb_loss_weight = lb_loss_weight
@@ -441,6 +447,11 @@ class MoERouter(nn.Module):
         else:
             raise NotImplementedError(self.gating_function)
 
+        if self.random_expert_assignment:
+            # Keep the learned-router path in the autograd graph, but make the
+            # top-k destinations independent of the token representations.
+            scores = scores * 0 + torch.rand_like(scores)
+
         # shape: (batch_size, seq_len, top_k)
         expert_weights, expert_indices = self.get_top_k(scores)
 
@@ -485,6 +496,10 @@ class MoERouter(nn.Module):
                         tp_mesh=self.tp_mesh,
                         cp_mesh=self.cp_mesh,
                     )
+                    # NOTE: under TP the loss is a replicated-scalar DTensor; the metric
+                    # accumulator is a plain tensor, so accumulate its local value to avoid
+                    # a plain-tensor += DTensor in-place error. The training path below keeps
+                    # the DTensor for correct autograd.
                     self.load_balancing_loss += get_local_tensor(lb_loss.detach())
 
                     scaled_lb_loss = self.lb_loss_weight * lb_loss

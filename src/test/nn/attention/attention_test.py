@@ -18,11 +18,13 @@ from olmo_core.nn.attention import (
     AttentionConfig,
     AttentionType,
     FusedAttention,
+    FusedAttentionV2,
     GateConfig,
     GateGranularity,
     NormalizedAttention,
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
+    _causal_attention_positions,
 )
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
@@ -146,6 +148,8 @@ def test_attention(
         pytest.skip("flash-attn requires a low precision dtype")
     if dtype == torch.bfloat16 and device.type == "cpu":
         pytest.skip("bf16 requires GPU")
+    if backend == "te" and device.type != "cuda":
+        pytest.skip("TransformerEngine attention requires a CUDA device")
     if attention_cls is NormalizedAttention:
         if "clip_qkv" in kwargs:
             pytest.skip("clip_qkv is not supported for NormalizedAttention")
@@ -1377,3 +1381,267 @@ def test_fused_attention_num_flops_per_token():
     # Larger models should be more expensive.
     fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
+
+
+def test_attention_sinks_num_params_and_build():
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        bias=True,
+        attention_sinks=True,
+    )
+    without = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        bias=True,
+    )
+    # Sinks add exactly one learnable logit per head.
+    assert config.num_params(32) == without.num_params(32) + 4
+
+    attention = config.build(32, layer_idx=0, n_layers=2)
+    assert isinstance(attention, Attention)
+    assert attention.sinks is not None
+    assert attention.sinks.shape == (4,)
+
+
+def test_attention_sinks_rejected_for_non_default_attention():
+    config = AttentionConfig(name=AttentionType.normalized, n_heads=4, attention_sinks=True)
+    with pytest.raises(OLMoConfigurationError, match="attention_sinks"):
+        config.build(32, layer_idx=0, n_layers=2)
+
+
+def test_attention_sinks_rejected_for_non_torch_backend_at_construction():
+    # An explicitly requested non-torch backend must fail while building, not on the first forward.
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        backend=AttentionBackendName.flash_2,
+        attention_sinks=True,
+    )
+    with pytest.raises(OLMoConfigurationError, match="torch attention backend"):
+        config.build(32, layer_idx=0, n_layers=2)
+
+
+def test_attention_sinks_softmax_matches_sdpa_when_inactive():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    seed_all(0)
+    d_model, seq_len = 32, 16
+
+    with_sinks = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        backend=AttentionBackendName.torch,
+        attention_sinks=True,
+    )
+    with_sinks.init_weights(
+        init_method=InitMethod.normal, d_model=d_model, block_idx=0, num_blocks=2
+    )
+
+    without_sinks = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=8,
+        backend=AttentionBackendName.torch,
+    )
+    without_sinks.load_state_dict(
+        {k: v for k, v in with_sinks.state_dict().items() if k != "sinks"}
+    )
+
+    x = torch.randn(2, seq_len, d_model)
+
+    assert with_sinks.sinks is not None
+    # A very negative sink logit makes the extra softmax column vanish, so the manual sink softmax
+    # must collapse to the plain SDPA result.
+    with torch.no_grad():
+        with_sinks.sinks.fill_(-1e4)
+        sink_out = with_sinks(x)
+        plain_out = without_sinks(x)
+    torch.testing.assert_close(sink_out, plain_out, rtol=1e-4, atol=1e-4)
+
+
+def test_fused_attention_v2_matches_standard_attention():
+    from olmo_core.nn.mxfp8_linear import MXFP8Linear
+
+    seed_all(0)
+    d_model = 64
+    fused = FusedAttentionV2(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Non-MXFP8 projections should be plain Linear layers.
+    assert isinstance(fused.w_qkv, torch.nn.Linear)
+    assert not isinstance(fused.w_qkv, MXFP8Linear)
+
+    standard = Attention(
+        d_model=d_model,
+        n_heads=4,
+        n_kv_heads=2,
+        head_dim=16,
+        bias=False,
+        backend=AttentionBackendName.torch,
+    )
+    # Copy the packed QKV projection into the standard attention's separate Q/K/V projections.
+    q_dim, kv_dim = 4 * 16, 2 * 16
+    with torch.no_grad():
+        standard.w_q.weight.copy_(fused.w_qkv.weight[:q_dim])
+        standard.w_k.weight.copy_(fused.w_qkv.weight[q_dim : q_dim + kv_dim])
+        standard.w_v.weight.copy_(fused.w_qkv.weight[q_dim + kv_dim :])
+        standard.w_out.weight.copy_(fused.w_out.weight)
+
+    x = torch.randn(2, 8, d_model)
+    with torch.no_grad():
+        torch.testing.assert_close(fused(x), standard(x))
+
+
+def test_attention_config_rejects_mxfp8_on_non_fused_v2():
+    config = AttentionConfig(
+        name=AttentionType.default, n_heads=4, head_dim=16, mxfp8_projections=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="fused_v2"):
+        config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_use_recompute_qkv_prep_is_transparent():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    def run(recompute: bool):
+        seed_all(0)
+        attention = FusedAttentionV2(
+            d_model=64,
+            n_heads=4,
+            n_kv_heads=2,
+            head_dim=16,
+            bias=False,
+            backend=AttentionBackendName.torch,
+            use_recompute_qkv_prep=recompute,
+        )
+        attention.init_weights(init_method=InitMethod.normal, d_model=64, block_idx=0, num_blocks=2)
+        x = torch.randn(2, 8, 64, requires_grad=True)
+        seed_all(123)
+        out = attention(x)
+        out.sum().backward()
+        assert x.grad is not None
+        assert attention.w_qkv.weight.grad is not None
+        return out.detach(), x.grad.detach(), attention.w_qkv.weight.grad.detach().clone()
+
+    # Recomputing Q/K/V in backward must not change the forward output or the gradients.
+    out0, grad_x0, grad_w0 = run(False)
+    out1, grad_x1, grad_w1 = run(True)
+    torch.testing.assert_close(out0, out1)
+    torch.testing.assert_close(grad_x0, grad_x1)
+    torch.testing.assert_close(grad_w0, grad_w1)
+
+
+def test_attention_config_rejects_recompute_on_unsupported_attention():
+    config = AttentionConfig(
+        name=AttentionType.normalized, n_heads=4, head_dim=16, use_recompute_qkv_prep=True
+    )
+    with pytest.raises(OLMoConfigurationError, match="use_recompute_qkv_prep"):
+        config.build(64, layer_idx=0, n_layers=1)
+
+
+def test_attention_config_allows_disabled_fused_v2_flags_on_other_types():
+    # A disabled (falsy) fused_v2-only flag is a no-op and must not break other attention types,
+    # even though as_dict keeps the explicit False.
+    config = AttentionConfig(
+        name=AttentionType.default,
+        n_heads=4,
+        head_dim=16,
+        mxfp8_projections=False,
+        mxfp8_qkv_projection=False,
+        use_recompute_qkv_prep=False,
+    )
+    attention = config.build(64, layer_idx=0, n_layers=1)
+    assert isinstance(attention, Attention)
+
+
+def test_mxfp8_saved_qkv_hooks_match_saved_tensors_by_storage():
+    # The Torch backend transposes (and, for GQA, repeats) q/k/v before SDPA, producing new tensor
+    # objects that autograd saves. The pack hook must recognize those via shared storage; matching
+    # by tensor identity would miss all of them and silently no-op.
+    from olmo_core.nn.attention import _MXFP8SavedQKVHooks
+    from olmo_core.nn.attention.backend import _repeat_kv
+
+    q = torch.randn(2, 8, 4, 32)
+    k = torch.randn(2, 8, 2, 32)
+    v = torch.randn(2, 8, 2, 32)
+    hooks = _MXFP8SavedQKVHooks(q, k, v, pack_counter=[0])
+
+    def matched(t: torch.Tensor):
+        return hooks.target_names.get(t.untyped_storage().data_ptr())
+
+    # transpose is a view -> shares storage -> matched.
+    assert matched(q.transpose(1, 2)) == "attention.q"
+    # a non-repeating kv path (n_rep=1) stays a view -> matched.
+    assert matched(_repeat_kv(k, 1).transpose(1, 2)) == "attention.k"
+    # a GQA repeat copies -> fresh storage -> not matched (acceptable; never mis-packs).
+    assert matched(_repeat_kv(k, 3)) is None
+    # unrelated tensors are never matched.
+    assert matched(torch.randn(2, 8, 4, 32)) is None
+
+
+def test_causal_attention_positions():
+    # Full causal attention: the triangle sum, including the diagonal (self-attention).
+    assert _causal_attention_positions(1) == 1
+    assert _causal_attention_positions(4) == 10  # 4 + 3 + 2 + 1
+    assert _causal_attention_positions(32) == 32 * 33 // 2
+
+    # A window at least as large as the sequence is equivalent to full attention.
+    assert _causal_attention_positions(32, 32) == _causal_attention_positions(32)
+    assert _causal_attention_positions(32, 100) == _causal_attention_positions(32)
+
+    # Sliding window: an early triangle plus a flat ``window_size`` per remaining query.
+    assert _causal_attention_positions(32, 8) == 8 * 9 // 2 + (32 - 8) * 8
+
+
+def test_attention_num_flops_per_token_applies_causal_discount():
+    d_model, n_heads, seq_len = 64, 4, 32
+    attn = AttentionConfig(name=AttentionType.default, n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=1
+    )
+    head_dim = attn.head_dim
+    param_flops = 6 * sum(p.numel() for p in attn.parameters())
+    expected_attn = 12 * n_heads * head_dim * _causal_attention_positions(seq_len) // seq_len
+
+    assert attn.num_flops_per_token(seq_len) == param_flops + expected_attn
+    # The causal triangle roughly halves the attention-compute term relative to the pre-change
+    # formula, which counted a full ``seq_len`` of keys per query.
+    old_style_attn = 12 * n_heads * head_dim * seq_len
+    assert expected_attn < old_style_attn
+    assert expected_attn * 2 > old_style_attn  # ~half, not an order of magnitude off
+
+
+def test_attention_num_flops_per_token_sliding_window_is_cheaper():
+    d_model, n_heads, seq_len = 64, 4, 32
+    sliding_window = SlidingWindowAttentionConfig(
+        pattern=[8],
+        force_full_attention_on_first_layer=False,
+        force_full_attention_on_last_layer=False,
+    )
+    swa_attn = AttentionConfig(
+        name=AttentionType.default, n_heads=n_heads, sliding_window=sliding_window
+    ).build(d_model, layer_idx=0, n_layers=4)
+    full_attn = AttentionConfig(name=AttentionType.default, n_heads=n_heads).build(
+        d_model, layer_idx=0, n_layers=4
+    )
+
+    assert swa_attn.window_size == 8
+    # Same parameters, so any difference is purely the windowed attention-compute term.
+    assert swa_attn.num_flops_per_token(seq_len) < full_attn.num_flops_per_token(seq_len)
+
+    head_dim = swa_attn.head_dim
+    param_flops = 6 * sum(p.numel() for p in swa_attn.parameters())
+    expected_attn = 12 * n_heads * head_dim * _causal_attention_positions(seq_len, 8) // seq_len
+    assert swa_attn.num_flops_per_token(seq_len) == param_flops + expected_attn

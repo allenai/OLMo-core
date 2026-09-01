@@ -15,5 +15,6 @@
    layer_norm
    lm_head
    moe
+   parallel
    rope
    transformer
