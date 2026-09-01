@@ -17,6 +17,7 @@ locally; CLAUDE.md covers Beaker.
 | `goldgrad/` | Gold-gradient O(1)-backward probe: train/eval/bench/reap | Local |
 | `local_4b/` | 4B local runs: contra n250, cptmix sweeps, docchunk oolong, fastlm cpt40m | Local |
 | `singletask_ladder/` | Per-task (not mixed) ladder SFT + multi-rung evals (see its README + EVAL.md) | Local + Beaker |
+| `loss_bench/` | Train/val CE-loss benchmark across the 8 checkpoints behind 4 results-hub comparison pairs (sparse-lm vs fast-lm, dense vs landmark @256k, summtoken causal/decay/p50, docchunk vs dense), by context-length bucket — see its README | Beaker |
 | `evals/` | Standalone eval launchers (dense/landmark native, vllm, 32k ladder). Family-specific evals live with their family. | Local |
 | `probes/` | One-off diagnostics: `sanity_check_packing.py`, `scan_doc_lengths.py` | — |
 | `hils_sft/` | SFT for HiLS-Attention-7B and its Olmo-3-1025-7B control, through the HiLS repo's veomni trainer (neither model can use olmo_core: HiLS's attention is not implemented there and both use the OLMo-3 vocab). Plus an olmo_core bridge arm. |
