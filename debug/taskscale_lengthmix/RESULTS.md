@@ -80,6 +80,21 @@ expect from spending every token at the rung being scored. A second pure-length 
 (2,000 examples at ~62.8k tokens), scores **.875 @32k** -- the same place, from twice the length and
 half the examples.
 
+### Sparse vs dense on nq, at a matched 48M tokens (eval_size 600/rung)
+
+| variant | 2k | 8k | 16k | 32k |
+|---|---|---|---|---|
+| dense | .973 | .933 | .910 | .873 |
+| sparse-landmark | .912 | .728 | .608 | .248 |
+| gap | -.061 | -.205 | -.302 | -.625 |
+
+The deficit compounds with length rather than settling at a constant ratio: sparse holds 94% of
+dense at 2k and 28% at 32k. This is the qdmatch profile (collapse at length), not the outlier
+profile (converges to ~0.9x and plateaus). Sparse's 16M and 32M budgets are still queued, so the
+crossover question -- whether MORE tokens buy sparse its way back -- is not answerable for nq yet.
+The 64k transfer rung on the deep pure-length arm gives dense .838, so dense degrades gently over
+the 32k->64k step that sparse cannot reach at all.
+
 **Sparse arms cannot be evaluated on L40S.** The landmark prefill kernel asks triton for 104KB of
 shared memory against sm_89's 99KB limit, so every sparse-landmark checkpoint dies with
 OutOfResources on neptune -- and `--no-sparse-decode` does NOT help, because the fast decode path is
