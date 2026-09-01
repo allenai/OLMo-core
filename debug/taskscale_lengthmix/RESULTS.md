@@ -70,7 +70,16 @@ B(.95)=205M. Per-doubling increments are +.028/+.043 at 16k and +.077/+.062 at 3
 The 16k/32k rungs are the informative ones -- 2k and 8k were already saturated, and the 16k column
 moves +.028 then +.025 while 2k moves -.004. Pure-length anchor: nqD32k_4000 (4,000 examples at
 n=200 docs, ~31.4k tokens) scores **.888 @32k**, slightly above the 48M mix, which is what you would
-expect from spending every token at the rung being scored.
+expect from spending every token at the rung being scored. A second pure-length arm, nqD64k_2000
+(2,000 examples at ~62.8k tokens), scores **.875 @32k** -- the same place, from twice the length and
+half the examples.
+
+**Sparse arms cannot be evaluated on L40S.** The landmark prefill kernel asks triton for 104KB of
+shared memory against sm_89's 99KB limit, so every sparse-landmark checkpoint dies with
+OutOfResources on neptune -- and `--no-sparse-decode` does NOT help, because the fast decode path is
+not what allocates it. Sparse evals have to go to an A100 (164KB) or H100 (228KB) cluster, which is
+the scheduling constraint on this wave: dense arms can use the idle L40S capacity, sparse arms
+compete for the jammed clusters.
 
 ## Prior-campaign anchors
 
