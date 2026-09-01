@@ -59,9 +59,13 @@ reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples i
 
 | budget | 2k | 8k | 16k | 32k |
 |---|---|---|---|---|
-| 16M | .977 | .917 | **.857** | pending |
+| 16M | .977 | .917 | **.857** | **.760** |
 | 32M | .977 | .930 | **.885** | **.837** |
 | 48M | .973 | .933 | **.910** | **.873** |
+
+Hill fits over the three budgets (fmax runs into its 1.0 bound at both rungs, so the .95 budgets
+are soft): 16k g=.45 K=0.3M -> B(.90)=41M, B(.95)=216M; 32k g=.70 K=3.1M -> B(.90)=71M,
+B(.95)=205M. Per-doubling increments are +.028/+.043 at 16k and +.077/+.062 at 32k.
 
 The 16k/32k rungs are the informative ones -- 2k and 8k were already saturated, and the 16k column
 moves +.028 then +.025 while 2k moves -.004. Pure-length anchor: nqD32k_4000 (4,000 examples at
