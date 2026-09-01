@@ -61,6 +61,15 @@ eos 248044, zero skipped examples, and every max_example_len inside the 65536 tr
 reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
 20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
 
+## Scheduling note (2026-09-01)
+
+jupiter sat at 0 of our 43 arms running for ~9 hours even while it reported free slots: the free
+capacity is FRAGMENTED (single-node 8-GPU requests need a node with 8 free GPUs, and 54 nodes were
+cordoned), and same-priority jobs drain FIFO behind our own head-of-queue job. **ai2/saturn
+(A100-80GB, eager scheduling) places the identical 8-GPU config in seconds once it has room** --
+migrating an arm there is a stop-on-jupiter + relaunch with `--cluster ai2/saturn`, no config
+change. Five dense arms moved and started immediately.
+
 ## Results
 
 (f1 per rung, eval_size stated per row; filled in as evals land)
