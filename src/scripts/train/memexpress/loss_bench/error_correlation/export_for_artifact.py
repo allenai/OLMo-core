@@ -24,8 +24,14 @@ from typing import Dict, List
 from analyze import ExampleKey, compare_pair, load_model_scores
 from registry import SAME_DATA_GROUPS
 
-PROMPT_TAIL_CHARS = 350
-PREDICTION_CHARS = 220
+# The harness itself already caps these before writing generations.jsonl (prompt[-1200:] for
+# prompt_tail; resp.strip()[:500] for contradiction/retrieval/outlier predictions, [:300] for
+# oolong/rerank -- see evaluate.py's _eval_* functions). These constants match those upstream caps
+# (not tighter) so nothing gets truncated a second time -- outlier's predictions in particular run
+# close to 500 chars (reasoning sentence + 3 bracketed IDs) and were getting cut mid-answer at the
+# old, tighter values.
+PROMPT_TAIL_CHARS = 1200
+PREDICTION_CHARS = 500
 
 
 def main() -> None:
