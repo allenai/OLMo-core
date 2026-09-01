@@ -45,10 +45,12 @@ def main():
         "v2/both gold scores a realistic-trained ckpt ~0.39 f1 too low.",
     )
     ap.add_argument("--no-sparse-decode", action="store_true",
-                    help="drop OLMO_LANDMARK_SPARSE_DECODE=1. The fast decode kernel asks for "
-                         "104KB of shared memory, over the 99KB an L40S (sm_89) has, so a sparse "
-                         "arm evaluated on neptune dies in triton with OutOfResources. H100/A100 "
-                         "are fine; this flag trades the ~2x decode speedup for portability.")
+                    help="drop OLMO_LANDMARK_SPARSE_DECODE=1 (the ~2x fast decode path). NOTE "
+                         "this does NOT make a sparse arm runnable on an L40S: the landmark "
+                         "PREFILL kernel itself asks triton for 104KB of shared memory against "
+                         "sm_89's 99KB limit, so neptune is out for every sparse-landmark "
+                         "checkpoint regardless of this flag. Send sparse evals to an A100 (164KB) "
+                         "or H100 (228KB) cluster.")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--ngpu", type=int, default=2)
     ap.add_argument("--max-length", type=int, default=72000)
