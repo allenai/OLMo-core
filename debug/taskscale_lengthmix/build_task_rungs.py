@@ -79,6 +79,20 @@ TASKS = {
         "budgets": [20e6, 40e6, 80e6],
         "prompt_task": "oolong",
     },
+    "absence": {
+        # Gutenberg text-diff. Rung knobs are the SHIPPED eval rungs' own --n-sents (90/180/360/720)
+        # rather than token-matched values: the eval labels are 3.0-3.6x below the measured medians
+        # (rung "2048" really measures 7.5k), so training at the label would misalign train and eval
+        # by 3x. The eval ladder has no 32k rung.
+        #
+        # Yield collapses with N -- 4000 examples cost 2,512 books at n=90 but only 168 examples
+        # came out of 20,000 books at n=720 -- so the big budgets may not compose; compose() skips
+        # what the pools cannot cover.
+        "rungs": [("2k", 90, 20000), ("4k", 180, 3000), ("8k", 360, 900), ("16k", 720, 200)],
+        "budgets": [20e6, 40e6, 80e6],
+        "prompt_task": "absence",
+        "max_seq": 49152,
+    },
     "grouping": {
         # docs-per-example -> MEASURED medians 1964 / 8042 / 16692 / 32808 (rung_token_audit.json).
         # Well-calibrated: labels are within 4% of measurement, unusual for this suite.
@@ -228,6 +242,12 @@ def build_pools(task, force=False):
                     d,
                 ]
             )
+        elif task == "absence":
+            run([sys.executable, GEN / "generate_absence_data.py", "--gutenberg",
+                 "--n-sents", knob, "--k-remove", 3, "--min-sentence-words", 4,
+                 "--examples-per-book", 3, "--max-books-to-scan", 20000,
+                 "--num-train", count, "--num-eval", 0,
+                 "--output-dir", d, "--seed", 42])
         elif task == "grouping":
             run([sys.executable, GEN / "generate_arxiv_grouping_data.py",
                  "--compact-in", SRC / "grouping" / "openalex_compact.jsonl",
