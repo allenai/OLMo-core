@@ -42,6 +42,7 @@ GEN = REPO / "src" / "corpus_reasoning" / "data"
 WEKA = pathlib.Path(os.environ.get(
     "TASKSCALE_ROOT",
     "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix"))
+SRC = WEKA / "src"          # staged inputs -- fixed, so --smoke reroutes only the OUTPUTS
 
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base"
 EOS = 248044
@@ -96,7 +97,6 @@ def pool_file(task, label):
 
 # ---------------------------------------------------------------- stage: pools
 def build_pools(task, force=False):
-    src = WEKA / "src"
     for label, knob, count in TASKS[task]["rungs"]:
         d = pool_dir(task, label)
         if d.exists() and not force:
@@ -110,14 +110,14 @@ def build_pools(task, force=False):
         d.mkdir(parents=True, exist_ok=True)
         if task == "xabsence":
             run([sys.executable, GEN / "generate_xabsence_data.py",
-                 "--pool", src / "xabsence" / "pool_exact_train.jsonl",
+                 "--pool", SRC / "xabsence" / "pool_exact_train.jsonl",
                  "--num-pairs", knob, "--num-unmatched", 3,
                  "--num-train", count, "--num-eval", 0,
-                 "--orphan-side", "both", "--src-tag", "pubmed",
+                 "--src-tag", "pubmed",
                  "--output-dir", d, "--seed", 1300 + knob])
         elif task == "contradiction":
             # disjoint row slice per rung -> a gold pair appears in at most one rung
-            full = src / "contradiction" / "contradiction_train_pubmed_realistic_n50-950_k3.jsonl"
+            full = SRC / "contradiction" / "contradiction_train_pubmed_realistic_n50-950_k3.jsonl"
             off = 0
             for lab2, _k2, c2 in TASKS[task]["rungs"]:
                 if lab2 == label:
