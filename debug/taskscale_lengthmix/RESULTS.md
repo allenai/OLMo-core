@@ -29,6 +29,28 @@ suite_table.json's: N = O_T(N) = low, NM / N² = high.
 | absence | low | 2k-16k | registry pending |
 | qdmatch_hpqa | high | 2k-32k | registry pending |
 
+## Measured rung medians (Qwen3.5-0.8B-Base tokenizer, --query-position after)
+
+Every mix share is computed from these, never from the rung label.
+
+| task | knob | 2k | 4k | 8k | 16k | 32k |
+|---|---|---|---|---|---|---|
+| oolong | len band | 2042 | — | 7846 | 16342 | 31728 |
+| contradiction | n docs | measured | — | measured | measured | 32811 |
+| xabsence (EXACT) | P pairs | — | ~4.5k | ~8.7k | 15625 | 30989 |
+| reorder | n chunks | measured | measured | 8812 | 17842 | no rung |
+
+## Arms built
+
+| task | budgets (tokens) | instances |
+|---|---|---|
+| oolong | 20.3M / 40.6M / 81.3M | 6,711 / 13,422 / 26,844 |
+| contradiction | 14.0M / 28.0M / 56.0M | 3,994 / 7,988 / 15,976 |
+| reorder | 15M / 30M / 50M | 5,835 / 11,670 / — |
+
+reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
+20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
+
 ## Results
 
 (f1 per rung, eval_size stated per row; filled in as evals land)
