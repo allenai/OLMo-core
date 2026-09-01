@@ -135,6 +135,27 @@ The 14M arm scores **.001 @2k, .000 @8k, .000 @16k** (eval_size 500) where its d
 runs the same eval path against the same bundle, so this is the model, not the harness:
 contradiction joins qdmatch as a task landmark compression cannot do at all.
 
+### Sparse verdicts so far (one row per task)
+
+| task | sparse profile | evidence |
+|---|---|---|
+| oolong | step down, then flat | .864/.631/.589/.535 @80M -- trails dense in all 12 cells |
+| nq | compounding decay | .912/.728/.608/.248 @48M vs dense .973/.933/.910/.873 |
+| outlier | constant ~0.9x factor, then plateau | needs ~1.5x tokens at 16k; 32k ceiling .57 |
+| xabsence | near-floor, decaying to zero | .217/.145/.061/.026 @20M (4k/8k/16k/32k) |
+| qdmatch_nq | dead | floor at every tested scale |
+| contradiction | dead | .001/.000/.000/.000 vs dense .909/.836/.751/.592 |
+| reorder | dead (at chance) | kendall_tau .009 @2k, -.004 @4k -- tau 0 IS chance |
+
+Five of seven sparse arms are at or near their task's floor. No task has yet shown sparse leading
+dense at any rung or budget.
+
+### absence, dense (2k rung so far)
+
+40M -> .983, 80M -> .997 (eval_size 500). Note absence's rung LABELS understate it ~3x: the "2k"
+rung measures 7.5k tokens on the eval path. Near-ceiling at the shortest rung, so the informative
+rungs will be 4k/8k (measured 14.5k/24.4k).
+
 ## Results (older)
 
 (f1 per rung, eval_size stated per row; filled in as evals land)
