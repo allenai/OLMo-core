@@ -150,11 +150,24 @@ contradiction joins qdmatch as a task landmark compression cannot do at all.
 Five of seven sparse arms are at or near their task's floor. No task has yet shown sparse leading
 dense at any rung or budget.
 
-### absence, dense (2k rung so far)
+### Dense, first rungs across the four new tasks (eval_size 500 each)
 
-40M -> .983, 80M -> .997 (eval_size 500). Note absence's rung LABELS understate it ~3x: the "2k"
-rung measures 7.5k tokens on the eval path. Near-ceiling at the shortest rung, so the informative
-rungs will be 4k/8k (measured 14.5k/24.4k).
+| task | metric | 2k/4k rung | budget scaling |
+|---|---|---|---|
+| xabsence | f1 | **1.000 / .997** @20M | 1.000 / 1.000 @80M -- SOLVED at every budget |
+| absence | f1 | .983 / .983 @40M | .997 / .993 @80M -- effectively solved |
+| reorder | kendall_tau | .359 @2k @15M | **.686** @2k @50M -- steep, still climbing |
+| textgroups | f1 | .040 / .016 @20M | .096 / .043 @80M -- near FLOOR even dense |
+
+Two tasks are already saturated for dense at these budgets (xabsence, absence), so their scaling
+laws are uninformative -- and note absence's labels understate length ~3x, so its "4k" rung is a
+measured 14.5k. The informative dense curves are reorder (a 3.3x budget nearly doubles tau) and
+textgroups, which is the campaign's one genuinely unsolved task for BOTH variants: dense at 80M
+scores .096 at 2k, where sparse-vs-dense is a comparison between two floors.
+
+The contrast that matters for sparse: on xabsence dense scores 1.000 at 4k where sparse scores
+.217, and on reorder dense reaches tau .686 where sparse sits at chance (.009). These are not
+tasks where sparse needs more data; they are tasks landmark compression cannot represent.
 
 ## Results (older)
 
