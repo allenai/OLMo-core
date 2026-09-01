@@ -50,10 +50,13 @@ from ctc_eval.lib.prompts import (
     COT_RETRIEVAL_INSTRUCTION_SINGLE, COT_RETRIEVAL_INSTRUCTION_MULTI_DOC,
     CONTRADICTION_INSTRUCTION, CLAIM_TEMPLATE,
     QDMATCH_INSTRUCTION,
+    XFORMMATCH_INSTRUCTION,
+    RECMATCH_INSTRUCTION,
+    RECORD_TEMPLATE,
     REDUNDANCY_INSTRUCTION,
     ABSENCE_INSTRUCTION,
     ABSENCE_GUTENBERG_INSTRUCTION,
-    XABSENCE_INSTRUCTION,
+    XABSENCE_INSTRUCTION, XABSENCE_ONESIDED_INSTRUCTION, XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION,
     CYCLE_INSTRUCTION,
     MATCHING_NGRAM_INSTRUCTION, NGRAM_TEMPLATE,
     MATHMATCH_INSTRUCTION, EXPRESSION_TEMPLATE,
@@ -97,7 +100,21 @@ def _get_instruction(example, task, output_top_k=-1):
         return CONTRADICTION_INSTRUCTION
     if task == "qdmatch":
         return QDMATCH_INSTRUCTION
+    if task == "xformmatch":
+        return XFORMMATCH_INSTRUCTION
+    if task == "recmatch":
+        return RECMATCH_INSTRUCTION
     if task == "xabsence":
+        # One-sided data (--orphan-side A) is self-describing: it carries orphan_side, so legacy
+        # files -- which lack the field -- keep the legacy two-sided prompt and stay byte-identical.
+        if example.get("orphan_side") == "A":
+            n_unmatched = example.get("num_unmatched", 3)
+            # ...and the WORDING is data-driven too: a prose corpus (source "xabsence_gutenberg")
+            # holds passages, not claims. PubMed one-sided files keep the "claims" wording
+            # byte-identically, so only the new gutenberg variant sees a different string.
+            if str(example.get("source", "")).endswith("gutenberg"):
+                return XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION.format(n=n_unmatched)
+            return XABSENCE_ONESIDED_INSTRUCTION.format(n=n_unmatched)
         return XABSENCE_INSTRUCTION
     if task == "redundancy":
         return REDUNDANCY_INSTRUCTION
@@ -161,6 +178,22 @@ def _format_doc(doc, use_titles=True, doc_id=None):
 
 def _format_documents(documents, task, use_titles=True):
     """Format all documents, adding [N] IDs for retrieval tasks."""
+    if task == "recmatch":
+        # One record per document; \n\n-separated so each record is its own
+        # isolated chunk under chunked attention.
+        return "\n\n".join(
+            RECORD_TEMPLATE.format(id=i + 1, text=doc["text"])
+            for i, doc in enumerate(documents)
+        )
+    if task == "xformmatch":
+        # Originals and rewrites in one shuffled shared 1-based index; each item
+        # carries a `type` tag. \n\n-separated so every item is its own
+        # isolated chunk under chunked attention.
+        lines = []
+        for i, item in enumerate(documents):
+            tag = "Original" if item.get("type") == "original" else "Rewrite"
+            lines.append(f"[{i + 1}] {tag}: {item['text']}")
+        return "\n\n".join(lines)
     if task == "qdmatch":
         # Items are a pre-ordered mix of queries and documents (single shared
         # 1-based index; order encodes the separate-vs-shuffled layout). Each
@@ -797,6 +830,14 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         (deterministic per-example).
       "none": no CoT prefix, just the "Outliers: ..." line.
     """
+    if task == "recmatch":
+        # Unordered sorted [a, b] pairs, 1-based (contradiction-style metrics).
+        return _json.dumps(example.get("gold_doc_indices", []))
+    if task == "xformmatch":
+        # Ordered [original_id, rewrite_id] pairs, 1-based (matches the rendered
+        # item numbers). NOT sorted within a pair -- the original's id comes
+        # first (same parser/metrics as qdmatch).
+        return _json.dumps([[int(a), int(b)] for a, b in example.get("gold_pairs", [])])
     if task == "qdmatch":
         # Ordered [query_id, doc_id] pairs, 1-based (matches the rendered item
         # numbers). NOT sorted — query index must come first.
@@ -824,9 +865,13 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "xabsence":
         # Unmatched item IDs (1-based, matching the rendered [i] numbers),
-        # scored by the absence set-F1.
+        # scored by the absence set-F1. The anchor word must match the anchor the INSTRUCTION
+        # asked for, or prompt and target disagree: one-sided data uses "Missing:" (like the
+        # sibling absence task), legacy two-sided data keeps "Unmatched:". The eval parser
+        # (_parse_id_set) already accepts both anchors.
         gold = sorted(int(g) + 1 for g in example.get("gold_doc_indices", []))
-        return "Unmatched: " + ", ".join(f"[{g}]" for g in gold)
+        anchor = "Missing" if example.get("orphan_side") == "A" else "Unmatched"
+        return f"{anchor}: " + ", ".join(f"[{g}]" for g in gold)
     if task == "matching_ngram":
         import json
         return json.dumps(example["gold_doc_indices"])
@@ -1081,7 +1126,21 @@ def _build_task_query(example, task, queries):
         return CONTRADICTION_INSTRUCTION
     if task == "qdmatch":
         return QDMATCH_INSTRUCTION
+    if task == "xformmatch":
+        return f"{XFORMMATCH_INSTRUCTION}\n\n{queries[0]}"
+    if task == "recmatch":
+        return f"{RECMATCH_INSTRUCTION}\n\n{queries[0]}"
     if task == "xabsence":
+        # One-sided data (--orphan-side A) is self-describing: it carries orphan_side, so legacy
+        # files -- which lack the field -- keep the legacy two-sided prompt and stay byte-identical.
+        if example.get("orphan_side") == "A":
+            n_unmatched = example.get("num_unmatched", 3)
+            # ...and the WORDING is data-driven too: a prose corpus (source "xabsence_gutenberg")
+            # holds passages, not claims. PubMed one-sided files keep the "claims" wording
+            # byte-identically, so only the new gutenberg variant sees a different string.
+            if str(example.get("source", "")).endswith("gutenberg"):
+                return XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION.format(n=n_unmatched)
+            return XABSENCE_ONESIDED_INSTRUCTION.format(n=n_unmatched)
         return XABSENCE_INSTRUCTION
     if task == "redundancy":
         return REDUNDANCY_INSTRUCTION
@@ -1204,7 +1263,7 @@ def build_prompt(example, task="retrieval", query_position="after",
     # no per-example query, so the task instruction itself plays the role of
     # the positioned ask and gets placed before/after/both relative to the
     # documents. The alpaca header is GENERIC_INSTRUCTION.
-    force_unified = task in ("contradiction", "qdmatch", "xabsence", "redundancy", "absence", "matching_ngram", "mathmatch", "strmatch", "cycle", "groups4", "textgroups", "reorder", "ruler")
+    force_unified = task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "redundancy", "absence", "matching_ngram", "mathmatch", "strmatch", "cycle", "groups4", "textgroups", "reorder", "ruler")
 
     # Unified path: every task shares the same structural prefill. The
     # task-specific ask lives in `query`, positioned relative to the docs.
@@ -1285,7 +1344,7 @@ def build_prompt_parts(example, task="retrieval", query_position="after",
 
     # Contradiction/reorder use unified-style: generic header + task
     # instruction placed in the positioned query slot.
-    if task in ("contradiction", "qdmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
+    if task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
         instruction = GENERIC_INSTRUCTION
     else:
         instruction = _get_instruction(example, task, output_top_k)
@@ -1295,7 +1354,7 @@ def build_prompt_parts(example, task="retrieval", query_position="after",
 
     context = _format_documents(docs, task, use_titles=use_titles)
 
-    if task in ("contradiction", "qdmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
+    if task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
         query = _build_task_query(example, task, queries)
         if query_position == "before":
             input_text = f"{query}\n\n{context}"

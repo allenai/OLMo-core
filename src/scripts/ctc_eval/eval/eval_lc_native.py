@@ -441,26 +441,51 @@ def main():
             # 600-example HELD-OUT files built by
             # debug/outlier_lengthmix_scaling/build_qdmatch_pools.py (eval units come from the p10
             # NQ *validation* split, disjoint from the train pool -- the shipped CTC-suite
-            # qdmatch_nq ladder drew train and eval from one shared unit pool).
+            # qdmatch_nq ladder drew train and eval from one shared unit pool). Length knob is
+            # M=N (queries == docs, k_relevant=3): M=N=9 -> median 1825 tokens, 42 -> 7571,
+            # 86 -> 15269, 172 -> 30425, all MEASURED with Qwen3.5-0.8B-Base
+            # ([[ctc-rung-labels-not-tokens]]).
+            # The 64k rung is ASYMMETRIC (M=172, N=368 -> median 61340). It has to be: one example
+            # consumes M+N-3 = 537 DISTINCT source units, and the original p10 NQ validation split
+            # held only 600 rows, so a symmetric M=N=344 (need 685) could not be drawn at all.
+            # That 600-row ceiling also meant one example consumed ~90% of the pool, so all 600
+            # eval examples shared nearly one corpus. The shipped rung_65536.jsonl is now REDRAWN
+            # from the 3,114-row DEEP validation pool at the same M=172/N=368 shape (537/3114 =
+            # 17% of the pool per example), which leaves the trained q64k arms byte-identical
+            # while de-correlating the eval. The superseded file is kept beside it as
+            # rung_65536.corr600.jsonl and is not wired up here.
+            # Each rung is gated on its own file, so 16k/32k/64k appear only once built.
             if os.path.isdir(f"{E5}/qdmatch_nq"):
                 LADDERS["qdmatch_nq"] = [
                     (_lab, f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
                     for _lab, _tok in (("3k", 2048), ("8k", 8192), ("16k", 16384),
-                                       ("32k", 32768))
+                                       ("32k", 32768), ("64k", 65536))
                     if os.path.exists(f"{E5}/qdmatch_nq/rung_{_tok}.jsonl")
                 ]
-            # nq LENGTH-MIX rungs (2k/8k). The shipped nq ladder above is named by doc count
+            # nq LENGTH-MIX rungs (2k/8k/16k). The shipped nq ladder above is named by doc count
             # (nq_validation_k{20,50,100,200}_600.jsonl); the length-mix bundle instead ships
-            # rung_{2048,8192}.jsonl, 600 held-out examples each, built by
+            # rung_{2048,8192,16384}.jsonl, 600 held-out examples each, built by
             # debug/outlier_lengthmix_scaling/build_nq_pools.py from the p10 NQ *validation*
-            # split (0 shared queries with the nq2k_*/nq8k_* training arms; k=12 -> median 1907
-            # tokens, k=48 -> median 7509, both MEASURED with Qwen3.5-0.8B-Base at
-            # --query-position after). Conditional and file-gated, so it overrides the shipped
-            # entry ONLY when pointed at that bundle; every other EVAL500_ROOT is untouched.
+            # split (0 shared queries with the nq2k_*/nq8k_*/nq16k_*/nq32k_* training arms;
+            # k=12 -> median 1907 tokens, k=48 -> median 7509, k=100 -> median 15455, all MEASURED
+            # with Qwen3.5-0.8B-Base at --query-position after).
+            # The 32k and 64k rungs come from the DEEP p10 source (nq_*_k~450_deep*.jsonl,
+            # 440-460 docs/row, 9,998 train / 3,114 validation): k=200 -> measured median 31.4k
+            # tokens and k=400 -> 62.8k, both with clamped_frac 0.0. They REPLACE the earlier
+            # k25-202 build, whose "32k" rung was really ~18k -- nq length is set by k =
+            # docs/example and `shrink` CLAMPS a row holding fewer than k docs, so with rows of
+            # 25-202 documents (mean ~114) k=200 clamped 98% of them and k=220/260 produced a
+            # byte-identical distribution. That superseded file is kept beside this one as
+            # rung_32768.clamped18k.jsonl and is NOT wired up here. Still quote measured medians,
+            # never labels ([[ctc-rung-labels-not-tokens]]).
+            # Conditional and file-gated, so it overrides the shipped entry ONLY when pointed at
+            # that bundle, and each rung is gated on its own file; every other EVAL500_ROOT is
+            # untouched.
             if os.path.exists(f"{E5}/nq/rung_2048.jsonl"):
                 LADDERS["nq"] = [
                     (_lab, f"{E5}/nq/rung_{_tok}.jsonl")
-                    for _lab, _tok in (("2k", 2048), ("8k", 8192))
+                    for _lab, _tok in (("2k", 2048), ("8k", 8192), ("16k", 16384),
+                                       ("32k", 32768), ("64k", 65536))
                     if os.path.exists(f"{E5}/nq/rung_{_tok}.jsonl")
                 ]
         else:

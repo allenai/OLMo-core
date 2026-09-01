@@ -102,7 +102,9 @@ def build_ladders(args):
             "outlier": [("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
                 ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
                 ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
+                ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
+                # 128k transfer-test rung (n=880 docs); see corpus_reasoning/eval/eval_lc_native.py.
+                ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl")],
             "rerank": [("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
                 ("8k", f"{E5}/rerank/msmarco_trainhn_eval_k50_500.jsonl"),
                 ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl")],
