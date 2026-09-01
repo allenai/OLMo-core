@@ -161,18 +161,16 @@ def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
         index = json.load(f)["examples"]
 
     buckets_in_scope = set(assign_train_buckets(spec.max_context_length))
-    per_bucket: dict = {
-        lab: {"ce_sum": 0.0, "n_tokens": 0, "n_examples": 0, "examples": []}
-        for lab in buckets_in_scope
-    }
+    per_key: dict = {}  # (task, bucket) -> accumulator
     n_skipped_too_long = 0
 
     for rec in index:
         bucket = rec["bucket"]
         if bucket not in buckets_in_scope:
             continue
+        task = rec["task"]
         i = rec["i"]
-        key = f"{bucket}__{i}"
+        key = f"{task}__{bucket}__{i}"
         ids = npz[f"{key}__ids"].tolist()
         mask = npz[f"{key}__mask"].tolist()
         if len(ids) > spec.max_context_length:
@@ -182,17 +180,14 @@ def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
         if result is None:
             continue
         ce_sum, n_tok = result
-        b = per_bucket[bucket]
+        b = per_key.setdefault(
+            (task, bucket), {"ce_sum": 0.0, "n_tokens": 0, "n_examples": 0, "examples": []}
+        )
         b["ce_sum"] += ce_sum
         b["n_tokens"] += n_tok
         b["n_examples"] += 1
         b["examples"].append(
-            {
-                "task": rec["task"],
-                "length": rec["length"],
-                "n_label_tokens": n_tok,
-                "mean_ce": ce_sum / n_tok,
-            }
+            {"length": rec["length"], "n_label_tokens": n_tok, "mean_ce": ce_sum / n_tok}
         )
 
     if n_skipped_too_long:
@@ -202,17 +197,20 @@ def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
         )
 
     out = {}
-    for bucket, b in per_bucket.items():
+    for (task, bucket), b in per_key.items():
         if b["n_tokens"] == 0:
             continue
-        out[bucket] = {
+        out_key = f"{task}@{bucket}"
+        out[out_key] = {
+            "task": task,
+            "bucket": bucket,
             "mean_ce_token_weighted": b["ce_sum"] / b["n_tokens"],
             "n_tokens": b["n_tokens"],
             "n_examples": b["n_examples"],
             "examples": b["examples"],
         }
         print(
-            f"[train] {spec.data_group}@{bucket}: mean_ce={out[bucket]['mean_ce_token_weighted']:.4f} "
+            f"[train] {spec.data_group}/{out_key}: mean_ce={out[out_key]['mean_ce_token_weighted']:.4f} "
             f"n_examples={b['n_examples']} n_tokens={b['n_tokens']}",
             flush=True,
         )
