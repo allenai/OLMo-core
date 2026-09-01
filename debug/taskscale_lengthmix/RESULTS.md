@@ -106,6 +106,12 @@ not what allocates it. Sparse evals have to go to an A100 (164KB) or H100 (228KB
 the scheduling constraint on this wave: dense arms can use the idle L40S capacity, sparse arms
 compete for the jammed clusters.
 
+## qdmatch_nq 64k transfer (eval_size 600)
+
+Neither arm was trained at 64k; both are 32k pure-length arms scored on the 64k rung.
+q32k_16000 (16,000 examples, ~487M tokens) -> **.706**, q32k_32000 (32,000 examples, ~975M) ->
+.713. Doubling the corpus buys +.007 at 64k, the same flat tail the 32k ladder shows.
+
 ## Prior-campaign anchors
 
 - qdmatch_nq dense short-heavy mixes @8k/16k/32k, eval_size 600: 64M .949/.883/.676,
