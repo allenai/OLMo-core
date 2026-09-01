@@ -634,6 +634,22 @@ def main():
             # built before the 2026-08-10 level-mix fix, and its concept level drifts with length
             # (L0 share .57 -> .00 across 2k -> 32k), so a length curve on it is really a
             # granularity curve. The fixed-mix rebuild holds ~.25 per level at every rung.
+            # outlier LENGTH-MIX rungs. The shipped outlier ladder above is named by doc count
+            # (outlier_wiki100w_n{22,55,110,220}_k3_eval_600.jsonl); the length-mix bundle instead
+            # ships rung_{2048,...,32768}.jsonl, 600 held-out examples each, built alongside the
+            # length-mix training pools. File-gated, so every other EVAL500_ROOT is untouched.
+            # NOTE the length-mix bundle nests these one level deeper than you would expect --
+            # eval_rungs/outlier/outlier/rung_*.jsonl -- so point EVAL500_ROOT at
+            # outlier_lengthmix/eval_rungs/outlier, not at eval_rungs. Without this entry an
+            # outlier ladder run against that bundle MISSING-skips every rung and exits 0 with an
+            # empty result.
+            if os.path.exists(f"{E5}/outlier/rung_2048.jsonl"):
+                LADDERS["outlier"] = [
+                    (_lab, f"{E5}/outlier/rung_{_tok}.jsonl")
+                    for _lab, _tok in (("2k", 2048), ("4k", 4096), ("8k", 8192),
+                                       ("16k", 16384), ("32k", 32768))
+                    if os.path.exists(f"{E5}/outlier/rung_{_tok}.jsonl")
+                ]
             # absence (Gutenberg text-diff). Its labels are the loosest in the suite -- measured
             # eval-path medians are 7.5k / 14.5k / 24.4k / 48.7k against labels 2k / 4k / 8k / 16k
             # -- because queries[0] is the whole corpus minus K sentences, so the prompt is ~2x the
