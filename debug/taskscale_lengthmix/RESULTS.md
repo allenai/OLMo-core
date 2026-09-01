@@ -146,11 +146,17 @@ contradiction joins qdmatch as a task landmark compression cannot do at all.
 | qdmatch_nq | dead | floor at every tested scale |
 | contradiction | dead | .001/.000/.000/.000 vs dense .909/.836/.751/.592 |
 | reorder | dead (at chance) | kendall_tau .009 @2k, -.004 @4k -- tau 0 IS chance; dense .686 @2k |
-| absence | dead | .017 / .005 @20M (2k/4k) where dense scores .983 / .983 |
+| absence | LATE TAKEOFF, not dead | .017/.005/.001 @20M -> .224/.094/.025 @40M -> .357/.304/.250 @80M |
 | grouping | at the degenerate floor | pairwise_f1 .419 @2k @20M -- BELOW the .44 that a
   single-cluster prediction scores, so it is not "44% right", it is chance; dense .794 |
 
-**Seven of nine sparse arms are at or near their task's floor**, and no task has shown sparse
+⚠ CORRECTION (same day): absence sparse was first recorded as "dead" from its 20M arm alone
+(.017/.005/.001). The 40M and 80M arms show a steep late takeoff -- .224/.094/.025 then
+.357/.304/.250 -- so it is the outlier pattern (nothing happens, then the task switches on), not a
+floor. A single small-budget arm cannot distinguish "cannot learn this" from "has not started
+learning yet"; only the ladder can. Its 80M scores are still far under dense's .983/.983/.993.
+
+**Six of nine sparse arms are at or near their task's floor**, and no task has shown sparse
 leading dense at any rung or any budget. Read grouping's number against its floor, not against
 zero: `pairwise_f1` gives ~0.44 for a degenerate all-one-cluster answer (ARI 0), so sparse
 grouping's .419 is chance, not partial credit -- the same reason the metric is never quoted without
