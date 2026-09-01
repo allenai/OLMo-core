@@ -94,22 +94,38 @@ THIRD distinct sparse shape: a step down from 2k to 8k, then near-flat -- 8k/16k
 .072-.096 at a given budget, where nq sparse fell .728 -> .248 over the same span. So sparse
 degradation is not one phenomenon; it is task-specific.
 
-Dense at 40M, for comparison: 2k .886 vs sparse .823, 8k .672 vs .564. Dense leads at every rung
-measured so far, and by MORE at 8k than at 2k.
+### oolong, dense vs sparse
 
-### contradiction, dense (32k rung still generating)
+Dense (2k/8k complete at all three budgets; 40M complete at all four rungs):
 
-| budget | 2k | 8k | 16k |
-|---|---|---|---|
-| 14M | .909 | .836 | .751 |
-| 56M | .982 | .971 | .941 |
+| budget | 2k | 8k | 16k | 32k |
+|---|---|---|---|---|
+| 20M | .865 | .639 | pending | pending |
+| 40M | .886 | .672 | .643 | .607 |
+| 80M | .913 | .692 | pending | pending |
 
-eval_size 500, v3 realistic-mode gold. A 4x budget buys +.073/+.135/+.190 -- the gain GROWS with
-length, the opposite of a task that is saturating.
+Head to head at 40M: **.886/.672/.643/.607 dense vs .823/.564/.532/.503 sparse** -- dense leads by
+.063/.108/.111/.104. Dense at the SMALLEST budget (20M) already beats sparse at the LARGEST (80M)
+at 8k (.639 vs .631), so on oolong sparse is not within a 4x budget of dense at length. Both are
+still climbing, but the dense per-doubling gain at 8k (+.038) roughly matches sparse's (+.067)
+only if sparse's flat tail keeps holding -- and it starts .108 behind.
+
+### contradiction, dense -- COMPLETE (2 budgets)
+
+| budget | 2k | 8k | 16k | 32k |
+|---|---|---|---|---|
+| 14M | .909 | .836 | .751 | .592 |
+| 56M | .982 | .971 | .941 | .881 |
+
+eval_size 500, v3 realistic-mode gold. A 4x budget buys +.073/+.135/+.190/**+.289** -- the gain
+grows monotonically with length. This is the strongest evidence in the campaign that long-context
+failure on a genuinely O_T(N^2) task can be bought off with data: .881 at 32k from 56M tokens,
+where outlier needs an extrapolated ~1.26B for .8 at the same rung. The 28M arm is still training.
 
 ### contradiction, sparse -- collapse
 
-The 14M arm scores **.001 @2k** (eval_size 500) where its dense twin scores .909. The dense arm
+The 14M arm scores **.001 @2k, .000 @8k, .000 @16k** (eval_size 500) where its dense twin scores
+.909/.836/.751. The dense arm
 runs the same eval path against the same bundle, so this is the model, not the harness:
 contradiction joins qdmatch as a task landmark compression cannot do at all.
 
