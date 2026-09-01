@@ -116,12 +116,16 @@ extrapolation says "the curve still rising will pass the curve that is saturatin
 points cannot support. Treat as NOT a prediction of crossover; it is a prediction that sparse has
 not yet shown its ceiling.
 
-### contradiction, dense -- COMPLETE (2 budgets)
+### contradiction, dense -- COMPLETE (3 budgets)
 
 | budget | 2k | 8k | 16k | 32k |
 |---|---|---|---|---|
 | 14M | .909 | .836 | .751 | .592 |
+| 28M | .967 | .932 | pending | pending |
 | 56M | .982 | .971 | .941 | .881 |
+
+The middle budget lands where a smooth curve wants it (2k .967 between .909 and .982), so the
+steep 14M->56M rise is a real curve rather than two points that happen to be far apart.
 
 eval_size 500, v3 realistic-mode gold. A 4x budget buys +.073/+.135/+.190/**+.289** -- the gain
 grows monotonically with length. This is the strongest evidence in the campaign that long-context
