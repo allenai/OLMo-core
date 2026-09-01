@@ -117,7 +117,17 @@ q32k_16000 (16,000 examples, ~487M tokens) -> **.706**, q32k_32000 (32,000 examp
 Its 16k rung -- a DOWNWARD transfer, since every training example sits at ~32k -- scores **.119**
 (eval_size 600), against .453 for the 64M short-heavy mix at the same rung. Training entirely at
 one length does not buy the shorter rung; the short-heavy recipe exists for exactly this reason.
-The 32k rung, which supplies the third point for the outlier 32k K refit, is still running.
+Its 32k rung scores **.302**, completing the three-point pure-length ladder at n=220 docs
+(~32.8k tokens/example): 2,000 ex / 66M tok -> .209, 4,000 / 131M -> .302, 8,000 / 262M -> .472.
+Per-doubling increments are +.093 then +.170 -- ACCELERATING, so this task is still in the takeoff
+part of its curve rather than the saturating tail. The Hill refit (fmax 1.05, g .88, K 339M,
+rmse .011) puts B(.5)=304M, B(.7)=742M and B(.8)=1.26B tokens; everything past 262M is
+extrapolation from three points inside a rising regime, so treat the .8 figure as an order of
+magnitude, not a number.
+
+Set against the short-heavy mixes at the same rung (.107 at 64M, .266 at 160M, .352 at 320M), the
+pure-length arms are AHEAD per token at 32k -- .302 at 131M vs ~.24 interpolated for the mix -- the
+mirror image of the 16k transfer above, where the mix wins by a factor of four.
 
 ## Prior-campaign anchors
 
