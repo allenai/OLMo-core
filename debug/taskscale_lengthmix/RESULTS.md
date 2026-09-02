@@ -178,7 +178,8 @@ a data-starvation artifact of the smallest arm.
 ### reorder + grouping, dense (eval_size 500)
 
 reorder (kendall tau): 2k .359/.610/.686, 4k .124/.356/.457, 8k .001/.017/.050 across 15/30/50M.
-16k is 0.000 at BOTH 15M and 30M -- the one rung where more data changes nothing at all. The 8k rung IS scaling -- 50x from the smallest budget -- but from .001, so a 3.3x budget moves it
+16k is 0.000 at ALL THREE budgets (15M, 30M, 50M) -- the one rung in the whole campaign where
+more data changes nothing whatsoever. reorder dense is now complete: 12 of 12 cells. The 8k rung IS scaling -- 50x from the smallest budget -- but from .001, so a 3.3x budget moves it
 to .050 and it would take orders of magnitude more to matter.
 Both short rungs scale cleanly; **8k is a cliff** -- .050 at the largest budget, against .686 at 2k
 for the same checkpoint. Reorder is a short-context task at these budgets no matter the data.
