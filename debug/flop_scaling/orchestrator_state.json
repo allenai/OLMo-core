@@ -1,0 +1,44 @@
+{
+ "synced": false,
+ "sync_ex": "01M1GBR1854WCV0KJX143YG4H3",
+ "grid_launched": false,
+ "runs": {
+  "fs-contradiction-dense-sh16M": {
+   "ex": "01M1GB22BK7THD9GR345RBKD4Y",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs-contradiction-kv17-sh16M": {
+   "ex": "01M1GB38PKKAFNQ2ATFDW68ZKT",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs-contradiction-ffnmoe-s1-sh16M": {
+   "ex": "01M1GB4T12VY82Q4E1J59BJ5TZ",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  }
+ },
+ "evals": {},
+ "last_harvest": 0,
+ "harvest_ex": null,
+ "done": false
+}

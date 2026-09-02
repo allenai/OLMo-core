@@ -84,8 +84,10 @@ def main() -> None:
     ap.add_argument("--num-gpus", type=int, default=8)
     ap.add_argument("--lr", type=float, default=5e-6, help="outlier length-mix campaign's dense optimum")
     ap.add_argument("--wandb-group", default="flop-scaling")
+    ap.add_argument("--skip", default="", help="comma list of run names NOT to launch (already exist)")
     ap.add_argument("mode", choices=["launch", "dry_run"])
     args = ap.parse_args()
+    skip = set(x for x in args.skip.split(",") if x)
 
     tasks = args.tasks.split(",")
     arms = args.arms.split(",")
@@ -96,6 +98,9 @@ def main() -> None:
             for arm in arms:
                 variant, largs, extra = arm_args(task, arm, budget)
                 name = run_name(task, arm, budget)
+                if name in skip:
+                    print(f"[skip] {name}")
+                    continue
                 cmd = [
                     sys.executable, "-u", LAUNCHER,
                     "--task", task, "--variant", variant, "--model-family", "qwen3", "--model-scale", "4b",
@@ -120,7 +125,8 @@ def main() -> None:
                 urls = [l.strip() for l in out.splitlines() if "beaker.org/ex/" in l]
                 tail = urls[-1] if urls else "\n".join(out.strip().splitlines()[-3:])
                 print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
-                rows.append((name, task, arm, budget, res.returncode, tail.replace("\t", " ")[:200]))
+                ids = [l.split("id=")[1].split()[0] for l in out.splitlines() if "SUBMITTED id=" in l]
+                rows.append((name, task, arm, budget, res.returncode, (ids[-1] + " " if ids else "") + tail.replace("\t", " ")[:200]))
     if args.mode == "launch":
         with open(LEDGER, "a") as f:
             w = csv.writer(f, delimiter="\t")

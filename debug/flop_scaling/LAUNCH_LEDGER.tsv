@@ -22,3 +22,4 @@ job_id	task	arm	budget	stage	run_name	cluster	launched	status	notes
 01M1GB22BK7THD9GR345RBKD4Y	contradiction	dense	16M	-	fs-contradiction-dense-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter
 01M1GB38PKKAFNQ2ATFDW68ZKT	contradiction	kv17	16M	-	fs-contradiction-kv17-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter
 01M1GB4T12VY82Q4E1J59BJ5TZ	contradiction	ffnmoe-s1	16M	s1	fs-contradiction-ffnmoe-s1-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter
+orchestrator	-	-	orchestrate	-	debug/flop_scaling/orchestrate.py	login node (setsid)	2026-09-01 23:09	RUNNING	unattended: sync outlier -> launch grid (dense,kv17,kv33,ffnmoe-s1 x tasks x budgets) -> evals + ffnmoe-s2 on completion, 1 retry, periodic harvest+collect+fit; state in orchestrator_state.json, log orchestrator.log
