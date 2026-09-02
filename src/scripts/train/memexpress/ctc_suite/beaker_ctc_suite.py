@@ -217,7 +217,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     opts = parse_args()
 
-    root_dir = get_root_dir(opts.cluster)  # -> /weka/oe-training-default/ai2-llm on jupiter
+    # --cluster may be a comma list (any-of placement); the weka root is the same on all of them
+    root_dir = get_root_dir(opts.cluster.split(",")[0])  # -> /weka/oe-training-default/ai2-llm on jupiter
     work_dir = get_work_dir(root_dir)
 
     data_root = (
