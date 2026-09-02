@@ -74,3 +74,23 @@ beaker35	nq	kv17	48M	-	fs35-nq-kv17-s48M	ai2/jupiter-cirrascale-2	2026-09-01 23:
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 beaker35	nq	kv33	48M	-	fs35-nq-kv33-s48M	ai2/jupiter-cirrascale-2	2026-09-01 23:48	LAUNCHED	"01M1GE0G76RH1Y5M57H8GCMQY0   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv17	16M	-	fs35-outlier-kv17-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:55	LAUNCHED	"01M1GED6702P1QJ6TGQK2RFXFQ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv33	16M	-	fs35-outlier-kv33-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:55	LAUNCHED	"01M1GEE68MAE9B4903J3KQS8AE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv17	32M	-	fs35-outlier-kv17-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:56	LAUNCHED	"01M1GEFJVRARQ4D0WZEGCH0B4W   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv33	32M	-	fs35-outlier-kv33-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:57	LAUNCHED	"01M1GEGPE1ZF2S8BQKETR9ZX0J   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv17	64M	-	fs35-outlier-kv17-s64M	ai2/jupiter-cirrascale-2	2026-09-01 23:58	LAUNCHED	"01M1GEJH22NB9P6RVYV49V1XCX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv33	64M	-	fs35-outlier-kv33-s64M	ai2/jupiter-cirrascale-2	2026-09-01 23:58	LAUNCHED	"01M1GEKN3DF7DKT4BST53Z68JE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv17	160M	-	fs35-outlier-kv17-s160M	ai2/jupiter-cirrascale-2	2026-09-01 23:59	LAUNCHED	"01M1GEN24TX5H2XD1J2PEJWGEX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv33	160M	-	fs35-outlier-kv33-s160M	ai2/jupiter-cirrascale-2	2026-09-02 00:00	LAUNCHED	"01M1GEPAG1R3XJV8Y5ECH7HZZ2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv17	320M	-	fs35-outlier-kv17-s320M	ai2/jupiter-cirrascale-2	2026-09-02 00:01	LAUNCHED	"01M1GEQS7JR146MZXHNJVSXE2E   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kv33	320M	-	fs35-outlier-kv33-s320M	ai2/jupiter-cirrascale-2	2026-09-02 00:01	LAUNCHED	"01M1GES0MSPWVCYKKY7BKVRY5P   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

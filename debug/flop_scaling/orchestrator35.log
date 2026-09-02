@@ -42,3 +42,28 @@ outlier        dense       320M mean_f1=0.552 PF=15058.7 ratio=1.0
   popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
 /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
   popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+09-01 23:55:22 launch fs35-outlier-kv17-s16M -> 01M1GED6702P1QJ6TGQK2RFXFQ
+09-01 23:55:55 launch fs35-outlier-kv33-s16M -> 01M1GEE68MAE9B4903J3KQS8AE
+09-01 23:56:41 launch fs35-outlier-kv17-s32M -> 01M1GEFJVRARQ4D0WZEGCH0B4W
+09-01 23:57:17 launch fs35-outlier-kv33-s32M -> 01M1GEGPE1ZF2S8BQKETR9ZX0J
+09-01 23:58:17 launch fs35-outlier-kv17-s64M -> 01M1GEJH22NB9P6RVYV49V1XCX
+09-01 23:58:54 launch fs35-outlier-kv33-s64M -> 01M1GEKN3DF7DKT4BST53Z68JE
+09-01 23:59:40 launch fs35-outlier-kv17-s160M -> 01M1GEN24TX5H2XD1J2PEJWGEX
+09-02 00:00:21 launch fs35-outlier-kv33-s160M -> 01M1GEPAG1R3XJV8Y5ECH7HZZ2
+09-02 00:01:09 launch fs35-outlier-kv17-s320M -> 01M1GEQS7JR146MZXHNJVSXE2E
+09-02 00:01:49 launch fs35-outlier-kv33-s320M -> 01M1GES0MSPWVCYKKY7BKVRY5P
+09-02 00:02:01 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:07:12 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:12:23 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:17:34 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:22:45 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:27:56 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:33:14 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:38:25 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:43:41 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:48:52 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:54:04 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 00:59:16 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 01:04:27 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 01:09:43 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 01:09:50 harvest job -> 01M1GJNJVFQN6ZNBNHA7G7ZZH1

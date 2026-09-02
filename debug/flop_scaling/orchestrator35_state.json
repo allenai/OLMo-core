@@ -219,6 +219,116 @@
    "retries": 0,
    "eval": null,
    "s2": null
+  },
+  "fs35-outlier-kv17-s16M": {
+   "ex": "01M1GED6702P1QJ6TGQK2RFXFQ",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s16M": {
+   "ex": "01M1GEE68MAE9B4903J3KQS8AE",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s32M": {
+   "ex": "01M1GEFJVRARQ4D0WZEGCH0B4W",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s32M": {
+   "ex": "01M1GEGPE1ZF2S8BQKETR9ZX0J",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s64M": {
+   "ex": "01M1GEJH22NB9P6RVYV49V1XCX",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s64M": {
+   "ex": "01M1GEKN3DF7DKT4BST53Z68JE",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s160M": {
+   "ex": "01M1GEN24TX5H2XD1J2PEJWGEX",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s160M": {
+   "ex": "01M1GEPAG1R3XJV8Y5ECH7HZZ2",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s320M": {
+   "ex": "01M1GEQS7JR146MZXHNJVSXE2E",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s320M": {
+   "ex": "01M1GES0MSPWVCYKKY7BKVRY5P",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
   }
  },
  "evals": {},
@@ -227,12 +337,13 @@
   "nq": true
  },
  "kv_launched": {
-  "nq": true
+  "nq": true,
+  "outlier": true
  },
  "s1_launched": true,
  "sync_ex": null,
- "last_harvest": 1788331126.7625158,
- "harvest_ex": null,
+ "last_harvest": 1788336590.023532,
+ "harvest_ex": "01M1GJNJVFQN6ZNBNHA7G7ZZH1",
  "done": false,
  "kv_ok": true
 }

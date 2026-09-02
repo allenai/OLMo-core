@@ -144,7 +144,7 @@ def build_launch_config(
         cmd=cmd,
         task_name=task_name,
         workspace=workspace,
-        clusters=[cluster],
+        clusters=[c.strip() for c in cluster.split(",") if c.strip()],  # comma list = any of them
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
