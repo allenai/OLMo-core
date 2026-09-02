@@ -296,7 +296,9 @@ def main():
             print("    [dry-run] not submitting.")
             continue
         workload = lc.launch(follow=False)
-        print(f"    submitted: {getattr(workload, 'id', workload)}")
+        wl_id = getattr(workload, "id", None) or getattr(getattr(workload, "experiment", None), "id", None)
+        print(f"    submitted: {wl_id}")
+        print(f"SUBMITTED id={wl_id}")
     print("\n=== done ===")
 
 
