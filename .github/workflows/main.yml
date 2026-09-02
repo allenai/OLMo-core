@@ -42,6 +42,7 @@ jobs:
             run: make lint-check
 
           - name: Test
+            cache_hf: true
             run: |
               pytest -v --color=yes --durations=6 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
@@ -105,6 +106,36 @@ jobs:
               name: Lint (min Python)
               run: make lint-check
 
+          - python: "3.11"
+            torch: "2.12.0"
+            task:
+              name: Test (CPU, torch 2.12)
+              cache_hf: true
+              run: |
+                pytest -v --color=yes --durations=6 \
+                  --ignore-glob='src/test/distributed/checkpoint*' \
+                  --ignore-glob='src/test/train/checkpoint*' \
+                  --ignore-glob='src/test/nn/transformer*' \
+                  --ignore-glob='src/test/nn/attention*' \
+                  --ignore-glob='src/test/examples/*' \
+                  --ignore-glob='src/test/scripts/*' \
+                  src/test/
+
+          - python: "3.11"
+            torch: "2.13.0"
+            task:
+              name: Test (CPU, torch 2.13)
+              cache_hf: true
+              run: |
+                pytest -v --color=yes --durations=6 \
+                  --ignore-glob='src/test/distributed/checkpoint*' \
+                  --ignore-glob='src/test/train/checkpoint*' \
+                  --ignore-glob='src/test/nn/transformer*' \
+                  --ignore-glob='src/test/nn/attention*' \
+                  --ignore-glob='src/test/examples/*' \
+                  --ignore-glob='src/test/scripts/*' \
+                  src/test/
+
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +144,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache-prefix: ${{ env.CACHE_PREFIX }}
+          torch-version: ${{ matrix.torch || '2.10.0' }}
+          torch-backend: cpu
 
       - name: Setup Google credentials
         run: |
@@ -131,10 +164,10 @@ jobs:
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Cache HuggingFace models
-        # The "Test" task runs the HF roundtrip tests, which download Qwen3-0.6B and
+        # The broad test tasks run the HF roundtrip tests, which download Qwen3-0.6B and
         # Gemma-3-270m. Persist HF_HOME so they're only downloaded once. Bump the key
         # suffix when the set of models pulled by these tests changes.
-        if: matrix.task.name == 'Test'
+        if: matrix.task.cache_hf
         uses: actions/cache@v4
         with:
           path: ${{ env.HF_HOME }}
