@@ -13,6 +13,7 @@ import csv
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -95,13 +96,33 @@ def main():
     st = json.load(open(STATE)) if os.path.exists(STATE) else {"runs": {}, "evals": {}}
     fpt65k = dense_flops_per_token()
     rows = []
-    # dense baseline from the prior campaigns
+    # dense baseline from the prior campaigns (+ rungs those campaigns never scored, launched by
+    # hand for this study and listed in dense_extra_evals.tsv: run, savedir, ex, task, rungs, when)
     pts = json.load(open(POINTS))
+    extra = {}
+    xp = f"{D}/dense_extra_evals.tsv"
+    if os.path.exists(xp):
+        for line in open(xp):
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 5 or not cols[2]:
+                continue
+            run, ex, task = cols[0], cols[2], cols[3]
+            m = re.search(r"mixs(\d+M)", run)
+            d = fetch_eval(f"dense-{run}", ex)
+            if m and d:
+                res = json.load(open(glob.glob(f"{d}/**/*multirung*.json", recursive=True)[0]))
+                for rg in RUNGS[task]:
+                    v = res.get(f"{TASK_KEY[task]}_{rg}", res.get(f"{task}_{rg}"))
+                    if v is not None:
+                        extra[(task, m.group(1), rg)] = v
     for task in ARMS:
         dense = pts.get(task, {}).get("dense", {})
         for b in ARMS[task]:
             tok = budget_tokens(b)
             f1 = {r: dense.get(r, {}).get(str(tok)) for r in RUNGS[task]}
+            for r in RUNGS[task]:
+                if f1[r] is None and (task, b, r) in extra:
+                    f1[r] = extra[(task, b, r)]
             vals = [v for v in f1.values() if v is not None]
             if not vals:
                 continue
@@ -109,6 +130,7 @@ def main():
             pf = arm_flops(lens) if lens else tok * fpt65k / 1e15  # fallback: padded-window formula
             rows.append({"task": task, "arm": "dense", "budget": b, "tokens": tok, "actual_pflops": pf,
                          "dense_equiv_pflops": pf, "flop_ratio": 1.0, "mean_f1": sum(vals) / len(vals),
+                         "partial": int(len(vals) < len(RUNGS[task])),
                          **{f"f1_{r}": v for r, v in f1.items()}, "run": f"prior-dense-{task}-{b}"})
     # new arms
     for run, e in st.get("evals", {}).items():
@@ -152,11 +174,12 @@ def main():
                 dpf = (dpf or 0) + (arm_flops(lens) if lens else s1["dense_equivalent_pflops"])
         rows.append({"task": r["task"], "arm": r["arm"], "budget": r["budget"], "tokens": budget_tokens(r["budget"]),
                      "actual_pflops": pf, "dense_equiv_pflops": dpf, "flop_ratio": (pf / dpf) if (pf and dpf) else None,
-                     "mean_f1": sum(vals) / len(vals) if vals else None, **{f"f1_{rg}": v for rg, v in f1.items()}, "run": run})
+                     "mean_f1": sum(vals) / len(vals) if vals else None, "partial": int(len(vals) < len(RUNGS[r["task"]])),
+                     **{f"f1_{rg}": v for rg, v in f1.items()}, "run": run})
     os.makedirs(OUT, exist_ok=True)
     if not rows:
         print("nothing to collect"); return
-    keys = ["task", "arm", "budget", "tokens", "actual_pflops", "dense_equiv_pflops", "flop_ratio", "mean_f1"] + sorted({k for r in rows for k in r if k.startswith("f1_")}) + ["run"]
+    keys = ["task", "arm", "budget", "tokens", "actual_pflops", "dense_equiv_pflops", "flop_ratio", "mean_f1", "partial"] + sorted({k for r in rows for k in r if k.startswith("f1_")}) + ["run"]
     with open(f"{OUT}/results35.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys); w.writeheader(); w.writerows(rows)
     print(f"wrote {OUT}/results35.csv ({len(rows)} rows)")

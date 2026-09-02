@@ -103,6 +103,8 @@ def main() -> None:
     tag = a.tag
     curves = defaultdict(list)
     for r in rows:
+        if r.get("partial") not in (None, "", "0"):
+            continue  # mean over a subset of the task's rungs: not comparable across budgets, never fit
         if r["mean_f1"] in ("", "None") or r["actual_pflops"] in ("", "None"):
             continue
         curves[(r["task"], r["arm"])].append((float(r["actual_pflops"]), float(r["tokens"]) / 1e6, float(r["mean_f1"])))
