@@ -1,0 +1,90 @@
+{
+ "runs": {
+  "fs35-outlier-ffnmoe-s1-s16M": {
+   "ex": "01M1GCVQ9VCNHWF6GDPA86E85V",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-ffnmoe-s1-s32M": {
+   "ex": "01M1GCY8N6VZY1NJNM4PJ9A19X",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-ffnmoe-s1-s64M": {
+   "ex": "01M1GCZ8CVTPWENWW4F3W1NY9A",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-ffnmoe-s1-s160M": {
+   "ex": "01M1GD0G2B5MSJ3505Z7H1YQJJ",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-ffnmoe-s1-s320M": {
+   "ex": "01M1GD1F3FMMCAT49W8ATCWS6G",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-ffnmoe-s1-s16M": {
+   "ex": "01M1GD2NTCC9F0F2M2BAB32H3A",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-ffnmoe-s1-s32M": {
+   "ex": "01M1GD3Q77D7W3DCWVV400MMH3",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  }
+ },
+ "evals": {},
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 0,
+ "harvest_ex": null,
+ "done": false,
+ "kv_ok": false
+}

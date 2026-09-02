@@ -45,5 +45,5 @@ gantry run --name "fs-data-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other
   --cluster 'ai2/jupiter*' --cluster 'ai2/neptune*' --cluster 'ai2/ceres*' --cluster 'ai2/saturn*' --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
   --weka oe-training-default:/weka/oe-training-default \
-  --env-secret HF_TOKEN=PRASANNS_HF_TOKEN --allow-dirty \
+  --allow-dirty \
   --timeout 0 --yes -- bash -c "$WORK"

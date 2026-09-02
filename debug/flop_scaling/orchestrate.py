@@ -88,7 +88,8 @@ def beaker_status(ex: str):
 
 
 def parse_id(out: str):
-    m = re.search(r"SUBMITTED id=(\S+)", out) or re.search(r"submitted: (\S+)", out) or re.search(r"beaker\.org/ex/([A-Z0-9]+)", out)
+    m = (re.search(r"SUBMITTED id=(\S+)", out) or re.search(r"submitted: (\S+)", out)
+         or re.search(r"beaker\.org/ex/([A-Z0-9]{26})", out) or re.search(r"rc=0: ([A-Z0-9]{26})", out))
     return m.group(1) if m else None
 
 

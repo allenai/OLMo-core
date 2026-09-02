@@ -25,5 +25,5 @@ gantry run --name "fs35-kvdata-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-o
   --cluster ai2/jupiter-cirrascale-2 --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
   --weka oe-training-default:/weka/oe-training-default \
-  --env-secret HF_TOKEN=PRASANNS_HF_TOKEN --allow-dirty \
+  --allow-dirty \
   --timeout 0 --yes -- bash -c "$WORK" 2>&1 | grep -E "beaker.org/ex|rror" | head -2

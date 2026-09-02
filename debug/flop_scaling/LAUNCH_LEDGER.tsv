@@ -25,3 +25,25 @@ job_id	task	arm	budget	stage	run_name	cluster	launched	status	notes
 orchestrator	-	-	orchestrate	-	debug/flop_scaling/orchestrate.py	login node (setsid)	2026-09-01 23:09	RUNNING	unattended: sync outlier -> launch grid (dense,kv17,kv33,ffnmoe-s1 x tasks x budgets) -> evals + ffnmoe-s2 on completion, 1 retry, periodic harvest+collect+fit; state in orchestrator_state.json, log orchestrator.log
 beaker	outlier	dense	8M	-	fs-outlier-dense-sh8M	ai2/jupiter-cirrascale-2	2026-09-01 23:14	LAUNCHED	01M1GC2XFPT5E5KBW96C5P6MW8 [beaker_ctc_suite] url=https://beaker.org/ex/01M1GC2XFPT5E5KBW96C5P6MW8
 beaker	outlier	kv17	8M	-	fs-outlier-kv17-sh8M	ai2/jupiter-cirrascale-2	2026-09-01 23:15	LAUNCHED	01M1GC3Z2H08PF8BCV90V2733X [beaker_ctc_suite] url=https://beaker.org/ex/01M1GC3Z2H08PF8BCV90V2733X
+beaker35	outlier	ffnmoe-s1	16M	s1	fs35-outlier-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:28	LAUNCHED	"01M1GCVQ9VCNHWF6GDPA86E85V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	32M	s1	fs35-outlier-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:29	LAUNCHED	"01M1GCY8N6VZY1NJNM4PJ9A19X   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	64M	s1	fs35-outlier-ffnmoe-s1-s64M	ai2/jupiter-cirrascale-2	2026-09-01 23:30	LAUNCHED	"01M1GCZ8CVTPWENWW4F3W1NY9A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	160M	s1	fs35-outlier-ffnmoe-s1-s160M	ai2/jupiter-cirrascale-2	2026-09-01 23:30	LAUNCHED	"01M1GD0G2B5MSJ3505Z7H1YQJJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	320M	s1	fs35-outlier-ffnmoe-s1-s320M	ai2/jupiter-cirrascale-2	2026-09-01 23:31	LAUNCHED	"01M1GD1F3FMMCAT49W8ATCWS6G   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	16M	s1	fs35-nq-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:32	LAUNCHED	"01M1GD2NTCC9F0F2M2BAB32H3A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	32M	s1	fs35-nq-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:32	LAUNCHED	"01M1GD3Q77D7W3DCWVV400MMH3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+PIVOT	-	-	note	-	Qwen3.5-4B track	-	2026-09-01 23:20	-	Prasann: stick to 3.5 for everything; reuse prior dense campaigns (taskscale_lengthmix + outlier_lengthmix, q35-4b-base-markerfix, seq 65536 packed, lr 5e-6). Qwen3-4B grid cancelled (5 jobs). Method arms train on the SAME weka arms; runs named fs35-<task>-<arm>-s<B>
+3493046	contradiction	ffnmoe	smoke35	-	fs35-smoke-ffnmoe	mooney	2026-09-01 23:20	DONE	PASS on Qwen3.5-4B (hybrid): 25 steps, routing on 7 rungs, 8.5k TPS/GPU, export + flops.json
+3493047	contradiction	softtoken	smoke35	-	fs35-smoke-softtoken	mooney	2026-09-01 23:20	RUNNING	soft-token mechanism on the GDN hybrid (gold-blind keep 0.25)
+3493051	outlier	-	kvdata35	-	outlier mix_s{16,32,64,160,320}M -> *_mk	mooney	2026-09-01 23:22	RUNNING	marker re-tokenization (qwen3_5 markers, query after, sidecars) -> S3 flop_scaling35/shards
+3493055	nq	-	kvdata35	-	nq nmix_s{16,32,48}M -> *_mk	mooney	2026-09-01 23:24	DONE	synced to S3
+01M1GCP893SDYYRTKP6JGSCVAB	contradiction	-	kvdata35	-	contradiction_mix_s{14,28,56}M -> *_mk	beaker(gantry, weka-native)	2026-09-01 23:25	RUNNING	
+01M1GCPCMH81BY9E6FX6HDVBG7	oolong	-	kvdata35	-	oolong_mix_s{20,40,80}M -> *_mk	beaker(gantry, weka-native)	2026-09-01 23:25	RUNNING	
+orchestrator35	-	-	orchestrate	-	debug/flop_scaling/orchestrate35.py	login node	2026-09-01 23:35	RUNNING	ffnmoe-s1 on all 14 dense arms now; s2 + evals (beaker_native_lengthmix_eval, per-task ladders) on completion; kv17/kv33 once data on weka AND kv_ok flag set after the softtoken smoke

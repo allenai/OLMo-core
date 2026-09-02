@@ -94,7 +94,13 @@ def x_for_target(fit, target):
 
 
 def main() -> None:
-    rows = list(csv.DictReader(open(f"{OUT}/results.csv")))
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--in", dest="inp", default=f"{OUT}/results.csv")
+    ap.add_argument("--tag", default="")
+    a = ap.parse_args()
+    rows = list(csv.DictReader(open(a.inp)))
+    tag = a.tag
     curves = defaultdict(list)
     for r in rows:
         if r["mean_f1"] in ("", "None") or r["actual_pflops"] in ("", "None"):
@@ -123,7 +129,7 @@ def main() -> None:
             "mtokens_to_target": x_for_target(ft, TARGETS.get(task, 0.7)),
             "best_f1": max(Y), "best_pflops": F[Y.index(max(Y))],
         })
-    with open(f"{OUT}/fits.csv", "w", newline="") as f:
+    with open(f"{OUT}/fits{tag}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(fits[0].keys())); w.writeheader(); w.writerows(fits)
     # markdown: per task, the FLOP multiplier of each arm vs dense at the target f1
     md = ["# FLOP-scaling fits\n", f"Primary law: Hill f1 = fmax x^g/(x^g+K^g) (the prior dense campaigns' form, debug/taskscale_lengthmix); secondary: saturating power law f1 = A - B x^-alpha. x = actual training PFLOPs. Target f1 per task: {TARGETS}. With 4-5 points per curve a 3-parameter fit interpolates; treat targets beyond the largest measured budget as extrapolations.\n"]
@@ -139,7 +145,7 @@ def main() -> None:
             mult = (pt / dense) if (pt and dense) else None
             fmt = lambda v, d=3: "-" if v is None else (f"{v:.{d}f}" if isinstance(v, float) else str(v))
             md.append(f"| {arm} | {ft['n_points']} | {fmt(ft['best_f1'])} ({fmt(ft['best_pflops'],1)}) | {fmt(ft['hill_flop_fmax'])} | {fmt(ft['hill_flop_g'],2)} | {fmt(ft['hill_flop_K'],1)} | {fmt(ft['hill_flop_rmse'])} | {fmt(pt,1)} | {fmt(mult,2)} | {fmt(ft['flop_A'])} / {fmt(ft['flop_alpha'],2)} | {fmt(ft['pflops_to_target'],1)} |")
-    open(f"{OUT}/fits.md", "w").write("\n".join(md) + "\n")
+    open(f"{OUT}/fits{tag}.md", "w").write("\n".join(md) + "\n")
     print("\n".join(md))
 
     try:
@@ -160,8 +166,8 @@ def main() -> None:
                 ax.plot(xs, hill(xs, *hf[:3]), "-", color=line.get_color(), alpha=0.8)
         ax.set_xscale("log"); ax.set_xlabel("training PFLOPs (actual, method-aware)"); ax.set_ylabel("mean f1 over rungs")
         ax.set_title(f"{task}: FLOP scaling, Hill-law fits"); ax.grid(alpha=0.3); ax.legend()
-        fig.tight_layout(); fig.savefig(f"{OUT}/{task}_flop_fit.png", dpi=130)
-        print("plot:", f"{OUT}/{task}_flop_fit.png")
+        fig.tight_layout(); fig.savefig(f"{OUT}/{task}_flop_fit{tag}.png", dpi=130)
+        print("plot:", f"{OUT}/{task}_flop_fit{tag}.png")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+09-01 23:27:39 orchestrator35 up; runs tracked: 0
+09-01 23:28:21 launch fs35-outlier-ffnmoe-s1-s16M -> FAILED: isors 1,16,64,256,1024,9728 --ffn-moe-width-multiple 1 --ffn-moe-target 0.01 --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3 launch
+  -> rc=0: 01M1GCVQ9VCNHWF6GDPA86E85V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+
+09-01 23:29:08 orchestrator35 up; runs tracked: 1
+09-01 23:29:45 launch fs35-outlier-ffnmoe-s1-s32M -> 01M1GCY8N6VZY1NJNM4PJ9A19X
+09-01 23:30:17 launch fs35-outlier-ffnmoe-s1-s64M -> 01M1GCZ8CVTPWENWW4F3W1NY9A
+09-01 23:30:58 launch fs35-outlier-ffnmoe-s1-s160M -> 01M1GD0G2B5MSJ3505Z7H1YQJJ
+09-01 23:31:29 launch fs35-outlier-ffnmoe-s1-s320M -> 01M1GD1F3FMMCAT49W8ATCWS6G
+09-01 23:32:09 launch fs35-nq-ffnmoe-s1-s16M -> 01M1GD2NTCC9F0F2M2BAB32H3A
+09-01 23:32:43 launch fs35-nq-ffnmoe-s1-s32M -> 01M1GD3Q77D7W3DCWVV400MMH3
