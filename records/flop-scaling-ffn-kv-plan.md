@@ -182,11 +182,19 @@ has the per-job trail.
    with 52% of routed-layer tokens on the null/width-1 rungs; 32k f1 0.14 vs 0.76 dense;
    contradiction 14M ended near f1 0 at every rung. Added `--ffn-moe-two-sided`
    (`|cost - target|`; bb35999da): the t10 probe lands at 0.0997 for target 0.10.
-4. **Exploration wrecks the start.** `--ffn-moe-explore 0.1` (10% of tokens per routed layer on a
-   random rung, null included) takes Qwen3.5-4B from CE 0.73 (dense packed step 1) to 8.86 at
-   step 1; CE only returns to ~2 when exploration anneals off at step ~10 of 30. Every s1/s2 run
-   paid that. The t10/a10 arms were relaunched with exploration off (399167447); the budget
-   term is differentiable in the router probabilities, so cheap rungs are still reached.
+4. **Every FFN run started from a RANDOM router (root cause of CE 8.86 at step 1).** First
+   blamed on exploration (399167447 turned it off; the no-explore run reproduced 8.860/7.623
+   exactly). The real defect: `Transformer.init_weights` calls `reset_parameters` on every
+   module, parent then child, so the router's inner `nn.Linear` re-ran torch's kaiming init
+   right after the router's one-hot "full rung" init -- on every meta-built (FSDP/Beaker, and
+   the local train_ctc_suite path) run the router was random and tokens landed on random rungs
+   from step 1. The per-rung gain vector was `torch.empty` on meta and never reset at all.
+   Fixed in 545c07b0d (router Linear owns the one-hot reset, gains reset, tolerant load
+   re-inits missing keys and logs `gain=1.00..1.00 bias0=10.0`); a meta-built nested model now
+   equals the base model exactly (CPU check, logit diff 0.0). Every s1/s2/t10/a10 number before
+   06:45 came from a scrambled start and was discarded (`results/flop_scaling/evals35_garbage_router`);
+   all FFN arms relaunched at 06:45. The Qwen3-4B v-series (records in the nested-FFN memory)
+   ran through the same meta path and carried the same handicap, healed by their longer horizons.
 
 KV: with correct ids, outlier kv17 16M scores 8k 0.13 / 16k 0.05 (dense 0.51 / –) while its
 train CE reached 0.17 — the gold_plus_random keep set leaks the answer on id-answer tasks (gold
