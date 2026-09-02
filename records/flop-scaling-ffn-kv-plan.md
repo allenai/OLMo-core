@@ -141,3 +141,23 @@ baseline curves separate (typically 16M–64M), evaluated identically:
 Selection rule: for each task, the variant with the best mean-f1 at matched actual PFLOPs wins;
 ties go to the cheaper one. Oolong is the hard case (no gold subset) and gets the blind /
 range / mix variants first.
+
+## 9. PIVOT to Qwen3.5-4B (Prasann 2026-09-02 ~23:30: "stick to 3.5 for everything if possible")
+
+The prior dense campaigns (`debug/taskscale_lengthmix`, `debug/outlier_lengthmix_scaling`) already
+give dense Qwen3.5-4B data-scaling points on outlier (16–640M), nq (16/32/48M), contradiction
+(14/28/56M) and oolong (20/40/80M), all short-heavy mixes, base `q35-4b-base-markerfix`, seq 65536
+packed, lr 5e-6, batch 8. The method arms therefore train on THOSE arms with THOSE settings and
+the dense arm is not retrained (the Qwen3-4B grid above was cancelled after 5 jobs):
+
+- **ffnmoe** (stage 1 L12+ fine ladder t0.01 → stage 2 all layers t0.02) on the dense arms as-is
+  (no markers needed). Evals through `beaker_native_lengthmix_eval.py` exactly as the dense runs
+  (prompt-format chat, query after, per-task ladders), routing enabled from the checkpoint config.
+- **kv17 / kv33** need the same JSONL arms re-tokenized WITH document markers (marker set
+  qwen3_5) + gold sidecars: `build_kv35_shards.sbatch` (outlier/nq, mooney -> S3 -> weka) and
+  `build_kv35_shards_beaker.sh` (contradiction/oolong, weka-native) -> `flop_scaling35/shards/<task>_s<B>_mk`.
+  The hybrid's GDN blocks see the compacted sequence; attention blocks keep original positions.
+  Mechanism validated locally first (fs35-smoke-*).
+- Launcher: `debug/flop_scaling/launch_grid35.py`; dense points from `points.json` join the fits.
+- FLOP accounting on the hybrid: `num_flops_per_token` covers GDN + attention + FFN; the FFN
+  share is lower than on dense Qwen3-4B, so the FFN arm's model-wide FLOP saving is smaller.

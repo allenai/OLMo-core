@@ -1,6 +1,6 @@
 {
  "synced": false,
- "sync_ex": "01M1GBR1854WCV0KJX143YG4H3",
+ "sync_ex": null,
  "grid_launched": false,
  "runs": {
   "fs-contradiction-dense-sh16M": {
@@ -30,6 +30,28 @@
    "task": "contradiction",
    "budget": "16M",
    "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs-outlier-dense-sh8M": {
+   "ex": "01M1GC2XFPT5E5KBW96C5P6MW8",
+   "task": "outlier",
+   "budget": "8M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs-outlier-kv17-sh8M": {
+   "ex": "01M1GC3Z2H08PF8BCV90V2733X",
+   "task": "outlier",
+   "budget": "8M",
+   "arm": "kv17",
    "state": "S",
    "rc": null,
    "retries": 0,

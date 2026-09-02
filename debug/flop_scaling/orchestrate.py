@@ -179,11 +179,13 @@ def cycle(st):
             if rc != 0:
                 st["sync_ex"] = None
             save_state(st)
+            if not st["synced"]:
+                return  # relaunch next cycle; do NOT fall through to the grid (bug 2026-09-01)
         else:
             log(f"sync {s}")
             return
-    # B. grid
-    if not st["grid_launched"]:
+    # B. grid (only with the data on weka)
+    if st["synced"] and not st["grid_launched"]:
         for t, b, a, name in all_runs():
             if name in st["runs"]:
                 continue
