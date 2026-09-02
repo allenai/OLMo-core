@@ -301,6 +301,16 @@ Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/
 
 **Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` — exactly `urgent`: never `normal`/`high`/`low`, and not `immediate` either. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
 
+**Allocation — ALWAYS unallocated.** Beaker capacity is split into per-budget *allocations*
+(`beaker allocation list ai2/jupiter-cirrascale-2 --budget ai2/oe-other`: 14%/168 slots on
+jupiter, 15%/88 on ceres, all of it granted to the `ai2/oe-scaling` workspace group; nothing on
+saturn/neptune). A job is *allocated* only when its workspace is in that group, and allocated
+jobs consume the team's guaranteed quota. Our jobs must stay **unallocated + urgent**: launch
+from workspace `ai2/flex2` under budget `ai2/oe-other` and never from an oe-scaling workspace.
+There is no per-job flag; the workspace decides. Verify with
+`beaker report gpu-usage --organizations ai2 --users prasanns --since 7d -g allocated,cluster`
+(non-admins must pass the org filter). Status 2026-09-02: 100% of our GPU hours were unallocated.
+
 ## Testing
 
 - Tests in `src/test/` mirror the source structure.
