@@ -56,7 +56,9 @@ from olmo_core.data.composable import (
     PackingInstanceSourceConfig,
     PadToLengthInstanceSourceConfig,
 )
-from olmo_core.data.document_chunk_landmark import RESERVED_IDS  # canonical ids -- never retype
+from olmo_core.data.document_chunk_landmark import (
+    RESERVED_IDS,  # canonical ids -- never retype
+)
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.float8 import Float8Config
@@ -77,6 +79,8 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    FlopMeterCallback,
+    NestedFFNMoECallback,
     CheckpointerCallback,
     ConfigSaverCallback,
     GPUMemoryMonitorCallback,
@@ -448,6 +452,19 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
         mixer.name = AttentionType.sparse_landmark
         mixer.mem_freq = MEM_FREQ_SPARSE
         mixer.num_landmarks = 1
+    if opts.variant == "pooledkv":
+        # Swap the full-attention mixer for pooled-doc-KV attention (same swap mechanics as
+        # sparselandmark): plain causal topology, but most context documents' K/V collapse -- for
+        # queries outside the document -- to a single mean-pooled slot with a +log(doc_len) logit
+        # bias; gold + a few random docs keep real per-token KV (keep set via the
+        # --pooled-gold-sidecar hook, else the seeded random fallback). GDN blocks are untouched.
+        # Inference needs NO special path: the checkpoint runs ordinary full attention.
+        blk = model_config.block
+        mixer = blk["attn"].sequence_mixer if isinstance(blk, dict) else blk.sequence_mixer
+        mixer.name = AttentionType.pooled_doc_kv
+        mixer.pooled_keep_prob = opts.pooled_keep_prob
+        mixer.pooled_keep_seed = opts.seed
+        mixer.pooled_len_bias = not opts.pooled_no_len_bias
     # YaRN RoPE context extension for long-context runs (base native ctx is 32k for Qwen3; the
     # 256k rung needs factor ~8). Off by default (--rope-yarn-factor 0) so short-rung runs are
     # byte-identical. Mirrors sft_longctx/Qwen3-4B-dense-longctx-SFT.py (factor=2 for 64k).
@@ -474,7 +491,7 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # 40960 the unfused path needs ~38 GiB per rank just for logits.float() and OOMs H200s
     # (same setting as the proven 40k-seq sft_docchunk Beaker scripts).
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
-    if opts.variant in ("chunked", "chunked-mix"):
+    if opts.variant in ("chunked", "chunked-mix", "pooledkv"):
         mix_keys: Dict[str, Any] = {}
         if opts.variant == "chunked-mix":
             mix_keys = dict(
@@ -586,7 +603,22 @@ def build_train_module_config(
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
-            ],
+            ]
+            + (
+                [
+                    # The router decides discrete routing from a cold start and wants a livelier
+                    # LR than the pretrained backbone; the gains are 1-D and must not be decayed.
+                    OptimGroupOverride(
+                        params=[
+                            "blocks.*.feed_forward._nffn_router.*",
+                            "blocks.*.feed_forward._nffn_gain",
+                        ],
+                        opts=dict(lr=opts.router_lr, weight_decay=0.0),
+                    )
+                ]
+                if opts.variant == "ffnmoe"
+                else []
+            ),
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
         compile_model=opts.compile,
@@ -846,6 +878,49 @@ def dry_run(opts: argparse.Namespace) -> None:
     print(f"  provenance preview: {json.dumps(prov, indent=2, default=str)}")
 
 
+def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
+    """Load ``base_checkpoint`` into ``model`` allowing keys the base lacks (the ffnmoe router/gains,
+    the softtoken projector), and REFUSE if anything else is missing -- a missing backbone key
+    would otherwise silently train from init.
+
+    torch's DCP loader rejects a state dict that asks for keys the checkpoint does not have
+    BEFORE any ``strict`` option applies, so the model state dict is FILTERED to the checkpoint's
+    keys, loaded, and set back non-strictly; the filtered-out (new) parameters keep their init.
+
+    Resumes are unaffected: if the save folder already holds a step checkpoint, ``fit()`` loads
+    it afterwards (it carries the new keys), overriding this base load.
+    """
+    import torch.distributed.checkpoint as dist_cp
+    import torch.distributed.checkpoint.state_dict as dist_cp_sd
+
+    from olmo_core.distributed.checkpoint import RemoteFileSystemReader, _prepare_state_dict
+    from olmo_core.utils import gc_cuda
+
+    reader = RemoteFileSystemReader(base_checkpoint)
+    ckpt_keys = set(reader.read_metadata().state_dict_metadata)
+    state_dict = _prepare_state_dict(model, None)
+    model_sd = state_dict["model"]
+    missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
+    allowed = ("._nffn_router.", "._nffn_gain", "pooled_projector.", "._pooled_projector")
+    bad = [k for k in missing if not any(a in k for a in allowed)]
+    if bad:
+        raise SystemExit(
+            f"[ctc-suite] base {base_checkpoint} lacks {len(bad)} backbone keys (first: {bad[:3]}); "
+            "refusing to train from init"
+        )
+    filtered = {"model": {k: v for k, v in model_sd.items() if k not in set(missing)}}
+    dist_cp.state_dict_loader.load(filtered, checkpoint_id=base_checkpoint, storage_reader=reader)
+    dist_cp_sd.set_model_state_dict(
+        model, filtered["model"], options=dist_cp_sd.StateDictOptions(strict=False)
+    )
+    gc_cuda()
+    print(
+        f"[ctc-suite] tolerant base load from {base_checkpoint}: {len(filtered['model'])} keys "
+        f"loaded, {len(missing)} new keys kept at init (e.g. {missing[:2]})",
+        flush=True,
+    )
+
+
 def build_and_fit(opts: argparse.Namespace) -> None:
     """Build the model / data loader / trainer and run the fit (real training entrypoint).
 
@@ -888,8 +963,18 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         TrainerConfig(
             save_folder=save_folder,
             save_overwrite=True,
-            load_path=base_checkpoint,
-            load_strategy=LoadStrategy.always,
+            # ffnmoe / softtoken add NEW parameters (router+gains / projector) that the plain
+            # base does not have; the trainer's own load is strict, so those arms load the base
+            # themselves below with strict=False (new keys keep their init: router -> full rung,
+            # projector -> identity). load_path stays None for them so fit() does not re-load.
+            load_path=None if opts.variant in ("ffnmoe", "softtoken") else base_checkpoint,
+            # ...and "always" would then demand a checkpoint that no longer exists: those arms
+            # resume from the save folder only if a step checkpoint is there.
+            load_strategy=(
+                LoadStrategy.if_available
+                if opts.variant in ("ffnmoe", "softtoken")
+                else LoadStrategy.always
+            ),
             load_trainer_state=False,
             load_optim_state=False,
             metrics_collect_interval=1,
@@ -955,12 +1040,142 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
     seed_all(12536 + opts.seed)
     model = plan["model_config"].build(init_device="meta")
+    ids = RESERVED_IDS[opts.model_family]
+    # Forwards per rank over the whole run = steps x grad-accum: the horizon the ffnmoe schedules
+    # (target / exploration / layer curriculum) and the softtoken mixing curriculum anneal over.
+    gbs_examples = max(1, opts.global_batch)
+    steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
+    accum = max(1, opts.global_batch // (world_size * opts.micro_batch_instances))
+    total_calls = max(1, steps_total * accum)
+    if opts.variant == "ffnmoe":
+        model.enable_nested_ffn_moe(
+            start_layer=opts.ffn_moe_start_layer,
+            divisors=[float(x) for x in opts.ffn_moe_divisors.split(",")],
+            include_null=not opts.ffn_moe_no_null,
+            target_cost=opts.ffn_moe_target,
+            budget_weight=opts.ffn_moe_budget_weight,
+            hinge_power=opts.ffn_moe_hinge_power,
+            target_anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac),
+            explore_prob=opts.ffn_moe_explore,
+            explore_anneal_calls=int(total_calls * opts.ffn_moe_explore_anneal_frac),
+            recon_frac=opts.ffn_moe_recon_frac,
+            recon_weight=opts.ffn_moe_recon_weight,
+            entropy_weight=opts.ffn_moe_entropy_weight,
+            seed=opts.seed,
+            layer_curriculum_calls=int(total_calls * opts.ffn_moe_layer_curriculum_frac),
+            width_multiple=opts.ffn_moe_width_multiple,
+        )
+        print(
+            f"[ctc-suite] ffnmoe: routed from layer {opts.ffn_moe_start_layer}, rungs="
+            f"{model._nested_ffn_moe['widths']}, target {opts.ffn_moe_target} annealed over "
+            f"{int(total_calls * opts.ffn_moe_target_anneal_frac)}/{total_calls} calls",
+            flush=True,
+        )
+    if opts.variant == "softtoken":
+        model.enable_pooled_soft_tokens(
+            ids.doc_start,
+            ids.doc_end,
+            ids.eos,
+            placeholder_id=ids.landmark,
+            keep_prob=opts.st_keep_prob,
+            keep_seed=opts.seed,
+            aux_match_weight=opts.st_aux_weight,
+            detach_soft_kv=not opts.st_no_detach_soft_kv,
+            distill_prob=opts.st_distill_prob,
+            distill_weight=opts.st_distill_weight,
+        )
+        print(
+            f"[ctc-suite] softtoken: detach={not opts.st_no_detach_soft_kv} "
+            f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
+            f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
+            f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob}",
+            flush=True,
+        )
     train_module = train_module_config.build(model)
+    if opts.variant == "softtoken" and not opts.st_gold_blind:
+        from olmo_core.nn.attention.pooled_doc_kv import (
+            install_pooled_doc_keep,
+            make_fingerprint_keep_docs_fn,
+        )
+
+        sidecar = opts.st_gold_sidecar or os.path.join(opts.data, "gold_fingerprints.json")
+        with open(sidecar) as f:
+            gold_table = json.load(f)
+        keep_fn = make_fingerprint_keep_docs_fn(
+            gold_table,
+            doc_start_id=ids.doc_start,
+            doc_end_id=ids.doc_end,
+            eos_id=ids.eos,
+            n_random=opts.st_n_random,
+            n_random_range=(
+                tuple(int(x) for x in opts.st_n_random_range.split(","))
+                if opts.st_n_random_range
+                else None
+            ),
+            n_random_frac=opts.st_keep_frac,
+            mode=opts.st_keep_mode,
+            n_gold=opts.st_n_gold,
+            seed=opts.seed,
+            mix_start_p=opts.st_mix_start_p,
+            mix_end_p=opts.st_mix_end_p,
+            mix_total_calls=int(total_calls * opts.st_mix_anneal_frac),
+        )
+        holder = install_pooled_doc_keep(train_module.model, keep_fn)
+        if holder.n_attached == 0:
+            raise SystemExit("[ctc-suite] softtoken: gold keep hook attached to nothing")
+        print(
+            f"[ctc-suite] softtoken: gold keep hook on {holder.n_attached} module(s), "
+            f"{len(gold_table)} fingerprints from {sidecar}",
+            flush=True,
+        )
+    if opts.variant == "ffnmoe":
+        trainer_config = trainer_config.with_callback(
+            "ffn_moe", NestedFFNMoECallback(calls_per_step=accum)
+        )
+    # Method-aware training FLOPs for every arm (records/flop-scaling-ffn-kv-plan.md §5).
+    trainer_config = trainer_config.with_callback(
+        "flop_meter", FlopMeterCallback(seq_len=opts.seq_len, pad_id=ids.eos)  # rows are padded with EOS (see pad_token_id above)
+    )
+    if opts.variant == "pooledkv" and opts.pooled_gold_sidecar:
+        # Gold-aware keep set: a forward pre-hook resolves each row's gold docs by content
+        # fingerprint and marks gold + --pooled-n-random random negatives as keeping real KV.
+        from olmo_core.nn.attention.pooled_doc_kv import (
+            install_pooled_doc_keep,
+            make_fingerprint_keep_docs_fn,
+        )
+
+        ids = RESERVED_IDS[opts.model_family]
+        with open(opts.pooled_gold_sidecar) as f:
+            gold_table = json.load(f)
+        keep_fn = make_fingerprint_keep_docs_fn(
+            gold_table,
+            doc_start_id=ids.doc_start,
+            doc_end_id=ids.doc_end,
+            eos_id=ids.eos,
+            n_random=opts.pooled_n_random,
+            mode=opts.pooled_keep_mode,
+            seed=opts.seed,
+            n_gold=opts.pooled_n_gold,
+        )
+        holder = install_pooled_doc_keep(train_module.model, keep_fn)
+        if holder.n_attached == 0:
+            raise SystemExit(
+                "[ctc-suite] --pooled-gold-sidecar given but no PooledDocKVAttention layers were "
+                "found on the model (variant/config mismatch?)."
+            )
+        print(
+            f"[ctc-suite] pooledkv: gold keep-set hook installed on {holder.n_attached} layers "
+            f"({len(gold_table)} fingerprints, mode={opts.pooled_keep_mode}, "
+            f"n_random={opts.pooled_n_random})",
+            flush=True,
+        )
     source = plan["instance_source_config"].build(plan["data_loader_config"].work_dir)
     data_loader = plan["data_loader_config"].build(
         source, dp_process_group=train_module.dp_process_group
     )
     trainer = trainer_config.build(train_module, data_loader)
+    if opts.variant in ("ffnmoe", "softtoken"):
+        _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
     trainer.fit()
 
     # Save a model-only checkpoint in the eval loader's expected layout (config.json +
@@ -975,6 +1190,25 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             experiment = {
                 "model": plan["model_config"].as_config_dict(),
                 "dataset": {"tokenizer": plan["tokenizer_config"].as_config_dict()},
+                # Recorded so the eval scores with the routing the run trained with (the
+                # evaluator reads this block and enables the router before loading).
+                "ffn_moe": (
+                    {
+                        "start_layer": opts.ffn_moe_start_layer,
+                        "divisors": opts.ffn_moe_divisors,
+                        "include_null": not opts.ffn_moe_no_null,
+                        "width_multiple": opts.ffn_moe_width_multiple,
+                    }
+                    if opts.variant == "ffnmoe"
+                    else None
+                ),
+                "softtoken": (
+                    {"n_random": opts.st_n_random, "n_random_range": opts.st_n_random_range,
+                     "keep_frac": opts.st_keep_frac, "keep_prob": opts.st_keep_prob,
+                     "keep_mode": opts.st_keep_mode, "gold_blind": opts.st_gold_blind}
+                    if opts.variant == "softtoken"
+                    else None
+                ),
             }
             with open(f"{save_folder}/config.json", "w") as f:
                 json.dump(experiment, f)
@@ -1011,10 +1245,95 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--variant",
-        choices=["full", "chunked", "chunked-mix", "sparselandmark"],
+        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken"],
         required=True,
         help="full = plain causal (no document_chunk_attention); chunked = pure document-chunked "
-        "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p); sparselandmark = AttentionType.sparse_landmark on the full-attn blocks + landmark-packed data",
+        "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p); "
+        "sparselandmark = AttentionType.sparse_landmark on the full-attn blocks + landmark-packed "
+        "data; pooledkv = AttentionType.pooled_doc_kv on the full-attn blocks (train-time "
+        "per-document KV pooling: gold + a few random docs keep real KV, the rest collapse to a "
+        "mean-pooled slot; inference is ordinary full attention); ffnmoe = nested-width FFN "
+        "router (olmo_core.nn.nested_ffn_moe: per-token choice of a prefix-sliced FFN width or "
+        "null under a budget hinge); softtoken = pooled-doc soft tokens (the whole stack runs on "
+        "a compacted sequence: gold + n_random docs keep real tokens, every other doc collapses "
+        "to ONE projected soft token; inference is ordinary full attention). Both add small new "
+        "parameters (router+gains / projector) that are initialized at load, so they run from "
+        "the plain base -- no baked base needed (tolerant load, see build_and_fit).",
+    )
+    # ---- ffnmoe (records/flop-scaling-ffn-kv-plan.md; recipe = ffnmoe/README.md v10/v12) ----
+    ap.add_argument("--ffn-moe-start-layer", type=int, default=12, help="first routed layer (0 = all)")
+    ap.add_argument("--ffn-moe-divisors", default="1,16,64,256,1024,9728", help="rung ladder")
+    ap.add_argument("--ffn-moe-width-multiple", type=int, default=1, help="1 allows a width-1 rung")
+    ap.add_argument("--ffn-moe-no-null", action="store_true")
+    ap.add_argument("--ffn-moe-target", type=float, default=0.01, help="budget: mean FFN cost on routed layers")
+    ap.add_argument("--ffn-moe-budget-weight", type=float, default=1.0)
+    ap.add_argument("--ffn-moe-hinge-power", type=int, default=1)
+    ap.add_argument("--ffn-moe-target-anneal-frac", type=float, default=0.3, help="0 = hinge active from step 0 (stage 2 of the two-stage recipe)")
+    ap.add_argument("--ffn-moe-explore", type=float, default=0.1)
+    ap.add_argument("--ffn-moe-explore-anneal-frac", type=float, default=0.3)
+    ap.add_argument("--ffn-moe-recon-frac", type=float, default=0.02)
+    ap.add_argument("--ffn-moe-recon-weight", type=float, default=0.0)
+    ap.add_argument("--ffn-moe-entropy-weight", type=float, default=0.0)
+    ap.add_argument("--ffn-moe-layer-curriculum-frac", type=float, default=0.0)
+    ap.add_argument("--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)")
+    # ---- softtoken (records/pooled-doc-kv-handoff.md; v20 = --st-n-random 128, v22 = 256) ----
+    ap.add_argument("--st-n-random", type=int, default=128, help="random non-gold docs kept real per example")
+    ap.add_argument("--st-n-random-range", default="", help="lo,hi log-uniform breadth per call (overrides --st-n-random)")
+    ap.add_argument(
+        "--st-keep-frac",
+        type=float,
+        default=None,
+        help="keep a FIXED FRACTION of each example's non-gold docs real (gold always kept); "
+        "context-length invariant -- the FLOP-scaling study's KV arms (overrides n-random/range)",
+    )
+    ap.add_argument("--st-keep-mode", default="gold_plus_random")
+    ap.add_argument("--st-n-gold", type=int, default=0)
+    ap.add_argument("--st-keep-prob", type=float, default=0.1, help="gold-blind fallback keep prob (no sidecar / --st-gold-blind)")
+    ap.add_argument("--st-gold-blind", action="store_true", help="ignore the gold sidecar: keep docs by --st-keep-prob only (oolong)")
+    ap.add_argument("--st-gold-sidecar", default=None, help="default <data>/gold_fingerprints.json")
+    ap.add_argument("--st-no-detach-soft-kv", action="store_true", help="the winning recipe DETACHES; this is the ablation")
+    ap.add_argument("--st-distill-prob", type=float, default=0.0)
+    ap.add_argument("--st-distill-weight", type=float, default=1.0)
+    ap.add_argument("--st-aux-weight", type=float, default=0.0)
+    ap.add_argument("--st-mix-start-p", type=float, default=0.0)
+    ap.add_argument("--st-mix-end-p", type=float, default=0.0)
+    ap.add_argument("--st-mix-anneal-frac", type=float, default=1.0)
+    ap.add_argument(
+        "--pooled-gold-sidecar",
+        default=None,
+        help="pooledkv only: gold sidecar JSON ({content_fingerprint: gold ids or pairs}, e.g. "
+        "from build_gold_sidecar_from_shard.py). Installs the gold-aware keep-set hook; without "
+        "it the keep set is a gold-blind random --pooled-keep-prob fraction (control arm).",
+    )
+    ap.add_argument(
+        "--pooled-n-random",
+        type=int,
+        default=2,
+        help="pooledkv + sidecar: random non-gold docs kept real per example",
+    )
+    ap.add_argument(
+        "--pooled-keep-mode",
+        default="gold_plus_random",
+        help="pooledkv + sidecar: select_keep_docs policy (gold_plus_random / gold_subsample / "
+        "random_only / random_nongold / gold_pair / gold_halves)",
+    )
+    ap.add_argument(
+        "--pooled-n-gold",
+        type=int,
+        default=0,
+        help="pooledkv + sidecar: n_gold for the gold_subsample / gold_halves policies",
+    )
+    ap.add_argument(
+        "--pooled-keep-prob",
+        type=float,
+        default=0.1,
+        help="pooledkv without sidecar: per-doc probability of keeping real KV (seeded hash)",
+    )
+    ap.add_argument(
+        "--pooled-no-len-bias",
+        action="store_true",
+        help="pooledkv: drop the +log(doc_len) slot logit bias (ablation; the biased form is the "
+        "principled 'L copies of the mean KV entry' equivalence)",
     )
     ap.add_argument(
         "--seq-len", type=int, default=40960, help="fits the 32k rung + prompt/CoT overhead"
@@ -1203,6 +1522,27 @@ def parse_args() -> argparse.Namespace:
         # posture as every sparse-landmark CPT/SFT script) rather than risk AC+compile metadata
         # mismatches mid-sweep.
         print("[ctc-suite] sparselandmark: forcing --no-compile (triton custom-autograd mixer)")
+        opts.compile = False
+    if opts.variant == "pooledkv":
+        if opts.pack:
+            # The keep-set fingerprint + role reconstruction assume ONE example per padded row
+            # (everything after the first EOS is PAD); packed rows would fingerprint-miss every
+            # example and silently keep all docs real.
+            ap.error("--variant pooledkv requires the padded (no --pack) data path")
+        if opts.compile:
+            # Data-dependent shapes (per-batch doc count) + host-side keep-set resolution.
+            print("[ctc-suite] pooledkv: forcing --no-compile (data-dependent pooled-KV shapes)")
+            opts.compile = False
+    if opts.variant != "pooledkv" and (opts.pooled_gold_sidecar or opts.pooled_no_len_bias):
+        ap.error("--pooled-* options are only valid with --variant pooledkv")
+    if opts.variant == "softtoken":
+        if opts.pack:
+            ap.error("--variant softtoken requires the padded (no --pack) data path (per-row fingerprints)")
+        if opts.compile:
+            print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
+            opts.compile = False
+    if opts.variant == "ffnmoe" and opts.compile:
+        print("[ctc-suite] ffnmoe: forcing --no-compile (data-dependent per-rung GEMM shapes)")
         opts.compile = False
     return opts
 

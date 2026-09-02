@@ -11,20 +11,19 @@ from __future__ import annotations
 from typing import List, Optional, Sequence
 
 import torch
-
 from ctc_eval.lib.chunked_attention import (
-    AttentionPattern,
     FREE_CHUNK_ID,
     PAD_CHUNK_ID,
+    AttentionPattern,
     build_dense_bool_mask,
     build_random_doc_edges,
     find_chunk_spans,
 )
 
-
 # ---------------------------------------------------------------------------
 # Tokenization + padding
 # ---------------------------------------------------------------------------
+
 
 def encode_and_sort(tokenizer, prompts: List[str]) -> tuple[list[list[int]], list[int]]:
     """Tokenize prompts; return (encoded_ids, sorted_order) where `sorted_order`
@@ -35,7 +34,9 @@ def encode_and_sort(tokenizer, prompts: List[str]) -> tuple[list[list[int]], lis
     return enc, order
 
 
-def pad_batch_left(batch_ids: list[list[int]], pad_token_id: int, device) -> tuple[torch.Tensor, list[int]]:
+def pad_batch_left(
+    batch_ids: list[list[int]], pad_token_id: int, device
+) -> tuple[torch.Tensor, list[int]]:
     """Left-pad a batch of token-id lists to the max length. Returns (B, S)."""
     B = len(batch_ids)
     lens = [len(ids) for ids in batch_ids]
@@ -50,6 +51,7 @@ def pad_batch_left(batch_ids: list[list[int]], pad_token_id: int, device) -> tup
 # Per-example chunk ids + prefill mask
 # ---------------------------------------------------------------------------
 
+
 def build_chunk_ids_padded(
     input_ids_padded: torch.Tensor,  # (B, S)
     real_lens: Sequence[int],
@@ -63,8 +65,8 @@ def build_chunk_ids_padded(
     n_docs_list: list[int] = []
     for b in range(B):
         L = real_lens[b]
-        real = input_ids_padded[b, S - L:]
-        chunk_ids[b, S - L:] = FREE_CHUNK_ID
+        real = input_ids_padded[b, S - L :]
+        chunk_ids[b, S - L :] = FREE_CHUNK_ID
         spans = find_chunk_spans(real, doc_start_id, doc_end_id)
         for idx, (s, e) in enumerate(spans):
             chunk_ids[b, S - L + s : S - L + e] = idx
@@ -86,7 +88,7 @@ def build_prefill_mask(
     if pattern.needs_anchor_tensor():
         if doc_end_id is None:
             raise ValueError("Pattern needs anchors but doc_end_id is None")
-        kwargs["is_anchor"] = (input_ids_padded == doc_end_id)
+        kwargs["is_anchor"] = input_ids_padded == doc_end_id
     if pattern.needs_random_edges():
         max_docs = max(max(n_docs_list), 1)
         doc_random = torch.zeros((B, max_docs, max_docs), dtype=torch.bool, device=device)
@@ -132,7 +134,9 @@ def build_prefill_position_ids(lens: Sequence[int], S: int, device) -> torch.Ten
     return position_ids
 
 
-def build_decode_mask_full(lens: Sequence[int], S: int, max_new_tokens: int, device) -> torch.Tensor:
+def build_decode_mask_full(
+    lens: Sequence[int], S: int, max_new_tokens: int, device
+) -> torch.Tensor:
     """(B, S + max_new_tokens) 2D attention mask that keeps padded KV positions
     masked throughout the whole decode loop. Generated positions are always 1.
     """
@@ -148,6 +152,7 @@ def build_decode_mask_full(lens: Sequence[int], S: int, max_new_tokens: int, dev
 # ---------------------------------------------------------------------------
 # Stop / decoding
 # ---------------------------------------------------------------------------
+
 
 def resolve_stop_set(stop_token_ids: Optional[Sequence[int]], tokenizer) -> set[int]:
     stop_set = set(stop_token_ids or [])
@@ -165,11 +170,14 @@ def make_stop_tester(stop_set: set[int], B: int, device, dtype):
 
     def _is_stop(tok_col):
         return (tok_col.unsqueeze(-1) == stop_tensor).any(dim=-1)
+
     return _is_stop
 
 
 def truncate_and_decode_batch(
-    gen_ids: torch.Tensor, stop_set: set[int], tokenizer,
+    gen_ids: torch.Tensor,
+    stop_set: set[int],
+    tokenizer,
 ) -> list[str]:
     """Per-example: truncate at first stop-token (exclusive), decode to text."""
     B = gen_ids.size(0)

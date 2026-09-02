@@ -9,7 +9,8 @@
 # NFS-safe; staging via cp can drop the hidden .metadata -> silent train-from-scratch, guarded).
 #
 # Knobs (env): TASK DATA_SRC VARIANT SCALE RUN EPOCHS SEQ_LEN LR GLOBAL_BATCH MICRO_BATCH
-#              BASE_SRC WANDB_GROUP MAX_STEPS NGPU SEED ACT_CKPT SHARD_DEGREE
+#              BASE_SRC WANDB_GROUP MAX_STEPS NGPU SEED ACT_CKPT SHARD_DEGREE EXTRA (verbatim extra
+#              train_ctc_suite.py args, e.g. the --ffn-moe-* / --st-* knobs)
 # Placement (env, applied ONLY when this file is executed directly -- it then self-submits):
 #              PARTITION (default berkeleynlp) QOS (optional) NODE (optional -w) TIME (default
 #              06:00:00) ACCOUNT (optional; jsteinhardt needs ACCOUNT=site QOS=preemptive_high)
@@ -73,6 +74,11 @@ LR="${LR:-5e-5}"
 GLOBAL_BATCH="${GLOBAL_BATCH:-8}"
 MICRO_BATCH="${MICRO_BATCH:-1}"
 MAX_STEPS="${MAX_STEPS:-0}"
+# Steps between mid-run model+optim checkpoints. Empty/0 = none (the train script's default), so
+# existing callers are byte-identical. Set it when you want to EVAL BEFORE THE RUN FINISHES -- with
+# no interval the only checkpoint is the model-only one written after fit(), so a 3-hour run yields
+# nothing evaluable for 3 hours. Costs ~55G per save at 4B: prune step*/ dirs once consumed.
+SAVE_INTERVAL="${SAVE_INTERVAL:-0}"
 SEED="${SEED:-0}"
 # Optional activation-checkpointing / FSDP shard-degree overrides (mirrors run_ctc_lambda.sbatch).
 # Empty by default -> trainer default (auto / no override), so existing callers are unaffected.
@@ -155,7 +161,12 @@ fi
 # ---- data + workdir + save folder: node-local /data ----
 DATA_LOCAL=$ROOT/data/$(basename "$DATA_SRC")
 mkdir -p "$DATA_LOCAL"
-cp -un "$DATA_SRC"/* "$DATA_LOCAL"/ 2>/dev/null || cp -n "$DATA_SRC"/* "$DATA_LOCAL"/ 2>/dev/null || true
+# MIRROR, don't "skip if present": cp -un left a stale qwen3_5-tokenized xabsence_train on mooney
+# shadowing the olmo3 rebuild of the same basename (2026-08-17, job 3460051 -- caught only by the
+# trainer's marker-set guard). rsync --delete is idempotent and transfers nothing when the dir
+# already matches, same reasoning as the rung-staging fix in eval_smallscale_ladder.sbatch.
+# flock: two jobs staging the same shard concurrently (e.g. paired smokes) race on --delete.
+flock "$DATA_LOCAL.lock" rsync -a --delete "$DATA_SRC"/ "$DATA_LOCAL"/ || { echo "FATAL: could not stage $DATA_SRC"; exit 4; }
 WORK_LOCAL=$ROOT/cache-$SLURM_JOB_ID
 mkdir -p "$WORK_LOCAL"
 SAVE_LOCAL=$ROOT/ckpts/$RUN
@@ -164,6 +175,11 @@ echo "BASE_CKPT=$BASE_CKPT DATA_LOCAL=$DATA_LOCAL SAVE=$SAVE_LOCAL"
 
 cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
+SAVEINTARG=""; [ "$SAVE_INTERVAL" -gt 0 ] && SAVEINTARG="--save-interval $SAVE_INTERVAL"
+# NO_FINAL_CKPT=1 skips the end-of-fit FULL (model+optim) save; the model-only export still runs.
+# Added after the 2026-08-18 cubbins failure: a completed 1250-step run died writing 82G to a full
+# /data and lost its weights entirely -- the model-only export (13G) never got its turn.
+NOFINALARG=""; [ -n "${NO_FINAL_CKPT:-}" ] && NOFINALARG="--no-final-checkpoint"
 MASTER_PORT=$((29000 + RANDOM % 1000))
 # Optional: disable wandb (e.g. no WANDB_API_KEY in the env). Set NOWANDB=1.
 # Backward-compatible: empty by default, so existing online-wandb runs are unchanged.
@@ -191,5 +207,5 @@ torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   ${MIX_START_P:+--mix-start-p "$MIX_START_P"} \
   ${MIX_END_P:+--mix-end-p "$MIX_END_P"} \
   --save-checkpoint $COMPILEARG $WANDBARG \
-  $MAXARG
+  $MAXARG $SAVEINTARG $NOFINALARG ${EXTRA:-}
 echo "=== DONE $(date '+%F %T')  rc=$? ==="

@@ -1,0 +1,66 @@
+{
+ "config": {
+  "seq_len": 6144,
+  "start_layer": 12,
+  "mix": "v3",
+  "iters": 8,
+  "no_ac": true,
+  "out": "debug/ffnmoe/profile_train_step_noac.json"
+ },
+ "gpu": "NVIDIA H200",
+ "dense": {
+  "train_step_ms": 603.449949179776,
+  "gpu_scope_ms": {
+   "step": 288.20211300000034,
+   "forward": 147.09161699999999,
+   "attn": 82.25211400000002,
+   "ffn": 45.80049400000001,
+   "lm_head": 140.54056599999998,
+   "backward": 0.0007999999999883584
+  },
+  "gpu_busy_ms": 1009.4448450000019,
+  "ffn_layer_fwd_ms": 1.2608360964804888,
+  "decode8_ms": 39.78803348727524
+ },
+ "routed": {
+  "train_step_ms": 580.3345135645941,
+  "gpu_scope_ms": {
+   "step": 260.74537100000003,
+   "forward": 310.826545,
+   "attn": 83.06837999999999,
+   "ffn": 65.08651299999998,
+   "lm_head": 140.236197,
+   "backward": 0.0008000000000465661
+  },
+  "gpu_busy_ms": 1142.6226110000025,
+  "ffn_layer_fwd_ms": 1.3298377860337496,
+  "routing": {
+   "ffn_moe/target": 0.05,
+   "ffn_moe/explore": 0.0,
+   "ffn_moe/tokens": 147456.0,
+   "ffn_moe/calls": 25.0,
+   "ffn_moe/mean_cost": 0.06454976399739583,
+   "ffn_moe/speedup": 15.491923410290758,
+   "ffn_moe/frac_rung0": 0.057942708333333336,
+   "ffn_moe/frac_rung1": 0.016927083333333332,
+   "ffn_moe/frac_rung2": 0.02001953125,
+   "ffn_moe/frac_rung3": 0.07194010416666667,
+   "ffn_moe/frac_rung4": 0.8331705729166666
+  },
+  "decode8_ms": 59.71763962879777
+ },
+ "noffn": {
+  "train_step_ms": 497.1720965113491,
+  "gpu_scope_ms": {
+   "step": 253.49132299999974,
+   "forward": 116.110479,
+   "attn": 82.26296300000001,
+   "ffn": 15.369928,
+   "lm_head": 140.358029,
+   "backward": 0.000864000000001397
+  },
+  "gpu_busy_ms": 846.027670000001,
+  "ffn_layer_fwd_ms": 0.011944258585572243,
+  "decode8_ms": 39.99411780387163
+ }
+}

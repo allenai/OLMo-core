@@ -45,8 +45,9 @@ it reduces to plain causal attention.
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -80,6 +81,49 @@ def _splitmix64(x: torch.Tensor) -> torch.Tensor:
     x = x ^ (x >> 27)
     x = x * -0x6B2FB644ECCEEE15  # 0x94D049BB133111EB as signed int64
     return x ^ (x >> 31)
+
+
+def resolve_keep_docs(
+    chunk_ids: torch.Tensor,
+    n_docs: int,
+    *,
+    holder: Optional["PooledDocKeepHolder"],
+    keep_prob: float,
+    keep_seed: int,
+) -> torch.Tensor:
+    """
+    The ``(B, n_docs)`` bool keep mask for one forward: the holder's gold-aware set when the
+    :func:`install_pooled_doc_keep` hook is installed, else a deterministic seeded random fallback
+    (a hash of the example's chunk layout and the doc index -- identical across layers,
+    activation-checkpoint recompute, and epochs). Shared by :class:`PooledDocKVAttention` (per-layer
+    KV pooling) and the soft-token pooling feature on
+    :class:`~olmo_core.nn.transformer.model.Transformer`.
+    """
+    B = chunk_ids.shape[0]
+    device = chunk_ids.device
+    keep = None if holder is None else holder.keep_docs
+    if keep is not None:
+        keep = keep.to(device=device, dtype=torch.bool)
+        if keep.shape[0] == 1 and B > 1:
+            keep = keep.expand(B, -1)
+        if keep.shape[0] != B:
+            raise RuntimeError(
+                f"pooled-KV keep holder batch ({keep.shape[0]}) does not match the forward's "
+                f"batch ({B}); the pre-hook and the forward disagree about the batch."
+            )
+        # Reconcile widths: documents the holder never saw stay REAL (conservative).
+        if keep.shape[1] < n_docs:
+            pad = torch.ones(B, n_docs - keep.shape[1], dtype=torch.bool, device=device)
+            keep = torch.cat([keep, pad], dim=1)
+        return keep[:, :n_docs]
+    sig = (
+        (chunk_ids.to(torch.int64) + 5)
+        * torch.arange(1, chunk_ids.shape[1] + 1, dtype=torch.int64, device=device)
+    ).sum(dim=-1)
+    d = torch.arange(n_docs, dtype=torch.int64, device=device)
+    h = _splitmix64(sig[:, None] ^ _splitmix64(d[None, :] + keep_seed))
+    u = (h & 0xFFFFFF).to(torch.float32) / float(1 << 24)
+    return u < keep_prob
 
 
 @dataclass
@@ -139,37 +183,14 @@ class PooledDocKVAttention(DocumentChunkedAttention):
     # ------------------------------------------------------------------
 
     def _resolve_keep_docs(self, chunk_ids: torch.Tensor, n_docs: int) -> torch.Tensor:
-        """
-        The ``(B, n_docs)`` bool keep mask for this forward: the holder's gold-aware set when the
-        hook is installed, else the deterministic seeded random fallback.
-        """
-        B = chunk_ids.shape[0]
-        device = chunk_ids.device
-        holder = self._pooled_keep_holder
-        keep = None if holder is None else holder.keep_docs
-        if keep is not None:
-            keep = keep.to(device=device, dtype=torch.bool)
-            if keep.shape[0] == 1 and B > 1:
-                keep = keep.expand(B, -1)
-            if keep.shape[0] != B:
-                raise RuntimeError(
-                    f"pooled-KV keep holder batch ({keep.shape[0]}) does not match the forward's "
-                    f"batch ({B}); the pre-hook and the attention forward disagree about the batch."
-                )
-            # Reconcile widths: documents the holder never saw stay REAL (conservative).
-            if keep.shape[1] < n_docs:
-                pad = torch.ones(B, n_docs - keep.shape[1], dtype=torch.bool, device=device)
-                keep = torch.cat([keep, pad], dim=1)
-            return keep[:, :n_docs]
-        # Fallback: per-(example layout, doc) seeded hash -> stable across layers and epochs.
-        sig = (
-            (chunk_ids.to(torch.int64) + 5)
-            * torch.arange(1, chunk_ids.shape[1] + 1, dtype=torch.int64, device=device)
-        ).sum(dim=-1)
-        d = torch.arange(n_docs, dtype=torch.int64, device=device)
-        h = _splitmix64(sig[:, None] ^ _splitmix64(d[None, :] + self.keep_seed))
-        u = (h & 0xFFFFFF).to(torch.float32) / float(1 << 24)
-        return u < self.keep_prob
+        """See :func:`resolve_keep_docs` (shared with the soft-token pooling feature)."""
+        return resolve_keep_docs(
+            chunk_ids,
+            n_docs,
+            holder=self._pooled_keep_holder,
+            keep_prob=self.keep_prob,
+            keep_seed=self.keep_seed,
+        )
 
     # ------------------------------------------------------------------
     # Pooling + mask construction
@@ -426,6 +447,17 @@ class PooledDocKVAttention(DocumentChunkedAttention):
 KeepDocsFn = Callable[[torch.Tensor], torch.Tensor]
 
 
+def _flatten_gold(gold) -> list:
+    """Gold sidecar values are either doc ids or id pairs; return the flat id list."""
+    out = []
+    for g in gold:
+        if isinstance(g, (list, tuple)):
+            out.extend(int(x) for x in g)
+        else:
+            out.append(int(g))
+    return out
+
+
 def make_fingerprint_keep_docs_fn(
     gold_table: Dict[str, Iterable[Any]],
     *,
@@ -433,11 +465,16 @@ def make_fingerprint_keep_docs_fn(
     doc_end_id: int,
     eos_id: int,
     n_random: int = 2,
+    n_random_range: Optional[Tuple[int, int]] = None,
+    n_random_frac: Optional[float] = None,
     mode: str = "gold_plus_random",
     seed: int = 0,
     n_gold: int = 0,
     n_pairs: int = 1,
     debug_calls: int = 12,
+    mix_start_p: float = 0.0,
+    mix_end_p: float = 0.0,
+    mix_total_calls: int = 0,
 ) -> KeepDocsFn:
     """
     Build a ``keep_docs_fn(input_ids) -> (B, n_docs) bool`` for :func:`install_pooled_doc_keep`:
@@ -449,10 +486,27 @@ def make_fingerprint_keep_docs_fn(
     warmup batch) keeps **all** documents real (degrades to full attention, never to a wrong pool).
 
     :param n_random: Random non-gold documents kept real per example (the "subset of negatives").
+    :param n_random_frac: If given, the negative count is a FIXED FRACTION of the row's non-gold
+        documents (``round(frac * n_non_gold)``, at least 1), so the kept share -- and hence the
+        compression ratio -- is the same at every context length (overrides ``n_random`` and
+        ``n_random_range``). This is the scale-invariant setting for a length-mix scaling study.
+    :param n_random_range: If given, ``(lo, hi)`` — each (row, call) draws its own negative count
+        log-uniformly in ``[lo, hi]`` (overrides ``n_random``). Training at varied candidate
+        breadths teaches ranking that is scale-invariant, so the eval regime (every doc real) is
+        not out-of-distribution. The draw is per (fingerprint, call): a row's breadth varies
+        across epochs.
     :param mode: A :func:`select_keep_docs` policy (``"gold_plus_random"``, ``"gold_subsample"``,
         ``"random_only"``, ``"random_nongold"``, ``"gold_pair"``, ``"gold_halves"``).
     :param seed: Base seed; the per-example draw is seeded with ``f"{seed}:{fingerprint}"`` so it is
         stable across epochs and layers.
+    :param mix_start_p: **Compression-mixing curriculum** (the pooled analogue of the proven
+        mask-mixing curriculum): each row independently trains UNCOMPRESSED (keep every doc) with
+        probability ``p``, annealed linearly from ``mix_start_p`` to ``mix_end_p`` over
+        ``mix_total_calls`` invocations of this fn (== forwards on this rank). Zero-shot pooled ->
+        full transfer collapses without it (f1 0.985 -> 0.08-0.16 measured); the curriculum keeps
+        the model anchored to the full-attention task while the compressed examples make it cheap.
+        The draw is seeded per (fingerprint, call index): deterministic given the data order, and a
+        given example flips between compressed/full across epochs.
     """
     import random as _random
 
@@ -474,6 +528,12 @@ def make_fingerprint_keep_docs_fn(
     state = {"calls": 0, "rows": 0, "hits": 0}
 
     def fn(input_ids: torch.Tensor) -> torch.Tensor:
+        # Curriculum probability for THIS call (linear anneal; constant mix_start_p if no total).
+        if mix_total_calls > 0:
+            frac = min(1.0, state["calls"] / max(1, mix_total_calls))
+            p_full = mix_start_p + (mix_end_p - mix_start_p) * frac
+        else:
+            p_full = mix_start_p
         ids_cpu = input_ids.detach().to("cpu")
         roles = build_chunk_ids_from_tokens(
             ids_cpu, doc_start_id=doc_start_id, doc_end_id=doc_end_id, eos_id=eos_id, mode="chunked"
@@ -483,19 +543,37 @@ def make_fingerprint_keep_docs_fn(
         keep = torch.ones(B, n_docs, dtype=torch.bool)
         ids2d = ids_cpu.tolist()
         n_found = 0
+        n_mixed = 0
         for b in range(B):
             fp = content_fingerprint_from_row(ids2d[b], eos_id)
             gold = table.get(fp)
             if gold is None:
                 continue  # unknown example -> all docs stay real
             n_found += 1
+            # Compression-mixing curriculum: this row trains uncompressed with probability p_full.
+            if (
+                p_full > 0.0
+                and _random.Random(f"mix:{seed}:{fp}:{state['calls']}").random() < p_full
+            ):
+                n_mixed += 1
+                continue  # keep[b] stays all-True
             row_roles = roles[b]
             present = [int(d) for d in torch.unique(row_roles[row_roles >= 0]).tolist()]
             rng = _random.Random(f"{seed}:{fp}")
+            n_rand_row = n_random
+            if n_random_frac is not None:
+                n_non_gold = max(0, len(present) - len(set(int(g) for g in _flatten_gold(gold))))
+                n_rand_row = max(1, int(round(n_random_frac * n_non_gold)))
+            elif n_random_range is not None:
+                lo, hi = n_random_range
+                u = _random.Random(f"nr:{seed}:{fp}:{state['calls']}").uniform(
+                    math.log(max(1, lo)), math.log(max(1, hi))
+                )
+                n_rand_row = min(hi, max(lo, int(round(math.exp(u)))))
             keep_docs = select_keep_docs(
                 present,
                 gold,
-                n_random=n_random,
+                n_random=n_rand_row,
                 mode=mode,
                 rng=rng,
                 n_gold=n_gold,
@@ -515,7 +593,12 @@ def make_fingerprint_keep_docs_fn(
             print(
                 f"[pooled-kv] call#{state['calls']}{tag}: B={B} n_docs<={n_docs} mode={mode} "
                 f"n_random={n_random} fp_hits={n_found}/{B} cum_hits={state['hits']}/{state['rows']} "
-                f"pooled_docs={n_pool}",
+                f"pooled_docs={n_pool} p_full={p_full:.2f} mixed={n_mixed}",
+                flush=True,
+            )
+        elif p_full > 0.0 and state["calls"] % 100 == 0:
+            print(
+                f"[pooled-kv] call#{state['calls']}: p_full={p_full:.3f} mixed={n_mixed}/{B}",
                 flush=True,
             )
         return keep
@@ -548,10 +631,15 @@ def install_pooled_doc_keep(
         if isinstance(m, PooledDocKVAttention):
             m._pooled_keep_holder = holder
             n += 1
+        elif getattr(m, "_pooled_soft_tokens", None) is not None:
+            # A Transformer with soft-token pooling enabled (duck-typed to avoid the circular
+            # import); it reads the same holder in its compaction step.
+            m._pooled_keep_holder = holder
+            n += 1
     holder.n_attached = n
     if n == 0:
         log.warning(
-            "install_pooled_doc_keep: no PooledDocKVAttention layers found on the model; the hook "
-            "will compute keep masks nobody reads."
+            "install_pooled_doc_keep: no PooledDocKVAttention layers and no soft-token-enabled "
+            "Transformer found on the model; the hook will compute keep masks nobody reads."
         )
     return holder

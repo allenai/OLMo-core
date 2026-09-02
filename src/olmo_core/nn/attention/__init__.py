@@ -1429,9 +1429,7 @@ class Attention(SequenceMixer):
                         "soft_kv_override with slot biases requires attn_bias (the "
                         "position-causal masked-SDPA path)"
                     )
-                col_bias = torch.zeros(
-                    (B, 1, 1, T), dtype=attn_bias.dtype, device=attn_bias.device
-                )
+                col_bias = torch.zeros((B, 1, 1, T), dtype=attn_bias.dtype, device=attn_bias.device)
                 col_bias[soft_kv_override["rows"], 0, 0, soft_kv_override["cols"]] = (
                     soft_kv_override["bias"].to(attn_bias.dtype)
                 )

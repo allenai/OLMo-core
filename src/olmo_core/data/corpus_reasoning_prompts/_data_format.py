@@ -41,36 +41,54 @@ import re
 
 from ._io import format_alpaca_prompt, insert_dummy_tokens
 from ._prompts import (
-    PASSAGE_TEMPLATE, PASSAGE_TEMPLATE_NO_TITLE,
-    PASSAGE_TEMPLATE_ID, PASSAGE_TEMPLATE_NO_TITLE_ID,
-    QA_INSTRUCTION, MULTI_QA_INSTRUCTION,
-    RETRIEVAL_INSTRUCTION_SINGLE, RETRIEVAL_INSTRUCTION_MULTI_DOC,
-    RETRIEVAL_INSTRUCTION_MULTI_QUERY, RERANK_INSTRUCTION, rerank_instruction,
-    helmet_rerank_passage, helmet_rerank_prompt,
-    COT_RETRIEVAL_INSTRUCTION_SINGLE, COT_RETRIEVAL_INSTRUCTION_MULTI_DOC,
-    CONTRADICTION_INSTRUCTION, CLAIM_TEMPLATE,
+    ABSENCE_GUTENBERG_INSTRUCTION,
+    ABSENCE_INSTRUCTION,
+    CLAIM_TEMPLATE,
+    CONTRADICTION_INSTRUCTION,
+    COT_RETRIEVAL_INSTRUCTION_MULTI_DOC,
+    COT_RETRIEVAL_INSTRUCTION_SINGLE,
+    CYCLE_INSTRUCTION,
+    EXPRESSION_TEMPLATE,
+    GENERIC_INSTRUCTION,
+    GROUPING_INSTRUCTION,
+    GROUPING_LABELED_INSTRUCTION,
+    GROUPS4_INSTRUCTION,
+    MATCHING_NGRAM_INSTRUCTION,
+    MATHMATCH_INSTRUCTION,
+    MULTI_QA_INSTRUCTION,
+    NGRAM_TEMPLATE,
+    OOLONG_INSTRUCTION,
+    OUTLIER_INSTRUCTION,
+    PASSAGE_TEMPLATE,
+    PASSAGE_TEMPLATE_GROUPING,
+    PASSAGE_TEMPLATE_ID,
+    PASSAGE_TEMPLATE_NO_TITLE,
+    PASSAGE_TEMPLATE_NO_TITLE_ID,
+    PASSAGE_TEMPLATE_REORDER,
+    QA_INSTRUCTION,
     QDMATCH_INSTRUCTION,
-    XFORMMATCH_INSTRUCTION,
     RECMATCH_INSTRUCTION,
     RECORD_TEMPLATE,
     REDUNDANCY_INSTRUCTION,
-    ABSENCE_INSTRUCTION,
-    ABSENCE_GUTENBERG_INSTRUCTION,
-    XABSENCE_INSTRUCTION, XABSENCE_ONESIDED_INSTRUCTION, XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION,
-    CYCLE_INSTRUCTION,
-    MATCHING_NGRAM_INSTRUCTION, NGRAM_TEMPLATE,
-    MATHMATCH_INSTRUCTION, EXPRESSION_TEMPLATE,
-    GROUPS4_INSTRUCTION,
-    STRMATCH_INSTRUCTION, STRING_TEMPLATE,
-    TEXTGROUPS_INSTRUCTION, TEXTGROUPS_TEMPLATE,
-    REORDER_INSTRUCTION, PASSAGE_TEMPLATE_REORDER,
-    GROUPING_INSTRUCTION, GROUPING_LABELED_INSTRUCTION,
-    PASSAGE_TEMPLATE_GROUPING,
-    OUTLIER_INSTRUCTION,
-    OOLONG_INSTRUCTION,
+    REORDER_INSTRUCTION,
+    RERANK_INSTRUCTION,
+    RETRIEVAL_INSTRUCTION_MULTI_DOC,
+    RETRIEVAL_INSTRUCTION_MULTI_QUERY,
+    RETRIEVAL_INSTRUCTION_SINGLE,
+    RULER_INSTRUCTION_DEFAULT,
+    RULER_INSTRUCTIONS,
+    STRING_TEMPLATE,
+    STRMATCH_INSTRUCTION,
     SUMMARIZATION_INSTRUCTION,
-    RULER_INSTRUCTIONS, RULER_INSTRUCTION_DEFAULT,
-    GENERIC_INSTRUCTION,
+    TEXTGROUPS_INSTRUCTION,
+    TEXTGROUPS_TEMPLATE,
+    XABSENCE_INSTRUCTION,
+    XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION,
+    XABSENCE_ONESIDED_INSTRUCTION,
+    XFORMMATCH_INSTRUCTION,
+    helmet_rerank_passage,
+    helmet_rerank_prompt,
+    rerank_instruction,
 )
 
 
@@ -145,20 +163,25 @@ def _get_instruction(example, task, output_top_k=-1):
     if task == "summarization":
         return SUMMARIZATION_INSTRUCTION
     if task == "ruler":
-        return RULER_INSTRUCTIONS.get(_ruler_subtask(example),
-                                      RULER_INSTRUCTION_DEFAULT)
+        return RULER_INSTRUCTIONS.get(_ruler_subtask(example), RULER_INSTRUCTION_DEFAULT)
     if task == "rerank":
         return rerank_instruction(output_top_k)
     multi = is_multi_query(example)
     if task == "cot_retrieval":
         # CoT retrieval doesn't support multi-query
-        return (COT_RETRIEVAL_INSTRUCTION_MULTI_DOC if _has_multi_gold(example)
-                else COT_RETRIEVAL_INSTRUCTION_SINGLE)
+        return (
+            COT_RETRIEVAL_INSTRUCTION_MULTI_DOC
+            if _has_multi_gold(example)
+            else COT_RETRIEVAL_INSTRUCTION_SINGLE
+        )
     elif task == "retrieval":
         if multi:
             return RETRIEVAL_INSTRUCTION_MULTI_QUERY
-        return (RETRIEVAL_INSTRUCTION_MULTI_DOC if _has_multi_gold(example)
-                else RETRIEVAL_INSTRUCTION_SINGLE)
+        return (
+            RETRIEVAL_INSTRUCTION_MULTI_DOC
+            if _has_multi_gold(example)
+            else RETRIEVAL_INSTRUCTION_SINGLE
+        )
     else:
         return MULTI_QA_INSTRUCTION if multi else QA_INSTRUCTION
 
@@ -182,8 +205,7 @@ def _format_documents(documents, task, use_titles=True):
         # One record per document; \n\n-separated so each record is its own
         # isolated chunk under chunked attention.
         return "\n\n".join(
-            RECORD_TEMPLATE.format(id=i + 1, text=doc["text"])
-            for i, doc in enumerate(documents)
+            RECORD_TEMPLATE.format(id=i + 1, text=doc["text"]) for i, doc in enumerate(documents)
         )
     if task == "xformmatch":
         # Originals and rewrites in one shuffled shared 1-based index; each item
@@ -217,19 +239,15 @@ def _format_documents(documents, task, use_titles=True):
         # paragraph when wrap_documents splits on \n\n, and therefore its own
         # isolated chunk under chunked attention.
         return "\n\n".join(
-            CLAIM_TEMPLATE.format(id=i + 1, text=doc["text"])
-            for i, doc in enumerate(documents)
+            CLAIM_TEMPLATE.format(id=i + 1, text=doc["text"]) for i, doc in enumerate(documents)
         )
     if task == "absence":
         # Neutral numbered items — elements may be claims, poem lines, numbers,
         # or diff lines depending on the source domain.
-        return "\n\n".join(
-            f"[{i + 1}] {doc['text']}" for i, doc in enumerate(documents)
-        )
+        return "\n\n".join(f"[{i + 1}] {doc['text']}" for i, doc in enumerate(documents))
     if task == "matching_ngram":
         return "\n\n".join(
-            NGRAM_TEMPLATE.format(id=i + 1, text=doc["text"])
-            for i, doc in enumerate(documents)
+            NGRAM_TEMPLATE.format(id=i + 1, text=doc["text"]) for i, doc in enumerate(documents)
         )
     if task in ("mathmatch", "groups4"):
         return "\n\n".join(
@@ -243,13 +261,11 @@ def _format_documents(documents, task, use_titles=True):
         )
     if task == "strmatch":
         return "\n\n".join(
-            STRING_TEMPLATE.format(id=i + 1, text=doc["text"])
-            for i, doc in enumerate(documents)
+            STRING_TEMPLATE.format(id=i + 1, text=doc["text"]) for i, doc in enumerate(documents)
         )
     if task == "cycle":
         return "\n\n".join(
-            CLAIM_TEMPLATE.format(id=i + 1, text=doc["text"])
-            for i, doc in enumerate(documents)
+            CLAIM_TEMPLATE.format(id=i + 1, text=doc["text"]) for i, doc in enumerate(documents)
         )
     if task == "reorder":
         # Gutenberg passages often contain internal \n\n paragraph breaks.
@@ -257,14 +273,12 @@ def _format_documents(documents, task, use_titles=True):
         # wrap_documents splits on \n\n — otherwise only the first chunk of a
         # passage gets wrapped and the rest leaks into the "free" region.
         return "\n\n".join(
-            PASSAGE_TEMPLATE_REORDER.format(
-                id=i + 1, text=doc["text"].replace("\n\n", "\n"))
+            PASSAGE_TEMPLATE_REORDER.format(id=i + 1, text=doc["text"].replace("\n\n", "\n"))
             for i, doc in enumerate(documents)
         )
     if task in ("grouping", "grouping_labeled"):
         return "\n\n".join(
-            PASSAGE_TEMPLATE_GROUPING.format(
-                id=i + 1, title=doc.get("title", ""), text=doc["text"])
+            PASSAGE_TEMPLATE_GROUPING.format(id=i + 1, title=doc.get("title", ""), text=doc["text"])
             for i, doc in enumerate(documents)
         )
     if task in ("oolong", "summarization"):
@@ -308,7 +322,7 @@ def remap_cot_doc_ids(cot_text, id_mapping):
         new_id = id_mapping.get(old_id, old_id)
         return f"[{new_id}]"
 
-    return re.sub(r'\[(\d+)\]', _replace_id, cot_text)
+    return re.sub(r"\[(\d+)\]", _replace_id, cot_text)
 
 
 def _build_retrieval_ids(gold):
@@ -322,17 +336,24 @@ def _build_retrieval_ids(gold):
 
 _OUTLIER_RATINGS = [1, 2, 3, 4, 5]
 _OUTLIER_CATEGORIES = [
-    "Books", "Beauty_and_Personal_Care", "Home_and_Kitchen", "Electronics",
+    "Books",
+    "Beauty_and_Personal_Care",
+    "Home_and_Kitchen",
+    "Electronics",
 ]
 
 
 def _outlier_rng(example):
-    key = _json.dumps({
-        "gold": sorted(example.get("gold_doc_indices", []) or []),
-        "src": example.get("source", ""),
-        "mj": (example.get("meta") or {}).get("majority_label"),
-        "mn": (example.get("meta") or {}).get("minority_label"),
-    }, sort_keys=True, default=str)
+    key = _json.dumps(
+        {
+            "gold": sorted(example.get("gold_doc_indices", []) or []),
+            "src": example.get("source", ""),
+            "mj": (example.get("meta") or {}).get("majority_label"),
+            "mn": (example.get("meta") or {}).get("minority_label"),
+        },
+        sort_keys=True,
+        default=str,
+    )
     seed = int(hashlib.sha1(key.encode()).hexdigest()[:16], 16)
     return _random.Random(seed)
 
@@ -440,9 +461,7 @@ def _build_reorder_anchor_cot(example, n_anchor: int = 3) -> str:
         j = succ[i]
         end_w = docs[i - 1]["text"].split()[-n_anchor:]
         start_w = docs[j - 1]["text"].split()[:n_anchor]
-        lines.append(
-            f'Chunk {i} → Chunk {j}: "...{" ".join(end_w)}" → "{" ".join(start_w)}..."'
-        )
+        lines.append(f'Chunk {i} → Chunk {j}: "...{" ".join(end_w)}" → "{" ".join(start_w)}..."')
     return "Reasoning:\n" + "\n".join(lines)
 
 
@@ -491,7 +510,7 @@ def _longest_word_run(wa, wb):
             while i + k < len(wa) and j + k < len(wb) and wa[i + k] == wb[j + k]:
                 k += 1
             if k > len(best):
-                best = wa[i:i + k]
+                best = wa[i : i + k]
     return best
 
 
@@ -553,13 +572,16 @@ def _build_cycle_template_cot(example) -> str:
             if nxt is None:
                 order = list(cyc)  # fallback: unordered
                 break
-            order.append(nxt); used.add(nxt); cur = edges[nxt][1]
+            order.append(nxt)
+            used.add(nxt)
+            cur = edges[nxt][1]
         for cid in order:
             a, b = edges[cid]
             lines.append(f"- Claim [{cid}]: {a} > {b}.")
         names = [edges[c][0] for c in order]
-        lines.append(f"  This forms a loop {' > '.join(names)} > {names[0]}, "
-                     f"which is impossible.")
+        lines.append(
+            f"  This forms a loop {' > '.join(names)} > {names[0]}, " f"which is impossible."
+        )
     return "\n".join(lines)
 
 
@@ -589,8 +611,7 @@ def _tg_feature_phrase(meta) -> str:
     feat = (meta or {}).get("feature", "nouns")
     if feat == "connector":
         return f'occurrences of the word "{(meta or {}).get("word", "and")}"'
-    return {"nouns": "nouns", "verbs": "verbs",
-            "adjectives": "adjectives"}.get(feat, feat)
+    return {"nouns": "nouns", "verbs": "verbs", "adjectives": "adjectives"}.get(feat, feat)
 
 
 def _build_textgroups_template_cot(example) -> str:
@@ -604,7 +625,7 @@ def _build_textgroups_template_cot(example) -> str:
     for grp in example["gold_doc_indices"]:
         vals = [counts[c - 1] for c in grp]
         terms = " + ".join(f"[{c}]={counts[c - 1]}" for c in grp)
-        tail = (f"within {W} of {T}" if W else f"exactly {T}")
+        tail = f"within {W} of {T}" if W else f"exactly {T}"
         lines.append(f"- Passages {terms} sum to {sum(vals)} ({tail}).")
     return "\n".join(lines)
 
@@ -618,12 +639,14 @@ def _build_textgroups_scan_cot(example) -> str:
     W = meta.get("tolerance", 0) or 0
     phrase = _tg_feature_phrase(meta)
     listing = ", ".join(f"[{i + 1}]={c}" for i, c in enumerate(counts))
-    tail = (f"within {W} of {T}" if W else f"to {T}")
+    tail = f"within {W} of {T}" if W else f"to {T}"
     lines = [f"Reasoning: counting the {phrase} in each passage: {listing}."]
     for grp in example["gold_doc_indices"]:
         terms = " + ".join(str(counts[c - 1]) for c in grp)
-        lines.append(f"Passages {', '.join(map(str, grp))} give {terms} = "
-                     f"{sum(counts[c - 1] for c in grp)}, summing {tail}.")
+        lines.append(
+            f"Passages {', '.join(map(str, grp))} give {terms} = "
+            f"{sum(counts[c - 1] for c in grp)}, summing {tail}."
+        )
     return "\n".join(lines)
 
 
@@ -631,8 +654,10 @@ def _build_absence_template_cot(example) -> str:
     """Name and quote each removed item (single-[id] so the trailing 'Missing:'
     line is what the parser reads)."""
     docs = example["documents"]
-    lines = ["Reasoning: scanning the original against the second version, these "
-             "numbered items are absent below:"]
+    lines = [
+        "Reasoning: scanning the original against the second version, these "
+        "numbered items are absent below:"
+    ]
     for g in sorted(example["gold_doc_indices"]):
         lines.append(f'- [{g + 1}]: "{_quote_claim(docs[g]["text"])}"')
     return "\n".join(lines)
@@ -643,8 +668,9 @@ def _build_rerank_template_cot(example) -> str:
     gold = sorted(example["gold_doc_indices"])
     lines = ["Reasoning:"]
     for g in gold:
-        lines.append(f"- Document [{g + 1}] directly answers the question, so it "
-                     f"ranks near the top.")
+        lines.append(
+            f"- Document [{g + 1}] directly answers the question, so it " f"ranks near the top."
+        )
     return "\n".join(lines)
 
 
@@ -654,11 +680,11 @@ def _build_oolong_plan_cot(example) -> str:
     tg = (example.get("_meta") or {}).get("task_group", "")
     plan = {
         "counting": "go through every item, determine its label, tally the counts, "
-                    "then compare the totals.",
+        "then compare the totals.",
         "user": "go through every item, note its user id, tally per user, then find "
-                "the most frequent.",
+        "the most frequent.",
         "timeline": "go through the items in date order, track the per-period label "
-                    "counts, then compare across periods.",
+        "counts, then compare across periods.",
     }.get(tg, "analyze every item and aggregate the result before answering.")
     return f"Reasoning: to answer this, {plan}"
 
@@ -669,6 +695,7 @@ def _build_oolong_plan_cot(example) -> str:
 # learn the scan-the-whole-corpus algorithm. CoT bodies use bare numbers or
 # single-[id] brackets so the answer parsers still lock onto the final line.
 
+
 def _build_strmatch_enumerate_cot(example) -> str:
     """Per-string verdict: matches which other string, or none."""
     n = len(example["documents"])
@@ -676,8 +703,14 @@ def _build_strmatch_enumerate_cot(example) -> str:
     for a, b in example["gold_doc_indices"]:
         partner.setdefault(a, []).append(b)
         partner.setdefault(b, []).append(a)
-    parts = [f"{i}: matches {', '.join(map(str, sorted(partner[i])))}" if i in partner
-             else f"{i}: no match" for i in range(1, n + 1)]
+    parts = [
+        (
+            f"{i}: matches {', '.join(map(str, sorted(partner[i])))}"
+            if i in partner
+            else f"{i}: no match"
+        )
+        for i in range(1, n + 1)
+    ]
     return "Reasoning: " + ", ".join(parts)
 
 
@@ -688,8 +721,14 @@ def _build_redundancy_enumerate_cot(example) -> str:
     for a, b in example["gold_doc_indices"]:
         partner.setdefault(a, []).append(b)
         partner.setdefault(b, []).append(a)
-    parts = [f"{i}: paraphrase of {', '.join(map(str, sorted(partner[i])))}" if i in partner
-             else f"{i}: unique" for i in range(1, n + 1)]
+    parts = [
+        (
+            f"{i}: paraphrase of {', '.join(map(str, sorted(partner[i])))}"
+            if i in partner
+            else f"{i}: unique"
+        )
+        for i in range(1, n + 1)
+    ]
     return "Reasoning: " + ", ".join(parts)
 
 
@@ -702,14 +741,16 @@ def _build_cycle_trace_cot(example) -> str:
         toks = d["text"].split()
         lines.append(f"- Claim {i}: {toks[0]} > {toks[-1]}")
     for cyc in example["gold_doc_indices"]:
-        edges = {c: (docs[c - 1]["text"].split()[0],
-                     docs[c - 1]["text"].split()[-1]) for c in cyc}
+        edges = {c: (docs[c - 1]["text"].split()[0], docs[c - 1]["text"].split()[-1]) for c in cyc}
         order, used, cur = [], set(), edges[cyc[0]][0]
         while len(order) < len(cyc):
             nxt = next((c for c in cyc if c not in used and edges[c][0] == cur), None)
             if nxt is None:
-                order = list(cyc); break
-            order.append(nxt); used.add(nxt); cur = edges[nxt][1]
+                order = list(cyc)
+                break
+            order.append(nxt)
+            used.add(nxt)
+            cur = edges[nxt][1]
         chain = " > ".join(f"{edges[c][0]} (claim {c})" for c in order)
         lines.append(f"Following the chain: {chain} > {edges[order[0]][0]} — a loop.")
     return "\n".join(lines)
@@ -724,10 +765,12 @@ def _build_groups4_sort_cot(example) -> str:
     listing = ", ".join(f"{v} [{i}]" for v, i in vals_sorted)
     grp = sorted(example["gold_doc_indices"][0]) if example["gold_doc_indices"] else []
     gv = sorted(_safe_num(docs[c - 1]["text"]) for c in grp)
-    return (f"Reasoning: sorting all values: {listing}.\n"
-            f"The values {', '.join(map(str, gv))} (expressions "
-            f"{', '.join(map(str, grp))}) all fall within {X}; every other value "
-            f"is farther than {X} from its neighbours.")
+    return (
+        f"Reasoning: sorting all values: {listing}.\n"
+        f"The values {', '.join(map(str, gv))} (expressions "
+        f"{', '.join(map(str, grp))}) all fall within {X}; every other value "
+        f"is farther than {X} from its neighbours."
+    )
 
 
 def _build_absence_walk_cot(example) -> str:
@@ -736,8 +779,7 @@ def _build_absence_walk_cot(example) -> str:
     n = len(example["documents"])
     gone = {g + 1 for g in example["gold_doc_indices"]}
     parts = [f"[{i}] ABSENT" if i in gone else f"[{i}] present" for i in range(1, n + 1)]
-    return "Reasoning: checking each numbered item against the second version:\n" \
-           + ", ".join(parts)
+    return "Reasoning: checking each numbered item against the second version:\n" + ", ".join(parts)
 
 
 def _build_rerank_score_cot(example) -> str:
@@ -745,8 +787,7 @@ def _build_rerank_score_cot(example) -> str:
     n = len(example["documents"])
     gold = {g + 1 for g in example["gold_doc_indices"]}
     parts = [f"[{i}] relevant" if i in gold else f"[{i}] off-topic" for i in range(1, n + 1)]
-    return "Reasoning: assessing each candidate's relevance to the question:\n" \
-           + ", ".join(parts)
+    return "Reasoning: assessing each candidate's relevance to the question:\n" + ", ".join(parts)
 
 
 def _rerank_reference_order(example):
@@ -761,8 +802,7 @@ def _rerank_reference_order(example):
     n = len(example["documents"])
     ce = example.get("ce_scores")
     if ce and any(s is not None for s in ce):
-        scored = sorted((i for i in range(n) if ce[i] is not None),
-                        key=lambda i: -ce[i])
+        scored = sorted((i for i in range(n) if ce[i] is not None), key=lambda i: -ce[i])
         rest = [i for i in range(n) if ce[i] is None]
         order = scored + rest
     else:
@@ -789,9 +829,8 @@ def _helmet_rerank_context_and_order(example):
     ctxs = example["ctxs"]
     has_title = "title" in ctxs[0]
     context = "\n\n".join(
-        helmet_rerank_passage(c["id"], c["text"],
-                              c["title"] if has_title else None)
-        for c in ctxs)
+        helmet_rerank_passage(c["id"], c["text"], c["title"] if has_title else None) for c in ctxs
+    )
     key = "score" if "score" in ctxs[0] else "label"
     ordered = sorted(ctxs, key=lambda c: c[key], reverse=True)
     return context, [str(c["id"]) for c in ordered]
@@ -815,8 +854,7 @@ def build_helmet_rerank(example, top_k=HELMET_RERANK_TOP_K):
     context, ordered_ids = _helmet_rerank_context_and_order(example)
     if top_k and top_k > 0:
         ordered_ids = ordered_ids[:top_k]
-    prompt = helmet_rerank_prompt(context, example["query"],
-                                  example.get("_demos", ""))
+    prompt = helmet_rerank_prompt(context, example["query"], example.get("_demos", ""))
     return prompt, " " + " > ".join(ordered_ids)
 
 
@@ -878,9 +916,11 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return f"{anchor}: " + ", ".join(f"[{g}]" for g in gold)
     if task == "matching_ngram":
         import json
+
         return json.dumps(example["gold_doc_indices"])
     if task == "strmatch":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             return f"{_build_strmatch_template_cot(example)}\nMatching pairs: {answer}"
@@ -889,6 +929,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "redundancy":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             return f"{_build_redundancy_template_cot(example)}\nRedundant pairs: {answer}"
@@ -897,6 +938,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "cycle":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             return f"{_build_cycle_template_cot(example)}\nCycles: {answer}"
@@ -905,6 +947,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "groups4":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             return f"{_build_groups4_template_cot(example)}\nGroups: {answer}"
@@ -913,6 +956,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "textgroups":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             return f"{_build_textgroups_template_cot(example)}\nGroups: {answer}"
@@ -924,6 +968,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
             # Gutenberg text-diff variant: answer is the first-four-words snippet
             # of each removed sentence, in order of occurrence, as a JSON list.
             import json
+
             snippets = example["answers"]
             answer = json.dumps(snippets, ensure_ascii=False)
             if cot_mode == "list":
@@ -963,6 +1008,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "mathmatch":
         import json
+
         answer = json.dumps(example["gold_doc_indices"])
         if cot_mode == "template":
             cot = _build_mathmatch_template_cot(example)
@@ -970,6 +1016,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "contradiction":
         import json
+
         # gold_doc_indices stores the contradiction pairs as [[a, b], [c, d]]
         # These are already 1-indexed claim IDs
         answer = json.dumps(example["gold_doc_indices"])
@@ -985,6 +1032,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return answer
     if task == "reorder":
         import json
+
         # gold_order is already a list of 1-indexed display IDs in source order.
         answer = json.dumps(example["gold_order"])
         if cot_mode == "successor":
@@ -998,6 +1046,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
         return example["answers"][0]
     if task == "grouping_labeled":
         import json
+
         labels = example.get("cluster_labels") or []
         clusters = example["gold_doc_indices"]
         groups = []
@@ -1016,11 +1065,11 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
             cot = ""
         elif cot_mode == "dummy":
             if src == "review_outlier_rating":
-                cot = ("I'll first look for the majority rating before "
-                       "outputting the final IDs.")
+                cot = "I'll first look for the majority rating before " "outputting the final IDs."
             elif src == "review_outlier_category":
-                cot = ("I'll first look for the majority category before "
-                       "outputting the final IDs.")
+                cot = (
+                    "I'll first look for the majority category before " "outputting the final IDs."
+                )
             else:
                 cot = ""
         elif cot_mode == "mislabel":
@@ -1028,19 +1077,23 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
             if src == "review_outlier_rating" and maj is not None and minn is not None:
                 alts_maj = [r for r in _OUTLIER_RATINGS if r != maj and r != minn]
                 new_maj = rng.choice(alts_maj)
-                alts_min = [r for r in _OUTLIER_RATINGS
-                            if r != new_maj and r != maj and r != minn]
+                alts_min = [r for r in _OUTLIER_RATINGS if r != new_maj and r != maj and r != minn]
                 new_min = rng.choice(alts_min)
-                cot = (f"Most reviews are {new_maj}-star ratings and the outliers "
-                       f"are {new_min}-star reviews.")
+                cot = (
+                    f"Most reviews are {new_maj}-star ratings and the outliers "
+                    f"are {new_min}-star reviews."
+                )
             elif src == "review_outlier_category" and maj and minn:
                 alts_maj = [c for c in _OUTLIER_CATEGORIES if c != maj and c != minn]
                 new_maj = rng.choice(alts_maj)
-                alts_min = [c for c in _OUTLIER_CATEGORIES
-                            if c != new_maj and c != maj and c != minn]
+                alts_min = [
+                    c for c in _OUTLIER_CATEGORIES if c != new_maj and c != maj and c != minn
+                ]
                 new_min = rng.choice(alts_min)
-                cot = (f"Most reviews are about {new_maj.replace('_', ' ')} "
-                       f"and the outliers are about {new_min.replace('_', ' ')}.")
+                cot = (
+                    f"Most reviews are about {new_maj.replace('_', ' ')} "
+                    f"and the outliers are about {new_min.replace('_', ' ')}."
+                )
             else:
                 cot = ""
         elif cot_mode == "random_words":
@@ -1048,24 +1101,26 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
             cot = _outlier_random_content_words(example, n=50, rng=rng)
         else:  # "label"
             if src == "review_outlier_rating" and maj is not None and minn is not None:
-                cot = (f"Most reviews are {maj}-star ratings and the outliers "
-                       f"are {minn}-star reviews.")
+                cot = (
+                    f"Most reviews are {maj}-star ratings and the outliers "
+                    f"are {minn}-star reviews."
+                )
             elif src == "review_outlier_category" and maj and minn:
                 maj_s = str(maj).replace("_", " ")
                 min_s = str(minn).replace("_", " ")
-                cot = (f"Most reviews are about {maj_s} and the outliers are "
-                       f"about {min_s}.")
+                cot = f"Most reviews are about {maj_s} and the outliers are " f"about {min_s}."
             elif src == "wiki_outlier_topic" and minn:
                 if maj:  # simple v1: single majority article
-                    cot = (f"Most passages are about {maj} and the outliers "
-                           f"are about {minn}.")
-                else:    # mixed v2: K majority articles in category_distribution
+                    cot = f"Most passages are about {maj} and the outliers " f"are about {minn}."
+                else:  # mixed v2: K majority articles in category_distribution
                     dist = meta.get("category_distribution") or {}
                     maj_titles = [t for t in dist if t != minn]
                     if maj_titles:
                         joined = ", ".join(maj_titles)
-                        cot = (f"Most passages are about {joined} and the "
-                               f"outliers are about {minn}.")
+                        cot = (
+                            f"Most passages are about {joined} and the "
+                            f"outliers are about {minn}."
+                        )
                     else:
                         cot = ""
             else:
@@ -1174,8 +1229,7 @@ def _build_task_query(example, task, queries):
         return f"{OUTLIER_INSTRUCTION}\n\n{queries[0]}"
     if task == "ruler":
         # instruction (refers to "the text above") then the per-example question.
-        instr = RULER_INSTRUCTIONS.get(_ruler_subtask(example),
-                                       RULER_INSTRUCTION_DEFAULT)
+        instr = RULER_INSTRUCTIONS.get(_ruler_subtask(example), RULER_INSTRUCTION_DEFAULT)
         return f"{queries[0]}\n\n{instr}"
     # retrieval / cot_retrieval / qa / multi-qa: use the task instruction so
     # the task type is identifiable at the positioned slot, followed by the
@@ -1184,10 +1238,18 @@ def _build_task_query(example, task, queries):
     return f"{task_instruction}\n\n{_build_questions_block(queries)}"
 
 
-def build_prompt(example, task="retrieval", query_position="after",
-                 use_titles=True, before_dummy=0, after_dummy=0,
-                 use_alpaca=True, unified_prompt=False, cot_mode="label",
-                 output_top_k=-1):
+def build_prompt(
+    example,
+    task="retrieval",
+    query_position="after",
+    use_titles=True,
+    before_dummy=0,
+    after_dummy=0,
+    use_alpaca=True,
+    unified_prompt=False,
+    cot_mode="label",
+    output_top_k=-1,
+):
     """Build a formatted prompt + output from a unified example.
 
     This is the single entry point for converting structured data into
@@ -1229,11 +1291,11 @@ def build_prompt(example, task="retrieval", query_position="after",
 
     # Handle no-document (closed-book) case
     if not docs:
-        instruction = (GENERIC_INSTRUCTION if unified_prompt
-                       else _get_instruction(example, task, output_top_k))
+        instruction = (
+            GENERIC_INSTRUCTION if unified_prompt else _get_instruction(example, task, output_top_k)
+        )
         questions = _build_questions_block(queries)
-        output = _build_output(example, task, cot_mode=cot_mode,
-                               output_top_k=output_top_k)
+        output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
         if use_alpaca:
             prompt = format_alpaca_prompt(instruction, questions)
         else:
@@ -1248,9 +1310,11 @@ def build_prompt(example, task="retrieval", query_position="after",
         output = _build_output(example, task, cot_mode=cot_mode)
         version_a = " ".join(d["text"] for d in docs)
         version_b = queries[0]
-        input_text = (f"Version A:\n\n{version_a}\n\n"
-                      f"Version B:\n\n{version_b}\n\n"
-                      f"{ABSENCE_GUTENBERG_INSTRUCTION}")
+        input_text = (
+            f"Version A:\n\n{version_a}\n\n"
+            f"Version B:\n\n{version_b}\n\n"
+            f"{ABSENCE_GUTENBERG_INSTRUCTION}"
+        )
         if before_dummy > 0 or after_dummy > 0:
             input_text = insert_dummy_tokens(input_text, before_dummy, after_dummy)
         if use_alpaca:
@@ -1260,14 +1324,29 @@ def build_prompt(example, task="retrieval", query_position="after",
         return prompt, output
 
     context = _format_documents(docs, task, use_titles=use_titles)
-    output = _build_output(example, task, cot_mode=cot_mode,
-                           output_top_k=output_top_k)
+    output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
 
     # Contradiction and reorder always use the unified-style prompt: there is
     # no per-example query, so the task instruction itself plays the role of
     # the positioned ask and gets placed before/after/both relative to the
     # documents. The alpaca header is GENERIC_INSTRUCTION.
-    force_unified = task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "redundancy", "absence", "matching_ngram", "mathmatch", "strmatch", "cycle", "groups4", "textgroups", "reorder", "ruler")
+    force_unified = task in (
+        "contradiction",
+        "qdmatch",
+        "xformmatch",
+        "recmatch",
+        "xabsence",
+        "redundancy",
+        "absence",
+        "matching_ngram",
+        "mathmatch",
+        "strmatch",
+        "cycle",
+        "groups4",
+        "textgroups",
+        "reorder",
+        "ruler",
+    )
 
     # Unified path: every task shares the same structural prefill. The
     # task-specific ask lives in `query`, positioned relative to the docs.
@@ -1320,9 +1399,16 @@ def build_prompt(example, task="retrieval", query_position="after",
     return prompt, output
 
 
-def build_prompt_parts(example, task="retrieval", query_position="after",
-                       use_titles=True, before_dummy=0, after_dummy=0,
-                       cot_mode="label", output_top_k=-1):
+def build_prompt_parts(
+    example,
+    task="retrieval",
+    query_position="after",
+    use_titles=True,
+    before_dummy=0,
+    after_dummy=0,
+    cot_mode="label",
+    output_top_k=-1,
+):
     """Like build_prompt, but returns (instruction, input_text, output) separately.
 
     Used by scripts/train/train.py to convert unified JSONL to Axolotl-compatible
@@ -1343,12 +1429,20 @@ def build_prompt_parts(example, task="retrieval", query_position="after",
 
     docs = example["documents"]
     queries = example["queries"]
-    output = _build_output(example, task, cot_mode=cot_mode,
-                           output_top_k=output_top_k)
+    output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
 
     # Contradiction/reorder use unified-style: generic header + task
     # instruction placed in the positioned query slot.
-    if task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
+    if task in (
+        "contradiction",
+        "qdmatch",
+        "xformmatch",
+        "recmatch",
+        "xabsence",
+        "matching_ngram",
+        "mathmatch",
+        "reorder",
+    ):
         instruction = GENERIC_INSTRUCTION
     else:
         instruction = _get_instruction(example, task, output_top_k)
@@ -1358,7 +1452,16 @@ def build_prompt_parts(example, task="retrieval", query_position="after",
 
     context = _format_documents(docs, task, use_titles=use_titles)
 
-    if task in ("contradiction", "qdmatch", "xformmatch", "recmatch", "xabsence", "matching_ngram", "mathmatch", "reorder"):
+    if task in (
+        "contradiction",
+        "qdmatch",
+        "xformmatch",
+        "recmatch",
+        "xabsence",
+        "matching_ngram",
+        "mathmatch",
+        "reorder",
+    ):
         query = _build_task_query(example, task, queries)
         if query_position == "before":
             input_text = f"{query}\n\n{context}"

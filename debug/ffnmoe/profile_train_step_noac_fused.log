@@ -1,0 +1,17 @@
+srun: job 3491513 queued and waiting for resources
+srun: job 3491513 has been allocated resources
+node cubbins
+/data/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+[dense] last layer FFN alone, in-model, fwd no_grad: 1.26 ms
+[dense] train step (1x6144, AC=off): 603 ms wall, GPU busy 1010 ms | scopes: fwd 146 bwd 0 | attn 82 ffn 46 lm_head 140 (fwd+recompute, thread-local)
+[dense] decode step (8 seqs x 1 token, no cache): 41.5 ms
+[routed] last layer FFN alone, in-model, fwd no_grad: 1.31 ms
+[routed] train step (1x6144, AC=off): 573 ms wall, GPU busy 1115 ms | scopes: fwd 298 bwd 0 | attn 82 ffn 54 lm_head 140 (fwd+recompute, thread-local)
+[routed] decode step (8 seqs x 1 token, no cache): 63.5 ms
+[noffn] last layer FFN alone, in-model, fwd no_grad: 0.01 ms
+[noffn] train step (1x6144, AC=off): 497 ms wall, GPU busy 846 ms | scopes: fwd 116 bwd 0 | attn 83 ffn 15 lm_head 140 (fwd+recompute, thread-local)
+[noffn] decode step (8 seqs x 1 token, no cache): 39.4 ms
+
+step speedup routed/dense: 1.05x ; floor (routed layers' FFN free): 1.21x ; decode: routed 0.65x, floor 1.05x
+wrote debug/ffnmoe/profile_train_step_noac_fused.json

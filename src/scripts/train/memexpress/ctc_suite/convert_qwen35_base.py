@@ -25,22 +25,35 @@ import torch
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-dir", required=True, help="local flat HF checkpoint dir (has config.json + *.safetensors)")
+    ap.add_argument(
+        "--base-dir",
+        required=True,
+        help="local flat HF checkpoint dir (has config.json + *.safetensors)",
+    )
     ap.add_argument("--out", required=True, help="output olmo-core model-only distcp dir")
     ap.add_argument("--skip-audit", action="store_true")
     args = ap.parse_args()
 
-    from corpus_reasoning.lib.olmo_models import build_transformer_config, resolve_olmo_model
-    from corpus_reasoning.train.convert_hf_to_olmo import _convert_qwen3_5
-    from olmo_core.data.tokenizer import TokenizerConfig
     from transformers import AutoTokenizer
 
+    from corpus_reasoning.lib.olmo_models import (
+        build_transformer_config,
+        resolve_olmo_model,
+    )
+    from corpus_reasoning.train.convert_hf_to_olmo import _convert_qwen3_5
+    from olmo_core.data.tokenizer import TokenizerConfig
+
     spec = resolve_olmo_model(args.base_dir)
-    print(f"[convert] {args.base_dir} -> builder={spec.builder} vocab={spec.vocab_size} "
-          f"is_hybrid={spec.is_hybrid}", flush=True)
+    print(
+        f"[convert] {args.base_dir} -> builder={spec.builder} vocab={spec.vocab_size} "
+        f"is_hybrid={spec.is_hybrid}",
+        flush=True,
+    )
     if not spec.is_hybrid:
-        sys.exit(f"[convert] {args.base_dir} resolved to a non-hybrid builder ({spec.builder}); "
-                  "this script is for Qwen3.5 hybrid bases only.")
+        sys.exit(
+            f"[convert] {args.base_dir} resolved to a non-hybrid builder ({spec.builder}); "
+            "this script is for Qwen3.5 hybrid bases only."
+        )
 
     tok = AutoTokenizer.from_pretrained(args.base_dir, trust_remote_code=True)
     eos = tok.eos_token_id
@@ -49,8 +62,11 @@ def main() -> None:
 
     model_cfg = build_transformer_config(spec)
     tok_cfg = TokenizerConfig(
-        vocab_size=spec.vocab_size, eos_token_id=eos, pad_token_id=pad,
-        bos_token_id=bos, identifier=args.base_dir,
+        vocab_size=spec.vocab_size,
+        eos_token_id=eos,
+        pad_token_id=pad,
+        bos_token_id=bos,
+        identifier=args.base_dir,
     )
     print(f"[convert] eos={eos} pad={pad} bos={bos}", flush=True)
 
@@ -60,8 +76,10 @@ def main() -> None:
     model_and_optim = os.path.join(args.out, "model_and_optim")
     metadata_path = os.path.join(model_and_optim, ".metadata")
     if not os.path.exists(metadata_path):
-        sys.exit(f"[convert] FAILED: {metadata_path} missing after save_model_and_optim_state "
-                  "-- conversion did not complete cleanly.")
+        sys.exit(
+            f"[convert] FAILED: {metadata_path} missing after save_model_and_optim_state "
+            "-- conversion did not complete cleanly."
+        )
     print(f"[convert] verified {metadata_path} exists", flush=True)
 
     if args.skip_audit:
@@ -89,8 +107,15 @@ def main() -> None:
         "trained_row_median_norm_first150k": trained_median,
         "norm_ratio_start": n0 / trained_median,
         "norm_ratio_end": n1 / trained_median,
-        "verdict": "PASS" if (abs(cos) < 0.9 and 0.5 < (n0 / trained_median) < 2.0
-                               and 0.5 < (n1 / trained_median) < 2.0) else "FAIL-CHECK",
+        "verdict": (
+            "PASS"
+            if (
+                abs(cos) < 0.9
+                and 0.5 < (n0 / trained_median) < 2.0
+                and 0.5 < (n1 / trained_median) < 2.0
+            )
+            else "FAIL-CHECK"
+        ),
     }
     print("[audit] " + json.dumps(result, indent=2), flush=True)
     with open(os.path.join(args.out, "marker_audit.json"), "w") as f:

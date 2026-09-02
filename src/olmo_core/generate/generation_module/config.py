@@ -118,7 +118,9 @@ class GenerationConfig(Config):
     and when top-k retrieval is disabled.
     """
 
-    landmark_sparse_decode: bool = False  # default OFF until GPU bf16 parity is validated (agent work was CPU-fp32-only)
+    landmark_sparse_decode: bool = (
+        False  # default OFF until GPU bf16 parity is validated (agent work was CPU-fp32-only)
+    )
     """
     For landmark-attention models only: route each decode step through the genuinely sparse decode
     in :mod:`olmo_core.nn.attention.landmark_sparse_decode` instead of the shipped dense-masked one.

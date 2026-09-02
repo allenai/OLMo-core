@@ -1,0 +1,84 @@
+srun: job 3491512 queued and waiting for resources
+srun: job 3491512 has been allocated resources
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+dense  fwd 6.698 ms wall
+router dtype torch.bfloat16 gain dtype torch.bfloat16
+routed fwd 1.511 ms wall, 1.460 ms GPU span
+dense  fwd 4.882 ms GPU span
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                        _NestedLadderFn         2.71%     281.046us        13.55%       1.407ms       1.407ms       0.000us         0.00%     654.918us     654.918us             1  
+                                           aten::linear         0.30%      31.307us         5.51%     572.631us      47.719us       0.000us         0.00%     545.731us      45.478us            12  
+                                           aten::matmul         0.22%      22.965us         4.67%     485.124us      40.427us       0.000us         0.00%     545.731us      45.478us            12  
+                                               aten::mm         3.21%     333.289us         4.45%     462.159us      38.513us     545.731us        56.18%     545.731us      45.478us            12  
+ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_...         0.00%       0.000us         0.00%       0.000us       0.000us     414.306us        42.65%     414.306us     138.102us             3  
+                                          aten::argsort        55.03%       5.714ms        56.88%       5.906ms       5.906ms       0.000us         0.00%     110.943us     110.943us             1  
+                                             aten::sort         0.52%      53.819us         1.85%     192.026us     192.026us     108.607us        11.18%     110.943us     110.943us             1  
+                                              aten::mul         0.80%      83.084us         1.31%     136.172us      17.021us     103.331us        10.64%     103.331us      12.916us             8  
+void at_cuda_detail::cub::DeviceRadixSortOnesweepKer...         0.00%       0.000us         0.00%       0.000us       0.000us      81.952us         8.44%      81.952us      10.244us             8  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us      77.281us         7.96%      77.281us      77.281us             1  
+ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us      66.817us         6.88%      66.817us      16.704us             4  
+                                         aten::bincount         0.33%      34.367us         2.30%     238.762us     238.762us      26.976us         2.78%      48.448us      48.448us             1  
+void cutlass::Kernel2<cutlass_80_tensorop_bf16_s1681...         0.00%       0.000us         0.00%       0.000us       0.000us      39.424us         4.06%      39.424us       9.856us             4  
+                                           aten::gather         0.68%      70.938us         1.13%     117.732us      23.546us      31.776us         3.27%      31.776us       6.355us             5  
+                                      aten::index_copy_         0.54%      56.166us         0.86%      89.611us      22.403us      30.017us         3.09%      30.017us       7.504us             4  
+void at::native::index_elementwise_kernel<128, 4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      30.017us         3.09%      30.017us       7.504us             4  
+void at::cuda::kernelHistogram1D<long, long, long, 1...         0.00%       0.000us         0.00%       0.000us       0.000us      26.976us         2.78%      26.976us      26.976us             1  
+                                            aten::zero_         0.07%       7.482us         0.41%      42.926us      21.463us       0.000us         0.00%      22.497us      11.248us             2  
+                                            aten::fill_         0.17%      17.902us         0.34%      35.444us      17.722us      22.497us         2.32%      22.497us      11.248us             2  
+                                             aten::silu         0.47%      48.688us         0.72%      74.775us      18.694us      21.984us         2.26%      21.984us       5.496us             4  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      21.984us         2.26%      21.984us       5.496us             4  
+                                       aten::zeros_like         0.05%       5.082us         0.39%      40.896us      40.896us       0.000us         0.00%      20.640us      20.640us             1  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      20.640us         2.12%      20.640us      20.640us             1  
+                                     aten::index_select         0.72%      74.698us         2.14%     221.984us      55.496us       0.000us         0.00%      19.872us       4.968us             4  
+void at::native::vectorized_gather_kernel<16, long>(...         0.00%       0.000us         0.00%       0.000us       0.000us      19.872us         2.05%      19.872us       4.968us             4  
+                                        Memset (Device)         0.00%       0.000us         0.00%       0.000us       0.000us      17.056us         1.76%      17.056us       1.551us            11  
+                                            aten::copy_         0.50%      51.905us         1.78%     184.897us      30.816us      16.768us         1.73%      16.768us       2.795us             6  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us      16.674us         1.72%      16.674us       4.168us             4  
+                                               aten::to         0.13%      13.235us         2.14%     221.824us      31.689us       0.000us         0.00%      14.432us       2.062us             7  
+                                         aten::_to_copy         0.26%      27.224us         2.01%     208.589us      41.718us       0.000us         0.00%      14.432us       2.886us             5  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 10.384ms
+Self CUDA time total: 971.461us
+
+dense  fwd+bwd 14.888 ms wall
+routed fwd+bwd 11.482 ms wall
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg     Self CUDA   Self CUDA %    CUDA total  CUDA time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                               aten::mm         9.96%       2.131ms        14.03%       3.002ms      83.402us       1.347ms        44.98%       1.347ms      37.403us            36  
+autograd::engine::evaluate_function: _NestedLadderFn...         0.34%      72.723us        39.56%       8.464ms       8.464ms       0.000us         0.00%       1.264ms       1.264ms             1  
+                                _NestedLadderFnBackward         9.16%       1.961ms        39.22%       8.391ms       8.391ms       0.000us         0.00%       1.264ms       1.264ms             1  
+                                           aten::linear         0.55%     117.146us         9.18%       1.964ms     122.727us       0.000us         0.00%     674.631us      42.164us            16  
+                                           aten::matmul         0.43%      91.508us         7.63%       1.632ms     102.014us       0.000us         0.00%     674.631us      42.164us            16  
+                                        _NestedLadderFn         3.36%     718.901us        16.66%       3.563ms       3.563ms       0.000us         0.00%     596.227us     596.227us             1  
+    autograd::engine::evaluate_function: IndexBackward0         0.14%      29.051us         3.08%     658.719us     658.719us       0.000us         0.00%     583.105us     583.105us             1  
+                                         IndexBackward0         0.12%      26.115us         2.94%     629.668us     629.668us       0.000us         0.00%     583.105us     583.105us             1  
+                                 aten::_index_put_impl_         0.56%     119.033us         2.47%     528.217us     528.217us     571.299us        19.08%     581.634us     581.634us             1  
+void (anonymous namespace)::indexing_backward_kernel...         0.00%       0.000us         0.00%       0.000us       0.000us     552.291us        18.45%     552.291us     552.291us             1  
+ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_...         0.00%       0.000us         0.00%       0.000us       0.000us     377.826us        12.62%     377.826us     125.942us             3  
+ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_...         0.00%       0.000us         0.00%       0.000us       0.000us     335.522us        11.21%     335.522us     111.841us             3  
+                                              aten::mul         4.33%     925.733us         7.10%       1.520ms      42.213us     333.954us        11.16%     333.954us       9.276us            36  
+ampere_bf16_s16816gemm_bf16_128x128_ldg8_f2f_stages_...         0.00%       0.000us         0.00%       0.000us       0.000us     282.978us         9.45%     282.978us      94.326us             3  
+                                             aten::add_         1.46%     312.158us         2.97%     634.756us      45.340us     211.427us         7.06%     211.427us      15.102us            14  
+void at::native::elementwise_kernel<128, 4, at::nati...         0.00%       0.000us         0.00%       0.000us       0.000us     186.177us         6.22%     186.177us      62.059us             3  
+      autograd::engine::evaluate_function: MulBackward0         0.27%      58.216us         1.06%     226.430us     113.215us       0.000us         0.00%     157.857us      78.928us             2  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     151.875us         5.07%     151.875us      13.807us            11  
+void at::native::vectorized_elementwise_kernel<4, at...         0.00%       0.000us         0.00%       0.000us       0.000us     134.658us         4.50%     134.658us       4.809us            28  
+                                           MulBackward0         0.06%      12.720us         0.62%     133.552us      66.776us       0.000us         0.00%     117.537us      58.768us             2  
+                                          aten::argsort         0.05%       9.714us         1.94%     416.061us     416.061us       0.000us         0.00%      96.766us      96.766us             1  
+                                             aten::sort         0.55%     117.157us         1.90%     406.347us     406.347us      94.718us         3.16%      96.766us      96.766us             1  
+                                              aten::sum         0.80%     172.110us         1.26%     270.342us      67.586us      89.248us         2.98%      89.248us      22.312us             4  
+void at_cuda_detail::cub::DeviceRadixSortOnesweepKer...         0.00%       0.000us         0.00%       0.000us       0.000us      83.168us         2.78%      83.168us       9.241us             9  
+void at::native::reduce_kernel<512, 1, at::native::R...         0.00%       0.000us         0.00%       0.000us       0.000us      79.680us         2.66%      79.680us      39.840us             2  
+ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us      78.466us         2.62%      78.466us      15.693us             5  
+autograd::engine::evaluate_function: torch::autograd...         0.34%      72.762us         0.97%     206.491us      41.298us       0.000us         0.00%      68.896us      13.779us             5  
+                        torch::autograd::AccumulateGrad         0.24%      51.114us         0.63%     133.729us      26.746us       0.000us         0.00%      68.896us      13.779us             5  
+                                           aten::gather         1.84%     394.494us         3.46%     739.698us      56.900us      68.322us         2.28%      68.322us       5.256us            13  
+ampere_bf16_s16816gemm_bf16_64x64_sliced1x2_ldg8_f2f...         0.00%       0.000us         0.00%       0.000us       0.000us      62.240us         2.08%      62.240us      15.560us             4  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 21.395ms
+Self CUDA time total: 2.994ms
+

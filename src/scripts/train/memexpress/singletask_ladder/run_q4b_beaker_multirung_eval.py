@@ -43,8 +43,17 @@ from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
 from olmo_core.utils import prepare_cli_environment
 
-ALL_TASKS = ["contra", "nq", "rerank", "outlier", "oolong", "fiqa", "scifact",
-             "outlier_review", "contra_fever"]
+ALL_TASKS = [
+    "contra",
+    "nq",
+    "rerank",
+    "outlier",
+    "oolong",
+    "fiqa",
+    "scifact",
+    "outlier_review",
+    "contra_fever",
+]
 VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
 
 
@@ -61,7 +70,26 @@ def variant_from_run_name(run_name: str) -> str:
 
 
 def build_eval_launch_config(
-    *, run_name, task, variant, cluster, step, ckpt, results_dir, prompt_format, query_position, ngpu, max_test, max_length, batch_size, priority, ladder_version, xlong, xlong_rungs, cot_mode, tokenizer=""
+    *,
+    run_name,
+    task,
+    variant,
+    cluster,
+    step,
+    ckpt,
+    results_dir,
+    prompt_format,
+    query_position,
+    ngpu,
+    max_test,
+    max_length,
+    batch_size,
+    priority,
+    ladder_version,
+    xlong,
+    xlong_rungs,
+    cot_mode,
+    tokenizer="",
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -100,88 +128,154 @@ def build_eval_launch_config(
     launch_config.torchrun = False  # the runner issues its own torchrun(s)
     launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
     launch_config.priority = priority
-    launch_config.step_soft_timeout = None  # we submit with follow=False (don't block on many evals);
-    launch_config.step_timeout = None        # the 10-min default soft timeout forbids follow=False
+    launch_config.step_soft_timeout = (
+        None  # we submit with follow=False (don't block on many evals);
+    )
+    launch_config.step_timeout = None  # the 10-min default soft timeout forbids follow=False
     return launch_config
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("run_name", help="trained run name (checkpoints under checkpoints/prasanns/<run_name>)")
+    ap.add_argument(
+        "run_name", help="trained run name (checkpoints under checkpoints/prasanns/<run_name>)"
+    )
     ap.add_argument("cluster", help="Beaker cluster, e.g. ai2/neptune (weka-backed)")
-    ap.add_argument("--task", default="all",
-                    help=f"comma list from {ALL_TASKS}, or 'all' (one Beaker job per task).")
-    ap.add_argument("--variant", default=None, choices=VARIANTS,
-                    help="dense|landmark|compressive|docchunk (default: infer from run name).")
-    ap.add_argument("--step", default="", help="pin a step dir (e.g. step580); default = latest complete.")
-    ap.add_argument("--ckpt", default="",
-                    help="ABSOLUTE weka step dir to eval ANY checkpoint, e.g. "
-                         "/weka/oe-training-default/ai2-llm/checkpoints/<you>/<run>/step1234 . "
-                         "Overrides run_name globbing (run_name is then just a results label).")
-    ap.add_argument("--results-dir", default="",
-                    help="ABSOLUTE weka dir for the per-task result JSONs "
-                         "(default: checkpoints/prasanns/<run_name>/eval).")
-    ap.add_argument("--query-position", choices=["both", "after", "before"], default="both",
-                    help="Prompt layout; MUST match the SFT shards the model was trained on. "
-                         "xlong5_2k256k_qwen35 -> both (default, and what every result before "
-                         "2026-08-11 used); xlong5_2k256k_qwen35_qafter -> after. It lands in the "
-                         "inner eval_command, so the launch ledger records it automatically.")
-    ap.add_argument("--prompt-format", choices=["chat", "raw", "alpaca"], default="chat",
-                    help="chat=SFT (apply_chat_template, matches training); raw=BASE/CPT models; alpaca=legacy.")
+    ap.add_argument(
+        "--task",
+        default="all",
+        help=f"comma list from {ALL_TASKS}, or 'all' (one Beaker job per task).",
+    )
+    ap.add_argument(
+        "--variant",
+        default=None,
+        choices=VARIANTS,
+        help="dense|landmark|compressive|docchunk (default: infer from run name).",
+    )
+    ap.add_argument(
+        "--step", default="", help="pin a step dir (e.g. step580); default = latest complete."
+    )
+    ap.add_argument(
+        "--ckpt",
+        default="",
+        help="ABSOLUTE weka step dir to eval ANY checkpoint, e.g. "
+        "/weka/oe-training-default/ai2-llm/checkpoints/<you>/<run>/step1234 . "
+        "Overrides run_name globbing (run_name is then just a results label).",
+    )
+    ap.add_argument(
+        "--results-dir",
+        default="",
+        help="ABSOLUTE weka dir for the per-task result JSONs "
+        "(default: checkpoints/prasanns/<run_name>/eval).",
+    )
+    ap.add_argument(
+        "--query-position",
+        choices=["both", "after", "before"],
+        default="both",
+        help="Prompt layout; MUST match the SFT shards the model was trained on. "
+        "xlong5_2k256k_qwen35 -> both (default, and what every result before "
+        "2026-08-11 used); xlong5_2k256k_qwen35_qafter -> after. It lands in the "
+        "inner eval_command, so the launch ledger records it automatically.",
+    )
+    ap.add_argument(
+        "--prompt-format",
+        choices=["chat", "raw", "alpaca"],
+        default="chat",
+        help="chat=SFT (apply_chat_template, matches training); raw=BASE/CPT models; alpaca=legacy.",
+    )
     ap.add_argument("--max-test", type=int, default=600)
     ap.add_argument("--max-length", type=int, default=40960)
-    ap.add_argument("--batch-size", type=int, default=2)  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
-    ap.add_argument("--ngpu", type=int, default=2,
-                    help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
-                         "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.")
-    ap.add_argument("--tokenizer", default="",
-                    help="HF tokenizer id, forwarded to the on-node runner as TOKENIZER. "
-                         "MUST match the model family: the runner defaults to Qwen/Qwen3-4B "
-                         "(vocab 151936), so a Qwen3.5 checkpoint (vocab 248320) evaluated "
-                         "without this scores ~0 on EVERY task while the job reports success -- "
-                         "wrong token ids, not a broken model. Qwen3.5 -> Qwen/Qwen3.5-4B-Base.")
+    ap.add_argument(
+        "--batch-size", type=int, default=2
+    )  # 40960-ctx generation on ~48GB neptune GPUs; 8 OOMs
+    ap.add_argument(
+        "--ngpu",
+        type=int,
+        default=2,
+        help="GPUs per eval job (data-parallel over examples). 4B model fits on 1-2 GPUs; "
+        "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.",
+    )
+    ap.add_argument(
+        "--tokenizer",
+        default="",
+        help="HF tokenizer id, forwarded to the on-node runner as TOKENIZER. "
+        "MUST match the model family: the runner defaults to Qwen/Qwen3-4B "
+        "(vocab 151936), so a Qwen3.5 checkpoint (vocab 248320) evaluated "
+        "without this scores ~0 on EVERY task while the job reports success -- "
+        "wrong token ids, not a broken model. Qwen3.5 -> Qwen/Qwen3.5-4B-Base.",
+    )
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
-    ap.add_argument("--ladder-version", choices=["v2", "v3"], default="v2",
-                    help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
-                         "500 questions/answers and only distractors vary (reads the "
-                         "_eval_bundle_eval500_v2 weka bundle). v1 is DISABLED -- its per-rung "
-                         "question resampling put eval-set noise into every rung-to-rung delta, "
-                         "and both the runner and eval_lc_native.py now reject it.")
-    ap.add_argument("--cot-mode", choices=["none", "plan"], default="none",
-                    help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
-                         "checkpoint); default 'none' keeps the no-CoT eval byte-identical.")
-    ap.add_argument("--xlong", action="store_true",
-                    help="OPT-IN: also run the ultra-long 64k/128k/256k/512k/1M/2M rungs (contra|nq|outlier). "
-                         "Forces bs=1 + raises MAX_LENGTH on-node. Use an 80GB GPU (ai2/jupiter); "
-                         "256k needs bs=1 single-GPU. Files must be built by build_xlong_rungs.py "
-                         "and uploaded to the v2 eval bundle.")
-    ap.add_argument("--xlong-rungs", default="64k,128k",
-                    help="which xlong sizes to add when --xlong: 64k,128k,256k,512k,1M,2M. Anything above "
-                         "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
-                         "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).")
+    ap.add_argument(
+        "--ladder-version",
+        choices=["v2", "v3"],
+        default="v2",
+        help="v2 is the ONLY supported ladder: every rung of a task shares the SAME "
+        "500 questions/answers and only distractors vary (reads the "
+        "_eval_bundle_eval500_v2 weka bundle). v1 is DISABLED -- its per-rung "
+        "question resampling put eval-set noise into every rung-to-rung delta, "
+        "and both the runner and eval_lc_native.py now reject it.",
+    )
+    ap.add_argument(
+        "--cot-mode",
+        choices=["none", "plan"],
+        default="none",
+        help="docchunk OOLONG only: 'plan' builds the CoT prefill (match a CoT-trained "
+        "checkpoint); default 'none' keeps the no-CoT eval byte-identical.",
+    )
+    ap.add_argument(
+        "--xlong",
+        action="store_true",
+        help="OPT-IN: also run the ultra-long 64k/128k/256k/512k/1M/2M rungs (contra|nq|outlier). "
+        "Forces bs=1 + raises MAX_LENGTH on-node. Use an 80GB GPU (ai2/jupiter); "
+        "256k needs bs=1 single-GPU. Files must be built by build_xlong_rungs.py "
+        "and uploaded to the v2 eval bundle.",
+    )
+    ap.add_argument(
+        "--xlong-rungs",
+        default="64k,128k",
+        help="which xlong sizes to add when --xlong: 64k,128k,256k,512k,1M,2M. Anything above "
+        "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
+        "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).",
+    )
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
     prepare_cli_environment()
 
     variant = args.variant or variant_from_run_name(args.run_name)
-    tasks = ALL_TASKS if args.task == "all" else [t.strip() for t in args.task.split(",") if t.strip()]
+    tasks = (
+        ALL_TASKS if args.task == "all" else [t.strip() for t in args.task.split(",") if t.strip()]
+    )
     bad = [t for t in tasks if t not in ALL_TASKS]
     if bad:
         raise SystemExit(f"unknown task(s) {bad}; choose from {ALL_TASKS}.")
 
-    print(f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
-          f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ===")
+    print(
+        f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
+        f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ==="
+    )
     for task in tasks:
         # docchunk now evaluates the FULL ladder (all 9 tasks incl. OOD) via
         # eval_lc_native_docchunk_ladder.py (box-marker chunked prefill + bs=1 KV-cached decode).
         lc = build_eval_launch_config(
-            run_name=args.run_name, task=task, variant=variant, cluster=args.cluster,
-            step=args.step, ckpt=args.ckpt, results_dir=args.results_dir, prompt_format=args.prompt_format,
+            run_name=args.run_name,
+            task=task,
+            variant=variant,
+            cluster=args.cluster,
+            step=args.step,
+            ckpt=args.ckpt,
+            results_dir=args.results_dir,
+            prompt_format=args.prompt_format,
             query_position=args.query_position,
-            ngpu=args.ngpu, max_test=args.max_test, max_length=args.max_length,
-            batch_size=args.batch_size, priority=args.priority, ladder_version=args.ladder_version,
-            xlong=args.xlong, xlong_rungs=args.xlong_rungs, cot_mode=args.cot_mode,
+            ngpu=args.ngpu,
+            max_test=args.max_test,
+            max_length=args.max_length,
+            batch_size=args.batch_size,
+            priority=args.priority,
+            ladder_version=args.ladder_version,
+            xlong=args.xlong,
+            xlong_rungs=args.xlong_rungs,
+            cot_mode=args.cot_mode,
             tokenizer=args.tokenizer,
         )
         print(f"\n--- [{task}] {lc.name} ---")

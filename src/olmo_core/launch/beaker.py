@@ -115,9 +115,9 @@ def get_beaker_client(
         yield _BEAKER_CLIENTS[None]
     else:
         beaker = Beaker.from_env(
-            check_for_upgrades=check_for_upgrades
-            if check_for_upgrades is not None
-            else not is_running_in_beaker(),
+            check_for_upgrades=(
+                check_for_upgrades if check_for_upgrades is not None else not is_running_in_beaker()
+            ),
             default_workspace=workspace,
         )
         _BEAKER_CLIENTS[workspace] = beaker
@@ -668,9 +668,9 @@ class BeakerLaunchConfig(Config):
             # Multi-node settings.
             replicas=self.num_nodes if self.num_nodes > 1 else None,
             leader_selection=self.num_nodes > 1,
-            host_networking=self.host_networking
-            if self.host_networking is not None
-            else self.num_nodes > 1,
+            host_networking=(
+                self.host_networking if self.host_networking is not None else self.num_nodes > 1
+            ),
             propagate_failure=True if self.num_nodes > 1 else None,
             propagate_preemption=True if self.num_nodes > 1 else None,
             synchronized_start_timeout="90m" if self.num_nodes > 1 else None,

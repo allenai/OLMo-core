@@ -8,6 +8,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -142,6 +143,8 @@ class Transformer(nn.Module):
         self._pooled_keep_holder: Optional[Any] = None
         # Role-gated FFN ("flexible-compute FFN"): set by ``enable_role_gated_ffn``.
         self._role_gated_ffn: Optional[Dict[str, Any]] = None
+        # Nested-width FFN mixture (learned router): set by ``enable_nested_ffn_moe``.
+        self._nested_ffn_moe: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -412,8 +415,101 @@ class Transformer(nn.Module):
             "start_layer": int(start_layer),
             "holder": holder,
         }
+        log.info("Role-gated FFN enabled on %d blocks (start_layer=%d)", len(gated), start_layer)
+
+    def enable_nested_ffn_moe(
+        self,
+        *,
+        start_layer: int = 4,
+        divisors: Sequence[float] = (1, 4, 16, 64),
+        include_null: bool = True,
+        target_cost: float = 0.05,
+        budget_weight: float = 1.0,
+        hinge_power: int = 1,
+        target_anneal_calls: int = 0,
+        explore_prob: float = 0.0,
+        explore_anneal_calls: int = 0,
+        recon_frac: float = 0.0,
+        recon_weight: float = 0.0,
+        entropy_weight: float = 0.0,
+        seed: int = 0,
+        layer_curriculum_calls: int = 0,
+        width_multiple: int = 8,
+    ) -> None:
+        """
+        Enable the nested-width FFN mixture (see :mod:`olmo_core.nn.nested_ffn_moe`): from
+        ``start_layer`` on, a learned per-token router picks one of several nested FFN widths
+        (down to a zero-cost null rung), and a budget hinge loss pushes the mean per-token FFN
+        cost under ``target_cost``.
+
+        Adds a small router and per-rung gains per gated block -- NEW state-dict keys, so the base
+        checkpoint must be re-saved with them (``bake_ffn_moe_into_base.py``). The router is
+        initialized to select the full rung with probability ~1, so an enabled but untrained model
+        reproduces its base exactly.
+
+        Call BEFORE building the optimizer / applying data parallelism.
+
+        :param start_layer: First routed layer.
+        :param divisors: Cost divisors for the rungs, e.g. ``(1, 4, 16, 64)``.
+        :param include_null: Append a zero-compute null rung.
+        :param target_cost: Mean per-token FFN cost the budget hinge allows for free.
+        :param budget_weight: Weight of the budget hinge.
+        :param recon_frac: Fraction of tokens carrying a local full-FFN reconstruction target.
+        :param seed: Base seed for the exploration draws (kept deterministic per forward so
+            activation-checkpoint recompute reproduces the routing).
+        :param layer_curriculum_calls: If > 0, routing opens from the last layer downward to
+            ``start_layer`` linearly over this many forwards (see
+            :meth:`NestedFFNHolder.current_min_layer`).
+        :param width_multiple: Rung widths are floored to a multiple of this (minimum = this).
+            ``1`` allows a single-hidden-unit rung, e.g. divisor 9728 on Qwen3-4B.
+
+        :raises OLMoConfigurationError: If no blocks were routed.
+        """
+        from ..nested_ffn_moe import (
+            NestedFFNHolder,
+            install_nested_ffn_moe,
+            resolve_rung_widths,
+        )
+
+        first_block = next(iter(self.blocks.values()))
+        hidden_size = first_block.feed_forward.w1.out_features  # type: ignore[union-attr]
+        widths, costs = resolve_rung_widths(
+            hidden_size, divisors, include_null=include_null, multiple_of=width_multiple
+        )
+        holder = NestedFFNHolder(
+            costs,
+            target_cost=target_cost,
+            budget_weight=budget_weight,
+            hinge_power=hinge_power,
+            target_anneal_calls=target_anneal_calls,
+            explore_prob=explore_prob,
+            explore_anneal_calls=explore_anneal_calls,
+            recon_frac=recon_frac,
+            recon_weight=recon_weight,
+            entropy_weight=entropy_weight,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+            layer_curriculum_calls=layer_curriculum_calls,
+        )
+        routed = install_nested_ffn_moe(
+            self.blocks, holder, start_layer=start_layer, widths=widths, costs=costs
+        )
+        if not routed:
+            raise OLMoConfigurationError("enable_nested_ffn_moe routed no blocks")
+        self._nested_ffn_moe = {
+            "start_layer": int(start_layer),
+            "widths": widths,
+            "costs": costs,
+            "holder": holder,
+        }
         log.info(
-            "Role-gated FFN enabled on %d blocks (start_layer=%d)", len(gated), start_layer
+            "Nested-FFN MoE enabled on %d blocks (start_layer=%d) rungs=%s costs=%s target=%.4f",
+            len(routed),
+            start_layer,
+            widths,
+            [round(c, 5) for c in costs],
+            target_cost,
         )
 
     def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
@@ -1096,10 +1192,19 @@ class Transformer(nn.Module):
                     "pos": d_pos,
                     "caps": {li: t_caps[li][d_rows, d_pos].detach() for li in t_caps},
                 }
+            n_tokens_in = int(input_ids.numel())
             compacted = self._compact_pooled_soft_tokens(input_ids, labels, ignore_index)
             if compacted is not None:
                 cb, soft_inject, oracle_ovr = compacted
                 input_ids, labels = cb.input_ids, cb.labels
+                # Compaction accounting for the FLOP meter (accumulated across microbatches; the
+                # FlopMeterCallback reads and resets it every step).
+                stats = getattr(self, "_soft_token_compaction", None)
+                if stats is None:
+                    stats = self._soft_token_compaction = {"tokens_in": 0, "tokens_out": 0, "rows": 0}
+                stats["tokens_in"] += n_tokens_in
+                stats["tokens_out"] += int(input_ids.numel())
+                stats["rows"] += int(input_ids.shape[0])
                 kwargs["position_ids"] = cb.position_ids
                 if oracle_ovr is not None:
                     kwargs["soft_kv_override_layers"] = oracle_ovr
@@ -1133,9 +1238,7 @@ class Transformer(nn.Module):
                     )
                     lab_rows, lab_cols = (labels != ignore_index).nonzero(as_tuple=True)
                     if lab_rows.numel() > 0:
-                        nq = min(
-                            pst["aux_queries"] * cb.input_ids.shape[0], int(lab_rows.numel())
-                        )
+                        nq = min(pst["aux_queries"] * cb.input_ids.shape[0], int(lab_rows.numel()))
                         sel = torch.randperm(lab_rows.numel(), device=lab_rows.device)[:nq]
                         valid = cb.shadow_doc_cols >= 0
                         n_sh = cb.shadow_rows.numel()
@@ -1144,8 +1247,9 @@ class Transformer(nn.Module):
                             "cols_q": lab_cols[sel],
                             "rows_kv": cb.shadow_rows[:, None].expand_as(cb.shadow_doc_cols)[valid],
                             "cols_kv": cb.shadow_doc_cols[valid],
-                            "doc_of_kv": torch.arange(n_sh, device=lab_rows.device)[:, None]
-                            .expand_as(cb.shadow_doc_cols)[valid],
+                            "doc_of_kv": torch.arange(n_sh, device=lab_rows.device)[
+                                :, None
+                            ].expand_as(cb.shadow_doc_cols)[valid],
                             "rows_sh": cb.shadow_rows,
                             "cols_sh": cb.shadow_cols,
                             "log_len": cb.shadow_log_len,
@@ -1156,6 +1260,10 @@ class Transformer(nn.Module):
         # soft-token path rewrote input_ids), so kept-doc tokens are gated in compacted rows too.
         if self._role_gated_ffn is not None:
             self._set_role_gate_mask(input_ids)
+        # Nested-FFN router: reset per-forward accumulators and advance the budget/exploration
+        # schedules. Loss terms are only collected when we are actually computing a loss.
+        if self._nested_ffn_moe is not None:
+            self._nested_ffn_moe["holder"].begin_forward(collect_loss=labels is not None)
 
         (
             input_ids,
@@ -1191,9 +1299,7 @@ class Transformer(nn.Module):
                 n_slots = s_rows.shape[0] - (
                     aux_ctx["rows_sh"].shape[0] if aux_ctx is not None else 0
                 )
-                soft_vecs = torch.cat(
-                    [soft_vecs[:n_slots].detach(), soft_vecs[n_slots:]], dim=0
-                )
+                soft_vecs = torch.cat([soft_vecs[:n_slots].detach(), soft_vecs[n_slots:]], dim=0)
             h[s_rows, s_cols] = soft_vecs
         if self.embeddings is not None and self.embed_scale is not None:
             h = h * self.embed_scale
@@ -1242,16 +1348,24 @@ class Transformer(nn.Module):
                 if aux_loss is not None:
                     w = self._pooled_soft_tokens["aux_match_weight"]  # type: ignore[index]
                     loss = loss + w * aux_loss.to(loss.dtype)
+                if self._nested_ffn_moe is not None:
+                    nffn_loss = self._nested_ffn_moe["holder"].regularization_loss()
+                    if nffn_loss is not None:
+                        loss = loss + nffn_loss.to(loss.dtype)
                 if distill_teacher is not None and labels is not None:
                     # Map teacher (row, ORIGINAL position) -> student compacted column via the
                     # per-row ascending position_ids (free/answer tokens survive compaction).
                     pos_ids_s = all_block_kwargs.get("position_ids")
                     s_r = distill_teacher["rows"]
                     if pos_ids_s is not None:
-                        s_c = torch.searchsorted(
-                            pos_ids_s[s_r].contiguous(),
-                            distill_teacher["pos"][:, None].contiguous(),
-                        ).squeeze(-1).clamp(max=pos_ids_s.shape[1] - 1)
+                        s_c = (
+                            torch.searchsorted(
+                                pos_ids_s[s_r].contiguous(),
+                                distill_teacher["pos"][:, None].contiguous(),
+                            )
+                            .squeeze(-1)
+                            .clamp(max=pos_ids_s.shape[1] - 1)
+                        )
                     else:
                         s_c = distill_teacher["pos"]
                     terms = []

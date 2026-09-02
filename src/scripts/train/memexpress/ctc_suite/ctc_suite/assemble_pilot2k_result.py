@@ -59,7 +59,11 @@ def parse_train_log(path):
     if re.search(r"\bnan\b", text, re.IGNORECASE) and "CE loss=nan" in text:
         crashed = True
         crash_msg = "NaN in train/CE loss"
-    if "Training complete" not in text and "DONE" not in text.split("\n")[-1:][0] and "=== DONE" not in text:
+    if (
+        "Training complete" not in text
+        and "DONE" not in text.split("\n")[-1:][0]
+        and "=== DONE" not in text
+    ):
         # heuristic: if no DONE marker at all, treat as incomplete
         if "=== DONE" not in text:
             crashed = True
@@ -68,7 +72,9 @@ def parse_train_log(path):
         # only flag as crash if it didn't also reach Training complete
         if "Training complete" not in text:
             crashed = True
-            m = re.search(r"(OLMoEnvironmentError|RuntimeError|AssertionError|CUDA out of memory)[^\n]*", text)
+            m = re.search(
+                r"(OLMoEnvironmentError|RuntimeError|AssertionError|CUDA out of memory)[^\n]*", text
+            )
             crash_msg = crash_msg or (m.group(0) if m else "error signature found in log")
     ce_start = ce_vals[0] if ce_vals else None
     ce_end = ce_vals[-1] if ce_vals else None
@@ -95,7 +101,12 @@ def find_wandb_url(log_path):
 
 def git_commit(repo_root):
     try:
-        out = subprocess.run(["git", "-C", repo_root, "rev-parse", "HEAD"], capture_output=True, text=True, check=True)
+        out = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         return out.stdout.strip()
     except Exception:
         return "unknown"
@@ -109,13 +120,23 @@ def main():
     ap.add_argument("--seq-len", type=int, required=True)
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--train-log", required=True)
-    ap.add_argument("--eval-rung-json", default=None, help="path to run_rung_eval.py's per-rung JSON, if eval was run")
+    ap.add_argument(
+        "--eval-rung-json",
+        default=None,
+        help="path to run_rung_eval.py's per-rung JSON, if eval was run",
+    )
     ap.add_argument("--eval-na-reason", default=None, help="why eval is N/A (no rung file etc)")
     ap.add_argument("--compute-pool", required=True, help="e.g. cubbins-1gpu, mooney-8gpu")
     ap.add_argument("--max-steps", type=int, default=0)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--curves-dir", default=None, help="dir to write <task>.json loss curve into (results/ctc_suite/pilot_2k/curves)")
-    ap.add_argument("--repo-root", default="/accounts/projects/berkeleynlp/prasann/projects/OLMo-core")
+    ap.add_argument(
+        "--curves-dir",
+        default=None,
+        help="dir to write <task>.json loss curve into (results/ctc_suite/pilot_2k/curves)",
+    )
+    ap.add_argument(
+        "--repo-root", default="/accounts/projects/berkeleynlp/prasann/projects/OLMo-core"
+    )
     args = ap.parse_args()
 
     ce_start, ce_end, crashed, crash_msg, n_steps = parse_train_log(args.train_log)
@@ -127,7 +148,9 @@ def main():
     eval_metric_name = None
     notes = []
     if args.max_steps:
-        notes.append(f"train early-stopped at --max-steps={args.max_steps} (plumbing check, not full epoch)")
+        notes.append(
+            f"train early-stopped at --max-steps={args.max_steps} (plumbing check, not full epoch)"
+        )
 
     if args.eval_rung_json and os.path.exists(args.eval_rung_json):
         with open(args.eval_rung_json) as f:
@@ -138,18 +161,24 @@ def main():
         aux = ev.get("aux_metrics", {})
         parse_rate = aux.get("parse_rate")
         if eval_metric == 0.0 and parse_rate == 1.0:
-            notes.append("eval_metric=0.0 at parse_rate=1.0 -- possible maxlen-truncation trap or format bug; DUMP GENERATIONS")
+            notes.append(
+                "eval_metric=0.0 at parse_rate=1.0 -- possible maxlen-truncation trap or format bug; DUMP GENERATIONS"
+            )
         if ev.get("small_eval_warning"):
             notes.append(ev["small_eval_warning"])
     elif args.eval_na_reason:
         notes.append(f"eval: N/A ({args.eval_na_reason})")
 
-    train_ok = (not crashed) and (ce_end is not None) and (ce_start is not None) and (ce_end < ce_start)
+    train_ok = (
+        (not crashed) and (ce_end is not None) and (ce_start is not None) and (ce_end < ce_start)
+    )
     if crashed:
         notes.append(f"TRAIN CRASH/INCOMPLETE: {crash_msg}")
 
     if args.eval_rung_json and os.path.exists(args.eval_rung_json):
-        eval_ok = eval_metric is not None and not (eval_metric == 0.0 and (aux.get("parse_rate") == 1.0))
+        eval_ok = eval_metric is not None and not (
+            eval_metric == 0.0 and (aux.get("parse_rate") == 1.0)
+        )
     else:
         eval_ok = True  # N/A eval doesn't fail the task
 
@@ -198,7 +227,9 @@ def main():
     with open(args.out, "w") as f:
         json.dump(record, f, indent=2, sort_keys=True)
         f.write("\n")
-    print(f"[assemble] wrote {args.out}  pass={passed}  ce {ce_start}->{ce_end}  eval={eval_metric}")
+    print(
+        f"[assemble] wrote {args.out}  pass={passed}  ce {ce_start}->{ce_end}  eval={eval_metric}"
+    )
 
 
 if __name__ == "__main__":

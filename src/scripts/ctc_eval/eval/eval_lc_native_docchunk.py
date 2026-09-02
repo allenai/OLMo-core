@@ -63,11 +63,15 @@ PAD_TOKEN_ID = 151863
 # ``cot``: the single-task ladder (v2) shards are tokenized with --cot-mode none, so eval prefill MUST
 # use cot=none for those checkpoints (oolong keeps "plan" only for the legacy doc-OOLONG run).
 TASK_CFG = {
-    "oolong":        dict(chunk_by="line",     max_new=256, stop="oolong",  scorer="oolong",        cot="plan"),
-    "contradiction": dict(chunk_by="document", max_new=200, stop="eos",     scorer="contradiction", cot="none"),
-    "retrieval":     dict(chunk_by="document", max_new=64,  stop="newline", scorer="retrieval",     cot="none"),
-    "rerank":        dict(chunk_by="document", max_new=512, stop="newline", scorer="rerank",        cot="none"),
-    "outlier":       dict(chunk_by="document", max_new=256, stop="eos",     scorer="outlier",       cot="none"),
+    "oolong": dict(chunk_by="line", max_new=256, stop="oolong", scorer="oolong", cot="plan"),
+    "contradiction": dict(
+        chunk_by="document", max_new=200, stop="eos", scorer="contradiction", cot="none"
+    ),
+    "retrieval": dict(
+        chunk_by="document", max_new=64, stop="newline", scorer="retrieval", cot="none"
+    ),
+    "rerank": dict(chunk_by="document", max_new=512, stop="newline", scorer="rerank", cot="none"),
+    "outlier": dict(chunk_by="document", max_new=256, stop="eos", scorer="outlier", cot="none"),
 }
 # Convenience aliases (run-name / launcher shorthands) -> canonical segmentation task.
 TASK_ALIASES = {"nq": "retrieval", "contra": "contradiction"}
@@ -80,19 +84,28 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
     ap.add_argument(
-        "--task", default="oolong",
+        "--task",
+        default="oolong",
         help="oolong | contradiction | retrieval | rerank | outlier "
         "(aliases: nq->retrieval, contra->contradiction).",
     )
     # --data is the general eval JSONL; --oolong-data kept as a back-compat alias.
-    ap.add_argument("--data", default=None, help="eval JSONL (unified format). Overrides --oolong-data.")
+    ap.add_argument(
+        "--data", default=None, help="eval JSONL (unified format). Overrides --oolong-data."
+    )
     ap.add_argument("--oolong-data", default="data/oolong_test_synth_ctx2048_spliteval.jsonl")
     ap.add_argument("--max-test-samples", type=int, default=100)
-    ap.add_argument("--max-new-tokens", type=int, default=None,
-                    help="override the per-task default decode budget.")
+    ap.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="override the per-task default decode budget.",
+    )
     ap.add_argument("--max-length", type=int, default=8192)
     ap.add_argument("--mem-freq", type=int, default=63)
-    ap.add_argument("--cot-mode", default=None, help="override the per-task default prompt CoT mode.")
+    ap.add_argument(
+        "--cot-mode", default=None, help="override the per-task default prompt CoT mode."
+    )
     ap.add_argument(
         "--use-titles",
         action="store_true",
@@ -125,22 +138,6 @@ def main():
     stop_rule = cfg["stop"]
     eval_data = args.data or args.oolong_data
 
-    from transformers import AutoTokenizer
-
-    from olmo_core.config import DType
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_END_ID as _DE,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_START_ID as _DS,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        emit_document_chunk_dense,
-        emit_document_chunk_landmark,
-        segment_prompt_to_chunks,
-    )
-    from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
     from ctc_eval.eval.evaluate import (
         _eval_contradiction,
         _eval_oolong,
@@ -148,6 +145,20 @@ def main():
         _eval_rerank,
         _eval_retrieval,
         load_unified_examples,
+    )
+    from transformers import AutoTokenizer
+
+    from olmo_core.config import DType
+    from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
+    from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        emit_document_chunk_landmark,
+        segment_prompt_to_chunks,
+    )
+    from olmo_core.generate.generation_module.config import GenerationConfig
+    from olmo_core.generate.generation_module.transformer import (
+        TransformerGenerationModuleConfig,
     )
 
     SCORERS = {
@@ -194,9 +205,15 @@ def main():
         max_length=args.max_length,
         use_cache=use_cache,
     )
+    from olmo_core.nn.nested_ffn_moe import post_build_hook_from_config
+
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False
-    ).build(checkpoint_dir=args.model_path, device=device)
+    ).build(
+        checkpoint_dir=args.model_path,
+        device=device,
+        post_build_hook=post_build_hook_from_config(args.model_path),
+    )
     # Belt-and-suspenders: ensure runtime chunk_id reconstruction is on (config.json should already
     # set it, but we control pad_id here). The full-attention baseline has NO chunked mask.
     if args.variant != "full":
@@ -229,20 +246,31 @@ def main():
 
     def build_prefill(raw_example):
         segs, ids, _ = segment_prompt_to_chunks(
-            tok, raw_example, seg_task, query_position="both", cot_mode=cot_mode,
-            chunk_by=chunk_by, item_regex=r"\|\|", include_answer=False,
+            tok,
+            raw_example,
+            seg_task,
+            query_position="both",
+            cot_mode=cot_mode,
+            chunk_by=chunk_by,
+            item_regex=r"\|\|",
+            include_answer=False,
             use_titles=args.use_titles,
-            doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
+            doc_start_id=DOC_START_ID,
+            doc_end_id=DOC_END_ID,
         )
         if args.variant in ("dense", "full"):
-            out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
+            out, _ = emit_document_chunk_dense(
+                segs
+            )  # box markers present; full attention ignores them
         else:
             out, _ = emit_document_chunk_landmark(
                 segs, mem_freq=args.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
             )
         return out
 
-    block_size = args.mem_freq + 1  # landmark window (64); the eager landmark forward needs T % 64 == 0
+    block_size = (
+        args.mem_freq + 1
+    )  # landmark window (64); the eager landmark forward needs T % 64 == 0
 
     @torch.no_grad()
     def generate_one(prefill):
@@ -305,15 +333,21 @@ def main():
         return text.split("</think>", 1)[1] if "</think>" in text else text
 
     examples = load_unified_examples(
-        eval_data, args.max_test_samples, task=seg_task,
-        query_position="both", use_alpaca=True,
+        eval_data,
+        args.max_test_samples,
+        task=seg_task,
+        query_position="both",
+        use_alpaca=True,
     )
     import math
 
     block_size = args.mem_freq + 1
     if args.variant == "landmark" and args.landmark_top_k_blocks is not None:
         n_set = gm.model.set_landmark_eval_top_k(args.landmark_top_k_blocks)
-        print(f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers", flush=True)
+        print(
+            f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers",
+            flush=True,
+        )
 
     my_gidx = list(range(rank, len(examples), world))
     local = []
@@ -363,8 +397,11 @@ def main():
             json.dump(summary, f, indent=2)
         # Print whatever scalar metrics the scorer returned (per-task primary keys differ).
         scalars = {k: v for k, v in res.items() if isinstance(v, (int, float))}
-        print(f"[{seg_task}] n={len(examples)} skipped={skipped} " + " ".join(
-            f"{k}={v:.3f}" for k, v in scalars.items()), flush=True)
+        print(
+            f"[{seg_task}] n={len(examples)} skipped={skipped} "
+            + " ".join(f"{k}={v:.3f}" for k, v in scalars.items()),
+            flush=True,
+        )
     if world > 1:
         torch.distributed.barrier()
 

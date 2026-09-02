@@ -81,9 +81,7 @@ def main() -> None:
 
     marker = {"doc_start": ids.doc_start, "doc_end": ids.doc_end}
     row = {k: emb[v] for k, v in marker.items()}
-    cos = torch.nn.functional.cosine_similarity(
-        row["doc_start"][None], row["doc_end"][None]
-    ).item()
+    cos = torch.nn.functional.cosine_similarity(row["doc_start"][None], row["doc_end"][None]).item()
     report = {
         "family": args.family,
         "checkpoint": args.checkpoint,
@@ -98,11 +96,15 @@ def main() -> None:
         "bit_identical": bool(torch.equal(row["doc_start"], row["doc_end"])),
     }
 
-    print(f"trained-row norm: median={median_norm:.4f} "
-          f"p05={report['trained_row_norm_p05']:.4f} p95={report['trained_row_norm_p95']:.4f}")
+    print(
+        f"trained-row norm: median={median_norm:.4f} "
+        f"p05={report['trained_row_norm_p05']:.4f} p95={report['trained_row_norm_p95']:.4f}"
+    )
     for k, v in marker.items():
-        print(f"  {k:10s} id={v}  norm={report['marker_norms'][k]:.4f} "
-              f"({report['marker_norm_ratios'][k]:.2f}x median)")
+        print(
+            f"  {k:10s} id={v}  norm={report['marker_norms'][k]:.4f} "
+            f"({report['marker_norm_ratios'][k]:.2f}x median)"
+        )
     print(f"  pairwise cosine = {cos:+.4f}   bit_identical={report['bit_identical']}")
 
     cos_ok = abs(cos) < 0.9
@@ -110,9 +112,11 @@ def main() -> None:
     report["cosine_gate_pass"] = cos_ok
     report["norm_gate_pass"] = norm_ok
     report["audit_pass"] = cos_ok and norm_ok
-    print(f"VERDICT: cosine_gate={'PASS' if cos_ok else 'FAIL'} "
-          f"norm_gate={'PASS' if norm_ok else 'FAIL'} -> "
-          f"{'no repair needed' if report['audit_pass'] else 'REPAIR REQUIRED'}")
+    print(
+        f"VERDICT: cosine_gate={'PASS' if cos_ok else 'FAIL'} "
+        f"norm_gate={'PASS' if norm_ok else 'FAIL'} -> "
+        f"{'no repair needed' if report['audit_pass'] else 'REPAIR REQUIRED'}"
+    )
 
     if not report["audit_pass"] and args.repair_to:
         from transformers import AutoTokenizer
@@ -127,7 +131,9 @@ def main() -> None:
         tok = AutoTokenizer.from_pretrained(args.tokenizer)
         vocab = TokenizerConfig.dolma2().padded_vocab_size()
         if args.arch == "olmo_hybrid":
-            from olmo_hybrid_configs import olmo_hybrid_7B_ctc  # type: ignore[import-not-found]
+            from olmo_hybrid_configs import (
+                olmo_hybrid_7B_ctc,  # type: ignore[import-not-found]
+            )
 
             model_config = olmo_hybrid_7B_ctc(vocab_size=vocab)
         else:
@@ -141,10 +147,14 @@ def main() -> None:
             donor_ids = tok.encode(DONOR_STRS[name], add_special_tokens=False)
             if len(donor_ids) != 1 or donor_ids[0] >= ids.real_vocab_size:
                 raise SystemExit(f"donor {DONOR_STRS[name]!r} is not a single trained token")
-            vec = w[donor_ids[0]].float() + torch.randn(w.shape[1], generator=g) * (std * args.jitter)
+            vec = w[donor_ids[0]].float() + torch.randn(w.shape[1], generator=g) * (
+                std * args.jitter
+            )
             w[tid] = vec.to(w.dtype)
-            print(f"  repaired {name} (id {tid}) <- {DONOR_STRS[name]!r} "
-                  f"norm={w[tid].float().norm():.4f}")
+            print(
+                f"  repaired {name} (id {tid}) <- {DONOR_STRS[name]!r} "
+                f"norm={w[tid].float().norm():.4f}"
+            )
         new_cos = torch.nn.functional.cosine_similarity(
             w[marker["doc_start"]].float()[None], w[marker["doc_end"]].float()[None]
         ).item()

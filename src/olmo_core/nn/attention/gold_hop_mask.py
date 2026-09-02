@@ -97,7 +97,11 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from .chunked_mask import _random_doc_keep, build_chunk_ids_from_tokens, random_doc_nonce
+from .chunked_mask import (
+    _random_doc_keep,
+    build_chunk_ids_from_tokens,
+    random_doc_nonce,
+)
 from .gold_grad_mask import content_fingerprint_from_row
 
 __all__ = [
@@ -647,7 +651,9 @@ def edit_doc_graph_for_hops(
             raise ValueError(f"gold pair {list(p)!r} is not a pair; the sidecar must be gold_pairs")
         a, b = sorted(int(x) for x in p)
         if a == b:
-            raise ValueError(f"degenerate gold pair {list(p)!r} (a document cannot contradict itself)")
+            raise ValueError(
+                f"degenerate gold pair {list(p)!r} (a document cannot contradict itself)"
+            )
         norm_pairs.append((a, b))
 
     base_edges = int(adj.sum())
@@ -722,9 +728,7 @@ def gold_hop_graph_for_row(
     """
     base = build_base_doc_graph(n_docs, doc_keep_prob=doc_keep_prob, seed=seed, nonce=nonce)
     rng = random.Random(f"{seed}:{fingerprint}:hop{hops}")
-    return edit_doc_graph_for_hops(
-        base, pairs, hops, rng, compensate=compensate, n_decoys=n_decoys
-    )
+    return edit_doc_graph_for_hops(base, pairs, hops, rng, compensate=compensate, n_decoys=n_decoys)
 
 
 # ---------------------------------------------------------------------------

@@ -50,6 +50,7 @@ fixture's recipe at the real 7B dimensions.
 import os
 from typing import List, Optional
 
+from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
@@ -57,7 +58,6 @@ from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerBlockType
-from olmo_core.config import DType
 
 __all__ = [
     "OLMO_HYBRID_HF_ID",
@@ -107,13 +107,13 @@ OLMO_HYBRID_LAYER_TYPES: List[str] = [
 # --- released dimensions (config.json + safetensors header) -----------------------------------
 _D_MODEL = 3840
 _N_LAYERS = 32
-_N_HEADS = 30          # MHA: num_key_value_heads == num_attention_heads == 30
-_HEAD_DIM = 128        # 3840 / 30; the config omits head_dim, so it is the derived value
+_N_HEADS = 30  # MHA: num_key_value_heads == num_attention_heads == 30
+_HEAD_DIM = 128  # 3840 / 30; the config omits head_dim, so it is the derived value
 _INTERMEDIATE = 11008
 _LAYER_NORM_EPS = 1e-6
 _LINEAR_NUM_KEY_HEADS = 30
 _LINEAR_NUM_VALUE_HEADS = 30
-_LINEAR_KEY_HEAD_DIM = 96    # q_proj/k_proj are (2880, 3840) = 30 * 96
+_LINEAR_KEY_HEAD_DIM = 96  # q_proj/k_proj are (2880, 3840) = 30 * 96
 _LINEAR_VALUE_HEAD_DIM = 192  # v_proj/g_proj are (5760, 3840) = 30 * 192; o_norm is (192,)
 _LINEAR_CONV_KERNEL = 4
 

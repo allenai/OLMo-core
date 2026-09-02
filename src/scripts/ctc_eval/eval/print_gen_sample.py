@@ -5,6 +5,7 @@ land in the Beaker job log for quick error inspection without pulling the sideca
 
 Usage: python print_gen_sample.py <generations.jsonl> [N]
 """
+
 import json
 import sys
 
@@ -19,9 +20,17 @@ with open(path) as fh:
         r = json.loads(line)
         d = r.get("detail") or {}
         metric = {k: d.get(k) for k in ("f1", "exact_match", "recall") if k in d}
-        print("--- [%s@%s #%s] metric=%s gold=%s pred=%s ---"
-              % (r.get("task"), r.get("rung"), r.get("idx"), metric,
-                 d.get("gold_ids"), d.get("predicted_ids")))
+        print(
+            "--- [%s@%s #%s] metric=%s gold=%s pred=%s ---"
+            % (
+                r.get("task"),
+                r.get("rung"),
+                r.get("idx"),
+                metric,
+                d.get("gold_ids"),
+                d.get("predicted_ids"),
+            )
+        )
         tail = (r.get("prompt_tail") or "")[-220:].replace("\n", " ")
         print("  PROMPT_TAIL: ...%s" % tail)
         print("  GENERATION : %r" % (r.get("generation") or "")[:400])

@@ -283,3 +283,65 @@ def test_fingerprint_keep_docs_fn_gold_plus_random():
     assert keep.shape == (2, 3)
     assert keep[0].tolist() == [False, True, False]
     assert keep[1].tolist() == [True, True, True]  # fingerprint miss -> all real
+
+
+def test_fingerprint_keep_docs_fn_n_random_range():
+    # (lo, hi) breadth: gold always kept, negative count varies per call within [lo, hi].
+    from olmo_core.nn.attention.gold_grad_mask import content_fingerprint_from_row
+
+    START, END, EOS = 900, 901, 999
+    row = []
+    for d in range(12):
+        row += [START, 10 + 2 * d, 11 + 2 * d, END]
+    row += [7, 8, EOS]
+    fp = content_fingerprint_from_row(row, EOS)
+    fn = make_fingerprint_keep_docs_fn(
+        {fp: [3, 7]},
+        doc_start_id=START,
+        doc_end_id=END,
+        eos_id=EOS,
+        n_random=2,
+        n_random_range=(1, 8),
+        mode="gold_plus_random",
+        seed=0,
+    )
+    counts = []
+    for _ in range(8):
+        keep = fn(torch.tensor([row]))
+        assert keep.shape == (1, 12)
+        assert keep[0, 3] and keep[0, 7]
+        counts.append(int(keep.sum().item()))
+    assert len(set(counts)) > 1  # breadth varies across calls (per-epoch variation)
+    assert all(2 + 1 <= c <= 2 + 8 for c in counts)
+
+
+@pytest.mark.parametrize("n_docs,frac", [(12, 0.5), (24, 0.25), (6, 1.0 / 6)])
+def test_fingerprint_keep_docs_fn_fixed_fraction(n_docs, frac):
+    """n_random_frac keeps a context-length-INVARIANT share of the non-gold docs real (gold always
+    kept): the FLOP-scaling study's KV arms. Same fraction at every doc count."""
+    from olmo_core.nn.attention.gold_grad_mask import content_fingerprint_from_row
+
+    START, END, EOS = 900, 901, 999
+    row = []
+    for d in range(n_docs):
+        row += [START, 10 + 2 * d, 11 + 2 * d, END]
+    row += [7, 8, EOS]
+    fp = content_fingerprint_from_row(row, EOS)
+    gold = [1, 3]
+    fn = make_fingerprint_keep_docs_fn(
+        {fp: gold},
+        doc_start_id=START,
+        doc_end_id=END,
+        eos_id=EOS,
+        n_random=999,  # would keep everything -- must be overridden by the fraction
+        n_random_frac=frac,
+        mode="gold_plus_random",
+        seed=0,
+    )
+    keep = fn(torch.tensor([row]))
+    assert keep.shape == (1, n_docs)
+    assert keep[0, 1] and keep[0, 3]
+    expected = len(gold) + max(1, int(round(frac * (n_docs - len(gold)))))
+    assert int(keep.sum().item()) == expected
+    # deterministic per (seed, fingerprint)
+    assert torch.equal(keep, fn(torch.tensor([row])))

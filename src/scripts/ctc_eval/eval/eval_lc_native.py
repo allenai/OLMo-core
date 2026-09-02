@@ -245,12 +245,19 @@ def main():
         use_cache=True,
         **_lm_kwargs,
     )
+    from olmo_core.nn.nested_ffn_moe import post_build_hook_from_config
+
     gm = TransformerGenerationModuleConfig(
         gen_cfg,
         float8_config=None,
         dtype=DType("bfloat16"),
         compile_model=False,
-    ).build(checkpoint_dir=args.model_path, device=device)
+    ).build(
+        checkpoint_dir=args.model_path,
+        device=device,
+        # nested-FFN routing, if the checkpoint recorded one (scored WITH its router)
+        post_build_hook=post_build_hook_from_config(args.model_path),
+    )
     print(
         f"[native] built generation module from {args.model_path} in {time.time()-t0:.1f}s",
         flush=True,

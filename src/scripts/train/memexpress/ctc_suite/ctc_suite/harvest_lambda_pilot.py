@@ -33,8 +33,18 @@ def fetch_log(run: str, jobid: str) -> str:
     """
     remote = f"{LROOT}/logs/ctc_suite_{run}_{jobid}.log"
     return subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=5", "lambda", f"cat {remote}"],
-        capture_output=True, text=True, check=True,
+        [
+            "ssh",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=5",
+            "lambda",
+            f"cat {remote}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
 
 
@@ -65,15 +75,20 @@ def main():
     ap.add_argument("--run-name", default=None)
     ap.add_argument("--variant", default="full")
     ap.add_argument("--scale", default="0.8b")
-    ap.add_argument("--allow-partial", action="store_true",
-                    help="write result even if training hasn't completed (default: refuse)")
+    ap.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="write result even if training hasn't completed (default: refuse)",
+    )
     args = ap.parse_args()
     run = args.run_name or f"ctc-1ep-{args.task}-full-lambda"
 
     log = fetch_log(run, args.jobid)
     n_examples, seq_len, steps, completed = parse(log)
     if not steps:
-        raise SystemExit(f"no CE steps parsed for {args.task} (job {args.jobid}) -- crashed? check log")
+        raise SystemExit(
+            f"no CE steps parsed for {args.task} (job {args.jobid}) -- crashed? check log"
+        )
     if not completed and not args.allow_partial:
         last = steps[-1]["step"]
         raise SystemExit(
@@ -86,8 +101,12 @@ def main():
     (OUT / "curves").mkdir(parents=True, exist_ok=True)
 
     curve = {
-        "task": args.task, "scale": args.scale, "variant": args.variant,
-        "seq_len": seq_len, "compute_pool": "lambda-1gpu", "steps": steps,
+        "task": args.task,
+        "scale": args.scale,
+        "variant": args.variant,
+        "seq_len": seq_len,
+        "compute_pool": "lambda-1gpu",
+        "steps": steps,
     }
     (OUT / "curves" / f"{args.task}.json").write_text(json.dumps(curve, indent=2))
 
@@ -96,10 +115,12 @@ def main():
         "compute_pool": "lambda-1gpu",
         "curve_path": str(OUT / "curves" / f"{args.task}.json"),
         "epochs": 1,
-        "eval_metric": None, "eval_metric_name": None, "eval_size": None,
+        "eval_metric": None,
+        "eval_metric_name": None,
+        "eval_size": None,
         "git_commit": GIT_COMMIT,
         "notes": f"lambda air-gapped run (job {args.jobid}); eval: N/A (harvest from log). "
-                 f"train {'completed' if completed else 'INCOMPLETE'}.",
+        f"train {'completed' if completed else 'INCOMPLETE'}.",
         "pass": bool(completed and cef < ce0),
         "scale": args.scale,
         "seq_len": seq_len,
@@ -112,8 +133,10 @@ def main():
         "wandb_url_if_any": None,
     }
     (OUT / f"{args.task}.json").write_text(json.dumps(result, indent=2))
-    print(f"{args.task}: CE {ce0:.3f} -> {cef:.4f}  steps={len(steps)}  n_ex={n_examples} "
-          f"seq={seq_len}  completed={completed}  pass={result['pass']}")
+    print(
+        f"{args.task}: CE {ce0:.3f} -> {cef:.4f}  steps={len(steps)}  n_ex={n_examples} "
+        f"seq={seq_len}  completed={completed}  pass={result['pass']}"
+    )
 
 
 if __name__ == "__main__":

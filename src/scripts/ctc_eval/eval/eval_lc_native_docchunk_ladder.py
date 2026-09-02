@@ -68,8 +68,17 @@ DOC_END_ID = 151649  # <|box_end|>
 PAD_TOKEN_ID = 151863
 
 # Full task order (5 in-distribution v2 tasks + 4 OOD ladders).
-ALL_TASKS = ["contradiction", "nq", "oolong", "rerank", "outlier",
-             "fiqa", "scifact", "outlier_review", "contra_fever"]
+ALL_TASKS = [
+    "contradiction",
+    "nq",
+    "oolong",
+    "rerank",
+    "outlier",
+    "fiqa",
+    "scifact",
+    "outlier_review",
+    "contra_fever",
+]
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -91,44 +100,62 @@ def build_ladders(args):
         # v2: every rung of a task shares the SAME >=500 questions; only distractor docs differ. ALL
         # rungs live under $EVAL500_ROOT/<task>/ (point EVAL500_ROOT at the v2 bundle).
         ladders_v2 = {
-            "contradiction": [("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
+            "contradiction": [
+                ("2k", f"{E5}/contra/contradiction_eval_pubmed_both_n100_k3.jsonl"),
                 ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
-            "nq": [("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
+                ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl"),
+            ],
+            "nq": [
+                ("3k", f"{E5}/nq/nq_validation_k20_600.jsonl"),
                 ("8k", f"{E5}/nq/nq_validation_k50_600.jsonl"),
                 ("16k", f"{E5}/nq/nq_validation_k100_600.jsonl"),
-                ("32k", f"{E5}/nq/nq_validation_k200_600.jsonl")],
-            "outlier": [("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
+                ("32k", f"{E5}/nq/nq_validation_k200_600.jsonl"),
+            ],
+            "outlier": [
+                ("3k", f"{E5}/outlier/outlier_wiki100w_n22_k3_eval_600.jsonl"),
                 ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
                 ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
                 ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
                 # 128k transfer-test rung (n=880 docs); see corpus_reasoning/eval/eval_lc_native.py.
-                ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl")],
-            "rerank": [("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
+                ("128k", f"{E5}/outlier/outlier_wiki100w_n880_k3_eval_600.jsonl"),
+            ],
+            "rerank": [
+                ("3k", f"{E5}/rerank/msmarco_trainhn_eval_k20_500.jsonl"),
                 ("8k", f"{E5}/rerank/msmarco_trainhn_eval_k50_500.jsonl"),
-                ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl")],
-            "oolong": [("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
+                ("16k", f"{E5}/rerank/msmarco_trainhn_eval_k100_500.jsonl"),
+            ],
+            "oolong": [
+                ("8k", f"{E5}/oolong/oolong_test_synth_ctx8192_spliteval.jsonl"),
                 ("16k", f"{E5}/oolong/oolong_test_synth_ctx16384_spliteval.jsonl"),
-                ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl")],
+                ("32k", f"{E5}/oolong/oolong_test_synth_ctx32768_spliteval.jsonl"),
+            ],
             # OOD generalization (held-out BEIR retrieval, graded as retrieval f1). Version-agnostic.
-            "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
+            "fiqa": [
+                ("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
                 ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
                 ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
-                ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
-            "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
+                ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl"),
+            ],
+            "scifact": [
+                ("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
                 ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
                 ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
-                ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
+                ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl"),
+            ],
             # OOD outlier + contradiction (review / FEVER source; graded identically via gold indices).
-            "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
+            "outlier_review": [
+                ("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
                 ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
                 ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
-                ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
-            "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
+                ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl"),
+            ],
+            "contra_fever": [
+                ("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
                 ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
                 ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
-                ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
+                ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
+            ],
         }
         # ---- OPT-IN ultra-long rungs (64k/128k/256k), OFF by default (v2 only) ----
         # KEEP IN SYNC with eval_lc_native.py: size-labelled glob so the calibrated doc-count in the
@@ -150,44 +177,62 @@ def build_ladders(args):
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
         return ladders_v2
     return {
-        "contradiction": [("2k", args.contra_data),
+        "contradiction": [
+            ("2k", args.contra_data),
             ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
             ("16k", f"{E5}/contra/contradiction_eval_pubmed_both_n385_k3.jsonl"),
-            ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl")],
-        "nq": [("3k", args.nq_data),
+            ("32k", f"{E5}/contra/contradiction_eval_pubmed_both_n765_k3.jsonl"),
+        ],
+        "nq": [
+            ("3k", args.nq_data),
             ("8k", f"{E5}/nq/nq_validation_k50_hn5_600.jsonl"),
             ("16k", f"{E5}/nq/nq_validation_k100_hn10_600.jsonl"),
-            ("32k", f"{E5}/nq/nq_validation_k200_hn20_600.jsonl")],
-        "oolong": [("1k", "data/oolong_test_synth_ctx1024_spliteval.jsonl"),
+            ("32k", f"{E5}/nq/nq_validation_k200_hn20_600.jsonl"),
+        ],
+        "oolong": [
+            ("1k", "data/oolong_test_synth_ctx1024_spliteval.jsonl"),
             ("2k", "data/oolong_test_synth_ctx2048_spliteval.jsonl"),
             ("4k", "data/oolong_test_synth_ctx4096_spliteval.jsonl"),
             ("8k", "data/oolong_test_synth_ctx8192_spliteval.jsonl"),
             ("16k", "data/oolong_test_synth_ctx16384_spliteval.jsonl"),
-            ("32k", "data/oolong_test_synth_ctx32768_spliteval.jsonl")],
-        "rerank": [("2k", args.rerank_data),
+            ("32k", "data/oolong_test_synth_ctx32768_spliteval.jsonl"),
+        ],
+        "rerank": [
+            ("2k", args.rerank_data),
             ("8k", f"{E5}/rerank/msmarco_validation_rerank_k80_600.jsonl"),
             ("16k", f"{E5}/rerank/msmarco_validation_rerank_k158_597.jsonl"),
-            ("32k", f"{E5}/rerank/msmarco_validation_rerank_k315_599.jsonl")],
-        "outlier": [("3k", args.outlier_data),
+            ("32k", f"{E5}/rerank/msmarco_validation_rerank_k315_599.jsonl"),
+        ],
+        "outlier": [
+            ("3k", args.outlier_data),
             ("8k", f"{E5}/outlier/outlier_wiki100w_n55_k3_eval_600.jsonl"),
             ("16k", f"{E5}/outlier/outlier_wiki100w_n110_k3_eval_600.jsonl"),
-            ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl")],
-        "fiqa": [("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
+            ("32k", f"{E5}/outlier/outlier_wiki100w_n220_k3_eval_600.jsonl"),
+        ],
+        "fiqa": [
+            ("2k", f"{E5}/beir/beir_fiqa_ce_ladder_k10_648.jsonl"),
             ("4k", f"{E5}/beir/beir_fiqa_ce_ladder_k20_648.jsonl"),
             ("8k", f"{E5}/beir/beir_fiqa_ce_ladder_k40_648.jsonl"),
-            ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl")],
-        "scifact": [("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
+            ("16k", f"{E5}/beir/beir_fiqa_ce_ladder_k80_648.jsonl"),
+        ],
+        "scifact": [
+            ("4k", f"{E5}/beir/beir_scifact_ladder_k11_299.jsonl"),
             ("8k", f"{E5}/beir/beir_scifact_ladder_k22_299.jsonl"),
             ("16k", f"{E5}/beir/beir_scifact_ladder_k44_299.jsonl"),
-            ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl")],
-        "outlier_review": [("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
+            ("32k", f"{E5}/beir/beir_scifact_ladder_k88_299.jsonl"),
+        ],
+        "outlier_review": [
+            ("3k", f"{E5}/outlier/outlier_review_matched_n30_k3_eval_600.jsonl"),
             ("8k", f"{E5}/outlier/outlier_review_matched_n75_k3_eval_600.jsonl"),
             ("16k", f"{E5}/outlier/outlier_review_matched_n150_k3_eval_600.jsonl"),
-            ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl")],
-        "contra_fever": [("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
+            ("32k", f"{E5}/outlier/outlier_review_matched_n300_k3_eval_600.jsonl"),
+        ],
+        "contra_fever": [
+            ("2k", f"{E5}/contra/contradiction_eval_fever_plain_n100_k3.jsonl"),
             ("8k", f"{E5}/contra/contradiction_eval_fever_plain_n408_k3.jsonl"),
             ("16k", f"{E5}/contra/contradiction_eval_fever_plain_n820_k3.jsonl"),
-            ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl")],
+            ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
+        ],
     }
 
 
@@ -197,52 +242,100 @@ def build_ladders(args):
 def build_task_spec(args):
     return {
         # task:            (loadtask,        chunk_by,   item_regex, primary_key, max_new_tokens,            stopkind)
-        "contradiction":  ("contradiction", "document", r"\|\|",   "f1",        args.contra_max_new_tokens,  "contra"),
-        "nq":             ("retrieval",     "document", r"\|\|",   "f1",        args.nq_max_new_tokens,      None),
-        "oolong":         ("oolong",        "line",     r"\|\|",   "score",     args.oolong_max_new_tokens,  "oolong"),
-        "rerank":         ("rerank",        "document", r"\|\|",   None,        args.rerank_max_new_tokens,  None),
-        "outlier":        ("outlier",       "document", r"\|\|",   "f1",        args.outlier_max_new_tokens, None),
+        "contradiction": (
+            "contradiction",
+            "document",
+            r"\|\|",
+            "f1",
+            args.contra_max_new_tokens,
+            "contra",
+        ),
+        "nq": ("retrieval", "document", r"\|\|", "f1", args.nq_max_new_tokens, None),
+        "oolong": ("oolong", "line", r"\|\|", "score", args.oolong_max_new_tokens, "oolong"),
+        "rerank": ("rerank", "document", r"\|\|", None, args.rerank_max_new_tokens, None),
+        "outlier": ("outlier", "document", r"\|\|", "f1", args.outlier_max_new_tokens, None),
         # ---- OOD ladders: reuse the in-distribution graders + segmentation of their base task ----
-        "fiqa":           ("retrieval",     "document", r"\|\|",   "f1",        args.nq_max_new_tokens,      None),
-        "scifact":        ("retrieval",     "document", r"\|\|",   "f1",        args.nq_max_new_tokens,      None),
-        "outlier_review": ("outlier",       "document", r"\|\|",   "f1",        args.outlier_max_new_tokens, None),
-        "contra_fever":   ("contradiction", "document", r"\|\|",   "f1",        args.contra_max_new_tokens,  "contra"),
+        "fiqa": ("retrieval", "document", r"\|\|", "f1", args.nq_max_new_tokens, None),
+        "scifact": ("retrieval", "document", r"\|\|", "f1", args.nq_max_new_tokens, None),
+        "outlier_review": ("outlier", "document", r"\|\|", "f1", args.outlier_max_new_tokens, None),
+        "contra_fever": (
+            "contradiction",
+            "document",
+            r"\|\|",
+            "f1",
+            args.contra_max_new_tokens,
+            "contra",
+        ),
     }
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full", "hierarchical"],
-                    help="hierarchical loads EXACTLY like dense (DocumentChunkedAttention, dense "
-                         "doc-chunk data, no landmarks) -- config.json drives the attention class.")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--variant",
+        required=True,
+        choices=["dense", "landmark", "full", "hierarchical"],
+        help="hierarchical loads EXACTLY like dense (DocumentChunkedAttention, dense "
+        "doc-chunk data, no landmarks) -- config.json drives the attention class.",
+    )
     ap.add_argument("--model-path", required=True, help="step dir: config.json + model_and_optim/")
-    ap.add_argument("--out", required=True,
-                    help="ladder JSON. MERGES <task>_<rung> keys into an existing file if present, so "
-                         "per-task/per-rung split invocations accumulate into one ladder JSON.")
+    ap.add_argument(
+        "--out",
+        required=True,
+        help="ladder JSON. MERGES <task>_<rung> keys into an existing file if present, so "
+        "per-task/per-rung split invocations accumulate into one ladder JSON.",
+    )
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
-    ap.add_argument("--ladder-version", choices=["v2"], default="v2",
-                    help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
-                         "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).")
-    ap.add_argument("--mem-freq", type=int, default=63,
-                    help="landmark variant: a landmark token every mem_freq content tokens (window=64).")
+    ap.add_argument(
+        "--ladder-version",
+        choices=["v2"],
+        default="v2",
+        help="v2 (DEFAULT): every rung of a task shares the SAME >=500 questions, only "
+        "distractors vary (reads the _eval_bundle_eval500_v2 bundle via EVAL500_ROOT).",
+    )
+    ap.add_argument(
+        "--mem-freq",
+        type=int,
+        default=63,
+        help="landmark variant: a landmark token every mem_freq content tokens (window=64).",
+    )
     ap.add_argument("--max-test-samples", type=int, default=400)
-    ap.add_argument("--max-length", type=int, default=40960,
-                    help="KV-cache length budget (covers the 32k rung + box/landmark token overhead).")
+    ap.add_argument(
+        "--max-length",
+        type=int,
+        default=40960,
+        help="KV-cache length budget (covers the 32k rung + box/landmark token overhead).",
+    )
 
     # ---- task/rung filters (let the launcher split a slow ladder to dodge wall-clock timeouts) ----
-    ap.add_argument("--tasks", default=",".join(ALL_TASKS),
-                    help="comma list restricting which of the 9 tasks to run.")
-    ap.add_argument("--rungs", default=None,
-                    help="comma list restricting rungs (e.g. '16k,32k'); applied across tasks.")
-    ap.add_argument("--xlong", action="store_true",
-                    default=os.environ.get("LADDER_XLONG") == "1",
-                    help="OPT-IN (v2 only): append the ultra-long 64k/128k/256k rungs (contra|nq|outlier) "
-                         "by size-labelled glob under EVAL500_ROOT. Combine with --rungs 64k,128k to pick "
-                         "which; the runner forces bs=1 and raises --max-length. Honors env LADDER_XLONG=1.")
+    ap.add_argument(
+        "--tasks",
+        default=",".join(ALL_TASKS),
+        help="comma list restricting which of the 9 tasks to run.",
+    )
+    ap.add_argument(
+        "--rungs",
+        default=None,
+        help="comma list restricting rungs (e.g. '16k,32k'); applied across tasks.",
+    )
+    ap.add_argument(
+        "--xlong",
+        action="store_true",
+        default=os.environ.get("LADDER_XLONG") == "1",
+        help="OPT-IN (v2 only): append the ultra-long 64k/128k/256k rungs (contra|nq|outlier) "
+        "by size-labelled glob under EVAL500_ROOT. Combine with --rungs 64k,128k to pick "
+        "which; the runner forces bs=1 and raises --max-length. Honors env LADDER_XLONG=1.",
+    )
 
     # ---- per-task max-new-tokens knobs ----
-    ap.add_argument("--contra-max-new-tokens", type=int, default=96,
-                    help="NO-CoT contradiction: the 'Contradicting pairs: [[...]]' line is short.")
+    ap.add_argument(
+        "--contra-max-new-tokens",
+        type=int,
+        default=96,
+        help="NO-CoT contradiction: the 'Contradicting pairs: [[...]]' line is short.",
+    )
     ap.add_argument("--nq-max-new-tokens", type=int, default=64)
     ap.add_argument("--oolong-max-new-tokens", type=int, default=200)
     ap.add_argument("--rerank-max-new-tokens", type=int, default=256)
@@ -253,22 +346,41 @@ def main():
     ap.add_argument("--nq-data", default="data/nq_validation_k20_hn2_600.jsonl")
     ap.add_argument("--rerank-data", default="data/msmarco_dev_rerank_k20_1000.jsonl")
     ap.add_argument("--outlier-data", default="data/outlier_wiki100w_n20_k3_eval_100.jsonl")
-    ap.add_argument("--root", default=None,
-                    help="chdir here before resolving relative data paths (on-cluster: the weka $BUNDLE, "
-                         "so relative data/... base + v1-oolong files resolve).")
+    ap.add_argument(
+        "--root",
+        default=None,
+        help="chdir here before resolving relative data paths (on-cluster: the weka $BUNDLE, "
+        "so relative data/... base + v1-oolong files resolve).",
+    )
     # accepted for launcher parity; docchunk builds its own prefill via segment_prompt_to_chunks.
-    ap.add_argument("--cot-mode", default="none", choices=["none", "plan"],
-                    help="OOLONG CoT mode used to build the prefill prompt. 'none' (default) keeps the "
-                         "no-CoT behavior byte-identical; 'plan' matches a CoT-trained checkpoint so the "
-                         "model can externalize cross-item aggregation into (free/global) generated tokens.")
-    ap.add_argument("--prompt-format", default="chat", choices=["chat", "raw", "alpaca"],
-                    help="accepted for runner parity; docchunk prefill mirrors the training converter.")
+    ap.add_argument(
+        "--cot-mode",
+        default="none",
+        choices=["none", "plan"],
+        help="OOLONG CoT mode used to build the prefill prompt. 'none' (default) keeps the "
+        "no-CoT behavior byte-identical; 'plan' matches a CoT-trained checkpoint so the "
+        "model can externalize cross-item aggregation into (free/global) generated tokens.",
+    )
+    ap.add_argument(
+        "--prompt-format",
+        default="chat",
+        choices=["chat", "raw", "alpaca"],
+        help="accepted for runner parity; docchunk prefill mirrors the training converter.",
+    )
 
     # ---- landmark-only top-k inference knobs (exact if unset; mirror the single-task scripts) ----
-    ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
-                    help="landmark variant: keep only top-k landmark BLOCKS per query (exact if unset).")
-    ap.add_argument("--landmark-top-k-fraction", type=float, default=None,
-                    help="landmark variant: top-k = ceil(fraction * num_prompt_blocks) (reference: 0.1).")
+    ap.add_argument(
+        "--landmark-top-k-blocks",
+        type=int,
+        default=None,
+        help="landmark variant: keep only top-k landmark BLOCKS per query (exact if unset).",
+    )
+    ap.add_argument(
+        "--landmark-top-k-fraction",
+        type=float,
+        default=None,
+        help="landmark variant: top-k = ceil(fraction * num_prompt_blocks) (reference: 0.1).",
+    )
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     if args.root:
@@ -343,9 +455,15 @@ def main():
         max_length=args.max_length,
         use_cache=True,
     )
+    from olmo_core.nn.nested_ffn_moe import post_build_hook_from_config
+
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False
-    ).build(checkpoint_dir=args.model_path, device=device)
+    ).build(
+        checkpoint_dir=args.model_path,
+        device=device,
+        post_build_hook=post_build_hook_from_config(args.model_path),
+    )
     if not is_full:
         gm.model.enable_document_chunk_attention(
             doc_start_id=DOC_START_ID,
@@ -354,23 +472,37 @@ def main():
             mode="chunked",
             pad_id=PAD_TOKEN_ID if is_landmark else None,
         )
-    print(f"[docchunk-ladder-{args.variant}] built from {args.model_path} in {time.time()-t0:.1f}s",
-          flush=True)
+    print(
+        f"[docchunk-ladder-{args.variant}] built from {args.model_path} in {time.time()-t0:.1f}s",
+        flush=True,
+    )
 
     if is_landmark and args.landmark_top_k_blocks is not None:
         n_set = gm.model.set_landmark_eval_top_k(args.landmark_top_k_blocks)
-        print(f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers", flush=True)
+        print(
+            f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers",
+            flush=True,
+        )
 
     block_size = args.mem_freq + 1  # landmark window (64); eager landmark forward needs T % 64 == 0
 
     def build_prefill(raw_example, loadtask, chunk_by, item_regex):
         segs, _ids, _ = segment_prompt_to_chunks(
-            tok, raw_example, loadtask, query_position="both", cot_mode=args.cot_mode,
-            chunk_by=chunk_by, item_regex=item_regex, include_answer=False,
-            doc_start_id=DOC_START_ID, doc_end_id=DOC_END_ID,
+            tok,
+            raw_example,
+            loadtask,
+            query_position="both",
+            cot_mode=args.cot_mode,
+            chunk_by=chunk_by,
+            item_regex=item_regex,
+            include_answer=False,
+            doc_start_id=DOC_START_ID,
+            doc_end_id=DOC_END_ID,
         )
         if use_dense_emit:
-            out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
+            out, _ = emit_document_chunk_dense(
+                segs
+            )  # box markers present; full attention ignores them
         else:
             out, _ = emit_document_chunk_landmark(
                 segs, mem_freq=args.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
@@ -382,15 +514,19 @@ def main():
 
     def make_answer_complete(stopkind):
         if stopkind == "oolong":
+
             def _f(content_ids):
                 return "answer:" in tok.decode(content_ids, skip_special_tokens=True).lower()
+
             return _f
         if stopkind == "contra":
+
             def _f(content_ids):
                 txt = tok.decode(
                     [t for t in content_ids if t != LANDMARK_TOKEN_ID], skip_special_tokens=True
                 ).lower()
                 return "contradicting pairs:" in txt
+
             return _f
         return None
 
@@ -419,7 +555,11 @@ def main():
                 if nxt == EOS_TOKEN_ID or nxt == IM_END_ID:
                     break
                 new_content.append(nxt)
-                if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
+                if (
+                    nxt == NEWLINE_ID
+                    and answer_complete is not None
+                    and answer_complete(new_content)
+                ):
                     break
                 logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
                 nxt = int(logits[0, -1].argmax().item())
@@ -442,7 +582,9 @@ def main():
             logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
             since_landmark += 1
             if since_landmark == args.mem_freq:
-                logits = gm.model(torch.tensor([[LANDMARK_TOKEN_ID]], device=device), logits_to_keep=1)
+                logits = gm.model(
+                    torch.tensor([[LANDMARK_TOKEN_ID]], device=device), logits_to_keep=1
+                )
                 since_landmark = 0
             if nxt == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
                 break
@@ -489,8 +631,11 @@ def main():
                 print(f"[ladder:{task}@{label}] MISSING {path}, skipping", flush=True)
                 continue
             examples = load_unified_examples(
-                path, args.max_test_samples, task=loadtask,
-                query_position="both", use_alpaca=True,
+                path,
+                args.max_test_samples,
+                task=loadtask,
+                query_position="both",
+                use_alpaca=True,
             )
             # bs=1 DP shard: this rank decodes global indices [rank, rank+world, ...].
             my_gidx = list(range(rank, len(examples), world))
@@ -527,10 +672,13 @@ def main():
                     prim = res.get(primary_key)
                 else:  # rerank -> first mrr* metric
                     prim = next((v for k, v in res.items() if k.startswith("mrr")), None)
-                summary[f"{task}_{label}"] = (float(prim) if prim is not None else None)
-                print(f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
-                      f"{prim if prim is None else round(float(prim), 3)} "
-                      f"(n={len(examples)}, skipped_too_long={skipped})", flush=True)
+                summary[f"{task}_{label}"] = float(prim) if prim is not None else None
+                print(
+                    f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
+                    f"{prim if prim is None else round(float(prim), 3)} "
+                    f"(n={len(examples)}, skipped_too_long={skipped})",
+                    flush=True,
+                )
                 flush()
             if world > 1:
                 torch.distributed.barrier()

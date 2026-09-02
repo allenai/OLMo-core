@@ -1627,9 +1627,7 @@ class TransformerConfig(ModelConfig):
             doc_keep_prob is not None
             or random_doc_seed is not None
             or random_doc_per_example is not None
-        ) and not (
-            uses_document_chunked and _rand
-        ):
+        ) and not (uses_document_chunked and _rand):
             raise OLMoConfigurationError(
                 "'doc_keep_prob' / 'random_doc_seed' / 'random_doc_per_example' are only valid "
                 "with document_chunked=True and "

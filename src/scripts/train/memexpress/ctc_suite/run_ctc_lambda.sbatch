@@ -130,6 +130,8 @@ MASTER_PORT=$((29000 + RANDOM % 1000))
 torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py \
   --task "$TASK" --variant "$VARIANT" --model-scale "$SCALE" \
+  ${MODEL_FAMILY:+--model-family "$MODEL_FAMILY"} \
+  --no-final-checkpoint \
   --run-name "$RUN" --wandb-group "$WANDB_GROUP" --base-checkpoint "$BASE_CKPT" \
   --data "$DATA_LOCAL" --work-dir "$WORK_LOCAL" --save-folder "$SAVE_LOCAL" \
   --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --lr "$LR" --attn-backend "$ATTN_BACKEND" \

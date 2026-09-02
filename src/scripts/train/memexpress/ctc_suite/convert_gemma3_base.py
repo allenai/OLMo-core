@@ -119,8 +119,10 @@ def build_gemma3_config(text_cfg: dict, vocab_size: int):
         )
     for cap in ("final_logit_softcapping", "attn_logit_softcapping"):
         if text_cfg.get(cap):
-            sys.exit(f"[convert] checkpoint sets {cap}={text_cfg[cap]}, which olmo-core's gemma3 "
-                     "path does not implement.")
+            sys.exit(
+                f"[convert] checkpoint sets {cap}={text_cfg[cap]}, which olmo-core's gemma3 "
+                "path does not implement."
+            )
     return cfg
 
 
@@ -199,9 +201,12 @@ def main() -> None:
     raw_cfg = json.load(open(os.path.join(args.base_dir, "config.json")))
     text_cfg = raw_cfg.get("text_config", raw_cfg)
     vocab_size = int(text_cfg["vocab_size"])
-    print(f"[convert] {args.base_dir}: gemma3 text vocab={vocab_size} "
-          f"d_model={text_cfg['hidden_size']} n_layers={text_cfg['num_hidden_layers']} "
-          f"n_heads={text_cfg['num_attention_heads']} head_dim={text_cfg['head_dim']}", flush=True)
+    print(
+        f"[convert] {args.base_dir}: gemma3 text vocab={vocab_size} "
+        f"d_model={text_cfg['hidden_size']} n_layers={text_cfg['num_hidden_layers']} "
+        f"n_heads={text_cfg['num_attention_heads']} head_dim={text_cfg['head_dim']}",
+        flush=True,
+    )
 
     model_cfg = build_gemma3_config(text_cfg, vocab_size)
     hf_state = _load_hf_text_state(args.base_dir)
@@ -221,15 +226,21 @@ def main() -> None:
     missing, unexpected = model.load_state_dict(converted, strict=False)
     missing = [k for k in missing if "rope" not in k and "inv_freq" not in k]
     if missing or unexpected:
-        sys.exit(f"[convert] strict-load mismatch: missing={list(missing)[:8]} "
-                 f"unexpected={list(unexpected)[:8]}")
+        sys.exit(
+            f"[convert] strict-load mismatch: missing={list(missing)[:8]} "
+            f"unexpected={list(unexpected)[:8]}"
+        )
     n_params = sum(p.numel() for p in model.parameters())
     hf_params = sum(v.numel() for v in hf_state.values())
-    print(f"[convert] strict load OK: olmo params={n_params:,} vs HF text tensors={hf_params:,}",
-          flush=True)
+    print(
+        f"[convert] strict load OK: olmo params={n_params:,} vs HF text tensors={hf_params:,}",
+        flush=True,
+    )
     if n_params != hf_params:
-        sys.exit(f"[convert] PARAM COUNT MISMATCH olmo={n_params:,} hf={hf_params:,} -- the "
-                 "architecture does not match the checkpoint.")
+        sys.exit(
+            f"[convert] PARAM COUNT MISMATCH olmo={n_params:,} hf={hf_params:,} -- the "
+            "architecture does not match the checkpoint."
+        )
 
     tok = AutoTokenizer.from_pretrained(args.base_dir)
     emb = model.embeddings.weight.data
@@ -254,17 +265,32 @@ def main() -> None:
         bos_token_id=int(raw_cfg.get("bos_token_id", 2)),
         identifier=args.base_dir,
     )
-    save_model_and_optim_state(str(join_path(args.out, "model_and_optim")), model,
-                               save_overwrite=True)
+    save_model_and_optim_state(
+        str(join_path(args.out, "model_and_optim")), model, save_overwrite=True
+    )
     with open(os.path.join(args.out, "config.json"), "w") as f:
-        json.dump({"model": model_cfg.as_config_dict(),
-                   "dataset": {"tokenizer": tok_cfg.as_config_dict()}}, f)
+        json.dump(
+            {
+                "model": model_cfg.as_config_dict(),
+                "dataset": {"tokenizer": tok_cfg.as_config_dict()},
+            },
+            f,
+        )
     meta = os.path.join(args.out, "model_and_optim", ".metadata")
     if not os.path.exists(meta):
         sys.exit(f"[convert] FAILED: {meta} missing -- conversion did not complete cleanly.")
     with open(os.path.join(args.out, "marker_audit.json"), "w") as f:
-        json.dump({"base_dir": args.base_dir, "out": args.out, "marker_set": args.marker_set,
-                   "before": before, "after": after}, f, indent=2)
+        json.dump(
+            {
+                "base_dir": args.base_dir,
+                "out": args.out,
+                "marker_set": args.marker_set,
+                "before": before,
+                "after": after,
+            },
+            f,
+            indent=2,
+        )
     print(f"[convert] DONE -> {args.out} (verified {meta})", flush=True)
 
 

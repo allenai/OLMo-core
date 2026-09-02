@@ -15,7 +15,6 @@ import json
 import re
 from pathlib import Path
 
-
 # Alpaca prompt template — the exact wrapper Axolotl applies during training.
 # Evaluation scripts must use this same template for trained models (LoRA or full FT)
 # to match the prompt distribution the model was trained on. Base model evaluation
@@ -52,8 +51,9 @@ def save_results(path: str, data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
-def insert_dummy_tokens(input_text: str, before_dummy: int = 0, after_dummy: int = 0,
-                        dummy_token: str = "* ") -> str:
+def insert_dummy_tokens(
+    input_text: str, before_dummy: int = 0, after_dummy: int = 0, dummy_token: str = "* "
+) -> str:
     """Insert dummy tokens before and/or after the document block in the input text.
 
     Used for ablation studies to test whether the model relies on positional
@@ -81,7 +81,7 @@ def insert_dummy_tokens(input_text: str, before_dummy: int = 0, after_dummy: int
 
     # Locate the start of the document block by finding the first "Document" token.
     # Handles all naming conventions: "Document (Title:", "Document:", "Document ["
-    doc_match = re.search(r'Document[\s\[\(:]', input_text)
+    doc_match = re.search(r"Document[\s\[\(:]", input_text)
     if not doc_match:
         return input_text
     doc_start_idx = doc_match.start()

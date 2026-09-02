@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple, cast
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -864,6 +864,7 @@ class TransformerGenerationModule(GenerationModule):
         load_thread_count: Optional[int] = None,
         dtype: Optional[DType] = None,
         attention_backend: Optional[AttentionBackendName] = None,
+        post_build_hook: Optional[Callable[["Transformer"], None]] = None,
         **kwargs,
     ) -> "TransformerGenerationModule":
         """
@@ -882,6 +883,9 @@ class TransformerGenerationModule(GenerationModule):
             load_thread_count: Number of threads to use for loading checkpoint.
             dtype: If provided, build the model with this dtype.
             attention_backend: If provided, override the config to use this attention backend.
+            post_build_hook: Called on the freshly built model BEFORE the checkpoint is loaded.
+                Use it for ``enable_*`` methods that ADD parameters (e.g.
+                ``enable_nested_ffn_moe``), whose keys must exist for the load to populate them.
             **kwargs: Additional keyword arguments passed to the TransformerGenerationModule
                 constructor.
 
@@ -1001,6 +1005,11 @@ class TransformerGenerationModule(GenerationModule):
         log_or_print(log, f"{transformer_config}")
         log_or_print(log, f"{generation_config}")
         model = transformer_config.build()
+        if post_build_hook is not None:
+            # Runs BEFORE the checkpoint load, so a hook that adds parameters (e.g.
+            # ``enable_nested_ffn_moe``'s router) has its keys present when the load happens --
+            # enabling such a feature afterwards would silently leave it at its init values.
+            post_build_hook(model)
         generation_module = cls(model, generation_config, **kwargs)
 
         # Load checkpoint

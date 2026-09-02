@@ -29,33 +29,38 @@ Trade-offs vs the right-padded variant:
     context eval (decode-dominated), it's strictly better.
   - Decode is correctly batched and reaches up to ~B× decode-step speed.
 """
+
 from __future__ import annotations
 
 import copy
 from typing import List, Optional, Sequence
 
 import torch
-from tqdm.auto import tqdm
-
 from ctc_eval.eval.chunked_batch_helpers import (
-    encode_and_sort, resolve_stop_set, make_stop_tester,
+    encode_and_sort,
+    make_stop_tester,
+    resolve_stop_set,
     truncate_and_decode_batch,
 )
 from ctc_eval.lib.chunked_attention import (
-    AttentionPattern, FREE_CHUNK_ID,
-    build_dense_bool_mask, find_chunk_spans,
-    build_random_doc_edges, build_random_token_keep,
+    FREE_CHUNK_ID,
+    AttentionPattern,
+    build_dense_bool_mask,
+    build_random_doc_edges,
+    build_random_token_keep,
+    find_chunk_spans,
 )
+from tqdm.auto import tqdm
 
 
-def _build_chunk_ids_one(input_ids: torch.Tensor, doc_start_id: int,
-                          doc_end_id: int) -> torch.Tensor:
+def _build_chunk_ids_one(
+    input_ids: torch.Tensor, doc_start_id: int, doc_end_id: int
+) -> torch.Tensor:
     """Build chunk_ids for a single (1, L) prompt. Real tokens get
     FREE_CHUNK_ID by default; tokens inside a doc-span get the doc index."""
     L = input_ids.size(1)
     device = input_ids.device
-    chunk_ids = torch.full((1, L), FREE_CHUNK_ID, dtype=torch.int32,
-                            device=device)
+    chunk_ids = torch.full((1, L), FREE_CHUNK_ID, dtype=torch.int32, device=device)
     spans = find_chunk_spans(input_ids[0], doc_start_id, doc_end_id)
     for idx, (s, e) in enumerate(spans):
         chunk_ids[0, s:e] = idx
@@ -63,12 +68,12 @@ def _build_chunk_ids_one(input_ids: torch.Tensor, doc_start_id: int,
 
 
 @torch.no_grad()
-def _prefill_one(model, prompt_ids: List[int], doc_start_id: int,
-                  doc_end_id: int, pattern: AttentionPattern):
+def _prefill_one(
+    model, prompt_ids: List[int], doc_start_id: int, doc_end_id: int, pattern: AttentionPattern
+):
     """Single-example prefill. Returns (last_real_logit, past_kv, L)."""
     device = next(model.parameters()).device
-    input_ids = torch.tensor(prompt_ids, dtype=torch.long,
-                              device=device).unsqueeze(0)
+    input_ids = torch.tensor(prompt_ids, dtype=torch.long, device=device).unsqueeze(0)
     L = input_ids.size(1)
     chunk_ids = _build_chunk_ids_one(input_ids, doc_start_id, doc_end_id)
     kwargs = {}
@@ -77,22 +82,29 @@ def _prefill_one(model, prompt_ids: List[int], doc_start_id: int,
     if pattern.needs_random_edges():
         n_docs = int((chunk_ids[0] >= 0).any() and chunk_ids[0].max().item() + 1 or 0)
         adj = build_random_doc_edges(
-            num_docs=n_docs, num_edges=pattern.num_random_doc_edges,
-            seed=pattern.random_seed, max_docs=max(n_docs, 1),
+            num_docs=n_docs,
+            num_edges=pattern.num_random_doc_edges,
+            seed=pattern.random_seed,
+            max_docs=max(n_docs, 1),
         ).to(device)
         kwargs["doc_random"] = adj.unsqueeze(0)
     if pattern.needs_random_token_mask():
         rk = build_random_token_keep(
-            seq_len=L, keep_prob=pattern.keep_prob, seed=pattern.random_seed,
+            seq_len=L,
+            keep_prob=pattern.keep_prob,
+            seed=pattern.random_seed,
         ).to(device)
         kwargs["random_keep"] = rk.unsqueeze(0)
     bool_mask = build_dense_bool_mask(pattern, chunk_ids, **kwargs)  # (1, L, L)
     dtype = torch.bfloat16
     min_val = torch.finfo(dtype).min
     mask = torch.where(
-        bool_mask, torch.zeros((), dtype=dtype, device=device),
+        bool_mask,
+        torch.zeros((), dtype=dtype, device=device),
         torch.full((), min_val, dtype=dtype, device=device),
-    ).unsqueeze(1)  # (1, 1, L, L)
+    ).unsqueeze(
+        1
+    )  # (1, 1, L, L)
     outputs = model(input_ids=input_ids, attention_mask=mask, use_cache=True)
     return outputs.logits[0, -1, :].clone(), outputs.past_key_values, L
 
@@ -108,7 +120,9 @@ def _stack_olmohybrid_caches(caches: list, lens: List[int], stacked, B: int, max
             num_heads = k0.shape[1]
             head_dim = k0.shape[3]
             stacked_k = torch.zeros(
-                (B, num_heads, max_L, head_dim), dtype=k0.dtype, device=k0.device,
+                (B, num_heads, max_L, head_dim),
+                dtype=k0.dtype,
+                device=k0.device,
             )
             stacked_v = torch.zeros_like(stacked_k)
             for b, (c, L) in enumerate(zip(caches, lens)):
@@ -118,16 +132,19 @@ def _stack_olmohybrid_caches(caches: list, lens: List[int], stacked, B: int, max
             stacked.value_cache[layer_idx] = stacked_v
         elif ltype == "linear_attention":
             stacked.conv_states_q[layer_idx] = torch.cat(
-                [c.conv_states_q[layer_idx] for c in caches], dim=0)
+                [c.conv_states_q[layer_idx] for c in caches], dim=0
+            )
             stacked.conv_states_k[layer_idx] = torch.cat(
-                [c.conv_states_k[layer_idx] for c in caches], dim=0)
+                [c.conv_states_k[layer_idx] for c in caches], dim=0
+            )
             stacked.conv_states_v[layer_idx] = torch.cat(
-                [c.conv_states_v[layer_idx] for c in caches], dim=0)
+                [c.conv_states_v[layer_idx] for c in caches], dim=0
+            )
             stacked.recurrent_states[layer_idx] = torch.cat(
-                [c.recurrent_states[layer_idx] for c in caches], dim=0)
+                [c.recurrent_states[layer_idx] for c in caches], dim=0
+            )
         else:
-            raise RuntimeError(f"OlmoHybrid: unknown layer_type {ltype!r} "
-                               f"at layer {layer_idx}")
+            raise RuntimeError(f"OlmoHybrid: unknown layer_type {ltype!r} " f"at layer {layer_idx}")
     return stacked
 
 
@@ -175,7 +192,9 @@ def _stack_caches(caches: list, lens: List[int]):
             dtype = layer_caches[0].keys.dtype
             device = layer_caches[0].keys.device
             stacked_k = torch.zeros(
-                (B, num_heads, max_L, head_dim), dtype=dtype, device=device,
+                (B, num_heads, max_L, head_dim),
+                dtype=dtype,
+                device=device,
             )
             stacked_v = torch.zeros_like(stacked_k)
             for b, (lc, L) in enumerate(zip(layer_caches, lens)):
@@ -219,15 +238,24 @@ def generate_hf_batched_serial_prefill(
     enc, order = encode_and_sort(tokenizer, prompts)
     outputs: List[Optional[str]] = [None] * len(enc)
 
-    pbar = tqdm(range(0, len(order), batch_size), desc="  chunked-eval",
-                unit="batch", total=(len(order) + batch_size - 1) // batch_size)
+    pbar = tqdm(
+        range(0, len(order), batch_size),
+        desc="  chunked-eval",
+        unit="batch",
+        total=(len(order) + batch_size - 1) // batch_size,
+    )
     for start in pbar:
-        idx_batch = order[start:start + batch_size]
+        idx_batch = order[start : start + batch_size]
         texts = _generate_one_batch(
-            model, tokenizer,
+            model,
+            tokenizer,
             [enc[i] for i in idx_batch],
-            doc_start_id, doc_end_id, pad_token_id,
-            max_new_tokens, stop_set, pattern,
+            doc_start_id,
+            doc_end_id,
+            pad_token_id,
+            max_new_tokens,
+            stop_set,
+            pattern,
         )
         for i, t in zip(idx_batch, texts):
             outputs[i] = t
@@ -235,8 +263,17 @@ def generate_hf_batched_serial_prefill(
     return outputs  # type: ignore[return-value]
 
 
-def _generate_one_batch(model, tokenizer, batch_ids, doc_start_id, doc_end_id,
-                         pad_token_id, max_new_tokens, stop_set, pattern):
+def _generate_one_batch(
+    model,
+    tokenizer,
+    batch_ids,
+    doc_start_id,
+    doc_end_id,
+    pad_token_id,
+    max_new_tokens,
+    stop_set,
+    pattern,
+):
     device = next(model.parameters()).device
     B = len(batch_ids)
 
@@ -246,7 +283,11 @@ def _generate_one_batch(model, tokenizer, batch_ids, doc_start_id, doc_end_id,
     lens: List[int] = []
     for prompt_ids in batch_ids:
         last_logit, pkv, L = _prefill_one(
-            model, prompt_ids, doc_start_id, doc_end_id, pattern,
+            model,
+            prompt_ids,
+            doc_start_id,
+            doc_end_id,
+            pattern,
         )
         first_tokens.append(last_logit.argmax())  # scalar
         per_example_caches.append(pkv)
@@ -264,7 +305,9 @@ def _generate_one_batch(model, tokenizer, batch_ids, doc_start_id, doc_end_id,
     # pad slots [L_b, max_L) = 0 (zero KV from stacking, masked out);
     # generated slots [max_L, max_L+step) = 1 (always attended).
     decode_mask_full = torch.zeros(
-        (B, max_L + max_new_tokens), dtype=torch.long, device=device,
+        (B, max_L + max_new_tokens),
+        dtype=torch.long,
+        device=device,
     )
     for b, L in enumerate(lens):
         decode_mask_full[b, :L] = 1

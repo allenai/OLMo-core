@@ -1,0 +1,19 @@
+job_id	task	arm	budget	stage	run_name	cluster	launched	status	notes
+3492749	contradiction	ffnmoe	smoke	-	fs-smoke-ffnmoe	sneetches	2026-09-02 07:40	FAILED	wrong BASE_SRC (ffnmoe_exp/q4b-dense-cpt-fixmark has no .metadata); relaunched 3492755
+3492750	contradiction	softtoken	smoke	-	fs-smoke-softtoken	sneetches	2026-09-02 07:40	FAILED	same; relaunched 3492756
+3492755	contradiction	ffnmoe	smoke	-	fs-smoke-ffnmoe	sneetches	2026-09-02 07:50	FAILED	DCP loader rejects missing keys before strict applies -> tolerant load now filters the state dict to the checkpoint's keys; relaunched 3492759. 30-step local smoke of the ported arm through train_ctc_suite (tolerant base load, FLOP meter, export)
+3492756	contradiction	softtoken	smoke	-	fs-smoke-softtoken	sneetches	2026-09-02 07:50	FAILED	concurrent rsync --delete into the same staging dir (paired smokes) -> flock added; relaunched 3492760. 30-step local smoke (n_random 8, torch attn backend)
+3492759	contradiction	ffnmoe	smoke	-	fs-smoke-ffnmoe	sneetches	2026-09-02 08:05	FAILED	tolerant load OK (399 loaded / 72 new) but LoadStrategy.always demanded a checkpoint -> if_available for these arms; relaunched
+3492760	contradiction	softtoken	smoke	-	fs-smoke-softtoken	sneetches	2026-09-02 08:05	FAILED	staging+keep hook+tolerant load OK (4 new projector keys); same LoadStrategy failure; relaunched
+3492761	outlier	-	data	-	fs-data-outlier	mooney	2026-09-02 08:05	FAILED	(no Hub access on mooney + login HF cache is node-local /tmp -> seed pools copied to /scratch, job stages + passes --pool; relaunched) build_shortheavy_data.sbatch: pools 31k/9.3k/2.8k/700/180 -> arms sh8M..sh128M -> Qwen3 shards + sidecars -> S3
+3492762	nq	-	data	-	fs-data-nq	mooney	2026-09-02 08:05	FAILED	same failure/relaunch
+3492763	contradiction	-	data	-	fs-data-contradiction	mooney	2026-09-02 08:05	FAILED	(relaunched) same (watch the 2k pool: the seed pool may cap below 31k)
+3492764	oolong	-	data	-	fs-data-oolong	mooney	2026-09-02 08:05	FAILED	(relaunched) same (line-chunked; no gold sidecar -> soft-token arms run gold-blind)
+3492774	contradiction	ffnmoe	smoke	-	fs-smoke-ffnmoe	sneetches	2026-09-02 08:25	DONE	PASS: 30 steps, tolerant load 399+72 keys, routing active (7 rungs), flops.json actual/dense 0.739 (target still annealing), export + config ffn_moe block OK. TPS 4.8k/GPU @6144
+3492775	contradiction	softtoken	smoke	-	fs-smoke-softtoken	sneetches	2026-09-02 08:25	DONE	PASS: 30 steps, keep hook 2000 fps, projector 4 new keys, flops.json actual/dense 0.114 (n_random 8 of 100 docs), export OK. TPS 11.2k/GPU (torch attn)
+3492785	contradiction	ffnmoe	smoke-eval	-	fs-smoke-ffnmoe	sneetches	2026-09-02 08:40	DONE	PASS mechanically: routing enabled from config.json (7 rungs), per-layer costs reported; f1=0.000 is the 30-step untrained router (argmax spread over all rungs), not a path failure
+3492776	outlier	-	data	-	fs-data-outlier	mooney	2026-09-02 08:35	RUNNING	data build (seed pool staged from /scratch)
+3492777	nq	-	data	-	fs-data-nq	mooney	2026-09-02 08:35	RUNNING	data build
+3492778	contradiction	-	data	-	fs-data-contradiction	mooney	2026-09-02 08:35	FAILED	mined-pair pool cannot give 31k distinct 2k examples (50 consecutive rejections at num_docs=44,num_pairs=3) -> budgets capped at 48M, pools 12k/3.6k/1.1k/280/80; relaunched
+3492779	oolong	-	data	-	fs-data-oolong	mooney	2026-09-02 08:35	DONE	ALL 5 arms built + tokenized + on S3 in 3 min (sh8M 2490 ex ... sh128M 39844 ex; qwen3 markers, query after, no-cot)
+3492805	-	-	base	-	q4b-dense-cpt-fixmark -> S3	sneetches	2026-09-02 08:55	RUNNING	upload the 12G model-only fixmark base to s3://.../flop_scaling/bases/ (first attempt 3492789 uploaded nothing: --exclude '*optim*' matched model_and_optim/)

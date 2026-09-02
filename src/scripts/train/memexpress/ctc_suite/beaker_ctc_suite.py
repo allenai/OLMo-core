@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--variant",
         required=True,
-        choices=["full", "chunked", "chunked-mix", "sparselandmark"],
+        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken"],
     )
     ap.add_argument(
         "--model-scale",
@@ -116,7 +116,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="training seed passthrough. Needed to test whether a result reproduces across seeds -- "
-             "a single run per configuration cannot distinguish a real effect from seed variance.",
+        "a single run per configuration cannot distinguish a real effect from seed variance.",
     )
     ap.add_argument(
         "--no-compile",
@@ -187,6 +187,29 @@ def parse_args() -> argparse.Namespace:
         "this checkout is a shared working tree actively modified by concurrent jobs and is rarely clean; "
         "gantry always clones the PUSHED commit regardless of local dirtiness)",
     )
+    ap.add_argument(
+        "--keep-final-checkpoint",
+        action="store_true",
+        default=False,
+        help="keep the full model+optimizer+train-state checkpoint CheckpointerCallback writes at "
+        "the end of the run. Off by default: eval and rebasing both load the model-only save from "
+        "the --save-checkpoint block after fit(), so that final step*/ dir is read by nothing and "
+        "costs ~83G per 7B run (~49G at 4B). Leaving it on regrew weka from 7.2 TB to 23 TB between "
+        "2026-07-28 and 2026-08-29. Pass this only for a long run on a preemptible queue where a "
+        "resume point is worth the space; --save-interval N gives mid-run resume points separately.",
+    )
+    ap.add_argument(
+        "--extra-args",
+        default="",
+        help="verbatim extra CLI for train_ctc_suite.py (shlex-split), e.g. the --ffn-moe-* / "
+        "--st-* knobs of the ffnmoe / softtoken arms",
+    )
+    ap.add_argument(
+        "--exact-run-name",
+        action="store_true",
+        help="use --run-name verbatim (no timestamp suffix) so the save folder is predictable, "
+        "e.g. for a stage-2 run that warm-starts from stage 1's export. Reusing a name RESUMES.",
+    )
     ap.add_argument("mode", choices=["launch", "dry_run"])
     return ap.parse_args()
 
@@ -208,7 +231,11 @@ def main() -> None:
         base_checkpoint = f"{root_dir}/checkpoints/prasanns/ctc_suite/bases/q35-{opts.model_scale}-base-modelonly/model_and_optim"
     else:
         base_checkpoint = f"{root_dir}/checkpoints/prasanns/ctc_suite/bases/qwen3-{opts.model_scale}-base-trainedmark/model_and_optim"
-    run_name = f"{opts.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
+    run_name = (
+        opts.run_name
+        if opts.exact_run_name
+        else f"{opts.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
+    )
     save_folder = f"{root_dir}/checkpoints/prasanns/ctc_suite/ckpts/{run_name}"
     wandb_group = opts.wandb_group or f"ctc-suite-{opts.task}"
     world_size = opts.num_nodes * opts.num_gpus
@@ -250,6 +277,8 @@ def main() -> None:
         opts.model_family,
         "--save-checkpoint",
     ]
+    if not opts.keep_final_checkpoint:
+        cmd += ["--no-final-checkpoint"]
     if opts.max_steps:
         cmd += ["--max-steps", str(opts.max_steps)]
     if opts.cp_degree:
@@ -275,6 +304,10 @@ def main() -> None:
         cmd += ["--ac-budget", str(opts.ac_budget)]
     if opts.shard_degree:
         cmd += ["--shard-degree", str(opts.shard_degree)]
+    if opts.extra_args:
+        import shlex
+
+        cmd += shlex.split(opts.extra_args)
 
     launch_config = build_launch_config(
         name=run_name,
@@ -326,7 +359,9 @@ def main() -> None:
     # Print the id/name on ONE greppable line. `workload` renders as a multi-hundred-line protobuf
     # dump, so a batch launcher that keeps only the tail of stdout loses the id entirely and cannot
     # record what it just submitted.
-    wl_id = getattr(workload, "id", None) or getattr(getattr(workload, "experiment", None), "id", None)
+    wl_id = getattr(workload, "id", None) or getattr(
+        getattr(workload, "experiment", None), "id", None
+    )
     wl_name = getattr(workload, "name", None) or run_name
     print(f"[beaker_ctc_suite] SUBMITTED id={wl_id} name={wl_name}")
     if wl_id:

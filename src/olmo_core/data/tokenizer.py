@@ -13,8 +13,7 @@ __all__ = [
 class TokenizerLike(Protocol):
     eos_token_id: int
 
-    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]:
-        ...
+    def encode(self, text: str, add_special_tokens: bool = False) -> List[int]: ...
 
 
 class TokenizerName(StrEnum):
@@ -51,6 +50,7 @@ class TokenizerName(StrEnum):
     """
     The Qwen3.5 tokenizer (``Qwen/Qwen3.5-0.8B``).
     """
+
 
 @dataclass
 class TokenizerConfig(Config):
@@ -139,7 +139,7 @@ class TokenizerConfig(Config):
             pad_token_id=50256,
             identifier=TokenizerName.gpt2,
         )
-    
+
     @classmethod
     def qwen3(cls) -> "TokenizerConfig":
         """

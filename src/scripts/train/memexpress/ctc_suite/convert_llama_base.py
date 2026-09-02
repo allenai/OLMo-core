@@ -257,9 +257,7 @@ def main() -> None:
         audit["marker_repair"] = None
     else:
         tok = AutoTokenizer.from_pretrained(args.tokenizer)
-        audit["marker_repair"] = repair_markers(
-            emb, tok, ids, seed=args.seed, jitter=args.jitter
-        )
+        audit["marker_repair"] = repair_markers(emb, tok, ids, seed=args.seed, jitter=args.jitter)
         if tied:
             # Keep the head consistent with the repaired embeddings (that is what the tie meant).
             head.copy_(emb)
@@ -287,10 +285,15 @@ def main() -> None:
         identifier=args.tokenizer,
     )
     os.makedirs(args.out, exist_ok=True)
-    save_model_and_optim_state(os.path.join(args.out, "model_and_optim"), model, save_overwrite=True)
+    save_model_and_optim_state(
+        os.path.join(args.out, "model_and_optim"), model, save_overwrite=True
+    )
     with open(os.path.join(args.out, "config.json"), "w") as f:
         json.dump(
-            {"model": model_cfg.as_config_dict(), "dataset": {"tokenizer": tok_cfg.as_config_dict()}},
+            {
+                "model": model_cfg.as_config_dict(),
+                "dataset": {"tokenizer": tok_cfg.as_config_dict()},
+            },
             f,
         )
 

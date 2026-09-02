@@ -31,6 +31,7 @@ import sys
 import time
 
 import torch
+
 from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
     DOC_END_ID,
     DOC_START_ID,
@@ -133,9 +134,16 @@ def build_eval_prefill(
     )
 
     segs, ids, _ = segment_prompt_to_chunks(
-        tok, raw_example, "contradiction", query_position="both", cot_mode=cot_mode,
-        chunk_by="document", item_regex=r"\|\|", include_answer=False,
-        doc_start_id=doc_start_id, doc_end_id=doc_end_id,
+        tok,
+        raw_example,
+        "contradiction",
+        query_position="both",
+        cot_mode=cot_mode,
+        chunk_by="document",
+        item_regex=r"\|\|",
+        include_answer=False,
+        doc_start_id=doc_start_id,
+        doc_end_id=doc_end_id,
         # MUST equal the training shard's value, or the prefill layout differs from training.
         free_pad_repeat=free_pad_repeat,
         repeat_doc_text=repeat_doc_text,
@@ -162,12 +170,47 @@ def main():
     # the Qwen3.5-tokenized shards (see Qwen3.5-0.8B-docchunk-mask-mix-contradiction-SFT-local.py).
     ap.add_argument("--doc-start-id", type=int, default=DOC_START_ID, help="<|box_start|> id")
     ap.add_argument("--doc-end-id", type=int, default=DOC_END_ID, help="<|box_end|> id")
-    ap.add_argument("--eos-token-id", type=int, default=EOS_TOKEN_ID, help="document-separator EOS id")
-    ap.add_argument("--ffn-gate-start-layer", type=int, default=-1,
-                    help="mirror the training-time role-gated FFN (context-doc tokens skip the "
-                    "full FFN from this layer on); -1 disables")
-    ap.add_argument("--pad-fallback-id", type=int, default=151645,
-                    help="generation pad id when the tokenizer pad == eos (Qwen3 default 151645).")
+    ap.add_argument(
+        "--eos-token-id", type=int, default=EOS_TOKEN_ID, help="document-separator EOS id"
+    )
+    ap.add_argument(
+        "--ffn-gate-start-layer",
+        type=int,
+        default=-1,
+        help="mirror the training-time role-gated FFN (context-doc tokens skip the "
+        "full FFN from this layer on); -1 disables",
+    )
+    # Nested-FFN MoE (olmo_core.nn.nested_ffn_moe): the router is a LEARNED parameter living in
+    # the checkpoint, so unlike the role gate these flags must match training exactly or the
+    # router weights land in the wrong shape (load error) or go unused (silently dense).
+    ap.add_argument(
+        "--ffn-moe-start-layer",
+        type=int,
+        default=-1,
+        help="mirror the training-time nested-FFN router from this layer on; "
+        "-1 disables. MUST match the training flags.",
+    )
+    ap.add_argument(
+        "--ffn-moe-divisors", default="1,4,16,64", help="rung cost divisors; must match training"
+    )
+    ap.add_argument(
+        "--ffn-moe-no-null",
+        action="store_true",
+        help="drop the zero-compute rung; must match training",
+    )
+    ap.add_argument(
+        "--ffn-moe-width-multiple",
+        type=int,
+        default=-1,
+        help="rung width multiple; -1 = read from the checkpoint's config.json ffn_moe block "
+        "(falls back to 8, the training default)",
+    )
+    ap.add_argument(
+        "--pad-fallback-id",
+        type=int,
+        default=151645,
+        help="generation pad id when the tokenizer pad == eos (Qwen3 default 151645).",
+    )
     ap.add_argument("--contra-data", default="data/contradiction_eval_pubmed_both_n100_k3.jsonl")
     ap.add_argument("--max-test-samples", type=int, default=100)
     ap.add_argument(
@@ -185,13 +228,21 @@ def main():
     )
     ap.add_argument("--max-length", type=int, default=20480)
     ap.add_argument("--mem-freq", type=int, default=63)
-    ap.add_argument("--free-pad-repeat", type=int, default=0,
-                    help="MUST match the training shard: N repeats of FREE_PAD_SENTENCE appended "
-                         "after the documents (extra FREE tokens). A mismatch silently changes the "
-                         "prompt layout the model was trained on.")
-    ap.add_argument("--repeat-doc-text", type=int, default=1,
-                    help="MUST match the training shard: repeat each document's text N times "
-                         "inside its chunk.")
+    ap.add_argument(
+        "--free-pad-repeat",
+        type=int,
+        default=0,
+        help="MUST match the training shard: N repeats of FREE_PAD_SENTENCE appended "
+        "after the documents (extra FREE tokens). A mismatch silently changes the "
+        "prompt layout the model was trained on.",
+    )
+    ap.add_argument(
+        "--repeat-doc-text",
+        type=int,
+        default=1,
+        help="MUST match the training shard: repeat each document's text N times "
+        "inside its chunk.",
+    )
     ap.add_argument(
         "--summary-every-k",
         type=int,
@@ -274,22 +325,23 @@ def main():
 
     from transformers import AutoTokenizer
 
+    from corpus_reasoning.eval.evaluate import (
+        _eval_contradiction,
+        load_unified_examples,
+    )
     from olmo_core.config import DType
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_END_ID as _DE,
-    )
-    from olmo_core.data.document_chunk_landmark import (
-        DOC_START_ID as _DS,
-    )
+    from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
+    from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
     from olmo_core.generate.generation_module.config import GenerationConfig
-    from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
+    from olmo_core.generate.generation_module.transformer import (
+        TransformerGenerationModuleConfig,
+    )
     from olmo_core.nn.attention.gold_grad_mask import content_fingerprint_from_row
     from olmo_core.nn.attention.gold_hop_mask import (
         GOLD_HOPS_INF,
         install_gold_hop_mask,
         make_fingerprint_gold_hop_fn,
     )
-    from corpus_reasoning.eval.evaluate import _eval_contradiction, load_unified_examples
 
     # Resolve boundary/eos ids from CLI (Qwen3 defaults preserve prior behavior; Qwen3.5 overrides).
     ds_id, de_id, eos_id = args.doc_start_id, args.doc_end_id, args.eos_token_id
@@ -327,9 +379,41 @@ def main():
         max_length=args.max_length,
         use_cache=use_cache,
     )
+
+    def _post_build(model):
+        # Must run BEFORE the checkpoint load: the router/gain are trained parameters stored in
+        # the checkpoint, so their keys have to exist for the load to populate them. Enabling
+        # afterwards would leave the router at its init (full rung everywhere) and quietly score
+        # a dense model -- the FFN_GATE lesson in a form that fails silently.
+        if args.ffn_moe_start_layer >= 0:
+            wm = args.ffn_moe_width_multiple
+            if wm < 0:
+                wm = 8
+                try:
+                    with open(os.path.join(args.model_path, "config.json")) as f:
+                        wm = int((json.load(f).get("ffn_moe") or {}).get("width_multiple", 8))
+                except Exception:
+                    pass
+            model.enable_nested_ffn_moe(
+                start_layer=args.ffn_moe_start_layer,
+                divisors=[float(x) for x in args.ffn_moe_divisors.split(",")],
+                include_null=not args.ffn_moe_no_null,
+                width_multiple=wm,
+            )
+
     gm = TransformerGenerationModuleConfig(
         gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False
-    ).build(checkpoint_dir=args.model_path, device=device)
+    ).build(
+        checkpoint_dir=args.model_path,
+        device=device,
+        post_build_hook=_post_build if args.ffn_moe_start_layer >= 0 else None,
+    )
+    if args.ffn_moe_start_layer >= 0:
+        widths = gm.model._nested_ffn_moe["widths"]
+        print(
+            f"[ffn-moe] routing active from layer {args.ffn_moe_start_layer}, rungs={widths}",
+            flush=True,
+        )
     # pad_id is always PAD_TOKEN_ID now (not just for landmark): batched eval (--batch-size > 1)
     # left-pads the prompt with this id, and chunk_ids reconstruction must mark it PAD (non-
     # attendable) rather than FREE. At --batch-size 1 no such token ever appears in the dense/full
@@ -436,7 +520,9 @@ def main():
             mem_freq=args.mem_freq,
         )
 
-    block_size = args.mem_freq + 1  # landmark window (64); the eager landmark forward needs T % 64 == 0
+    block_size = (
+        args.mem_freq + 1
+    )  # landmark window (64); the eager landmark forward needs T % 64 == 0
 
     def _answer_complete(content_ids):
         # The enumerate CoT walks every claim then ends with a final 'Contradicting pairs: [[...]]'
@@ -506,14 +592,20 @@ def main():
         return text.split("</think>", 1)[1] if "</think>" in text else text
 
     examples = load_unified_examples(
-        args.contra_data, args.max_test_samples, task="contradiction",
-        query_position="both", use_alpaca=True,
+        args.contra_data,
+        args.max_test_samples,
+        task="contradiction",
+        query_position="both",
+        use_alpaca=True,
     )
     import math
 
     if args.variant == "landmark" and args.landmark_top_k_blocks is not None:
         n_set = gm.model.set_landmark_eval_top_k(args.landmark_top_k_blocks)
-        print(f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers", flush=True)
+        print(
+            f"[topk] fixed top_k={args.landmark_top_k_blocks} on {n_set} landmark layers",
+            flush=True,
+        )
 
     my_gidx = list(range(rank, len(examples), world))
 
@@ -632,6 +724,60 @@ def main():
         for gi, resp in local:
             full[gi] = resp
 
+    # Deployed FFN cost of a nested-FFN-MoE model: hard argmax routing over the WHOLE eval
+    # (prefill + decode), summed across ranks. This, not the training-time `mean_cost` (one
+    # microbatch, exploration noise included), is the compute number to report next to f1.
+    ffn_moe_summary = None
+    if args.ffn_moe_start_layer >= 0:
+        holder = gm.model._nested_ffn_moe["holder"]
+        usage = list(holder.usage_total)
+        by_layer = {int(k): list(v) for k, v in holder.usage_by_layer.items()}
+        if world > 1:
+            parts = [None] * world
+            torch.distributed.all_gather_object(parts, (usage, by_layer))
+            usage = [sum(p[0][i] for p in parts) for i in range(len(usage))]
+            by_layer = {}
+            for p in parts:
+                for k, v in p[1].items():
+                    row = by_layer.setdefault(k, [0] * len(v))
+                    for i, c in enumerate(v):
+                        row[i] += c
+        per_layer_cost = {
+            str(k): sum(c * u for c, u in zip(holder.costs, v)) / max(1, sum(v))
+            for k, v in sorted(by_layer.items())
+        }
+        total = max(1, sum(usage))
+        cost_sum = sum(c * u for c, u in zip(holder.costs, usage))
+        ffn_moe_summary = {
+            "start_layer": args.ffn_moe_start_layer,
+            "divisors": args.ffn_moe_divisors,
+            "widths": gm.model._nested_ffn_moe["widths"],
+            "routed_tokens": total,
+            "mean_cost_routed_layers": cost_sum / total,
+            "frac_rung": [u / total for u in usage],
+            "per_layer_mean_cost": per_layer_cost,
+        }
+        n_layers = len(gm.model.blocks)
+        n_routed = n_layers - args.ffn_moe_start_layer
+        ffn_moe_summary["mean_cost_all_layers"] = (
+            (n_layers - n_routed) + n_routed * ffn_moe_summary["mean_cost_routed_layers"]
+        ) / n_layers
+        if is_main:
+            print(
+                f"[ffn-moe] eval-time hard routing over {total} tokens: mean_cost="
+                f"{ffn_moe_summary['mean_cost_routed_layers']:.4f} on routed layers "
+                f"({1 / max(ffn_moe_summary['mean_cost_routed_layers'], 1e-9):.1f}x), "
+                f"{ffn_moe_summary['mean_cost_all_layers']:.4f} over all {n_layers} layers "
+                f"({1 / ffn_moe_summary['mean_cost_all_layers']:.2f}x total FFN); "
+                f"rungs={[round(f, 3) for f in ffn_moe_summary['frac_rung']]}",
+                flush=True,
+            )
+            print(
+                "[ffn-moe] per-layer cost: "
+                + " ".join(f"L{k}:{v:.2f}" for k, v in per_layer_cost.items()),
+                flush=True,
+            )
+
     if is_main:
         res, details = _eval_contradiction(examples, full)
         if args.per_example_out:
@@ -650,6 +796,8 @@ def main():
             "landmark_top_k_fraction": args.landmark_top_k_fraction,
             "contradiction": res,
         }
+        if ffn_moe_summary is not None:
+            summary["ffn_moe"] = ffn_moe_summary
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w") as f:
             json.dump(summary, f, indent=2)

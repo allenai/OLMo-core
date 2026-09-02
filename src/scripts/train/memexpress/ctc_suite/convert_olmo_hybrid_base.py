@@ -34,18 +34,17 @@ import os
 from typing import Dict
 
 import torch
+from olmo_hybrid_configs import (  # type: ignore[import-not-found]
+    OLMO_HYBRID_LAYER_TYPES,
+    OLMO_HYBRID_VOCAB_SIZE,
+    olmo_hybrid_7B_ctc,
+)
 
 from olmo_core.distributed.checkpoint import save_model_and_optim_state
 from olmo_core.nn.hf.convert import (
     HYBRID_ATTN_LAYER_KEY_MAP,
     HYBRID_GDN_LAYER_KEY_MAP,
     HYBRID_SHARED_KEY_MAP,
-)
-
-from olmo_hybrid_configs import (  # type: ignore[import-not-found]
-    OLMO_HYBRID_LAYER_TYPES,
-    OLMO_HYBRID_VOCAB_SIZE,
-    olmo_hybrid_7B_ctc,
 )
 
 #: Released parameter count; the config must reproduce it exactly before any weight is touched.

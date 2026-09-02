@@ -99,8 +99,11 @@ def main() -> None:
     rep["no_swa_minus_native"] = rep["no_swa"] - rep["native"]
     print(json.dumps(rep, indent=2), flush=True)
     verdict = "BENIGN" if rep["no_swa_minus_native"] < 0.25 else "DAMAGING"
-    print(f"VERDICT: removing the sliding window is {verdict} "
-          f"(delta CE = {rep['no_swa_minus_native']:+.4f})", flush=True)
+    print(
+        f"VERDICT: removing the sliding window is {verdict} "
+        f"(delta CE = {rep['no_swa_minus_native']:+.4f})",
+        flush=True,
+    )
     if args.out:
         with open(args.out, "w") as f:
             json.dump(rep, f, indent=2)

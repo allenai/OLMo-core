@@ -15,6 +15,8 @@ locally; CLAUDE.md covers Beaker.
 | `goldgrad/` | Gold-gradient O(1)-backward probe: train/eval/bench/reap | Local |
 | `local_4b/` | 4B local runs: contra n250, cptmix sweeps, docchunk oolong, fastlm cpt40m | Local |
 | `singletask_ladder/` | Per-task (not mixed) ladder SFT + multi-rung evals (see its README + EVAL.md) | Local + Beaker |
+| `pooledkv/` | Train-time KV compression (pooled-doc-KV / soft-token compaction), full-attention inference. Trainer + bake + oracle-slot cache + eval | Local (sneetches/horton) |
+| `ffnmoe/` | Nested-width FFN mixture: learned per-token router over full/¼/1⁄16/1⁄64/null FFN rungs under a compute budget. **FFN axis only** — no KV compaction | Local |
 | `evals/` | Standalone eval launchers (dense/landmark native, vllm, 32k ladder). Family-specific evals live with their family. | Local |
 | `probes/` | One-off diagnostics: `sanity_check_packing.py`, `scan_doc_lengths.py` | — |
 

@@ -21,9 +21,7 @@ The _ID variants add numeric document identifiers for the retrieval task.
 # textually identical across tasks (e.g. in qafter mode:
 # "<alpaca>{GENERIC_INSTRUCTION}\n\n### Input:\n<docs>\n\n") so a mixed-task
 # dataset shows the model the same structural prefill regardless of task type.
-GENERIC_INSTRUCTION = (
-    "You will be asked to do a long-context processing task for a context."
-)
+GENERIC_INSTRUCTION = "You will be asked to do a long-context processing task for a context."
 
 
 PASSAGE_TEMPLATE = "Document (Title: {title}): {text}"
@@ -147,8 +145,7 @@ def helmet_rerank_prompt(context, question, demos=""):
     so the prompt ends with "Ranking:" and the model/target continues with
     " ID3 > ID1 > ...". `context` = passages joined by "\\n\\n"; `demos` = the
     few-shot block (each demo already ends with "\\n\\n") or "" for zero-shot."""
-    user = HELMET_RERANK_USER_TEMPLATE.format(demos=demos, context=context,
-                                              question=question)
+    user = HELMET_RERANK_USER_TEMPLATE.format(demos=demos, context=context, question=question)
     return user + "\n" + HELMET_RERANK_SYSTEM_TEMPLATE
 
 
@@ -415,7 +412,7 @@ GROUPING_LABELED_INSTRUCTION = (
     "You are given a list of scientific paper abstracts. Group them into the "
     "requested number of categories based on what they are about. For each "
     "group, give a short label describing the shared topic, then list the "
-    '1-indexed document IDs. Output a JSON object of the form '
+    "1-indexed document IDs. Output a JSON object of the form "
     '{"groups": [{"label": "<topic>", "doc_ids": [...]}, ...]}. Every '
     "document must appear in exactly one group."
 )

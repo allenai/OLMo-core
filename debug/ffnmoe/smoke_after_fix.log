@@ -1,0 +1,20 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+rungs: [3072, 768, 192, 0] costs=[1.0, 0.25, 0.0625, 0.0]
+step    1 | ce  5.6981 | total  5.7079 | mean_cost 0.9396 (  1.1x) | target 0.990 | rungs 0.93 0.02 0.02 0.02
+step   25 | ce  0.0039 | total  0.0039 | mean_cost 0.4197 (  2.4x) | target 0.750 | rungs 0.32 0.38 0.03 0.27
+step   50 | ce  0.0014 | total  0.0014 | mean_cost 0.3948 (  2.5x) | target 0.500 | rungs 0.30 0.37 0.03 0.30
+step   75 | ce  0.0068 | total  0.0068 | mean_cost 0.0672 ( 14.9x) | target 0.250 | rungs 0.04 0.08 0.16 0.72
+step  100 | ce  0.0049 | total  0.0049 | mean_cost 0.0181 ( 55.1x) | target 0.100 | rungs 0.00 0.03 0.14 0.83
+step  125 | ce  0.0012 | total  0.0012 | mean_cost 0.0596 ( 16.8x) | target 0.100 | rungs 0.03 0.08 0.15 0.74
+step  150 | ce  0.0007 | total  0.0007 | mean_cost 0.0601 ( 16.7x) | target 0.100 | rungs 0.03 0.08 0.14 0.75
+step  175 | ce  0.0006 | total  0.0006 | mean_cost 0.0605 ( 16.5x) | target 0.100 | rungs 0.03 0.08 0.14 0.75
+step  200 | ce  0.0005 | total  0.0005 | mean_cost 0.0624 ( 16.0x) | target 0.100 | rungs 0.03 0.08 0.13 0.75
+step  225 | ce  0.0004 | total  0.0004 | mean_cost 0.0626 ( 16.0x) | target 0.100 | rungs 0.03 0.08 0.14 0.75
+step  250 | ce  0.0004 | total  0.0004 | mean_cost 0.0663 ( 15.1x) | target 0.100 | rungs 0.04 0.08 0.13 0.75
+step  275 | ce  0.0003 | total  0.0003 | mean_cost 0.0701 ( 14.3x) | target 0.100 | rungs 0.04 0.08 0.13 0.74
+step  300 | ce  0.0003 | total  0.0003 | mean_cost 0.0723 ( 13.8x) | target 0.100 | rungs 0.04 0.08 0.14 0.74
+
+FINAL (eval, no exploration): ce 0.0003 | mean_cost 0.0726 -> 13.8x FFN reduction on routed layers
