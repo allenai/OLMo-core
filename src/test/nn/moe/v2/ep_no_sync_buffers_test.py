@@ -75,10 +75,12 @@ def test_compute_ep_no_sync_rank_capacity():
 
 def test_ep_no_sync_prewarm_uses_runtime_bf16_dtype(monkeypatch):
     recorded_dtypes = []
+    recorded_d_models = []
 
-    def record_dtype(*args, dtype, **kwargs):
+    def record_dtype(*args, dtype, d_model, **kwargs):
         del args, kwargs
         recorded_dtypes.append(dtype)
+        recorded_d_models.append(d_model)
 
     monkeypatch.setattr(ddp_model, "get_ep_no_sync_buffers", record_dtype)
     monkeypatch.setattr(
@@ -104,6 +106,7 @@ def test_ep_no_sync_prewarm_uses_runtime_bf16_dtype(monkeypatch):
 
     block = SimpleNamespace(
         routed_experts_router=SimpleNamespace(top_k=2),
+        routed_experts=SimpleNamespace(d_model=2),
         ep_pg=object(),
         ep=SimpleNamespace(
             uses_rowwise_buffers=True,
@@ -136,3 +139,4 @@ def test_ep_no_sync_prewarm_uses_runtime_bf16_dtype(monkeypatch):
     )
 
     assert recorded_dtypes == [torch.bfloat16, torch.bfloat16]
+    assert recorded_d_models == [2, 2]
