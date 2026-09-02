@@ -14,3 +14,31 @@ Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
 09-01 23:34:11 launch fs35-contradiction-ffnmoe-s1-s14M -> 01M1GD6CZZR79XHKMP6RXSBM9B
 09-01 23:34:54 launch fs35-contradiction-ffnmoe-s1-s28M -> 01M1GD7PHQ7WK14RA05QE634WF
 09-01 23:35:26 launch fs35-contradiction-ffnmoe-s1-s56M -> 01M1GD8PF4NFCZ5FJXRS49XKFW
+09-01 23:36:05 launch fs35-oolong-ffnmoe-s1-s20M -> 01M1GD9WGVNK0QC0SBHA8CAVQ9
+09-01 23:36:44 orchestrator35 up; runs tracked: 12
+09-01 23:37:31 launch fs35-oolong-ffnmoe-s1-s40M -> 01M1GDCG73BP50NENWS39Z56A9
+09-01 23:38:10 launch fs35-oolong-ffnmoe-s1-s80M -> 01M1GDDP3JZ876X9MNY6TV6QS4
+09-01 23:38:35 kv sync (outlier ready) -> 01M1GDEH4NGDTMQ9NA0ESZV53D
+09-01 23:38:41 status: runs 0/14 done, 14 pending; evals 0/0 done, 0 pending; kv launched []
+09-01 23:38:46 harvest job -> 01M1GDEVMG1TAQPPT9EHX2YCRP
+09-01 23:45:03 launch fs35-nq-kv17-s16M -> 01M1GDT9PMJ7WEDNWPQ7A22GQJ
+09-01 23:45:37 launch fs35-nq-kv33-s16M -> 01M1GDVB6BX2QC4V6H2D6RV2NW
+09-01 23:46:23 launch fs35-nq-kv17-s32M -> 01M1GDWQDW44G61KTE1HCP3NMA
+09-01 23:47:06 launch fs35-nq-kv33-s32M -> 01M1GDY1Q1A2A0M9JSFTZWYDTV
+09-01 23:47:50 launch fs35-nq-kv17-s48M -> 01M1GDZCBVSVRJZ1R81G1VW1JN
+09-01 23:48:26 launch fs35-nq-kv33-s48M -> 01M1GE0G76RH1Y5M57H8GCMQY0
+09-01 23:48:35 status: runs 0/20 done, 20 pending; evals 0/0 done, 0 pending; kv launched ['nq']
+09-01 23:49:35 collect: outlier        dense        32M mean_f1=0.601 PF=1505.9 ratio=1.0
+outlier        dense        64M mean_f1=0.428 PF=3011.7 ratio=1.0
+outlier        dense       160M mean_f1=0.604 PF=7529.4 ratio=1.0
+outlier        dense       320M mean_f1=0.552 PF=15058.7 ratio=1.0
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:41: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(satpow, xs, ys, p0=p0, bounds=([max(ys), 1e-6, 0.01], [1.0, 50.0, 5.0]), maxfev=20000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)

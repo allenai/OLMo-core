@@ -36,12 +36,50 @@ def budget_tokens(b):
     return int(b[:-1]) * 1_000_000
 
 
+_MODEL = None
+
+
+def _model():
+    global _MODEL
+    if _MODEL is None:
+        from olmo_core.nn.transformer import TransformerConfig
+        _MODEL = TransformerConfig.qwen3_5_4B(vocab_size=248320).build(init_device="meta")
+    return _MODEL
+
+
+def fpt(L):
+    """Qwen3.5-4B training FLOPs/token for an example of length L (the meter's own formula)."""
+    return int(_model().num_flops_per_token(int(L)))
+
+
+def ffn_per_token():
+    return int(sum(b.feed_forward.num_flops_per_token(1) for b in _model().blocks.values()))
+
+
+_FPT_CACHE = {}
+
+
+def arm_flops(lengths, ffn_cost=1.0):
+    """Sum over examples of L * [fpt(L) - ffn_per_tok * (1 - ffn_cost)], with attention priced at
+    each example's REAL length (the dense arms train packed with per-example masking; the padded
+    65536 window the meter uses would inflate attention ~10x). Lengths are bucketed to 256."""
+    ffn = ffn_per_token()
+    total = 0.0
+    for L in lengths:
+        b = max(256, (int(L) + 255) // 256 * 256)
+        if b not in _FPT_CACHE:
+            _FPT_CACHE[b] = fpt(b)
+        total += L * (_FPT_CACHE[b] - ffn * (1.0 - ffn_cost))
+    return total / 1e15
+
+
+def arm_lengths(arm_dir_name):
+    p = f"{HARVEST}/arms/{arm_dir_name}_lengths.json"
+    return json.load(open(p))["lengths"] if os.path.exists(p) else None
+
+
 def dense_flops_per_token():
-    """Qwen3.5-4B dense training FLOPs/token at the packed 65536 window (meta build, no weights)."""
-    from olmo_core.nn.transformer import TransformerConfig
-    cfg = TransformerConfig.qwen3_5_4B(vocab_size=248320)
-    model = cfg.build(init_device="meta")
-    return int(model.num_flops_per_token(65536))
+    return fpt(65536)
 
 
 def fetch_eval(run, ex):
@@ -55,7 +93,7 @@ def fetch_eval(run, ex):
 
 def main():
     st = json.load(open(STATE)) if os.path.exists(STATE) else {"runs": {}, "evals": {}}
-    fpt = dense_flops_per_token()
+    fpt65k = dense_flops_per_token()
     rows = []
     # dense baseline from the prior campaigns
     pts = json.load(open(POINTS))
@@ -67,7 +105,8 @@ def main():
             vals = [v for v in f1.values() if v is not None]
             if not vals:
                 continue
-            pf = tok * fpt / 1e15
+            lens = arm_lengths(os.path.basename(ARMS[task][b]))
+            pf = arm_flops(lens) if lens else tok * fpt65k / 1e15  # fallback: padded-window formula
             rows.append({"task": task, "arm": "dense", "budget": b, "tokens": tok, "actual_pflops": pf,
                          "dense_equiv_pflops": pf, "flop_ratio": 1.0, "mean_f1": sum(vals) / len(vals),
                          **{f"f1_{r}": v for r, v in f1.items()}, "run": f"prior-dense-{task}-{b}"})
@@ -86,12 +125,25 @@ def main():
         vals = [v for v in f1.values() if v is not None]
         flp = f"{HARVEST}/runs/{run}/flops.json"
         fl = json.load(open(flp)) if os.path.exists(flp) else None
-        pf = fl["actual_pflops"] if fl else None
-        dpf = fl["dense_equivalent_pflops"] if fl else None
+        lens = arm_lengths(os.path.basename(ARMS[r["task"]][r["budget"]]))
+        dpf = arm_flops(lens) if lens else (fl["dense_equivalent_pflops"] if fl else None)
+        pf = None
+        if fl:
+            if r["arm"].startswith("ffnmoe"):
+                # back out the mean routed FFN cost from the meter's own (padded-window) ratio,
+                # then re-price with real lengths: ratio = 1 - ffn_frac65k * (1 - c)
+                ffn_frac = ffn_per_token() / fpt(65536)
+                c = 1.0 - (1.0 - fl["actual_over_dense"]) / ffn_frac
+                pf = arm_flops(lens, ffn_cost=max(0.0, min(1.0, c))) if lens else fl["actual_pflops"]
+            else:
+                pf = fl["actual_pflops"]  # KV: the meter already prices the compacted rows at their real length
         if r["arm"] == "ffnmoe-s2":
-            f1p = f"{HARVEST}/runs/{run.replace('ffnmoe-s2', 'ffnmoe-s1')}/flops.json"
+            s1run = run.replace("ffnmoe-s2", "ffnmoe-s1"); f1p = f"{HARVEST}/runs/{s1run}/flops.json"
             if os.path.exists(f1p) and pf is not None:
-                s1 = json.load(open(f1p)); pf += s1["actual_pflops"]; dpf += s1["dense_equivalent_pflops"]
+                s1 = json.load(open(f1p)); ffn_frac = ffn_per_token() / fpt(65536)
+                c1 = 1.0 - (1.0 - s1["actual_over_dense"]) / ffn_frac
+                pf += arm_flops(lens, ffn_cost=max(0.0, min(1.0, c1))) if lens else s1["actual_pflops"]
+                dpf = (dpf or 0) + (arm_flops(lens) if lens else s1["dense_equivalent_pflops"])
         rows.append({"task": r["task"], "arm": r["arm"], "budget": r["budget"], "tokens": budget_tokens(r["budget"]),
                      "actual_pflops": pf, "dense_equiv_pflops": dpf, "flop_ratio": (pf / dpf) if (pf and dpf) else None,
                      "mean_f1": sum(vals) / len(vals) if vals else None, **{f"f1_{rg}": v for rg, v in f1.items()}, "run": run})

@@ -120,15 +120,119 @@
    "retries": 0,
    "eval": null,
    "s2": null
+  },
+  "fs35-oolong-ffnmoe-s1-s20M": {
+   "ex": "01M1GD9WGVNK0QC0SBHA8CAVQ9",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-oolong-ffnmoe-s1-s40M": {
+   "ex": "01M1GDCG73BP50NENWS39Z56A9",
+   "task": "oolong",
+   "budget": "40M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-oolong-ffnmoe-s1-s80M": {
+   "ex": "01M1GDDP3JZ876X9MNY6TV6QS4",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv17-s16M": {
+   "ex": "01M1GDT9PMJ7WEDNWPQ7A22GQJ",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv33-s16M": {
+   "ex": "01M1GDVB6BX2QC4V6H2D6RV2NW",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv17-s32M": {
+   "ex": "01M1GDWQDW44G61KTE1HCP3NMA",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv33-s32M": {
+   "ex": "01M1GDY1Q1A2A0M9JSFTZWYDTV",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv17-s48M": {
+   "ex": "01M1GDZCBVSVRJZ1R81G1VW1JN",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "kv17",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv33-s48M": {
+   "ex": "01M1GE0G76RH1Y5M57H8GCMQY0",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "kv33",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
   }
  },
  "evals": {},
- "kv_synced": {},
- "kv_launched": {},
- "s1_launched": false,
+ "kv_synced": {
+  "outlier": true,
+  "nq": true
+ },
+ "kv_launched": {
+  "nq": true
+ },
+ "s1_launched": true,
  "sync_ex": null,
- "last_harvest": 0,
+ "last_harvest": 1788331126.7625158,
  "harvest_ex": null,
  "done": false,
- "kv_ok": false
+ "kv_ok": true
 }

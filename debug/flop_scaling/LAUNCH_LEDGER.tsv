@@ -55,3 +55,22 @@ beaker35	contradiction	ffnmoe-s1	28M	s1	fs35-contradiction-ffnmoe-s1-s28M	ai2/ju
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 beaker35	contradiction	ffnmoe-s1	56M	s1	fs35-contradiction-ffnmoe-s1-s56M	ai2/jupiter-cirrascale-2	2026-09-01 23:35	LAUNCHED	"01M1GD8PF4NFCZ5FJXRS49XKFW   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	20M	s1	fs35-oolong-ffnmoe-s1-s20M	ai2/jupiter-cirrascale-2	2026-09-01 23:36	LAUNCHED	"01M1GD9WGVNK0QC0SBHA8CAVQ9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+3493064	contradiction	softtoken	smoke35	-	fs35-smoke-st-torch	mooney	2026-09-01 23:33	DONE	PASS: soft-token on Qwen3.5-4B with --attn-backend torch runs ~1 step/s (37-40k padded TPS/GPU) vs 21 s/step with flash_2 (3493047: mechanism OK, FLOPs 0.18x dense at keep .25). KV arms use the torch backend; export records flash_2 for KV-cached eval. flash_2 slow path on compacted hybrid rows = open item
+beaker35	oolong	ffnmoe-s1	40M	s1	fs35-oolong-ffnmoe-s1-s40M	ai2/jupiter-cirrascale-2	2026-09-01 23:37	LAUNCHED	"01M1GDCG73BP50NENWS39Z56A9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	80M	s1	fs35-oolong-ffnmoe-s1-s80M	ai2/jupiter-cirrascale-2	2026-09-01 23:38	LAUNCHED	"01M1GDDP3JZ876X9MNY6TV6QS4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv17	16M	-	fs35-nq-kv17-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:45	LAUNCHED	"01M1GDT9PMJ7WEDNWPQ7A22GQJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv33	16M	-	fs35-nq-kv33-s16M	ai2/jupiter-cirrascale-2	2026-09-01 23:45	LAUNCHED	"01M1GDVB6BX2QC4V6H2D6RV2NW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv17	32M	-	fs35-nq-kv17-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:46	LAUNCHED	"01M1GDWQDW44G61KTE1HCP3NMA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv33	32M	-	fs35-nq-kv33-s32M	ai2/jupiter-cirrascale-2	2026-09-01 23:47	LAUNCHED	"01M1GDY1Q1A2A0M9JSFTZWYDTV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv17	48M	-	fs35-nq-kv17-s48M	ai2/jupiter-cirrascale-2	2026-09-01 23:47	LAUNCHED	"01M1GDZCBVSVRJZ1R81G1VW1JN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kv33	48M	-	fs35-nq-kv33-s48M	ai2/jupiter-cirrascale-2	2026-09-01 23:48	LAUNCHED	"01M1GE0G76RH1Y5M57H8GCMQY0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

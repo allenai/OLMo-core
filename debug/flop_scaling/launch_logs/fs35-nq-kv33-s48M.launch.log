@@ -1,0 +1,257 @@
+[beaker_ctc_suite] task=nq variant=softtoken scale=4b run_name=fs35-nq-kv33-s48M nodes=1 world_size=8 global_batch=160 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/flop_scaling35/shards/nq_s48M_mk
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-kv33-s48M
+[beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/flop-scaling-q35
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task nq --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/flop_scaling35/shards/nq_s48M_mk --variant softtoken --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 160 --micro-batch-instances 2 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-kv33-s48M --run-name fs35-nq-kv33-s48M --wandb-group flop-scaling-q35 --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --no-compile --st-keep-frac 0.3333 --st-keep-mode gold_plus_random --attn-backend torch
+Experiment: prasanns/fs35-nq-kv33-s48M-1568019b → 
+https://beaker.org/ex/01M1GE0G76RH1Y5M57H8GCMQY0
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: dbf21a5 flop-scaling: soft-token arm on the torch backend… → 
+https://github.com/allenai/OLMo-core/commit/dbf21a5
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+[beaker_ctc_suite] SUBMITTED id=01M1GE0G76RH1Y5M57H8GCMQY0 name=fs35-nq-kv33-s48M
+[beaker_ctc_suite] url=https://beaker.org/ex/01M1GE0G76RH1Y5M57H8GCMQY0
+[beaker_ctc_suite] launched: experiment {
+  id: "01M1GE0G76RH1Y5M57H8GCMQY0"
+  name: "fs35-nq-kv33-s48M-1568019b"
+  author_id: "01K31JPADAHRBWED2VT05703Z0"
+  workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
+  tasks {
+    id: "01M1GE0G7CKQ845YZFYJD428Y3"
+    experiment_id: "01M1GE0G76RH1Y5M57H8GCMQY0"
+    name: "train"
+    author_id: "01K31JPADAHRBWED2VT05703Z0"
+    created {
+      seconds: 1788331704
+      nanos: 549908000
+    }
+    container_spec {
+      resource_request {
+        cpu_count: 0
+        gpu_count: 8
+        shared_memory_bytes: 10737418240
+      }
+      image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
+      command: "bash"
+      command: "/gantry/entrypoint.sh"
+      arguments: "python"
+      arguments: "src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py"
+      arguments: "--task"
+      arguments: "nq"
+      arguments: "--data"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/flop_scaling35/shards/nq_s48M_mk"
+      arguments: "--variant"
+      arguments: "softtoken"
+      arguments: "--model-scale"
+      arguments: "4b"
+      arguments: "--seq-len"
+      arguments: "65536"
+      arguments: "--epochs"
+      arguments: "1"
+      arguments: "--lr"
+      arguments: "5e-06"
+      arguments: "--global-batch"
+      arguments: "160"
+      arguments: "--micro-batch-instances"
+      arguments: "2"
+      arguments: "--base-checkpoint"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"
+      arguments: "--work-dir"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite"
+      arguments: "--save-folder"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-kv33-s48M"
+      arguments: "--run-name"
+      arguments: "fs35-nq-kv33-s48M"
+      arguments: "--wandb-group"
+      arguments: "flop-scaling-q35"
+      arguments: "--wandb-entity"
+      arguments: "prasanns-allen-institute-for-ai"
+      arguments: "--model-family"
+      arguments: "qwen3_5"
+      arguments: "--save-checkpoint"
+      arguments: "--no-final-checkpoint"
+      arguments: "--no-compile"
+      arguments: "--st-keep-frac"
+      arguments: "0.3333"
+      arguments: "--st-keep-mode"
+      arguments: "gold_plus_random"
+      arguments: "--attn-backend"
+      arguments: "torch"
+      environment_variables {
+        name: "GANTRY_VERSION"
+        literal: "3.7.0"
+      }
+      environment_variables {
+        name: "GITHUB_REPO"
+        literal: "allenai/OLMo-core"
+      }
+      environment_variables {
+        name: "GIT_REF"
+        literal: "dbf21a568aa1493ab2dc0e3de1828bbf1e1c452a"
+      }
+      environment_variables {
+        name: "GANTRY_TASK_NAME"
+        literal: "train"
+      }
+      environment_variables {
+        name: "RESULTS_DIR"
+        literal: "/results"
+      }
+      environment_variables {
+        name: "GANTRY_RUNTIME_DIR"
+        literal: "/gantry-runtime"
+      }
+      environment_variables {
+        name: "GANTRY_EXEC_METHOD"
+        literal: "exec"
+      }
+      environment_variables {
+        name: "GANTRY_USE_TORCHRUN"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GIT_BRANCH"
+        literal: "prasann/landmark"
+      }
+      environment_variables {
+        name: "GANTRY_DEFAULT_PYTHON_VERSION"
+        literal: "3.12"
+      }
+      environment_variables {
+        name: "GANTRY_USE_SYSTEM_PYTHON"
+        literal: "1"
+      }
+      environment_variables {
+        name: "GANTRY_PYTHON_MANAGER"
+        literal: "uv"
+      }
+      environment_variables {
+        name: "GANTRY_UV_ALL_EXTRAS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "NCCL_DEBUG"
+        literal: "WARN"
+      }
+      environment_variables {
+        name: "PYTORCH_CUDA_ALLOC_CONF"
+        literal: "expandable_segments:True"
+      }
+      environment_variables {
+        name: "LOG_FILTER_TYPE"
+        literal: "local_rank0_only"
+      }
+      environment_variables {
+        name: "OMP_NUM_THREADS"
+        literal: "8"
+      }
+      environment_variables {
+        name: "R2_PROFILE"
+        literal: "R2"
+      }
+      environment_variables {
+        name: "S3_PROFILE"
+        literal: "S3"
+      }
+      environment_variables {
+        name: "WEKA_PROFILE"
+        literal: "WEKA"
+      }
+      environment_variables {
+        name: "NUM_NODES"
+        literal: "1"
+      }
+      environment_variables {
+        name: "OLMO_CORE_VERSION"
+        literal: "2.5.0"
+      }
+      environment_variables {
+        name: "FORCE_COLOR"
+        literal: "1"
+      }
+      environment_variables {
+        name: "TORCH_LOGS"
+        literal: "recompiles,graph_breaks"
+      }
+      environment_variables {
+        name: "PYTORCH_KERNEL_CACHE_PATH"
+        literal: "/root/.cache/torch/kernels"
+      }
+      environment_variables {
+        name: "OLMO_SHARED_FS"
+        literal: "1"
+      }
+      environment_variables {
+        name: "BEAKER_TOKEN"
+        secret_reference: "PRASANNS_BEAKER_TOKEN"
+      }
+      environment_variables {
+        name: "WANDB_API_KEY"
+        secret_reference: "PRASANNS_WANDB_API_KEY"
+      }
+      environment_variables {
+        name: "R2_ENDPOINT_URL"
+        secret_reference: "R2_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "WEKA_ENDPOINT_URL"
+        secret_reference: "WEKA_ENDPOINT_URL"
+      }
+      environment_variables {
+        name: "SLACK_WEBHOOK_URL"
+        secret_reference: "SLACK_WEBHOOK_URL"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CONFIG"
+        secret_reference: "PRASANNS_AWS_CONFIG"
+      }
+      environment_variables {
+        name: "GANTRY_AWS_CREDENTIALS"
+        secret_reference: "PRASANNS_AWS_CREDENTIALS"
+      }
+      environment_variables {
+        name: "GANTRY_GOOGLE_CREDENTIALS"
+        secret_reference: "GOOGLE_CREDENTIALS"
+      }
+      mounts {
+        mount_path: "/gantry"
+        dataset_id: "01KNQSJ27JZEM2Z9KQ191P0JJY"
+      }
+      mounts {
+        mount_path: "/weka/oe-training-default"
+        weka: "oe-training-default"
+      }
+      result_path: "/results"
+      identity {
+        type: JOB_IDENTITY_TYPE_NONE
+      }
+    }
+    system_details {
+      priority: JOB_PRIORITY_URGENT
+      placement_constraints {
+        type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/jupiter"
+      }
+      min_runtime {
+      }
+      auto_resume: true
+    }
+    status: STATUS_QUEUED
+  }
+  created {
+    seconds: 1788331704
+    nanos: 549908000
+  }
+}
+status: STATUS_QUEUED
+budget_id: "01KP6SET80STGTCC9EFRPAE2R6"
+
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
