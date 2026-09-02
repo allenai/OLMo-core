@@ -195,6 +195,12 @@ class NestedFFNHolder:
         ``0.05`` asks for a ~20x average FFN reduction on gated layers.
     :param budget_weight: ``lambda`` on the hinge term.
     :param hinge_power: 1 for a linear hinge (constant pressure above target), 2 for squared.
+    :param two_sided: Penalize ``|mean_cost - target|`` instead of the one-sided hinge, so the
+        router is pulled back UP when it undershoots the budget. With the one-sided hinge the
+        only routing pressure is downward: on a 30-step long-context SFT (fs35 nq 16M) the
+        mean cost sank to 0.0026 against a 0.01 target, half the tokens in the routed layers
+        got no FFN at all, and the 32k rung collapsed (f1 0.14 vs 0.76 dense). Two-sided keeps
+        the realized cost AT the target, which is also what makes the FLOP accounting exact.
     :param target_start: Target at call 0; annealed linearly to ``target_cost`` over
         ``target_anneal_calls`` forwards. Starting at 1.0 means no compute pressure at all until
         the router has begun to differentiate, which avoids the v24-style early CE wall.
@@ -220,6 +226,7 @@ class NestedFFNHolder:
         target_cost: float = 0.05,
         budget_weight: float = 1.0,
         hinge_power: int = 1,
+        two_sided: bool = False,
         target_start: float = 1.0,
         target_anneal_calls: int = 0,
         explore_prob: float = 0.0,
@@ -245,6 +252,7 @@ class NestedFFNHolder:
         self.target_cost = float(target_cost)
         self.budget_weight = float(budget_weight)
         self.hinge_power = int(hinge_power)
+        self.two_sided = bool(two_sided)
         self.target_start = float(target_start)
         self.target_anneal_calls = int(target_anneal_calls)
         self.explore_prob = float(explore_prob)
@@ -418,10 +426,9 @@ class NestedFFNHolder:
         if not self._exp_costs:
             return None
         mean_cost = torch.stack(self._exp_costs).mean()
-        loss = (
-            self.budget_weight
-            * torch.clamp(mean_cost - self.current_target(), min=0.0) ** self.hinge_power
-        )
+        gap = mean_cost - self.current_target()
+        dev = gap.abs() if self.two_sided else torch.clamp(gap, min=0.0)
+        loss = self.budget_weight * dev**self.hinge_power
         if self.entropy_weight > 0 and self._entropies:
             loss = loss - self.entropy_weight * torch.stack(self._entropies).mean()
         if self.recon_weight > 0 and self._recons:

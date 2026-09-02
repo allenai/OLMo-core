@@ -181,6 +181,16 @@ def cycle(st):
                     launch_train(st, task, b, "ffnmoe-s1")
         st["s1_launched"] = True
         save(st)
+    # A2. milder two-sided-budget FFN arms (see launch_grid35.arm_args): t10 (L12+) on every dense
+    # arm, a10 (all layers) on each task's smallest budget as a probe.
+    if not st.get("extra_launched"):
+        for task in ARMS:
+            for i, b in enumerate(ARMS[task]):
+                for arm in (["ffnmoe-t10", "ffnmoe-a10"] if i == 0 else ["ffnmoe-t10"]):
+                    if run_name(task, arm, b) not in st["runs"]:
+                        launch_train(st, task, b, arm)
+        st["extra_launched"] = True
+        save(st)
     # B. KV arms once data is in place AND the soft-token mechanism is validated on the hybrid
     #    (state flag kv_ok, set by hand after the fs35-smoke-softtoken run passes)
     for task in ARMS:

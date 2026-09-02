@@ -1062,6 +1062,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             target_cost=opts.ffn_moe_target,
             budget_weight=opts.ffn_moe_budget_weight,
             hinge_power=opts.ffn_moe_hinge_power,
+            two_sided=opts.ffn_moe_two_sided,
             target_anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac),
             explore_prob=opts.ffn_moe_explore,
             explore_anneal_calls=int(total_calls * opts.ffn_moe_explore_anneal_frac),
@@ -1291,6 +1292,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ffn-moe-target", type=float, default=0.01, help="budget: mean FFN cost on routed layers")
     ap.add_argument("--ffn-moe-budget-weight", type=float, default=1.0)
     ap.add_argument("--ffn-moe-hinge-power", type=int, default=1)
+    ap.add_argument("--ffn-moe-two-sided", action="store_true",
+                    help="budget = |mean_cost - target| (pulls an undershooting router back up to the target)")
     ap.add_argument("--ffn-moe-target-anneal-frac", type=float, default=0.3, help="0 = hinge active from step 0 (stage 2 of the two-stage recipe)")
     ap.add_argument("--ffn-moe-explore", type=float, default=0.1)
     ap.add_argument("--ffn-moe-explore-anneal-frac", type=float, default=0.3)

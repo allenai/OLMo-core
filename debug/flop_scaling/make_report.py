@@ -19,7 +19,9 @@ OUT = f"{REPO}/results/flop_scaling"
 STATE = f"{REPO}/debug/flop_scaling/orchestrator35_state.json"
 REPORT = f"{REPO}/records/flop-scaling-report-{dt.date.today().isoformat()}.md"
 ARM_LABEL = {"dense": "dense (prior campaign)", "ffnmoe-s1": "FFN routing, stage 1 (L12+)", "ffnmoe-s2": "FFN routing, stage 2 (all layers)",
+             "ffnmoe-t10": "FFN routing, L12+, two-sided target 0.10", "ffnmoe-a10": "FFN routing, all layers, two-sided target 0.10",
              "kv17": "KV soft-token, keep 1/6", "kv33": "KV soft-token, keep 1/3"}
+ARM_ORDER = ["dense", "ffnmoe-s1", "ffnmoe-s2", "ffnmoe-t10", "ffnmoe-a10", "kv17", "kv33"]
 
 
 def main():
@@ -47,7 +49,7 @@ def main():
         budgets = sorted({b for arm in by[task] for b in by[task][arm]}, key=lambda b: int(b[:-1]))
         md.append("| arm | " + " | ".join(f"{b} tokens<br>mean f1 (PF)" for b in budgets) + " |")
         md.append("|---|" + "---|" * len(budgets))
-        for arm in ["dense", "ffnmoe-s1", "ffnmoe-s2", "kv17", "kv33"]:
+        for arm in ARM_ORDER:
             if arm not in by[task]:
                 continue
             cells = []
@@ -61,7 +63,7 @@ def main():
             md.append(f"| {ARM_LABEL.get(arm, arm)} | " + " | ".join(cells) + " |")
         # per-rung detail
         md.append(f"\nPer-rung f1 ({', '.join(c[3:] for c in f1cols)}):\n")
-        for arm in ["dense", "ffnmoe-s1", "ffnmoe-s2", "kv17", "kv33"]:
+        for arm in ARM_ORDER:
             for b in budgets:
                 r = by[task].get(arm, {}).get(b)
                 if r and r["mean_f1"] not in ("", "None"):

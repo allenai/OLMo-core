@@ -61,6 +61,15 @@ def arm_args(task, arm, budget):
         extra = (f"--ffn-moe-start-layer 0 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
                  "--ffn-moe-target 0.02 --ffn-moe-target-anneal-frac 0.0 --ffn-moe-explore-anneal-frac 0.3")
         return "ffnmoe", data, packed + ["--base-checkpoint", s1], extra
+    if arm in ("ffnmoe-t10", "ffnmoe-a10"):
+        # Milder, TWO-SIDED budget arms (2026-09-02 04:40): the stage-1 recipe undershot its 0.01
+        # target 4x on these 30-90 step runs (nq 16M: mean cost 0.0026, 52% of routed-layer tokens
+        # with no FFN) and lost the 16k/32k rungs. FFN is 57% of training FLOPs at these lengths,
+        # so a 10x FFN cut already buys most of the attainable saving (1.5x on L12+, 2.1x all-layer).
+        start = 12 if arm == "ffnmoe-t10" else 0
+        extra = (f"--ffn-moe-start-layer {start} --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
+                 "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
+        return "ffnmoe", data, packed + ["--base-checkpoint", BASE], extra
     if arm in KV_FRAC:
         frac = KV_FRAC[arm]
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]
