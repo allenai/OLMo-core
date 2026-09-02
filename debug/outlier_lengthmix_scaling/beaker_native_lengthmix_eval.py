@@ -14,6 +14,11 @@ Usage:
 """
 
 import argparse
+import os
+
+# Weka-staged copy of Qwen/Qwen3.5-0.8B (fs35-tokenizers job, 2026-09-02): with dozens of evals
+# starting together the Hub rate-limits (429) and every eval died at the tokenizer download.
+TOKENIZER = os.environ.get("FS_TOKENIZER", "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B")
 
 from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
@@ -80,7 +85,7 @@ def main():
         + '|| pip install -q scipy scikit-learn; '
         + f"python -m torch.distributed.run --nproc_per_node={args.ngpu} --master_port=29513 "
         f"src/scripts/ctc_eval/eval/eval_lc_native.py --model-path {ckpt} "
-        f"--out /results/{args.run_name}_native_multirung.json --tokenizer Qwen/Qwen3.5-0.8B "
+        f"--out /results/{args.run_name}_native_multirung.json --tokenizer {TOKENIZER} "
         f"--max-length {args.max_length} --max-test-samples 600 --batch-size 1 --skip-ruler --skip-gen "
         f"--landmark-mem-id 248200 --landmark-pad-id 248203 --eos-token-id 248044 "
         f"--prompt-format chat --query-position after "

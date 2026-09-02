@@ -43,6 +43,7 @@ EVAL_CFG = {
     "outlier": ("8k,16k,32k", "outlier_lengthmix/eval_rungs", ""),
     "nq": ("2k,8k,16k,32k", "outlier_lengthmix/eval_rungs", ""),
 }
+KV_TOKENIZER = os.environ.get("FS_KV_TOKENIZER", "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base")  # weka-staged, no Hub calls
 KV_S3_TASKS = {"outlier", "nq"}  # marker shards built on mooney -> S3 -> weka
 KV_WEKA_TASKS = {"contradiction", "oolong"}  # built straight onto weka by the gantry jobs
 KV_WEKA_JOBS = {"contradiction": "01M1HKA5E3EQ3R949NDFC0AS9V", "oolong": "01M1HKA92V6VG4T0VPF505N8SK"}  # 10:45 relaunch: arms/<arm>/arm.jsonl path
@@ -132,7 +133,7 @@ def launch_eval(st, name):
     if r["arm"].startswith("kv"):
         cmd = [PY, "-u", f"{REPO}/src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py", name, "ai2/neptune",
                "--task", TASK_KEY[r["task"]], "--variant", "docchunk", "--ckpt", f"{W}/ctc_suite/ckpts/{name}",
-               "--query-position", "after", "--cot-mode", "none", "--tokenizer", "Qwen/Qwen3.5-0.8B-Base",
+               "--query-position", "after", "--cot-mode", "none", "--tokenizer", KV_TOKENIZER,
                "--ngpu", "2", "--max-test", "600", "--priority", "urgent",
                "--dc-rung-files", json.dumps(KV_RUNG_FILES[r["task"]]),
                "--dc-rungs", ",".join(next(iter(KV_RUNG_FILES[r["task"]].values())).keys())]
