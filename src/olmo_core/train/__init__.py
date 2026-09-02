@@ -41,6 +41,7 @@ API Reference
 """
 
 import logging
+import os
 from datetime import timedelta
 from typing import Optional
 
@@ -80,6 +81,21 @@ __all__ = [
 
 
 log = logging.getLogger(__name__)
+
+
+def _distributed_timeout_from_env(default: timedelta) -> timedelta:
+    raw_timeout = os.getenv("OLMO_DISTRIBUTED_TIMEOUT_SECONDS")
+    if raw_timeout is None:
+        return default
+    try:
+        timeout = timedelta(seconds=float(raw_timeout))
+    except ValueError as exc:
+        raise ValueError(
+            "OLMO_DISTRIBUTED_TIMEOUT_SECONDS must be a positive number of seconds"
+        ) from exc
+    if timeout.total_seconds() <= 0:
+        raise ValueError("OLMO_DISTRIBUTED_TIMEOUT_SECONDS must be positive")
+    return timeout
 
 
 def prepare_training_environment(
@@ -127,6 +143,16 @@ def prepare_training_environment(
         mp.set_start_method("spawn", force=True)
     except RuntimeError as e:
         print(f"failed to set multiprocessing start method: {e}")
+
+    # Allow short-lived diagnostics to fail fast without reducing the production default. Device
+    # mesh subgroups do not inherit the timeout passed to init_process_group(), so update PyTorch's
+    # subgroup defaults as well whenever the override is explicitly set.
+    timeout = _distributed_timeout_from_env(timeout)
+    if os.getenv("OLMO_DISTRIBUTED_TIMEOUT_SECONDS") is not None:
+        import torch.distributed.distributed_c10d as c10d
+
+        c10d.default_pg_timeout = timeout
+        c10d.default_pg_nccl_timeout = timeout
 
     # Initialize process group.
     if backend is not None:

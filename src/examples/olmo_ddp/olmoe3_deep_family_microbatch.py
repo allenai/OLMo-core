@@ -184,6 +184,9 @@ def build_common_components(
         for name in (
             "OLMOE3_DEEP_MB_MAX_STEPS",
             "OLMOE3_DEEP_MB_SYSTEM_PRESET",
+            "OLMO_DISTRIBUTED_TIMEOUT_SECONDS",
+            "OLMO_ROWWISE_VERBOSE_DEBUG_PRINT",
+            "OLMO_ROWWISE_DEBUG_RANKS",
             *EMO_ENV_VARS,
         ):
             if value := os.environ.get(name):

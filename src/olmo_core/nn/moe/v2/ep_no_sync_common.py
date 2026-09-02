@@ -155,6 +155,9 @@ def build_keep_reorder(
     return reorder_indices, inverse_reorder_indices, packed_keep_mask
 
 
+@torch.compiler.disable(
+    reason="Keep per-block EP metadata collectives eager and ordered under pipeline parallelism"
+)
 @nvtx.annotate("SyncTokenCount", color="green")
 def sync_tail_drop_allowed_splits_single_a2a(
     block: OLMoDDPTransformerBlock,
