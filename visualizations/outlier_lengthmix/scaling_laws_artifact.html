@@ -366,24 +366,31 @@ measured length, then log-budget is regressed on log-length to get the task's le
 (B ∝ L<sup>β</sup>). Only tasks that actually <em>reach</em> f1=0.8 somewhere in the measured range
 get a prediction — the other five would be extrapolating a curve that never approached the target.</p>
 <div class="tblwrap"><table>
-<tr><th>task</th><th class="n">β</th><th class="n">r²</th><th class="n">64k</th><th class="n">128k</th><th class="n">256k</th><th class="n">1M</th></tr>
-<tr><td>contradiction <span class="chip">high-CTC</span></td><td class="n">0.56</td><td class="n">.96</td>
-<td class="n">0.05B</td><td class="n">0.07B</td><td class="n">0.11B</td><td class="n"><strong>0.23B</strong></td></tr>
-<tr><td>nq <span class="chip">low-CTC</span></td><td class="n">1.77</td><td class="n">.95</td>
-<td class="n">0.08B</td><td class="n">0.26B</td><td class="n">0.89B</td><td class="n"><strong>10.4B</strong></td></tr>
-<tr><td>xabsence <span class="chip">high-CTC</span></td><td class="n">1.92</td><td class="n"><span class="conf-b">.64</span></td>
-<td class="n">0.11B</td><td class="n">0.43B</td><td class="n">1.6B</td><td class="n"><strong>23B</strong></td></tr>
-<tr><td>outlier <span class="chip">high-CTC</span></td><td class="n">2.70</td><td class="n">1.00</td>
-<td class="n">16B</td><td class="n">101B</td><td class="n">657B</td><td class="n"><strong>28T</strong> <span class="conf-c">†</span></td></tr>
-<tr><td>qdmatch_nq <span class="chip">high-CTC</span></td><td class="n">4.87</td><td class="n">.90</td>
-<td class="n">44B</td><td class="n">1.3T</td><td class="n">37T</td><td class="n"><strong>3×10<sup>7</sup>B</strong> <span class="conf-c">†</span></td></tr>
+<tr><th>task</th><th class="n">β</th><th class="n">r²</th><th class="n">rungs used</th><th class="n">64k</th><th class="n">128k</th><th class="n">256k</th><th class="n">1M</th></tr>
+<tr><td>contradiction <span class="chip">high-CTC</span></td><td class="n">0.90</td><td class="n">1.00</td><td class="n">2</td>
+<td class="n">0.06B</td><td class="n">0.12B</td><td class="n">0.22B</td><td class="n"><strong>0.75B</strong></td></tr>
+<tr><td>outlier <span class="chip">high-CTC</span></td><td class="n">2.29</td><td class="n">.99</td><td class="n">3</td>
+<td class="n">12B</td><td class="n">57B</td><td class="n">276B</td><td class="n"><strong>6.6T</strong> <span class="conf-c">†</span></td></tr>
+<tr><td>outlier <span class="s">sparse</span></td><td class="n">1.46</td><td class="n">1.00</td><td class="n">2</td>
+<td class="n">4.3B</td><td class="n">12B</td><td class="n">32B</td><td class="n"><strong>245B</strong> <span class="conf-c">†</span></td></tr>
 </table></div>
-<p><span class="conf-c">†</span> the anchor rung's own budget is already 4–5× past anything we ran,
-so these two rows compound an extrapolated anchor with an extrapolated exponent — treat them as
-"astronomically expensive", not as numbers. The spread in β is the real finding: <strong>the same
-target at the same length costs contradiction 0.23B tokens and qdmatch effectively infinity</strong>,
-so a single suite-wide budget is meaningless. β is not predicted by CTC class either — the cheapest
-(contradiction, β=0.56) and the most expensive (qdmatch, β=4.87) are both high-CTC.</p>
+<p><strong>Only three of twenty task-variants get a prediction at f1=0.8, and that is the honest
+count.</strong> The rest fail one of two tests, both now enforced by the fitter. Fourteen never
+reach 0.8 anywhere we measured (every sparse arm except outlier's, plus dense reorder, grouping and
+textgroups) — extrapolating a curve that never approached the target is not a prediction. Three
+(absence, xabsence, and nq/qdmatch on their short rungs) are the mirror failure: they already beat
+0.8 at the <em>smallest</em> budget we ran, so no rung was ever observed below the target and its
+cost is equally unmeasured. An earlier version of this table lacked that second guard and reported
+budgets for those tasks; on absence it produced a NEGATIVE exponent, i.e. the fit claiming longer
+context is cheaper. Those rows are withdrawn.</p>
+<p><span class="conf-c">†</span> the anchor rung's own budget already sits 3–4× past anything we
+ran, so those rows compound an extrapolated anchor with an extrapolated exponent. The spread is
+still the finding: <strong>reaching f1=0.8 at 1M costs contradiction ~0.75B tokens and outlier
+~6.6T</strong> — four orders of magnitude apart, both high-CTC, so a single suite-wide budget is
+meaningless and CTC class does not predict the exponent. The one place sparse gets a law at this
+target, outlier, it fits a LOWER exponent than dense (1.46 vs 2.29) off two rungs — the only hint
+in the campaign that sparse might scale better in length even while losing at every measured
+point.</p>
 </div></div>
 
 <div class="step"><div class="step-n">05</div><div>

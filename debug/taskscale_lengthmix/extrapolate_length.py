@@ -73,7 +73,7 @@ def main():
                 print(f"{task:14s} {variant:6s}  target {a.target} never reached in the measured "
                       f"range (best {best:.3f}) -- no prediction")
                 continue
-            pts = []
+            pts, below = [], []
             for lab, budgets in rungs.items():
                 if lab not in RUNG_TOK or len(budgets) < 2:
                     continue
@@ -85,12 +85,25 @@ def main():
                 # length exponent. (qdmatch's 64k rung did exactly this, forcing beta to 5.5.)
                 if need is not None and need > 20 * max(bs):
                     need = None
+                # Mirror guard: if the fit says the target was already met BELOW the smallest
+                # budget we ran, we never observed this rung under the target and the "budget" is
+                # extrapolation into ground we did not cover. Saturated tasks (absence sits at
+                # .98-.998 everywhere) otherwise emit tiny, noise-ordered budgets that can even
+                # make beta NEGATIVE -- the fit reporting that longer context is cheaper.
+                elif need is not None and need < min(bs):
+                    need = None
+                    below.append(RUNG_TOK[lab])
                 pts.append((RUNG_TOK[lab], need, max(bs), p[0]))
             usable = [(L, b) for L, b, _, _ in pts if b is not None]
             dropped = [L for L, b, _, _ in pts if b is None]
             if len(usable) < 2:
-                why = ("target above every rung's fitted ceiling"
-                       if pts else "fewer than two budgets per rung")
+                if below and len(below) == len(pts):
+                    why = (f"every rung already beat {a.target} at the smallest budget we ran -- "
+                           "no rung was observed below the target, so its cost is unmeasured")
+                elif pts:
+                    why = "target above every rung's fitted ceiling"
+                else:
+                    why = "fewer than two budgets per rung"
                 print(f"{task:14s} {variant:6s}  no length law -- {why}")
                 continue
             L = np.log(np.array([x[0] for x in usable], float))
