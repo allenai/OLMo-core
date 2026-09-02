@@ -157,17 +157,28 @@ def panel(task, task_data, axis, err=True):
             f'<svg viewBox="0 0 {W} {H}" width="100%">{"".join(body)}</svg></figure>')
 
 
-N_PARAMS, N_FULL_ATTN, D_ATTN = 4.0e9, 8, 16 * 256
+# Length-dependent training cost, anchored on the two MEASURED rates. At the length our arms
+# trained (L0), dense costs 0.00552 and sparse 0.00332 node-hours per million tokens; the gap is
+# the dense attention term, since sparse pays 1/64 of it. Splitting on that gives a constant part
+# (parameters and the GDN layers) and a part proportional to L.
+L0 = 6659.0
+SPARSE_FRAC = 1.0 / 64.0
+C_ATTN = (H_PER_MTOK["dense"] - H_PER_MTOK["sparse"]) / (L0 * (1 - SPARSE_FRAC))
+C_PARAMS = H_PER_MTOK["dense"] - C_ATTN * L0
 
 
-def flops_per_token(variant, L):
-    """6N for parameters + attention over context L; sparse-landmark pays 1/64 of the latter.
+def hours_per_token(variant, L):
+    """Node-hours per training token at context length L.
 
-    Only 8 of Qwen3.5-4B's 32 layers are full attention (GDN:full = 3:1), which is why the
-    architecture's FLOP advantage is modest until L is large enough for attention to dominate.
+    Sparse is quadratic/64, NOT sub-quadratic. SparseLandmarkAttention costs
+    O(T * (block + n_landmarks * T / block)) with block=64 and one landmark per block, i.e. per
+    token it pays 64 + L/64 keys: still linear in L, just with a 64x smaller coefficient, because
+    every query still scans one landmark per past block. So the dense/sparse ratio RISES toward an
+    asymptote of ~64x and then stops -- 4x at 32k, 12x at 128k, 40x at 1M. A task needing more than
+    ~64x sparse's data penalty can never be rescued by training longer.
     """
-    f = 1.0 if variant == "dense" else 1.0 / 64.0
-    return 6 * N_PARAMS + f * 12 * N_FULL_ATTN * D_ATTN * L
+    f = 1.0 if variant == "dense" else SPARSE_FRAC
+    return (C_PARAMS + C_ATTN * L * f) / 1e6
 
 
 def budget_for(p, t):
@@ -217,7 +228,7 @@ def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 10
             if need is None or need > 20 * max(bs) or need < min(bs):
                 continue
             L = RUNG_TOK[rung]
-            pts.append((L, need * flops_per_token(variant, L)))
+            pts.append((L, need * hours_per_token(variant, L)))
         if len(pts) >= 2:
             pts.sort()
             lx = np.log([p[0] for p in pts])
@@ -239,13 +250,14 @@ def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 10
     for e in range(int(math.ceil(ylo)), int(math.floor(yhi)) + 1):
         body.append(f'<line class="grid" x1="{PAD_L}" y1="{py(10**e):.1f}" x2="{W - PAD_R}" '
                     f'y2="{py(10**e):.1f}"/>')
-        body.append(f'<text x="{PAD_L - 5}" y="{py(10**e) + 3:.1f}" text-anchor="end">1e{e}</text>')
+        lab = f"{10**e:g}h" if e >= 0 else f"{10**e:.0e}h".replace("e-0", "e-")
+        body.append(f'<text x="{PAD_L - 5}" y="{py(10**e) + 3:.1f}" text-anchor="end">{lab}</text>')
     for L in (2048, 8192, 32768, 131072, 1048576, 10485760):
         if xlo < math.log10(L) < xhi:
             body.append(f'<text x="{sx(L, xlo, xhi):.1f}" y="{H - PAD_B + 13}" '
                         f'text-anchor="middle">{L // 1024}k</text>')
     body.append(f'<text x="{PAD_L}" y="{H - 4}" style="font-size:9px">context length &rarr; '
-                f'(y: training FLOPs to reach {target})</text>')
+                f'(y: node-hours to reach {target})</text>')
     cross = None
     for variant, (pts, beta, c) in curves.items():
         col = "#2B5FB8" if variant == "dense" else "#C0442A"
@@ -344,18 +356,37 @@ svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
             'left</b> relative to its token position, which is enough to reverse the outlier 16k '
             'comparison and to close much of the oolong gap.</p>',
             f'<div class="grid">{wall}</div>',
-            "<h2>Length scaling: FLOPs to reach a target score vs context length</h2>",
+            "<h2>Length scaling: training node-hours to reach a target score vs context length</h2>",
             '<p>Each point is a measured rung converted twice: the fitted data law gives the '
-            'tokens needed for that panel\'s target at that length, and the FLOP model converts '
-            'tokens to compute '
-            '(6N for parameters plus attention over L, with sparse paying 1/64 of the attention '
-            'term; only 8 of 32 layers are full attention in this GDN hybrid). Filled circles are '
-            'those measured-rung points, hollow squares are the extrapolation out to 10M context, '
-            'and &beta; is the fitted slope of log-FLOPs on log-length. <b>Where sparse\'s &beta; '
-            'is smaller, the two lines must cross</b> &mdash; the green rule marks it.</p>',
+            'tokens needed for that panel\'s target at that length, and the measured cost model '
+            'converts tokens to node-hours. That model is anchored on the two rates we measured '
+            '(dense 0.00552, sparse 0.00332 h per M tokens at a 6.7k mix) and split into a constant '
+            'part plus a part proportional to L, so dense\'s cost per token grows with context '
+            'while sparse\'s barely moves. Filled circles are measured-rung points, hollow squares '
+            'the extrapolation out to 10M context, and &beta; is the fitted slope of log-hours on '
+            'log-length. <b>Where sparse\'s &beta; is smaller the lines must cross</b> &mdash; the '
+            'green rule marks it.</p>',
             f'<div class="grid">{length}</div>',
-            '<p style="color:var(--ink-soft);font-size:.9rem">Only tasks whose rungs actually '
-            f'bracket {a.target} appear here: a rung already above the target at its smallest '
+            '<p><b>Read outlier\'s crossing as an order of magnitude, not a number.</b> Sparse\'s '
+            'fitted exponent swings roughly 1.3&ndash;3.3 across a 0.2-wide band of target scores, '
+            'which variously puts the crossing near 16k, near 300k, or removes it; it rests on two '
+            'or three rungs whose budgets sit close together. The robust part is the mechanism: '
+            'dense\'s cost per token grows with context and sparse\'s barely does, so a crossing '
+            'must exist somewhere for any task whose sparse data-penalty is finite.</p>'
+            '<p><b>Sparse is quadratic/64, not sub-quadratic.</b> Landmark attention still scans '
+            'one landmark per past 64-token block, so its cost per token is 64 + L/64 keys &mdash; '
+            'linear in L like dense, with a 64&times; smaller coefficient. The advantage therefore '
+            'grows toward a <b>ceiling of ~64&times;</b> (4&times; at 32k, 12&times; at 128k, '
+            '40&times; at 1M) rather than without bound, which is why these curves converge and '
+            'cross rather than diverging. It also caps what length can buy: a task where sparse '
+            'needs more than ~64&times; dense\'s tokens is never rescued by a longer context.</p>'
+            '<p>Six panels show one variant only, for the reason the sections above establish: on '
+            'contradiction, nq, qdmatch and reorder, sparse never reaches the target at any budget '
+            'so it has no curve to cross with; on absence only sparse brackets the target, dense '
+            'sitting near 1.0 at every rung and budget.</p>'
+            '<p style="color:var(--ink-soft);font-size:.9rem">Each panel uses the target its own '
+            'ladders bracket (shown after the task name). A rung already above that target at its '
+            'smallest '
             'budget, or one needing more than 20&times; the largest budget we ran, is dropped '
             'rather than fitted, because in both cases the "budget" would be the curve running '
             'away rather than a measurement.</p>',
