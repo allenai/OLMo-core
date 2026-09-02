@@ -193,11 +193,16 @@ class CheckpointerCallback(Callback):
                     path,
                     op_name=f"clear_directory {path}",
                     distributed=False,
+                    checkpoint_dependent=False,
                     soft_timeout=180,  # this can take a while on GCS, for example
                 )
         elif get_fs_local_rank() == 0:
             self.trainer.run_bookkeeping_op(
-                clear_directory, path, op_name=f"clear_directory {path}", distributed=False
+                clear_directory,
+                path,
+                op_name=f"clear_directory {path}",
+                distributed=False,
+                checkpoint_dependent=False,
             )
 
     def _schedule_for_removal(self, path: str):
