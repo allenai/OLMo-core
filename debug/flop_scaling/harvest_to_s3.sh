@@ -23,11 +23,8 @@ for a in arms:
     m = json.load(open(a+"/metadata.json")); eos = m.get("eos_token_id") or 248044
     lens = []
     for part in sorted(glob.glob(a+"/token_ids_part_*.npy")):
-        t = np.load(part, allow_pickle=True)
-        if t.dtype == object:  # ragged per-example arrays (the document_landmark converter format)
-            lens += [int(len(x)) for x in t]
-        else:
-            e = np.flatnonzero(np.asarray(t) == eos); lens += np.diff(np.concatenate([[-1], e])).tolist()
+        t = np.memmap(part, dtype=np.dtype(m.get("dtype", "uint32")), mode="r")  # RAW token dump, no npy header
+        e = np.flatnonzero(np.asarray(t) == eos); lens += np.diff(np.concatenate([[-1], e])).tolist()
     json.dump({"arm": name, "eos": eos, "n": len(lens), "lengths": lens}, open(f, "w")); print(name, len(lens), "examples", flush=True)
 '
 CMD+="python -c '$LEN_PY' || echo LENGTHS_FAILED; "
