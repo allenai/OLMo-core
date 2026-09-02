@@ -21,6 +21,23 @@ import time
 import torch
 
 
+
+def _tokenizer_with_retry(name, tries=8):
+    """``AutoTokenizer.from_pretrained`` with exponential backoff: with dozens of evals starting
+    at once the Hub answers 429 (rate limit) and the whole job died at startup (2026-09-02)."""
+    from transformers import AutoTokenizer
+
+    delay = 20.0
+    for i in range(tries):
+        try:
+            return AutoTokenizer.from_pretrained(name)
+        except Exception as e:  # HfHubHTTPError / OSError wrap the 429
+            if i == tries - 1:
+                raise
+            print(f"[tokenizer] load failed ({type(e).__name__}); retry {i + 1}/{tries - 1} in {delay:.0f}s", flush=True)
+            time.sleep(delay)
+            delay = min(delay * 2, 300.0)
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -223,7 +240,7 @@ def main():
     if not is_main:
         sys.stdout = open(os.devnull, "w")
 
-    tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    tok = _tokenizer_with_retry(args.tokenizer)
     tok.padding_side = "left"
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
