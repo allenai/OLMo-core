@@ -215,11 +215,14 @@ CUDA13_ARGS = \
 # so the CUDA-12 line moves to cu129. Stays on CUDA 12.x, so it runs on the current H100/B200 CI
 # driver (unlike the CUDA-13 images), while torch 2.13 bundles triton 3.7.1 and nccl 2.29.7 — which
 # unblocks flash-linear-attention 0.5.2 and makes the RMA NCCL swap unnecessary. Built for
-# sm_90/100 only (sm_103/B300 needs CUDA 13); keeps flash-attn 3.
+# sm_90/100 only (sm_103/B300 needs CUDA 13); keeps flash-attn 3. TransformerEngine is bumped to
+# 2.18 because the MXFP8 path passes MXFP8Tensor(with_gemm_swizzled_scales=...), added in TE 2.12
+# (the base's TE 2.9 predates it).
 CUDA129_ARGS = \
 	TORCH_VERSION=2.13.0 \
 	CUDA_VERSION=12.9.1 \
-	CUDA_NVCC_VERSION=12.9.86
+	CUDA_NVCC_VERSION=12.9.86 \
+	TE_VERSION=2.18.0
 
 # FA4 layer (CUDA-13 only): installs the flash_attn.cute wheel (AttentionBackendName.flash_4) and
 # appends it to the smoke test; adds the '-fa4' tag suffix (see FA4_TAG). The cutlass-dsl pin avoids
