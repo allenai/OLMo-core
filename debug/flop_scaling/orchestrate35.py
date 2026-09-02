@@ -278,7 +278,7 @@ def cycle(st):
     # D. evals
     for name, e in list(st["evals"].items()):
         if e["state"] in ("DONE", "FAILED") or not e.get("ex"):
-            if e["state"] == "LAUNCH-FAILED" and e["retries"] < 1:
+            if e["state"] == "LAUNCH-FAILED" and e["retries"] < 3:
                 e["retries"] += 1
                 launch_eval(st, name)
             continue
@@ -291,7 +291,7 @@ def cycle(st):
             if rc == 0:
                 e["state"] = "DONE"
                 log(f"eval {name} DONE")
-            elif e["retries"] < 1:
+            elif e["retries"] < 3:
                 e["retries"] += 1
                 log(f"eval {name} failed rc={rc}; relaunching")
                 launch_eval(st, name)
