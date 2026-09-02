@@ -6,6 +6,7 @@ from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
+from .checkpoint_ready_notifier import CheckpointReadyNotifierCallback
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
 from .console_logger import ConsoleLoggerCallback
@@ -38,6 +39,7 @@ __all__ = [
     "CallbackConfig",
     "CheckpointerCallback",
     "CheckpointRemovalStrategy",
+    "CheckpointReadyNotifierCallback",
     "CometCallback",
     "CometNotificationSetting",
     "ConfigSaverCallback",
