@@ -157,7 +157,7 @@ contradiction joins qdmatch as a task landmark compression cannot do at all.
 | xabsence | near-floor and FLAT in budget | .217/.145/.061/.026 @20M vs .221/.140/.057/.032 @80M -- 4x data buys nothing |
 | qdmatch_nq | dead | floor at every tested scale |
 | contradiction | dead | .001/.000/.000/.000 vs dense .909/.836/.751/.592 |
-| reorder | dead at every budget | tau .009/.005/.007 @2k across 15/30/50M -- flat at chance; dense .686 @2k |
+| reorder | dead at every budget AND every rung | 15M ladder complete: .005/-.004/.000/.000 at 2k/4k/8k/16k; dense .686 at 2k |
 | absence | LATE TAKEOFF, not dead | .017/.005/.001 @20M -> .224/.094/.025 @40M -> .357/.304/.250 @80M |
 | grouping | at the degenerate floor | pairwise_f1 .419 @2k @20M -- BELOW the .44 that a
   single-cluster prediction scores, so it is not "44% right", it is chance; dense .794 |
