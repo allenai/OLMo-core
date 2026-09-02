@@ -737,6 +737,7 @@ class OLMoDDPTrainModule(TrainModule):
                     rank_microbatch_size=self.rank_microbatch_size,
                     rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(),
                 )
+            self._set_ep_no_sync_symm_initialization_complete(True)
 
     def rebuild_train_pp_schedule(self, global_batch_size: int) -> None:
         """Rebuild the PP schedule for ``global_batch_size`` after batch-size changes."""
@@ -2904,6 +2905,8 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         from olmo_core.nn.ddp import OLMoDDPModel
 
+        self._set_ep_no_sync_symm_initialization_complete(False)
+
         # Materialize and init parameters.
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
@@ -2929,7 +2932,18 @@ class OLMoDDPTrainModule(TrainModule):
         for m in model_parts:
             m.refresh_rowwise_fp8_cache()
 
+        # PP needs one additional, schedule-aware prewarm in on_attach(). PP1 is
+        # fully initialized here, so any later symmetric allocation is a bug.
+        if not self.pp_enabled:
+            self._set_ep_no_sync_symm_initialization_complete(True)
+
         return
+
+    @staticmethod
+    def _set_ep_no_sync_symm_initialization_complete(value: bool) -> None:
+        from olmo_core.train.globals import set_global_arg
+
+        set_global_arg("ep_no_sync_symm_initialization_complete", value)
 
     def _cp_local_rank_microbatch_size(self, rank_microbatch_size: int) -> int:
         if self._cp_config is None:

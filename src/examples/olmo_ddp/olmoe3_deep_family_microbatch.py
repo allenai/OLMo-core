@@ -139,6 +139,7 @@ SYSTEMS = {
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
     "large-pp2-ep8-mb4": SystemConfig("large", 2, 2, 8, 4, 512 * 1024),
     # Full-batch 64-GPU throughput qualifications using the best passing microbatch settings.
+    "g64-small-pp1-ep1-mb4": SystemConfig("small", 8, 1, 1, 4, 8 * MIB),
     "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
     "g64-medium-pp1-ep4-mb1": SystemConfig("medium", 8, 1, 4, 1, 8 * MIB),
     "g64-large-pp2-ep8-mb1": SystemConfig("large", 8, 2, 8, 1, 8 * MIB),
@@ -198,7 +199,7 @@ def build_common_components(
             "OLMO_DISTRIBUTED_TIMEOUT_SECONDS",
             "OLMO_ROWWISE_VERBOSE_DEBUG_PRINT",
             "OLMO_ROWWISE_DEBUG_RANKS",
-            "OLMO_ROWWISE_SYNC_BEFORE_SPLIT_ALL_GATHER",
+            "OLMO_EP_NO_SYNC_FORBID_RUNTIME_SYMM_ALLOC",
             "OLMOE3_MXFP8_MLP",
             "OLMOE3_DEEP_WSD_WARMUP_STEPS",
             "OLMOE3_DEEP_WSD_DECAY_STEPS",
