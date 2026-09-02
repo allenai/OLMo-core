@@ -198,7 +198,15 @@ for the same checkpoint. Reorder is a short-context task at these budgets no mat
 grouping (pairwise_f1, floor .44): 80M gives .794 / .569 / .417 / .210 at 2k/8k/16k/32k. The 16k
 cell is AT the degenerate floor and 32k is half of it, so grouping's usable range under this recipe
 ends between 8k and 16k -- and by 32k the model is scoring below what a single-cluster answer would
-get, meaning it is emitting malformed or wrong partitions rather than degenerate ones. Sparse sits at .419/.187/.090 (2k/8k/16k at 40M) against dense .794/.569/.417: the 2k cell is
+get, meaning it is emitting malformed or wrong partitions rather than degenerate ones. Sparse sits at .419/.187/.090 (2k/8k/16k at 40M) against dense .794/.569/.417/.210. **Its 32k cell
+is deliberately UNMEASURED.** Two attempts died on an NCCL rank desync, and two single-rank reruns
+generated for 9.9 and 9.6 hours without finishing -- roughly 2x the dense job's 32k rung, which is
+the point where serial execution stops explaining it. They were cancelled rather than left running:
+the cell would confirm a verdict, not decide one, since every shorter rung is already at or below
+grouping's .44 degenerate floor and falling monotonically. Recorded as unmeasured rather than
+inferred.
+
+Reading the measured cells: the 2k cell is
 already at grouping's .44 degenerate floor and every longer rung is well below it, i.e. sparse is
 not producing even a degenerate clustering by 8k.
 
