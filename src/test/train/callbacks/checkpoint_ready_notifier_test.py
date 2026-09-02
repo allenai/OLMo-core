@@ -127,17 +127,20 @@ def test_unavailable_inbox_warns_without_failing(
     assert "Could not publish checkpoint-ready event" in caplog.text
 
 
-@pytest.mark.parametrize("field", ["run_id", "lineage_id"])
-def test_rejects_unsafe_ids(tmp_path: Path, field: str) -> None:
-    kwargs = {
-        "inbox_dir": str(tmp_path),
-        "run_id": "safe-run",
-        "lineage_id": "safe-lineage",
-    }
-    kwargs[field] = "../unsafe"
-
+@pytest.mark.parametrize(
+    ("run_id", "lineage_id", "field"),
+    [
+        ("../unsafe", "safe-lineage", "run_id"),
+        ("safe-run", "../unsafe", "lineage_id"),
+    ],
+)
+def test_rejects_unsafe_ids(tmp_path: Path, run_id: str, lineage_id: str, field: str) -> None:
     with pytest.raises(OLMoConfigurationError, match=field):
-        CheckpointReadyNotifierCallback(**kwargs)
+        CheckpointReadyNotifierCallback(
+            inbox_dir=str(tmp_path),
+            run_id=run_id,
+            lineage_id=lineage_id,
+        )
 
 
 def test_rejects_relative_inbox() -> None:
