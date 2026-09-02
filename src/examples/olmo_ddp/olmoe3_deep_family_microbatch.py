@@ -115,6 +115,7 @@ SYSTEMS = {
     "small-pp1-ep1-mb4": SystemConfig("small", 1, 1, 1, 4, 1 * MIB),
     "small-pp1-ep1-mb8": SystemConfig("small", 1, 1, 1, 8, 1 * MIB),
     "small-pp1-ep1-mb16": SystemConfig("small", 1, 1, 1, 16, 1 * MIB),
+    "small-pp1-ep4-mb4": SystemConfig("small", 1, 1, 4, 4, 1 * MIB),
     "small-pp1-ep4-mb8": SystemConfig("small", 1, 1, 4, 8, 1 * MIB),
     "small-pp1-ep4-mb16": SystemConfig("small", 1, 1, 4, 16, 1 * MIB),
     # Reduced batches retain the corresponding 8 Mi-token production GA at 128 GPUs.
