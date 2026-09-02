@@ -83,6 +83,32 @@ def dense_flops_per_token():
     return fpt(65536)
 
 
+_LOG_CACHE = {}
+
+
+def f1_from_log(ex):
+    """``{<task>_<rung>: f1}`` parsed from an eval experiment's ``[ladder:task@rung] f1=`` lines
+    (cached on disk under evals35/logs so the collect stays fast on re-runs)."""
+    if not ex:
+        return {}
+    p = f"{EVALS}/logs/{ex}.json"
+    if os.path.exists(p):
+        return json.load(open(p))
+    if ex in _LOG_CACHE:
+        return _LOG_CACHE[ex]
+    try:
+        out = subprocess.run(["beaker", "experiment", "logs", ex], env=ENV, capture_output=True, text=True, timeout=300).stdout
+    except Exception:
+        out = ""
+    hits = re.findall(r"\[ladder:(\w+)@(\d+k)\] f1=([0-9.]+)", out)
+    res = {f"{t}_{rg}": float(v) for t, rg, v in hits}
+    _LOG_CACHE[ex] = res
+    if res and "=== DONE" in out:
+        os.makedirs(f"{EVALS}/logs", exist_ok=True)
+        json.dump(res, open(p, "w"))
+    return res
+
+
 def fetch_eval(run, ex):
     d = f"{EVALS}/{run}"
     if glob.glob(f"{d}/**/*multirung*.json", recursive=True):
@@ -137,10 +163,15 @@ def main():
         if e.get("state") != "DONE" or not e.get("ex"):
             continue
         r = st["runs"][run]
-        # docchunk-evaluated (KV) runs land in the weka _eval_results harvest as
-        # <run>_<task>_multirung.json; dense-evaluator (FFN) runs in the Beaker results dataset
+        # docchunk-evaluated (KV) runs: the per-rung f1 lines of THIS eval's Beaker log are the
+        # primary source -- the weka _eval_results/<run>_<task>_multirung.json is a merge target
+        # that any later eval of the same run overwrites (2026-09-02: "cancelled" garbage-id evals
+        # kept running and finished after the fixed ones). Harvest file = fallback only.
+        res = f1_from_log(e["ex"]) if r["arm"].startswith("kv") else {}
         hv = glob.glob(f"{HARVEST}/evals/{run}_*multirung*.json")
-        if hv:
+        if res:
+            pass
+        elif hv:
             res = json.load(open(hv[0]))
         else:
             d = fetch_eval(run, e["ex"])
