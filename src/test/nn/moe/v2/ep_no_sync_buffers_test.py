@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import torch
@@ -7,11 +7,13 @@ import torch
 from olmo_core.nn.ddp import model as ddp_model
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig
 from olmo_core.nn.moe.v2.ep_no_sync_buffers import (
+    _alloc_ep_symm_tensor,
     _cached_symm_tensor_covers,
     _parse_bool_env,
     _view_cached_symm_tensor,
     compute_ep_no_sync_rank_capacity,
 )
+from olmo_core.train.globals import set_global_arg
 
 
 def test_parse_bool_env():
@@ -46,6 +48,21 @@ def test_view_cached_symm_tensor():
     assert tuple(view.shape) == (5, 4)
     assert view.data_ptr() == cached.data_ptr()
     torch.testing.assert_close(view, cached[:5])
+
+
+def test_runtime_symm_allocation_guard(monkeypatch):
+    monkeypatch.setenv("OLMO_EP_NO_SYNC_FORBID_RUNTIME_SYMM_ALLOC", "1")
+    set_global_arg("ep_no_sync_symm_initialization_complete", True)
+    try:
+        with pytest.raises(RuntimeError, match="after initialization completed"):
+            _alloc_ep_symm_tensor(
+                shape=(8, 4),
+                dtype=torch.bfloat16,
+                device=torch.device("cpu"),
+                group=cast(Any, object()),
+            )
+    finally:
+        set_global_arg("ep_no_sync_symm_initialization_complete", False)
 
 
 def test_compute_ep_no_sync_rank_capacity():
