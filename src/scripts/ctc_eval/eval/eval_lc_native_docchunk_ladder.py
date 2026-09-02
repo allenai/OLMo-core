@@ -54,7 +54,11 @@ import time
 
 import torch
 
-# Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
+# Reserved ids. DEFAULTS are the Qwen3 family; main() overwrites every one of them from
+# olmo_core.data.document_chunk_landmark.RESERVED_IDS[family] (+ the tokenizer's <|im_end|>) once
+# the family is known -- see resolve_reserved_ids(). Before 2026-09-02 they were hardcoded, so a
+# Qwen3.5 checkpoint (markers 248049/248050, eos 248044) was prompted with Qwen3's ids: documents
+# wrapped in arbitrary vocab tokens and generation never hit a stop id (fs35 KV evals: f1 0.18).
 EOS_TOKEN_ID = 151643
 # The SFT model ends its assistant turn with <|im_end|> (chat template), and 151643 is appended by the
 # converter UNSUPERVISED (not in the loss mask) -- so the model reliably emits 151645 but often never
@@ -85,6 +89,41 @@ ALL_TASKS = [
 # LADDER definition -- rung -> eval-JSONL mapping. This MIRRORS eval_lc_native.py's v1/v2 LADDERS EXACTLY
 # (so the docchunk ladder JSON is directly comparable to the dense/landmark ladder JSONs). Keep in sync.
 # ----------------------------------------------------------------------------------------------------
+def resolve_reserved_ids(args, tok):
+    """
+    Point the module-level marker/stop ids at the checkpoint's tokenizer family.
+
+    Family = ``--family`` if given, else ``model_family`` from ``<model_path>/config.json`` (the
+    train_ctc_suite export writes it), else inferred from the tokenizer name (``3.5``/``3_5`` ->
+    ``qwen3_5``), else ``qwen3``.
+    """
+    global EOS_TOKEN_ID, IM_END_ID, LANDMARK_TOKEN_ID, DOC_START_ID, DOC_END_ID, PAD_TOKEN_ID
+    from olmo_core.data.document_chunk_landmark import RESERVED_IDS
+
+    fam = args.family
+    if fam == "auto":
+        fam = None
+        for _fn in ("config.json", "provenance.json"):  # train_ctc_suite export writes both
+            cfg_p = os.path.join(args.model_path, _fn)
+            if not fam and os.path.exists(cfg_p):
+                try:
+                    fam = json.load(open(cfg_p)).get("model_family")
+                except Exception:
+                    fam = None
+        if not fam:
+            name = args.tokenizer.lower()
+            fam = "qwen3_5" if ("3.5" in name or "3_5" in name) else "qwen3"
+    ids = RESERVED_IDS[fam]
+    EOS_TOKEN_ID, LANDMARK_TOKEN_ID = ids.eos, ids.landmark
+    DOC_START_ID, DOC_END_ID, PAD_TOKEN_ID = ids.doc_start, ids.doc_end, ids.pad
+    im_end = tok.convert_tokens_to_ids("<|im_end|>")
+    if isinstance(im_end, int) and im_end >= 0 and im_end != tok.unk_token_id:
+        IM_END_ID = im_end
+    print(f"[ids] family={fam} eos={EOS_TOKEN_ID} im_end={IM_END_ID} doc_start={DOC_START_ID} "
+          f"doc_end={DOC_END_ID} landmark={LANDMARK_TOKEN_ID} pad={PAD_TOKEN_ID}", flush=True)
+    return fam
+
+
 def build_ladders(args):
     E5 = os.environ.get("EVAL500_ROOT", "/scratch/users/prasann/cpt_data/eval500")
     # v1 ladders are DISABLED (2026-07-29). Each v1 rung drew its OWN questions, so every
@@ -175,6 +214,17 @@ def build_ladders(args):
                     if _hits:
                         ladders_v2[_t].append((_s, _hits[0]))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+        # FLOP-scaling study: explicit rung files per task, e.g. to score a marker-trained model
+        # on EXACTLY the rung files a prior dense campaign used (outlier_lengthmix/eval_rungs/...).
+        # DC_RUNG_FILES = JSON {"outlier": {"8k": "/weka/.../rung_8192.jsonl", ...}, ...}; a task
+        # present here REPLACES its default rung list. (Until 2026-09-02 this sat after the v2
+        # return below, i.e. never ran: every "override" eval scored the default v2 files.)
+        _ovr = os.environ.get("DC_RUNG_FILES")
+        if _ovr:
+            for _task, _rungs in json.loads(_ovr).items():
+                ladders_v2[_task] = [(lab, path) for lab, path in _rungs.items()]
+            print(f"[ladder] DC_RUNG_FILES override for {sorted(json.loads(_ovr))}: "
+                  f"{ {t: [p for _, p in ladders_v2[t]] for t in json.loads(_ovr)} }", flush=True)
         return ladders_v2
     _ladders = {
         "contradiction": [
@@ -234,15 +284,6 @@ def build_ladders(args):
             ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
         ],
     }
-    # FLOP-scaling study: explicit rung files per task, e.g. to score a marker-trained model on
-    # EXACTLY the rung files a prior dense campaign used (outlier_lengthmix/eval_rungs/...).
-    # DC_RUNG_FILES = JSON {"outlier": {"8k": "/weka/.../rung_8192.jsonl", ...}, ...}; a task
-    # present here REPLACES its default rung list.
-    _ovr = os.environ.get("DC_RUNG_FILES")
-    if _ovr:
-        for _task, _rungs in json.loads(_ovr).items():
-            _ladders[_task] = [(lab, path) for lab, path in _rungs.items()]
-        print(f"[ladder] DC_RUNG_FILES override for {sorted(json.loads(_ovr))}", flush=True)
     return _ladders
 
 
@@ -298,6 +339,9 @@ def main():
         "per-task/per-rung split invocations accumulate into one ladder JSON.",
     )
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
+    ap.add_argument("--family", default="auto",
+                    help="reserved-id family (qwen3|qwen3_5|olmo3|llama|gemma); auto = checkpoint "
+                    "config.json model_family, else inferred from the tokenizer name")
     ap.add_argument(
         "--ladder-version",
         choices=["v2"],
@@ -426,7 +470,8 @@ def main():
         TransformerGenerationModuleConfig,
     )
 
-    assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
+    # (module defaults equal the library's Qwen3 defaults; resolve_reserved_ids() re-points them)
+    assert (_DS, _DE) == (151648, 151649)
 
     # Grader per task. OOD ladders reuse their base-task grader (fiqa/scifact->retrieval,
     # outlier_review->outlier, contra_fever->contradiction), matching eval_lc_native.py's LSPEC.
@@ -455,6 +500,7 @@ def main():
         sys.stdout = open(os.devnull, "w")
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer)
+    resolve_reserved_ids(args, tok)
     NEWLINE_ID = tok("\n", add_special_tokens=False).input_ids[-1]
     torch.cuda.set_device(local_rank)
     device = torch.device(f"cuda:{local_rank}")
@@ -465,7 +511,7 @@ def main():
 
     t0 = time.time()
     # GenerationConfig requires pad != eos; Qwen3 has no pad and we decode bs=1 (pad unused).
-    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, EOS_TOKEN_ID) else 151645
+    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, EOS_TOKEN_ID) else IM_END_ID
     gen_cfg = GenerationConfig(
         eos_token_id=EOS_TOKEN_ID,
         pad_token_id=pad_id,
