@@ -1044,7 +1044,14 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     # Forwards per rank over the whole run = steps x grad-accum: the horizon the ffnmoe schedules
     # (target / exploration / layer curriculum) and the softtoken mixing curriculum anneal over.
     gbs_examples = max(1, opts.global_batch)
-    steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
+    if opts.pack:
+        # Packed rows hold many examples: the step count is tokens / (rows x seq_len), not
+        # examples / rows. Using the example count here over-estimated the schedule horizon
+        # ~20x on the first Qwen3.5 FFN runs (target still 0.84 at the last step).
+        n_tok = int(plan["meta"].get("num_tokens") or plan["meta"].get("total_tokens") or 0)
+        steps_total = max(1, -(-n_tok * opts.epochs // (gbs_examples * opts.seq_len))) if n_tok else -(-plan["n_examples"] * opts.epochs // gbs_examples)
+    else:
+        steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
     accum = max(1, opts.global_batch // (world_size * opts.micro_batch_instances))
     total_calls = max(1, steps_total * accum)
     if opts.variant == "ffnmoe":
