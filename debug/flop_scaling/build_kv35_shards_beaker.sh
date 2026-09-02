@@ -10,7 +10,7 @@ case "$TASK" in oolong) CONV=oolong; CHUNK=line;; nq) CONV=retrieval; CHUNK=docu
 read -r -d '' WORK <<EOW
 set -uo pipefail; export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false; FAIL=0
 # gantry's runtime venv has neither numpy nor transformers; the image's conda env has both.
-PYBIN=/opt/conda/bin/python; \$PYBIN -c "import numpy, transformers" || PYBIN=python; echo "PYBIN=\$PYBIN"
+PYBIN=python; \$PYBIN -c "import numpy, transformers, dataclass_extensions, olmo_core" || PYBIN=/opt/conda/bin/python; echo "PYBIN=\$PYBIN"
 ls $WEKA/taskscale_lengthmix/arms | head -40
 for B in $BUDGETS; do
   SRC=$WEKA/taskscale_lengthmix/arms/${TASK}_mix_s\$B/arm.jsonl   # build_task_rungs.py: arms/<arm>/arm.jsonl

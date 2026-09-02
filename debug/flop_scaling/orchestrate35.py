@@ -46,7 +46,7 @@ EVAL_CFG = {
 KV_TOKENIZER = os.environ.get("FS_KV_TOKENIZER", "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base")  # weka-staged, no Hub calls
 KV_S3_TASKS = {"outlier", "nq"}  # marker shards built on mooney -> S3 -> weka
 KV_WEKA_TASKS = {"contradiction", "oolong"}  # built straight onto weka by the gantry jobs
-KV_WEKA_JOBS = {"contradiction": "01M1HSV1VB15NQ100YPFWAHNNK", "oolong": "01M1HSV571Y01EMSXSW23CNQWB"}  # 12:40 relaunch: conda python for the converter
+KV_WEKA_JOBS = {"contradiction": "01M1HT3NC2YF6CACR7W9YYDBB4", "oolong": "01M1HT3S8Z7CASZFB59DAMZGM0"}  # 12:45 relaunch: gantry venv (pip install -e . brings dataclass_extensions)
 
 
 def log(m):
