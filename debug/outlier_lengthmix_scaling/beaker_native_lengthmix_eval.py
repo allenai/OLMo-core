@@ -52,7 +52,12 @@ def main():
                          "checkpoint regardless of this flag. Send sparse evals to an A100 (164KB) "
                          "or H100 (228KB) cluster.")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
-    ap.add_argument("--ngpu", type=int, default=2)
+    ap.add_argument("--ngpu", type=int, default=2,
+                    help="Data-parallel eval ranks. Use 1 for a long rung whose per-example "
+                         "generation length varies a lot (grouping at 32k with max_new=2048): the "
+                         "two ranks shard the examples, one finishes far ahead of the other, and "
+                         "the NCCL watchdog eventually aborts the job with a collective timeout "
+                         "that reads as a hang. Single-rank has no collectives to desync.")
     ap.add_argument("--max-length", type=int, default=72000)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()

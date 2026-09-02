@@ -61,6 +61,17 @@ eos 248044, zero skipped examples, and every max_example_len inside the 65536 tr
 reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
 20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
 
+## Sparse grouping 32k: an NCCL desync that looked like a slow job
+
+Both sparse grouping evals sat on their 32k rung for 6-7 hours with no output, which was
+indistinguishable from "this rung is expensive" until one died: **NCCL watchdog collective timeout
+-> SIGABRT**. The cause is rank imbalance, not capacity. The eval shards examples across 2
+data-parallel ranks; grouping at 32k generates up to 2048 tokens per example with a huge spread, so
+one rank finished long before the other and the idle rank's collective timed out. Re-run the long
+rung with `--ngpu 1` (no collectives to desync). Two changes came out of this: the driver's --ngpu
+help now says when to drop to 1, and eval_lc_native stamps each rung's start and generation
+wall-clock so the next stall is diagnosable from the log instead of by comparing sibling jobs.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
