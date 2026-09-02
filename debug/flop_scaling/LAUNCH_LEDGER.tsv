@@ -192,3 +192,4 @@ beaker35	oolong	ffnmoe-s1	80M	s1	fs35-oolong-ffnmoe-s1-s80M	ai2/jupiter-cirrasca
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 beaker35	outlier	ffnmoe-s2	16M	s2	fs35-outlier-ffnmoe-s2-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 03:13	LAUNCHED	"01M1GSQ5GJNVP0HCNGCB231QMJ   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+evalfix	-	-	note	-	fs35 KV evals	beaker	2026-09-02 03:29	-	KV arms train on MARKER-wrapped prompts but were being scored with the dense campaign's plain-prompt evaluator (outlier kv17 16M: .13/.04/.01 with well-formed outputs = format mismatch). Now scored with the docchunk (marker) evaluator on the SAME rung files via DC_RUNG_FILES/DC_RUNGS; 6 evals relaunched. FFN arms (plain prompts) keep the dense evaluator

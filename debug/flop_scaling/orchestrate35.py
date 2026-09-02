@@ -221,6 +221,8 @@ def cycle(st):
         save(st)
     # C. training runs
     for name, r in list(st["runs"].items()):
+        if r["state"] == "DONE" and not r.get("eval"):
+            launch_eval(st, name)  # e.g. an eval that was reset for relaunch under a new evaluator
         if r["state"] in ("DONE", "FAILED") or not r.get("ex"):
             if r["state"] == "LAUNCH-FAILED" and r["retries"] < 1:
                 r["retries"] += 1
