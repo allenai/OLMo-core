@@ -23,11 +23,14 @@ from olmo_core.data.multimodal.tulu import Tulu4DatasetConfig
 
 __all__ = [
     "IMAGE_ONLY_V9_SUBMIXTURES",
+    "SINGLE_IMAGE_ONLY_V9_SUBMIXTURES",
     "DEBUG_MIXTURE_DATASETS",
     "VALIDATION_MIXTURES",
     "build_image_only_v9_datasets",
     "build_image_only_v9_dataset",
     "build_image_only_v9_mixture",
+    "build_single_image_only_v9_mixture",
+    "filter_submixtures_single_image",
 ]
 
 # Parity-validated subset for stage-2 smoke tests before the full 32-source sweep is green.
@@ -147,6 +150,22 @@ IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
     SubMixture("nlp", 0.166, [DatasetSource("tulu4")]),
 ]
 
+
+def filter_submixtures_single_image(submixtures: Sequence[SubMixture]) -> List[SubMixture]:
+    """Drop multi-image sources from each submixture, preserving group rates."""
+    exclude = set(MULTI_IMAGE_MIXTURE_DATASETS)
+    out: List[SubMixture] = []
+    for group in submixtures:
+        kept = [src for src in group.datasets if src.name not in exclude]
+        if kept:
+            out.append(SubMixture(group.name, group.rate, kept))
+    return out
+
+
+SINGLE_IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = filter_submixtures_single_image(
+    IMAGE_ONLY_V9_SUBMIXTURES
+)
+
 ACADEMIC_MIXTURE_DATASETS: Tuple[str, ...] = tuple(
     src.name for src in IMAGE_ONLY_V9_SUBMIXTURES[1].datasets
 )
@@ -161,6 +180,7 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "academic": ACADEMIC_MIXTURE_DATASETS,
     "multi-image": MULTI_IMAGE_MIXTURE_DATASETS,
     "image-only-v9": None,
+    "single-image-only-v9": None,
     # Pointing bisect (one source each).
     "pixmo_multi_points": ("pixmo_multi_points",),
     "pixmo_points_train": ("pixmo_points_train",),
@@ -327,17 +347,20 @@ def build_image_only_v9_mixture(
     *,
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
-) -> Tuple[List, List[float]]:
+    submixtures: Optional[Sequence[SubMixture]] = None,
+) -> Tuple[List, List[float], List[str]]:
     """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`.
 
     Flattens ``IMAGE_ONLY_V9_SUBMIXTURES`` with mm_olmo SubMixture rate math, optionally
     restricting to ``dataset_names`` (weights are renormalized over the subset).
     """
+    groups = list(IMAGE_ONLY_V9_SUBMIXTURES if submixtures is None else submixtures)
     datasets_map = build_image_only_v9_datasets(
         tokenizer, seed, max_sequence_length=max_sequence_length
     )
-    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
-    flat = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
+    needed = {src.name for group in groups for src in group.datasets}
+    lengths = {name: len(datasets_map[name]) for name in needed}
+    flat = compute_flat_mixture_weights(groups, lengths)
 
     if dataset_names is not None:
         allowed = set(dataset_names)
@@ -347,6 +370,24 @@ def build_image_only_v9_mixture(
         norm = sum(w for _, w in flat)
         flat = [(name, w / norm) for name, w in flat]
 
-    out_datasets = [datasets_map[name] for name, _ in flat]
+    out_names = [name for name, _ in flat]
+    out_datasets = [datasets_map[name] for name in out_names]
     out_weights = [w for _, w in flat]
-    return out_datasets, out_weights
+    return out_datasets, out_weights, out_names
+
+
+def build_single_image_only_v9_mixture(
+    tokenizer,
+    seed: int = 0,
+    *,
+    dataset_names: Optional[Sequence[str]] = None,
+    max_sequence_length: int = 16384,
+) -> Tuple[List, List[float], List[str]]:
+    """Build image-only-v9 with multi-image sources removed (rates renormalized)."""
+    return build_image_only_v9_mixture(
+        tokenizer,
+        seed,
+        dataset_names=dataset_names,
+        max_sequence_length=max_sequence_length,
+        submixtures=SINGLE_IMAGE_ONLY_V9_SUBMIXTURES,
+    )

@@ -21,8 +21,6 @@ These tests auto-skip when the corresponding HF checkpoint is not cached
 locally — they're not meant for default CI.
 """
 
-import os
-
 import pytest
 import torch
 
@@ -38,7 +36,7 @@ from olmo_core.testing import requires_gpu
 
 transformers = pytest.importorskip("transformers")
 
-from ._molmo2_common import MOLMO2_VARIANTS, _hf_cache_has  # noqa: F401 (re-exported)
+from ._molmo2_common import MOLMO2_VARIANTS, _hf_cache_has  # noqa: E402 F401
 
 
 def _load_hf(model_id: str):

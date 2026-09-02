@@ -173,6 +173,12 @@ PACK_BUFFER_SIZE = 48
 PACK_IMAGE_WEIGHT = 1.0
 COMPILE_MODEL = True  # torch.compile the LM (fuses pointwise ops; one-time compile warmup)
 DATA_PREFETCH_WORKERS = 4  # background threads preprocessing examples (0 = synchronous)
+DL_NUM_WORKERS = 0
+"""Process workers for the packed mixture DataLoader (0 = sync pack+collate, the
+historical stage-1 behaviour). >0 moves packing into worker processes, which is what
+took stage-2 from ~12-14k to ~20k TPS; requires packing to be enabled."""
+DL_PREFETCH_FACTOR = 2
+DL_PERSISTENT_WORKERS = True
 MAX_CROPS = 8
 
 # mm_olmo applies 0.1 dropout to the residual stream of RESPONSE tokens only (prompt and
@@ -308,6 +314,15 @@ class ExperimentConfig(Config):
     data_prefetch_workers: int = DATA_PREFETCH_WORKERS
     """Background threads preprocessing examples (0 = synchronous)."""
 
+    dl_num_workers: int = DL_NUM_WORKERS
+    """Process workers for the packed mixture DataLoader (0 = sync pack+collate)."""
+
+    dl_prefetch_factor: int = DL_PREFETCH_FACTOR
+    """Batches prefetched per DataLoader worker (only used when ``dl_num_workers > 0``)."""
+
+    dl_persistent_workers: bool = DL_PERSISTENT_WORKERS
+    """Keep DataLoader workers alive across epochs (only used when ``dl_num_workers > 0``)."""
+
     pack_max_crops: int = PACK_MAX_CROPS
     """Image-crop budget per pack — the knapsack's second dimension."""
 
@@ -418,14 +433,14 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             weight_decay=0.0,
             group_overrides=[
                 OptimGroupOverride(
-                    params=["connector.*"],
+                    params=["vision_backbone.connector.*"],
                     opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
                 ),
                 # mm_olmo's third component group (`ft_vit=True`, vit_learning_rate=6e-6).
                 *(
                     [
                         OptimGroupOverride(
-                            params=["vision.*"],
+                            params=["vision_backbone.vision.*"],
                             opts=dict(lr=VIT_LR, weight_decay=0.0, scheduler_name="vision"),
                         )
                     ]
@@ -435,7 +450,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             ],
         ),
         # An empty list keeps the encoder trainable *and* in train mode — the train module
-        # only forces `vision.eval()` when `vision.*` is frozen.
+        # only forces `vision.eval()` when the encoder's params are frozen.
         # mm_olmo: `activation_checkpointing: true` with `llm.activation_checkpoint:
         # whole_layer` — every block checkpointed. This is what makes microbatch 4 fit.
         # (vision/connector AC are already on by default in the train module, matching
@@ -445,7 +460,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             mode=TransformerActivationCheckpointingMode.full
         ),
         freeze_params=(
-            ([] if train_vit else ["vision.*"])
+            ([] if train_vit else ["vision_backbone.vision.*"])
             # The extra image-token rows live in `embeddings.extra_weight`, so freezing
             # `embeddings.weight` leaves them trainable.
             + (["lm.embeddings.weight"] if freeze_base_embeddings else [])
@@ -676,7 +691,14 @@ def _init_weights_from_scratch(
     missing, unexpected = model.load_state_dict(converted, strict=False)
     del converted
     # Everything except the connector must have been covered by the two base checkpoints.
-    non_connector_missing = [k for k in missing if not k.startswith("connector.")]
+    # `load_state_dict` reports missing keys under the model's *registered* names, which the
+    # legacy-key remap deliberately leaves alone (it only rewrites the dicts it is handed).
+    # So derive the connector's prefix from the module tree rather than assuming a layout.
+    connector_prefix = next(
+        (f"{name}." for name, mod in model.named_modules() if mod is model.connector),
+        "connector.",
+    )
+    non_connector_missing = [k for k in missing if not k.startswith(connector_prefix)]
     if non_connector_missing or unexpected:
         raise RuntimeError(
             f"[scratch init] unexpected state-dict coverage: missing={non_connector_missing[:8]} "
@@ -769,6 +791,9 @@ def train(config: ExperimentConfig):
             pack_buffer_size=config.pack_buffer_size,
             pack_image_weight=config.pack_image_weight,
             prefetch_workers=config.data_prefetch_workers,
+            dl_num_workers=config.dl_num_workers,
+            dl_prefetch_factor=config.dl_prefetch_factor,
+            dl_persistent_workers=config.dl_persistent_workers,
             dp_world_size=dp_world_size,
             dp_rank=dp_rank,
         )
