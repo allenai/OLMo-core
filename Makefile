@@ -211,6 +211,16 @@ CUDA13_ARGS = \
 	TRITON_PTXAS_PATH=/usr/local/bin/triton-ptxas \
 	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn"
 
+# CUDA-12.9 base (torch 2.13). Successor to the CUDA-12.8 base: torch 2.13 dropped the cu128 wheel,
+# so the CUDA-12 line moves to cu129. Stays on CUDA 12.x, so it runs on the current H100/B200 CI
+# driver (unlike the CUDA-13 images), while torch 2.13 bundles triton 3.7.1 and nccl 2.29.7 — which
+# unblocks flash-linear-attention 0.5.2 and makes the RMA NCCL swap unnecessary. Built for
+# sm_90/100 only (sm_103/B300 needs CUDA 13); keeps flash-attn 3.
+CUDA129_ARGS = \
+	TORCH_VERSION=2.13.0 \
+	CUDA_VERSION=12.9.1 \
+	CUDA_NVCC_VERSION=12.9.86
+
 # FA4 layer (CUDA-13 only): installs the flash_attn.cute wheel (AttentionBackendName.flash_4) and
 # appends it to the smoke test; adds the '-fa4' tag suffix (see FA4_TAG). The cutlass-dsl pin avoids
 # 4.6.x, which dropped symbols 4.0.0b16 needs (ThrMma).
@@ -232,6 +242,12 @@ RMA_CU13_ARGS = \
 	BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu13 \
 	NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION)
+# RMA layer for the CUDA-12.9 family. torch 2.13 already bundles nccl 2.29.7 (the RMA-capable
+# build), so no NCCL override is needed here — only the CUDA-12.9 devel base (nvcc + headers) and
+# NVSHMEM.
+RMA_CU129_ARGS = \
+	BASE_IMAGE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
+	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu12
 
 # ---- CUDA 12.8 family (H100, B200) — torch 2.10 -------------------------------------------------
 # olmo-core-tch2100cu128-<date>
@@ -243,6 +259,17 @@ beaker-image-cu128 :
 .PHONY : beaker-image-cu128-rma
 beaker-image-cu128-rma :
 	$(MAKE) beaker-image $(RMA_CU12_ARGS)
+
+# ---- CUDA 12.9 family (H100, B200) — torch 2.13 ------------------------------------------------
+# olmo-core-tch2130cu129-<date>
+.PHONY : beaker-image-cu129
+beaker-image-cu129 :
+	$(MAKE) beaker-image $(CUDA129_ARGS)
+
+# olmo-core-tch2130cu129-rma-<date>
+.PHONY : beaker-image-cu129-rma
+beaker-image-cu129-rma :
+	$(MAKE) beaker-image $(CUDA129_ARGS) $(RMA_CU129_ARGS)
 
 # ---- CUDA 13.0 family (H100, B200, B300) — torch 2.11 ------------------------------------------
 # olmo-core-tch2110cu130-<date>

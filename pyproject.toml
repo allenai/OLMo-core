@@ -72,11 +72,11 @@ fa4 = [
     # breaks `import olmo_core.nn`.
     "nvidia-cutlass-dsl<4.6.0 ; sys_platform == 'linux'",
 ]
-# NOTE: fla 0.5.2 requires triton >= 3.7.1 (a hard guard on Hopper) and pulls torchaudio 2.11,
-# but no released torch bundles triton >= 3.7.1 (torch 2.10/2.11 pin 3.6.0, 2.12 pins 3.7.0) and
-# the CI/beaker image ships torch 2.10 / triton 3.6.0. Stay on 0.4.1 until the GPU image moves to a
-# torch that bundles triton >= 3.7.1 (or a validated forced-triton image), then match main's 0.5.2.
-fla = ["flash-linear-attention==0.4.1"]
+# NOTE: fla 0.5.2 requires triton >= 3.7.1 (a hard guard on Hopper). torch 2.13 bundles triton
+# 3.7.1 (and nccl 2.29.7 + a matching torchaudio), so it works on the CUDA-12.9 / torch-2.13 image
+# (see `beaker-image-cu129` in the Makefile). Requires that image (or torch >= 2.13); the older
+# torch 2.10/2.11 images ship triton 3.6.0 and cannot run fla 0.5.2.
+fla = ["flash-linear-attention==0.5.2"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
