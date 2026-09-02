@@ -277,7 +277,7 @@ if [ "$VARIANT" = "docchunk" ]; then
     src/scripts/ctc_eval/eval/eval_lc_native_docchunk_ladder.py \
     --variant "$DC_EMIT" --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" \
     --root "$BUNDLE" --max-test-samples "$MAX_TEST" --max-length "$MAX_LENGTH" --mem-freq 63 \
-    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" $COT_ARGS
+    --ladder-version "$LADDER_VERSION" --tasks "$LTASK" --rungs "$RUNGS" --query-position "$QUERY_POSITION" $COT_ARGS
   rc=$?
 else
   $TR --model-path "$CKPT" --out "$OUT" --tokenizer "$TOKENIZER" --max-length "$MAX_LENGTH" \

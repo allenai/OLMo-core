@@ -354,6 +354,13 @@ def main():
     )
     # accepted for launcher parity; docchunk builds its own prefill via segment_prompt_to_chunks.
     ap.add_argument(
+        "--query-position",
+        default="both",
+        choices=["before", "after", "both"],
+        help="prompt layout; MUST match the SFT shards the model trained on (query-after shards -> "
+        "after). Was hardcoded to 'both' before the FLOP-scaling study.",
+    )
+    ap.add_argument(
         "--cot-mode",
         default="none",
         choices=["none", "plan"],
@@ -491,7 +498,7 @@ def main():
             tok,
             raw_example,
             loadtask,
-            query_position="both",
+            query_position=args.query_position,
             cot_mode=args.cot_mode,
             chunk_by=chunk_by,
             item_regex=item_regex,
@@ -634,7 +641,7 @@ def main():
                 path,
                 args.max_test_samples,
                 task=loadtask,
-                query_position="both",
+                query_position=args.query_position,
                 use_alpaca=True,
             )
             # bs=1 DP shard: this rank decodes global indices [rank, rank+world, ...].
