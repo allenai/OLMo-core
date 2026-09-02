@@ -177,6 +177,15 @@ grouping (pairwise_f1, floor .44): 80M gives .794 / .569 / .417 at 2k/8k/16k. Th
 the degenerate floor, so grouping's usable range under this recipe ends between 8k and 16k. Sparse
 sits at .419/.187 -- the 2k cell is already at the floor and 8k is below it.
 
+### textgroups 16k: measured once, deliberately not re-run
+
+The first six textgroups evals fired while the weka rung bundle was still partly synced, so all six
+skipped the 16k rung (caught by `audit_evals.sh`). The dense 80M arm was re-fired against the
+complete bundle and returns **.006 @16k** (eval_size 500). The other five were NOT re-run: both
+variants are already at the floor by 8k (dense .015, sparse .002), so five more jobs would buy five
+more numbers indistinguishable from zero. `audit_evals.sh` will keep flagging them as short --
+that is the correct behaviour for the tool, and this note is the reason they stay that way.
+
 ### Dense, first rungs across the four new tasks (eval_size 500 each)
 
 | task | metric | 2k/4k rung | budget scaling |
