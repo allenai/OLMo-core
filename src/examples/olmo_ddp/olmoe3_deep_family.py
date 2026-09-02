@@ -104,6 +104,7 @@ def build_model_config(
     num_experts: int = NUM_EXPERTS,
     top_k: int = TOP_K,
     emo: EmoRouterConfig | None = None,
+    mxfp8_mlp: bool = False,
 ) -> OLMoDDPModelConfig:
     """Build one rung with no activation or block recomputation enabled."""
 
@@ -116,6 +117,7 @@ def build_model_config(
         num_experts=num_experts,
         top_k=top_k,
         emo=emo,
+        mxfp8_mlp=mxfp8_mlp,
     )
     attention_block = _moe_block(
         g,
@@ -124,6 +126,7 @@ def build_model_config(
         num_experts=num_experts,
         top_k=top_k,
         emo=emo,
+        mxfp8_mlp=mxfp8_mlp,
     )
     model = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,

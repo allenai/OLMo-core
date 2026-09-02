@@ -1,8 +1,9 @@
-"""Low-cost microbatch probes for the 16/24/40-layer OLMoE3 family.
+"""Capacity and throughput probes for the 16/24/40-layer OLMoE3 family.
 
 The reduced-node tests preserve the gradient-accumulation geometry expected at
-the intended production GPU counts. They deliberately disable checkpoints,
-evals, float8, and every form of activation recomputation.
+the intended production GPU counts. Full 64-GPU presets use the production
+8 Mi-token batch. All probes disable checkpoints, evals, and every form of
+activation recomputation; routed-MLP MXFP8 is explicitly opt-in.
 
 Example::
 
@@ -57,14 +58,20 @@ from olmo_core.train.train_module.transformer import TransformerPipelineParallel
 
 SEQUENCE_LENGTH = 8192
 MAX_STEPS = int(os.environ.get("OLMOE3_DEEP_MB_MAX_STEPS", "8"))
+MXFP8_MLP = os.environ.get("OLMOE3_MXFP8_MLP", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 EP_CAPACITY_FACTOR = 1.25
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_PROJECT = "olmoe3-deep-family-microbatch"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24"
 PRESET = get_preset("olmo-ddp")
 GPUS_PER_NODE = 8
-WSD_WARMUP_STEPS = 2
-WSD_DECAY_STEPS = 2
+WSD_WARMUP_STEPS = int(os.environ.get("OLMOE3_DEEP_WSD_WARMUP_STEPS", "2"))
+WSD_DECAY_STEPS = int(os.environ.get("OLMOE3_DEEP_WSD_DECAY_STEPS", "2"))
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,10 @@ SYSTEMS = {
     "large-pp2-ep8-mb1": SystemConfig("large", 2, 2, 8, 1, 512 * 1024),
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
     "large-pp2-ep8-mb4": SystemConfig("large", 2, 2, 8, 4, 512 * 1024),
+    # Full-batch 64-GPU throughput qualifications using the best passing microbatch settings.
+    "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
+    "g64-medium-pp1-ep4-mb1": SystemConfig("medium", 8, 1, 4, 1, 8 * MIB),
+    "g64-large-pp2-ep8-mb1": SystemConfig("large", 8, 2, 8, 1, 8 * MIB),
 }
 
 
@@ -187,6 +198,10 @@ def build_common_components(
             "OLMO_DISTRIBUTED_TIMEOUT_SECONDS",
             "OLMO_ROWWISE_VERBOSE_DEBUG_PRINT",
             "OLMO_ROWWISE_DEBUG_RANKS",
+            "OLMO_ROWWISE_SYNC_BEFORE_SPLIT_ALL_GATHER",
+            "OLMOE3_MXFP8_MLP",
+            "OLMOE3_DEEP_WSD_WARMUP_STEPS",
+            "OLMOE3_DEEP_WSD_DECAY_STEPS",
             *EMO_ENV_VARS,
         ):
             if value := os.environ.get(name):
@@ -248,6 +263,7 @@ def build_model_config_from_common(common: CommonComponents, system: SystemConfi
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
         emo=emo,
+        mxfp8_mlp=MXFP8_MLP,
     )
     if system.model_size == "large":
         for block in [model.block, *model.block_overrides.values()]:
@@ -325,6 +341,7 @@ def build_trainer_config(
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
         emo=emo,
+        mxfp8_mlp=MXFP8_MLP,
     )
     tags = [
         "deep-family-microbatch",
@@ -333,7 +350,7 @@ def build_trainer_config(
         "kda:cute-old",
         "moe:fused-v2",
         "recompute:false",
-        "float8:false",
+        f"mxfp8-mlp:{str(MXFP8_MLP).lower()}",
         f"system:{preset_name}",
         f"size:{system.model_size}",
         f"gpus:{system.num_gpus}",
@@ -369,6 +386,7 @@ def build_trainer_config(
                     f"rank MB={system.rank_microbatch_sequences}, "
                     f"grad accum={system.gradient_accumulation_steps}; "
                     f"{emo_note(emo)}; "
+                    f"routed-MLP MXFP8={MXFP8_MLP}; "
                     "no recomputation; default attention + scalable softmax; "
                     f"WSD={WSD_WARMUP_STEPS} warmup / stable / {WSD_DECAY_STEPS} decay"
                 ),

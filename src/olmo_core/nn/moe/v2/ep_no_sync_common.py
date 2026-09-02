@@ -76,6 +76,29 @@ def _ep_sync_debug_print(label: str, **tensors: torch.Tensor) -> None:
     print(" | ".join(str(part) for part in parts), flush=True)
 
 
+def _sync_stream_before_split_all_gather(requested: torch.Tensor) -> None:
+    enabled = os.getenv("OLMO_ROWWISE_SYNC_BEFORE_SPLIT_ALL_GATHER", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"} or requested.device.type != "cuda":
+        return
+
+    # This diagnostic separates the rowwise NVSHMEM work from the following NCCL metadata
+    # collective. Poll an event instead of calling synchronize() directly so a wedged CUDA stream
+    # produces an actionable Python error instead of leaving the probe alive indefinitely.
+    timeout_seconds = float(os.getenv("OLMO_DISTRIBUTED_TIMEOUT_SECONDS", "300"))
+    event = torch.cuda.Event(enable_timing=False)
+    event.record(torch.cuda.current_stream(requested.device))
+    deadline = time.monotonic() + timeout_seconds
+    _ep_sync_debug_print("sync_tail_drop:stream-sync-enter", requested=requested)
+    while not event.query():
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                "CUDA stream did not quiesce before the EP split all-gather within "
+                f"{timeout_seconds:g}s"
+            )
+        time.sleep(0.01)
+    _ep_sync_debug_print("sync_tail_drop:stream-sync-exit", requested=requested)
+
+
 def rowwise_stage_debug_enabled() -> bool:
     if os.getenv("OLMO_ROWWISE_STAGE_DEBUG", "0").strip().lower() not in {
         "1",
@@ -189,6 +212,7 @@ def sync_tail_drop_allowed_splits_single_a2a(
         device=requested.device,
         dtype=requested.dtype,
     )
+    _sync_stream_before_split_all_gather(requested)
     _ep_sync_debug_print(
         (
             "sync_tail_drop:all_gather-enter "

@@ -184,8 +184,12 @@ def _moe_block(
     top_k: int = TOP_K,
     expert_hidden_multiplier: int = 1,
     emo: EmoRouterConfig | None = None,
+    mxfp8_mlp: bool = False,
 ) -> OLMoDDPTransformerBlockConfig:
-    disabled_fp8 = MoERowwiseFP8Config(enabled=False)
+    rowwise_fp8 = MoERowwiseFP8Config(
+        enabled=mxfp8_mlp,
+        fused_autograd_recompute_swiglu=False,
+    )
     return OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         sequence_mixer=sequence_mixer,
@@ -197,7 +201,7 @@ def _moe_block(
             num_experts=num_experts,
             bias=False,
             dtype=DType.float32,
-            rowwise_fp8=disabled_fp8,
+            rowwise_fp8=rowwise_fp8,
         ),
         routed_experts_router=MoERouterConfigV2(
             d_model=g.d_model,
@@ -229,7 +233,7 @@ def _moe_block(
         checkpoint_permute_moe_unpermute=False,
         checkpoint_second_unpermute=False,
         ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem),
-        rowwise_fp8=disabled_fp8,
+        rowwise_fp8=rowwise_fp8,
     )
 
 
