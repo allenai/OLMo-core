@@ -140,6 +140,10 @@ SYSTEMS = {
     "medium-pp2-ep2-mb4": SystemConfig("medium", 1, 2, 2, 4, 512 * 1024),
     "medium-pp2-ep4-mb2": SystemConfig("medium", 1, 2, 4, 2, 512 * 1024),
     "medium-pp2-ep4-mb4": SystemConfig("medium", 1, 2, 4, 4, 512 * 1024),
+    # Two-node PP1 probes provide more representative distributed-optimizer sharding than the
+    # one-node screens while preserving the production gradient-accumulation geometry.
+    "g16-medium-pp1-ep4-mb2": SystemConfig("medium", 2, 1, 4, 2, 1 * MIB),
+    "g16-medium-pp1-ep4-mb4": SystemConfig("medium", 2, 1, 4, 4, 1 * MIB),
     # Reduced batches retain the corresponding 8 Mi-token production GA at 256 GPUs.
     "large-pp2-ep8-mb1": SystemConfig("large", 2, 2, 8, 1, 512 * 1024),
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
