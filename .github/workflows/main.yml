@@ -11,18 +11,12 @@ on:
       # Temporary: run CI for the incremental MoE PRs landing into this integration branch.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
-      # Temporary: run CI for the PRs landing into this integration branch.
-      # Remove before merging akshitab/global-lb-emo-router into main.
-      - akshitab/global-lb-emo-router
   push:
     branches:
       - main
       # Temporary: keep the MoE integration branch continuously tested as PRs merge in.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
-      # Temporary: keep this integration branch continuously tested as PRs merge in.
-      # Remove before merging akshitab/global-lb-emo-router into main.
-      - akshitab/global-lb-emo-router
     tags:
       - "v*.*.*"
 

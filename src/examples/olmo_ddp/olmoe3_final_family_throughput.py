@@ -15,6 +15,7 @@ from functools import partial
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from olmoe3_emo import EMO_ENV_VARS, emo_note, emo_router_config, emo_tags
 from olmoe3_final_family import MODEL_SIZES, build_model_config
 
 from olmo_core.config import DType
@@ -30,18 +31,11 @@ from olmo_core.distributed.parallel import (
     PipelineScheduleType,
 )
 from olmo_core.internal.common import get_beaker_username
-from olmo_core.internal.experiment import (
-    CliContext,
-    CommonComponents,
-    DataComponents,
-)
+from olmo_core.internal.experiment import CliContext, CommonComponents, DataComponents
 from olmo_core.internal.experiment import (
     build_common_components as build_default_common_components,
 )
-from olmo_core.internal.experiment import (
-    build_config,
-    main,
-)
+from olmo_core.internal.experiment import build_config, main
 from olmo_core.launch.beaker import BeakerEnvSecret, BeakerEnvVar
 from olmo_core.launch.beaker_presets import get_preset
 from olmo_core.optim import OLMoDDPOptimizerConfig, OptimGroupOverride
@@ -203,7 +197,6 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         launch.budget = "ai2/oe-other"
         launch.gh_token_secret = f"{secret_prefix}_GITHUB_TOKEN"
         launch.beaker_image = BEAKER_IMAGE
-        launch.no_python = True
         env = dict(PRESET.env_vars)
         env.update({"S3_PROFILE": "default", "PYTHONPATH": "src"})
         # The train subcommand rebuilds its config inside the Beaker container,
@@ -213,6 +206,7 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
             "OLMOE3_THROUGHPUT_SYSTEM_PRESET",
             "OLMOE3_TEST_EP_CAPACITY_FACTOR",
             "OLMOE3_EXPERT_VARIANT",
+            *EMO_ENV_VARS,
         ):
             if value := os.environ.get(name):
                 env[name] = value
@@ -270,10 +264,17 @@ def build_data_components(common: CommonComponents) -> DataComponents:
 
 
 def build_model_config_from_common(common: CommonComponents, system: SystemConfig):
+    variant = expert_variant()
+    emo = emo_router_config(
+        eos_token_id=common.tokenizer.eos_token_id,
+        num_experts=variant["num_experts"],
+        top_k=variant["top_k"],
+    )
     model = build_model_config(
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
-        **expert_variant(),
+        **variant,
+        emo=emo,
     )
     # The original single-node 3.8B test needs block recomputation. The PP
     # qualification presets deliberately disable it to test the likely
@@ -352,10 +353,16 @@ def build_trainer_config(
     system: SystemConfig,
 ) -> TrainerConfig:
     variant = expert_variant()
+    emo = emo_router_config(
+        eos_token_id=common.tokenizer.eos_token_id,
+        num_experts=variant["num_experts"],
+        top_k=variant["top_k"],
+    )
     model = build_model_config(
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
         **variant,
+        emo=emo,
     )
     tags = [
         "final-family-throughput",
@@ -371,6 +378,7 @@ def build_trainer_config(
         f"ep-capacity:{EP_CAPACITY_FACTOR:g}",
         f"expert-variant:{EXPERT_VARIANT}",
         "gbs:8Mi",
+        *emo_tags(emo),
     ]
     return (
         TrainerConfig(
@@ -401,6 +409,7 @@ def build_trainer_config(
                     f"rank MB={system.rank_microbatch_sequences}, "
                     f"grad accum={system.gradient_accumulation_steps}, "
                     f"recompute={system.recompute_each_block}; "
+                    f"{emo_note(emo)}; "
                     f"WSD={WSD_WARMUP_STEPS} warmup / stable / "
                     f"{WSD_DECAY_STEPS} decay steps"
                 ),

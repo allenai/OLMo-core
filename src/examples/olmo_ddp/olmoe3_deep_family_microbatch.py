@@ -21,6 +21,8 @@ from functools import partial
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from olmoe3_deep_family import MODEL_SIZES, build_model_config
+from olmoe3_emo import EMO_ENV_VARS, emo_note, emo_router_config, emo_tags
+from olmoe3_final_family import NUM_EXPERTS, TOP_K
 
 from olmo_core.config import DType
 from olmo_core.data import (
@@ -168,7 +170,6 @@ def build_common_components(
         launch.budget = "ai2/oe-other"
         launch.gh_token_secret = f"{secret_prefix}_GITHUB_TOKEN"
         launch.beaker_image = BEAKER_IMAGE
-        launch.no_python = True
         env = dict(PRESET.env_vars)
         env.update({"S3_PROFILE": "default", "PYTHONPATH": "src"})
         # The accelerated independent-stage PP dry run does not preserve the
@@ -177,7 +178,11 @@ def build_common_components(
         # before they are frozen.
         if system.pp > 1:
             env["OLMO_PP_DRY_RUN_MODE"] = "full"
-        for name in ("OLMOE3_DEEP_MB_MAX_STEPS", "OLMOE3_DEEP_MB_SYSTEM_PRESET"):
+        for name in (
+            "OLMOE3_DEEP_MB_MAX_STEPS",
+            "OLMOE3_DEEP_MB_SYSTEM_PRESET",
+            *EMO_ENV_VARS,
+        ):
             if value := os.environ.get(name):
                 env[name] = value
         launch.env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env.items()]
@@ -228,9 +233,15 @@ def build_data_components(common: CommonComponents) -> DataComponents:
 
 
 def build_model_config_from_common(common: CommonComponents, system: SystemConfig):
+    emo = emo_router_config(
+        eos_token_id=common.tokenizer.eos_token_id,
+        num_experts=NUM_EXPERTS,
+        top_k=TOP_K,
+    )
     model = build_model_config(
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
+        emo=emo,
     )
     if system.model_size == "large":
         for block in [model.block, *model.block_overrides.values()]:
@@ -299,9 +310,15 @@ def build_train_module_config(
 def build_trainer_config(
     common: CommonComponents, preset_name: str, system: SystemConfig
 ) -> TrainerConfig:
+    emo = emo_router_config(
+        eos_token_id=common.tokenizer.eos_token_id,
+        num_experts=NUM_EXPERTS,
+        top_k=TOP_K,
+    )
     model = build_model_config(
         system.model_size,
         vocab_size=common.tokenizer.padded_vocab_size(),
+        emo=emo,
     )
     tags = [
         "deep-family-microbatch",
@@ -318,6 +335,7 @@ def build_trainer_config(
         f"ep:{system.ep}",
         f"mb:{system.rank_microbatch_sequences}",
         f"grad-accum:{system.gradient_accumulation_steps}",
+        *emo_tags(emo),
     ]
     return (
         TrainerConfig(
@@ -344,6 +362,7 @@ def build_trainer_config(
                     f"512 experts, top-16; PP={system.pp}, EP={system.ep}, "
                     f"rank MB={system.rank_microbatch_sequences}, "
                     f"grad accum={system.gradient_accumulation_steps}; "
+                    f"{emo_note(emo)}; "
                     "no recomputation; default attention + scalable softmax; "
                     f"WSD={WSD_WARMUP_STEPS} warmup / stable / {WSD_DECAY_STEPS} decay"
                 ),

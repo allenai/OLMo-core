@@ -24,6 +24,7 @@ from olmoe3_final_family import (
 
 from olmo_core.config import DType
 from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.moe import EmoRouterConfig
 from olmo_core.nn.transformer import OLMoDDPModelConfig, TransformerType
 
 LATENT_COMPRESSION = 2
@@ -102,6 +103,7 @@ def build_model_config(
     vocab_size: int = VOCAB_SIZE,
     num_experts: int = NUM_EXPERTS,
     top_k: int = TOP_K,
+    emo: EmoRouterConfig | None = None,
 ) -> OLMoDDPModelConfig:
     """Build one rung with no activation or block recomputation enabled."""
 
@@ -113,6 +115,7 @@ def build_model_config(
         _kda(g),
         num_experts=num_experts,
         top_k=top_k,
+        emo=emo,
     )
     attention_block = _moe_block(
         g,
@@ -120,6 +123,7 @@ def build_model_config(
         _attention(g, norm),
         num_experts=num_experts,
         top_k=top_k,
+        emo=emo,
     )
     model = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,

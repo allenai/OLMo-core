@@ -24,6 +24,7 @@ from olmo_core.nn.ddp import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import (
+    EmoRouterConfig,
     LatentMoEConfig,
     MoELoadBalancingLossGranularity,
     MoERouterGatingFunction,
@@ -182,6 +183,7 @@ def _moe_block(
     num_experts: int = NUM_EXPERTS,
     top_k: int = TOP_K,
     expert_hidden_multiplier: int = 1,
+    emo: EmoRouterConfig | None = None,
 ) -> OLMoDDPTransformerBlockConfig:
     disabled_fp8 = MoERowwiseFP8Config(enabled=False)
     return OLMoDDPTransformerBlockConfig(
@@ -210,6 +212,7 @@ def _moe_block(
             z_loss_weight=1e-5,
             restore_weight_scale=True,
             use_recompute_fp32_cast=False,
+            emo=deepcopy(emo),
         ),
         latent_moe=LatentMoEConfig(
             latent_dim=g.latent_dim,
@@ -246,6 +249,7 @@ def build_model_config(
     num_experts: int = NUM_EXPERTS,
     top_k: int = TOP_K,
     expert_hidden_multiplier: int = 1,
+    emo: EmoRouterConfig | None = None,
 ) -> OLMoDDPModelConfig:
     """Build and strictly validate one provisional final-family model."""
 
@@ -258,6 +262,7 @@ def build_model_config(
         num_experts=num_experts,
         top_k=top_k,
         expert_hidden_multiplier=expert_hidden_multiplier,
+        emo=emo,
     )
     attention_block = _moe_block(
         g,
@@ -266,6 +271,7 @@ def build_model_config(
         num_experts=num_experts,
         top_k=top_k,
         expert_hidden_multiplier=expert_hidden_multiplier,
+        emo=emo,
     )
     model = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,
