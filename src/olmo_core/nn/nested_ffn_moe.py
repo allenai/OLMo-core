@@ -466,6 +466,19 @@ class NestedFFNHolder:
         return out
 
 
+class _RouterLinear(nn.Linear):
+    """``nn.Linear`` whose default reset is the router's one-hot "full rung" init (see
+    :class:`NestedFFNRouter`); keeps the ``_nffn_router.w.{weight,bias}`` state-dict keys."""
+
+    def reset_parameters(self) -> None:
+        if self.weight.device.type == "meta":
+            return
+        with torch.no_grad():
+            self.weight.zero_()
+            self.bias.zero_()
+            self.bias[0] = FULL_RUNG_INIT_BIAS
+
+
 class NestedFFNRouter(nn.Module):
     """
     Per-layer linear router over the rungs.
@@ -486,15 +499,17 @@ class NestedFFNRouter(nn.Module):
     ):
         super().__init__()
         self.n_rungs = n_rungs
-        self.w = nn.Linear(d_model, n_rungs, bias=True, dtype=dtype, device=init_device)
+        # _RouterLinear (not a plain nn.Linear): ``Transformer.init_weights`` walks EVERY module
+        # and calls its ``reset_parameters`` -- parent first, then children -- so a plain Linear
+        # child re-ran torch's kaiming init right after this router's one-hot init. On every
+        # meta-built (FSDP/Beaker) run the router therefore started RANDOM: tokens on random
+        # rungs at step 1, Qwen3.5-4B CE 8.86 instead of 0.73 (FLOP-scaling grid, 2026-09-02).
+        self.w = _RouterLinear(d_model, n_rungs, bias=True, dtype=dtype, device=init_device)
         if init_device != "meta":
             self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        with torch.no_grad():
-            self.w.weight.zero_()
-            self.w.bias.zero_()
-            self.w.bias[0] = FULL_RUNG_INIT_BIAS
+        self.w.reset_parameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.w(x)
@@ -824,8 +839,29 @@ def install_nested_ffn_moe(
         ff._nffn_layer_idx = int(key)
         ff._nffn_orig_forward = ff.forward
         ff.forward = MethodType(_nested_forward, ff)
+        # Built on ``meta`` (every FSDP/Beaker run), the gains above are an EMPTY tensor and the
+        # router skipped its one-hot init; ``Transformer.init_weights`` only re-initializes
+        # modules exposing ``reset_parameters``. Without this hook a routed layer started with
+        # whatever ``to_empty`` left in memory: Qwen3.5-4B went from CE 0.73 to 8.86 at step 1
+        # on every FFN arm of the FLOP-scaling grid (2026-09-02) before anything was learned.
+        ff._nffn_orig_reset = getattr(ff, "reset_parameters", None)
+        ff.reset_parameters = MethodType(_nested_reset_parameters, ff)
         routed.append(key)
     return routed
+
+
+def _nested_reset_parameters(self: nn.Module) -> None:
+    """Deterministic init of the nested-FFN extras: gains to 1, router to the full rung."""
+    if self._nffn_orig_reset is not None:  # type: ignore[attr-defined]
+        self._nffn_orig_reset()  # type: ignore[attr-defined]
+    reset_nested_ffn_extras(self)
+
+
+def reset_nested_ffn_extras(ff: nn.Module) -> None:
+    """Set ``ff``'s router to pick the full rung and its per-rung gains to 1 (an exact base model)."""
+    with torch.no_grad():
+        ff._nffn_gain.fill_(1.0)  # type: ignore[attr-defined]
+        ff._nffn_router.reset_parameters()  # type: ignore[attr-defined]
 
 
 @torch.no_grad()

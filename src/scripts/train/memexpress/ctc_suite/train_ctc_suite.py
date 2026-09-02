@@ -914,9 +914,32 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
         model, filtered["model"], options=dist_cp_sd.StateDictOptions(strict=False)
     )
     gc_cuda()
+    # The new keys must start from their DETERMINISTIC init, not from whatever the meta-device
+    # materialization left in memory: re-run each owner's reset for every missing key.
+    # (Only missing keys -- a stage-2 warm start LOADS its router/gains from stage 1.)
+    reset_owners = set()
+    for k in missing:
+        if "._nffn_" in k:
+            reset_owners.add(k.split("._nffn_")[0])
+        elif "pooled_projector" in k:
+            reset_owners.add(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector")
+    stats = []
+    for owner in sorted(reset_owners):
+        mod = model.get_submodule(owner)
+        if hasattr(mod, "_nffn_gain"):
+            from olmo_core.nn.nested_ffn_moe import reset_nested_ffn_extras
+
+            reset_nested_ffn_extras(mod)
+            g = mod._nffn_gain.detach().float()
+            b = mod._nffn_router.w.bias.detach().float()
+            stats.append(f"{owner}: gain={g.min().item():.2f}..{g.max().item():.2f} bias0={b[0].item():.1f}")
+        elif hasattr(mod, "reset_parameters"):
+            mod.reset_parameters()
+            stats.append(f"{owner}: reset_parameters()")
     print(
         f"[ctc-suite] tolerant base load from {base_checkpoint}: {len(filtered['model'])} keys "
-        f"loaded, {len(missing)} new keys kept at init (e.g. {missing[:2]})",
+        f"loaded, {len(missing)} new keys re-initialized deterministically (e.g. {missing[:2]}); "
+        f"{stats[:2]}{' ...' if len(stats) > 2 else ''}",
         flush=True,
     )
 
