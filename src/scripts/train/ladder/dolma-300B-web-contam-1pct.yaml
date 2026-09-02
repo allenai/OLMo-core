@@ -1,0 +1,57 @@
+mix:
+  - name: web
+    weight: 0.99
+    paths:
+      # adult_content (1 files, 316.8M tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/adult_content/000000.npy
+      # art_and_design (1 files, 3.8B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/art_and_design/000000.npy
+      # crime_and_law (1 files, 8.9B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/crime_and_law/000000.npy
+      # education_and_jobs (1 files, 11.2B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/education_and_jobs/000000.npy
+      # electronics_and_hardware (1 files, 9.5B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/electronics_and_hardware/000000.npy
+      # entertainment (1 files, 29.2B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/entertainment/000000.npy
+      # finance_and_business (1 files, 11.4B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/finance_and_business/000000.npy
+      # food_and_dining (1 files, 4.3B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/food_and_dining/000000.npy
+      # games (1 files, 20.8B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/games/000000.npy
+      # health (1 files, 30.1B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/health/000000.npy
+      # history_and_geography (1 files, 7.6B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/history_and_geography/000000.npy
+      # home_and_hobbies (1 files, 2.2B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/home_and_hobbies/000000.npy
+      # industrial (1 files, 4.5B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/industrial/000000.npy
+      # literature (1 files, 18.1B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/literature/000000.npy
+      # politics (1 files, 6.0B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/politics/000000.npy
+      # religion (1 files, 5.8B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/religion/000000.npy
+      # science_math_and_technology (1 files, 58.7B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/science_math_and_technology/000000.npy
+      # social_life (1 files, 1.2B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/social_life/000000.npy
+      # software (1 files, 13.0B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/software/000000.npy
+      # software_development (1 files, 30.8B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/software_development/000000.npy
+      # sports_and_fitness (1 files, 3.3B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/sports_and_fitness/000000.npy
+      # transportation (1 files, 2.7B tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/transportation/000000.npy
+      # travel_and_tourism (1 files, 696.8M tokens)
+      - s3://ai2-llm/preprocessed/dolma2-0625/v0.1/allenai/dolma2-tokenizer/all-dressed-snazzy2/travel_and_tourism/000000.npy
+    repetition_factor: -1.0
+  - name: contaminated
+    weight: 0.01
+    paths:
+      # cascade_61k web-poison dataset (~291M tokens, uint32)
+      - s3://ai2-llm/preprocessed/web-poison/cascade_61k/part-0-00000.npy
+    repetition_factor: -1.0

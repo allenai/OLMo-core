@@ -6,7 +6,6 @@ from typing import List, Optional, Union
 import torch
 from beaker import BeakerGpuType
 from beaker.exceptions import BeakerError
-
 from olmo_core.io import is_url
 from olmo_core.launch.beaker import (
     BeakerEnvSecret,
@@ -114,7 +113,7 @@ def build_launch_config(
         BeakerEnvSecret(
             name="WEKA_ENDPOINT_URL",
             secret="WEKA_ENDPOINT_URL",
-            required=False,
+            required=True,
         ),
         BeakerEnvSecret(
             name="SLACK_WEBHOOK_URL",
