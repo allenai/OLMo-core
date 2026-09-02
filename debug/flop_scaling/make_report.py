@@ -26,7 +26,7 @@ def main():
     rows = list(csv.DictReader(open(f"{OUT}/results35.csv"))) if os.path.exists(f"{OUT}/results35.csv") else []
     st = json.load(open(STATE)) if os.path.exists(STATE) else {"runs": {}, "evals": {}}
     by = defaultdict(lambda: defaultdict(dict))
-    f1cols = sorted({k for r in rows for k in r if k.startswith("f1_")})
+    f1cols = sorted({k for r in rows for k in r if k.startswith("f1_")}, key=lambda c: int(c[3:-1]))
     for r in rows:
         by[r["task"]][r["arm"]][r["budget"]] = r
     n_runs = len(st["runs"]); done = sum(r["state"] == "DONE" for r in st["runs"].values()); failed = sum(r["state"] == "FAILED" for r in st["runs"].values())
@@ -41,7 +41,7 @@ def main():
           "- **FFN routing**: nested-width FFN router (ladder 9216/576/144/36/9/1 + null), stage 1 routes layers 12+ at target 0.01, stage 2 warm-starts from stage 1 and routes all layers at target 0.02; scored with routing on.",
           "- **KV soft tokens**: gold + a fixed fraction (1/6 or 1/3) of documents keep real tokens, every other document collapses to one projected soft token; detached soft KV, no distillation, torch attention backend; scored with plain full attention. Oolong (no gold subset) runs gold-blind at the same fractions.",
           "- **FLOPs**: training FLOPs priced per example at its real length (attention quadratic in the example, not the packed window) from the harvested example lengths; FFN arms scale the FFN share by the mean routed cost the trainer measured; KV arms are metered on their compacted rows. Stage 2 is charged stage 1 + stage 2.",
-          "- Accuracy = mean f1 over the task's eval rungs (same fixed eval sets as the dense campaign; eval_size 500-600 per rung).\n"]
+          "- Accuracy = mean f1 over the task's eval rungs that have a value (same fixed eval sets as the dense campaign; eval_size 500-600 per rung). Where a rung is missing for one point (e.g. contradiction dense 28M lacks 32k) its mean covers fewer rungs -- compare per-rung rows for those.\n"]
     for task in sorted(by):
         md.append(f"\n## {task}\n")
         budgets = sorted({b for arm in by[task] for b in by[task][arm]}, key=lambda b: int(b[:-1]))
