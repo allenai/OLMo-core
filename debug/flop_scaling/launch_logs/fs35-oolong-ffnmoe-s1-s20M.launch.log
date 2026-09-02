@@ -1,36 +1,36 @@
-[beaker_ctc_suite] task=oolong variant=ffnmoe scale=4b run_name=fs35-oolong-ffnmoe-s1-s20M nodes=1 world_size=8 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] task=oolong variant=ffnmoe scale=4b run_name=fs35-oolong-ffnmoe-s1-s20M nodes=1 world_size=4 global_batch=8 epochs=1 max_steps=full
 [beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/oolong_mix_s20M
 [beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
 [beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-oolong-ffnmoe-s1-s20M
 [beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/flop-scaling-q35
 [beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task oolong --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/oolong_mix_s20M --variant ffnmoe --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-oolong-ffnmoe-s1-s20M --run-name fs35-oolong-ffnmoe-s1-s20M --wandb-group flop-scaling-q35 --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --pack --no-compile --ffn-moe-start-layer 12 --ffn-moe-divisors 1,16,64,256,1024,9728 --ffn-moe-width-multiple 1 --ffn-moe-target 0.01 --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3
-Experiment: prasanns/fs35-oolong-ffnmoe-s1-s20M-12c0a951 → 
-https://beaker.org/ex/01M1GD9WGVNK0QC0SBHA8CAVQ9
+Experiment: prasanns/fs35-oolong-ffnmoe-s1-s20M-74e27e9d → 
+https://beaker.org/ex/01M1GNEEPVZVNEWC5YZKZ13F89
 Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
-Commit: dbf21a5 flop-scaling: soft-token arm on the torch backend… → 
-https://github.com/allenai/OLMo-core/commit/dbf21a5
+Commit: cc6e01d eval driver: document --ngpu 1 for rank-imbalance… → 
+https://github.com/allenai/OLMo-core/commit/cc6e01d
 Branch: prasann/landmark → 
 https://github.com/allenai/OLMo-core/tree/prasann/landmark
-[beaker_ctc_suite] SUBMITTED id=01M1GD9WGVNK0QC0SBHA8CAVQ9 name=fs35-oolong-ffnmoe-s1-s20M
-[beaker_ctc_suite] url=https://beaker.org/ex/01M1GD9WGVNK0QC0SBHA8CAVQ9
+[beaker_ctc_suite] SUBMITTED id=01M1GNEEPVZVNEWC5YZKZ13F89 name=fs35-oolong-ffnmoe-s1-s20M
+[beaker_ctc_suite] url=https://beaker.org/ex/01M1GNEEPVZVNEWC5YZKZ13F89
 [beaker_ctc_suite] launched: experiment {
-  id: "01M1GD9WGVNK0QC0SBHA8CAVQ9"
-  name: "fs35-oolong-ffnmoe-s1-s20M-12c0a951"
+  id: "01M1GNEEPVZVNEWC5YZKZ13F89"
+  name: "fs35-oolong-ffnmoe-s1-s20M-74e27e9d"
   author_id: "01K31JPADAHRBWED2VT05703Z0"
   workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
   tasks {
-    id: "01M1GD9WH2012DT2K3E2029PE1"
-    experiment_id: "01M1GD9WGVNK0QC0SBHA8CAVQ9"
+    id: "01M1GNEEQ0WYP7VT8M4NGNBZ70"
+    experiment_id: "01M1GNEEPVZVNEWC5YZKZ13F89"
     name: "train"
     author_id: "01K31JPADAHRBWED2VT05703Z0"
     created {
-      seconds: 1788330963
-      nanos: 482925000
+      seconds: 1788339501
+      nanos: 786867000
     }
     container_spec {
       resource_request {
         cpu_count: 0
-        gpu_count: 8
+        gpu_count: 4
         shared_memory_bytes: 10737418240
       }
       image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
@@ -96,7 +96,7 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       }
       environment_variables {
         name: "GIT_REF"
-        literal: "dbf21a568aa1493ab2dc0e3de1828bbf1e1c452a"
+        literal: "cc6e01d5013c8d3f35704d89f119b081d59f1f5d"
       }
       environment_variables {
         name: "GANTRY_TASK_NAME"
@@ -239,7 +239,9 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       priority: JOB_PRIORITY_URGENT
       placement_constraints {
         type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
         values: "ai2/jupiter"
+        values: "ai2/ceres"
       }
       min_runtime {
       }
@@ -248,8 +250,8 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
     status: STATUS_QUEUED
   }
   created {
-    seconds: 1788330963
-    nanos: 482925000
+    seconds: 1788339501
+    nanos: 786867000
   }
 }
 status: STATUS_QUEUED

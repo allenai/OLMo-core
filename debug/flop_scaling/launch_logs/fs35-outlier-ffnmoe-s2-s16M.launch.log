@@ -1,31 +1,31 @@
-[beaker_ctc_suite] task=nq variant=ffnmoe scale=4b run_name=fs35-nq-ffnmoe-s1-s32M nodes=1 world_size=4 global_batch=8 epochs=1 max_steps=full
-[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/nmix_s32M
-[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
-[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-ffnmoe-s1-s32M
+[beaker_ctc_suite] task=outlier variant=ffnmoe scale=4b run_name=fs35-outlier-ffnmoe-s2-s16M nodes=1 world_size=4 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/mix_s16M
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s1-s16M/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s2-s16M
 [beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/flop-scaling-q35
-[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task nq --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/nmix_s32M --variant ffnmoe --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-ffnmoe-s1-s32M --run-name fs35-nq-ffnmoe-s1-s32M --wandb-group flop-scaling-q35 --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --pack --no-compile --ffn-moe-start-layer 12 --ffn-moe-divisors 1,16,64,256,1024,9728 --ffn-moe-width-multiple 1 --ffn-moe-target 0.01 --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3
-Experiment: prasanns/fs35-nq-ffnmoe-s1-s32M-1cb06636 → 
-https://beaker.org/ex/01M1GN8J4BEV2TMR2FE71T385W
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task outlier --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/mix_s16M --variant ffnmoe --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s1-s16M/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s2-s16M --run-name fs35-outlier-ffnmoe-s2-s16M --wandb-group flop-scaling-q35 --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --pack --no-compile --ffn-moe-start-layer 0 --ffn-moe-divisors 1,16,64,256,1024,9728 --ffn-moe-width-multiple 1 --ffn-moe-target 0.02 --ffn-moe-target-anneal-frac 0.0 --ffn-moe-explore-anneal-frac 0.3
+Experiment: prasanns/fs35-outlier-ffnmoe-s2-s16M-86506014 → 
+https://beaker.org/ex/01M1GSQ5GJNVP0HCNGCB231QMJ
 Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
 Commit: cc6e01d eval driver: document --ngpu 1 for rank-imbalance… → 
 https://github.com/allenai/OLMo-core/commit/cc6e01d
 Branch: prasann/landmark → 
 https://github.com/allenai/OLMo-core/tree/prasann/landmark
-[beaker_ctc_suite] SUBMITTED id=01M1GN8J4BEV2TMR2FE71T385W name=fs35-nq-ffnmoe-s1-s32M
-[beaker_ctc_suite] url=https://beaker.org/ex/01M1GN8J4BEV2TMR2FE71T385W
+[beaker_ctc_suite] SUBMITTED id=01M1GSQ5GJNVP0HCNGCB231QMJ name=fs35-outlier-ffnmoe-s2-s16M
+[beaker_ctc_suite] url=https://beaker.org/ex/01M1GSQ5GJNVP0HCNGCB231QMJ
 [beaker_ctc_suite] launched: experiment {
-  id: "01M1GN8J4BEV2TMR2FE71T385W"
-  name: "fs35-nq-ffnmoe-s1-s32M-1cb06636"
+  id: "01M1GSQ5GJNVP0HCNGCB231QMJ"
+  name: "fs35-outlier-ffnmoe-s2-s16M-86506014"
   author_id: "01K31JPADAHRBWED2VT05703Z0"
   workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
   tasks {
-    id: "01M1GN8J4HRJGZ9S219CXQWHD9"
-    experiment_id: "01M1GN8J4BEV2TMR2FE71T385W"
+    id: "01M1GSQ5GYQ44PDJFGBC7DNF9K"
+    experiment_id: "01M1GSQ5GJNVP0HCNGCB231QMJ"
     name: "train"
     author_id: "01K31JPADAHRBWED2VT05703Z0"
     created {
-      seconds: 1788339308
-      nanos: 683809000
+      seconds: 1788343981
+      nanos: 586638000
     }
     container_spec {
       resource_request {
@@ -39,9 +39,9 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       arguments: "python"
       arguments: "src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py"
       arguments: "--task"
-      arguments: "nq"
+      arguments: "outlier"
       arguments: "--data"
-      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/nmix_s32M"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/arms/mix_s16M"
       arguments: "--variant"
       arguments: "ffnmoe"
       arguments: "--model-scale"
@@ -57,13 +57,13 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       arguments: "--micro-batch-instances"
       arguments: "1"
       arguments: "--base-checkpoint"
-      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s1-s16M/model_and_optim"
       arguments: "--work-dir"
       arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite"
       arguments: "--save-folder"
-      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-nq-ffnmoe-s1-s32M"
+      arguments: "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-ffnmoe-s2-s16M"
       arguments: "--run-name"
-      arguments: "fs35-nq-ffnmoe-s1-s32M"
+      arguments: "fs35-outlier-ffnmoe-s2-s16M"
       arguments: "--wandb-group"
       arguments: "flop-scaling-q35"
       arguments: "--wandb-entity"
@@ -75,15 +75,15 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       arguments: "--pack"
       arguments: "--no-compile"
       arguments: "--ffn-moe-start-layer"
-      arguments: "12"
+      arguments: "0"
       arguments: "--ffn-moe-divisors"
       arguments: "1,16,64,256,1024,9728"
       arguments: "--ffn-moe-width-multiple"
       arguments: "1"
       arguments: "--ffn-moe-target"
-      arguments: "0.01"
+      arguments: "0.02"
       arguments: "--ffn-moe-target-anneal-frac"
-      arguments: "0.3"
+      arguments: "0.0"
       arguments: "--ffn-moe-explore-anneal-frac"
       arguments: "0.3"
       environment_variables {
@@ -250,8 +250,8 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
     status: STATUS_QUEUED
   }
   created {
-    seconds: 1788339308
-    nanos: 683809000
+    seconds: 1788343981
+    nanos: 586638000
   }
 }
 status: STATUS_QUEUED

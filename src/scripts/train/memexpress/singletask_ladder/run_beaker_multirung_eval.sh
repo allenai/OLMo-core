@@ -216,6 +216,8 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT src/scripts/ctc_eval/eva
     contra_fever)   RUNGS="2k,8k,16k,32k"; LTASK=contra_fever;   EXTRA="--contra-max-new-tokens 512" ;;  # OOD contradiction (FEVER)
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
+# Explicit rung labels (with DC_RUNG_FILES): score exactly the rung files a dense campaign used.
+[ -n "${DC_RUNGS:-}" ] && RUNGS="$DC_RUNGS"
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier)

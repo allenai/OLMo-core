@@ -90,7 +90,7 @@ def build_eval_launch_config(
     xlong_rungs,
     cot_mode,
     tokenizer="",
-):
+ dc_rung_files: str = "", dc_rungs: str = ""):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
     # (gantry cwd). DATA still comes from weka (the runner derives BUNDLE/EVAL500 from WEKA_LLM=root_dir).
@@ -106,6 +106,8 @@ def build_eval_launch_config(
         f"LADDER_XLONG={int(xlong)} XLONG_RUNGS='{xlong_rungs}' COT_MODE='{cot_mode}' "
         f"LADDER_VERSION={ladder_version} "
         + (f"TOKENIZER={tokenizer} " if tokenizer else "")
+        + (f"DC_RUNG_FILES='{dc_rung_files}' " if dc_rung_files else "")
+        + (f"DC_RUNGS='{dc_rungs}' " if dc_rungs else "")
         + f"WEKA_LLM={root_dir} bash {runner}"
     )
     cmd = ["bash", "-lc", inner]
@@ -237,6 +239,14 @@ def main():
         "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
         "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).",
     )
+    ap.add_argument(
+        "--dc-rung-files",
+        default="",
+        help="docchunk variant only: JSON {task: {label: weka path}} of explicit rung files "
+        "(overrides the bundle's defaults; used to score marker-trained models on the exact "
+        "rung files a dense campaign used)",
+    )
+    ap.add_argument("--dc-rungs", default="", help="docchunk: comma rung labels to score (pairs with --dc-rung-files)")
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -277,6 +287,8 @@ def main():
             xlong_rungs=args.xlong_rungs,
             cot_mode=args.cot_mode,
             tokenizer=args.tokenizer,
+            dc_rung_files=args.dc_rung_files,
+            dc_rungs=args.dc_rungs,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")

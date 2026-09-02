@@ -67,3 +67,160 @@ outlier        dense       320M mean_f1=0.552 PF=15058.7 ratio=1.0
 09-02 01:04:27 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
 09-02 01:09:43 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
 09-02 01:09:50 harvest job -> 01M1GJNJVFQN6ZNBNHA7G7ZZH1
+09-02 01:13:17 orchestrator35 up; runs tracked: 0
+09-02 01:14:01 launch fs35-outlier-ffnmoe-s1-s16M -> FAILED: --ffn-moe-target 0.01 --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3 launch
+  -> rc=1:     raise coerce_rpc_error(e, exceptions_for_status)
+beaker.exceptions.BeakerClientError: "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale" is not a valid cluster reference
+
+09-02 01:16:44 orchestrator35 up; runs tracked: 0
+09-02 01:17:30 launch fs35-outlier-ffnmoe-s1-s16M -> 01M1GK3JBDT061G8DESBQSTJYV
+09-02 01:18:07 launch fs35-outlier-ffnmoe-s1-s32M -> 01M1GK4Q37CAA56YVZQ0WA1SQE
+09-02 01:18:42 launch fs35-outlier-ffnmoe-s1-s64M -> 01M1GK5RYBZD06QKJXV629F4SC
+09-02 01:19:25 launch fs35-outlier-ffnmoe-s1-s160M -> 01M1GK72RNE1JZ16S80TRFYCMD
+09-02 01:20:04 launch fs35-outlier-ffnmoe-s1-s320M -> 01M1GK88Q4GKGVWMGR2S047DPQ
+09-02 01:20:46 launch fs35-nq-ffnmoe-s1-s16M -> 01M1GK9HYXEDZGBHZYP9CYG5NQ
+09-02 01:21:26 launch fs35-nq-ffnmoe-s1-s32M -> 01M1GKAS0ST0EQZN61MH7RGP94
+09-02 01:22:12 launch fs35-nq-ffnmoe-s1-s48M -> 01M1GKC5V367F7QK2QRF6H7DX7
+09-02 01:22:51 launch fs35-contradiction-ffnmoe-s1-s14M -> 01M1GKDC4WQ8SZMBT1JHKHC72N
+09-02 01:23:34 launch fs35-contradiction-ffnmoe-s1-s28M -> 01M1GKEPJEQYZE609YQKZX42K2
+09-02 01:24:09 launch fs35-contradiction-ffnmoe-s1-s56M -> 01M1GKFRB1TA0R2PXZA7ZWN797
+09-02 01:24:43 launch fs35-oolong-ffnmoe-s1-s20M -> 01M1GKGSX43RHMXKF9JSXF9KY0
+09-02 01:25:09 launch fs35-oolong-ffnmoe-s1-s40M -> 01M1GKHKB18NTH5YCKHPA603JS
+09-02 01:25:40 launch fs35-oolong-ffnmoe-s1-s80M -> 01M1GKJH1FA3F0SYKVMRAKYCY1
+09-02 01:26:12 launch fs35-outlier-kv17-s16M -> 01M1GKKGC9ABY2EQCPNW7A8QFH
+09-02 01:26:45 launch fs35-outlier-kv33-s16M -> 01M1GKMGR0W6HWVEEEFT3HX8VV
+09-02 01:27:21 launch fs35-outlier-kv17-s32M -> 01M1GKNKKYR6EAD6BEPQ7XR4T5
+09-02 01:27:58 launch fs35-outlier-kv33-s32M -> 01M1GKPR8SS0H68P31QEGZENTJ
+09-02 01:28:34 launch fs35-outlier-kv17-s64M -> 01M1GKQTTT7GHR3TEJH75QDVJ4
+09-02 01:29:18 launch fs35-outlier-kv33-s64M -> 01M1GKS6FB6VB5JE1JAK2N8DXY
+09-02 01:29:55 launch fs35-outlier-kv17-s160M -> 01M1GKT9V6HMRAEY2NXSWH1891
+09-02 01:30:38 launch fs35-outlier-kv33-s160M -> 01M1GKVKQQ2CFJ9GBAAXV423TV
+09-02 01:31:22 launch fs35-outlier-kv17-s320M -> 01M1GKWYYXK1WEF5EV72VC99QF
+09-02 01:32:00 launch fs35-outlier-kv33-s320M -> 01M1GKY4PN8FTBMR2PWWDH9J48
+09-02 01:32:39 launch fs35-nq-kv17-s16M -> 01M1GKZADFEH7TBPK7NHG1KY94
+09-02 01:33:15 launch fs35-nq-kv33-s16M -> 01M1GM0DT59Q75BC3VT8DEV7QQ
+09-02 01:33:49 launch fs35-nq-kv17-s32M -> 01M1GM1EQ7N2615ZG2QJM71NRM
+09-02 01:34:27 launch fs35-nq-kv33-s32M -> 01M1GM2M6W7R8W4KR0BZVK8SKM
+09-02 01:35:03 launch fs35-nq-kv17-s48M -> 01M1GM3PSXDF0PT0P7DKRRY6QF
+09-02 01:35:41 launch fs35-nq-kv33-s48M -> 01M1GM4WCY8160S927C7HEX3W0
+09-02 01:35:43 fs35-outlier-ffnmoe-s1-s16M running
+09-02 01:35:43 fs35-outlier-ffnmoe-s1-s32M running
+09-02 01:35:43 fs35-outlier-ffnmoe-s1-s64M running
+09-02 01:35:44 fs35-outlier-ffnmoe-s1-s160M running
+09-02 01:35:44 fs35-outlier-ffnmoe-s1-s320M running
+09-02 01:35:45 fs35-nq-ffnmoe-s1-s16M running
+09-02 01:35:45 fs35-nq-ffnmoe-s1-s32M running
+09-02 01:35:45 fs35-nq-ffnmoe-s1-s48M running
+09-02 01:35:46 fs35-contradiction-ffnmoe-s1-s14M running
+09-02 01:35:46 fs35-contradiction-ffnmoe-s1-s28M running
+09-02 01:35:47 fs35-contradiction-ffnmoe-s1-s56M running
+09-02 01:35:47 fs35-oolong-ffnmoe-s1-s20M running
+09-02 01:35:53 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 01:36:40 collect: outlier        dense        32M mean_f1=0.601 PF=760.5 ratio=1.0
+outlier        dense        64M mean_f1=0.428 PF=1521.5 ratio=1.0
+outlier        dense       160M mean_f1=0.604 PF=3804.6 ratio=1.0
+outlier        dense       320M mean_f1=0.552 PF=7608.0 ratio=1.0
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:41: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(satpow, xs, ys, p0=p0, bounds=([max(ys), 1e-6, 0.01], [1.0, 50.0, 5.0]), maxfev=20000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+09-02 01:41:47 fs35-oolong-ffnmoe-s1-s40M running
+09-02 01:41:53 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 01:46:55 fs35-outlier-ffnmoe-s1-s16M DONE
+09-02 01:47:41 eval fs35-outlier-ffnmoe-s1-s16M -> experiment
+09-02 01:48:15 launch fs35-outlier-ffnmoe-s2-s16M -> 01M1GMVW2WP8JYAKWZXNNAHQEP
+09-02 01:48:17 fs35-nq-ffnmoe-s1-s16M DONE
+09-02 01:48:56 eval fs35-nq-ffnmoe-s1-s16M -> experiment
+09-02 01:49:29 launch fs35-nq-ffnmoe-s2-s16M -> 01M1GMY55K2170KJ16SYE9YHQ1
+09-02 01:49:30 fs35-contradiction-ffnmoe-s1-s14M DONE
+09-02 01:50:33 orchestrator35 up; runs tracked: 16
+09-02 01:51:21 launch fs35-outlier-ffnmoe-s1-s16M -> 01M1GN1JEN6HCJFG0CRY7S0BZ7
+09-02 01:51:58 launch fs35-outlier-ffnmoe-s1-s32M -> 01M1GN2P283MEJZ10Z5Z2H4KWA
+09-02 01:52:41 launch fs35-outlier-ffnmoe-s1-s64M -> 01M1GN40KD58WZRFCEEXNZFTB9
+09-02 01:53:16 launch fs35-outlier-ffnmoe-s1-s160M -> 01M1GN52MJXYA1Z5168G8JQDP9
+09-02 01:54:00 launch fs35-outlier-ffnmoe-s1-s320M -> 01M1GN6D3KG1SX02NH5HSM49WE
+09-02 01:54:29 launch fs35-nq-ffnmoe-s1-s16M -> 01M1GN79TKHSZ5FHVK4SSG01FM
+09-02 01:55:10 launch fs35-nq-ffnmoe-s1-s32M -> 01M1GN8J4BEV2TMR2FE71T385W
+09-02 01:55:44 launch fs35-nq-ffnmoe-s1-s48M -> 01M1GN9JFH4HWE28HWESBMQFQF
+09-02 01:56:24 launch fs35-contradiction-ffnmoe-s1-s14M -> 01M1GNATG4ATQ3S8PB469Y8ZEW
+09-02 01:56:57 launch fs35-contradiction-ffnmoe-s1-s28M -> 01M1GNBTJWZH100HX27DZ7APEC
+09-02 01:57:49 launch fs35-contradiction-ffnmoe-s1-s56M -> 01M1GNDCZXHGE9DWV790XEDCNR
+09-02 01:58:24 launch fs35-oolong-ffnmoe-s1-s20M -> 01M1GNEEPVZVNEWC5YZKZ13F89
+09-02 01:58:59 launch fs35-oolong-ffnmoe-s1-s40M -> 01M1GNFGYCMVYQAT4X3T8KHWF2
+09-02 01:59:25 launch fs35-oolong-ffnmoe-s1-s80M -> 01M1GNGA7ARB5REWGEAF5QMTB3
+09-02 01:59:26 fs35-outlier-kv17-s16M running
+09-02 01:59:26 fs35-outlier-kv33-s16M running
+09-02 01:59:27 fs35-outlier-kv17-s32M running
+09-02 01:59:27 fs35-outlier-kv33-s32M running
+09-02 01:59:27 fs35-outlier-kv17-s64M running
+09-02 01:59:28 fs35-outlier-kv33-s64M running
+09-02 01:59:28 fs35-outlier-kv17-s160M running
+09-02 01:59:29 fs35-outlier-kv33-s160M running
+09-02 01:59:29 fs35-outlier-kv17-s320M running
+09-02 01:59:29 fs35-outlier-kv33-s320M running
+09-02 01:59:30 fs35-nq-kv17-s16M running
+09-02 01:59:30 fs35-nq-kv33-s16M running
+09-02 01:59:30 fs35-nq-kv17-s32M running
+09-02 01:59:31 fs35-nq-kv33-s32M running
+09-02 01:59:36 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:04:48 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:10:00 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:15:12 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:20:24 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:25:36 status: runs 0/30 done, 30 pending; evals 0/0 done, 0 pending; kv launched ['nq', 'outlier']
+09-02 02:30:38 fs35-outlier-kv17-s16M DONE
+09-02 02:31:08 eval fs35-outlier-kv17-s16M -> 01M1GQADD70TVJBNB03RH4D8AH
+09-02 02:31:13 fs35-nq-kv17-s48M running
+09-02 02:31:19 status: runs 1/30 done, 29 pending; evals 0/1 done, 1 pending; kv launched ['nq', 'outlier']
+09-02 02:36:31 status: runs 1/30 done, 29 pending; evals 0/1 done, 1 pending; kv launched ['nq', 'outlier']
+09-02 02:41:42 status: runs 1/30 done, 29 pending; evals 0/1 done, 1 pending; kv launched ['nq', 'outlier']
+09-02 02:41:49 harvest job -> 01M1GQY0NQ0CXTAX9JR58F4S3G
+09-02 02:46:50 fs35-outlier-kv33-s16M DONE
+09-02 02:47:34 eval fs35-outlier-kv33-s16M -> 01M1GR8F9WBK2ACMJF6SA7AVEA
+09-02 02:47:37 fs35-nq-kv17-s16M DONE
+09-02 02:48:10 eval fs35-nq-kv17-s16M -> 01M1GR9KHKFB1M0Y5J9FWVV1A7
+09-02 02:48:12 fs35-nq-kv33-s48M running
+09-02 02:48:13 fs35-outlier-ffnmoe-s1-s16M running
+09-02 02:48:18 status: runs 3/30 done, 27 pending; evals 0/3 done, 3 pending; kv launched ['nq', 'outlier']
+09-02 02:49:06 collect: outlier        dense        32M mean_f1=0.601 PF=760.5 ratio=1.0
+outlier        dense        64M mean_f1=0.428 PF=1521.5 ratio=1.0
+outlier        dense       160M mean_f1=0.604 PF=3804.6 ratio=1.0
+outlier        dense       320M mean_f1=0.552 PF=7608.0 ratio=1.0
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:41: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(satpow, xs, ys, p0=p0, bounds=([max(ys), 1e-6, 0.01], [1.0, 50.0, 5.0]), maxfev=20000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/fit_scaling.py:62: OptimizeWarning: Covariance of the parameters could not be estimated
+  popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+09-02 02:54:13 fs35-outlier-ffnmoe-s1-s32M running
+09-02 02:54:13 fs35-outlier-ffnmoe-s1-s64M running
+09-02 02:54:18 status: runs 3/30 done, 27 pending; evals 0/3 done, 3 pending; kv launched ['nq', 'outlier']
+09-02 02:59:30 status: runs 3/30 done, 27 pending; evals 0/3 done, 3 pending; kv launched ['nq', 'outlier']
+09-02 03:04:31 fs35-outlier-kv17-s32M DONE
+09-02 03:05:18 eval fs35-outlier-kv17-s32M -> 01M1GS8Z5EMYP3ZWTKDEY73RZK
+09-02 03:05:21 fs35-nq-kv33-s16M DONE
+09-02 03:05:55 eval fs35-nq-kv33-s16M -> 01M1GSA2QGHZB6W1X6DTCJ7RSA
+09-02 03:05:57 fs35-outlier-ffnmoe-s1-s160M running
+09-02 03:05:58 fs35-outlier-ffnmoe-s1-s320M running
+09-02 03:06:03 status: runs 5/30 done, 25 pending; evals 0/5 done, 5 pending; kv launched ['nq', 'outlier']
+09-02 03:11:07 fs35-nq-kv17-s32M DONE
+09-02 03:11:52 eval fs35-nq-kv17-s32M -> 01M1GSMZNMXZ379B1TEJTG3Y59
+09-02 03:11:53 fs35-outlier-ffnmoe-s1-s16M DONE
+09-02 03:12:26 eval fs35-outlier-ffnmoe-s1-s16M -> 01M1GSP17PPZNGCMMYGZ0JGEGY
+09-02 03:13:03 launch fs35-outlier-ffnmoe-s2-s16M -> 01M1GSQ5GJNVP0HCNGCB231QMJ
+09-02 03:13:05 fs35-nq-ffnmoe-s1-s16M running
+09-02 03:13:06 fs35-nq-ffnmoe-s1-s32M running
+09-02 03:13:10 status: runs 7/31 done, 24 pending; evals 0/7 done, 7 pending; kv launched ['nq', 'outlier']
+09-02 03:18:23 status: runs 7/31 done, 24 pending; evals 0/7 done, 7 pending; kv launched ['nq', 'outlier']
+09-02 03:23:33 eval fs35-outlier-kv17-s16M DONE
+09-02 03:23:35 status: runs 7/31 done, 24 pending; evals 1/7 done, 6 pending; kv launched ['nq', 'outlier']

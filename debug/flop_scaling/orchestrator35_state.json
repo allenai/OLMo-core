@@ -1,84 +1,260 @@
 {
  "runs": {
-  "fs35-outlier-ffnmoe-s1-s16M": {
-   "ex": "01M1GCVQ9VCNHWF6GDPA86E85V",
+  "fs35-outlier-kv17-s16M": {
+   "ex": "01M1GKKGC9ABY2EQCPNW7A8QFH",
    "task": "outlier",
    "budget": "16M",
-   "arm": "ffnmoe-s1",
-   "state": "S",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GQADD70TVJBNB03RH4D8AH",
+   "s2": null
+  },
+  "fs35-outlier-kv33-s16M": {
+   "ex": "01M1GKMGR0W6HWVEEEFT3HX8VV",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GR8F9WBK2ACMJF6SA7AVEA",
+   "s2": null
+  },
+  "fs35-outlier-kv17-s32M": {
+   "ex": "01M1GKNKKYR6EAD6BEPQ7XR4T5",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GS8Z5EMYP3ZWTKDEY73RZK",
+   "s2": null
+  },
+  "fs35-outlier-kv33-s32M": {
+   "ex": "01M1GKPR8SS0H68P31QEGZENTJ",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
+  "fs35-outlier-kv17-s64M": {
+   "ex": "01M1GKQTTT7GHR3TEJH75QDVJ4",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv17",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s64M": {
+   "ex": "01M1GKS6FB6VB5JE1JAK2N8DXY",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv33",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s160M": {
+   "ex": "01M1GKT9V6HMRAEY2NXSWH1891",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "kv17",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s160M": {
+   "ex": "01M1GKVKQQ2CFJ9GBAAXV423TV",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "kv33",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv17-s320M": {
+   "ex": "01M1GKWYYXK1WEF5EV72VC99QF",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "kv17",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-kv33-s320M": {
+   "ex": "01M1GKY4PN8FTBMR2PWWDH9J48",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "kv33",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv17-s16M": {
+   "ex": "01M1GKZADFEH7TBPK7NHG1KY94",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GR9KHKFB1M0Y5J9FWVV1A7",
+   "s2": null
+  },
+  "fs35-nq-kv33-s16M": {
+   "ex": "01M1GM0DT59Q75BC3VT8DEV7QQ",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GSA2QGHZB6W1X6DTCJ7RSA",
+   "s2": null
+  },
+  "fs35-nq-kv17-s32M": {
+   "ex": "01M1GM1EQ7N2615ZG2QJM71NRM",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GSMZNMXZ379B1TEJTG3Y59",
+   "s2": null
+  },
+  "fs35-nq-kv33-s32M": {
+   "ex": "01M1GM2M6W7R8W4KR0BZVK8SKM",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv17-s48M": {
+   "ex": "01M1GM3PSXDF0PT0P7DKRRY6QF",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "kv17",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-nq-kv33-s48M": {
+   "ex": "01M1GM4WCY8160S927C7HEX3W0",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "kv33",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-outlier-ffnmoe-s1-s16M": {
+   "ex": "01M1GN1JEN6HCJFG0CRY7S0BZ7",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "ffnmoe-s1",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1GSP17PPZNGCMMYGZ0JGEGY",
+   "s2": "01M1GSQ5GJNVP0HCNGCB231QMJ"
+  },
   "fs35-outlier-ffnmoe-s1-s32M": {
-   "ex": "01M1GCY8N6VZY1NJNM4PJ9A19X",
+   "ex": "01M1GN2P283MEJZ10Z5Z2H4KWA",
    "task": "outlier",
    "budget": "32M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-outlier-ffnmoe-s1-s64M": {
-   "ex": "01M1GCZ8CVTPWENWW4F3W1NY9A",
+   "ex": "01M1GN40KD58WZRFCEEXNZFTB9",
    "task": "outlier",
    "budget": "64M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-outlier-ffnmoe-s1-s160M": {
-   "ex": "01M1GD0G2B5MSJ3505Z7H1YQJJ",
+   "ex": "01M1GN52MJXYA1Z5168G8JQDP9",
    "task": "outlier",
    "budget": "160M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-outlier-ffnmoe-s1-s320M": {
-   "ex": "01M1GD1F3FMMCAT49W8ATCWS6G",
+   "ex": "01M1GN6D3KG1SX02NH5HSM49WE",
    "task": "outlier",
    "budget": "320M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-nq-ffnmoe-s1-s16M": {
-   "ex": "01M1GD2NTCC9F0F2M2BAB32H3A",
+   "ex": "01M1GN79TKHSZ5FHVK4SSG01FM",
    "task": "nq",
    "budget": "16M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-nq-ffnmoe-s1-s32M": {
-   "ex": "01M1GD3Q77D7W3DCWVV400MMH3",
+   "ex": "01M1GN8J4BEV2TMR2FE71T385W",
    "task": "nq",
    "budget": "32M",
    "arm": "ffnmoe-s1",
-   "state": "S",
+   "state": "R",
    "rc": null,
    "retries": 0,
    "eval": null,
    "s2": null
   },
   "fs35-nq-ffnmoe-s1-s48M": {
-   "ex": "01M1GD501EM0392VRB155VD440",
+   "ex": "01M1GN9JFH4HWE28HWESBMQFQF",
    "task": "nq",
    "budget": "48M",
    "arm": "ffnmoe-s1",
@@ -89,7 +265,7 @@
    "s2": null
   },
   "fs35-contradiction-ffnmoe-s1-s14M": {
-   "ex": "01M1GD6CZZR79XHKMP6RXSBM9B",
+   "ex": "01M1GNATG4ATQ3S8PB469Y8ZEW",
    "task": "contradiction",
    "budget": "14M",
    "arm": "ffnmoe-s1",
@@ -100,7 +276,7 @@
    "s2": null
   },
   "fs35-contradiction-ffnmoe-s1-s28M": {
-   "ex": "01M1GD7PHQ7WK14RA05QE634WF",
+   "ex": "01M1GNBTJWZH100HX27DZ7APEC",
    "task": "contradiction",
    "budget": "28M",
    "arm": "ffnmoe-s1",
@@ -111,7 +287,7 @@
    "s2": null
   },
   "fs35-contradiction-ffnmoe-s1-s56M": {
-   "ex": "01M1GD8PF4NFCZ5FJXRS49XKFW",
+   "ex": "01M1GNDCZXHGE9DWV790XEDCNR",
    "task": "contradiction",
    "budget": "56M",
    "arm": "ffnmoe-s1",
@@ -122,7 +298,7 @@
    "s2": null
   },
   "fs35-oolong-ffnmoe-s1-s20M": {
-   "ex": "01M1GD9WGVNK0QC0SBHA8CAVQ9",
+   "ex": "01M1GNEEPVZVNEWC5YZKZ13F89",
    "task": "oolong",
    "budget": "20M",
    "arm": "ffnmoe-s1",
@@ -133,7 +309,7 @@
    "s2": null
   },
   "fs35-oolong-ffnmoe-s1-s40M": {
-   "ex": "01M1GDCG73BP50NENWS39Z56A9",
+   "ex": "01M1GNFGYCMVYQAT4X3T8KHWF2",
    "task": "oolong",
    "budget": "40M",
    "arm": "ffnmoe-s1",
@@ -144,7 +320,7 @@
    "s2": null
   },
   "fs35-oolong-ffnmoe-s1-s80M": {
-   "ex": "01M1GDDP3JZ876X9MNY6TV6QS4",
+   "ex": "01M1GNGA7ARB5REWGEAF5QMTB3",
    "task": "oolong",
    "budget": "80M",
    "arm": "ffnmoe-s1",
@@ -154,176 +330,11 @@
    "eval": null,
    "s2": null
   },
-  "fs35-nq-kv17-s16M": {
-   "ex": "01M1GDT9PMJ7WEDNWPQ7A22GQJ",
-   "task": "nq",
-   "budget": "16M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-nq-kv33-s16M": {
-   "ex": "01M1GDVB6BX2QC4V6H2D6RV2NW",
-   "task": "nq",
-   "budget": "16M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-nq-kv17-s32M": {
-   "ex": "01M1GDWQDW44G61KTE1HCP3NMA",
-   "task": "nq",
-   "budget": "32M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-nq-kv33-s32M": {
-   "ex": "01M1GDY1Q1A2A0M9JSFTZWYDTV",
-   "task": "nq",
-   "budget": "32M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-nq-kv17-s48M": {
-   "ex": "01M1GDZCBVSVRJZ1R81G1VW1JN",
-   "task": "nq",
-   "budget": "48M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-nq-kv33-s48M": {
-   "ex": "01M1GE0G76RH1Y5M57H8GCMQY0",
-   "task": "nq",
-   "budget": "48M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv17-s16M": {
-   "ex": "01M1GED6702P1QJ6TGQK2RFXFQ",
+  "fs35-outlier-ffnmoe-s2-s16M": {
+   "ex": "01M1GSQ5GJNVP0HCNGCB231QMJ",
    "task": "outlier",
    "budget": "16M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv33-s16M": {
-   "ex": "01M1GEE68MAE9B4903J3KQS8AE",
-   "task": "outlier",
-   "budget": "16M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv17-s32M": {
-   "ex": "01M1GEFJVRARQ4D0WZEGCH0B4W",
-   "task": "outlier",
-   "budget": "32M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv33-s32M": {
-   "ex": "01M1GEGPE1ZF2S8BQKETR9ZX0J",
-   "task": "outlier",
-   "budget": "32M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv17-s64M": {
-   "ex": "01M1GEJH22NB9P6RVYV49V1XCX",
-   "task": "outlier",
-   "budget": "64M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv33-s64M": {
-   "ex": "01M1GEKN3DF7DKT4BST53Z68JE",
-   "task": "outlier",
-   "budget": "64M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv17-s160M": {
-   "ex": "01M1GEN24TX5H2XD1J2PEJWGEX",
-   "task": "outlier",
-   "budget": "160M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv33-s160M": {
-   "ex": "01M1GEPAG1R3XJV8Y5ECH7HZZ2",
-   "task": "outlier",
-   "budget": "160M",
-   "arm": "kv33",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv17-s320M": {
-   "ex": "01M1GEQS7JR146MZXHNJVSXE2E",
-   "task": "outlier",
-   "budget": "320M",
-   "arm": "kv17",
-   "state": "S",
-   "rc": null,
-   "retries": 0,
-   "eval": null,
-   "s2": null
-  },
-  "fs35-outlier-kv33-s320M": {
-   "ex": "01M1GES0MSPWVCYKKY7BKVRY5P",
-   "task": "outlier",
-   "budget": "320M",
-   "arm": "kv33",
+   "arm": "ffnmoe-s2",
    "state": "S",
    "rc": null,
    "retries": 0,
@@ -331,19 +342,62 @@
    "s2": null
   }
  },
- "evals": {},
+ "evals": {
+  "fs35-outlier-kv17-s16M": {
+   "ex": "01M1GQADD70TVJBNB03RH4D8AH",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s16M": {
+   "ex": "01M1GR8F9WBK2ACMJF6SA7AVEA",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35-nq-kv17-s16M": {
+   "ex": "01M1GR9KHKFB1M0Y5J9FWVV1A7",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35-outlier-kv17-s32M": {
+   "ex": "01M1GS8Z5EMYP3ZWTKDEY73RZK",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35-nq-kv33-s16M": {
+   "ex": "01M1GSA2QGHZB6W1X6DTCJ7RSA",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35-nq-kv17-s32M": {
+   "ex": "01M1GSMZNMXZ379B1TEJTG3Y59",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35-outlier-ffnmoe-s1-s16M": {
+   "ex": "01M1GSP17PPZNGCMMYGZ0JGEGY",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  }
+ },
  "kv_synced": {
   "outlier": true,
   "nq": true
  },
  "kv_launched": {
-  "nq": true,
-  "outlier": true
+  "outlier": true,
+  "nq": true
  },
  "s1_launched": true,
  "sync_ex": null,
- "last_harvest": 1788336590.023532,
- "harvest_ex": "01M1GJNJVFQN6ZNBNHA7G7ZZH1",
+ "last_harvest": 1788342109.3305643,
+ "harvest_ex": null,
  "done": false,
  "kv_ok": true
 }

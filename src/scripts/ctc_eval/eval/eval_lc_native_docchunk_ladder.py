@@ -176,7 +176,7 @@ def build_ladders(args):
                         ladders_v2[_t].append((_s, _hits[0]))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
         return ladders_v2
-    return {
+    _ladders = {
         "contradiction": [
             ("2k", args.contra_data),
             ("8k", f"{E5}/contra/contradiction_eval_pubmed_both_n190_k3.jsonl"),
@@ -234,6 +234,16 @@ def build_ladders(args):
             ("32k", f"{E5}/contra/contradiction_eval_fever_plain_n1642_k3.jsonl"),
         ],
     }
+    # FLOP-scaling study: explicit rung files per task, e.g. to score a marker-trained model on
+    # EXACTLY the rung files a prior dense campaign used (outlier_lengthmix/eval_rungs/...).
+    # DC_RUNG_FILES = JSON {"outlier": {"8k": "/weka/.../rung_8192.jsonl", ...}, ...}; a task
+    # present here REPLACES its default rung list.
+    _ovr = os.environ.get("DC_RUNG_FILES")
+    if _ovr:
+        for _task, _rungs in json.loads(_ovr).items():
+            _ladders[_task] = [(lab, path) for lab, path in _rungs.items()]
+        print(f"[ladder] DC_RUNG_FILES override for {sorted(json.loads(_ovr))}", flush=True)
+    return _ladders
 
 
 # Per-task segmentation + scoring spec. loadtask/chunk_by/item_regex match the training converter; the

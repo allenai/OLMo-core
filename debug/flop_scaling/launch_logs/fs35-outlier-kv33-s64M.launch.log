@@ -1,36 +1,36 @@
-[beaker_ctc_suite] task=outlier variant=softtoken scale=4b run_name=fs35-outlier-kv33-s64M nodes=1 world_size=8 global_batch=160 epochs=1 max_steps=full
+[beaker_ctc_suite] task=outlier variant=softtoken scale=4b run_name=fs35-outlier-kv33-s64M nodes=1 world_size=4 global_batch=160 epochs=1 max_steps=full
 [beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/flop_scaling35/shards/outlier_s64M_mk
 [beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
 [beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-kv33-s64M
 [beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/flop-scaling-q35
 [beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task outlier --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/flop_scaling35/shards/outlier_s64M_mk --variant softtoken --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 160 --micro-batch-instances 2 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/fs35-outlier-kv33-s64M --run-name fs35-outlier-kv33-s64M --wandb-group flop-scaling-q35 --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --no-compile --st-keep-frac 0.3333 --st-keep-mode gold_plus_random --attn-backend torch
-Experiment: prasanns/fs35-outlier-kv33-s64M-052e56b8 → 
-https://beaker.org/ex/01M1GEKN3DF7DKT4BST53Z68JE
+Experiment: prasanns/fs35-outlier-kv33-s64M-29a14349 → 
+https://beaker.org/ex/01M1GKS6FB6VB5JE1JAK2N8DXY
 Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
-Commit: 56ff0d8 flop-scaling: lengths harvest reads the raw uint3… → 
-https://github.com/allenai/OLMo-core/commit/56ff0d8
+Commit: bb6f8a0 eval_lc_native: stamp each ladder rung's start an… → 
+https://github.com/allenai/OLMo-core/commit/bb6f8a0
 Branch: prasann/landmark → 
 https://github.com/allenai/OLMo-core/tree/prasann/landmark
-[beaker_ctc_suite] SUBMITTED id=01M1GEKN3DF7DKT4BST53Z68JE name=fs35-outlier-kv33-s64M
-[beaker_ctc_suite] url=https://beaker.org/ex/01M1GEKN3DF7DKT4BST53Z68JE
+[beaker_ctc_suite] SUBMITTED id=01M1GKS6FB6VB5JE1JAK2N8DXY name=fs35-outlier-kv33-s64M
+[beaker_ctc_suite] url=https://beaker.org/ex/01M1GKS6FB6VB5JE1JAK2N8DXY
 [beaker_ctc_suite] launched: experiment {
-  id: "01M1GEKN3DF7DKT4BST53Z68JE"
-  name: "fs35-outlier-kv33-s64M-052e56b8"
+  id: "01M1GKS6FB6VB5JE1JAK2N8DXY"
+  name: "fs35-outlier-kv33-s64M-29a14349"
   author_id: "01K31JPADAHRBWED2VT05703Z0"
   workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
   tasks {
-    id: "01M1GEKN3HNA9YEJWBYNCCM9ZH"
-    experiment_id: "01M1GEKN3DF7DKT4BST53Z68JE"
+    id: "01M1GKS6FGHSE5AK60Q3HR43D5"
+    experiment_id: "01M1GKS6FB6VB5JE1JAK2N8DXY"
     name: "train"
     author_id: "01K31JPADAHRBWED2VT05703Z0"
     created {
-      seconds: 1788332332
-      nanos: 141807000
+      seconds: 1788337756
+      nanos: 651848000
     }
     container_spec {
       resource_request {
         cpu_count: 0
-        gpu_count: 8
+        gpu_count: 4
         shared_memory_bytes: 10737418240
       }
       image_id: "01KAY1JXJFCPQ1J5W61E2D2Q8V"
@@ -89,7 +89,7 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       }
       environment_variables {
         name: "GIT_REF"
-        literal: "56ff0d8809d4d86126f11a88364c033d433c492c"
+        literal: "bb6f8a08b47f51b4a1272f14312c4ff2684a7c9b"
       }
       environment_variables {
         name: "GANTRY_TASK_NAME"
@@ -232,7 +232,9 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       priority: JOB_PRIORITY_URGENT
       placement_constraints {
         type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
+        values: "ai2/saturn"
         values: "ai2/jupiter"
+        values: "ai2/ceres"
       }
       min_runtime {
       }
@@ -241,8 +243,8 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
     status: STATUS_QUEUED
   }
   created {
-    seconds: 1788332332
-    nanos: 141807000
+    seconds: 1788337756
+    nanos: 651848000
   }
 }
 status: STATUS_QUEUED

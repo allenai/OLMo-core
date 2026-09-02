@@ -37,7 +37,10 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -70,10 +73,20 @@ BASE_CHECKPOINT = (
     "q4b-base-fast-compressive-landmark-8node/step2385/model_and_optim"
 )
 
-_TASK_DIR = {"contra": "contradiction", "nq": "nq", "oolong": "oolong",
-             "rerank": "rerank", "outlier": "outlier"}
-_TASK_LABEL = {"contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolong",
-               "rerank": "rerank", "outlier": "outlier"}
+_TASK_DIR = {
+    "contra": "contradiction",
+    "nq": "nq",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
+}
+_TASK_LABEL = {
+    "contra": "contradiction",
+    "nq": "nq_retrieval",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
+}
 
 LR = 1e-5
 GLOBAL_BATCH_SIZE = NUM_NODES * SEQUENCE_LENGTH
@@ -127,18 +140,26 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         rank_microbatch_size=SEQUENCE_LENGTH,
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
-            lr=LR, weight_decay=0.0, betas=(0.9, 0.95),
-            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
+            lr=LR,
+            weight_decay=0.0,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full, shard_degree=1,
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=1,
         ),
         cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         ),
         float8_config=Float8Config(enabled=False),
         z_loss_multiplier=None,
@@ -153,11 +174,16 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         expand_glob=True,
     )
     instance_source_config = LandmarkPackingInstanceSourceConfig(
-        source=MixingDocumentSourceConfig(source_specs=[
-            MixingDocumentSourceSpecConfig(
-                source=task_source, ratio=1.0, max_repetition_factor=8.0, label=_TASK_LABEL[task],
-            )
-        ]),
+        source=MixingDocumentSourceConfig(
+            source_specs=[
+                MixingDocumentSourceSpecConfig(
+                    source=task_source,
+                    ratio=1.0,
+                    max_repetition_factor=8.0,
+                    label=_TASK_LABEL[task],
+                )
+            ]
+        ),
         sequence_length=SEQUENCE_LENGTH,
         mem_freq=MEM_FREQ,
         mem_id=LANDMARK_TOKEN_ID,
@@ -165,25 +191,49 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
 
     data_loader_config = ComposableDataLoaderConfig(
-        tokenizer=tokenizer_config, work_dir=str(work_dir),
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=34521, num_workers=4,
+        tokenizer=tokenizer_config,
+        work_dir=str(work_dir),
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        seed=34521,
+        num_workers=4,
         generate_doc_lengths=False,
     )
 
     trainer_config = (
         TrainerConfig(
-            save_folder=save_dir, save_overwrite=True, load_path=BASE_CHECKPOINT,
-            load_strategy=LoadStrategy.always, load_trainer_state=False, load_optim_state=False,
-            metrics_collect_interval=10, cancel_check_interval=10,
+            save_folder=save_dir,
+            save_overwrite=True,
+            load_path=BASE_CHECKPOINT,
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=False,
+            metrics_collect_interval=10,
+            cancel_check_interval=10,
             max_duration=Duration.epochs(EPOCHS),
         )
-        .with_callback("checkpointer", CheckpointerCallback(
-            save_interval=100000, ephemeral_save_interval=500, max_checkpoints=2, save_async=True))
-        .with_callback("wandb", WandBCallback(
-            name=run_name_with_ts, group=cli_context.run_name,
-            entity="prasanns-allen-institute-for-ai", project="memory-networks",
-            enabled=True, cancel_check_interval=10))
-        .with_callback("slack_notifier", SlackNotifierCallback(name=run_name_with_ts, enabled=False))
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=100000,
+                ephemeral_save_interval=500,
+                max_checkpoints=2,
+                save_async=True,
+            ),
+        )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name_with_ts,
+                group=cli_context.run_name,
+                entity="prasanns-allen-institute-for-ai",
+                project="memory-networks",
+                enabled=True,
+                cancel_check_interval=10,
+            ),
+        )
+        .with_callback(
+            "slack_notifier", SlackNotifierCallback(name=run_name_with_ts, enabled=False)
+        )
         .with_callback("config_saver", ConfigSaverCallback())
     )
 

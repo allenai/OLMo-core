@@ -58,11 +58,18 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, OLMoCoreBeakerImage
+from olmo_core.launch.beaker import (
+    BeakerEnvVar,
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+)
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
@@ -108,10 +115,20 @@ BASE_CHECKPOINTS = {
     "sparselandmark": f"{_AMANDAB}/q4b-sparse-landmark-dolma3longmino/step2385/model_and_optim",
 }
 
-_TASK_DIR = {"contra": "contradiction", "nq": "nq", "oolong": "oolong",
-             "rerank": "rerank", "outlier": "outlier"}
-_TASK_LABEL = {"contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolong",
-               "rerank": "rerank", "outlier": "outlier"}
+_TASK_DIR = {
+    "contra": "contradiction",
+    "nq": "nq",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
+}
+_TASK_LABEL = {
+    "contra": "contradiction",
+    "nq": "nq_retrieval",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
+}
 _VARIANTS = ("dense", "landmark", "compressive", "sparselandmark")
 
 LR = 2e-5  # overnight 10k matrix: bumped from 1e-5 (coordinator request 2026-06-30).
@@ -236,20 +253,27 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cp_config = TransformerContextParallelConfig.ulysses(degree=CP_DEGREE)
         shard_degree = 1
         ac_config = TransformerActivationCheckpointingConfig(
-            mode=TransformerActivationCheckpointingMode.budget, activation_memory_budget=0.7,
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.7,
         )
 
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=SEQUENCE_LENGTH,
         max_sequence_length=SEQUENCE_LENGTH,
         optim=SkipStepAdamWConfig(
-            lr=LR, weight_decay=0.0, betas=(0.9, 0.95),
-            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
+            lr=LR,
+            weight_decay=0.0,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
         compile_model=True,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32,
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
             shard_degree=shard_degree,
         ),
@@ -273,44 +297,77 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         seed=SUBSAMPLE_SEED,
         label=_TASK_LABEL[task],
     )
-    mixing = MixingDocumentSourceConfig(source_specs=[
-        MixingDocumentSourceSpecConfig(
-            source=subsampled_source, ratio=1.0, max_repetition_factor=8.0, label=_TASK_LABEL[task],
-        )
-    ])
+    mixing = MixingDocumentSourceConfig(
+        source_specs=[
+            MixingDocumentSourceSpecConfig(
+                source=subsampled_source,
+                ratio=1.0,
+                max_repetition_factor=8.0,
+                label=_TASK_LABEL[task],
+            )
+        ]
+    )
 
     if variant == "dense":
         instance_source_config = ConcatAndChunkInstanceSourceConfig(
-            sources=[mixing], sequence_length=SEQUENCE_LENGTH,
+            sources=[mixing],
+            sequence_length=SEQUENCE_LENGTH,
         )
         generate_doc_lengths = True  # block-diagonal (varlen) masking at EOS doc boundaries
     else:  # landmark + compressive both use LandmarkPacking
         instance_source_config = LandmarkPackingInstanceSourceConfig(
-            source=mixing, sequence_length=SEQUENCE_LENGTH, mem_freq=MEM_FREQ,
-            mem_id=LANDMARK_TOKEN_ID, pad_id=tokenizer_config.pad_token_id,
+            source=mixing,
+            sequence_length=SEQUENCE_LENGTH,
+            mem_freq=MEM_FREQ,
+            mem_id=LANDMARK_TOKEN_ID,
+            pad_id=tokenizer_config.pad_token_id,
         )
         generate_doc_lengths = False
 
     data_loader_config = ComposableDataLoaderConfig(
-        tokenizer=tokenizer_config, work_dir=str(work_dir),
-        global_batch_size=GLOBAL_BATCH_SIZE, seed=34521, num_workers=4,
+        tokenizer=tokenizer_config,
+        work_dir=str(work_dir),
+        global_batch_size=GLOBAL_BATCH_SIZE,
+        seed=34521,
+        num_workers=4,
         generate_doc_lengths=generate_doc_lengths,
     )
 
     trainer_config = (
         TrainerConfig(
-            save_folder=save_dir, save_overwrite=True, load_path=base_checkpoint,
-            load_strategy=LoadStrategy.always, load_trainer_state=False, load_optim_state=False,
-            metrics_collect_interval=10, cancel_check_interval=10,
+            save_folder=save_dir,
+            save_overwrite=True,
+            load_path=base_checkpoint,
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=False,
+            metrics_collect_interval=10,
+            cancel_check_interval=10,
             max_duration=Duration.epochs(EPOCHS),
         )
-        .with_callback("checkpointer", CheckpointerCallback(
-            save_interval=100000, ephemeral_save_interval=500, max_checkpoints=2, save_async=True))
-        .with_callback("wandb", WandBCallback(
-            name=run_name_with_ts, group=cli_context.run_name,
-            entity="prasanns-allen-institute-for-ai", project="memory-networks",
-            enabled=True, cancel_check_interval=10))
-        .with_callback("slack_notifier", SlackNotifierCallback(name=run_name_with_ts, enabled=False))
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=100000,
+                ephemeral_save_interval=500,
+                max_checkpoints=2,
+                save_async=True,
+            ),
+        )
+        .with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name_with_ts,
+                group=cli_context.run_name,
+                entity="prasanns-allen-institute-for-ai",
+                project="memory-networks",
+                enabled=True,
+                cancel_check_interval=10,
+            ),
+        )
+        .with_callback(
+            "slack_notifier", SlackNotifierCallback(name=run_name_with_ts, enabled=False)
+        )
         .with_callback("config_saver", ConfigSaverCallback())
     )
 

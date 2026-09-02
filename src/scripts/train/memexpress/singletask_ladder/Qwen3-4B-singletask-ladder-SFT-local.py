@@ -51,7 +51,10 @@ from olmo_core.float8 import Float8Config
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.rope import YaRNRoPEScalingConfig
-from olmo_core.nn.transformer import TransformerActivationCheckpointingMode, TransformerConfig
+from olmo_core.nn.transformer import (
+    TransformerActivationCheckpointingMode,
+    TransformerConfig,
+)
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
@@ -91,12 +94,18 @@ BASE_CKPTS = {
 }
 
 _TASK_DIR = {
-    "contra": "contradiction", "nq": "nq", "oolong": "oolong",
-    "rerank": "rerank", "outlier": "outlier",
+    "contra": "contradiction",
+    "nq": "nq",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
 }
 _TASK_LABEL = {
-    "contra": "contradiction", "nq": "nq_retrieval", "oolong": "oolong",
-    "rerank": "rerank", "outlier": "outlier",
+    "contra": "contradiction",
+    "nq": "nq_retrieval",
+    "oolong": "oolong",
+    "rerank": "rerank",
+    "outlier": "outlier",
 }
 
 SAVE_ROOT = "/data/prasann/singletask_ladder_runs"
@@ -119,8 +128,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     world_size = int(os.environ.get("WORLD_SIZE", "8"))
     cp_degree = opts.cp_degree or min(CP_DEGREE, world_size)
     global_batch_size = opts.batch_tokens or seq_len  # one window per optimizer step
-    print(f"[cfg] variant={variant} task={task} seq_len={seq_len} ws={world_size} cp={cp_degree} "
-          f"gbs={global_batch_size}\n[cfg] base={base_checkpoint}\n[cfg] data={task_root}", flush=True)
+    print(
+        f"[cfg] variant={variant} task={task} seq_len={seq_len} ws={world_size} cp={cp_degree} "
+        f"gbs={global_batch_size}\n[cfg] base={base_checkpoint}\n[cfg] data={task_root}",
+        flush=True,
+    )
 
     tokenizer_config = TokenizerConfig.qwen3()
     doc_tokenizer_config = replace(tokenizer_config, bos_token_id=None)
@@ -146,14 +158,21 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         rank_microbatch_size=seq_len,
         max_sequence_length=seq_len,
         optim=SkipStepAdamWConfig(
-            lr=opts.lr, weight_decay=0.0, betas=(0.9, 0.95),
-            group_overrides=[OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))],
+            lr=opts.lr,
+            weight_decay=0.0,
+            betas=(0.9, 0.95),
+            group_overrides=[
+                OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
+            ],
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
         compile_model=opts.compile,
         dp_config=TransformerDataParallelConfig(
-            name=DataParallelType.hsdp, param_dtype=DType.bfloat16, reduce_dtype=DType.float32,
-            wrapping_strategy=TransformerDataParallelWrappingStrategy.full, shard_degree=1,
+            name=DataParallelType.hsdp,
+            param_dtype=DType.bfloat16,
+            reduce_dtype=DType.float32,
+            wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
+            shard_degree=1,
         ),
         cp_config=TransformerContextParallelConfig.ulysses(degree=cp_degree),
         # FFN-only AC (NOT budget mode -- budget requires torch.compile; we default compile off for
@@ -175,26 +194,38 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         label_mask_paths=[f"{task_root}/labels_mask_*.npy"],
         expand_glob=True,
     )
-    mixing = MixingDocumentSourceConfig(source_specs=[
-        MixingDocumentSourceSpecConfig(
-            source=task_source, ratio=1.0, max_repetition_factor=8.0, label=_TASK_LABEL[task],
-        )
-    ])
+    mixing = MixingDocumentSourceConfig(
+        source_specs=[
+            MixingDocumentSourceSpecConfig(
+                source=task_source,
+                ratio=1.0,
+                max_repetition_factor=8.0,
+                label=_TASK_LABEL[task],
+            )
+        ]
+    )
     if variant == "compressive":
         instance_source_config = LandmarkPackingInstanceSourceConfig(
-            source=mixing, sequence_length=seq_len, mem_freq=MEM_FREQ,
-            mem_id=LANDMARK_TOKEN_ID, pad_id=tokenizer_config.pad_token_id,
+            source=mixing,
+            sequence_length=seq_len,
+            mem_freq=MEM_FREQ,
+            mem_id=LANDMARK_TOKEN_ID,
+            pad_id=tokenizer_config.pad_token_id,
         )
         generate_doc_lengths = False
     else:
         instance_source_config = ConcatAndChunkInstanceSourceConfig(
-            sources=[mixing], sequence_length=seq_len,
+            sources=[mixing],
+            sequence_length=seq_len,
         )
         generate_doc_lengths = True
 
     data_loader_config = ComposableDataLoaderConfig(
-        tokenizer=tokenizer_config, work_dir=WORK_DIR,
-        global_batch_size=global_batch_size, seed=34521, num_workers=4,
+        tokenizer=tokenizer_config,
+        work_dir=WORK_DIR,
+        global_batch_size=global_batch_size,
+        seed=34521,
+        num_workers=4,
         generate_doc_lengths=generate_doc_lengths,
     )
 
@@ -203,21 +234,41 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     )
     trainer_config = (
         TrainerConfig(
-            save_folder=save_folder, save_overwrite=True, load_path=base_checkpoint,
-            load_strategy=LoadStrategy.always, load_trainer_state=False, load_optim_state=False,
-            metrics_collect_interval=10, cancel_check_interval=10, max_duration=max_duration,
+            save_folder=save_folder,
+            save_overwrite=True,
+            load_path=base_checkpoint,
+            load_strategy=LoadStrategy.always,
+            load_trainer_state=False,
+            load_optim_state=False,
+            metrics_collect_interval=10,
+            cancel_check_interval=10,
+            max_duration=max_duration,
             async_bookkeeping=False,
         )
-        .with_callback("checkpointer", CheckpointerCallback(
-            save_interval=opts.save_interval, ephemeral_save_interval=None,
-            max_checkpoints=2, save_async=False))
+        .with_callback(
+            "checkpointer",
+            CheckpointerCallback(
+                save_interval=opts.save_interval,
+                ephemeral_save_interval=None,
+                max_checkpoints=2,
+                save_async=False,
+            ),
+        )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback("config_saver", ConfigSaverCallback())
     )
     if opts.wandb:
-        trainer_config = trainer_config.with_callback("wandb", WandBCallback(
-            name=run_name_with_ts, group=opts.wandb_group or run_name,
-            entity=opts.wandb_entity, project="memory-networks", enabled=True, cancel_check_interval=10))
+        trainer_config = trainer_config.with_callback(
+            "wandb",
+            WandBCallback(
+                name=run_name_with_ts,
+                group=opts.wandb_group or run_name,
+                entity=opts.wandb_entity,
+                project="memory-networks",
+                enabled=True,
+                cancel_check_interval=10,
+            ),
+        )
 
     seed_all(12536)
     print("[stage] building model...", flush=True)
@@ -236,21 +287,31 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
 def main() -> None:
     import faulthandler
+
     faulthandler.dump_traceback_later(900, repeat=True)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--variant", required=True, choices=["dense", "compressive"])
-    ap.add_argument("--task", required=True, choices=["contra", "nq", "oolong", "rerank", "outlier"])
+    ap.add_argument(
+        "--task", required=True, choices=["contra", "nq", "oolong", "rerank", "outlier"]
+    )
     ap.add_argument("--run-name", required=True)
-    ap.add_argument("--data-root", default="/scratch/users/prasann/single_task_ladders",
-                    help="dir holding <task>/{token_ids_part_*,labels_mask_*}.npy subdirs")
+    ap.add_argument(
+        "--data-root",
+        default="/scratch/users/prasann/single_task_ladders",
+        help="dir holding <task>/{token_ids_part_*,labels_mask_*}.npy subdirs",
+    )
     ap.add_argument("--seq-len", type=int, default=SEQUENCE_LENGTH)
     ap.add_argument("--save-folder", default=None)
     ap.add_argument("--base-ckpt", default=None)
     ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--max-steps", type=int, default=0, help=">0 overrides --epochs")
-    ap.add_argument("--save-interval", type=int, default=400,
-                    help="persist a checkpoint every N steps to node-local /data (preemption safety net)")
+    ap.add_argument(
+        "--save-interval",
+        type=int,
+        default=400,
+        help="persist a checkpoint every N steps to node-local /data (preemption safety net)",
+    )
     ap.add_argument("--batch-tokens", type=int, default=0)
     ap.add_argument("--cp-degree", type=int, default=0)
     ap.add_argument("--compile", action="store_true", help="torch.compile the model (slower start)")
@@ -258,8 +319,9 @@ def main() -> None:
     ap.add_argument("--wandb-group", default=None)
     # Local wandb login is the PERSONAL entity, NOT the ai2 one (which gives CommError: permission
     # denied). Default to the personal entity; override with --wandb-entity for ai2/gantry runs.
-    ap.add_argument("--wandb-entity",
-                    default="prasann-uc-berkeley-electrical-engineering-computer-sciences")
+    ap.add_argument(
+        "--wandb-entity", default="prasann-uc-berkeley-electrical-engineering-computer-sciences"
+    )
     opts = ap.parse_args()
     prepare_training_environment()
     try:

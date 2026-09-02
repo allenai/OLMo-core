@@ -84,11 +84,11 @@ def dense_flops_per_token():
 
 def fetch_eval(run, ex):
     d = f"{EVALS}/{run}"
-    if glob.glob(f"{d}/*multirung*.json"):
+    if glob.glob(f"{d}/**/*multirung*.json", recursive=True):
         return d
     os.makedirs(d, exist_ok=True)
     subprocess.run(["beaker", "experiment", "results", ex, "-o", d], env=ENV, capture_output=True, text=True, timeout=600)
-    return d if glob.glob(f"{d}/*multirung*.json") else None
+    return d if glob.glob(f"{d}/**/*multirung*.json", recursive=True) else None
 
 
 def main():
@@ -115,13 +115,19 @@ def main():
         if e.get("state") != "DONE" or not e.get("ex"):
             continue
         r = st["runs"][run]
-        d = fetch_eval(run, e["ex"])
-        if not d:
-            print("no result file for", run)
-            continue
-        res = json.load(open(glob.glob(f"{d}/*multirung*.json")[0]))
+        # docchunk-evaluated (KV) runs land in the weka _eval_results harvest as
+        # <run>_<task>_multirung.json; dense-evaluator (FFN) runs in the Beaker results dataset
+        hv = glob.glob(f"{HARVEST}/evals/{run}_*multirung*.json")
+        if hv:
+            res = json.load(open(hv[0]))
+        else:
+            d = fetch_eval(run, e["ex"])
+            if not d:
+                print("no result file for", run)
+                continue
+            res = json.load(open(glob.glob(f"{d}/**/*multirung*.json", recursive=True)[0]))
         tkey = TASK_KEY[r["task"]]
-        f1 = {rg: res.get(f"{tkey}_{rg}") for rg in RUNGS[r["task"]]}
+        f1 = {rg: (res.get(f"{tkey}_{rg}") if res.get(f"{tkey}_{rg}") is not None else res.get(f"{r['task']}_{rg}")) for rg in RUNGS[r["task"]]}
         vals = [v for v in f1.values() if v is not None]
         flp = f"{HARVEST}/runs/{run}/flops.json"
         fl = json.load(open(flp)) if os.path.exists(flp) else None

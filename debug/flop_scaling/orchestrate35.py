@@ -102,11 +102,43 @@ def launch_train(st, task, budget, arm):
     save(st)
 
 
+W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
+# The KV arms train on MARKER-wrapped prompts, so they are scored with the marker-aware
+# (docchunk, dense-emitter) evaluator on the SAME rung files the dense campaign used; the FFN
+# arms train on the dense arms' plain prompts and use the dense campaign's evaluator as-is.
+KV_RUNG_FILES = {
+    "outlier": {"outlier": {"8k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_8192.jsonl",
+                            "16k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_16384.jsonl",
+                            "32k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_32768.jsonl"}},
+    "nq": {"nq": {"2k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_2048.jsonl",
+                  "8k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_8192.jsonl",
+                  "16k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_16384.jsonl",
+                  "32k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_32768.jsonl"}},
+    "contradiction": {"contradiction": {"2k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl",
+                                        "8k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl",
+                                        "16k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n385_k3.jsonl",
+                                        "32k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n765_k3.jsonl"}},
+    "oolong": {"oolong": {"2k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx2048_spliteval.jsonl",
+                          "8k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx8192_spliteval.jsonl",
+                          "16k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx16384_spliteval.jsonl",
+                          "32k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx32768_spliteval.jsonl"}},
+}
+TASK_KEY = {"contradiction": "contra", "nq": "nq", "outlier": "outlier", "oolong": "oolong"}
+
+
 def launch_eval(st, name):
     r = st["runs"][name]
     rungs, root, extra = EVAL_CFG[r["task"]]
-    cmd = [PY, "-u", f"{REPO}/debug/outlier_lengthmix_scaling/beaker_native_lengthmix_eval.py", name, name,
-           "--ladder-tasks", r["task"], "--ladder-rungs", rungs, "--cluster", "ai2/neptune", "--eval500-root", root] + (extra.split() if extra else [])
+    if r["arm"].startswith("kv"):
+        cmd = [PY, "-u", f"{REPO}/src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py", name, "ai2/neptune",
+               "--task", TASK_KEY[r["task"]], "--variant", "docchunk", "--ckpt", f"{W}/ctc_suite/ckpts/{name}",
+               "--query-position", "after", "--cot-mode", "none", "--tokenizer", "Qwen/Qwen3.5-0.8B-Base",
+               "--ngpu", "2", "--max-test", "600", "--priority", "urgent",
+               "--dc-rung-files", json.dumps(KV_RUNG_FILES[r["task"]]),
+               "--dc-rungs", ",".join(next(iter(KV_RUNG_FILES[r["task"]].values())).keys())]
+    else:
+        cmd = [PY, "-u", f"{REPO}/debug/outlier_lengthmix_scaling/beaker_native_lengthmix_eval.py", name, name,
+               "--ladder-tasks", r["task"], "--ladder-rungs", rungs, "--cluster", "ai2/neptune", "--eval500-root", root] + (extra.split() if extra else [])
     rc, out = sh(cmd, timeout=1200)
     ex = parse_id(out)
     st["evals"][name] = {"ex": ex, "state": "S" if ex else "LAUNCH-FAILED", "rc": None, "retries": st["evals"].get(name, {}).get("retries", 0)}
