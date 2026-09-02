@@ -66,9 +66,14 @@ def arm_args(task, arm, budget):
         # target 4x on these 30-90 step runs (nq 16M: mean cost 0.0026, 52% of routed-layer tokens
         # with no FFN) and lost the 16k/32k rungs. FFN is 57% of training FLOPs at these lengths,
         # so a 10x FFN cut already buys most of the attainable saving (1.5x on L12+, 2.1x all-layer).
+        # --ffn-moe-explore 0: the default 10% random-rung exploration (incl. the null rung) turns
+        # the base model into a CE-8.9 model at step 1 (dense packed start: 0.73) and only anneals
+        # off by step ~10 of 30 -- a third of these short runs spent recovering. The budget term
+        # is differentiable in the router probs, so cheap rungs get pulled in without exploration.
         start = 12 if arm == "ffnmoe-t10" else 0
         extra = (f"--ffn-moe-start-layer {start} --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
-                 "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
+                 "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
+                 "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
         return "ffnmoe", data, packed + ["--base-checkpoint", BASE], extra
     if arm in KV_FRAC:
         frac = KV_FRAC[arm]
