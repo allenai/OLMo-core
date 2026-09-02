@@ -866,7 +866,20 @@ def main():
                     print(f"[ladder:{task}@{label}] MISSING {path}, skipping")
                     continue
                 ex = _load(path, task=loadtask)
+                # A rung prints nothing between "started" and its score, and a long rung can run
+                # for hours -- so a wedged job and a slow one look identical from the log. Stamp
+                # the start with the shape of the work so elapsed time can be judged against it.
+                print(
+                    f"[ladder:{task}@{label}] generating {len(ex)} examples, "
+                    f"max_new={maxtok} ...",
+                    flush=True,
+                )
+                _t0 = time.time()
                 resp = generate([e["prompt"] for e in ex], maxtok, **gkw)
+                print(
+                    f"[ladder:{task}@{label}] generation done in {time.time() - _t0:.0f}s",
+                    flush=True,
+                )
                 res, det = fn(ex, resp)
                 _record_gens(task, label, ex, resp, det)
                 prim = (
