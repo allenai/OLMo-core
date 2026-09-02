@@ -10,7 +10,16 @@ case "$TASK" in oolong) CONV=oolong; CHUNK=line;; nq) CONV=retrieval; CHUNK=docu
 read -r -d '' WORK <<EOW
 set -uo pipefail; export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false; FAIL=0
 # gantry's runtime venv has neither numpy nor transformers; the image's conda env has both.
-PYBIN=python; \$PYBIN -c "import numpy, transformers, dataclass_extensions, olmo_core" || PYBIN=/opt/conda/bin/python; echo "PYBIN=\$PYBIN"
+# gantry's "--install true" is a no-op install command, so its venv has nothing; the image's
+# conda env has torch/numpy/transformers but not every olmo_core import-time dep. Install
+# whatever the converter's import chain still lacks (a few pure-python packages) into conda.
+PYBIN=/opt/conda/bin/python; export PYTHONPATH=src
+for i in 1 2 3 4 5 6; do
+  MISSING=\$(\$PYBIN -c "import olmo_core.data.document_chunk_landmark" 2>&1 | grep -oE "No module named '[^']+'" | sed "s/No module named '//; s/'//" | cut -d. -f1)
+  [ -z "\$MISSING" ] && break
+  echo "installing missing dep: \$MISSING"; \$PYBIN -m pip install -q "\$(echo \$MISSING | tr _ -)" 2>&1 | tail -1
+done
+\$PYBIN -c "import olmo_core.data.document_chunk_landmark, numpy, transformers; print('imports OK')" || { echo "!!! converter deps unresolved"; exit 1; }; echo "PYBIN=\$PYBIN"
 ls $WEKA/taskscale_lengthmix/arms | head -40
 for B in $BUDGETS; do
   SRC=$WEKA/taskscale_lengthmix/arms/${TASK}_mix_s\$B/arm.jsonl   # build_task_rungs.py: arms/<arm>/arm.jsonl
