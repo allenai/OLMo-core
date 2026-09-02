@@ -178,6 +178,9 @@ def build_common_components(
         # before they are frozen.
         if system.pp > 1:
             env["OLMO_PP_DRY_RUN_MODE"] = "full"
+            # These probes are specifically qualifying PP+rowwise EP. Record the schedule-aware
+            # lifetime-lease prewarm so a missing slot is diagnosable before the first PP step.
+            env["OLMO_EP_NO_SYNC_SYMM_BUFFER_SUMMARY_PREWARM"] = "1"
         for name in (
             "OLMOE3_DEEP_MB_MAX_STEPS",
             "OLMOE3_DEEP_MB_SYSTEM_PRESET",
