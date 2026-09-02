@@ -9,14 +9,16 @@ WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns
 case "$TASK" in oolong) CONV=oolong; CHUNK=line;; nq) CONV=retrieval; CHUNK=document;; *) CONV=$TASK; CHUNK=document;; esac
 read -r -d '' WORK <<EOW
 set -uo pipefail; export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false; FAIL=0
+# gantry's runtime venv has neither numpy nor transformers; the image's conda env has both.
+PYBIN=/opt/conda/bin/python; \$PYBIN -c "import numpy, transformers" || PYBIN=python; echo "PYBIN=\$PYBIN"
 ls $WEKA/taskscale_lengthmix/arms | head -40
 for B in $BUDGETS; do
   SRC=$WEKA/taskscale_lengthmix/arms/${TASK}_mix_s\$B/arm.jsonl   # build_task_rungs.py: arms/<arm>/arm.jsonl
   [ -s "\$SRC" ] || { echo "!!! no JSONL for $TASK \$B at \$SRC"; FAIL=1; continue; }
   OUT=$WEKA/flop_scaling35/shards/${TASK}_s\${B}_mk; [ -s \$OUT/metadata.json ] && { echo "[skip] \$OUT"; continue; }
   echo "--- $TASK \$B: \$SRC -> \$OUT \$(date +%T) ---"; mkdir -p \$OUT
-  PYTHONPATH=src python src/scripts/data/convert_unified_to_document_landmark.py --input-jsonl \$SRC --task $CONV --out-dir \$OUT --emit dense --marker-set qwen3_5 --tokenizer Qwen/Qwen3.5-0.8B-Base --seq-len 65536 --query-position after --cot-mode none --chunk-by $CHUNK --emit-gold-sidecar --num-proc 16 || { echo "!!! FAILED \$B"; continue; }
-  python -c "import json;m=json.load(open('\$OUT/metadata.json'));print('   ',{k:m.get(k) for k in ('num_instances','task','marker_set','query_position','max_example_len')})"
+  PYTHONPATH=src \$PYBIN src/scripts/data/convert_unified_to_document_landmark.py --input-jsonl \$SRC --task $CONV --out-dir \$OUT --emit dense --marker-set qwen3_5 --tokenizer Qwen/Qwen3.5-0.8B-Base --seq-len 65536 --query-position after --cot-mode none --chunk-by $CHUNK --emit-gold-sidecar --num-proc 16 || { echo "!!! FAILED \$B"; continue; }
+  \$PYBIN -c "import json;m=json.load(open('\$OUT/metadata.json'));print('   ',{k:m.get(k) for k in ('num_instances','task','marker_set','query_position','max_example_len')})"
 done
 ls -la $WEKA/flop_scaling35/shards/
 for B in $BUDGETS; do [ -s $WEKA/flop_scaling35/shards/${TASK}_s\${B}_mk/metadata.json ] || { echo "!!! missing metadata for $TASK \$B"; FAIL=1; }; done

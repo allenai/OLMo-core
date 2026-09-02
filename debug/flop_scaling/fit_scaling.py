@@ -22,7 +22,7 @@ import numpy as np
 
 REPO = "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core"
 OUT = f"{REPO}/results/flop_scaling"
-TARGETS = {"contradiction": 0.85, "outlier": 0.7, "nq": 0.8, "oolong": 0.5}
+TARGETS = {"contradiction": 0.85, "outlier": 0.45, "nq": 0.88, "oolong": 0.68}  # inside the dense data range of each task (2026-09-02)
 
 
 def satpow(x, A, B, a):
