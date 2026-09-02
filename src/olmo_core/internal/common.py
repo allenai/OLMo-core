@@ -73,7 +73,7 @@ def build_launch_config(
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
-    default_root_dir = get_root_dir(cluster)
+    default_root_dir = get_root_dir(cluster.split(",")[0])
     if root_dir is None:
         root_dir = default_root_dir
     elif root_dir != default_root_dir:
