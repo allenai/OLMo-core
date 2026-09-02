@@ -61,6 +61,14 @@ eos 248044, zero skipped examples, and every max_example_len inside the 65536 tr
 reorder's 60M budget is not buildable: its 2k pool tops out at 18,973 examples inside the
 20,000-book window the eval split forces (books 20,001+ are eval), against 19,300 needed.
 
+## A free repeatability check
+
+The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
+files. Two independent decodes of one checkpoint: 2k tau .686 vs .687, 4k .457 vs .453. So
+decode-side nondeterminism contributes about +-.004 here -- an order of magnitude below the
++-.022 binomial floor at eval_size 500. When two of our numbers differ, it is sampling of the eval
+set, not the decode, and quoting three decimals is over-precision either way.
+
 ## Scheduling note (2026-09-01)
 
 **Root cause of the 9-hour stall: another user's stuck job, not our queue.** Every placement
@@ -170,7 +178,7 @@ a data-starvation artifact of the smallest arm.
 ### reorder + grouping, dense (eval_size 500)
 
 reorder (kendall tau): 2k .359/.610/.686, 4k .124/.356/.457, 8k .001/.017/.050 across 15/30/50M.
-The 8k rung IS scaling -- 50x from the smallest budget -- but from .001, so a 3.3x budget moves it
+16k is 0.000 at 15M. The 8k rung IS scaling -- 50x from the smallest budget -- but from .001, so a 3.3x budget moves it
 to .050 and it would take orders of magnitude more to matter.
 Both short rungs scale cleanly; **8k is a cliff** -- .050 at the largest budget, against .686 at 2k
 for the same checkpoint. Reorder is a short-context task at these budgets no matter the data.
