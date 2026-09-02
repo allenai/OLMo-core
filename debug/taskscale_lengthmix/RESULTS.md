@@ -169,7 +169,9 @@ a data-starvation artifact of the smallest arm.
 
 ### reorder + grouping, dense (eval_size 500)
 
-reorder (kendall tau): 2k .359/.610/.686, 4k .124/.356/.457, 8k .001/--/.050 across 15/30/50M.
+reorder (kendall tau): 2k .359/.610/.686, 4k .124/.356/.457, 8k .001/.017/.050 across 15/30/50M.
+The 8k rung IS scaling -- 50x from the smallest budget -- but from .001, so a 3.3x budget moves it
+to .050 and it would take orders of magnitude more to matter.
 Both short rungs scale cleanly; **8k is a cliff** -- .050 at the largest budget, against .686 at 2k
 for the same checkpoint. Reorder is a short-context task at these budgets no matter the data.
 
