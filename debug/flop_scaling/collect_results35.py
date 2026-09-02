@@ -184,10 +184,14 @@ def main():
         vals = [v for v in f1.values() if v is not None]
         flp = f"{HARVEST}/runs/{run}/flops.json"
         fl = json.load(open(flp)) if os.path.exists(flp) else None
-        lens = arm_lengths(os.path.basename(ARMS[r["task"]][r["budget"]]))
-        dpf = arm_flops(lens) if lens else (fl["dense_equivalent_pflops"] if fl else None)
+        data_budget = r.get("data_budget", r["budget"])  # sub-budget dense points train on a bigger arm
+        lens = arm_lengths(os.path.basename(ARMS[r["task"]][data_budget]))
+        frac = budget_tokens(r["budget"]) / budget_tokens(data_budget)
+        dpf = arm_flops(lens) * frac if lens else (fl["dense_equivalent_pflops"] if fl else None)
         pf = None
-        if fl:
+        if r["arm"] == "dense":
+            pf = dpf  # --max-tokens dense anchor: priced like the prior dense points, scaled to its budget
+        elif fl:
             if r["arm"].startswith("ffnmoe"):
                 # back out the mean routed FFN cost from the meter's own (padded-window) ratio,
                 # then re-price with real lengths: ratio = 1 - ffn_frac65k * (1 - c)

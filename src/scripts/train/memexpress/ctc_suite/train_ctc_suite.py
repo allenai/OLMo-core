@@ -1002,7 +1002,10 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             load_optim_state=False,
             metrics_collect_interval=1,
             cancel_check_interval=1,
-            max_duration=Duration.epochs(opts.epochs),
+            # --max-tokens: a SHORTER budget on the same arm with a complete LR schedule (warmup
+            # fraction + linear decay are relative to max_duration), i.e. a clean data-scaling
+            # point below the arm's size. --max-steps only hard-stops mid-schedule.
+            max_duration=Duration.tokens(opts.max_tokens) if opts.max_tokens else Duration.epochs(opts.epochs),
             hard_stop=Duration.steps(opts.max_steps) if opts.max_steps else None,
             # no_checkpoints=True would ALSO skip the base-checkpoint LOAD block (trainer.fit
             # gates loading on `not no_checkpoints`) -> silent train-from-scratch. Keep False;
@@ -1072,6 +1075,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # examples / rows. Using the example count here over-estimated the schedule horizon
         # ~20x on the first Qwen3.5 FFN runs (target still 0.84 at the last step).
         n_tok = int(plan["meta"].get("num_tokens") or plan["meta"].get("total_tokens") or 0)
+        if opts.max_tokens:
+            n_tok = min(n_tok, opts.max_tokens) if n_tok else opts.max_tokens
         steps_total = max(1, -(-n_tok * opts.epochs // (gbs_examples * opts.seq_len))) if n_tok else -(-plan["n_examples"] * opts.epochs // gbs_examples)
     else:
         steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
@@ -1425,6 +1430,8 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--num-workers", type=int, default=2, help="dataloader workers per rank")
     ap.add_argument("--max-steps", type=int, default=0, help="hard-stop after N steps (0 = full)")
+    ap.add_argument("--max-tokens", type=int, default=0,
+                    help="train on the first N tokens of the arm with a full schedule (0 = whole arm); a sub-budget point")
     ap.add_argument(
         "--vocab-size",
         type=int,
