@@ -42,6 +42,7 @@ jobs:
             run: make lint-check
 
           - name: Test
+            cache_hf: true
             run: |
               pytest -v --color=yes --durations=6 \
                 --ignore-glob='src/test/distributed/checkpoint*' \
@@ -109,6 +110,7 @@ jobs:
             torch: "2.12.0"
             task:
               name: Test (CPU, torch 2.12)
+              cache_hf: true
               run: |
                 pytest -v --color=yes --durations=6 \
                   --ignore-glob='src/test/distributed/checkpoint*' \
@@ -123,6 +125,7 @@ jobs:
             torch: "2.13.0"
             task:
               name: Test (CPU, torch 2.13)
+              cache_hf: true
               run: |
                 pytest -v --color=yes --durations=6 \
                   --ignore-glob='src/test/distributed/checkpoint*' \
@@ -161,10 +164,10 @@ jobs:
             mypy-${{ env.CACHE_PREFIX }}-${{ runner.os }}-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
 
       - name: Cache HuggingFace models
-        # The "Test" task runs the HF roundtrip tests, which download Qwen3-0.6B and
+        # The broad test tasks run the HF roundtrip tests, which download Qwen3-0.6B and
         # Gemma-3-270m. Persist HF_HOME so they're only downloaded once. Bump the key
         # suffix when the set of models pulled by these tests changes.
-        if: matrix.task.name == 'Test'
+        if: matrix.task.cache_hf
         uses: actions/cache@v4
         with:
           path: ${{ env.HF_HOME }}
