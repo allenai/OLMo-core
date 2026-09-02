@@ -183,8 +183,10 @@ to .050 and it would take orders of magnitude more to matter.
 Both short rungs scale cleanly; **8k is a cliff** -- .050 at the largest budget, against .686 at 2k
 for the same checkpoint. Reorder is a short-context task at these budgets no matter the data.
 
-grouping (pairwise_f1, floor .44): 80M gives .794 / .569 / .417 at 2k/8k/16k. The 16k cell is AT
-the degenerate floor, so grouping's usable range under this recipe ends between 8k and 16k. Sparse sits at .419/.187/.090 (2k/8k/16k at 40M) against dense .794/.569/.417: the 2k cell is
+grouping (pairwise_f1, floor .44): 80M gives .794 / .569 / .417 / .210 at 2k/8k/16k/32k. The 16k
+cell is AT the degenerate floor and 32k is half of it, so grouping's usable range under this recipe
+ends between 8k and 16k -- and by 32k the model is scoring below what a single-cluster answer would
+get, meaning it is emitting malformed or wrong partitions rather than degenerate ones. Sparse sits at .419/.187/.090 (2k/8k/16k at 40M) against dense .794/.569/.417: the 2k cell is
 already at grouping's .44 degenerate floor and every longer rung is well below it, i.e. sparse is
 not producing even a degenerate clustering by 8k.
 
