@@ -66,6 +66,8 @@ def emo_tags(config: EmoRouterConfig | None) -> list[str]:
         f"emo-min-pool:{config.min_document_expert_pool}",
         f"emo-max-pool:{config.max_document_expert_pool}",
         f"emo-eval-pool:{config.eval_pool_size()}",
+        "emo-global-lb:true",
+        "lb-granularity:local_batch",
     ]
 
 
@@ -77,5 +79,6 @@ def emo_note(config: EmoRouterConfig | None) -> str:
     return (
         "EMO document pool="
         f"[{config.min_document_expert_pool}, {config.max_document_expert_pool}], "
-        f"eval pool={config.eval_pool_size()}, EOS={config.eos_token_id}"
+        f"eval pool={config.eval_pool_size()}, EOS={config.eos_token_id}, "
+        "global LB with local-batch loss"
     )

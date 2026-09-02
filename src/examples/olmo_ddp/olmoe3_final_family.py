@@ -208,10 +208,15 @@ def _moe_block(
             gating_function=MoERouterGatingFunction.softmax,
             dtype=DType.float32,
             lb_loss_weight=0.01,
-            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+            lb_loss_granularity=(
+                MoELoadBalancingLossGranularity.local_batch
+                if emo is not None
+                else MoELoadBalancingLossGranularity.instance
+            ),
             z_loss_weight=1e-5,
             restore_weight_scale=True,
             use_recompute_fp32_cast=False,
+            global_load_balancing=emo is not None,
             emo=deepcopy(emo),
         ),
         latent_moe=LatentMoEConfig(
