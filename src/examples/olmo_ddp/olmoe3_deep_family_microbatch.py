@@ -111,16 +111,21 @@ class SystemConfig:
 
 MIB = 1024 * 1024
 SYSTEMS = {
-    # At 64 production GPUs these retain GA=2 and GA=1 respectively.
+    # Reduced batches retain the corresponding 8 Mi-token production GA at 64 GPUs.
+    "small-pp1-ep1-mb4": SystemConfig("small", 1, 1, 1, 4, 1 * MIB),
     "small-pp1-ep1-mb8": SystemConfig("small", 1, 1, 1, 8, 1 * MIB),
     "small-pp1-ep1-mb16": SystemConfig("small", 1, 1, 1, 16, 1 * MIB),
+    "small-pp1-ep4-mb8": SystemConfig("small", 1, 1, 4, 8, 1 * MIB),
     "small-pp1-ep4-mb16": SystemConfig("small", 1, 1, 4, 16, 1 * MIB),
-    # At 128 production GPUs these retain GA=4 and GA=2 respectively.
+    # Reduced batches retain the corresponding 8 Mi-token production GA at 128 GPUs.
+    "medium-pp1-ep4-mb1": SystemConfig("medium", 1, 1, 4, 1, 512 * 1024),
     "medium-pp1-ep4-mb2": SystemConfig("medium", 1, 1, 4, 2, 512 * 1024),
     "medium-pp1-ep4-mb4": SystemConfig("medium", 1, 1, 4, 4, 512 * 1024),
+    "medium-pp1-ep8-mb1": SystemConfig("medium", 1, 1, 8, 1, 512 * 1024),
     "medium-pp1-ep8-mb2": SystemConfig("medium", 1, 1, 8, 2, 512 * 1024),
     "medium-pp1-ep8-mb4": SystemConfig("medium", 1, 1, 8, 4, 512 * 1024),
-    # At 256 production GPUs with PP2 these retain GA=4 and GA=2.
+    # Reduced batches retain the corresponding 8 Mi-token production GA at 256 GPUs.
+    "large-pp2-ep8-mb1": SystemConfig("large", 2, 2, 8, 1, 512 * 1024),
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
     "large-pp2-ep8-mb4": SystemConfig("large", 2, 2, 8, 4, 512 * 1024),
 }
@@ -146,7 +151,9 @@ def select_system(model_size: str) -> tuple[str, SystemConfig]:
     return preset_name, system
 
 
-def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponents:
+def build_common_components(
+    cli_context: CliContext, system: SystemConfig, **kwargs
+) -> CommonComponents:
     common = build_default_common_components(cli_context, **kwargs)
     if (launch := common.launch) is not None:
         beaker_user = get_beaker_username()
@@ -163,6 +170,12 @@ def build_common_components(cli_context: CliContext, **kwargs) -> CommonComponen
         launch.no_python = True
         env = dict(PRESET.env_vars)
         env.update({"S3_PROFILE": "default", "PYTHONPATH": "src"})
+        # The accelerated independent-stage PP dry run does not preserve the
+        # real pipeline's symmetric-buffer lease lifetimes.  Run one true PP
+        # dry-run step so the lease pools observe the production schedule
+        # before they are frozen.
+        if system.pp > 1:
+            env["OLMO_PP_DRY_RUN_MODE"] = "full"
         for name in ("OLMOE3_DEEP_MB_MAX_STEPS", "OLMOE3_DEEP_MB_SYSTEM_PRESET"):
             if value := os.environ.get(name):
                 env[name] = value
@@ -358,7 +371,7 @@ if __name__ == "__main__":
         global_batch_size=system.global_batch_size,
         max_sequence_length=SEQUENCE_LENGTH,
         num_nodes=system.num_nodes,
-        common_config_builder=build_common_components,
+        common_config_builder=partial(build_common_components, system=system),
         data_config_builder=build_data_components,
         model_config_builder=partial(build_model_config_from_common, system=system),
         train_module_config_builder=partial(build_train_module_config, system=system),
