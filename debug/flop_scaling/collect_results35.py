@@ -100,7 +100,7 @@ def f1_from_log(ex):
         out = subprocess.run(["beaker", "experiment", "logs", ex], env=ENV, capture_output=True, text=True, timeout=300).stdout
     except Exception:
         out = ""
-    hits = re.findall(r"\[ladder:(\w+)@(\d+k)\] f1=([0-9.]+)", out)
+    hits = re.findall(r"\[ladder:(\w+)@(\d+k)\] (?:f1|score)=([0-9.]+)", out)  # oolong prints score=
     res = {f"{t}_{rg}": float(v) for t, rg, v in hits}
     _LOG_CACHE[ex] = res
     if res and "=== DONE" in out:
