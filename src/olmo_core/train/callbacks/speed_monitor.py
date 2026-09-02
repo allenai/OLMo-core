@@ -97,8 +97,8 @@ class SpeedMonitorCallback(Callback):
             )
             if using_half_precision:
                 dense_correction = 0.5  # listed specs are one-half lower without sparsity
-                if "H100" in device_name:
-                    # data from https://www.nvidia.com/en-us/data-center/h100/
+                if "H100" in device_name or "H200" in device_name:
+                    # data from https://www.nvidia.com/en-us/data-center/h100/ / https://www.nvidia.com/en-us/data-center/h200/
                     if "NVL" in device_name:
                         self.device_peak_flops_per_second = int(1671e12 * dense_correction)
                     elif "PCIe" in device_name:
