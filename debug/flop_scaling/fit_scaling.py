@@ -45,6 +45,36 @@ def fit_curve(xs, ys):
         return None
 
 
+def hill(x, fmax, g, K):
+    """The prior campaigns' law (debug/taskscale_lengthmix/fit_crossover.py): f = fmax x^g/(x^g+K^g)."""
+    return fmax * np.power(x, g) / (np.power(x, g) + np.power(K, g))
+
+
+def fit_hill(xs, ys):
+    """-> (fmax, g, K, rmse) or None; same bounds style as fit_crossover.py (x in PFLOPs or Mtokens)."""
+    from scipy.optimize import curve_fit
+
+    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+    if len(xs) < 3:
+        return None
+    try:
+        p0 = [min(1.0, max(ys) + 0.05), 1.0, float(np.median(xs))]
+        popt, _ = curve_fit(hill, xs, ys, p0=p0, bounds=([0.05, 0.1, min(xs) / 100], [1.05, 4.0, max(xs) * 100]), maxfev=400000)
+        rmse = float(np.sqrt(np.mean((hill(xs, *popt) - ys) ** 2)))
+        return (*popt, rmse)
+    except Exception:
+        return None
+
+
+def hill_x_for_target(fit, target):
+    if fit is None:
+        return None
+    fmax, g, K, _ = fit
+    if target >= fmax:
+        return None
+    return float(K * (target / (fmax - target)) ** (1.0 / g))
+
+
 def loglin(xs, ys):
     xs, ys = np.log(np.asarray(xs, float)), np.asarray(ys, float)
     if len(xs) < 2:
@@ -76,8 +106,15 @@ def main() -> None:
         F = [p[0] for p in pts]; T = [p[1] for p in pts]; Y = [p[2] for p in pts]
         ff = fit_curve(F, Y); ft = fit_curve(T, Y)
         lf = loglin(F, Y); lt = loglin(T, Y)
+        hf = fit_hill(F, Y); ht = fit_hill(T, Y)
         fits.append({
             "task": task, "arm": arm, "n_points": len(pts),
+            "hill_flop_fmax": hf[0] if hf else None, "hill_flop_g": hf[1] if hf else None,
+            "hill_flop_K": hf[2] if hf else None, "hill_flop_rmse": hf[3] if hf else None,
+            "hill_pflops_to_target": hill_x_for_target(hf, TARGETS.get(task, 0.7)),
+            "hill_data_fmax": ht[0] if ht else None, "hill_data_g": ht[1] if ht else None,
+            "hill_data_K_mtok": ht[2] if ht else None,
+            "hill_mtokens_to_target": hill_x_for_target(ht, TARGETS.get(task, 0.7)),
             "flop_A": ff[0] if ff else None, "flop_alpha": ff[2] if ff else None, "flop_rmse": ff[3] if ff else None,
             "flop_loglin_slope": lf[0] if lf else None,
             "pflops_to_target": x_for_target(ff, TARGETS.get(task, 0.7)),
@@ -89,18 +126,19 @@ def main() -> None:
     with open(f"{OUT}/fits.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(fits[0].keys())); w.writeheader(); w.writerows(fits)
     # markdown: per task, the FLOP multiplier of each arm vs dense at the target f1
-    md = ["# FLOP-scaling fits\n", f"Model: f1 = A - B * x^(-alpha); target f1 per task: {TARGETS}\n"]
+    md = ["# FLOP-scaling fits\n", f"Primary law: Hill f1 = fmax x^g/(x^g+K^g) (the prior dense campaigns' form, debug/taskscale_lengthmix); secondary: saturating power law f1 = A - B x^-alpha. x = actual training PFLOPs. Target f1 per task: {TARGETS}. With 4-5 points per curve a 3-parameter fit interpolates; treat targets beyond the largest measured budget as extrapolations.\n"]
     by_task = defaultdict(dict)
     for ft in fits:
         by_task[ft["task"]][ft["arm"]] = ft
     for task, arms in by_task.items():
-        md.append(f"\n## {task}\n\n| arm | points | best f1 (PF) | fit A | alpha | rmse | PF to f1={TARGETS.get(task,0.7)} | x dense |\n|---|---|---|---|---|---|---|---|")
-        dense = arms.get("dense", {}).get("pflops_to_target")
+        tgt = TARGETS.get(task, 0.7)
+        md.append(f"\n## {task}\n\n| arm | points | best f1 (PF) | Hill fmax | g | K (PF) | rmse | PF to f1={tgt} (Hill) | x dense | satpow A / alpha | PF to target (satpow) |\n|---|---|---|---|---|---|---|---|---|---|---|")
+        dense = arms.get("dense", {}).get("hill_pflops_to_target")
         for arm, ft in sorted(arms.items()):
-            pt = ft["pflops_to_target"]
+            pt = ft["hill_pflops_to_target"]
             mult = (pt / dense) if (pt and dense) else None
             fmt = lambda v, d=3: "-" if v is None else (f"{v:.{d}f}" if isinstance(v, float) else str(v))
-            md.append(f"| {arm} | {ft['n_points']} | {fmt(ft['best_f1'])} ({fmt(ft['best_pflops'],1)}) | {fmt(ft['flop_A'])} | {fmt(ft['flop_alpha'],2)} | {fmt(ft['flop_rmse'])} | {fmt(pt,1)} | {fmt(mult,2)} |")
+            md.append(f"| {arm} | {ft['n_points']} | {fmt(ft['best_f1'])} ({fmt(ft['best_pflops'],1)}) | {fmt(ft['hill_flop_fmax'])} | {fmt(ft['hill_flop_g'],2)} | {fmt(ft['hill_flop_K'],1)} | {fmt(ft['hill_flop_rmse'])} | {fmt(pt,1)} | {fmt(mult,2)} | {fmt(ft['flop_A'])} / {fmt(ft['flop_alpha'],2)} | {fmt(ft['pflops_to_target'],1)} |")
     open(f"{OUT}/fits.md", "w").write("\n".join(md) + "\n")
     print("\n".join(md))
 
@@ -116,11 +154,12 @@ def main() -> None:
             pts = sorted(curves[(task, arm)])
             F = [p[0] for p in pts]; Y = [p[2] for p in pts]
             line, = ax.plot(F, Y, "o", label=arm)
-            if ft["flop_A"] is not None:
+            hf = fit_hill(F, Y)
+            if hf is not None:
                 xs = np.logspace(math.log10(min(F)) - 0.2, math.log10(max(F)) + 0.5, 60)
-                ax.plot(xs, satpow(xs, ft["flop_A"], *(fit_curve(F, Y)[1:3])), "-", color=line.get_color(), alpha=0.8)
+                ax.plot(xs, hill(xs, *hf[:3]), "-", color=line.get_color(), alpha=0.8)
         ax.set_xscale("log"); ax.set_xlabel("training PFLOPs (actual, method-aware)"); ax.set_ylabel("mean f1 over rungs")
-        ax.set_title(f"{task}: FLOP scaling with fitted saturating power laws"); ax.grid(alpha=0.3); ax.legend()
+        ax.set_title(f"{task}: FLOP scaling, Hill-law fits"); ax.grid(alpha=0.3); ax.legend()
         fig.tight_layout(); fig.savefig(f"{OUT}/{task}_flop_fit.png", dpi=130)
         print("plot:", f"{OUT}/{task}_flop_fit.png")
 
