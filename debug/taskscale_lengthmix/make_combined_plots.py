@@ -53,8 +53,13 @@ def sy(v):
     return H - PAD_B - max(min(v, 1.0), 0.0) * (H - PAD_B - PAD_T)
 
 
-def panel(task, task_data, axis, err=True, extrap=12.0):
-    """extrap: how many times past the largest measured budget to run the dashed fit."""
+# How far the top panels extrapolate. Fixed per axis rather than a multiple of each task's own
+# budget, so every panel shares an x-range and a crossover can be read across tasks: out to 10,000
+# node-hours of training, and the token count that buys at the dense rate.
+XMAX = {"hours": 1e4, "tokens": 1e4 / (H_PER_MTOK["dense"] / 1e6)}
+
+
+def panel(task, task_data, axis, err=True):
     series, allx = [], []
     for rung in sorted(set(task_data.get("dense", {})) | set(task_data.get("sparse", {})),
                        key=lambda r: RUNG_TOK.get(r, 0)):
@@ -69,19 +74,22 @@ def panel(task, task_data, axis, err=True, extrap=12.0):
             series.append((rung, variant, xs, ys, fit(xs, ys) if len(xs) >= 2 else None))
     if not series:
         return ""
-    xlo, xhi = math.log10(min(allx) / 2.2), math.log10(max(allx) * extrap)
+    xlo, xhi = math.log10(min(allx) / 2.2), math.log10(XMAX[axis])
     body = [f'<line class="axis" x1="{PAD_L}" y1="{H - PAD_B}" x2="{W - PAD_R}" y2="{H - PAD_B}"/>',
             f'<line class="axis" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{H - PAD_B}"/>']
     for v in (0, .25, .5, .75, 1.0):
         body.append(f'<line class="grid" x1="{PAD_L}" y1="{sy(v):.1f}" x2="{W - PAD_R}" '
                     f'y2="{sy(v):.1f}"/>')
         body.append(f'<text x="{PAD_L - 5}" y="{sy(v) + 3:.1f}" text-anchor="end">{v:g}</text>')
-    for e in range(int(math.floor(xlo)), int(math.ceil(xhi)) + 1):
+    step = 1 if (xhi - xlo) < 5 else 2
+    for e in range(int(math.floor(xlo)), int(math.ceil(xhi)) + 1, step):
         x = 10.0**e
         if not (xlo < e < xhi):
             continue
-        lab = (f"{x / 1e6:g}M" if axis == "tokens" else
-               (f"{x:g}h" if x >= 1 else f"{x:.2g}h"))
+        if axis == "tokens":
+            lab = f"{x / 1e9:g}B" if x >= 1e9 else f"{x / 1e6:g}M"
+        else:
+            lab = f"{x:g}h" if x >= 1 else f"{x:.2g}h"
         body.append(f'<text x="{sx(x, xlo, xhi):.1f}" y="{H - PAD_B + 13}" '
                     f'text-anchor="middle">{lab}</text>')
     body.append(f'<text x="{PAD_L}" y="{H - 4}" style="font-size:9px">'
@@ -137,7 +145,15 @@ def panel(task, task_data, axis, err=True, extrap=12.0):
     rungs_here = sorted({r for r, _, _, _, _ in series}, key=lambda r: RUNG_TOK.get(r, 0))
     legend = " ".join(f'<span style="color:{RUNG_COLOR.get(r, "#888")}">&#9679;{r}</span>'
                       for r in rungs_here)
-    return (f'<figure><figcaption><b>{task}</b> &nbsp; {legend}</figcaption>'
+    xtxt = ""
+    if crossings:
+        bits = []
+        for r, x, inside in sorted(crossings, key=lambda c: RUNG_TOK.get(c[0], 0)):
+            val = f"{x / 1e6:.0f}M tok" if axis == "tokens" else f"{x:.2g} h"
+            bits.append(f"{r} @{val}" + ("" if inside else "*"))
+        xtxt = ' &nbsp;| <span style="opacity:.85">&#9711; sparse catches dense: ' + \
+               ", ".join(bits) + "</span>"
+    return (f'<figure><figcaption><b>{task}</b> &nbsp; {legend}{xtxt}</figcaption>'
             f'<svg viewBox="0 0 {W} {H}" width="100%">{"".join(body)}</svg></figure>')
 
 
@@ -159,7 +175,32 @@ def budget_for(p, t):
     return None if t >= fmax else K * (t / (fmax - t)) ** (1.0 / g)
 
 
-def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 1048576)):
+def auto_target(task_data):
+    """Pick the score whose cost this task's ladders can actually speak to.
+
+    A fixed target excludes most tasks: a rung already above it at the smallest budget we ran was
+    never observed below it, so its "budget to reach it" would be extrapolation into unmeasured
+    ground and the guards drop it. Every task does bracket SOME level, though. This scans candidate
+    targets and keeps the one bracketed by the most rungs -- counting dense and sparse together so
+    the two curves stay comparable -- breaking ties toward the higher score, which is both the more
+    useful question and further from any metric floor.
+    """
+    best, best_n = None, 0
+    for t in [x / 100 for x in range(5, 96)]:
+        n = 0
+        for variant in ("dense", "sparse"):
+            for rung, budgets in task_data.get(variant, {}).items():
+                if rung not in RUNG_TOK or len(budgets) < 2:
+                    continue
+                bs = sorted(float(b) for b in budgets)
+                if budgets[f"{int(bs[0])}"] < t <= max(budgets.values()):
+                    n += 1
+        if n >= best_n and n >= 2:
+            best, best_n = t, n
+    return best
+
+
+def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 1048576, 4194304, 10485760)):
     """FLOPs needed to reach `target` against context length, per variant, with extrapolation."""
     curves = {}
     for variant in ("dense", "sparse"):
@@ -199,7 +240,7 @@ def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 10
         body.append(f'<line class="grid" x1="{PAD_L}" y1="{py(10**e):.1f}" x2="{W - PAD_R}" '
                     f'y2="{py(10**e):.1f}"/>')
         body.append(f'<text x="{PAD_L - 5}" y="{py(10**e) + 3:.1f}" text-anchor="end">1e{e}</text>')
-    for L in (2048, 8192, 32768, 131072, 1048576):
+    for L in (2048, 8192, 32768, 131072, 1048576, 10485760):
         if xlo < math.log10(L) < xhi:
             body.append(f'<text x="{sx(L, xlo, xhi):.1f}" y="{H - PAD_B + 13}" '
                         f'text-anchor="middle">{L // 1024}k</text>')
@@ -244,8 +285,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("points")
     ap.add_argument("out")
-    ap.add_argument("--target", type=float, default=0.5,
-                    help="score whose FLOP cost the length-scaling section plots")
+    ap.add_argument("--target", type=float, default=0.0,
+                    help="score whose FLOP cost the length-scaling section plots; "
+                         "0 = pick per task, the level that task's own ladders bracket")
     a = ap.parse_args()
     data = json.load(open(a.points))
     order = ["contradiction", "nq", "oolong", "outlier", "qdmatch_nq", "xabsence", "absence",
@@ -254,7 +296,15 @@ def main():
 
     tok = "".join(panel(t, data[t], "tokens") for t in tasks)
     wall = "".join(panel(t, data[t], "hours") for t in tasks)
-    length = "".join(length_panel(t, data[t], a.target) for t in tasks)
+    bits = []
+    for t in tasks:
+        tg = a.target if a.target > 0 else auto_target(data[t])
+        if tg is None:
+            continue
+        html = length_panel(t, data[t], tg)
+        if html:
+            bits.append(html.replace(f"<b>{t}</b> &nbsp;", f"<b>{t}</b> @{tg:g} &nbsp;"))
+    length = "".join(bits)
     css = """<style>
 :root{--paper:#F7F8F6;--panel:#FFF;--ink:#1A2129;--ink-soft:#4A5560;--hairline:#D9DED9;--teal:#5E7370;}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#12171C;--panel:#1A2129;
@@ -294,12 +344,13 @@ svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
             'left</b> relative to its token position, which is enough to reverse the outlier 16k '
             'comparison and to close much of the oolong gap.</p>',
             f'<div class="grid">{wall}</div>',
-            f"<h2>Length scaling: FLOPs to reach {a.target} vs context length</h2>",
-            '<p>Each point is a measured rung converted twice: the fitted data law gives the tokens '
-            f'needed for {a.target} at that length, and the FLOP model converts tokens to compute '
+            "<h2>Length scaling: FLOPs to reach a target score vs context length</h2>",
+            '<p>Each point is a measured rung converted twice: the fitted data law gives the '
+            'tokens needed for that panel\'s target at that length, and the FLOP model converts '
+            'tokens to compute '
             '(6N for parameters plus attention over L, with sparse paying 1/64 of the attention '
             'term; only 8 of 32 layers are full attention in this GDN hybrid). Filled circles are '
-            'those measured-rung points, hollow squares are the extrapolation to 64k/128k/256k/1M, '
+            'those measured-rung points, hollow squares are the extrapolation out to 10M context, '
             'and &beta; is the fitted slope of log-FLOPs on log-length. <b>Where sparse\'s &beta; '
             'is smaller, the two lines must cross</b> &mdash; the green rule marks it.</p>',
             f'<div class="grid">{length}</div>',
