@@ -49,8 +49,16 @@ ARMS = {
 KV_SHARDS = f"{WEKA}/flop_scaling35/shards"  # <task>_s<B>_mk (marker re-tokenization)
 
 
+# FFN arms carry a generation tag in their run name: the trainer auto-resumes from any step
+# checkpoint already in ctc_suite/ckpts/<run-name>, so a relaunch under the SAME name after a
+# code fix silently continues the broken run (2026-09-02: the garbage-router generation).
+# Bump FS35_FFN_TAG instead of deleting weka checkpoints. KV arms keep their original names.
+FFN_TAG = os.environ.get("FS35_FFN_TAG", "r2")
+
+
 def run_name(task, arm, budget):
-    return f"fs35-{task}-{arm}-s{budget}"
+    tag = FFN_TAG if arm.startswith("ffnmoe") else ""
+    return f"fs35{tag}-{task}-{arm}-s{budget}"
 
 
 def arm_args(task, arm, budget):

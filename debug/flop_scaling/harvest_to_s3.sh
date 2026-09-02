@@ -10,8 +10,8 @@ CMD='AWS=$(command -v aws || ls /opt/conda/bin/aws 2>/dev/null || true); '
 CMD+='if [ -z "$AWS" ]; then pip install -q awscli && AWS=$(command -v aws); fi; '
 CMD+='[ -n "$AWS" ] || { echo FATAL_NO_AWSCLI; exit 127; }; '
 CMD+='mkdir -p ~/.aws && echo "$AWS_CREDS" > ~/.aws/credentials && echo "$AWS_CFG" > ~/.aws/config; export AWS_PROFILE=S3; '
-CMD+="mkdir -p /tmp/h/runs /tmp/h/evals; for d in $CK/fs-*/ $CK/fs35-*/; do r=\$(basename \$d); mkdir -p /tmp/h/runs/\$r; for f in flops.json provenance.json config.json; do [ -f \$d/\$f ] && cp \$d/\$f /tmp/h/runs/\$r/; done; done; "
-CMD+="cp $EV/fs-*.json $EV/fs35-*.json /tmp/h/evals/ 2>/dev/null; echo runs=\$(ls /tmp/h/runs | wc -l) evals=\$(ls /tmp/h/evals | wc -l); "
+CMD+="mkdir -p /tmp/h/runs /tmp/h/evals; for d in $CK/fs-*/ $CK/fs35*/; do r=\$(basename \$d); mkdir -p /tmp/h/runs/\$r; for f in flops.json provenance.json config.json; do [ -f \$d/\$f ] && cp \$d/\$f /tmp/h/runs/\$r/; done; done; "
+CMD+="cp $EV/fs-*.json $EV/fs35*.json /tmp/h/evals/ 2>/dev/null; echo runs=\$(ls /tmp/h/runs | wc -l) evals=\$(ls /tmp/h/evals | wc -l); "
 # per-example token lengths of every arm (dense campaign arms + the marker copies), for the
 # post-hoc FLOP accounting (attention priced at each example's real length, not the padded window)
 LEN_PY='import numpy as np, glob, json, os, sys
