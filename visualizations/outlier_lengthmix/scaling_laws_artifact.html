@@ -409,10 +409,7 @@ holds 94% of dense at 2k (.912 vs .973) but 28% at 32k (.248 vs .873)</td></tr>
 landmark compression, not by task family — but the length axis matters as much as the operation.
 Of the three tasks now measured against dense at a matched budget, two (qdmatch, nq) show sparse
 <em>collapsing</em> as context grows, and only outlier shows the stable constant-factor penalty
-(≈0.9× of dense, then a plateau) that the "sparse just needs more tokens" story assumes. And on cost: sparse's FLOP advantage (1.16× at 16k,
-~28× at 5M, ceiling 64×) is mostly <strong>neutralized by the short-heavy recipe</strong> —
-cheap short tokens are cheap for dense too. Sparse's remaining niche is where long tokens are
-unavoidable (transfer breaks, or the data must be long).</p>
+(≈0.9× of dense, then a plateau) that the "sparse just needs more tokens" story assumes. And on cost, MEASURED rather than counted in FLOPs: fitting hours = setup + rate &times; tokens on every arm's job timings gives <strong>dense 0.00552 vs sparse 0.00332 node-hours per million tokens &mdash; a 1.66&times; speedup</strong> at these 4k&ndash;9k mixes, well above the ~1.1&times; a FLOP count predicts, since only 8 of 32 layers are full attention in this GDN hybrid and the rest of the gain is kernel and memory behaviour. That is enough to cancel outlier's ~1.5&times; token penalty almost exactly: <strong>at matched wall-clock sparse reaches parity with dense on outlier at 16k&ndash;32k</strong> (16k: .700 vs .678 at 1.06 h, .816 vs .782 at 2.12 h &mdash; gaps of .022 and .034 against a 2 SE band of ~.05, so parity, not a win). No other task gets that far. The advantage grows with training length toward a <strong>~64&times; ceiling</strong> &mdash; landmark attention still scans one landmark per past 64-token block, so it is quadratic/64 rather than sub-quadratic &mdash; which caps what length can buy: a task needing more than ~64&times; dense's tokens is never rescued by longer context.</p>
 </div></div>
 
 <div class="step"><div class="step-n">06</div><div>
