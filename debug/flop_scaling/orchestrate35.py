@@ -45,7 +45,7 @@ EVAL_CFG = {
 }
 KV_S3_TASKS = {"outlier", "nq"}  # marker shards built on mooney -> S3 -> weka
 KV_WEKA_TASKS = {"contradiction", "oolong"}  # built straight onto weka by the gantry jobs
-KV_WEKA_JOBS = {"contradiction": "01M1GCP893SDYYRTKP6JGSCVAB", "oolong": "01M1GCPCMH81BY9E6FX6HDVBG7"}
+KV_WEKA_JOBS = {"contradiction": "01M1H9MG3ETSH9J85443MPK6DC", "oolong": "01M1H9MM1FDVZYQN9GN2EKTS2E"}  # relaunched 07:55 on 4 clusters (8h unscheduled on jupiter)
 
 
 def log(m):

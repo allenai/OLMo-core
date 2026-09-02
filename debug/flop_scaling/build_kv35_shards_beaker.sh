@@ -22,7 +22,7 @@ ls -la $WEKA/flop_scaling35/shards/ ; echo KVDATA_DONE
 EOW
 export PATH=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:$PATH
 gantry run --name "fs35-kvdata-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
-  --cluster ai2/jupiter-cirrascale-2 --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
+  --cluster ai2/jupiter-cirrascale-2 --cluster ai2/ceres-cirrascale --cluster ai2/saturn-cirrascale --cluster ai2/neptune-cirrascale --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
   --weka oe-training-default:/weka/oe-training-default \
   --allow-dirty \
