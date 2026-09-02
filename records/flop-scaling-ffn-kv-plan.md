@@ -161,3 +161,38 @@ the dense arm is not retrained (the Qwen3-4B grid above was cancelled after 5 jo
 - Launcher: `debug/flop_scaling/launch_grid35.py`; dense points from `points.json` join the fits.
 - FLOP accounting on the hybrid: `num_flops_per_token` covers GDN + attention + FFN; the FFN
   share is lower than on dense Qwen3-4B, so the FFN arm's model-wide FLOP saving is smaller.
+
+## 10. Overnight log, 2026-09-02 03:30–06:10 (what broke, what it changed)
+
+Four evaluator/recipe defects surfaced as soon as the first method evals landed. Every method
+number reported before 06:00 was affected; the ledger (`debug/flop_scaling/LAUNCH_LEDGER.tsv`)
+has the per-job trail.
+
+1. **Marker-aware (KV) evals died at launch**: `run_beaker_multirung_eval.sh` lost its v2
+   `EVAL500` default when v3 was added, so every v2 launch that did not export it hit
+   `set -u`. Restored (3c8395692).
+2. **The docchunk ladder evaluator hardcoded Qwen3 ids** (doc markers 151648/151649, eos 151643,
+   `<|im_end|>` 151645). A Qwen3.5 checkpoint was therefore prompted with arbitrary vocab tokens
+   around each document and never hit a stop id. Now resolved per family from
+   `RESERVED_IDS` + the tokenizer (`--family auto`; abca39b21). Its `DC_RUNG_FILES` override
+   also sat after the v2 `return`, i.e. never ran: every "override" eval scored the default
+   v2 files. Moved in front of the return in the same commit.
+3. **Stage-1 FFN recipe undershoots its budget ~4x on these 27–90-step runs.** One-sided hinge:
+   the only routing pressure is downward, so nq 16M ended at mean cost 0.0026 (target 0.01)
+   with 52% of routed-layer tokens on the null/width-1 rungs; 32k f1 0.14 vs 0.76 dense;
+   contradiction 14M ended near f1 0 at every rung. Added `--ffn-moe-two-sided`
+   (`|cost - target|`; bb35999da): the t10 probe lands at 0.0997 for target 0.10.
+4. **Exploration wrecks the start.** `--ffn-moe-explore 0.1` (10% of tokens per routed layer on a
+   random rung, null included) takes Qwen3.5-4B from CE 0.73 (dense packed step 1) to 8.86 at
+   step 1; CE only returns to ~2 when exploration anneals off at step ~10 of 30. Every s1/s2 run
+   paid that. The t10/a10 arms were relaunched with exploration off (399167447); the budget
+   term is differentiable in the router probabilities, so cheap rungs are still reached.
+
+KV: with correct ids, outlier kv17 16M scores 8k 0.13 / 16k 0.05 (dense 0.51 / –) while its
+train CE reached 0.17 — the gold_plus_random keep set leaks the answer on id-answer tasks (gold
+docs are always among the few real ones). Gold-blind arms `kvb33` (all budgets) and `kvb17`
+(smallest budget) were added for outlier/nq/contradiction (800f43769); oolong was blind already.
+
+Dense baseline gap: the outlier dense campaign scored only the 8k rung at 16M/32M. Their 16k/32k
+rungs were launched by hand (`dense_extra_evals.tsv`); rows whose mean covers a rung subset carry
+`partial=1` and are excluded from the fits.
