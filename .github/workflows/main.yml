@@ -11,12 +11,18 @@ on:
       # Temporary: run CI for the incremental MoE PRs landing into this integration branch.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
+      # Temporary: run CI for the PRs landing into this integration branch.
+      # Remove before merging akshitab/global-lb-emo-router into main.
+      - akshitab/global-lb-emo-router
   push:
     branches:
       - main
       # Temporary: keep the MoE integration branch continuously tested as PRs merge in.
       # Remove before merging akshitab/moe-v2-core into main.
       - akshitab/moe-v2-core
+      # Temporary: keep this integration branch continuously tested as PRs merge in.
+      # Remove before merging akshitab/global-lb-emo-router into main.
+      - akshitab/global-lb-emo-router
     tags:
       - "v*.*.*"
 
@@ -254,9 +260,12 @@ jobs:
             gpu_type: --gpu-type h100
             # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
-            # module at collection time can run. One `bash -c` so both run inside the gantry container.
+            # module at collection time can run. The image currently contains torchaudio 2.11
+            # alongside torch 2.10; remove the unused, ABI-incompatible audio extension before
+            # transformers discovers it during collection. One `bash -c` keeps all commands inside
+            # the gantry container.
             run: |
-              bash -c 'unset TRITON_PTXAS_PATH TRITON_PTXAS_BLACKWELL_PATH; python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
+              bash -c 'uv pip uninstall --system torchaudio && unset TRITON_PTXAS_PATH TRITON_PTXAS_BLACKWELL_PATH && python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -316,8 +325,8 @@ jobs:
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
             --env 'CUBLAS_WORKSPACE_CONFIG=:16:8' \
-            --env-secret 'AWS_ACCESS_KEY_ID=AWS_ACCESS_KEY_ID' \
-            --env-secret 'AWS_SECRET_ACCESS_KEY=AWS_SECRET_ACCESS_KEY' \
+            --env-secret 'AWS_ACCESS_KEY_ID=olmocore_AWS_ACCESS_KEY_ID' \
+            --env-secret 'AWS_SECRET_ACCESS_KEY=olmocore_AWS_SECRET_ACCESS_KEY' \
             -- ${{ matrix.task.run }}
 
   release:

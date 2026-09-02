@@ -6,21 +6,22 @@ from dataclasses import dataclass
 from functools import cached_property
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
+from torch.distributed.pipelining.schedules import (
+    PipelineScheduleMulti,
+    PipelineScheduleSingle,
+    _PipelineSchedule,
+    get_schedule_class,
+)
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
-
-if TYPE_CHECKING:
-    # Imported lazily: pulling in olmo_core.nn at module import time creates a circular import
-    # (olmo_core.distributed.parallel is imported while olmo_core.nn is still initializing).
-    from olmo_core.nn.lm_head import LMOutputWithLoss
 
 logger = logging.getLogger(__name__)
 
@@ -746,13 +747,7 @@ def debug_save_pp_schedule(
 
 class PipelineSchedule:
     """
-    Driver for the custom pipeline schedules
-    (:class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomScheduleInterleaved1F1B`
-    and :class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomSchedule1F1BV`).
-
-    .. note::
-        The standard PyTorch pipeline schedules (``1F1B``, ``Interleaved1F1B``, ``GPipe``, ...) are
-        not currently wired up for this train module — only the ``custom_*`` schedules are supported.
+    Driver for standard PyTorch and OLMo custom pipeline schedules.
 
     :param num_microbatches: How many microbatches to split the global training batch into. The
         global training batch size must be evenly divisible by this. If not specified, the default
@@ -777,6 +772,9 @@ class PipelineSchedule:
         self.pp_mesh = pp_mesh
         self.loss_fn = loss_fn
 
+        self._is_custom = schedule_name.value.startswith("Custom")
+        schedule_impl: _PipelineSchedule
+        custom_schedule_class: Any = None
         if schedule_name == PipelineScheduleType.custom_1F1B:
             raise NotImplementedError("Custom 1F1B schedule is not implemented yet.")
         elif schedule_name == PipelineScheduleType.custom_interleaved_1F1B:
@@ -785,39 +783,55 @@ class PipelineSchedule:
                 CustomScheduleInterleaved1F1B,
             )
 
-            schedule_class = CustomScheduleInterleaved1F1B
+            custom_schedule_class = CustomScheduleInterleaved1F1B
         elif schedule_name == PipelineScheduleType.custom_1F1B_V:
             # Custom 1F1B-V schedule
             from olmo_core.train.train_module.transformer.pipeline.pipeline_schedule import (
                 CustomSchedule1F1BV,
             )
 
-            schedule_class = CustomSchedule1F1BV
-        else:
-            raise OLMoConfigurationError(
-                f"pipeline schedule {schedule_name.value!r} is not supported by this train module. "
-                f"Only the custom schedules are wired up: "
-                f"{PipelineScheduleType.custom_interleaved_1F1B.value!r} and "
-                f"{PipelineScheduleType.custom_1F1B_V.value!r}. Standard PyTorch schedules "
-                "(1F1B, Interleaved1F1B, GPipe, ...) are not currently supported here."
-            )
+            custom_schedule_class = CustomSchedule1F1BV
 
         if num_microbatches is None:
             num_microbatches = pp_mesh.size()
 
-        schedule_impl = schedule_class(
-            stages,  # type: ignore[arg-type]
-            n_microbatches=num_microbatches,
-            forward_pull_ahead_extra_activations=(
-                0
-                if forward_pull_ahead_extra_activations is None
-                else forward_pull_ahead_extra_activations
-            ),
-        )
+        if self._is_custom:
+            schedule_impl = custom_schedule_class(
+                stages,  # type: ignore[arg-type]
+                n_microbatches=num_microbatches,
+                forward_pull_ahead_extra_activations=(
+                    0
+                    if forward_pull_ahead_extra_activations is None
+                    else forward_pull_ahead_extra_activations
+                ),
+            )
+        else:
+            try:
+                standard_schedule_class = get_schedule_class(schedule_name.value)
+            except ValueError as e:
+                raise OLMoConfigurationError(
+                    f"Invalid pipeline schedule name '{schedule_name}'"
+                ) from e
+            if issubclass(standard_schedule_class, PipelineScheduleSingle):
+                if len(model_parts) != 1:
+                    raise OLMoConfigurationError(
+                        f"Expected a single stage for '{schedule_name}' pipeline schedule"
+                    )
+                schedule_impl = standard_schedule_class(
+                    stages[0], n_microbatches=num_microbatches, loss_fn=self.loss_fn
+                )
+            elif issubclass(standard_schedule_class, PipelineScheduleMulti):
+                schedule_impl = standard_schedule_class(
+                    stages,  # type: ignore[arg-type]
+                    n_microbatches=num_microbatches,
+                    loss_fn=self.loss_fn,
+                )
+            else:
+                raise NotImplementedError(standard_schedule_class)
 
         # Opt-in (default off): the plot imports matplotlib, which is only in the `dev` extra, so
         # enabling it by default would break normal installs with ModuleNotFoundError.
-        if torch.distributed.get_rank() == 0 and save_plot:
+        if self._is_custom and torch.distributed.get_rank() == 0 and save_plot:
             plot_dir = plot_dir or _default_pp_schedule_plot_dir()
             source = getattr(schedule_impl, "pipeline_order_source", "unknown")
             stem = "_".join(
@@ -866,7 +880,7 @@ class PipelineSchedule:
         forward_only: bool = False,
         num_microbatches: Optional[int] = None,
         **kwargs,
-    ) -> List[List[Optional["LMOutputWithLoss"]]]:
+    ) -> Any:
         """
         :param args: Only passed to first stage.
         :param kwargs: Passed to all stages.
@@ -876,6 +890,21 @@ class PipelineSchedule:
 
         :return: A list with length of num stages. Each element of the list is an inner list with length of num microbatches. Each element in the inner list is either (1) the output of the corresponding microbatch if that stage is the last stage, or (2) None if that stage is not the last stage.
         """
+
+        if not self._is_custom:
+            if forward_only or num_microbatches is not None:
+                raise OLMoConfigurationError(
+                    "Per-step microbatch overrides and forward-only evaluation require a custom "
+                    "pipeline schedule"
+                )
+            losses: Optional[List[torch.Tensor]] = (
+                [] if self.has_last_stage and self.loss_fn is not None else None
+            )
+            if losses is None:
+                target = None
+            standard_args = (input_ids,) if self.has_first_stage else ()
+            output = self.schedule_impl.step(*standard_args, target=target, losses=losses, **kwargs)
+            return output, None if losses is None else torch.stack(losses)
 
         if self.has_last_stage:
             pass  # keep target as is
@@ -901,6 +930,17 @@ class PipelineSchedule:
         ):
             old_num_microbatches = self.schedule_impl._n_microbatches
             self.schedule_impl.reset_n_microbatches(num_microbatches)
+
+        # NOTE: checked here, after the active microbatch count has been selected above, so that
+        # training, evaluation, and reduced dry runs are all validated against the count they
+        # actually run with. Stages size their P2P buffers from a single floor-divided microbatch
+        # shape, so uneven microbatches would leave receivers with undersized buffers.
+        active_num_microbatches = self.schedule_impl._n_microbatches
+        if active_num_microbatches > 0 and input_ids.size(0) % active_num_microbatches != 0:
+            raise RuntimeError(
+                f"Pipeline batch size {input_ids.size(0)} must be divisible by the active number "
+                f"of microbatches ({active_num_microbatches}); uneven microbatches are not supported"
+            )
 
         self.schedule_impl.prepare_step(
             global_batch_size=input_ids.size(0),

@@ -1,10 +1,16 @@
 import os
 
 import pytest
-
 from gantry.api import GitRepoState
 
-from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+    _build_config,
+    _parse_args,
+    get_beaker_client,
+)
+from olmo_core.launch.beaker_presets import OLMO_DDP
 
 
 def test_get_beaker_client_caching():
@@ -44,11 +50,49 @@ def test_build_recipe_propagates_github_token_secret(monkeypatch):
             ref="deadbeef",
         ),
         gh_token_secret="jacobm_GITHUB_TOKEN",
+        allow_dirty=True,
     )
 
     recipe, _ = config._build_recipe(object(), follow=False)
 
     assert recipe.gh_token_secret == "jacobm_GITHUB_TOKEN"
+
+
+def _parse_launch(monkeypatch, *args: str):
+    monkeypatch.setattr("sys.argv", ["olmo_core.launch.beaker", *args, "--", "true"])
+    opts, command = _parse_args()
+    return _build_config(opts, command)
+
+
+def test_launch_preset_supplies_image_and_setup(monkeypatch):
+    config = _parse_launch(monkeypatch, "--preset", OLMO_DDP.name)
+
+    assert config.beaker_image == OLMO_DDP.beaker_image
+    assert config.post_setup == OLMO_DDP.post_setup
+
+
+def test_explicit_launch_values_override_preset(monkeypatch):
+    config = _parse_launch(
+        monkeypatch,
+        "--preset",
+        OLMO_DDP.name,
+        "--beaker-image",
+        OLMoCoreBeakerImage.stable,
+        "--pre-setup",
+        "explicit pre",
+        "--post-setup",
+        "explicit post",
+    )
+
+    assert config.beaker_image == OLMoCoreBeakerImage.stable
+    assert config.pre_setup == "explicit pre"
+    assert config.post_setup == "explicit post"
+
+
+def test_launch_without_preset_uses_stable_image(monkeypatch):
+    config = _parse_launch(monkeypatch)
+
+    assert config.beaker_image == OLMoCoreBeakerImage.stable
 
 
 @pytest.fixture(scope="session")

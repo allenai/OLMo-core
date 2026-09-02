@@ -1,7 +1,7 @@
 import os
 from collections.abc import Callable
 from inspect import signature
-from typing import Optional, Union, cast
+from typing import Dict, Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -380,19 +380,14 @@ class Olmo3MoeExperts(nn.ModuleList):
             map_type="index",
         )
 
-        batch_size_per_expert = torch.bincount(
-            routing_map.reshape(-1), minlength=num_experts
-        )
+        batch_size_per_expert = torch.bincount(routing_map.reshape(-1), minlength=num_experts)
         if requires_host_side_split_sizes():
             batch_size_per_expert = batch_size_per_expert.to(device="cpu", dtype=torch.int64)
         else:
             batch_size_per_expert = batch_size_per_expert.to(dtype=torch.int32)
 
         w_up_gate = torch.stack(
-            [
-                torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
-                for expert in self
-            ]
+            [torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0) for expert in self]
         )
         up_gate = gmm(
             permuted,
@@ -555,9 +550,48 @@ class Olmo3MoeRouter(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts_per_tok = config.num_experts_per_tok
         self.original_num_experts_per_tok = config.original_num_experts_per_tok
+        self.n_routed_experts = config.n_routed_experts
         self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
         self.restore_weight_scale = config.restore_weight_scale
+        # Evaluation-time expert restriction. This is inference state rather than model
+        # configuration, so it is non-persistent and absent from the state dict.
+        self.register_buffer("allowed_experts", None, persistent=False)
+
+    def set_allowed_experts(self, allowed_experts: torch.Tensor) -> None:
+        """
+        Restrict routing to a fixed subset of the routed experts.
+
+        The mask is applied to the router scores immediately before the ordinary
+        token-level top-k selection, so masked experts can never be routed to. Token
+        top-k, expert weighting, and the shared expert are otherwise unchanged.
+
+        :param allowed_experts: A boolean tensor of shape ``(n_routed_experts,)`` that is
+            ``True`` for every expert the router may select.
+
+        :raises ValueError: If the mask has the wrong shape or dtype, or allows fewer
+            experts than ``num_experts_per_tok``.
+        """
+        if allowed_experts.dtype != torch.bool:
+            raise ValueError(f"allowed_experts must be a bool tensor, got {allowed_experts.dtype}")
+        if allowed_experts.shape != (self.n_routed_experts,):
+            raise ValueError(
+                f"allowed_experts must have shape ({self.n_routed_experts},), "
+                f"got {tuple(allowed_experts.shape)}"
+            )
+        num_allowed = int(allowed_experts.sum().item())
+        if num_allowed < self.num_experts_per_tok:
+            raise ValueError(
+                f"allowed_experts must allow at least num_experts_per_tok="
+                f"{self.num_experts_per_tok} experts, got {num_allowed}"
+            )
+        self.allowed_experts = allowed_experts.detach().to(device=self.gate.weight.device)
+
+    def clear_allowed_experts(self) -> None:
+        """
+        Remove any expert restriction, restoring ordinary full-expert routing.
+        """
+        self.allowed_experts = None
 
     def forward(self, x):
         # OLMo-core intentionally evaluates the router projection in float32 even when the
@@ -575,6 +609,12 @@ class Olmo3MoeRouter(nn.Module):
             scores = scores + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
+
+        if self.allowed_experts is not None:
+            # Masking the scores (rather than the logits) matches the training-time EMO
+            # document-pool operator, which selects on masked scores but weights with the
+            # unmasked ones. An all-allowed mask is an exact no-op.
+            scores = scores.masked_fill(~self.allowed_experts, float("-inf"))
 
         expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
 
@@ -601,6 +641,32 @@ class Olmo3MoeRouter(nn.Module):
             )
 
         return expert_weights, expert_indices
+
+
+def get_moe_routers(model: nn.Module) -> Dict[int, Olmo3MoeRouter]:
+    """
+    Collect the routers of every MoE layer in an Olmo3Moe model, keyed by layer index.
+
+    Dense layers have no router and are omitted, so the returned keys are the complement
+    of :attr:`Olmo3MoeConfig.dense_layers_indices`.
+
+    :param model: An :class:`Olmo3MoeModel` or :class:`Olmo3MoeForCausalLM`.
+
+    :returns: A mapping from layer index to that layer's router.
+
+    :raises ValueError: If the model does not expose decoder layers.
+    """
+    base = getattr(model, "model", model)
+    layers = getattr(base, "layers", None)
+    if layers is None:
+        raise ValueError(f"{type(model).__name__} does not expose decoder layers")
+
+    routers: Dict[int, Olmo3MoeRouter] = {}
+    for layer_idx, layer in enumerate(layers):
+        router = getattr(getattr(layer, "mlp", None), "router", None)
+        if isinstance(router, Olmo3MoeRouter):
+            routers[layer_idx] = router
+    return routers
 
 
 class Olmo3MoeCausalConv1d(nn.Conv1d):
@@ -1032,9 +1098,7 @@ class Olmo3MoeAttention(nn.Module):
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        query_states = self._apply_scalable_softmax(
-            query_states, position_ids, cache_position
-        )
+        query_states = self._apply_scalable_softmax(query_states, position_ids, cache_position)
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}

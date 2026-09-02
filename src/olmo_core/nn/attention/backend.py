@@ -331,15 +331,6 @@ class TorchAttentionBackend(AttentionBackend):
                 device=q.device,
                 window_size=self.window_size,
             )
-        elif sinks is not None:
-            # The sink path applies softmax manually (see below), so it needs an explicit causal
-            # mask rather than relying on SDPA's ``is_causal``.
-            attn_mask = self._get_sliding_window_mask(
-                seq_len_q=q.shape[1],
-                seq_len_kv=k.shape[1],
-                device=q.device,
-                window_size=(-1, -1),
-            )
 
         if any(
             opt is not None
@@ -362,6 +353,22 @@ class TorchAttentionBackend(AttentionBackend):
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
             q = all_to_all_single_cp2hp(q, self.cp_pg)
             k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+            if sinks is not None:
+                # Ulysses partitions heads after the CP-to-HP exchange. Select the matching sink
+                # logits; the enclosing data-parallel reduction combines gradients for the
+                # replicated full parameter after backward.
+                sinks = sinks.chunk(dist.get_world_size(self.cp_pg))[dist.get_rank(self.cp_pg)]
+
+        if sinks is not None and attn_mask is None:
+            # The sink path applies softmax manually (see below), so it needs an explicit causal
+            # mask rather than relying on SDPA's ``is_causal``. Build it after Ulysses expands the
+            # local context shard to the global sequence length.
+            attn_mask = self._get_sliding_window_mask(
+                seq_len_q=q.shape[1],
+                seq_len_kv=k.shape[1],
+                device=q.device,
+                window_size=(-1, -1),
+            )
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads

@@ -402,13 +402,9 @@ def test_olmo3moe_router_uses_float32_projection():
     hidden_states = torch.randn(2, 5, config.hidden_size, dtype=torch.bfloat16)
 
     actual_weights, actual_indices = router(hidden_states)
-    logits = torch.nn.functional.linear(
-        hidden_states.float(), router.gate.weight.float()
-    )
+    logits = torch.nn.functional.linear(hidden_states.float(), router.gate.weight.float())
     scores = logits.softmax(dim=-1)
-    expected_weights, expected_indices = torch.topk(
-        scores, config.num_experts_per_tok, dim=-1
-    )
+    expected_weights, expected_indices = torch.topk(scores, config.num_experts_per_tok, dim=-1)
     if config.normalize_expert_weights is not None:
         expected_weights = expected_weights.div(
             torch.norm(
@@ -424,3 +420,141 @@ def test_olmo3moe_router_uses_float32_projection():
     assert actual_weights.dtype == torch.float32
     assert torch.equal(actual_indices, expected_indices)
     assert torch.equal(actual_weights, expected_weights)
+
+
+def _masked_model_and_inputs():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    torch.manual_seed(0)
+    model = Olmo3MoeForCausalLM(_small_config()).eval()
+    input_ids = torch.randint(0, model.config.vocab_size, (2, 6))
+    return model, input_ids
+
+
+def _logits(model, input_ids):
+    with torch.no_grad():
+        return model(input_ids, use_cache=False).logits
+
+
+def _allow(config, expert_ids):
+    mask = torch.zeros(config.n_routed_experts, dtype=torch.bool)
+    mask[list(expert_ids)] = True
+    return mask
+
+
+@requires_olmo3moe
+def test_olmo3moe_get_moe_routers_skips_dense_layers():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeForCausalLM,
+        Olmo3MoeRouter,
+        get_moe_routers,
+    )
+
+    config = _small_config()
+    model = Olmo3MoeForCausalLM(config)
+    routers = get_moe_routers(model)
+
+    # dense_layers_indices=[0], so only layer 1 routes.
+    assert sorted(routers) == [1]
+    assert all(isinstance(router, Olmo3MoeRouter) for router in routers.values())
+    # The helper should work on the inner model too.
+    assert sorted(get_moe_routers(model.model)) == [1]
+
+
+@requires_olmo3moe
+def test_olmo3moe_all_experts_mask_is_exact_noop():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, input_ids = _masked_model_and_inputs()
+    routers = get_moe_routers(model)
+    baseline = _logits(model, input_ids)
+
+    for router in routers.values():
+        router.set_allowed_experts(torch.ones(model.config.n_routed_experts, dtype=torch.bool))
+    assert torch.equal(_logits(model, input_ids), baseline)
+
+    for router in routers.values():
+        router.clear_allowed_experts()
+    assert torch.equal(_logits(model, input_ids), baseline)
+
+
+@requires_olmo3moe
+def test_olmo3moe_expert_mask_excludes_masked_experts():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, _ = _masked_model_and_inputs()
+    router = get_moe_routers(model)[1]
+    allowed = {0, 2}
+    router.set_allowed_experts(_allow(model.config, allowed))
+
+    hidden_states = torch.randn(4, 5, model.config.hidden_size)
+    with torch.no_grad():
+        _, expert_indices = router(hidden_states)
+
+    assert set(expert_indices.unique().tolist()) <= allowed
+
+
+@requires_olmo3moe
+def test_olmo3moe_expert_mask_changes_model_output():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, input_ids = _masked_model_and_inputs()
+    router = get_moe_routers(model)[1]
+
+    # Two disjoint allowed sets must route through different experts, so the outputs
+    # cannot coincide. This checks the mask is wired into the model forward, which an
+    # all-allowed no-op test cannot show.
+    router.set_allowed_experts(_allow(model.config, {0, 1}))
+    first = _logits(model, input_ids)
+    router.set_allowed_experts(_allow(model.config, {2, 3}))
+    second = _logits(model, input_ids)
+
+    assert not torch.allclose(first, second)
+
+
+@requires_olmo3moe
+def test_olmo3moe_clearing_mask_restores_full_routing():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, input_ids = _masked_model_and_inputs()
+    router = get_moe_routers(model)[1]
+    baseline = _logits(model, input_ids)
+
+    router.set_allowed_experts(_allow(model.config, {0, 1}))
+    assert not torch.allclose(_logits(model, input_ids), baseline)
+
+    router.clear_allowed_experts()
+    assert router.allowed_experts is None
+    assert torch.equal(_logits(model, input_ids), baseline)
+
+
+@requires_olmo3moe
+def test_olmo3moe_expert_mask_is_not_persistent():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, _ = _masked_model_and_inputs()
+    get_moe_routers(model)[1].set_allowed_experts(_allow(model.config, {0, 1}))
+
+    assert not any("allowed_experts" in key for key in model.state_dict())
+
+
+@requires_olmo3moe
+@pytest.mark.parametrize(
+    "mask, match",
+    [
+        (torch.ones(4, dtype=torch.float32), "bool tensor"),
+        (torch.ones(3, dtype=torch.bool), "shape"),
+        (torch.ones(4, 4, dtype=torch.bool), "shape"),
+        (torch.tensor([True, False, False, False]), "at least num_experts_per_tok"),
+    ],
+    ids=["dtype", "short", "2d", "undersized"],
+)
+def test_olmo3moe_expert_mask_rejects_invalid_masks(mask, match):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import get_moe_routers
+
+    model, _ = _masked_model_and_inputs()
+    router = get_moe_routers(model)[1]
+
+    with pytest.raises(ValueError, match=match):
+        router.set_allowed_experts(mask)
+    assert router.allowed_experts is None

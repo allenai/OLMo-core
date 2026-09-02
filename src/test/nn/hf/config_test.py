@@ -1,18 +1,22 @@
 import pytest
 from transformers import Olmo2Config
 
-from olmo_core.nn.hf.config import get_hf_config
 from olmo_core.config import DType
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.hf.config import get_hf_config
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.rope import RoPEConfig
+from olmo_core.nn.transformer import (
+    OLMoDDPModelConfig,
+    TransformerBlockType,
+    TransformerType,
+)
 from olmo_core.nn.transformer.config import TransformerBlockConfig, TransformerConfig
-from olmo_core.nn.transformer import OLMoDDPModelConfig, TransformerBlockType, TransformerType
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore

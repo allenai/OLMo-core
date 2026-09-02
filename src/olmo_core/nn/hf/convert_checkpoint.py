@@ -22,8 +22,8 @@ import rich
 import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
-from torch.nn.attention import SDPBackend, sdpa_kernel
 from cached_path import cached_path
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 
 
 def _load_ddp_optimizer_model_state(
-    checkpoint_dir: str | Path,
+    checkpoint_dir: PathOrStr,
     model: Transformer,
     *,
     work_dir: str | Path,

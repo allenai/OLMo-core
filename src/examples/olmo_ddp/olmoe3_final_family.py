@@ -34,6 +34,7 @@ from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.transformer import (
+    InitMethod,
     OLMoDDPModelConfig,
     TransformerBlockType,
     TransformerType,
@@ -283,7 +284,7 @@ def build_model_config(
         ),
         embedding_norm=deepcopy(norm),
         dtype=DType.float32,
-        init_method="normal",
+        init_method=InitMethod.normal,
         init_seed=0,
         init_std=0.02,
         embed_scale=math.sqrt(g.d_model),
