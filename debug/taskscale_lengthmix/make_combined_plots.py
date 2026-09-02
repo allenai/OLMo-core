@@ -53,7 +53,8 @@ def sy(v):
     return H - PAD_B - max(min(v, 1.0), 0.0) * (H - PAD_B - PAD_T)
 
 
-def panel(task, task_data, axis, err=True):
+def panel(task, task_data, axis, err=True, extrap=12.0):
+    """extrap: how many times past the largest measured budget to run the dashed fit."""
     series, allx = [], []
     for rung in sorted(set(task_data.get("dense", {})) | set(task_data.get("sparse", {})),
                        key=lambda r: RUNG_TOK.get(r, 0)):
@@ -68,7 +69,7 @@ def panel(task, task_data, axis, err=True):
             series.append((rung, variant, xs, ys, fit(xs, ys) if len(xs) >= 2 else None))
     if not series:
         return ""
-    xlo, xhi = math.log10(min(allx) / 2.2), math.log10(max(allx) * 2.2)
+    xlo, xhi = math.log10(min(allx) / 2.2), math.log10(max(allx) * extrap)
     body = [f'<line class="axis" x1="{PAD_L}" y1="{H - PAD_B}" x2="{W - PAD_R}" y2="{H - PAD_B}"/>',
             f'<line class="axis" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{H - PAD_B}"/>']
     for v in (0, .25, .5, .75, 1.0):
@@ -86,6 +87,7 @@ def panel(task, task_data, axis, err=True):
     body.append(f'<text x="{PAD_L}" y="{H - 4}" style="font-size:9px">'
                 + ("training tokens" if axis == "tokens" else "training node-hours (8xH100)")
                 + "</text>")
+    fits_by_rung = {}
     for rung, variant, xs, ys, p in series:
         col = RUNG_COLOR.get(rung, "#888")
         dash = ' stroke-dasharray="4 3"' if variant == "sparse" else ""
@@ -94,6 +96,14 @@ def panel(task, task_data, axis, err=True):
             body.append('<polyline points="' + " ".join(
                 f"{sx(x, xlo, xhi):.1f},{sy(hill(x, *p)):.1f}" for x in grid)
                 + f'" fill="none" stroke="{col}" stroke-width="1.7"{dash}/>')
+            # extrapolation past the last measured budget, drawn thin and faded so it never reads
+            # as data -- this is where a crossover would have to happen for sparse to win
+            gx = np.logspace(math.log10(max(xs)), xhi, 50)
+            body.append('<polyline points="' + " ".join(
+                f"{sx(x, xlo, xhi):.1f},{sy(hill(x, *p)):.1f}" for x in gx)
+                + f'" fill="none" stroke="{col}" stroke-width="1.1" opacity=".45" '
+                  'stroke-dasharray="2 3"/>')
+            fits_by_rung.setdefault(rung, {})[variant] = (p, max(xs))
         for x, y in zip(xs, ys):
             if err:
                 se = (max(y, 0.0) * (1 - max(min(y, 1.0), 0.0)) / 500) ** 0.5
@@ -106,6 +116,24 @@ def panel(task, task_data, axis, err=True):
             else:
                 body.append(f'<circle cx="{sx(x, xlo, xhi):.1f}" cy="{sy(y):.1f}" r="3.1" '
                             f'fill="var(--panel)" stroke="{col}" stroke-width="1.6"/>')
+    # crossover marks: where the sparse fit meets the dense fit for the same rung
+    crossings = []
+    for rung, fv in fits_by_rung.items():
+        if len(fv) != 2:
+            continue
+        (pd, dmax), (ps, smax) = fv["dense"], fv["sparse"]
+        lo, hi = max(min(dmax, smax) / 30, 10 ** xlo), 10 ** xhi
+        g = np.logspace(math.log10(lo), math.log10(hi), 2500)
+        gap = hill(g, *ps) - hill(g, *pd)
+        hit = np.nonzero(gap >= 0)[0]
+        if len(hit) and 10**xlo < g[hit[0]] < 10**xhi:
+            x = float(g[hit[0]])
+            col = RUNG_COLOR.get(rung, "#888")
+            y = sy(hill(x, *pd))
+            body.append(f'<circle cx="{sx(x, xlo, xhi):.1f}" cy="{y:.1f}" r="5" fill="none" '
+                        f'stroke="{col}" stroke-width="1.4" opacity=".9"/>')
+            body.append(f'<circle cx="{sx(x, xlo, xhi):.1f}" cy="{y:.1f}" r="1.6" fill="{col}"/>')
+            crossings.append((rung, x, x <= max(dmax, smax)))
     rungs_here = sorted({r for r, _, _, _, _ in series}, key=lambda r: RUNG_TOK.get(r, 0))
     legend = " ".join(f'<span style="color:{RUNG_COLOR.get(r, "#888")}">&#9679;{r}</span>'
                       for r in rungs_here)
@@ -113,10 +141,111 @@ def panel(task, task_data, axis, err=True):
             f'<svg viewBox="0 0 {W} {H}" width="100%">{"".join(body)}</svg></figure>')
 
 
+N_PARAMS, N_FULL_ATTN, D_ATTN = 4.0e9, 8, 16 * 256
+
+
+def flops_per_token(variant, L):
+    """6N for parameters + attention over context L; sparse-landmark pays 1/64 of the latter.
+
+    Only 8 of Qwen3.5-4B's 32 layers are full attention (GDN:full = 3:1), which is why the
+    architecture's FLOP advantage is modest until L is large enough for attention to dominate.
+    """
+    f = 1.0 if variant == "dense" else 1.0 / 64.0
+    return 6 * N_PARAMS + f * 12 * N_FULL_ATTN * D_ATTN * L
+
+
+def budget_for(p, t):
+    fmax, g, K = p
+    return None if t >= fmax else K * (t / (fmax - t)) ** (1.0 / g)
+
+
+def length_panel(task, task_data, target, out_lengths=(65536, 131072, 262144, 1048576)):
+    """FLOPs needed to reach `target` against context length, per variant, with extrapolation."""
+    curves = {}
+    for variant in ("dense", "sparse"):
+        pts = []
+        for rung, budgets in task_data.get(variant, {}).items():
+            if rung not in RUNG_TOK or len(budgets) < 2:
+                continue
+            bs = sorted(float(b) for b in budgets)
+            ys = [budgets[f"{int(b)}"] for b in bs]
+            p = fit(bs, ys)
+            need = budget_for(p, target)
+            # same guards as the standalone fitter: a budget far past, or below, everything we ran
+            # is the fit running away rather than a measurement of that rung
+            if need is None or need > 20 * max(bs) or need < min(bs):
+                continue
+            L = RUNG_TOK[rung]
+            pts.append((L, need * flops_per_token(variant, L)))
+        if len(pts) >= 2:
+            pts.sort()
+            lx = np.log([p[0] for p in pts])
+            ly = np.log([p[1] for p in pts])
+            beta, c = np.polyfit(lx, ly, 1)
+            curves[variant] = (pts, beta, c)
+    if not curves:
+        return ""
+    allx = [L for v in curves.values() for L, _ in v[0]] + list(out_lengths)
+    ally = [F for v in curves.values() for _, F in v[0]]
+    ally += [math.exp(c + b * math.log(L)) for _, b, c in curves.values() for L in out_lengths]
+    xlo, xhi = math.log10(min(allx) / 1.5), math.log10(max(allx) * 1.5)
+    ylo, yhi = math.log10(min(ally) / 5), math.log10(max(ally) * 5)
+
+    def py(v):
+        return H - PAD_B - (math.log10(v) - ylo) / (yhi - ylo) * (H - PAD_B - PAD_T)
+    body = [f'<line class="axis" x1="{PAD_L}" y1="{H - PAD_B}" x2="{W - PAD_R}" y2="{H - PAD_B}"/>',
+            f'<line class="axis" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{H - PAD_B}"/>']
+    for e in range(int(math.ceil(ylo)), int(math.floor(yhi)) + 1):
+        body.append(f'<line class="grid" x1="{PAD_L}" y1="{py(10**e):.1f}" x2="{W - PAD_R}" '
+                    f'y2="{py(10**e):.1f}"/>')
+        body.append(f'<text x="{PAD_L - 5}" y="{py(10**e) + 3:.1f}" text-anchor="end">1e{e}</text>')
+    for L in (2048, 8192, 32768, 131072, 1048576):
+        if xlo < math.log10(L) < xhi:
+            body.append(f'<text x="{sx(L, xlo, xhi):.1f}" y="{H - PAD_B + 13}" '
+                        f'text-anchor="middle">{L // 1024}k</text>')
+    body.append(f'<text x="{PAD_L}" y="{H - 4}" style="font-size:9px">context length &rarr; '
+                f'(y: training FLOPs to reach {target})</text>')
+    cross = None
+    for variant, (pts, beta, c) in curves.items():
+        col = "#2B5FB8" if variant == "dense" else "#C0442A"
+        dash = ' stroke-dasharray="4 3"' if variant == "sparse" else ""
+        body.append('<polyline points="' + " ".join(
+            f"{sx(L, xlo, xhi):.1f},{py(F):.1f}" for L, F in pts)
+            + f'" fill="none" stroke="{col}" stroke-width="1.9"{dash}/>')
+        ext = [(L, math.exp(c + beta * math.log(L))) for L in out_lengths]
+        seg = [pts[-1]] + ext
+        body.append('<polyline points="' + " ".join(
+            f"{sx(L, xlo, xhi):.1f},{py(F):.1f}" for L, F in seg)
+            + f'" fill="none" stroke="{col}" stroke-width="1.2" opacity=".55" '
+              'stroke-dasharray="2 3"/>')
+        for L, F in pts:
+            body.append(f'<circle cx="{sx(L, xlo, xhi):.1f}" cy="{py(F):.1f}" r="3.2" '
+                        f'fill="{col}"/>')
+        for L, F in ext:
+            body.append(f'<rect x="{sx(L, xlo, xhi) - 3:.1f}" y="{py(F) - 3:.1f}" width="6" '
+                        f'height="6" fill="var(--panel)" stroke="{col}" stroke-width="1.4"/>')
+    if len(curves) == 2:
+        (_, bd, cd), (_, bs_, cs) = curves["dense"], curves["sparse"]
+        if bs_ < bd:                       # sparse grows slower -> they must cross
+            Lx = math.exp((cs - cd) / (bd - bs_))
+            if 10**xlo < Lx < 10**xhi:
+                cross = Lx
+                body.append(f'<line x1="{sx(Lx, xlo, xhi):.1f}" y1="{PAD_T}" '
+                            f'x2="{sx(Lx, xlo, xhi):.1f}" y2="{H - PAD_B}" stroke="#2E7D4F" '
+                            'stroke-width="1.3" stroke-dasharray="3 2"/>')
+    betas = ", ".join(f"{v} &beta;={curves[v][1]:.2f}" for v in curves)
+    ctxt = (f" &nbsp;| <span style='color:#2E7D4F'>sparse cheaper beyond {cross / 1024:.0f}k "
+            "context</span>" if cross else "")
+    return (f'<figure><figcaption><b>{task}</b> &nbsp; {betas}{ctxt}</figcaption>'
+            f'<svg viewBox="0 0 {W} {H}" width="100%">{"".join(body)}</svg></figure>')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("points")
     ap.add_argument("out")
+    ap.add_argument("--target", type=float, default=0.5,
+                    help="score whose FLOP cost the length-scaling section plots")
     a = ap.parse_args()
     data = json.load(open(a.points))
     order = ["contradiction", "nq", "oolong", "outlier", "qdmatch_nq", "xabsence", "absence",
@@ -125,6 +254,7 @@ def main():
 
     tok = "".join(panel(t, data[t], "tokens") for t in tasks)
     wall = "".join(panel(t, data[t], "hours") for t in tasks)
+    length = "".join(length_panel(t, data[t], a.target) for t in tasks)
     css = """<style>
 :root{--paper:#F7F8F6;--panel:#FFF;--ink:#1A2129;--ink-soft:#4A5560;--hairline:#D9DED9;--teal:#5E7370;}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--paper:#12171C;--panel:#1A2129;
@@ -164,6 +294,20 @@ svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
             'left</b> relative to its token position, which is enough to reverse the outlier 16k '
             'comparison and to close much of the oolong gap.</p>',
             f'<div class="grid">{wall}</div>',
+            f"<h2>Length scaling: FLOPs to reach {a.target} vs context length</h2>",
+            '<p>Each point is a measured rung converted twice: the fitted data law gives the tokens '
+            f'needed for {a.target} at that length, and the FLOP model converts tokens to compute '
+            '(6N for parameters plus attention over L, with sparse paying 1/64 of the attention '
+            'term; only 8 of 32 layers are full attention in this GDN hybrid). Filled circles are '
+            'those measured-rung points, hollow squares are the extrapolation to 64k/128k/256k/1M, '
+            'and &beta; is the fitted slope of log-FLOPs on log-length. <b>Where sparse\'s &beta; '
+            'is smaller, the two lines must cross</b> &mdash; the green rule marks it.</p>',
+            f'<div class="grid">{length}</div>',
+            '<p style="color:var(--ink-soft);font-size:.9rem">Only tasks whose rungs actually '
+            f'bracket {a.target} appear here: a rung already above the target at its smallest '
+            'budget, or one needing more than 20&times; the largest budget we ran, is dropped '
+            'rather than fitted, because in both cases the "budget" would be the curve running '
+            'away rather than a measurement.</p>',
             "</main>"]
     open(a.out, "w").write("\n".join(html))
     print(f"wrote {a.out}: {len(tasks)} tasks x 2 axes = {len(tasks) * 2} panels")
