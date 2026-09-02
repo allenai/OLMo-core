@@ -105,7 +105,7 @@ class SpeedMonitorCallback(Callback):
                         self.device_peak_flops_per_second = int(1513e12 * dense_correction)
                     else:  # for SXM and other variants
                         self.device_peak_flops_per_second = int(1979e12 * dense_correction)
-                elif "B200" in device_name:
+                elif "B200" in device_name or "B300" in device_name:
                     # data from https://www.nvidia.com/en-us/data-center/hgx/
                     self.device_peak_flops_per_second = int(4.5e15 * dense_correction)
                 else:  # for other GPU types, assume A100
