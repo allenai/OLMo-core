@@ -73,7 +73,17 @@ the deployed model); the soft-token arms with plain full attention (zero-shot tr
 **80 eval jobs** (one multi-rung eval per (task, budget, arm)). Beaker `ai2/jupiter`, 1 node × 8
 H100 per training job, `urgent`. Rough cost: dense 128M tokens at seq 40960 ≈ 1 h on 8 H100; the
 whole grid ≈ 4 tasks × 248M tokens × ~2.2 arm-equivalents ≈ 15–20 node-hours plus evals. Pilots
-first: one (task=outlier, budget=16M) job per arm, end to end through eval, before the grid.
+first: one (task=contradiction, budget=16M) job per arm, end to end through eval, before the
+grid (contradiction/oolong data landed first).
+
+### Batching (decided from the smokes, 2026-09-02)
+
+`dense` and `ffnmoe` train **packed** (`--pack`, seq 65536 -- the packer needs a power of two --
+8 packed rows per optimizer step ≈ 524k tokens). The soft-token arms need one example per row
+(per-row content fingerprints resolve the gold set), so they run the **padded** path at seq
+40960 with a 160-example global batch (≈ the same 524k tokens per step on average); their
+compaction drops padding before any compute, so no FLOPs are wasted on it. The FLOP meter counts
+NON-pad tokens (rows are padded with EOS) so both paths are charged for the same real tokens.
 
 ## 5. FLOP accounting (the x-axis)
 
@@ -112,3 +122,22 @@ known not to convert to wall-clock at 6k (`src/scripts/train/memexpress/ffnmoe/R
 - 1 epoch per stage; the ffnmoe arm's stage 1 uses the same arm data as its stage 2 (so it sees
   the data twice, and both passes are charged).
 - The soft-token arms keep a fixed FRACTION (1/6, 1/3) of non-gold docs real at every length (`--st-keep-frac`), per Prasann's instruction; the 128/256 absolute-count recipes are the reference points at 32k.
+
+## 8. KV iteration (Prasann 2026-09-02: "iterate especially the KV idea to get good FLOP-optimal performance for all tasks")
+
+After the baseline grid (kv17 / kv33 at fixed keep fractions), the KV arm is iterated per task on
+the FLOP axis. Pre-registered variants, one change each, launched at the budgets where the
+baseline curves separate (typically 16M–64M), evaluated identically:
+
+| variant | what it tests |
+|---|---|
+| `kv08` / `kv50` (keep 1/12, 1/2) | the keep-fraction frontier: where does each task's curve bend? |
+| `kv-blind` (gold-blind at the same fraction, all tasks) | does the method need gold knowledge at train time? (deployment-realistic; oolong is already blind) |
+| `kv-range` (`--st-n-random-range` log-uniform between 1/12 and 1/2 of docs) | scale-invariant breadth randomization (the v25 mechanism) |
+| `kv-mix` (`--st-mix-start-p 0.5 --st-mix-end-p 0`) | compression-mixing curriculum: some uncompressed rows early |
+| `kv-nodetach` | the detach ablation (co-drift control) |
+| `kv-long` (short-heavy mix shifted longer, or 32k-only tail) | whether the KV saving, which grows with context, buys more at longer training lengths |
+
+Selection rule: for each task, the variant with the best mean-f1 at matched actual PFLOPs wins;
+ties go to the cheaper one. Oolong is the hard case (no gold subset) and gets the blind /
+range / mix variants first.

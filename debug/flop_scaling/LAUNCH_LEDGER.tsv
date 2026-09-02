@@ -17,3 +17,8 @@ job_id	task	arm	budget	stage	run_name	cluster	launched	status	notes
 3492778	contradiction	-	data	-	fs-data-contradiction	mooney	2026-09-02 08:35	FAILED	mined-pair pool cannot give 31k distinct 2k examples (50 consecutive rejections at num_docs=44,num_pairs=3) -> budgets capped at 48M, pools 12k/3.6k/1.1k/280/80; relaunched
 3492779	oolong	-	data	-	fs-data-oolong	mooney	2026-09-02 08:35	DONE	ALL 5 arms built + tokenized + on S3 in 3 min (sh8M 2490 ex ... sh128M 39844 ex; qwen3 markers, query after, no-cot)
 3492805	-	-	base	-	q4b-dense-cpt-fixmark -> S3	sneetches	2026-09-02 08:55	RUNNING	upload the 12G model-only fixmark base to s3://.../flop_scaling/bases/ (first attempt 3492789 uploaded nothing: --exclude '*optim*' matched model_and_optim/)
+01M1GAJ067EEAY1HN2GKBQMMSF	-	-	sync	-	fs-sync-s3-weka	beaker(gantry)	2026-09-02 09:20	FAILED	(image has no aws binary; scripts now use the relay jobs' awscli bootstrap; relaunched 01M1GARRK04MPAPMDHKF1QPRH4) S3 -> weka: fixmark base + contradiction/oolong shards (incremental; rerun for outlier/nq)
+01M1GARRK04MPAPMDHKF1QPRH4	-	-	sync	-	fs-sync-s3-weka	beaker(gantry)	2026-09-02 09:35	RUNNING	S3 -> weka: fixmark base (17 files) + contradiction/oolong shards
+01M1GB22BK7THD9GR345RBKD4Y	contradiction	dense	16M	-	fs-contradiction-dense-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter
+01M1GB38PKKAFNQ2ATFDW68ZKT	contradiction	kv17	16M	-	fs-contradiction-kv17-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter
+01M1GB4T12VY82Q4E1J59BJ5TZ	contradiction	ffnmoe-s1	16M	s1	fs-contradiction-ffnmoe-s1-sh16M	ai2/jupiter-cirrascale-2	2026-09-01 22:58	LAUNCHED	PILOT (contradiction/16M) queued on jupiter

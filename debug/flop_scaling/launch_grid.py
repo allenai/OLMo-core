@@ -114,7 +114,11 @@ def main() -> None:
                 env = dict(os.environ, PYTHONPATH=f"{REPO}/src")
                 res = subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True)
                 out = res.stdout + res.stderr
-                tail = "\n".join(out.strip().splitlines()[-3:])
+                os.makedirs(f"{REPO}/debug/flop_scaling/launch_logs", exist_ok=True)
+                with open(f"{REPO}/debug/flop_scaling/launch_logs/{name}.{args.mode}.log", "w") as lf:
+                    lf.write(out)
+                urls = [l.strip() for l in out.splitlines() if "beaker.org/ex/" in l]
+                tail = urls[-1] if urls else "\n".join(out.strip().splitlines()[-3:])
                 print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
                 rows.append((name, task, arm, budget, res.returncode, tail.replace("\t", " ")[:200]))
     if args.mode == "launch":
