@@ -353,8 +353,21 @@ svg .grid{stroke:var(--hairline);stroke-width:.5;stroke-dasharray:2 3}
             "<h2>Against measured training wall-clock</h2>",
             '<p>Same fits, same points, x rescaled by each variant\'s measured cost per token '
             '(dense 0.00552, sparse 0.00332 node-hours per million). Sparse slides <b>1.66&times; '
-            'left</b> relative to its token position, which is enough to reverse the outlier 16k '
-            'comparison and to close much of the oolong gap.</p>',
+            'left</b> relative to its token position, which closes most of the outlier gap and much '
+            'of oolong\'s.</p>'
+            '<div class="key"><b>Is the outlier crossover real? Not yet.</b> Comparing raw points '
+            'at matched wall-clock (dense interpolated to each sparse arm\'s hours, 2 SE at '
+            'eval_size 600 &asymp; 0.05):<br>'
+            '&nbsp;&nbsp;16k &mdash; 0.53 h: sparse .497 vs dense .522 &nbsp;|&nbsp; 1.06 h: '
+            '.700 vs .678 &nbsp;|&nbsp; 2.12 h: .816 vs .782<br>'
+            '&nbsp;&nbsp;32k &mdash; 0.53 h: .186 vs .160 &nbsp;|&nbsp; 1.06 h: .254 vs .283 '
+            '&nbsp;|&nbsp; 2.12 h: .386 vs .389<br>'
+            'Sparse does move ahead at 16k for the two largest budgets, but by +.022 and +.034 '
+            'against a 2 SE band of ~.05 &mdash; <b>every one of these differences is inside the '
+            'noise</b>. At 32k the sign alternates, which is what a tie looks like. At 8k dense '
+            'leads clearly at every matched time. So the honest reading is that on outlier sparse '
+            'reaches <em>parity</em> in wall-clock at 16k-32k, not that it wins; the fitted '
+            'crossings near 0.8 h are curves resolving a difference the data does not.</div>',
             f'<div class="grid">{wall}</div>',
             "<h2>Length scaling: training node-hours to reach a target score vs context length</h2>",
             '<p>Each point is a measured rung converted twice: the fitted data law gives the '

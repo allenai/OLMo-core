@@ -72,6 +72,25 @@ rung with `--ngpu 1` (no collectives to desync). Two changes came out of this: t
 help now says when to drop to 1, and eval_lc_native stamps each rung's start and generation
 wall-clock so the next stall is diagnosable from the log instead of by comparing sibling jobs.
 
+## The outlier wall-clock "crossover" is parity, not a win
+
+Sparse trains 1.66x faster per token (measured), which is enough to erase outlier's token
+disadvantage. Comparing RAW points at matched wall-clock -- dense interpolated to each sparse arm's
+node-hours, 2 SE at eval_size 600 ~= 0.05:
+
+  16k: 0.53h .497 vs .522 | 1.06h .700 vs .678 | 2.12h .816 vs .782   (sparse ahead by .022, .034)
+  32k: 0.53h .186 vs .160 | 1.06h .254 vs .283 | 2.12h .386 vs .389   (sign alternates)
+   8k: 0.11h .278 vs .524 | 0.21h .467 vs .626 | 0.32h .645 vs .701 | 0.53h .754 vs .779
+
+**Every difference at 16k and 32k is inside 2 SE.** Sparse leads at the two largest 16k budgets but
+by less than the noise; at 32k the sign flips between budgets, which is what a tie looks like; at 8k
+dense leads clearly everywhere. The fitted crossings near 0.75-1.0 node-hours are curves resolving a
+difference the data does not resolve.
+
+Correct claim: on outlier, sparse reaches WALL-CLOCK PARITY with dense at 16k-32k despite needing
+~1.5x the tokens. Establishing a win would need either more eval examples (2 SE ~= .05 is the wall)
+or budgets past 640M where the fits say the gap widens.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
