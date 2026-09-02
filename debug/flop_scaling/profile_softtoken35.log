@@ -1,0 +1,12 @@
+srun: job 3493069 queued and waiting for resources
+srun: job 3493069 has been allocated resources
+/data/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Traceback (most recent call last):
+  File "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flop_scaling/profile_softtoken35.py", line 39, in <module>
+    arr = np.load(f"{SHARD}/token_ids_part_000000.npy", mmap_mode="r")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 489, in load
+    raise ValueError(
+ValueError: This file contains pickled (object) data. If you trust the file you can load it unsafely using the `allow_pickle=` keyword argument or `pickle.load()`.
+srun: error: mooney: task 0: Exited with exit code 1

@@ -47,3 +47,11 @@ PIVOT	-	-	note	-	Qwen3.5-4B track	-	2026-09-01 23:20	-	Prasann: stick to 3.5 for
 01M1GCP893SDYYRTKP6JGSCVAB	contradiction	-	kvdata35	-	contradiction_mix_s{14,28,56}M -> *_mk	beaker(gantry, weka-native)	2026-09-01 23:25	RUNNING	
 01M1GCPCMH81BY9E6FX6HDVBG7	oolong	-	kvdata35	-	oolong_mix_s{20,40,80}M -> *_mk	beaker(gantry, weka-native)	2026-09-01 23:25	RUNNING	
 orchestrator35	-	-	orchestrate	-	debug/flop_scaling/orchestrate35.py	login node	2026-09-01 23:35	RUNNING	ffnmoe-s1 on all 14 dense arms now; s2 + evals (beaker_native_lengthmix_eval, per-task ladders) on completion; kv17/kv33 once data on weka AND kv_ok flag set after the softtoken smoke
+beaker35	nq	ffnmoe-s1	48M	s1	fs35-nq-ffnmoe-s1-s48M	ai2/jupiter-cirrascale-2	2026-09-01 23:33	LAUNCHED	"01M1GD501EM0392VRB155VD440   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	14M	s1	fs35-contradiction-ffnmoe-s1-s14M	ai2/jupiter-cirrascale-2	2026-09-01 23:34	LAUNCHED	"01M1GD6CZZR79XHKMP6RXSBM9B   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	28M	s1	fs35-contradiction-ffnmoe-s1-s28M	ai2/jupiter-cirrascale-2	2026-09-01 23:34	LAUNCHED	"01M1GD7PHQ7WK14RA05QE634WF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	56M	s1	fs35-contradiction-ffnmoe-s1-s56M	ai2/jupiter-cirrascale-2	2026-09-01 23:35	LAUNCHED	"01M1GD8PF4NFCZ5FJXRS49XKFW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

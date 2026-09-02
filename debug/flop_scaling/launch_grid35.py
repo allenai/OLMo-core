@@ -66,9 +66,9 @@ def arm_args(task, arm, budget):
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]
         kvdata = f"{KV_SHARDS}/{task}_s{budget}_mk"
         if task == "oolong":
-            extra = f"--st-gold-blind --st-keep-prob {frac:.4f} --attn-backend flash_2"
+            extra = f"--st-gold-blind --st-keep-prob {frac:.4f} --attn-backend torch"
         else:
-            extra = f"--st-keep-frac {frac:.4f} --st-keep-mode gold_plus_random --attn-backend flash_2"
+            extra = f"--st-keep-frac {frac:.4f} --st-keep-mode gold_plus_random --attn-backend torch"
         return "softtoken", kvdata, padded, extra
     raise SystemExit(f"unknown arm {arm}")
 

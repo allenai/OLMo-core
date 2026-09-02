@@ -1187,8 +1187,24 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"{save_folder}/model_and_optim", train_module.model, save_overwrite=True
         )
         if get_rank() == 0:
+            model_dict = plan["model_config"].as_config_dict()
+            if opts.attn_backend == "torch":
+                # The soft-token arm trains with the SDPA backend (the flash_2 path is ~20x slower
+                # on its compacted rows), but SDPA has no KV-cached generation: record flash_2 in
+                # the export so the evaluators build the (identical-weight) model for fast decode.
+                def _swap(o):
+                    if isinstance(o, dict):
+                        for k, v in o.items():
+                            if k == "backend" and v == "torch":
+                                o[k] = "flash_2"
+                            else:
+                                _swap(v)
+                    elif isinstance(o, list):
+                        for v in o:
+                            _swap(v)
+                _swap(model_dict)
             experiment = {
-                "model": plan["model_config"].as_config_dict(),
+                "model": model_dict,
                 "dataset": {"tokenizer": plan["tokenizer_config"].as_config_dict()},
                 # Recorded so the eval scores with the routing the run trained with (the
                 # evaluator reads this block and enables the router before loading).

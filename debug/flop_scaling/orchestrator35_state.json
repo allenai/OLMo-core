@@ -76,6 +76,50 @@
    "retries": 0,
    "eval": null,
    "s2": null
+  },
+  "fs35-nq-ffnmoe-s1-s48M": {
+   "ex": "01M1GD501EM0392VRB155VD440",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-contradiction-ffnmoe-s1-s14M": {
+   "ex": "01M1GD6CZZR79XHKMP6RXSBM9B",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-contradiction-ffnmoe-s1-s28M": {
+   "ex": "01M1GD7PHQ7WK14RA05QE634WF",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35-contradiction-ffnmoe-s1-s56M": {
+   "ex": "01M1GD8PF4NFCZ5FJXRS49XKFW",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "ffnmoe-s1",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
   }
  },
  "evals": {},
