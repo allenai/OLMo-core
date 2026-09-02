@@ -229,6 +229,18 @@ def cycle(st):
                     launch_train(st, task, b, arm)
         st["kv_launched"][task] = True
         save(st)
+    # B2. gold-blind KV arms (kvb33 on every budget, kvb17 on the smallest) for the gold-subset
+    # tasks, once that task's marker data is in place (oolong's kv17/kv33 are already gold-blind).
+    st.setdefault("kvb_launched", {})
+    for task in ARMS:
+        if task == "oolong" or st["kvb_launched"].get(task) or not st["kv_launched"].get(task):
+            continue
+        for i, b in enumerate(ARMS[task]):
+            for arm in (["kvb33", "kvb17"] if i == 0 else ["kvb33"]):
+                if run_name(task, arm, b) not in st["runs"]:
+                    launch_train(st, task, b, arm)
+        st["kvb_launched"][task] = True
+        save(st)
     # C. training runs
     for name, r in list(st["runs"].items()):
         if r["state"] == "DONE" and not r.get("eval"):

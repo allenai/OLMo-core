@@ -20,8 +20,9 @@ STATE = f"{REPO}/debug/flop_scaling/orchestrator35_state.json"
 REPORT = f"{REPO}/records/flop-scaling-report-{dt.date.today().isoformat()}.md"
 ARM_LABEL = {"dense": "dense (prior campaign)", "ffnmoe-s1": "FFN routing, stage 1 (L12+)", "ffnmoe-s2": "FFN routing, stage 2 (all layers)",
              "ffnmoe-t10": "FFN routing, L12+, two-sided target 0.10", "ffnmoe-a10": "FFN routing, all layers, two-sided target 0.10",
-             "kv17": "KV soft-token, keep 1/6", "kv33": "KV soft-token, keep 1/3"}
-ARM_ORDER = ["dense", "ffnmoe-s1", "ffnmoe-s2", "ffnmoe-t10", "ffnmoe-a10", "kv17", "kv33"]
+             "kv17": "KV soft-token, keep gold + 1/6", "kv33": "KV soft-token, keep gold + 1/3",
+             "kvb17": "KV soft-token, gold-blind keep 1/6", "kvb33": "KV soft-token, gold-blind keep 1/3"}
+ARM_ORDER = ["dense", "ffnmoe-s1", "ffnmoe-s2", "ffnmoe-t10", "ffnmoe-a10", "kv17", "kv33", "kvb17", "kvb33"]
 
 
 def main():

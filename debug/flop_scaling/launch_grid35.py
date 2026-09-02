@@ -33,7 +33,11 @@ BASE = f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"
 CKPTS = f"{WEKA}/ctc_suite/ckpts"
 LEDGER = f"{REPO}/debug/flop_scaling/LAUNCH_LEDGER.tsv"
 FFN_LADDER = "1,16,64,256,1024,9728"  # Qwen3.5-4B hidden is also 9728
-KV_FRAC = {"kv17": 1 / 6, "kv33": 1 / 3}
+KV_FRAC = {"kv17": 1 / 6, "kv33": 1 / 3, "kvb17": 1 / 6, "kvb33": 1 / 3}
+# kvb* = GOLD-BLIND keep set (random docs only, gold not forced real). gold_plus_random leaks the
+# answer on id-answer tasks: the gold docs are always among the few real ones, so the model learns
+# "answer = a real doc" and collapses at eval where every doc is real (outlier kv17 16M: 8k f1 .13
+# vs dense .51 with train CE .17). Oolong has no gold subset and was gold-blind from the start.
 
 # (task -> budget -> dense-campaign arm dir on weka). Dense f1 for these exist in points.json.
 ARMS = {
@@ -79,7 +83,7 @@ def arm_args(task, arm, budget):
         frac = KV_FRAC[arm]
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]
         kvdata = f"{KV_SHARDS}/{task}_s{budget}_mk"
-        if task == "oolong":
+        if task == "oolong" or arm.startswith("kvb"):
             extra = f"--st-gold-blind --st-keep-prob {frac:.4f} --attn-backend torch"
         else:
             extra = f"--st-keep-frac {frac:.4f} --st-keep-mode gold_plus_random --attn-backend torch"
