@@ -182,6 +182,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     launch.weka_buckets = [BeakerWekaBucket("olmo-3p5-checkpoints", CHECKPOINT_MOUNT)]
     launch.shared_filesystem = True
+    launch.priority = "urgent"
     launch.min_runtime = "8h"
     launch.retries = 10
     launch.follow = False
