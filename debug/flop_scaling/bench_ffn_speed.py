@@ -156,6 +156,28 @@ def shapes(model, L: int, device: str, decode_batch: int):
     return {"train": train, "prefill": prefill, "decode": decode}
 
 
+def ffn_isolated(ff, L: int, d_model: int, device: str, iters: int):
+    """Time ONE routed FFN sub-block alone (forward, and forward+backward) on L tokens: the
+    routing implementation's own overhead against the pure FLOP ratio, with nothing else in
+    the way (no attention / GDN / head)."""
+    x = torch.randn(1, L, d_model, device=device, dtype=torch.bfloat16, requires_grad=True)
+
+    def fwd():
+        with torch.no_grad():
+            ff(x)
+
+    def fwdbwd():
+        y = ff(x)
+        y.float().sum().backward()
+        x.grad = None
+        for p in ff.parameters():
+            p.grad = None
+
+    holder = ff._nffn_holder
+    holder.begin_forward(collect_loss=False)
+    return timeit(fwd, iters), timeit(fwdbwd, iters)
+
+
 def theoretical(cfg_model, L: int, c: float, n_layers_full: int, n_layers_built: int):
     """Model-wide FLOP speedup for full model at seq L when every layer's FFN runs at cost c."""
     m = cfg_model
@@ -202,6 +224,14 @@ def main():
                 fns = shapes(model, L, device, args.decode_batch)
                 for lvl in levels:
                     r = rung_for(lvl, widths); force_rung(ffs, r); c = widths[r] / H
+                    if nl == 4:
+                        model.train(True)
+                        try:
+                            f_fwd, f_fb = ffn_isolated(ffs[0], L, ffs[0].w1.in_features, device, args.iters)
+                        except torch.cuda.OutOfMemoryError:
+                            torch.cuda.empty_cache(); f_fwd = f_fb = float("nan")
+                        probe[(nl, L, lvl, "ffn_fwd")] = f_fwd; probe[(nl, L, lvl, "ffn_fwdbwd")] = f_fb
+                        print(f"  FFN-only L={L} cost={lvl:5s} fwd {f_fwd:8.3f} ms  fwd+bwd {f_fb:8.3f} ms", flush=True)
                     for shape, fn in fns.items():
                         if shape == "decode" and L != int(args.seq_lens.split(",")[0]):
                             continue
@@ -226,7 +256,8 @@ def main():
                     c = cost_of(lvl, [H])
                     results["runs"].append({"model": name, "n_layers": n_full, "H": H, "L": L, "level": lvl, "cost": c,
                                             "shape": shape, "probe_per_layer_ms": per_layer, "probe_overhead_ms": overhead,
-                                            "predicted_full_ms": predicted})
+                                            "predicted_full_ms": predicted,
+                                            "ffn_only_fwd_ms": probe.get((4, L, lvl, "ffn_fwd")), "ffn_only_fwdbwd_ms": probe.get((4, L, lvl, "ffn_fwdbwd"))})
         # ---- full model where it fits ----
         if sum(p.numel() for p in cfg_full.build(init_device="meta").parameters()) / 1e9 <= args.full_max_params_b:
             _, model = build(name, None, device, args.attn_backend)
@@ -261,7 +292,7 @@ def main():
         print(f"[{name}] written {args.out}", flush=True)
 
     # ---- summary table: measured speedup vs cost=1 (routed code path) and vs theory ----
-    lines = ["| model | L | shape | cost | theory x | full x | probe x | full ms | probe-pred ms |", "|---|---|---|---|---|---|---|---|---|"]
+    lines = ["| model | L | shape | cost | theory x (model) | full x | probe x | FFN-only fwd x | FFN-only fwd+bwd x | full ms | probe-pred ms |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     by = {}
     for rr in results["runs"]:
         by[(rr["model"], rr["L"], rr["shape"], rr["level"])] = rr
@@ -269,8 +300,11 @@ def main():
         base = by.get((rr["model"], rr["L"], rr["shape"], "1"))
         fx = (base["full_ms"] / rr["full_ms"]) if base and "full_ms" in base and "full_ms" in rr and rr["full_ms"] == rr["full_ms"] and rr["full_ms"] > 0 else None
         px = (base["predicted_full_ms"] / rr["predicted_full_ms"]) if base and rr["predicted_full_ms"] > 0 else None
+        def ratio(k):
+            a, b = (base or {}).get(k), rr.get(k)
+            return "-" if not a or not b or b != b else f"{a / b:.2f}"
         lines.append(f"| {rr['model']} | {rr['L']} | {rr['shape']} | {rr['level']} | {rr.get('theoretical_speedup', float('nan')):.2f} | "
-                     f"{'-' if fx is None else f'{fx:.2f}'} | {'-' if px is None else f'{px:.2f}'} | "
+                     f"{'-' if fx is None else f'{fx:.2f}'} | {'-' if px is None else f'{px:.2f}'} | {ratio('ffn_only_fwd_ms')} | {ratio('ffn_only_fwdbwd_ms')} | "
                      f"{'-' if 'full_ms' not in rr else f'{rr['full_ms']:.1f}'} | {rr['predicted_full_ms']:.1f} |")
     open(args.out.replace(".json", ".md"), "w").write("# Routed-FFN speed: theoretical vs measured (%s)\n\n" % results["gpu"] + "\n".join(lines) + "\n")
     print("\n".join(lines[:40]))
