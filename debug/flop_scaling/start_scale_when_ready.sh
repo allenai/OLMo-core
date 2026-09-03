@@ -10,7 +10,9 @@ CL="ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale"
 done_fix=0; done_nine=0
 start_scale() { # $1 = scale
   tag="s$(echo $1 | tr -d .)"
-  if ps -eo args | grep "[o]rchestrate_scale.py" | grep -q "FS_SCALE=$1 " || [ -f debug/flop_scaling/orchestrate_${tag}_state.json ]; then echo "$(date '+%m-%d %H:%M') $1 already started"; return; fi
+  lock=debug/flop_scaling/orchestrate_${tag}.started
+  if [ -f "$lock" ] || [ -f debug/flop_scaling/orchestrate_${tag}_state.json ]; then echo "$(date '+%m-%d %H:%M') $1 already started"; return; fi
+  date > "$lock"   # written BEFORE the launch so a second watchdog instance cannot race it (2026-09-02 23:10 double start)
   FS_SCALE=$1 FS35_CLUSTER="$CL" setsid nohup env FS_SCALE=$1 $PY debug/flop_scaling/orchestrate_scale.py >> debug/flop_scaling/orchestrate_${tag}.log 2>&1 < /dev/null &
   echo "$(date '+%m-%d %H:%M') started orchestrate_scale for $1"
 }
