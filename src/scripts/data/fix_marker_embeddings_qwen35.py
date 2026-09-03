@@ -23,8 +23,13 @@ import argparse
 
 import torch
 
-from olmo_core.data.document_chunk_landmark import RESERVED_IDS  # canonical ids -- never retype
-from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
+from olmo_core.data.document_chunk_landmark import (
+    RESERVED_IDS,  # canonical ids -- never retype
+)
+from olmo_core.distributed.checkpoint import (
+    load_model_and_optim_state,
+    save_model_and_optim_state,
+)
 from olmo_core.nn.transformer import TransformerConfig
 
 FAMILY = "qwen3_5"
@@ -35,6 +40,8 @@ FACTORIES = {
     "0.8b": TransformerConfig.qwen3_5_0_8B,
     "2b": TransformerConfig.qwen3_5_2B,
     "4b": TransformerConfig.qwen3_5_4B,
+    "9b": TransformerConfig.qwen3_5_9B,
+    "27b": TransformerConfig.qwen3_5_27B,
 }
 
 #: Trained delimiter donors, same choices as the Qwen3 script (delimiters already read as
