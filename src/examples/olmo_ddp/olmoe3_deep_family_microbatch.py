@@ -275,6 +275,9 @@ def build_common_components(
         launch.google_credentials_secret = f"{secret_prefix}_GOOGLE_CREDENTIALS"
         launch.shared_memory = "128GiB"
         if ALLOWED_HOSTNAMES:
+            launch.clusters = []
+            launch.gpu_types = None
+            launch.tags = None
             launch.hostnames = ALLOWED_HOSTNAMES
         launch.follow = False
         launch.step_soft_timeout = None
