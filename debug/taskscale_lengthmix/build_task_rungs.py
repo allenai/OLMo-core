@@ -70,16 +70,19 @@ TASKS = {
     "oolong": {
         # narrow bands around each target so a rung is a LENGTH, not a range: the shipped
         # ctc bands span an octave (2k-4k, 8k-16k, ...) which smears the length axis.
-        # Pools deepened 2026-09-02 to carry a 4th budget: oolong has the campaign's only complete
-        # 3x4 grid on BOTH variants, so a 160M point extends the best-anchored ladder we have.
-        # Items are redrawn combinatorially per example, so extra depth costs CPU time only.
+        # Pools deepened 2026-09-02 to carry a 4th budget and again 2026-09-03 for a 5th: oolong
+        # has the campaign's only complete 3x4 grid on BOTH variants. The 160M point already
+        # showed why depth matters -- it deleted two of three fitted crossovers and doubled the
+        # third, because a 3-point sparse fit leaves fmax pinned at its bound. 320M is the next
+        # test of whether the now-pinned ceilings hold. Items are redrawn combinatorially per
+        # example, so extra depth costs CPU time only.
         "rungs": [
-            ("2k", (1800, 2400), 52000),
-            ("8k", (7200, 9200), 4800),
-            ("16k", (14500, 18500), 1200),
-            ("32k", (29000, 36000), 310),
+            ("2k", (1800, 2400), 104000),
+            ("8k", (7200, 9200), 9600),
+            ("16k", (14500, 18500), 2400),
+            ("32k", (29000, 36000), 620),
         ],
-        "budgets": [20e6, 40e6, 80e6, 160e6],
+        "budgets": [20e6, 40e6, 80e6, 160e6, 320e6],
         "prompt_task": "oolong",
     },
     "absence": {
