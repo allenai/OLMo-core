@@ -61,6 +61,10 @@ def launch_train(st, task, budget, arm):
         if arm.startswith("kv"):  # padded single-example rows; micro-batch by scale
             largs = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", str(KV_MICRO[SCALE]),
                      "--base-checkpoint", BASES[SCALE]]
+    if SCALE == "0.8b":
+        # the trainer's scale default for 0.8b is NO activation checkpointing (fits on 141GB H200s);
+        # a 65k packed row OOMs an 80GB H100 without it (fs35s08b-oolong-dense-s20M, 23:20)
+        extra = (extra + " --activation-checkpointing full").strip()
     cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", "qwen3_5", "--model-scale", SCALE,
            "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS[SCALE]),
            "--epochs", "1", "--lr", "5e-6", "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
