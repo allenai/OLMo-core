@@ -264,7 +264,9 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             CheckpointerCallback(
                 save_interval=CHECKPOINT_INTERVAL,
                 ephemeral_save_interval=None,
-                pre_train_checkpoint=True,
+                # The default saves step 0 only when no checkpoint was loaded. Explicit True
+                # would re-save and overwrite step 0 when resuming from that checkpoint.
+                pre_train_checkpoint=None,
                 save_async=True,
                 remove=CheckpointRemovalStrategy.never,
                 max_checkpoints=None,
