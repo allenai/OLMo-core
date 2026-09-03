@@ -931,8 +931,14 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
             from olmo_core.nn.nested_ffn_moe import reset_nested_ffn_extras
 
             reset_nested_ffn_extras(mod)
-            g = mod._nffn_gain.detach().float()
-            b = mod._nffn_router.w.bias.detach().float()
+            # Under FSDP these are DTensors sharded across ranks; with 8 ranks and 7 rungs one
+            # rank's local shard is EMPTY and .min() raises there (9B ladder, 2026-09-03), which
+            # hangs every other rank at the next collective. Gather before reading.
+            g = mod._nffn_gain.detach()
+            b = mod._nffn_router.w.bias.detach()
+            g = g.full_tensor() if hasattr(g, "full_tensor") else g
+            b = b.full_tensor() if hasattr(b, "full_tensor") else b
+            g, b = g.float(), b.float()
             stats.append(f"{owner}: gain={g.min().item():.2f}..{g.max().item():.2f} bias0={b[0].item():.1f}")
         elif hasattr(mod, "reset_parameters"):
             mod.reset_parameters()
