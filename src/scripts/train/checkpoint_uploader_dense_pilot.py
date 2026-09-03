@@ -34,7 +34,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerEnvSecret, BeakerWekaBucket
+from olmo_core.launch.beaker import BeakerEnvSecret, BeakerEnvVar, BeakerWekaBucket
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -197,6 +197,10 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             required=True,
         ),
     ]
+    # The jacobm AWS credentials in scaling-ladders use the standard
+    # ``default`` profile, while OLMo-core's generic launcher defaults to
+    # ``S3``. Match the profile layout used by these workspace secrets.
+    launch.env_vars.append(BeakerEnvVar(name="S3_PROFILE", value="default"))
     launch.google_credentials_secret = None
     launch.aws_config_secret = "jacobm_AWS_CONFIG"
     launch.aws_credentials_secret = "jacobm_AWS_CREDENTIALS"
