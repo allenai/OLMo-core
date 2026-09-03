@@ -186,7 +186,9 @@ SYSTEMS = {
     "g32-large-pp4-ep8-mb2": SystemConfig("large", 4, 4, 8, 2, 1 * MIB),
     "g32-large-pp4-ep8-mb4": SystemConfig("large", 4, 4, 8, 4, 1 * MIB),
     # Full-batch 64-GPU throughput qualifications using the best passing microbatch settings.
+    "g64-small-pp1-ep1-mb1": SystemConfig("small", 8, 1, 1, 1, 8 * MIB),
     "g64-small-pp1-ep1-mb4": SystemConfig("small", 8, 1, 1, 4, 8 * MIB),
+    "g64-small-pp1-ep1-mb8": SystemConfig("small", 8, 1, 1, 8, 8 * MIB),
     "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
     "g64-medium-pp1-ep4-mb1": SystemConfig("medium", 8, 1, 4, 1, 8 * MIB),
     # Half-scale medium probes preserve the gradient-accumulation geometry of the intended
