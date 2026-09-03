@@ -70,6 +70,11 @@ SHARE_EP_OUTPUTS = os.environ.get("OLMOE3_SHARE_EP_OUTPUTS", "0").strip().lower(
     "yes",
     "on",
 }
+ALLOWED_HOSTNAMES = [
+    hostname.strip()
+    for hostname in os.environ.get("OLMOE3_ALLOWED_HOSTNAMES", "").split(",")
+    if hostname.strip()
+]
 USE_REDUCE_SCATTER = os.environ.get("OLMOE3_USE_REDUCE_SCATTER", "0").strip().lower() in {
     "1",
     "true",
@@ -269,6 +274,8 @@ def build_common_components(
         launch.aws_credentials_secret = f"{secret_prefix}_AWS_CREDENTIALS"
         launch.google_credentials_secret = f"{secret_prefix}_GOOGLE_CREDENTIALS"
         launch.shared_memory = "128GiB"
+        if ALLOWED_HOSTNAMES:
+            launch.hostnames = ALLOWED_HOSTNAMES
         launch.follow = False
         launch.step_soft_timeout = None
     return common
