@@ -172,7 +172,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cmd=cli_context.remote_cmd,
         cluster=cli_context.cluster,
         workspace="ai2/scaling-ladders",
-        budget="ai2/oe-adapt",
+        budget="ai2/oe-other",
         num_nodes=1,
         nccl_debug=False,
         step_timeout=None,
