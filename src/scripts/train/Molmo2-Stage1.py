@@ -397,6 +397,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
         # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
         loss_token_weighting="none",
+        # Experiment, not the released recipe: the released run leaves every source at
+        # weight 1. Raising captions to 1.25 lifts their share of the sum(CE*w)/sum(w)
+        # objective from 77.5% to ~81%. Measured tradeoff across two full runs: +0.057
+        # caption avg and -0.0078 pointing f1 per point of caption share.
+        message_weight=1.25,
         seed=95818,
     )
 

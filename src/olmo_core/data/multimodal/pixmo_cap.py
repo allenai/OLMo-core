@@ -29,7 +29,7 @@ import numpy as np
 from olmo_core.config import Config
 
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import example_rng, build_branched_sequence
+from .sequence_builder import build_branched_sequence, example_rng
 
 __all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
 
@@ -84,6 +84,11 @@ class PixMoCapDatasetConfig(Config):
     max_crops: int = 8
     max_sequence_length: int = 5248
     loss_token_weighting: str = "root_subsegments"
+    message_weight: Optional[float] = None
+    """Example-wide multiplier on this source's loss tokens (mm_olmo
+    ``kwargs_mixture[].datasets[].message_weight``). ``None`` leaves every response token at
+    weight 1, which is what the released ``Molmo2-4B-Pretrain`` uses. Raising it increases
+    captions' share of the ``sum(CE*w)/sum(w)`` objective relative to the other sources."""
     fixed_prompt: Optional[str] = None
     """If set, always use this user prompt instead of sampling from the pools.
     Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
@@ -279,6 +284,22 @@ class PixMoCapDataset:
             eos_id=self._eos_id,
             loss_token_weighting=cfg.loss_token_weighting,
         )
+        if cfg.message_weight is not None:
+            # Same path pixmo_points uses: branch scaling is already folded into loss_masks by
+            # build_branched_sequence, so only the example-wide multiplier is applied here.
+            from olmo_core.data.multimodal.message_weight import (
+                MessageWeight,
+                apply_message_weight_to_loss_masks,
+            )
+
+            seq["loss_masks"] = apply_message_weight_to_loss_masks(
+                seq["loss_masks"],
+                seq.get("subsegment_ids"),
+                MessageWeight.from_string(cfg.loss_token_weighting).with_overrides(
+                    cfg.message_weight
+                ),
+                branch_scaling_already_applied=True,
+            )
 
         # Truncate to max_sequence_length, never cutting an <im_patch> token.
         if len(seq["input_ids"]) > cfg.max_sequence_length:
