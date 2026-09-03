@@ -184,17 +184,14 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     launch.shared_filesystem = True
     launch.priority = "urgent"
     launch.min_runtime = "8h"
-    launch.retries = 10
+    # Keep enough retries for a transient Beaker failure without allowing a
+    # deterministic pilot/configuration error to occupy a node all night.
+    launch.retries = 2
     launch.follow = False
     launch.env_secrets = [
         BeakerEnvSecret(
             name="BEAKER_TOKEN",
             secret="jacobm_BEAKER_TOKEN",
-            required=True,
-        ),
-        BeakerEnvSecret(
-            name="WANDB_API_KEY",
-            secret="jacobm_WANDB_API_KEY",
             required=True,
         ),
     ]
@@ -288,7 +285,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
                 group=run_id,
                 entity="ai2-llm",
                 project="checkpoint-uploader-pilot",
-                enabled=True,
+                # Beaker stdout is the authoritative pilot log. Keeping W&B
+                # disabled also makes checkpoint resume independent of W&B
+                # callback initialization order while async checkpoint metrics
+                # are drained during startup.
+                enabled=False,
                 cancel_check_interval=100,
                 tags=["checkpoint-uploader", "dense-275m", "dolma3p5", "wsd"],
             ),
