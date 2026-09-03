@@ -7,11 +7,12 @@ set -uo pipefail
 MODE="${MODE:?}"; W=/weka/oe-training-default/ai2-llm/checkpoints/prasanns
 read -r -d '' PRE <<'EOP'
 set -uo pipefail; export PYTHONWARNINGS=ignore PYTHONPATH=src HF_HUB_ENABLE_HF_TRANSFER=0; PYBIN=/opt/conda/bin/python
+$PYBIN -c "import fla" 2>/dev/null || $PYBIN -m pip install -q flash-linear-attention 2>&1 | tail -1   # GatedDeltaNet asserts has_fla() even on CPU
 for i in 1 2 3 4 5 6 7 8; do
-  MISSING=$($PYBIN -c "import olmo_core.nn.transformer, olmo_core.distributed.checkpoint, transformers, safetensors" 2>&1 | grep -oE "No module named '[^']+'" | sed "s/No module named '//; s/'//" | cut -d. -f1)
+  MISSING=$($PYBIN -c "import olmo_core.nn.transformer, olmo_core.distributed.checkpoint, transformers, safetensors, fla" 2>&1 | grep -oE "No module named '[^']+'" | sed "s/No module named '//; s/'//" | cut -d. -f1)
   [ -z "$MISSING" ] && break; echo "installing $MISSING"; $PYBIN -m pip install -q "$(echo $MISSING | tr _ -)" 2>&1 | tail -1
 done
-$PYBIN -c "import olmo_core.nn.transformer; print('imports OK')" || exit 1
+$PYBIN -c "import olmo_core.nn.transformer; from olmo_core.nn.attention.recurrent import has_fla; assert has_fla(); print('imports OK, fla', has_fla())" || exit 1
 EOP
 if [ "$MODE" = fix ]; then
   SCALES="${SCALES:-0.8b 2b}"
