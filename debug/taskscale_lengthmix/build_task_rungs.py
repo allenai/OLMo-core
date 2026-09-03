@@ -147,11 +147,19 @@ def pool_dir(task, label):
 
 
 def pool_file(task, label):
-    """The one *train* JSONL a generator dropped in the rung dir (names differ per generator)."""
+    """The train JSONL for a rung, preferring the DEEPEST one present.
+
+    Deepening a pool leaves the shallower file behind (the generator names outputs by example
+    count), so a rung directory can legitimately hold more than one. Take the largest and log which
+    -- asserting on exactly one file made the first deepening pass fail outright.
+    """
     d = pool_dir(task, label)
-    hits = sorted(p for p in d.glob("*.jsonl") if "train" in p.name and "heldout" not in p.name)
-    assert len(hits) == 1, f"{d}: expected 1 train jsonl, found {[p.name for p in hits]}"
-    return hits[0]
+    hits = [q for q in d.glob("*.jsonl") if "train" in q.name and "heldout" not in q.name]
+    assert hits, f"{d}: no train jsonl"
+    if len(hits) > 1:
+        hits.sort(key=lambda q: sum(1 for _ in open(q)))
+        log(f"{task} {label}: {len(hits)} pools present, using the deepest ({hits[-1].name})")
+    return hits[-1]
 
 
 # ---------------------------------------------------------------- stage: pools
@@ -343,6 +351,11 @@ def compose(task):
             continue
         random.Random(SHUFFLE_SEED).shuffle(lines)
         arm = f"{task}_mix_s{int(B/1e6)}M"
+        if (WEKA / "arms_tokenized" / arm / "metadata.json").exists():
+            # Already tokenized and already measured. Recomposing it from a deeper
+            # pool would silently change what that budget means.
+            log(f"[skip] {arm}: already tokenized, leaving as-is")
+            continue
         d = WEKA / "arms" / arm
         d.mkdir(parents=True, exist_ok=True)
         (d / "arm.jsonl").write_text("\n".join(lines) + "\n")
