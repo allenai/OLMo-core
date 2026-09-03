@@ -75,6 +75,13 @@ fa4 = [
 # Match the dense ladder's current OLMo Core dependency. The MoE ladder validates
 # this against its Torch 2.11 / CUDA 13 Beaker image before production use.
 fla = ["flash-linear-attention==0.5.2"]
+# CuTe/Triton drop-ins for FLA's KDA chunk kernel (`KimiDeltaAttentionConfig.use_cute_kernel`)
+# and short convolution (used by `CausalConv1d` whenever the package is installed). It lives
+# in a private allenai repo, so it is pinned to a commit and deliberately left out of `all`
+# — CI has no token for it. Bump the commit to pick up a new kernel release.
+kernel-fun = [
+    "kernel-fun @ git+https://github.com/allenai/kernel-fun.git@738ec2fb431243b2072abc32bfb3ef30bb3f8c2e#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
+]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
@@ -127,28 +134,15 @@ exclude = '''
     | \bdist\b
     | \bdoc\b
     | scratch/
-    | src/olmo_core/nn/attention/kda_cute/(_common|kda)/
 )
 '''
 
 [tool.isort]
 profile = "black"
 multi_line_output = 3
-extend_skip_glob = [
-    "src/olmo_core/nn/attention/kda_cute/_common/*",
-    "src/olmo_core/nn/attention/kda_cute/kda/*",
-]
 
 [tool.ruff]
 line-length = 100
-extend-exclude = [
-    # Vendored verbatim from the kernel-fun package (see the kda_cute package docstring).
-    # These are excluded from isort/black/ruff/mypy rather than fixed in place: they are
-    # 90-column upstream, and any reformatting here is lost on the next vendor and turns
-    # the next diff into noise. Fixes belong upstream, where a bench row can check them.
-    "src/olmo_core/nn/attention/kda_cute/_common",
-    "src/olmo_core/nn/attention/kda_cute/kda",
-]
 
 [tool.ruff.lint]
 ignore = ["F403", "F405", "E501"]
@@ -205,14 +199,6 @@ disable_error_code = "has-type"
 [[tool.mypy.overrides]]
 module = "tests.*"
 strict_optional = false
-
-[[tool.mypy.overrides]]
-# The vendored kernel-fun kernels: CuTe DSL metaclass-generated attributes and DSL-typed
-# unpacking that mypy cannot follow. This lives here rather than as an in-file
-# `# mypy: ignore-errors` header (where it used to be) because those files are copied
-# byte-for-byte from the package and an in-file edit would be lost on the next vendor.
-module = "olmo_core.nn.attention.kda_cute.*"
-ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = "src/test/"
