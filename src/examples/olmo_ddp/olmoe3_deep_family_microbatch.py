@@ -325,7 +325,7 @@ def build_model_config_from_common(common: CommonComponents, system: SystemConfi
         emo=emo,
         mxfp8_mlp=MXFP8_MLP,
     )
-    if system.model_size == "large" or SHARE_EP_OUTPUTS:
+    if SHARE_EP_OUTPUTS:
         for block in [model.block, *model.block_overrides.values()]:
             if block.routed_experts is not None:
                 block.ep.share_dispatch_out = True
