@@ -366,7 +366,10 @@ class MultimodalLM(nn.Module):
         num_prefix = getattr(self.vision, "num_prefix_tokens", 0)
         if num_prefix > 0:
             features = features[:, num_prefix:]
-        return features
+        # Prefix removal is a view, and fused vision kernels can likewise produce
+        # padded strides.  Materialize the patch sequence before reshaping across
+        # crops so compiled connector graphs see one canonical layout.
+        return features.contiguous()
 
     def _encode_images(
         self,
@@ -383,6 +386,10 @@ class MultimodalLM(nn.Module):
         :returns: Shape ``(B, n_pooled, lm_d_model)``.
         """
         B, T, N, _ = images.shape
+        # Packed and distributed loaders can provide strided views.  The crop axis is
+        # flattened below and must have a canonical layout for compiled ViT blocks.
+        images = images.contiguous()
+        pooled_patches_idx = pooled_patches_idx.contiguous()
         microbatch = self._vit_crop_microbatch()
 
         # Pad crop axis to the DP max so every rank runs the same number of ViT
@@ -402,16 +409,21 @@ class MultimodalLM(nn.Module):
                 T = t_pad
 
         if microbatch <= 0 or T <= microbatch:
-            features = self._vit_forward_features(images.reshape(B * T, N, -1))
-            features = features.reshape(B, T * features.shape[1], features.shape[-1])
+            flat_images = images.reshape(B * T, N, -1).contiguous()
+            features = self._vit_forward_features(flat_images)
+            features = features.reshape(B, T * features.shape[1], features.shape[-1]).contiguous()
         else:
             parts: List[torch.Tensor] = []
             for start in range(0, T, microbatch):
                 end = min(start + microbatch, T)
-                chunk = images[:, start:end].reshape(B * (end - start), N, -1)
+                chunk = images[:, start:end].reshape(B * (end - start), N, -1).contiguous()
                 chunk_features = self._vit_forward_features(chunk)
-                parts.append(chunk_features.reshape(B, (end - start) * chunk_features.shape[1], -1))
-            features = torch.cat(parts, dim=1)
+                parts.append(
+                    chunk_features.reshape(
+                        B, (end - start) * chunk_features.shape[1], -1
+                    ).contiguous()
+                )
+            features = torch.cat(parts, dim=1).contiguous()
 
         return self.connector(features, pooled_patches_idx)
 
