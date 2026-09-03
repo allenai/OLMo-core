@@ -544,3 +544,4 @@ beaker35	outlier	ffnmoe-s2	320M	s2	fs35r2-outlier-ffnmoe-s2-s320M	ai2/jupiter-ci
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 beaker35	speed	bench_ffn_speed	-	-	01M1JXKD36XC4J4GYBR9E7R1MT	jupiter 1xH100	2026-09-02 22:59	LAUNCHED	forced-cost routed-FFN speed benchmark (first try 01M1JXA08VN07ETRAYK1439JJ1 died: no fla in conda env; landed on A100)
 beaker35	bases	prep	0.8b,2b fix / 9b fetch	-	01M1JXEMAJHTH4F1R8SW81C39T 01M1JXER3GKVMXZSGPA7GHX58S	cpu	2026-09-02 22:59	LAUNCHED	marker-repaired bases for the model-scale ladder (prep_bases_beaker.sh)
+beaker35	oolong,contradiction	scale ladder 0.8b/2b/9b	20M,80M/14M,56M	dense,kv17|kv33,ffnmoe-t10	36 runs	jupiter+ceres+saturn 4/4/8gpu	2026-09-02 23:20	LAUNCHED	orchestrate_scale.py per scale; bases q35-{08b,2b,9b}-base-markerfix built tonight; 11 duplicate launches from a watchdog double-start cancelled at job level 23:16
