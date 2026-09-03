@@ -1,10 +1,10 @@
 # FLOP-scaling study: FFN routing and KV soft tokens vs dense (Qwen3.5-4B)
 
-Generated 2026-09-02 18:09 from `results/flop_scaling/results35.csv`. Plan: `records/flop-scaling-ffn-kv-plan.md`. Ledger: `debug/flop_scaling/LAUNCH_LEDGER.tsv`.
+Generated 2026-09-02 22:42 from `results/flop_scaling/results35.csv`. Plan: `records/flop-scaling-ffn-kv-plan.md`. Ledger: `debug/flop_scaling/LAUNCH_LEDGER.tsv`.
 
-Run status at generation: 92/93 training runs done (0 failed), 90/92 evals done. Cells missing below are still queued/running on Beaker.
+Run status at generation: 93/93 training runs done (0 failed), 93/93 evals done. Cells missing below are still queued/running on Beaker.
 
-## Summary (written 2026-09-02 18:10; grid 92/93 runs and 87/89 evals done, three outlier-320M tail items pending)
+## Summary (final, 2026-09-02 22:45; all 93 runs and 92 evals done)
 
 **Question.** At matched *training* FLOPs, does either method beat dense SFT on Qwen3.5-4B short-heavy 2k–32k mixes?
 
@@ -17,7 +17,7 @@ Run status at generation: 92/93 training runs done (0 failed), 90/92 evals done.
 | nq | KV soft tokens, gold-blind 1/3 | **dense wins by ~0.03 everywhere**: 0.832 @163 PF vs dense-8M 0.860 @190; 0.878 @509 vs dense-16M 0.878 @379 | 2.5× at f1 0.88 (FFN stage 1: 2.35×) |
 | outlier | none | every KV arm dead (≤0.30 at 8k vs dense 0.51–0.89); FFN routing 0.28 vs 0.43 at 64M | — |
 
-**Routed FFN** never reaches compute-optimality here: FFN is 57% of training FLOPs at these lengths, so the saving caps at ~0.70×, and every arm gives up more than that (losses concentrate on the 32k rung). Routing all layers collapses on 30–150-step runs. The two-sided budget lands exactly on target and is the recipe to keep; the L12+ ladder at 0.01 (stage 1) is the better of the two at ≥48M budgets. Deployed inference cost is the one thing FFN routing buys that KV does not.
+**Routed FFN** never reaches compute-optimality here: FFN is 57% of training FLOPs at these lengths, so the saving caps at ~0.70×, and every arm gives up more than that (losses concentrate on the 32k rung). Routing all layers collapses on 30–150-step runs, but recovers with horizon: the outlier stage-2 arm at 320M (~600 steps) scores 8k 0.70 / 16k 0.44 against 0.00–0.05 at ≤56M, matching the Qwen3-4B experience that all-layer routing needs long runs. The two-sided budget lands exactly on target and is the recipe to keep; the L12+ ladder at 0.01 (stage 1) is the better of the two at ≥48M budgets. Deployed inference cost is the one thing FFN routing buys that KV does not.
 
 **KV soft tokens** are task-shaped: they win where the answer is an aggregate over many documents (oolong), tie where two specific documents must survive but usually do (contradiction with gold forced real), trail slightly where one passage must be read verbatim (nq), and fail where every document must be compared (outlier). Forcing gold documents real leaks the answer on id-answer tasks (nq 1/6: 0.603 forced vs 0.728 blind) but is required on contradiction (blind 1/6: 0.053).
 
@@ -128,7 +128,7 @@ Per-rung f1 (2k, 8k, 16k, 32k):
 | FFN routing, L12+, two-sided target 0.10 | – | 0.596 (382) | 0.642 (741) | 0.688 (1437) |
 | FFN routing, all layers, two-sided target 0.10 | – | 0.508 (336) | – | – |
 | KV soft-token, keep gold + 1/6 | – | 0.637 (134) | 0.652 (272) | 0.665 (564) |
-| KV soft-token, keep gold + 1/3 | – | 0.641 (227) | 0.663 (457) | 0.674 (?) |
+| KV soft-token, keep gold + 1/3 | – | 0.641 (227) | 0.663 (457) | 0.674 (962) |
 
 Per-rung f1 (2k, 8k, 16k, 32k):
 
@@ -159,13 +159,13 @@ Per-rung f1 (2k, 8k, 16k, 32k):
 |---|---|---|---|---|---|---|
 | dense (prior campaign + 4-10M anchors) | 0.194 (190) | 0.263 (380) | 0.338 (760) | 0.428 (1522) | 0.604 (3805) | 0.552 (7608) |
 | FFN routing, stage 1 (L12+) | – | 0.056 (272) | 0.134 (532) | 0.280 (1062) | 0.415 (2611) | 0.493 (5261) |
-| FFN routing, stage 2 (all layers) | – | 0.019 (442) | 0.089 (866) | 0.165 (1725) | 0.322 (4271) | – |
-| FFN routing, L12+, two-sided target 0.10 | – | 0.078 (312) | 0.221 (587) | 0.321 (1124) | 0.378 (2787) | – |
+| FFN routing, stage 2 (all layers) | – | 0.019 (442) | 0.089 (866) | 0.165 (1725) | 0.322 (4271) | 0.399 (8562) |
+| FFN routing, L12+, two-sided target 0.10 | – | 0.078 (312) | 0.221 (587) | 0.321 (1124) | 0.378 (2787) | 0.499 (5550) |
 | FFN routing, all layers, two-sided target 0.10 | – | 0.031 (271) | – | – | – | – |
 | KV soft-token, keep gold + 1/6 | – | 0.065 (127) | 0.052 (261) | 0.089 (508) | 0.054 (1312) | 0.045 (2641) |
 | KV soft-token, keep gold + 1/3 | – | 0.137 (192) | 0.146 (396) | 0.226 (763) | 0.202 (1992) | 0.284 (4013) |
 | KV soft-token, gold-blind keep 1/6 | – | 0.033 (96) | – | – | – | – |
-| KV soft-token, gold-blind keep 1/3 | – | 0.133 (168) | 0.170 (350) | 0.247 (661) | 0.369 (1753) | – |
+| KV soft-token, gold-blind keep 1/3 | – | 0.133 (168) | 0.170 (350) | 0.247 (661) | 0.369 (1753) | 0.486 (3527) |
 
 Per-rung f1 (2k, 8k, 16k, 32k):
 
@@ -184,10 +184,12 @@ Per-rung f1 (2k, 8k, 16k, 32k):
 - ffnmoe-s2 @ 32M: – / 0.22 / 0.04 / 0.00
 - ffnmoe-s2 @ 64M: – / 0.36 / 0.13 / 0.00
 - ffnmoe-s2 @ 160M: – / 0.58 / 0.34 / 0.05
+- ffnmoe-s2 @ 320M: – / 0.70 / 0.44 / 0.06
 - ffnmoe-t10 @ 16M: – / 0.22 / 0.01 / 0.00
 - ffnmoe-t10 @ 32M: – / 0.43 / 0.22 / 0.01
 - ffnmoe-t10 @ 64M: – / 0.58 / 0.32 / 0.07
 - ffnmoe-t10 @ 160M: – / 0.70 / 0.40 / 0.03
+- ffnmoe-t10 @ 320M: – / 0.84 / 0.53 / 0.12
 - ffnmoe-a10 @ 16M: – / 0.08 / 0.01 / 0.00
 - kv17 @ 16M: – / 0.13 / 0.05 / 0.01
 - kv17 @ 32M: – / 0.10 / 0.04 / 0.02
@@ -204,6 +206,7 @@ Per-rung f1 (2k, 8k, 16k, 32k):
 - kvb33 @ 32M: – / 0.36 / 0.12 / 0.03
 - kvb33 @ 64M: – / 0.50 / 0.19 / 0.05
 - kvb33 @ 160M: – / 0.73 / 0.30 / 0.08
+- kvb33 @ 320M: – / 0.82 / 0.50 / 0.14
 
 ## Fitted scaling trends
 
@@ -249,7 +252,7 @@ Primary law: Hill f1 = fmax x^g/(x^g+K^g) (the prior dense campaigns' form, debu
 | ffnmoe-s2 | 3 | 0.648 (2174.5) | 0.688 | 1.23 | 227.9 | 0.000 | 8215.5 | 12.52 | 0.705 / 0.88 | 5591.0 |
 | ffnmoe-t10 | 3 | 0.688 (1436.8) | 1.050 | 0.28 | 145.0 | 0.000 | 1279.7 | 1.95 | 1.000 / 0.19 | 1283.2 |
 | kv17 | 3 | 0.665 (564.1) | 1.034 | 0.10 | 1.3 | 0.003 | 917.0 | 1.40 | 0.726 / 0.26 | 1702.5 |
-| kv33 | 2 | 0.663 (456.9) | - | - | - | - | - | - | - / - | - |
+| kv33 | 3 | 0.674 (962.3) | 1.047 | 0.10 | 2.3 | 0.003 | 1084.2 | 1.65 | 0.686 / 0.94 | 1910.6 |
 
 ## outlier
 
@@ -258,12 +261,12 @@ Primary law: Hill f1 = fmax x^g/(x^g+K^g) (the prior dense campaigns' form, debu
 | dense | 5 | 0.604 (3804.6) | 1.050 | 0.60 | 2516.7 | 0.012 | 1554.5 | 1.00 | 1.000 / 0.21 | 1424.5 |
 | ffnmoe-a10 | 1 | 0.031 (271.0) | - | - | - | - | - | - | - / - | - |
 | ffnmoe-s1 | 5 | 0.493 (5260.7) | 0.525 | 1.57 | 1023.6 | 0.007 | 3216.3 | 2.07 | 1.000 / 0.21 | 3726.2 |
-| ffnmoe-s2 | 4 | 0.322 (4271.0) | 0.453 | 1.55 | 2397.5 | 0.009 | 67702.2 | 43.55 | 1.000 / 0.16 | 20489.6 |
-| ffnmoe-t10 | 4 | 0.378 (2786.7) | 0.380 | 2.45 | 527.6 | 0.006 | - | - | 0.436 / 0.85 | - |
+| ffnmoe-s2 | 5 | 0.399 (8561.6) | 0.456 | 1.54 | 2422.7 | 0.008 | 41543.4 | 26.72 | 1.000 / 0.16 | 16941.3 |
+| ffnmoe-t10 | 5 | 0.499 (5550.0) | 0.506 | 1.35 | 821.9 | 0.031 | 3850.9 | 2.48 | 0.706 / 0.35 | 3986.7 |
 | kv17 | 5 | 0.089 (508.0) | 0.094 | 0.10 | 1.3 | 0.016 | - | - | 0.089 / 0.01 | - |
 | kv33 | 5 | 0.284 (4013.2) | 1.050 | 0.28 | 179976.1 | 0.024 | 63716.3 | 40.99 | 1.000 / 0.06 | 740572.1 |
 | kvb17 | 1 | 0.033 (95.5) | - | - | - | - | - | - | - / - | - |
-| kvb33 | 4 | 0.369 (1753.2) | 1.050 | 0.59 | 4987.6 | 0.007 | 3065.4 | 1.97 | 1.000 / 0.13 | 6166.0 |
+| kvb33 | 5 | 0.486 (3527.0) | 1.050 | 0.61 | 4614.4 | 0.007 | 2884.3 | 1.86 | 1.000 / 0.16 | 3629.3 |
 
 
 ## Plots

@@ -8,7 +8,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZ7VH1TFVFJBFXCW0JMHKT",
    "s2": null
   },
   "fs35-outlier-kv33-s16M": {
@@ -19,7 +19,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZ8XD2Q57H2SBN7M7G77PC",
    "s2": null
   },
   "fs35-outlier-kv17-s32M": {
@@ -30,7 +30,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZARQSN3DNBK0SBRX0W6PP",
    "s2": null
   },
   "fs35-outlier-kv33-s32M": {
@@ -38,10 +38,10 @@
    "task": "outlier",
    "budget": "32M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZBNVDM4G78N830T4ST8CM",
    "s2": null
   },
   "fs35-outlier-kv17-s64M": {
@@ -49,10 +49,10 @@
    "task": "outlier",
    "budget": "64M",
    "arm": "kv17",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZCMADRYXEYW7NZR66MW9Q",
    "s2": null
   },
   "fs35-outlier-kv33-s64M": {
@@ -60,10 +60,10 @@
    "task": "outlier",
    "budget": "64M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZDM9MTZ21BCHMM9DDEEVM",
    "s2": null
   },
   "fs35-outlier-kv17-s160M": {
@@ -71,10 +71,10 @@
    "task": "outlier",
    "budget": "160M",
    "arm": "kv17",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1H1RVVNFVA3X9MXX6YV47S1",
    "s2": null
   },
   "fs35-outlier-kv33-s160M": {
@@ -82,10 +82,10 @@
    "task": "outlier",
    "budget": "160M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1H4MBHN4DKWQ236QG00939Z",
    "s2": null
   },
   "fs35-outlier-kv17-s320M": {
@@ -93,10 +93,10 @@
    "task": "outlier",
    "budget": "320M",
    "arm": "kv17",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1HBME0JWXXVEPV7FTP0VHM2",
    "s2": null
   },
   "fs35-outlier-kv33-s320M": {
@@ -104,10 +104,10 @@
    "task": "outlier",
    "budget": "320M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1HHQC26YBXDY9287MM4MTJ2",
    "s2": null
   },
   "fs35-nq-kv17-s16M": {
@@ -118,7 +118,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZERWF3JTQ3YPQ5AR0S1VQ",
    "s2": null
   },
   "fs35-nq-kv33-s16M": {
@@ -129,7 +129,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZG48MCWFZB8SZHFSYGE7F",
    "s2": null
   },
   "fs35-nq-kv17-s32M": {
@@ -140,7 +140,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZHBY289E2P48NJR4RX1NE",
    "s2": null
   },
   "fs35-nq-kv33-s32M": {
@@ -148,10 +148,10 @@
    "task": "nq",
    "budget": "32M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZJVDE15D0TJP6R9MDWC5F",
    "s2": null
   },
   "fs35-nq-kv17-s48M": {
@@ -159,10 +159,10 @@
    "task": "nq",
    "budget": "48M",
    "arm": "kv17",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1GZM7Z4GRWQSE2GPHYNSABT",
    "s2": null
   },
   "fs35-nq-kv33-s48M": {
@@ -170,198 +170,1449 @@
    "task": "nq",
    "budget": "48M",
    "arm": "kv33",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1H0BY25ZM61DBA7PC70GXPP",
    "s2": null
   },
-  "fs35-outlier-ffnmoe-s1-s16M": {
-   "ex": "01M1GN1JEN6HCJFG0CRY7S0BZ7",
+  "fs35-outlier-kvb33-s16M": {
+   "ex": "01M1H2XFW8G4MCH2MYP2RYB8PV",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HESBRNVCNJV66KB4DFD2S6",
+   "s2": null
+  },
+  "fs35-outlier-kvb17-s16M": {
+   "ex": "01M1H2YTCKVG69HAVR6STPMYMR",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kvb17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HDW3ZKP02NWS66PHKG51ZP",
+   "s2": null
+  },
+  "fs35-outlier-kvb33-s32M": {
+   "ex": "01M1H30S8J0CHDBFWBXJ2AC7PX",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HH9N7W4QAVFNYMG1E9VFA5",
+   "s2": null
+  },
+  "fs35-outlier-kvb33-s64M": {
+   "ex": "01M1H32BFVR57MJDXY0KZ5CFFB",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HMTP50TQ5JK7ZCVSEV7KNN",
+   "s2": null
+  },
+  "fs35-outlier-kvb33-s160M": {
+   "ex": "01M1H33NWWNAXSWBRECC0P4N8B",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HXB6XP8GMG42F5KW3FQTXN",
+   "s2": null
+  },
+  "fs35-outlier-kvb33-s320M": {
+   "ex": "01M1H357FJ7GYVCMY7YXSDWPR1",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1JB5H5PRCN6P7JYM87C21VP",
+   "s2": null
+  },
+  "fs35-nq-kvb33-s16M": {
+   "ex": "01M1H36P2AW8KVV2FSHBWSSMMF",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HG7XQK794EHS3BMJ0TZVRA",
+   "s2": null
+  },
+  "fs35-nq-kvb17-s16M": {
+   "ex": "01M1H383F8H4PJ2PGVYZ2FX3GT",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kvb17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HDX8WPNWTV2Q848TBAHSQ9",
+   "s2": null
+  },
+  "fs35-nq-kvb33-s32M": {
+   "ex": "01M1H39ERCB4Y2SS8GZT79ETQJ",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HK74F4T7N2RGK5ZZYQTE6E",
+   "s2": null
+  },
+  "fs35-nq-kvb33-s48M": {
+   "ex": "01M1H3AZ02PGCPJ7E7PZTNV4EY",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HKNE9X1YGKE2RT2GA0Z4GA",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s1-s16M": {
+   "ex": "01M1H9H70RJ7HNWWF5DYATCY3M",
    "task": "outlier",
    "budget": "16M",
    "arm": "ffnmoe-s1",
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": "01M1GSP17PPZNGCMMYGZ0JGEGY",
-   "s2": "01M1GSQ5GJNVP0HCNGCB231QMJ"
+   "eval": "01M1HBNXX5E9HNMKXVGDR3KFCH",
+   "s2": "01M1HBQBZQXVSBQH9440ZEKSZP"
   },
-  "fs35-outlier-ffnmoe-s1-s32M": {
-   "ex": "01M1GN2P283MEJZ10Z5Z2H4KWA",
+  "fs35r2-outlier-ffnmoe-s1-s32M": {
+   "ex": "01M1H9JG8S5K4WJEDK7084NS7M",
    "task": "outlier",
    "budget": "32M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HC2W4R3XQE996CF95YGWWP",
+   "s2": "01M1HC45D6MN8FTHAA6CKBFMC3"
   },
-  "fs35-outlier-ffnmoe-s1-s64M": {
-   "ex": "01M1GN40KD58WZRFCEEXNZFTB9",
+  "fs35r2-outlier-ffnmoe-s1-s64M": {
+   "ex": "01M1H9M95RYTNKQ6J9DY0VEXKV",
    "task": "outlier",
    "budget": "64M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HEBHHW5VDEB2H88MX21MS5",
+   "s2": "01M1HECHR9QC0NXCCS4TEB09VT"
   },
-  "fs35-outlier-ffnmoe-s1-s160M": {
-   "ex": "01M1GN52MJXYA1Z5168G8JQDP9",
+  "fs35r2-outlier-ffnmoe-s1-s160M": {
+   "ex": "01M1H9P0AGKXE2J2TF7YKKX1HF",
    "task": "outlier",
    "budget": "160M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HPB1RDN7CK1T47TGXS1PA7",
+   "s2": "01M1HNABQG7TA4PRZGSJTF7N66"
   },
-  "fs35-outlier-ffnmoe-s1-s320M": {
-   "ex": "01M1GN6D3KG1SX02NH5HSM49WE",
+  "fs35r2-outlier-ffnmoe-s1-s320M": {
+   "ex": "01M1H9Q9MC5R80MCDWW0CM85NZ",
    "task": "outlier",
    "budget": "320M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HZPM5PXB81DH18M4G7M6JJ",
+   "s2": "01M1HZQN0AHF6J9RKKR8XPGYZA"
   },
-  "fs35-nq-ffnmoe-s1-s16M": {
-   "ex": "01M1GN79TKHSZ5FHVK4SSG01FM",
+  "fs35r2-nq-ffnmoe-s1-s16M": {
+   "ex": "01M1H9RDT2W96RAV64F3FYYAQA",
    "task": "nq",
    "budget": "16M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HC5MQNN3W87BKTQARRKNC2",
+   "s2": "01M1HC6THV72PK5CG0F8T8X0JA"
   },
-  "fs35-nq-ffnmoe-s1-s32M": {
-   "ex": "01M1GN8J4BEV2TMR2FE71T385W",
+  "fs35r2-nq-ffnmoe-s1-s32M": {
+   "ex": "01M1H9SPQE1EB53014S9WPG3SG",
    "task": "nq",
    "budget": "32M",
    "arm": "ffnmoe-s1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HDZ092WH6KK6GJ5BDHY5DV",
+   "s2": "01M1HE063XBH3WJ3RX13ADCNR0"
   },
-  "fs35-nq-ffnmoe-s1-s48M": {
-   "ex": "01M1GN9JFH4HWE28HWESBMQFQF",
+  "fs35r2-nq-ffnmoe-s1-s48M": {
+   "ex": "01M1H9VE7YJ9NX7G0K5CPCQG7A",
    "task": "nq",
    "budget": "48M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HFSKD2R9A6CAG4GJC34HKY",
+   "s2": "01M1HFTM6H7J669WQY3RRDWC6H"
   },
-  "fs35-contradiction-ffnmoe-s1-s14M": {
-   "ex": "01M1GNATG4ATQ3S8PB469Y8ZEW",
+  "fs35r2-contradiction-ffnmoe-s1-s14M": {
+   "ex": "01M1H9WN9G7DT91PCE4S0NZ4HN",
    "task": "contradiction",
    "budget": "14M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HDG3X9GBQ66A3EMQNMTGKQ",
+   "s2": "01M1HDH1ZBY3DVXPMZXKM6FBX4"
   },
-  "fs35-contradiction-ffnmoe-s1-s28M": {
-   "ex": "01M1GNBTJWZH100HX27DZ7APEC",
+  "fs35r2-contradiction-ffnmoe-s1-s28M": {
+   "ex": "01M1H9YA08FWHD0QWE0S3M8X4B",
    "task": "contradiction",
    "budget": "28M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HFVVK7QGDJW321EETMSK3V",
+   "s2": "01M1HFWTGQ5PCSJC7XAY88SQFQ"
   },
-  "fs35-contradiction-ffnmoe-s1-s56M": {
-   "ex": "01M1GNDCZXHGE9DWV790XEDCNR",
+  "fs35r2-contradiction-ffnmoe-s1-s56M": {
+   "ex": "01M1H9ZGAA07AD22Y1XJM8VJCG",
    "task": "contradiction",
    "budget": "56M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HHRQ7HVCCZBQ403YYSSPYK",
+   "s2": "01M1HHSXD2CWN10ZHFC1XQFDK2"
   },
-  "fs35-oolong-ffnmoe-s1-s20M": {
-   "ex": "01M1GNEEPVZVNEWC5YZKZ13F89",
+  "fs35r2-oolong-ffnmoe-s1-s20M": {
+   "ex": "01M1HA0P9M8CVN75QT7Q08M4WX",
    "task": "oolong",
    "budget": "20M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HFE6B5T5B19KB6DGWMRZKV",
+   "s2": "01M1HFEYCKTWEWJMDQ9VX52QZ3"
   },
-  "fs35-oolong-ffnmoe-s1-s40M": {
-   "ex": "01M1GNFGYCMVYQAT4X3T8KHWF2",
+  "fs35r2-oolong-ffnmoe-s1-s40M": {
+   "ex": "01M1HA1NQ06J9R7QV847F8WX4A",
    "task": "oolong",
    "budget": "40M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
-   "s2": null
+   "eval": "01M1HHAXF69PN3QPKJXF4Y29GY",
+   "s2": "01M1HHC6GR7GE5J9FVT5YHAPNM"
   },
-  "fs35-oolong-ffnmoe-s1-s80M": {
-   "ex": "01M1GNGA7ARB5REWGEAF5QMTB3",
+  "fs35r2-oolong-ffnmoe-s1-s80M": {
+   "ex": "01M1HA3HHH49S0FD8S00N11HMD",
    "task": "oolong",
    "budget": "80M",
    "arm": "ffnmoe-s1",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1HP7FZAGA3FJ2736FHQ8ZSD",
+   "s2": "01M1HMET6ZJZJNJ893C00WJ3NK"
+  },
+  "fs35r2-outlier-ffnmoe-t10-s16M": {
+   "ex": "01M1HA517YP32XX00W7J7HFF93",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HG90BMPEWBRYFDA1YJBX21",
    "s2": null
   },
-  "fs35-outlier-ffnmoe-s2-s16M": {
-   "ex": "01M1GSQ5GJNVP0HCNGCB231QMJ",
+  "fs35r2-outlier-ffnmoe-a10-s16M": {
+   "ex": "01M1HA6NPGS75KW6BAF3TTSB9G",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "ffnmoe-a10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HGY479MGAW3RAZXMGBKABV",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-t10-s32M": {
+   "ex": "01M1HA884SYTTY36NP3XHRKBN7",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HJ6D3R4PD7Q8XAS2JWWEKQ",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-t10-s64M": {
+   "ex": "01M1HA9P1G6KCE5QVE9PJ46Z64",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HP8GDZ0AQDM26F64Y6TVGN",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-t10-s160M": {
+   "ex": "01M1HAB768Y50HVR650QE8C223",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HVFB0JWHK79V2552FD8GRZ",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-t10-s320M": {
+   "ex": "01M1HACJ55QY62GCZ59M10WXVA",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J6CSJ05MBVBRY4WH5BASKT",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-t10-s16M": {
+   "ex": "01M1HAE3ZTZPZ70DWPP8FMVAZ4",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HHVBQ26YJYK8G6ZYQ7AC7C",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-a10-s16M": {
+   "ex": "01M1HAFGDHR7HEZ25RVKHRSQ4K",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "ffnmoe-a10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HJ79BY6G5CHC4QHHHQ8EFW",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-t10-s32M": {
+   "ex": "01M1HAH686JF5AV2CCPMKN5J0W",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HM14W87CWGC9N9CQB4P1ES",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-t10-s48M": {
+   "ex": "01M1HAJH4E255574D9QKA770H4",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HMVP6P9KX1XTBN0N4FFRFT",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s14M": {
+   "ex": "01M1HAM4DP7CMV2HC62X7EVJB5",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HJVRK40PJXPR0T6SH798MG",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-a10-s14M": {
+   "ex": "01M1HANHKFB2394BPNHSG7GGK6",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-a10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HJWH4CYZGPKKQSR0B7FYZW",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s28M": {
+   "ex": "01M1HAPWTD6VBWDXW331FB6XXM",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HM1Y7J888N75WAR9HS9SBR",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s56M": {
+   "ex": "01M1HAR9QN3FNHAAG67XR4A505",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HP4G2QEBDXR6X5F8DYCXG8",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-t10-s20M": {
+   "ex": "01M1HASJCFXEN3VYRZHPKWTMGP",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HM2SPZWHG26TE05B96X4VQ",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-a10-s20M": {
+   "ex": "01M1HATTRHMD903ZFFGNF4PJSK",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-a10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HM3JVF2KDTD9TJEAFVXCXX",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-t10-s40M": {
+   "ex": "01M1HAWABZBBZRR6NBBJV4J41C",
+   "task": "oolong",
+   "budget": "40M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HP5FVPEW9M40Z7WQQY24ZZ",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-t10-s80M": {
+   "ex": "01M1HAXM8YKD8MNYHB5BB15PHE",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "ffnmoe-t10",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HRRTFR0P2V60HWPCGM5S4V",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s2-s16M": {
+   "ex": "01M1HBQBZQXVSBQH9440ZEKSZP",
    "task": "outlier",
    "budget": "16M",
    "arm": "ffnmoe-s2",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1HP9BWAZ4QCWD2D29RX7Y5T",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s2-s32M": {
+   "ex": "01M1HC45D6MN8FTHAA6CKBFMC3",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HPCN3JKZ77QMHNE60AK91C",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-s2-s16M": {
+   "ex": "01M1HC6THV72PK5CG0F8T8X0JA",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HR3APXDH3ZG0D68ACGEDQK",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s14M": {
+   "ex": "01M1HDH1ZBY3DVXPMZXKM6FBX4",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HMZ5NA6XNR3KK4DRM7EGXN",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-s2-s32M": {
+   "ex": "01M1HE063XBH3WJ3RX13ADCNR0",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HP6E3SX8DX5PJ14AYRNPKK",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s2-s64M": {
+   "ex": "01M1HECHR9QC0NXCCS4TEB09VT",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HRDGAN6M0K577HV0GR09K7",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-s2-s20M": {
+   "ex": "01M1HFEYCKTWEWJMDQ9VX52QZ3",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HPBW5XSS955WPMCXY7M3CX",
+   "s2": null
+  },
+  "fs35r2-nq-ffnmoe-s2-s48M": {
+   "ex": "01M1HFTM6H7J669WQY3RRDWC6H",
+   "task": "nq",
+   "budget": "48M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HQBK2Z7ZFR4BT7RV6BCE2N",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s28M": {
+   "ex": "01M1HFWTGQ5PCSJC7XAY88SQFQ",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HPPTEM7YF9E9D5V6ZSP1XM",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-s2-s40M": {
+   "ex": "01M1HHC6GR7GE5J9FVT5YHAPNM",
+   "task": "oolong",
+   "budget": "40M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HQCK0SHHHKV4CZWJYK9XHZ",
+   "s2": null
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s56M": {
+   "ex": "01M1HHSXD2CWN10ZHFC1XQFDK2",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HREA1MZSZA56M6KKEVZGR7",
+   "s2": null
+  },
+  "fs35r2-oolong-ffnmoe-s2-s80M": {
+   "ex": "01M1HMET6ZJZJNJ893C00WJ3NK",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HSW9QG62VGTT6JQB1Q8MMN",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s2-s160M": {
+   "ex": "01M1HNABQG7TA4PRZGSJTF7N66",
+   "task": "outlier",
+   "budget": "160M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HZB3VP74AFBR47NFNBEGB9",
+   "s2": null
+  },
+  "fs35-nq-dense-s4M": {
+   "ex": "01M1HSZ0GES40YMQFCD8FY1S08",
+   "task": "nq",
+   "budget": "4M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HV2N9CT8GR4JTWFZG4AX38",
+   "s2": null,
+   "data_budget": "16M"
+  },
+  "fs35-nq-dense-s8M": {
+   "ex": "01M1HSZTT9TDS8D0399CDZ2RSH",
+   "task": "nq",
+   "budget": "8M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HVGB9YPE1FMCRPX9EDKWZC",
+   "s2": null,
+   "data_budget": "16M"
+  },
+  "fs35-contradiction-dense-s7M": {
+   "ex": "01M1HT0KQKS2Z8JQ4QWK6YWN66",
+   "task": "contradiction",
+   "budget": "7M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HV3EC9KV4F5QWAQ43B85FT",
+   "s2": null,
+   "data_budget": "14M"
+  },
+  "fs35-oolong-dense-s10M": {
+   "ex": "01M1HT1DWDSH12GR5Z2FB0JCAT",
+   "task": "oolong",
+   "budget": "10M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HVHA5WE23N38JZSAZDS240",
+   "s2": null,
+   "data_budget": "20M"
+  },
+  "fs35-outlier-dense-s8M": {
+   "ex": "01M1HT26HWFCM1SR57E3QF2V3N",
+   "task": "outlier",
+   "budget": "8M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HV4B60XGN6VWYHNXTWC0VT",
+   "s2": null,
+   "data_budget": "16M"
+  },
+  "fs35-contradiction-kv17-s14M": {
+   "ex": "01M1HTNXABT2HH0PAHFXRSWTMX",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HXZWVPAQDQSYJ15YHD33Z5",
+   "s2": null
+  },
+  "fs35-contradiction-kv33-s14M": {
+   "ex": "01M1HTPP1XWKCEM2KZXQVCZSZW",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HYZ8WRQ6CJSH9FX8CD2PDS",
+   "s2": null
+  },
+  "fs35-contradiction-kv17-s28M": {
+   "ex": "01M1HTQG0HBP45GZFRR6JMPXGD",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HZ0BP0RMZWJ4KWJWQR6B9E",
+   "s2": null
+  },
+  "fs35-contradiction-kv33-s28M": {
+   "ex": "01M1HTR90WXZD89H7AEBRZA3PS",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HZS5MQSM4HXBFZDVDNW8K9",
+   "s2": null
+  },
+  "fs35-contradiction-kv17-s56M": {
+   "ex": "01M1HTS1P7VP0H2RGQTPZSCNQ2",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J12RF4M9GED48HYN492QA3",
+   "s2": null
+  },
+  "fs35-contradiction-kv33-s56M": {
+   "ex": "01M1HTSVVT4HW73QF3WC1RF8E1",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J2P84RETB5GVZMDGMHYCKF",
+   "s2": null
+  },
+  "fs35-oolong-kv17-s20M": {
+   "ex": "01M1HTTQV5SG40K5WJS32V0DA4",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HZC6QT4Z1SPAJ2K5TAZRTS",
+   "s2": null
+  },
+  "fs35-oolong-kv33-s20M": {
+   "ex": "01M1HTVF8B46QGKT3DHY90CEVD",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J1RNBY4WY3GV1790GZFD9Q",
+   "s2": null
+  },
+  "fs35-oolong-kv17-s40M": {
+   "ex": "01M1HTW8W7M0249T45S7MG5QX7",
+   "task": "oolong",
+   "budget": "40M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J1DPETV2MT8RDV0Y0HGD9J",
+   "s2": null
+  },
+  "fs35-oolong-kv33-s40M": {
+   "ex": "01M1HTX1SFB9C32BWMG7SMPNJW",
+   "task": "oolong",
+   "budget": "40M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J4JM475NTE2FBAJPSKN3TG",
+   "s2": null
+  },
+  "fs35-oolong-kv17-s80M": {
+   "ex": "01M1HTXSWRMWQF0WRKR4YESG1T",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "kv17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J5FG2T6FC15FDNVZDMWDWR",
+   "s2": null
+  },
+  "fs35-oolong-kv33-s80M": {
+   "ex": "01M1HTYNZ7J6H8PRG2SPPC5CNP",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "kv33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J9P3651N9FVZJ1HRFXEWWZ",
+   "s2": null
+  },
+  "fs35-contradiction-kvb33-s14M": {
+   "ex": "01M1HTZE5P4PNQP5NMRHP4KAAM",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J04VWBPVNF9G9N4PAC0BXG",
+   "s2": null
+  },
+  "fs35-contradiction-kvb17-s14M": {
+   "ex": "01M1HV082R41BBS0XNBSJ6XVRG",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "kvb17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1HZT8PGSBZD0DD8ATF3TTJ0",
+   "s2": null
+  },
+  "fs35-contradiction-kvb33-s28M": {
+   "ex": "01M1HV129N8X9S25V06GWTGZ1C",
+   "task": "contradiction",
+   "budget": "28M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J3NRGWDB896AM3T6FT4CBJ",
+   "s2": null
+  },
+  "fs35-contradiction-kvb33-s56M": {
+   "ex": "01M1HV1TJ2B614CD3TJNZ3T99F",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "kvb33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1J8QYWN513W34P2GT3M0249",
+   "s2": null
+  },
+  "fs35r2-outlier-ffnmoe-s2-s320M": {
+   "ex": "01M1HZQN0AHF6J9RKKR8XPGYZA",
+   "task": "outlier",
+   "budget": "320M",
+   "arm": "ffnmoe-s2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1JKA1P3X6H4M417J9QWZ60D",
    "s2": null
   }
  },
  "evals": {
-  "fs35-outlier-ffnmoe-s1-s16M": {
-   "ex": "01M1GSP17PPZNGCMMYGZ0JGEGY",
-   "state": "S",
-   "rc": null,
+  "fs35-outlier-kv17-s16M": {
+   "ex": "01M1GZ7VH1TFVFJBFXCW0JMHKT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s16M": {
+   "ex": "01M1GZ8XD2Q57H2SBN7M7G77PC",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv17-s32M": {
+   "ex": "01M1GZARQSN3DNBK0SBRX0W6PP",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s32M": {
+   "ex": "01M1GZBNVDM4G78N830T4ST8CM",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv17-s64M": {
+   "ex": "01M1GZCMADRYXEYW7NZR66MW9Q",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s64M": {
+   "ex": "01M1GZDM9MTZ21BCHMM9DDEEVM",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv17-s16M": {
+   "ex": "01M1GZERWF3JTQ3YPQ5AR0S1VQ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv33-s16M": {
+   "ex": "01M1GZG48MCWFZB8SZHFSYGE7F",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv17-s32M": {
+   "ex": "01M1GZHBY289E2P48NJR4RX1NE",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv33-s32M": {
+   "ex": "01M1GZJVDE15D0TJP6R9MDWC5F",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv17-s48M": {
+   "ex": "01M1GZM7Z4GRWQSE2GPHYNSABT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kv33-s48M": {
+   "ex": "01M1H0BY25ZM61DBA7PC70GXPP",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv17-s160M": {
+   "ex": "01M1H1RVVNFVA3X9MXX6YV47S1",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s160M": {
+   "ex": "01M1H4MBHN4DKWQ236QG00939Z",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv17-s320M": {
+   "ex": "01M1HBME0JWXXVEPV7FTP0VHM2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s1-s16M": {
+   "ex": "01M1HBNXX5E9HNMKXVGDR3KFCH",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s1-s32M": {
+   "ex": "01M1HC2W4R3XQE996CF95YGWWP",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-s1-s16M": {
+   "ex": "01M1HC5MQNN3W87BKTQARRKNC2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-s1-s14M": {
+   "ex": "01M1HDG3X9GBQ66A3EMQNMTGKQ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kvb17-s16M": {
+   "ex": "01M1HDW3ZKP02NWS66PHKG51ZP",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kvb17-s16M": {
+   "ex": "01M1HDX8WPNWTV2Q848TBAHSQ9",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-s1-s32M": {
+   "ex": "01M1HDZ092WH6KK6GJ5BDHY5DV",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s1-s64M": {
+   "ex": "01M1HEBHHW5VDEB2H88MX21MS5",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kvb33-s16M": {
+   "ex": "01M1HESBRNVCNJV66KB4DFD2S6",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-s1-s20M": {
+   "ex": "01M1HFE6B5T5B19KB6DGWMRZKV",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-s1-s48M": {
+   "ex": "01M1HFSKD2R9A6CAG4GJC34HKY",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-s1-s28M": {
+   "ex": "01M1HFVVK7QGDJW321EETMSK3V",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kvb33-s16M": {
+   "ex": "01M1HG7XQK794EHS3BMJ0TZVRA",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-t10-s16M": {
+   "ex": "01M1HG90BMPEWBRYFDA1YJBX21",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-a10-s16M": {
+   "ex": "01M1HGY479MGAW3RAZXMGBKABV",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kvb33-s32M": {
+   "ex": "01M1HH9N7W4QAVFNYMG1E9VFA5",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-s1-s40M": {
+   "ex": "01M1HHAXF69PN3QPKJXF4Y29GY",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kv33-s320M": {
+   "ex": "01M1HHQC26YBXDY9287MM4MTJ2",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-s1-s56M": {
+   "ex": "01M1HHRQ7HVCCZBQ403YYSSPYK",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-t10-s16M": {
+   "ex": "01M1HHVBQ26YJYK8G6ZYQ7AC7C",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-t10-s32M": {
+   "ex": "01M1HJ6D3R4PD7Q8XAS2JWWEKQ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-a10-s16M": {
+   "ex": "01M1HJ79BY6G5CHC4QHHHQ8EFW",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s14M": {
+   "ex": "01M1HJVRK40PJXPR0T6SH798MG",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-a10-s14M": {
+   "ex": "01M1HJWH4CYZGPKKQSR0B7FYZW",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kvb33-s32M": {
+   "ex": "01M1HK74F4T7N2RGK5ZZYQTE6E",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-kvb33-s48M": {
+   "ex": "01M1HKNE9X1YGKE2RT2GA0Z4GA",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-t10-s32M": {
+   "ex": "01M1HM14W87CWGC9N9CQB4P1ES",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s28M": {
+   "ex": "01M1HM1Y7J888N75WAR9HS9SBR",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-t10-s20M": {
+   "ex": "01M1HM2SPZWHG26TE05B96X4VQ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-a10-s20M": {
+   "ex": "01M1HM3JVF2KDTD9TJEAFVXCXX",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-s1-s80M": {
+   "ex": "01M1HP7FZAGA3FJ2736FHQ8ZSD",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 2
+  },
+  "fs35r2-outlier-ffnmoe-t10-s64M": {
+   "ex": "01M1HP8GDZ0AQDM26F64Y6TVGN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 2
+  },
+  "fs35-outlier-kvb33-s64M": {
+   "ex": "01M1HMTP50TQ5JK7ZCVSEV7KNN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-t10-s48M": {
+   "ex": "01M1HMVP6P9KX1XTBN0N4FFRFT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s2-s16M": {
+   "ex": "01M1HP9BWAZ4QCWD2D29RX7Y5T",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 2
+  },
+  "fs35r2-nq-ffnmoe-s2-s16M": {
+   "ex": "01M1HR3APXDH3ZG0D68ACGEDQK",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 3
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s14M": {
+   "ex": "01M1HMZ5NA6XNR3KK4DRM7EGXN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s1-s160M": {
+   "ex": "01M1HPB1RDN7CK1T47TGXS1PA7",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 1
+  },
+  "fs35r2-oolong-ffnmoe-s2-s20M": {
+   "ex": "01M1HPBW5XSS955WPMCXY7M3CX",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 1
+  },
+  "fs35r2-outlier-ffnmoe-s2-s32M": {
+   "ex": "01M1HPCN3JKZ77QMHNE60AK91C",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 1
+  },
+  "fs35r2-contradiction-ffnmoe-t10-s56M": {
+   "ex": "01M1HP4G2QEBDXR6X5F8DYCXG8",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-t10-s40M": {
+   "ex": "01M1HP5FVPEW9M40Z7WQQY24ZZ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-s2-s32M": {
+   "ex": "01M1HP6E3SX8DX5PJ14AYRNPKK",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s28M": {
+   "ex": "01M1HPPTEM7YF9E9D5V6ZSP1XM",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-nq-ffnmoe-s2-s48M": {
+   "ex": "01M1HQBK2Z7ZFR4BT7RV6BCE2N",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-s2-s40M": {
+   "ex": "01M1HQCK0SHHHKV4CZWJYK9XHZ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s2-s64M": {
+   "ex": "01M1HRDGAN6M0K577HV0GR09K7",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-contradiction-ffnmoe-s2-s56M": {
+   "ex": "01M1HREA1MZSZA56M6KKEVZGR7",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-t10-s80M": {
+   "ex": "01M1HRRTFR0P2V60HWPCGM5S4V",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-oolong-ffnmoe-s2-s80M": {
+   "ex": "01M1HSW9QG62VGTT6JQB1Q8MMN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-dense-s4M": {
+   "ex": "01M1HV2N9CT8GR4JTWFZG4AX38",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-dense-s7M": {
+   "ex": "01M1HV3EC9KV4F5QWAQ43B85FT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-dense-s8M": {
+   "ex": "01M1HV4B60XGN6VWYHNXTWC0VT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-t10-s160M": {
+   "ex": "01M1HVFB0JWHK79V2552FD8GRZ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-nq-dense-s8M": {
+   "ex": "01M1HVGB9YPE1FMCRPX9EDKWZC",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-dense-s10M": {
+   "ex": "01M1HVHA5WE23N38JZSAZDS240",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kvb33-s160M": {
+   "ex": "01M1HXB6XP8GMG42F5KW3FQTXN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv17-s14M": {
+   "ex": "01M1HXZWVPAQDQSYJ15YHD33Z5",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv33-s14M": {
+   "ex": "01M1HYZ8WRQ6CJSH9FX8CD2PDS",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv17-s28M": {
+   "ex": "01M1HZ0BP0RMZWJ4KWJWQR6B9E",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s2-s160M": {
+   "ex": "01M1HZB3VP74AFBR47NFNBEGB9",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv17-s20M": {
+   "ex": "01M1HZC6QT4Z1SPAJ2K5TAZRTS",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s1-s320M": {
+   "ex": "01M1HZPM5PXB81DH18M4G7M6JJ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv33-s28M": {
+   "ex": "01M1HZS5MQSM4HXBFZDVDNW8K9",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kvb17-s14M": {
+   "ex": "01M1HZT8PGSBZD0DD8ATF3TTJ0",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kvb33-s14M": {
+   "ex": "01M1J04VWBPVNF9G9N4PAC0BXG",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv17-s56M": {
+   "ex": "01M1J12RF4M9GED48HYN492QA3",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv17-s40M": {
+   "ex": "01M1J1DPETV2MT8RDV0Y0HGD9J",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv33-s20M": {
+   "ex": "01M1J1RNBY4WY3GV1790GZFD9Q",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kv33-s56M": {
+   "ex": "01M1J2P84RETB5GVZMDGMHYCKF",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kvb33-s28M": {
+   "ex": "01M1J3NRGWDB896AM3T6FT4CBJ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv33-s40M": {
+   "ex": "01M1J4JM475NTE2FBAJPSKN3TG",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv17-s80M": {
+   "ex": "01M1J5FG2T6FC15FDNVZDMWDWR",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-t10-s320M": {
+   "ex": "01M1J6CSJ05MBVBRY4WH5BASKT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-contradiction-kvb33-s56M": {
+   "ex": "01M1J8QYWN513W34P2GT3M0249",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-oolong-kv33-s80M": {
+   "ex": "01M1J9P3651N9FVZJ1HRFXEWWZ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35-outlier-kvb33-s320M": {
+   "ex": "01M1JB5H5PRCN6P7JYM87C21VP",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "fs35r2-outlier-ffnmoe-s2-s320M": {
+   "ex": "01M1JKA1P3X6H4M417J9QWZ60D",
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   }
  },
  "kv_synced": {
   "outlier": true,
-  "nq": true
+  "nq": true,
+  "contradiction": true,
+  "oolong": true
  },
  "kv_launched": {
   "outlier": true,
-  "nq": true
+  "nq": true,
+  "contradiction": true,
+  "oolong": true
  },
  "s1_launched": true,
  "sync_ex": null,
- "last_harvest": 1788342109.3305643,
- "harvest_ex": null,
+ "last_harvest": 1788414119.0632904,
+ "harvest_ex": "01M1JWKJNYETES1CC3VWEWTWE8",
  "done": false,
- "kv_ok": true
+ "kv_ok": true,
+ "extra_launched": true,
+ "kvb_launched": {
+  "outlier": true,
+  "nq": true,
+  "contradiction": true,
+  "oolong": false
+ },
+ "finishing": true
 }

@@ -1,4 +1,4 @@
-## Summary (written 2026-09-02 18:10; grid 92/93 runs and 87/89 evals done, three outlier-320M tail items pending)
+## Summary (final, 2026-09-02 22:45; all 93 runs and 92 evals done)
 
 **Question.** At matched *training* FLOPs, does either method beat dense SFT on Qwen3.5-4B short-heavy 2k–32k mixes?
 
@@ -11,7 +11,7 @@
 | nq | KV soft tokens, gold-blind 1/3 | **dense wins by ~0.03 everywhere**: 0.832 @163 PF vs dense-8M 0.860 @190; 0.878 @509 vs dense-16M 0.878 @379 | 2.5× at f1 0.88 (FFN stage 1: 2.35×) |
 | outlier | none | every KV arm dead (≤0.30 at 8k vs dense 0.51–0.89); FFN routing 0.28 vs 0.43 at 64M | — |
 
-**Routed FFN** never reaches compute-optimality here: FFN is 57% of training FLOPs at these lengths, so the saving caps at ~0.70×, and every arm gives up more than that (losses concentrate on the 32k rung). Routing all layers collapses on 30–150-step runs. The two-sided budget lands exactly on target and is the recipe to keep; the L12+ ladder at 0.01 (stage 1) is the better of the two at ≥48M budgets. Deployed inference cost is the one thing FFN routing buys that KV does not.
+**Routed FFN** never reaches compute-optimality here: FFN is 57% of training FLOPs at these lengths, so the saving caps at ~0.70×, and every arm gives up more than that (losses concentrate on the 32k rung). Routing all layers collapses on 30–150-step runs, but recovers with horizon: the outlier stage-2 arm at 320M (~600 steps) scores 8k 0.70 / 16k 0.44 against 0.00–0.05 at ≤56M, matching the Qwen3-4B experience that all-layer routing needs long runs. The two-sided budget lands exactly on target and is the recipe to keep; the L12+ ladder at 0.01 (stage 1) is the better of the two at ≥48M budgets. Deployed inference cost is the one thing FFN routing buys that KV does not.
 
 **KV soft tokens** are task-shaped: they win where the answer is an aggregate over many documents (oolong), tie where two specific documents must survive but usually do (contradiction with gold forced real), trail slightly where one passage must be read verbatim (nq), and fail where every document must be compared (outlier). Forcing gold documents real leaks the answer on id-answer tasks (nq 1/6: 0.603 forced vs 0.728 blind) but is required on contradiction (blind 1/6: 0.053).
 
