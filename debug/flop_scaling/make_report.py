@@ -39,6 +39,7 @@ def main():
           f"Plan: `records/flop-scaling-ffn-kv-plan.md`. Ledger: `debug/flop_scaling/LAUNCH_LEDGER.tsv`.\n",
           f"Run status at generation: {done}/{n_runs} training runs done ({failed} failed), {ev_done}/{len(st['evals'])} evals done. "
           "Cells missing below are still queued/running on Beaker.\n",
+          (open(f"{REPO}/debug/flop_scaling/summary35.md").read() + "\n") if os.path.exists(f"{REPO}/debug/flop_scaling/summary35.md") else "",
           "## Setup\n",
           "- Model/data/optimizer identical to the prior dense campaigns (`debug/taskscale_lengthmix`, `debug/outlier_lengthmix_scaling`): Qwen3.5-4B (`q35-4b-base-markerfix`), short-heavy 2k–32k length mixes as nested-prefix arms, seq 65536 packed (KV: padded single-example rows, same tokens/step), lr 5e-6, 8 rows/step, 1 epoch. Dense points are those campaigns' numbers, not retrained.",
           "- **FFN routing**: nested-width FFN router over the base FFN (Qwen3.5-4B widths 9728/608/152/38/9/1 + null; the slices share weights). Stage 1 routes layers 12+ (20 of 32) with a one-sided budget hinge at target 0.01; stage 2 warm-starts from stage 1 and routes all layers at 0.02 with the hinge on from step 0; the two-sided arms penalize |cost - target| at 0.10 on layers 12+ (t10) or all layers (a10), no exploration. Scored with routing on (the cut carries to inference).",

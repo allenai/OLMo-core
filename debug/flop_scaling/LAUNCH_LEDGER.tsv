@@ -193,3 +193,352 @@ Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 beaker35	outlier	ffnmoe-s2	16M	s2	fs35-outlier-ffnmoe-s2-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 03:13	LAUNCHED	"01M1GSQ5GJNVP0HCNGCB231QMJ   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 evalfix	-	-	note	-	fs35 KV evals	beaker	2026-09-02 03:29	-	KV arms train on MARKER-wrapped prompts but were being scored with the dense campaign's plain-prompt evaluator (outlier kv17 16M: .13/.04/.01 with well-formed outputs = format mismatch). Now scored with the docchunk (marker) evaluator on the SAME rung files via DC_RUNG_FILES/DC_RUNGS; 6 evals relaunched. FFN arms (plain prompts) keep the dense evaluator
+beaker35	outlier	ffnmoe-s2	32M	s2	fs35-outlier-ffnmoe-s2-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 03:36	LAUNCHED	"01M1GV27GXD7RE480K5H57QHAY   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s2	16M	s2	fs35-nq-ffnmoe-s2-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 03:38	LAUNCHED	"01M1GV4ZT4D8DZFYX3JRM8ET51   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	-	kv	-	-	KV evals x6	ai2/neptune	2026-09-02 03:39	RELAUNCH	first marker-aware KV evals died: run_beaker_multirung_eval.sh had no v2 EVAL500 default (unbound variable at set -u); fixed 3c8395692, evals cancelled + reset for relaunch
+beaker35	nq	ffnmoe-s2	32M	s2	fs35-nq-ffnmoe-s2-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 03:59	LAUNCHED	"01M1GWBZB7Q7SCKNSG0MRSJ614   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	14M	s2	fs35-contradiction-ffnmoe-s2-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:00	LAUNCHED	"01M1GWEJ67K0TY1MGSJDAD5SBR   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	28M	s2	fs35-contradiction-ffnmoe-s2-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:13	LAUNCHED	"01M1GX5DGM6P4ANREQRDQA66XA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s2	20M	s2	fs35-oolong-ffnmoe-s2-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:14	LAUNCHED	"01M1GX729Z8R5QS7YKA86079T3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	64M	s2	fs35-outlier-ffnmoe-s2-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:22	LAUNCHED	"01M1GXNNBCQ6YMS6CRM86DD9G4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s2	48M	s2	fs35-nq-ffnmoe-s2-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:29	LAUNCHED	"01M1GY35V1TK4DJRM51EHZVSZB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	16M	t10	fs35-outlier-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:36	LAUNCHED	"01M1GYFJGG5MQ5F0YXDB3F5D3V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-a10	16M	a10	fs35-outlier-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:37	LAUNCHED	"01M1GYH703SB69WX55P3ZA261P   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	32M	t10	fs35-outlier-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:37	LAUNCHED	"01M1GYJCKSJEVQPG8DDJFRVAZN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	64M	t10	fs35-outlier-ffnmoe-t10-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:38	LAUNCHED	"01M1GYM4TPBFXDC83CBEJ30KMS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	160M	t10	fs35-outlier-ffnmoe-t10-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:39	LAUNCHED	"01M1GYN722H7SXZ6YV5P12XR09   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	all	ffnmoe-t10/a10	-	-	18 runs	jupiter+ceres+saturn 4gpu	2026-09-02 04:39	LAUNCHED	stage-1 recipe undershot budget 4x (nq 16M mean_cost .0026 vs .01; 32k f1 .14 vs dense .76). New two-sided budget (bb35999da), target 0.10: t10 = L12+ on every arm, a10 = all layers on each task smallest budget
+beaker35	outlier	ffnmoe-t10	320M	t10	fs35-outlier-ffnmoe-t10-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:40	LAUNCHED	"01M1GYQ2B07TG3R7YQ1573RBGB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	16M	t10	fs35-nq-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:41	LAUNCHED	"01M1GYS1R2G6K19426A5G439Q7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-a10	16M	a10	fs35-nq-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:42	LAUNCHED	"01M1GYT8JQ5A8SME9DZ833TBDD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	32M	t10	fs35-nq-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:42	LAUNCHED	"01M1GYVF1DJK2528W2P34JSDJH   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	48M	t10	fs35-nq-ffnmoe-t10-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:43	LAUNCHED	"01M1GYWR61D6QR644B5Z9ZNTDM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	14M	t10	fs35-contradiction-ffnmoe-t10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:44	LAUNCHED	"01M1GYXQMSQ9J30M7781J28HEA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-a10	14M	a10	fs35-contradiction-ffnmoe-a10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:44	LAUNCHED	"01M1GYZ5KC6CVYTVGQKFEC8TYR   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	28M	t10	fs35-contradiction-ffnmoe-t10-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:45	LAUNCHED	"01M1GZ0MQBQ3J9STH9Z7BWXD6M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	56M	t10	fs35-contradiction-ffnmoe-t10-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:46	LAUNCHED	"01M1GZ1TY59W287Y8250YPG708   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	20M	t10	fs35-oolong-ffnmoe-t10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:47	LAUNCHED	"01M1GZ35ZMYXNJNS6G604HCJ2Q   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	-	kv	-	-	KV evals x8	ai2/neptune	2026-09-02 04:47	RELAUNCH	docchunk ladder evaluator hardcoded Qwen3 ids (markers/eos/im_end) and its DC_RUNG_FILES override was dead code after the v2 return -> outlier kv17 16M 8k f1 .18 was garbage; fixed abca39b21, evals cancelled + reset
+beaker35	oolong	ffnmoe-a10	20M	a10	fs35-oolong-ffnmoe-a10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:47	LAUNCHED	"01M1GZ4QWABZT1GDBK98CEH1DY   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	40M	t10	fs35-oolong-ffnmoe-t10-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:48	LAUNCHED	"01M1GZ5HV296RSWC1NB72HMDT7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	80M	t10	fs35-oolong-ffnmoe-t10-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:48	LAUNCHED	"01M1GZ6B12EPK4JPAG4DHPEVPH   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	56M	s2	fs35-contradiction-ffnmoe-s2-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:57	LAUNCHED	"01M1GZQ393VMZPJV1TV9BG6AXS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s2	40M	s2	fs35-oolong-ffnmoe-s2-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 04:59	LAUNCHED	"01M1GZSWNNK90FKZ04572ESV00   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	all	ffnmoe-t10/a10	-	-	18 runs	jupiter+ceres+saturn 4gpu	2026-09-02 05:38	RELAUNCH	explore 0.1 = CE 8.86 at step 1 (dense 0.73), anneals off by step 10 of 30; relaunched with --ffn-moe-explore 0 (399167447)
+beaker35	outlier	ffnmoe-t10	16M	t10	fs35-outlier-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:39	LAUNCHED	"01M1H22D3GZJV8NX2ME5682V7R   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-a10	16M	a10	fs35-outlier-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:39	LAUNCHED	"01M1H23Q5WFKCY7PT7JK3MC2BG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	32M	t10	fs35-outlier-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:40	LAUNCHED	"01M1H25E2X3DBE3WQFPFFBVGDA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	64M	t10	fs35-outlier-ffnmoe-t10-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:41	LAUNCHED	"01M1H27EKCFQ88EH1DZBZQWQFV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	160M	t10	fs35-outlier-ffnmoe-t10-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:42	LAUNCHED	"01M1H28P6MZWTKFHXAW1826ZV0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	320M	t10	fs35-outlier-ffnmoe-t10-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:43	LAUNCHED	"01M1H2A851A3J4PQBB3XGHFYD5   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	16M	t10	fs35-nq-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:44	LAUNCHED	"01M1H2BNQSXMGYQ01ED421R5S3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-a10	16M	a10	fs35-nq-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:44	LAUNCHED	"01M1H2D3JVNX98D6Q3BBPCXZ5W   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	32M	t10	fs35-nq-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:45	LAUNCHED	"01M1H2EEXQ5J5Y8T7SH95ST0YZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	48M	t10	fs35-nq-ffnmoe-t10-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:46	LAUNCHED	"01M1H2G0PKEPKC1JF9QJ16C2P3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	14M	t10	fs35-contradiction-ffnmoe-t10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:47	LAUNCHED	"01M1H2HDF8J2Z3Y82APR57SJ59   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-a10	14M	a10	fs35-contradiction-ffnmoe-a10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:48	LAUNCHED	"01M1H2JWJ6ATEYFR2D2WE49FSN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	28M	t10	fs35-contradiction-ffnmoe-t10-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:48	LAUNCHED	"01M1H2M9HSNE3AQGG04PM6GCHJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	56M	t10	fs35-contradiction-ffnmoe-t10-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:49	LAUNCHED	"01M1H2NPPNF68SXZ428N2PH94H   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	20M	t10	fs35-oolong-ffnmoe-t10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:50	LAUNCHED	"01M1H2Q3KZWGCDZ8E7APWR9N8G   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier,nq,contradiction	kvb33/kvb17	-	-	~14 runs	jupiter+ceres+saturn 4gpu	2026-09-02 05:51	LAUNCHED	gold-blind KV arms: gold_plus_random leaks answer (outlier kv17 16M f1 .13/.05 at 8k/16k, train CE .17); 800f43769
+beaker35	oolong	ffnmoe-a10	20M	a10	fs35-oolong-ffnmoe-a10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:51	LAUNCHED	"01M1H2SVN6ZBJ1PYS8G0G9NW1H   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	40M	t10	fs35-oolong-ffnmoe-t10-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:52	LAUNCHED	"01M1H2V6K7E7YHMD5NKP4BRT03   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	80M	t10	fs35-oolong-ffnmoe-t10-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:53	LAUNCHED	"01M1H2WFJC2RDCYB2NFK7C6HEX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb33	16M	-	fs35-outlier-kvb33-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:53	LAUNCHED	"01M1H2XFW8G4MCH2MYP2RYB8PV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb17	16M	-	fs35-outlier-kvb17-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:54	LAUNCHED	"01M1H2YTCKVG69HAVR6STPMYMR   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb33	32M	-	fs35-outlier-kvb33-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:55	LAUNCHED	"01M1H30S8J0CHDBFWBXJ2AC7PX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb33	64M	-	fs35-outlier-kvb33-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:56	LAUNCHED	"01M1H32BFVR57MJDXY0KZ5CFFB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb33	160M	-	fs35-outlier-kvb33-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:57	LAUNCHED	"01M1H33NWWNAXSWBRECC0P4N8B   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	kvb33	320M	-	fs35-outlier-kvb33-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:58	LAUNCHED	"01M1H357FJ7GYVCMY7YXSDWPR1   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kvb33	16M	-	fs35-nq-kvb33-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:58	LAUNCHED	"01M1H36P2AW8KVV2FSHBWSSMMF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kvb17	16M	-	fs35-nq-kvb17-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 05:59	LAUNCHED	"01M1H383F8H4PJ2PGVYZ2FX3GT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kvb33	32M	-	fs35-nq-kvb33-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:00	LAUNCHED	"01M1H39ERCB4Y2SS8GZT79ETQJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	kvb33	48M	-	fs35-nq-kvb33-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:01	LAUNCHED	"01M1H3AZ02PGCPJ7E7PZTNV4EY   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s2	80M	s2	fs35-oolong-ffnmoe-s2-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:02	LAUNCHED	"01M1H3DQ6K9YJ24W18BV2CKJXH   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	160M	s2	fs35-outlier-ffnmoe-s2-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:17	LAUNCHED	"01M1H48Y39GYNMWMAM4QDBP0CM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	all	ffnmoe-*	-	-	all FFN runs	jupiter+ceres+saturn 4gpu	2026-09-02 06:44	RELAUNCH	ROOT CAUSE of CE 8.86 at step 1: router random on every meta-built run (init_weights re-ran nn.Linear reset after the one-hot init) + gains torch.empty; fixed 545c07b0d (meta build == base, verified CPU). All s1/s2/t10/a10 results before this are garbage-router runs (moved to evals35_garbage_router)
+beaker35	outlier	ffnmoe-s1	16M	s1	fs35-outlier-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:44	LAUNCHED	"01M1H5V2RHBD8S19VC18GBDH51   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	32M	s1	fs35-outlier-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:45	LAUNCHED	"01M1H5W3JSGXW15WQ5N0Y6JKWD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	64M	s1	fs35-outlier-ffnmoe-s1-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:46	LAUNCHED	"01M1H5XPBVK8YCBZHPSF7S1V9A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	160M	s1	fs35-outlier-ffnmoe-s1-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:47	LAUNCHED	"01M1H5ZKYAY46YKZW5AMHRX31N   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	320M	s1	fs35-outlier-ffnmoe-s1-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:48	LAUNCHED	"01M1H61HJMXGZX6619JP9NSGEN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	16M	s1	fs35-nq-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:48	LAUNCHED	"01M1H62D1WPFXKXR9RKCC5GPXP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	32M	s1	fs35-nq-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:49	LAUNCHED	"01M1H6407RQFC5FPSYG6JZPJQJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	48M	s1	fs35-nq-ffnmoe-s1-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:50	LAUNCHED	"01M1H65H0GY733CRBMTTPWBSGC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	14M	s1	fs35-contradiction-ffnmoe-s1-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:51	LAUNCHED	"01M1H67A7WYMJ4DFVHSF6BN2QW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	28M	s1	fs35-contradiction-ffnmoe-s1-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:52	LAUNCHED	"01M1H68V566NG3F6451XBGQKS8   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	56M	s1	fs35-contradiction-ffnmoe-s1-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:53	LAUNCHED	"01M1H6ADMHB2Z07234EAYJ5V19   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	20M	s1	fs35-oolong-ffnmoe-s1-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:54	LAUNCHED	"01M1H6C4JR16K19720BYC9KVQ3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	40M	s1	fs35-oolong-ffnmoe-s1-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:54	LAUNCHED	"01M1H6DH04VXF2KXRQT71K820V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	80M	s1	fs35-oolong-ffnmoe-s1-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:55	LAUNCHED	"01M1H6EPWR7YGG2R948P89R8MN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	16M	t10	fs35-outlier-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:56	LAUNCHED	"01M1H6G8W2BYB4QP1BK4ZPYGEG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-a10	16M	a10	fs35-outlier-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:57	LAUNCHED	"01M1H6J7JYPFREPZ9Q27GW3YT0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	32M	t10	fs35-outlier-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:58	LAUNCHED	"01M1H6KR3WBDM9RHTZPB2ER7BG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	64M	t10	fs35-outlier-ffnmoe-t10-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:59	LAUNCHED	"01M1H6MYYBTKT2AAEFRC3CXKDE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	160M	t10	fs35-outlier-ffnmoe-t10-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 06:59	LAUNCHED	"01M1H6PM7N3SBP224EXDTCRZ5M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	320M	t10	fs35-outlier-ffnmoe-t10-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:00	LAUNCHED	"01M1H6R56YWXQF1EPXZ5Q04M91   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	16M	t10	fs35-nq-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:01	LAUNCHED	"01M1H6SN3GE3A0364V495SH2CM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-a10	16M	a10	fs35-nq-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:02	LAUNCHED	"01M1H6V24S89JYFSG3JBXX8KNT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	32M	t10	fs35-nq-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:03	LAUNCHED	"01M1H6W6JSYTVTWCJVC7ESNSMW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	48M	t10	fs35-nq-ffnmoe-t10-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:03	LAUNCHED	"01M1H6XP60KWTW35JFV754HEZT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	14M	t10	fs35-contradiction-ffnmoe-t10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:04	LAUNCHED	"01M1H6Z5CF94RPJTCVEYWC8K0B   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-a10	14M	a10	fs35-contradiction-ffnmoe-a10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:05	LAUNCHED	"01M1H70A3PZBZ5G4XPB7RNYR9A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	28M	t10	fs35-contradiction-ffnmoe-t10-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:06	LAUNCHED	"01M1H71TSYCQE3DY7FESKK4JSZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	56M	t10	fs35-contradiction-ffnmoe-t10-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:06	LAUNCHED	"01M1H7398B3HCQ7K4EH9C07WNH   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	20M	t10	fs35-oolong-ffnmoe-t10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:07	LAUNCHED	"01M1H74BGGMFMNJWNQN6AT30CZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-a10	20M	a10	fs35-oolong-ffnmoe-a10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:08	LAUNCHED	"01M1H75X7XCRRF0D0Z8FJTBVYG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	40M	t10	fs35-oolong-ffnmoe-t10-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:09	LAUNCHED	"01M1H77G62ZFHW1H9SF09SHX63   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	80M	t10	fs35-oolong-ffnmoe-t10-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:10	LAUNCHED	"01M1H790TPABHE2JMDYMB8G14N   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	all	ffnmoe-*	-	-	51 jobs	-	2026-09-02 07:48	CANCELLED	`beaker experiment cancel` is a NO-OP (every "cancelled" job ran to completion all night); cancelled at job level (beaker job cancel <job-id>). FFN arms relaunched as fs35r2-* so they cannot auto-resume the garbage-router checkpoints
+beaker35	outlier	ffnmoe-s1	16M	s1	fs35r2-outlier-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:49	LAUNCHED	"01M1H9H70RJ7HNWWF5DYATCY3M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	32M	s1	fs35r2-outlier-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:50	LAUNCHED	"01M1H9JG8S5K4WJEDK7084NS7M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	64M	s1	fs35r2-outlier-ffnmoe-s1-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:51	LAUNCHED	"01M1H9M95RYTNKQ6J9DY0VEXKV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s1	160M	s1	fs35r2-outlier-ffnmoe-s1-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:52	LAUNCHED	"01M1H9P0AGKXE2J2TF7YKKX1HF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction,oolong	kvdata	-	-	01M1H9MG3ETSH9J85443MPK6DC 01M1H9MM1FDVZYQN9GN2EKTS2E	jupiter+ceres+saturn+neptune cpu	2026-09-02 07:52	RELAUNCHED	CPU marker re-tokenization jobs sat unscheduled on jupiter for 8h; relaunched on 4 clusters
+beaker35	outlier	ffnmoe-s1	320M	s1	fs35r2-outlier-ffnmoe-s1-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:52	LAUNCHED	"01M1H9Q9MC5R80MCDWW0CM85NZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	16M	s1	fs35r2-nq-ffnmoe-s1-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:53	LAUNCHED	"01M1H9RDT2W96RAV64F3FYYAQA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	32M	s1	fs35r2-nq-ffnmoe-s1-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:54	LAUNCHED	"01M1H9SPQE1EB53014S9WPG3SG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s1	48M	s1	fs35r2-nq-ffnmoe-s1-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:55	LAUNCHED	"01M1H9VE7YJ9NX7G0K5CPCQG7A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	14M	s1	fs35r2-contradiction-ffnmoe-s1-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:55	LAUNCHED	"01M1H9WN9G7DT91PCE4S0NZ4HN   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	28M	s1	fs35r2-contradiction-ffnmoe-s1-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:56	LAUNCHED	"01M1H9YA08FWHD0QWE0S3M8X4B   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s1	56M	s1	fs35r2-contradiction-ffnmoe-s1-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:57	LAUNCHED	"01M1H9ZGAA07AD22Y1XJM8VJCG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	20M	s1	fs35r2-oolong-ffnmoe-s1-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:57	LAUNCHED	"01M1HA0P9M8CVN75QT7Q08M4WX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	40M	s1	fs35r2-oolong-ffnmoe-s1-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:58	LAUNCHED	"01M1HA1NQ06J9R7QV847F8WX4A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s1	80M	s1	fs35r2-oolong-ffnmoe-s1-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 07:59	LAUNCHED	"01M1HA3HHH49S0FD8S00N11HMD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	16M	t10	fs35r2-outlier-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:00	LAUNCHED	"01M1HA517YP32XX00W7J7HFF93   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-a10	16M	a10	fs35r2-outlier-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:01	LAUNCHED	"01M1HA6NPGS75KW6BAF3TTSB9G   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	32M	t10	fs35r2-outlier-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:02	LAUNCHED	"01M1HA884SYTTY36NP3XHRKBN7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	64M	t10	fs35r2-outlier-ffnmoe-t10-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:02	LAUNCHED	"01M1HA9P1G6KCE5QVE9PJ46Z64   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	160M	t10	fs35r2-outlier-ffnmoe-t10-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:03	LAUNCHED	"01M1HAB768Y50HVR650QE8C223   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-t10	320M	t10	fs35r2-outlier-ffnmoe-t10-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:04	LAUNCHED	"01M1HACJ55QY62GCZ59M10WXVA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	16M	t10	fs35r2-nq-ffnmoe-t10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:05	LAUNCHED	"01M1HAE3ZTZPZ70DWPP8FMVAZ4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-a10	16M	a10	fs35r2-nq-ffnmoe-a10-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:05	LAUNCHED	"01M1HAFGDHR7HEZ25RVKHRSQ4K   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	32M	t10	fs35r2-nq-ffnmoe-t10-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:06	LAUNCHED	"01M1HAH686JF5AV2CCPMKN5J0W   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-t10	48M	t10	fs35r2-nq-ffnmoe-t10-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:07	LAUNCHED	"01M1HAJH4E255574D9QKA770H4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	14M	t10	fs35r2-contradiction-ffnmoe-t10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:08	LAUNCHED	"01M1HAM4DP7CMV2HC62X7EVJB5   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-a10	14M	a10	fs35r2-contradiction-ffnmoe-a10-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:09	LAUNCHED	"01M1HANHKFB2394BPNHSG7GGK6   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	28M	t10	fs35r2-contradiction-ffnmoe-t10-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:10	LAUNCHED	"01M1HAPWTD6VBWDXW331FB6XXM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-t10	56M	t10	fs35r2-contradiction-ffnmoe-t10-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:10	LAUNCHED	"01M1HAR9QN3FNHAAG67XR4A505   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	20M	t10	fs35r2-oolong-ffnmoe-t10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:11	LAUNCHED	"01M1HASJCFXEN3VYRZHPKWTMGP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-a10	20M	a10	fs35r2-oolong-ffnmoe-a10-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:12	LAUNCHED	"01M1HATTRHMD903ZFFGNF4PJSK   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	40M	t10	fs35r2-oolong-ffnmoe-t10-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:12	LAUNCHED	"01M1HAWABZBBZRR6NBBJV4J41C   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-t10	80M	t10	fs35r2-oolong-ffnmoe-t10-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:13	LAUNCHED	"01M1HAXM8YKD8MNYHB5BB15PHE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	14M	-	fs35-contradiction-kv17-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:14	LAUNCHED	"01M1HAYY8E9AZABV7BRM11HDTQ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	14M	-	fs35-contradiction-kv33-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:15	LAUNCHED	"01M1HB07DF8TCD86DZR4DPCAW7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	28M	-	fs35-contradiction-kv17-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:15	LAUNCHED	"01M1HB15BYR5EBMADJATVZ6V9X   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	28M	-	fs35-contradiction-kv33-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:16	LAUNCHED	"01M1HB2C4GG4XYMRAN8D04X12N   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	56M	-	fs35-contradiction-kv17-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:17	LAUNCHED	"01M1HB3PRFF609ZK52PYR33XG3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	56M	-	fs35-contradiction-kv33-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:17	LAUNCHED	"01M1HB4SM1BGXHR5MRH2D940P6   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	20M	-	fs35-oolong-kv17-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:18	LAUNCHED	"01M1HB63G3D1H7WGAD5ZBKC4BZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	20M	-	fs35-oolong-kv33-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:19	LAUNCHED	"01M1HB7C16158E4NYKNBCKFS0S   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	40M	-	fs35-oolong-kv17-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:19	LAUNCHED	"01M1HB8WJ2R16P58DBT310KBXQ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	40M	-	fs35-oolong-kv33-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:20	LAUNCHED	"01M1HBA8STDRY6918C81QDKTV7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	80M	-	fs35-oolong-kv17-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:21	LAUNCHED	"01M1HBBPKW4WJ5DHY26YCBG2Z0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	80M	-	fs35-oolong-kv33-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:22	LAUNCHED	"01M1HBD2B8B1M9PZ9N5QMHQPR0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	14M	-	fs35-contradiction-kvb33-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:22	LAUNCHED	"01M1HBEGJX8GXBND55KBMEP4PC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb17	14M	-	fs35-contradiction-kvb17-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:23	LAUNCHED	"01M1HBFZE56V94PNKKTC1S8M1H   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	28M	-	fs35-contradiction-kvb33-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:24	LAUNCHED	"01M1HBHEZAZADD0TQYEGWYBCQB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	56M	-	fs35-contradiction-kvb33-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:25	LAUNCHED	"01M1HBJXPG1GB9BAK7ZGNJADQW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	16M	s2	fs35r2-outlier-ffnmoe-s2-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:27	LAUNCHED	"01M1HBQBZQXVSBQH9440ZEKSZP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	32M	s2	fs35r2-outlier-ffnmoe-s2-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:34	LAUNCHED	"01M1HC45D6MN8FTHAA6CKBFMC3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s2	16M	s2	fs35r2-nq-ffnmoe-s2-s16M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:36	LAUNCHED	"01M1HC6THV72PK5CG0F8T8X0JA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	14M	s2	fs35r2-contradiction-ffnmoe-s2-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 08:59	LAUNCHED	"01M1HDH1ZBY3DVXPMZXKM6FBX4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s2	32M	s2	fs35r2-nq-ffnmoe-s2-s32M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 09:07	LAUNCHED	"01M1HE063XBH3WJ3RX13ADCNR0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	64M	s2	fs35r2-outlier-ffnmoe-s2-s64M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 09:14	LAUNCHED	"01M1HECHR9QC0NXCCS4TEB09VT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s2	20M	s2	fs35r2-oolong-ffnmoe-s2-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 09:33	LAUNCHED	"01M1HFEYCKTWEWJMDQ9VX52QZ3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	nq	ffnmoe-s2	48M	s2	fs35r2-nq-ffnmoe-s2-s48M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 09:39	LAUNCHED	"01M1HFTM6H7J669WQY3RRDWC6H   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	28M	s2	fs35r2-contradiction-ffnmoe-s2-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 09:40	LAUNCHED	"01M1HFWTGQ5PCSJC7XAY88SQFQ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	ffnmoe-s2	40M	s2	fs35r2-oolong-ffnmoe-s2-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 10:06	LAUNCHED	"01M1HHC6GR7GE5J9FVT5YHAPNM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	ffnmoe-s2	56M	s2	fs35r2-contradiction-ffnmoe-s2-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 10:13	LAUNCHED	"01M1HHSXD2CWN10ZHFC1XQFDK2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	14M	-	fs35-contradiction-kv17-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 10:39	LAUNCHED	"01M1HK82Z2DC1W8CEJS0F2ADY0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction,oolong	kvdata	-	-	01M1HKA5E3EQ3R949NDFC0AS9V 01M1HKA92V6VG4T0VPF505N8SK	4 clusters cpu	2026-09-02 10:41	RELAUNCHED	first build found no input (looked for arms/<task>_mix_s<B>*.jsonl; real path arms/<arm>/arm.jsonl) yet exited 0 -> 16 KV runs launched on empty shards; script now fails loudly
+beaker35	oolong	ffnmoe-s2	80M	s2	fs35r2-oolong-ffnmoe-s2-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 11:00	LAUNCHED	"01M1HMET6ZJZJNJ893C00WJ3NK   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	160M	s2	fs35r2-outlier-ffnmoe-s2-s160M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 11:15	LAUNCHED	"01M1HNABQG7TA4PRZGSJTF7N66   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	-	evals	-	-	-	-	2026-09-02 11:50	FIX	Hub 429 rate limits killed ~10 eval starts; tokenizer retry+backoff in evaluators (3a02d8dab) and weka-staged tokenizers hf_tokenizers/ used by both launchers
+beaker35	nq,contradiction,oolong,outlier	dense-anchor	4M/8M/7M/10M/8M	-	5 runs	jupiter+ceres+saturn 4gpu	2026-09-02 12:38	LAUNCHED	cheap dense anchors via --max-tokens (full schedule) so the low-compute crossover vs KV can be fitted
+beaker35	contradiction	kv17	14M	-	fs35-contradiction-kv17-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:49	LAUNCHED	"01M1HTNXABT2HH0PAHFXRSWTMX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	14M	-	fs35-contradiction-kv33-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:49	LAUNCHED	"01M1HTPP1XWKCEM2KZXQVCZSZW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	28M	-	fs35-contradiction-kv17-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:49	LAUNCHED	"01M1HTQG0HBP45GZFRR6JMPXGD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	28M	-	fs35-contradiction-kv33-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:50	LAUNCHED	"01M1HTR90WXZD89H7AEBRZA3PS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv17	56M	-	fs35-contradiction-kv17-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:50	LAUNCHED	"01M1HTS1P7VP0H2RGQTPZSCNQ2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kv33	56M	-	fs35-contradiction-kv33-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:51	LAUNCHED	"01M1HTSVVT4HW73QF3WC1RF8E1   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	20M	-	fs35-oolong-kv17-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:51	LAUNCHED	"01M1HTTQV5SG40K5WJS32V0DA4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	20M	-	fs35-oolong-kv33-s20M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:52	LAUNCHED	"01M1HTVF8B46QGKT3DHY90CEVD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	40M	-	fs35-oolong-kv17-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:52	LAUNCHED	"01M1HTW8W7M0249T45S7MG5QX7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	40M	-	fs35-oolong-kv33-s40M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:52	LAUNCHED	"01M1HTX1SFB9C32BWMG7SMPNJW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv17	80M	-	fs35-oolong-kv17-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:53	LAUNCHED	"01M1HTXSWRMWQF0WRKR4YESG1T   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	oolong	kv33	80M	-	fs35-oolong-kv33-s80M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:53	LAUNCHED	"01M1HTYNZ7J6H8PRG2SPPC5CNP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	14M	-	fs35-contradiction-kvb33-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:54	LAUNCHED	"01M1HTZE5P4PNQP5NMRHP4KAAM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb17	14M	-	fs35-contradiction-kvb17-s14M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:54	LAUNCHED	"01M1HV082R41BBS0XNBSJ6XVRG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	28M	-	fs35-contradiction-kvb33-s28M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:55	LAUNCHED	"01M1HV129N8X9S25V06GWTGZ1C   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	contradiction	kvb33	56M	-	fs35-contradiction-kvb33-s56M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 12:55	LAUNCHED	"01M1HV1TJ2B614CD3TJNZ3T99F   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+beaker35	outlier	ffnmoe-s2	320M	s2	fs35r2-outlier-ffnmoe-s2-s320M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-02 14:17	LAUNCHED	"01M1HZQN0AHF6J9RKKR8XPGYZA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
