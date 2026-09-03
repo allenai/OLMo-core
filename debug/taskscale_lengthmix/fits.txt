@@ -1,0 +1,101 @@
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/fit_crossover.py:49: OptimizeWarning: Covariance of the parameters could not be estimated
+  p, _ = curve_fit(
+
+=== absence
+    2k
+        s[fmax 0.37 g 4.00 K 37M rmse 0.008] 0.7:above ceiling 0.37 0.8:above ceiling 0.37 0.9:above ceiling 0.37
+    4k
+        s[fmax 0.36 g 4.00 K 52M rmse 0.002] 0.7:above ceiling 0.36 0.8:above ceiling 0.36 0.9:above ceiling 0.36
+    8k
+        s[fmax 0.63 g 4.00 K 89M rmse 0.000] 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
+
+=== contradiction
+    2k
+        d[fmax 0.99 g 2.06 K 4M rmse 0.000] 0.7:7M 0.8:9M 0.9:13M
+    8k
+        d[fmax 0.99 g 1.52 K 5M rmse 0.000] 0.7:8M 0.8:12M 0.9:21M
+   16k
+        d[fmax 1.00 g 1.17 K 6M rmse 0.000] 0.7:11M 0.8:18M 0.9:35M
+   32k
+        d[fmax 1.05 g 0.97 K 11M rmse 0.011] 0.7:22M 0.8:37M 0.9:>=70M
+
+=== grouping
+
+=== nq
+    2k
+        d[fmax 0.98 g 4.00 K 0M rmse 0.002] 0.7:0M 0.8:0M 0.9:0M
+    8k
+        d[fmax 0.94 g 1.66 K 2M rmse 0.000] 0.7:3M 0.8:5M 0.9:11M
+   16k
+        d[fmax 1.05 g 0.33 K 0M rmse 0.003] 0.7:1M 0.8:6M 0.9:41M
+   32k
+        d[fmax 1.02 g 0.65 K 3M rmse 0.000] 0.7:10M 0.8:22M 0.9:>=69M
+
+=== oolong
+    2k
+        d[fmax 1.00 g 0.34 K 0M rmse 0.002] 0.7:1M 0.8:5M 0.9:55M
+        s[fmax 1.05 g 0.23 K 0M rmse 0.008] 0.7:2M 0.8:17M 0.9:>=285M
+        CROSSOVER none below 10B
+    8k
+        d[fmax 0.72 g 0.84 K 2M rmse 0.000] 0.7:>=123M 0.8:above ceiling 0.72 0.9:above ceiling 0.72
+        s[fmax 1.05 g 0.27 K 19M rmse 0.009] 0.7:>=256M 0.8:>=1494M 0.9:>=15801M
+        CROSSOVER 301M = 3.8x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.72 / sparse 1.05
+   16k
+        d[fmax 0.68 g 1.64 K 7M rmse 0.000] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
+        s[fmax 1.05 g 0.22 K 29M rmse 0.008] 0.7:>=676M 0.8:>=5706M 0.9:>=98891M
+        CROSSOVER 460M = 5.7x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.68 / sparse 1.05
+   32k
+        d[fmax 0.62 g 2.23 K 7M rmse 0.000] 0.7:above ceiling 0.62 0.8:above ceiling 0.62 0.9:above ceiling 0.62
+        s[fmax 0.63 g 0.50 K 3M rmse 0.000] 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
+        CROSSOVER 5404M = 67.6x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.62 / sparse 0.63
+
+=== outlier
+    8k
+        d[fmax 1.05 g 0.71 K 19M rmse 0.018] 0.7:52M 0.8:100M 0.9:>=244M
+        s[fmax 1.05 g 1.07 K 70M rmse 0.036] 0.7:133M 0.8:>=206M 0.9:>=370M
+        CROSSOVER 829M = 5.2x PAST the largest measured budget (160M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 1.05 / sparse 1.05
+   16k
+        d[fmax 1.05 g 0.82 K 89M rmse 0.016] 0.7:207M 0.8:367M 0.9:>=787M
+        s[fmax 0.90 g 1.45 K 134M rmse 0.012] 0.7:320M 0.8:566M 0.9:above ceiling 0.90
+        CROSSOVER none below 10B
+   32k
+        d[fmax 1.04 g 0.89 K 624M rmse 0.018] 0.7:>=1393M 0.8:>=2386M 0.9:>=4950M
+        s[fmax 0.57 g 1.18 K 344M rmse 0.014] 0.7:above ceiling 0.57 0.8:above ceiling 0.57 0.9:above ceiling 0.57
+        CROSSOVER none below 10B
+
+=== qdmatch_nq
+    8k
+        d[fmax 0.98 g 0.52 K 0M rmse 0.003] 0.7:1M 0.8:2M 0.9:10M
+   16k
+        d[fmax 0.97 g 0.36 K 0M rmse 0.002] 0.7:1M 0.8:8M 0.9:133M
+   32k
+        d[fmax 1.05 g 0.18 K 3M rmse 0.003] 0.7:116M 0.8:>=1491M 0.9:>=45412M
+
+=== reorder
+    2k  s[flat at the floor -- no fit]
+    2k
+        d[fmax 0.72 g 2.46 K 15M rmse 0.000] 0.7:>=62M 0.8:above ceiling 0.72 0.9:above ceiling 0.72
+    4k  s[flat at the floor -- no fit]
+    4k
+        d[fmax 0.50 g 2.92 K 22M rmse 0.000] 0.7:above ceiling 0.50 0.8:above ceiling 0.50 0.9:above ceiling 0.50
+    8k  s[flat at the floor -- no fit]
+    8k
+        d[fmax 0.07 g 4.00 K 40M rmse 0.000] 0.7:above ceiling 0.07 0.8:above ceiling 0.07 0.9:above ceiling 0.07
+   16k  d[flat at the floor -- no fit]
+
+=== textgroups
+    2k
+        d[fmax 1.05 g 0.99 K 850M rmse 0.013] 0.7:>=1707M 0.8:>=2739M 0.9:>=5157M
+        s[fmax 1.05 g 0.82 K 5512M rmse 0.005] 0.7:>=12786M 0.8:>=22616M 0.9:>=48507M
+        CROSSOVER none below 10B
+    4k  s[flat at the floor -- no fit]
+    4k
+        d[fmax 1.05 g 0.96 K 2215M rmse 0.004] 0.7:>=4563M 0.8:>=7449M 0.9:>=14347M
+    8k  d[flat at the floor -- no fit]
+    8k  s[flat at the floor -- no fit]
+
+=== xabsence
+    4k
+        d[fmax 1.00 g 3.86 K 0M rmse 0.000] 0.7:0M 0.8:1M 0.9:1M
+    8k
+        d[fmax 1.00 g 1.08 K 0M rmse 0.001] 0.7:0M 0.8:0M 0.9:1M

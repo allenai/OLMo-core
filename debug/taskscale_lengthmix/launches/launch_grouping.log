@@ -1,0 +1,7 @@
+[tsl] launch tsl-full-grouping-s20M-4b (grouping_mix_s20M, full)
+[tsl] launch tsl-slm-grouping-s20M-4b (grouping_mix_s20M, sparselandmark)
+[tsl] launch tsl-full-grouping-s40M-4b (grouping_mix_s40M, full)
+[tsl] launch tsl-slm-grouping-s40M-4b (grouping_mix_s40M, sparselandmark)
+[tsl] launch tsl-full-grouping-s80M-4b (grouping_mix_s80M, full)
+[tsl] launch tsl-slm-grouping-s80M-4b (grouping_mix_s80M, sparselandmark)
+[tsl] grouping: submitted 3 budgets x 2 variants 03:22:48

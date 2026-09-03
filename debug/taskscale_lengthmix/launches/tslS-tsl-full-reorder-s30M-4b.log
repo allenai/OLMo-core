@@ -1,0 +1,586 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+[beaker_ctc_suite] task=reorder variant=full scale=4b run_name=tsl-full-reorder-s30M-4b-20260901T082904-0700 nodes=1 world_size=8 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/reorder_mix_s30M
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-full-reorder-s30M-4b-20260901T082904-0700
+[beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/taskscale-lengthmix
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task reorder --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/reorder_mix_s30M --variant full --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-full-reorder-s30M-4b-20260901T082904-0700 --run-name tsl-full-reorder-s30M-4b-20260901T082904-0700 --wandb-group taskscale-lengthmix --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --pack
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/tsl-full-reorder-s30M-4b-20260901T082904-0700-61f267f4 → 
+https://beaker.org/ex/01M1ESDAF4RZV3FPVWN6Z8RRXK
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 0aad3c4 artifact + snapshot: fold in the measured nq law,… → 
+https://github.com/allenai/OLMo-core/commit/0aad3c4
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+✓ job created
+✓ job scheduled
+✓ resources acquired: 8 GPU, 243.0 CPU
+✓ downloading dataset "01KNQSJ27JZEM2Z9KQ191P0JJY"
+✓ downloaded dataset "01KNQSJ27JZEM2Z9KQ191P0JJY" in 1.012306543s
+✓ pulling image
+✓ local healthcheck started
+✓ pulled image in 367.782936ms
+✓ local healthcheck succeeded
+✓ job ready
+
+───────────────────────────────────── Logs ─────────────────────────────────────
+[36m[1m
+##########################################
+### [GANTRY] Validating environment... ###  
+##########################################
+[0m
+[36m[1m❯ [GANTRY INFO][0m Shell is GNU bash, version 5.1.16(1)-release 
+(x86_64-pc-linux-gnu).
+[36m[1m❯ [GANTRY INFO][0m Running on Beaker node 
+'saturn-cs-aus-243.reviz.ai2.in' (01K1QWV49XF9X9C3E44PQZ2DEY)
+[36m[1m❯ [GANTRY INFO][0m Results dataset 
+[94m[4mhttps://beaker.org/ds/01M1ESDAFCPXT3B247TGJZ20T6[0m mounted to 
+'/results'.
+[36m[1m❯ [GANTRY INFO][0m Checking for required tools...
+[36m[1m❯ [GANTRY INFO][0m Using git version 2.34.1.
+[36m[1m❯ [GANTRY INFO][0m Using curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0
+OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 
+(+libidn2/2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 
+OpenLDAP/2.5.19.
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Installing AWS config...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Installing AWS credentials...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Installing Google Cloud credentials...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Creating PyTorch kernel cache directory...
+[33m[1m❯ [GANTRY WARN][0m 'gcloud' CLI not found so credentials can't be 
+activated globally. As a result some tools like 'gsutil' may not be able to 
+authenticate.
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m
+#######################################
+### [GANTRY] Cloning source code... ###  
+#######################################
+[0m
+[36m[1m❯ [GANTRY INFO][0m Cloning source from 'allenai/OLMo-core' @ 
+'0aad3c43f965126af99e0423b18d84a0ec44d1aa'...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Initializing git submodules...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m
+#######################################
+### [GANTRY] Building Python env... ###  
+#######################################
+[0m
+[36m[1m❯ [GANTRY INFO][0m Installing uv...
+[36m[1m❯ [GANTRY INFO][0m Done. Installed uv 0.12.8 (x86_64-unknown-linux-gnu).
+[36m[1m❯ [GANTRY INFO][0m Using existing Python 3.12.12 installation at 
+'/opt/conda/bin/python'.
+[36m[1m❯ [GANTRY INFO][0m Acquiring lock for uv install at 
+'/results/lockfile'...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m❯ [GANTRY INFO][0m Installing local project...
+[36m[1m❯ [GANTRY INFO][0m Done.
+[36m[1m
+########################################
+### [GANTRY] Python environment info ###  
+########################################
+[0m
+[36m[1m❯ [GANTRY INFO][0m Using Python 3.12.12 from '/opt/conda/bin/python'.
+[36m[1m❯ [GANTRY INFO][0m Packages:
+[1mai2-olmo-core[0m @ file:///gantry-runtime
+[1mai2-olmo-eval[0m==0.9.0
+[1maiohappyeyeballs[0m==2.6.1
+[1maiohttp[0m==3.13.2
+[1maiosignal[0m==1.4.0
+[1malabaster[0m==0.7.16
+[1mannotated-types[0m==0.7.0
+[1mantlr4-python3-runtime[0m==4.9.3
+[1manyio[0m==4.11.0
+[1mapache-tvm-ffi[0m==0.1.13.post3
+[1marchspec[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/archspec_1737352602016/work
+[1masttokens[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/asttokens_1763409923949/work
+[1mattrs[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/attrs_1759762205280/work
+[1mbabel[0m==2.17.0
+[1mbeaker-gantry[0m==3.7.0
+[1mbeaker-py[0m==2.7.2
+[1mbeautifulsoup4[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/beautifulsoup4_1759146011391/w
+ork
+[1mbettermap[0m==1.3.1
+[1mblack[0m==23.12.1
+[1mboltons[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/boltons_1749686179973/work
+[1mboto3[0m==1.41.3
+[1mbotocore[0m==1.41.3
+[1mbrotli[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/brotli-split_1756599151967/wor
+k
+[1mbuild[0m==1.3.0
+[1mcached-path[0m==1.8.0
+[1mcachetools[0m==6.2.2
+[1mcertifi[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/certifi_1762976168352/work/cer
+tifi
+[1mcffi[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/cffi_1761202850602/work
+[1mchardet[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/chardet_1741797914774/work
+[1mcharset-normalizer[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/charset-normalizer_17604372182
+88/work
+[1mclick[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/click_1763248546991/work
+[1mclick-help-colors[0m==0.9.4
+[1mclick-option-group[0m==0.5.9
+[1mcolorama[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/colorama_1733218098505/work
+[1mcomet-ml[0m==3.54.2
+[1mconda[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda_1760108593422/work/conda
+-src
+[1mconda-build[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda-build_1763816195874/work
+[1mconda-index[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda-index_1760661811794/work
+[1mconda-libmamba-solver[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda-libmamba-solver_17458344
+76052/work/src
+[1mconda-package-handling[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda-package-handling_1736345
+463896/work
+[1mconda-package-streaming[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/conda-package-streaming_175154
+8120229/work
+[1mconfigobj[0m==5.0.9
+[1mcontourpy[0m==1.3.3
+[1mcryptography[0m==46.0.3
+[1mcuda-bindings[0m==13.3.1
+[1mcuda-core[0m==1.0.1
+[1mcuda-pathfinder[0m==1.8.0
+[1mcuda-python[0m==13.3.1
+[1mcycler[0m==0.12.1
+[1mdataclass-extensions[0m==0.5.0
+[1mdatasets[0m==3.6.0
+[1mdecorator[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/decorator_1740384970518/work
+[1mdill[0m==0.3.8
+[1mdion[0m @ 
+git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb253523
+9b
+[1mdistro[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/distro_1734729835256/work
+[1mdocker[0m==7.1.0
+[1mdocutils[0m==0.20.1
+[1mdulwich[0m==0.24.10
+[1meinops[0m==0.8.1
+[1mevalidate[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_evalidate_17
+46793833/work
+[1meverett[0m==3.1.0
+[1mexecnet[0m==2.1.2
+[1mexecuting[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/executing_1756729339227/work
+[1mfilelock[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/filelock_1759948064277/work
+[1mfla-core[0m==0.4.1
+[1mflash-attn[0m==2.8.2
+[1mflash-attn-4[0m==4.0.0b28
+[1mflash-linear-attention[0m==0.4.1
+[1mfonttools[0m==4.64.0
+[1mfrozendict[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/frozendict_1756047928019/work
+[1mfrozenlist[0m==1.8.0
+[1mfsspec[0m==2025.3.0
+[1mfuro[0m==2024.8.6
+[1mgitdb[0m==4.0.12
+[1mgitpython[0m==3.1.45
+[1mgoogle-api-core[0m==2.28.1
+[1mgoogle-auth[0m==2.43.0
+[1mgoogle-cloud-compute[0m==1.40.0
+[1mgoogle-cloud-core[0m==2.5.0
+[1mgoogle-cloud-storage[0m==2.19.0
+[1mgoogle-crc32c[0m==1.7.1
+[1mgoogle-resumable-media[0m==2.8.0
+[1mgoogleapis-common-protos[0m==1.72.0
+[1mgrouped-gemm[0m @ 
+git+https://git@github.com/tgale96/grouped_gemm.git@f1429a3c44c98f7912aa4b001251
+44cdf4e7fdb2
+[1mgrpcio[0m==1.76.0
+[1mgrpcio-status[0m==1.76.0
+[1mh11[0m==0.16.0
+[1mh2[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_h2_175636487
+1/work
+[1mhf-xet[0m==1.2.0
+[1mhpack[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/hpack_1737618293087/work
+[1mhttpcore[0m==1.0.9
+[1mhttpx[0m==0.28.1
+[1mhuggingface-hub[0m==0.36.0
+[1mhyperframe[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/hyperframe_1737618333194/work
+[1mid[0m==1.5.0
+[1midna[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/idna_1760286409563/work
+[1mimagesize[0m==1.4.1
+[1mimportlib-metadata[0m==8.7.0
+[1mimportlib-resources[0m==6.5.2
+[1miniconfig[0m==2.3.0
+[1mipython[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_ipython_1762
+350942/work
+[1mipython-pygments-lexers[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/ipython_pygments_lexers_173712
+3620466/work
+[1misort[0m==5.13.2
+[1mjaraco-classes[0m==3.4.0
+[1mjaraco-context[0m==6.0.1
+[1mjaraco-functools[0m==4.3.0
+[1mjedi[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/jedi_1733300866624/work
+[1mjeepney[0m==0.9.0
+[1mjinja2[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/jinja2_1741263328855/work
+[1mjmespath[0m==1.0.1
+[1mjsonpatch[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1733814567314/work
+[1mjsonpointer[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/jsonpointer_1756754132407/work
+[1mjsonschema[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_jsonschema_1
+755595646/work
+[1mjsonschema-specifications[0m @ file:///tmp/tmptzik3dqa/src
+[1mkeyring[0m==25.7.0
+[1mkiwisolver[0m==1.5.1
+[1mlibarchive-c[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-libar
+chive-c_1754663558/work
+[1mlibmambapy[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_libmambapy_1
+760729597/work/libmambapy
+[1mlief[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/lief_1760811648956/work/api/py
+thon
+[1mliger-kernel[0m==0.6.4
+[1mlightning-utilities[0m==0.15.2
+[1mlinkify-it-py[0m==2.0.3
+[1mmarkdown-it-py[0m==3.0.0
+[1mmarkupsafe[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/markupsafe_1759055168201/work
+[1mmatplotlib[0m==3.11.1
+[1mmatplotlib-inline[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_176121449020
+9/work
+[1mmdit-py-plugins[0m==0.5.0
+[1mmdurl[0m==0.1.2
+[1mmemray[0m==1.19.1
+[1mmenuinst[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/menuinst_1761299738838/work
+[1mml-dtypes[0m==0.5.4
+[1mmore-itertools[0m==10.8.0
+[1mmpmath[0m==1.3.0
+[1mmsgpack[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/msgpack-python_1762503974934/w
+ork
+[1mmultidict[0m==6.7.0
+[1mmultiprocess[0m==0.70.16
+[1mmypy[0m==1.3.0
+[1mmypy-extensions[0m==1.1.0
+[1mmyst-parser[0m==2.0.0
+[1mnetworkx[0m==3.5
+[1mnh3[0m==0.3.2
+[1mninja[0m==1.13.0
+[1mnumpy[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpy_176335
+1074/work/dist/numpy-2.3.5-cp312-cp312-linux_x86_64.whl#sha256=585a706a3c8895903
+65479b2cdbe308c23addd9fae26c7937f4b74887269b6e3
+[1mnvidia-cublas-cu12[0m==12.8.4.1
+[1mnvidia-cuda-cupti-cu12[0m==12.8.90
+[1mnvidia-cuda-nvdisasm[0m==13.3.73
+[1mnvidia-cuda-nvrtc-cu12[0m==12.8.93
+[1mnvidia-cuda-runtime-cu12[0m==12.8.90
+[1mnvidia-cudnn-cu12[0m==9.10.2.21
+[1mnvidia-cufft-cu12[0m==11.3.3.83
+[1mnvidia-cufile-cu12[0m==1.13.1.3
+[1mnvidia-curand-cu12[0m==10.3.9.90
+[1mnvidia-cusolver-cu12[0m==11.7.3.90
+[1mnvidia-cusparse-cu12[0m==12.5.8.93
+[1mnvidia-cusparselt-cu12[0m==0.7.1
+[1mnvidia-cutlass-dsl[0m==4.6.2
+[1mnvidia-cutlass-dsl-libs-base[0m==4.6.2
+[1mnvidia-cutlass-dsl-libs-core[0m==4.6.2
+[1mnvidia-cutlass-dsl-libs-cu12[0m==4.6.2
+[1mnvidia-nccl-cu12[0m==2.27.5
+[1mnvidia-nvjitlink-cu12[0m==12.8.93
+[1mnvidia-nvshmem-cu12[0m==3.3.20
+[1mnvidia-nvtx-cu12[0m==12.8.90
+[1momegaconf[0m==2.3.0
+[1monnx[0m==1.19.1
+[1monnx-ir[0m==0.1.12
+[1monnxscript[0m==0.5.6
+[1mpackaging[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_17
+45345660/work
+[1mpandas[0m==2.3.3
+[1mparso[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_parso_175597
+4222/work
+[1mpathspec[0m==0.12.1
+[1mpetname[0m==2.9
+[1mpexpect[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pexpect_1733301927746/work
+[1mpillow[0m==11.3.0
+[1mpip[0m==25.3
+[1mpkginfo[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pkginfo_1739984581450/work
+[1mplatformdirs[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_platformdirs
+_1759953252/work
+[1mpluggy[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pluggy_1747339660894/work
+[1mprompt-toolkit[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/prompt-toolkit_1756321756983/w
+ork
+[1mpropcache[0m==0.4.1
+[1mproto-plus[0m==1.26.1
+[1mprotobuf[0m==6.33.1
+[1mpsutil[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_psutil_17620
+92914/work
+[1mptyprocess[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/ptyprocess_1733302279685/work/
+dist/ptyprocess-0.7.0-py2.py3-none-any.whl#sha256=92c32ff62b5fd8cf325bec5ab90d7b
+e3d2a8ca8c8a3813ff487a8d2002630d1f
+[1mpure-eval[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pure_eval_1733569405015/work
+[1mpyarrow[0m==19.0.1
+[1mpyasn1[0m==0.6.1
+[1mpyasn1-modules[0m==0.4.2
+[1mpycosat[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pycosat_1757744639790/work
+[1mpycparser[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pycparser_17
+33195786/work
+[1mpydantic[0m==2.12.4
+[1mpydantic-core[0m==2.41.5
+[1mpygments[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pygments_1750615794071/work
+[1mpyparsing[0m==3.3.2
+[1mpyproject-hooks[0m==1.2.0
+[1mpysocks[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pysocks_1733217236728/work
+[1mpytest[0m==9.0.1
+[1mpytest-memray[0m==1.8.0
+[1mpytest-sphinx[0m==0.6.3
+[1mpytest-xdist[0m==3.8.0
+[1mpython-box[0m==6.1.0
+[1mpython-dateutil[0m==2.9.0.post0
+[1mpytz[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pytz_1742920838005/work
+[1mpyyaml[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/pyyaml_1758891829620/work
+[1mquack-kernels[0m==0.6.4
+[1mreadme-renderer[0m==43.0
+[1mreferencing[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_referencing_
+1760379115/work
+[1mregex[0m==2025.11.3
+[1mrequests[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/requests_1755614211359/work
+[1mrequests-toolbelt[0m==1.0.0
+[1mrfc3986[0m==2.0.0
+[1mrich[0m==13.9.4
+[1mring-flash-attn[0m==0.1.8
+[1mrpds-py[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_rpds-py_1763
+327046/work
+[1mrsa[0m==4.9.1
+[1mruamel-yaml[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml_1761160588389/work
+[1mruamel-yaml-clib[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml.clib_1760564169582
+/work
+[1mruff[0m==0.14.6
+[1ms3transfer[0m==0.15.0
+[1msafetensors[0m==0.7.0
+[1msecretstorage[0m==3.5.0
+[1msemantic-version[0m==2.10.0
+[1msentry-sdk[0m==2.46.0
+[1msetuptools[0m==69.5.1
+[1msimplejson[0m==3.20.2
+[1msix[0m==1.17.0
+[1msmmap[0m==5.0.2
+[1msniffio[0m==1.3.1
+[1msnowballstemmer[0m==3.0.1
+[1msoupsieve[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/soupsieve_1756330469801/work
+[1msphinx[0m==7.4.7
+[1msphinx-autobuild[0m==2025.8.25
+[1msphinx-autodoc-typehints[0m==1.23.3
+[1msphinx-basic-ng[0m==1.0.0b2
+[1msphinx-copybutton[0m==0.5.2
+[1msphinx-inline-tabs[0m==2023.4.21
+[1msphinxcontrib-applehelp[0m==2.0.0
+[1msphinxcontrib-devhelp[0m==2.0.0
+[1msphinxcontrib-htmlhelp[0m==2.1.0
+[1msphinxcontrib-jsmath[0m==1.0.1
+[1msphinxcontrib-qthelp[0m==2.0.0
+[1msphinxcontrib-serializinghtml[0m==2.0.0
+[1mstack-data[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/stack_data_1733569443808/work
+[1mstarlette[0m==0.50.0
+[1msympy[0m==1.14.0
+[1mtextual[0m==6.2.1
+[1mtokenizers[0m==0.22.1
+[1mtomli[0m==2.4.1
+[1mtorch[0m==2.9.1+cu128
+[1mtorch-c-dlpack-ext[0m==0.1.5
+[1mtorchao[0m==0.15.0
+[1mtorchaudio[0m==2.9.1+cu128
+[1mtorchmetrics[0m==1.8.2
+[1mtorchvision[0m==0.24.1+cu128
+[1mtqdm[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/tqdm_1735661334605/work
+[1mtraitlets[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/traitlets_1733367359838/work
+[1mtransformer-engine[0m==2.9.0
+[1mtransformer-engine-cu12[0m==2.9.0
+[1mtransformer-engine-torch[0m==2.9.0
+[1mtransformers[0m==4.57.3
+[1mtriton[0m==3.5.1
+[1mtruststore[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_truststore_1
+753886790/work
+[1mtwine[0m==6.2.0
+[1mtyping-extensions[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_exten
+sions_1756220668/work
+[1mtyping-inspection[0m==0.4.2
+[1mtzdata[0m==2025.2
+[1muc-micro-py[0m==1.0.3
+[1murllib3[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/urllib3_1750271362675/work
+[1muvicorn[0m==0.38.0
+[1mwandb[0m==0.23.0
+[1mwatchfiles[0m==1.1.1
+[1mwcwidth[0m @ 
+file:///home/conda/feedstock_root/build_artifacts/wcwidth_1758622279606/work
+[1mwebsockets[0m==15.0.1
+[1mwheel[0m==0.45.1
+[1mwrapt[0m==2.0.1
+[1mwurlitzer[0m==3.1.1
+[1mxxhash[0m==3.6.0
+[1myarl[0m==1.22.0
+[1mzipp[0m==3.23.0
+[1mzstandard[0m==0.25.0
+[36m[1m
+#####################################
+### [GANTRY] NVIDIA system status ###  
+#####################################
+[0m
+Tue Sep  1 15:30:09 2026       
++-------------------------------------------------------------------------------
+----------+
+| NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version:
+12.8     |
+|-----------------------------------------+------------------------+------------
+----------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile 
+Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  
+Compute M. |
+|                                         |                        |            
+MIG M. |
+|=========================================+========================+============
+==========|
+|   0  NVIDIA A100-SXM4-80GB          On  |   00000000:07:00.0 Off |            
+0 |
+| N/A   32C    P0             64W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   1  NVIDIA A100-SXM4-80GB          On  |   00000000:0A:00.0 Off |            
+0 |
+| N/A   30C    P0             63W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   2  NVIDIA A100-SXM4-80GB          On  |   00000000:46:00.0 Off |            
+0 |
+| N/A   31C    P0             59W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   3  NVIDIA A100-SXM4-80GB          On  |   00000000:4C:00.0 Off |            
+0 |
+| N/A   34C    P0             62W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   4  NVIDIA A100-SXM4-80GB          On  |   00000000:84:00.0 Off |            
+0 |
+| N/A   32C    P0             64W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   5  NVIDIA A100-SXM4-80GB          On  |   00000000:8A:00.0 Off |            
+0 |
+| N/A   30C    P0             60W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   6  NVIDIA A100-SXM4-80GB          On  |   00000000:C0:00.0 Off |            
+0 |
+| N/A   30C    P0             63W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+|   7  NVIDIA A100-SXM4-80GB          On  |   00000000:C3:00.0 Off |            
+0 |
+| N/A   32C    P0             63W /  400W |       1MiB /  81920MiB |      0%    
+Default |
+|                                         |                        |            
+Disabled |
++-----------------------------------------+------------------------+------------
+----------+
+                                                                                
++-------------------------------------------------------------------------------
+----------+
+| Processes:                                                                    
+|
+|  GPU   GI   CI              PID   Type   Process name                        
+GPU Memory |
+|        ID   ID                                                               
+Usage      |
+|===============================================================================
+==========|
+|  No running processes found                                                   
+|
++-------------------------------------------------------------------------------
+----------+
+[36m[1m
+###############################
+### [GANTRY] Setup complete ###  (finished in 16 seconds)
+###############################
+[0m

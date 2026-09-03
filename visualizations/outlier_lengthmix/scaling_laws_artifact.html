@@ -130,8 +130,10 @@ advantage.</p>
 <figcaption>Outlier f1 vs <strong>training tokens</strong> (short-heavy mix, log-x; solid = 16k
 rung, dashed = 32k rung; curves are the Hill fits). The sparse curve approaches dense as budget
 grows but never crosses it: at every measured budget, dense is above sparse on both rungs, and
-past 320M the gap stops closing (.894 vs .816 @16k, .532 vs .386 @32k at 640M; seed-replicate
-error ±.02–.03).</figcaption></figure>
+past 320M the gap stops closing. The 640M point is now a <strong>two-seed mean</strong>:
+.882 vs .800 @16k and .509 vs .377 @32k, with a seed-to-seed spread of .033 (dense 16k) and
+.047 (dense 32k) — as large as the ±.041 binomial 2 SE, so single-seed points on this task
+carry roughly twice the error bar they appear to.</figcaption></figure>
 
 <figure><svg id="c5" viewBox="0 0 560 300" width="100%"></svg>
 <div class="legend">
@@ -409,7 +411,7 @@ holds 94% of dense at 2k (.912 vs .973) but 28% at 32k (.248 vs .873)</td></tr>
 landmark compression, not by task family — but the length axis matters as much as the operation.
 Of the three tasks now measured against dense at a matched budget, two (qdmatch, nq) show sparse
 <em>collapsing</em> as context grows, and only outlier shows the stable constant-factor penalty
-(≈0.9× of dense, then a plateau) that the "sparse just needs more tokens" story assumes. And on cost, MEASURED rather than counted in FLOPs: fitting hours = setup + rate &times; tokens on every arm's job timings gives <strong>dense 0.00552 vs sparse 0.00332 node-hours per million tokens &mdash; a 1.66&times; speedup</strong> at these 4k&ndash;9k mixes, well above the ~1.1&times; a FLOP count predicts, since only 8 of 32 layers are full attention in this GDN hybrid and the rest of the gain is kernel and memory behaviour. That is enough to cancel outlier's ~1.5&times; token penalty almost exactly: <strong>at matched wall-clock sparse reaches parity with dense on outlier at 16k&ndash;32k</strong> (16k: .700 vs .678 at 1.06 h, .816 vs .782 at 2.12 h &mdash; gaps of .022 and .034 against a 2 SE band of ~.05, so parity, not a win). No other task gets that far. The advantage grows with training length toward a <strong>~64&times; ceiling</strong> &mdash; landmark attention still scans one landmark per past 64-token block, so it is quadratic/64 rather than sub-quadratic &mdash; which caps what length can buy: a task needing more than ~64&times; dense's tokens is never rescued by longer context.</p>
+(≈0.9× of dense, then a plateau) that the "sparse just needs more tokens" story assumes. And on cost, MEASURED rather than counted in FLOPs: fitting hours = setup + rate &times; tokens on every arm's job timings gives <strong>dense 0.00552 vs sparse 0.00332 node-hours per million tokens &mdash; a 1.66&times; speedup</strong> at these 4k&ndash;9k mixes, well above the ~1.1&times; a FLOP count predicts, since only 8 of 32 layers are full attention in this GDN hybrid and the rest of the gain is kernel and memory behaviour. That is enough to cancel outlier's ~1.5&times; token penalty almost exactly: <strong>at matched wall-clock sparse reaches parity with dense on outlier at 16k&ndash;32k</strong> (16k: .700 vs .678 at 1.06 h, .799 vs .779 at 2.12 h &mdash; gaps of .022 and .020 against a 2 SE band of .058 on a difference, so parity, not a win). A second training seed at 640M was run specifically to settle this, and it settled it as parity: averaging the seeds SHRANK the largest sparse lead from .034 to .020, and at 32k the biggest matched pair stays negative (dense +.007). No other task gets that far. The advantage grows with training length toward a <strong>~64&times; ceiling</strong> &mdash; landmark attention still scans one landmark per past 64-token block, so it is quadratic/64 rather than sub-quadratic &mdash; which caps what length can buy: a task needing more than ~64&times; dense's tokens is never rescued by longer context.</p>
 </div></div>
 
 <div class="step"><div class="step-n">06</div><div>

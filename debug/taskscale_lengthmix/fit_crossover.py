@@ -29,11 +29,25 @@ def hill(B, fmax, g, K):
     return fmax * B**g / (B**g + K**g)
 
 
+FLOOR = 0.02  # a ladder whose best score is under this carries no scaling signal to fit
+
+
 def fit(budgets, scores):
+    """Hill fit, or None for a ladder that never leaves the floor.
+
+    reorder@16k is 0.000 at all three budgets and reorder@4k sparse is slightly NEGATIVE (kendall
+    tau, not f1). Both made p0[0] = max(f) * 1.05 fall outside the fmax lower bound, and curve_fit
+    raises "Initial guess is outside of provided bounds" -- which aborted the whole script partway
+    through the task list, so every task sorting after `reorder` silently went unfitted. Clamp the
+    guess, and refuse to fit a flat-zero ladder rather than reporting a law for it.
+    """
     B = np.asarray(budgets, float)
     f = np.asarray(scores, float)
+    if float(np.max(f)) < FLOOR:
+        return None
+    p0 = [min(max(float(np.max(f)) * 1.05, 0.05), 1.05), 1.0, float(np.median(B))]
     p, _ = curve_fit(
-        hill, B, f, p0=[max(f) * 1.05, 1.0, float(np.median(B))],
+        hill, B, f, p0=p0,
         bounds=([0.05, 0.1, 1e5], [1.05, 4.0, MAX_EXTRAP]), maxfev=400000,
     )
     return p, float(np.sqrt(np.mean((hill(B, *p) - f) ** 2)))
@@ -73,8 +87,11 @@ def main():
                 if not pts or len(pts) < 3:
                     continue
                 budgets = sorted(float(b) for b in pts)
-                fits[variant] = (fit(budgets, [pts[f"{int(b)}"] for b in budgets]),
-                                 max(budgets), min(budgets))
+                res = fit(budgets, [pts[f"{int(b)}"] for b in budgets])
+                if res is None:                       # flat-zero ladder, nothing to fit
+                    print(f"  {rung:>4s}  {variant[0]}[flat at the floor -- no fit]")
+                    continue
+                fits[variant] = (res, max(budgets), min(budgets))
             if not fits:
                 continue
             line = [f"  {rung:>4s}"]

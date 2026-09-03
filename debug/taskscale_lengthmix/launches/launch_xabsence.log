@@ -4,3 +4,4 @@
 [tsl] launch tsl-slm-xabsence-s40M-4b (xabsence_mix_s40M, sparselandmark)
 [tsl] launch tsl-full-xabsence-s80M-4b (xabsence_mix_s80M, full)
 [tsl] launch tsl-slm-xabsence-s80M-4b (xabsence_mix_s80M, sparselandmark)
+[tsl] xabsence: submitted 3 budgets x 2 variants 00:52:42

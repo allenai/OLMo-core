@@ -1,0 +1,7 @@
+[tsl] launch tsl-full-textgroups-s20M-4b (textgroups_mix_s20M, full)
+[tsl] launch tsl-slm-textgroups-s20M-4b (textgroups_mix_s20M, sparselandmark)
+[tsl] launch tsl-full-textgroups-s40M-4b (textgroups_mix_s40M, full)
+[tsl] launch tsl-slm-textgroups-s40M-4b (textgroups_mix_s40M, sparselandmark)
+[tsl] launch tsl-full-textgroups-s80M-4b (textgroups_mix_s80M, full)
+[tsl] launch tsl-slm-textgroups-s80M-4b (textgroups_mix_s80M, sparselandmark)
+[tsl] textgroups: submitted 3 budgets x 2 variants 02:07:51

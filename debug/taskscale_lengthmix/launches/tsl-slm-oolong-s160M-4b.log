@@ -1,0 +1,30 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+[beaker_ctc_suite] task=oolong variant=sparselandmark scale=4b run_name=tsl-slm-oolong-s160M-4b-20260902T175720-0700 nodes=1 world_size=8 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/oolong_mix_s160M
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-slm-oolong-s160M-4b-20260902T175720-0700
+[beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/taskscale-lengthmix
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task oolong --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/oolong_mix_s160M --variant sparselandmark --model-scale 4b --seq-len 65536 --epochs 1 --lr 1e-05 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-slm-oolong-s160M-4b-20260902T175720-0700 --run-name tsl-slm-oolong-s160M-4b-20260902T175720-0700 --wandb-group taskscale-lengthmix --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/tsl-slm-oolong-s160M-4b-20260902T175720-0700-6976c6e4 → 
+https://beaker.org/ex/01M1JCAHEX4C2D5QEHDWJCXT9H
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 7c01b8b taskscale: survive a deepened pool without redefi… → 
+https://github.com/allenai/OLMo-core/commit/7c01b8b
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+✓ job created
+✓ 128 nodes satisfy constraints on 1 cluster; 126 nodes do not have enough slots
+available to satisfy the request; 4 nodes are cordoned; 126 nodes waiting for at
+least 1 job higher in the queue to be scheduled (01M1JC9G2C54SPWXTDQ0RGMEPZ)
+✓ 128 nodes satisfy constraints on 1 cluster; 126 nodes do not have enough slots
+available to satisfy the request; 4 nodes are cordoned; 126 nodes waiting for at
+least 1 job higher in the queue to be scheduled (01M1HH4P0BK181V4G1WT8CBFTN)
+✓ 128 nodes satisfy constraints on 1 cluster; 126 nodes do not have enough slots
+available to satisfy the request; 4 nodes are cordoned; 126 nodes waiting for at
+least 1 job higher in the queue to be scheduled (01M1JCFAX9G10WEVD5A754QR4R)

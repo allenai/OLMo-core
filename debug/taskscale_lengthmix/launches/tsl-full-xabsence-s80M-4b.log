@@ -19,3 +19,6 @@ https://github.com/allenai/OLMo-core/commit/e57ced4
 Branch: prasann/landmark → 
 https://github.com/allenai/OLMo-core/tree/prasann/landmark
 ✓ job created
+✓ 128 nodes satisfy constraints on 1 cluster; 125 nodes do not have enough slots
+available to satisfy the request; 5 nodes are cordoned; 126 nodes waiting for at
+least 1 job higher in the queue to be scheduled (01M1DTGJ6EZJYMBBYKTD7Y5DE9)

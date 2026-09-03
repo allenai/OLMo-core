@@ -72,24 +72,34 @@ rung with `--ngpu 1` (no collectives to desync). Two changes came out of this: t
 help now says when to drop to 1, and eval_lc_native stamps each rung's start and generation
 wall-clock so the next stall is diagnosable from the log instead of by comparing sibling jobs.
 
-## The outlier wall-clock "crossover" is parity, not a win
+## The outlier wall-clock "crossover" is parity, not a win -- CONFIRMED by a second seed
 
 Sparse trains 1.66x faster per token (measured), which is enough to erase outlier's token
-disadvantage. Comparing RAW points at matched wall-clock -- dense interpolated to each sparse arm's
-node-hours, 2 SE at eval_size 600 ~= 0.05:
+disadvantage. Comparing RAW points at matched wall-clock -- dense interpolated linearly to each
+sparse arm's node-hours -- reproduce with `python3 matched_walltime.py`:
 
-  16k: 0.53h .497 vs .522 | 1.06h .700 vs .678 | 2.12h .816 vs .782   (sparse ahead by .022, .034)
-  32k: 0.53h .186 vs .160 | 1.06h .254 vs .283 | 2.12h .386 vs .389   (sign alternates)
-   8k: 0.11h .278 vs .524 | 0.21h .467 vs .626 | 0.32h .645 vs .701 | 0.53h .754 vs .779
+  2 SE at eval_size 600 = +-0.041 per arm, +-0.058 on a difference
 
-**Every difference at 16k and 32k is inside 2 SE.** Sparse leads at the two largest 16k budgets but
-by less than the noise; at 32k the sign flips between budgets, which is what a tie looks like; at 8k
-dense leads clearly everywhere. The fitted crossings near 0.75-1.0 node-hours are curves resolving a
-difference the data does not resolve.
+   8k: 0.11h .278 vs .524 | 0.21h .467 vs .626 | 0.32h .645 vs .701 | 0.53h .754 vs .779 | 2.12h .935 vs .922
+  16k: 0.53h .497 vs .522 | 1.06h .700 vs .678 | 2.12h .799 vs .779   (sparse ahead by .022, .020)
+  32k: 0.53h .186 vs .160 | 1.06h .254 vs .283 | 2.12h .377 vs .384   (sign alternates)
 
-Correct claim: on outlier, sparse reaches WALL-CLOCK PARITY with dense at 16k-32k despite needing
-~1.5x the tokens. Establishing a win would need either more eval examples (2 SE ~= .05 is the wall)
-or budgets past 640M where the fits say the gap widens.
+**The 640M column is now a 2-seed mean** (`lmx-{full,slm}-mixs640M-s3-4b`, banked as the
+`dense_seed3` / `sparse_seed3` arms). Averaging two seeds was the plan for resolving parity-vs-win
+by cutting comparison noise by sqrt(2). It resolved it as PARITY: the 16k sparse lead SHRANK from
++.034 on seed 1 alone to +.020 on the mean, and at 32k the largest matched pair stays negative
+(dense +.007). Nothing moved outside 2 SE.
+
+Seed 3 raw, eval_size 600: dense 8k .961 / 16k .869 / 32k .485; sparse 8k .935 / 16k .783 / 32k .368.
+
+**Seed spread is as large as the eval noise, which is why one seed could never have settled this.**
+At 640M the two seeds differ by .033 (dense 16k) and .047 (dense 32k) -- comparable to the +-.041
+binomial 2 SE per arm. Any future "win" claim on this task needs both replicates AND a bigger eval
+set; at eval_size 600 the floor on a difference is .058 and the effect being chased is .02.
+
+Correct claim, unchanged and now better supported: on outlier, sparse reaches WALL-CLOCK PARITY with
+dense at 16k-32k despite needing ~1.5x the tokens. The fitted crossings near 0.75-1.0 node-hours are
+curves resolving a difference the data does not resolve.
 
 ## A free repeatability check
 

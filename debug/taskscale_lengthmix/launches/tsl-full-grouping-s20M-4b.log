@@ -1,0 +1,24 @@
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+[beaker_ctc_suite] task=grouping variant=full scale=4b run_name=tsl-full-grouping-s20M-4b-20260901T031753-0700 nodes=1 world_size=8 global_batch=8 epochs=1 max_steps=full
+[beaker_ctc_suite] data=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/grouping_mix_s20M
+[beaker_ctc_suite] base_checkpoint=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim
+[beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-full-grouping-s20M-4b-20260901T031753-0700
+[beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/taskscale-lengthmix
+[beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task grouping --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/taskscale_lengthmix/arms_tokenized/grouping_mix_s20M --variant full --model-scale 4b --seq-len 65536 --epochs 1 --lr 5e-06 --global-batch 8 --micro-batch-instances 1 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/tsl-full-grouping-s20M-4b-20260901T031753-0700 --run-name tsl-full-grouping-s20M-4b-20260901T031753-0700 --wandb-group taskscale-lengthmix --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --pack
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/tsl-full-grouping-s20M-4b-20260901T031753-0700-cebbb474 → 
+https://beaker.org/ex/01M1E7KG57A0TPM32G7D7X76AY
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: ae006a1 taskscale: per-task Hill fits and sparse-vs-dense… → 
+https://github.com/allenai/OLMo-core/commit/ae006a1
+Branch: prasann/landmark → 
+https://github.com/allenai/OLMo-core/tree/prasann/landmark
+✓ job created
+✓ 128 nodes satisfy constraints on 1 cluster; 104 nodes do not have enough slots
+available to satisfy the request; 5 nodes are cordoned; 126 nodes waiting for at
+least 1 job higher in the queue to be scheduled (01M1DTGJ6EZJYMBBYKTD7Y5DE9)
