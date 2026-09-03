@@ -188,6 +188,7 @@ SYSTEMS = {
     # Full-batch 64-GPU throughput qualifications using the best passing microbatch settings.
     "g64-small-pp1-ep1-mb1": SystemConfig("small", 8, 1, 1, 1, 8 * MIB),
     "g64-small-pp1-ep1-mb4": SystemConfig("small", 8, 1, 1, 4, 8 * MIB),
+    "g64-small-pp1-ep1-mb4-16mi": SystemConfig("small", 8, 1, 1, 4, 16 * MIB),
     "g64-small-pp1-ep1-mb8": SystemConfig("small", 8, 1, 1, 8, 8 * MIB),
     "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
     "g64-medium-pp1-ep4-mb1": SystemConfig("medium", 8, 1, 4, 1, 8 * MIB),
@@ -195,6 +196,10 @@ SYSTEMS = {
     # 128-GPU / 8 Mi-token production job.
     "g64-medium-pp1-ep4-mb2": SystemConfig("medium", 8, 1, 4, 2, 4 * MIB),
     "g64-medium-pp1-ep8-mb4": SystemConfig("medium", 8, 1, 8, 4, 4 * MIB),
+    # Intended production scale. The 8 Mi and 16 Mi variants use GA=2 and GA=4,
+    # respectively, while keeping the same PP1/EP8/rank-MB4 execution geometry.
+    "g128-medium-pp1-ep8-mb4": SystemConfig("medium", 16, 1, 8, 4, 8 * MIB),
+    "g128-medium-pp1-ep8-mb4-16mi": SystemConfig("medium", 16, 1, 8, 4, 16 * MIB),
     "g64-large-pp2-ep8-mb1": SystemConfig("large", 8, 2, 8, 1, 8 * MIB),
 }
 
@@ -408,7 +413,7 @@ def build_trainer_config(
         "deep-family-microbatch",
         "scheduler:wsd",
         "attention:default-scalable-softmax",
-        "kda:cute-old",
+        "kda:cute-pr837",
         "moe:fused-v2",
         "recompute:false",
         f"mxfp8-mlp:{str(MXFP8_MLP).lower()}",
