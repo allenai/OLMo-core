@@ -23,6 +23,7 @@ from scipy.optimize import curve_fit
 
 TARGETS = (0.7, 0.8, 0.9)
 MAX_EXTRAP = 1e11
+G_MAX = 4.0          # upper bound on the Hill exponent; a fit that reaches it did not converge
 
 
 def hill(B, fmax, g, K):
@@ -48,7 +49,7 @@ def fit(budgets, scores):
     p0 = [min(max(float(np.max(f)) * 1.05, 0.05), 1.05), 1.0, float(np.median(B))]
     p, _ = curve_fit(
         hill, B, f, p0=p0,
-        bounds=([0.05, 0.1, 1e5], [1.05, 4.0, MAX_EXTRAP]), maxfev=400000,
+        bounds=([0.05, 0.1, 1e5], [1.05, G_MAX, MAX_EXTRAP]), maxfev=400000,
     )
     return p, float(np.sqrt(np.mean((hill(B, *p) - f) ** 2)))
 
@@ -95,6 +96,7 @@ def main():
             if not fits:
                 continue
             line = [f"  {rung:>4s}"]
+            unreliable = set()
             for variant, ((p, rmse), bmax, _bmin) in fits.items():
                 bits = []
                 for t in TARGETS:
@@ -103,9 +105,20 @@ def main():
                         bits.append(f"{t}:above ceiling {p[0]:.2f}")
                     else:
                         bits.append(f"{t}:{'>=' if b > bmax else ''}{b / 1e6:.0f}M")
+                # A Hill exponent pinned at the g bound with a large residual means the ladder is
+                # a STEP, not a smooth curve: sparse-landmark arms sit near zero until a takeoff
+                # budget and then jump (nq 2k .137 -> .912 between 32M and 48M). The fitter answers
+                # with the steepest curve it is allowed, so both the law and any crossover read off
+                # it are artifacts of the wrong functional form. Flag rather than quote.
+                bad = p[1] >= 0.99 * G_MAX or rmse > 0.05
                 line.append(f"{variant[:1]}[fmax {p[0]:.2f} g {p[1]:.2f} K {p[2] / 1e6:.0f}M "
-                            f"rmse {rmse:.3f}] " + " ".join(bits))
-            if len(fits) == 2:
+                            f"rmse {rmse:.3f}]{' !STEP-NOT-HILL' if bad else ''} " + " ".join(bits))
+                if bad:
+                    unreliable.add(variant)
+            if len(fits) == 2 and unreliable:
+                line.append(f"CROSSOVER suppressed -- {'/'.join(sorted(unreliable))} is a step, "
+                            f"not a Hill curve")
+            elif len(fits) == 2:
                 (pd, _), bd, bdlo = fits["dense"]
                 (ps, _), bs, bslo = fits["sparse"]
                 # Search from the smallest MEASURED budget, not below it: two 3-point fits diverge

@@ -1,13 +1,13 @@
-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/fit_crossover.py:49: OptimizeWarning: Covariance of the parameters could not be estimated
+/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/fit_crossover.py:50: OptimizeWarning: Covariance of the parameters could not be estimated
   p, _ = curve_fit(
 
 === absence
     2k
-        s[fmax 0.37 g 4.00 K 37M rmse 0.008] 0.7:above ceiling 0.37 0.8:above ceiling 0.37 0.9:above ceiling 0.37
+        s[fmax 0.37 g 4.00 K 37M rmse 0.008] !STEP-NOT-HILL 0.7:above ceiling 0.37 0.8:above ceiling 0.37 0.9:above ceiling 0.37
     4k
-        s[fmax 0.36 g 4.00 K 52M rmse 0.002] 0.7:above ceiling 0.36 0.8:above ceiling 0.36 0.9:above ceiling 0.36
+        s[fmax 0.36 g 4.00 K 52M rmse 0.002] !STEP-NOT-HILL 0.7:above ceiling 0.36 0.8:above ceiling 0.36 0.9:above ceiling 0.36
     8k
-        s[fmax 0.63 g 4.00 K 89M rmse 0.000] 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
+        s[fmax 0.63 g 4.00 K 89M rmse 0.000] !STEP-NOT-HILL 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
 
 === contradiction
     2k
@@ -23,13 +23,21 @@
 
 === nq
     2k
-        d[fmax 0.98 g 4.00 K 0M rmse 0.002] 0.7:0M 0.8:0M 0.9:0M
+        d[fmax 0.98 g 4.00 K 0M rmse 0.002] !STEP-NOT-HILL 0.7:0M 0.8:0M 0.9:0M
+        s[fmax 1.05 g 4.00 K 39M rmse 0.155] !STEP-NOT-HILL 0.7:46M 0.8:>=52M 0.9:>=61M
+        CROSSOVER suppressed -- dense/sparse is a step, not a Hill curve
     8k
         d[fmax 0.94 g 1.66 K 2M rmse 0.000] 0.7:3M 0.8:5M 0.9:11M
+        s[fmax 1.05 g 4.00 K 45M rmse 0.135] !STEP-NOT-HILL 0.7:>=53M 0.8:>=60M 0.9:>=70M
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
    16k
         d[fmax 1.05 g 0.33 K 0M rmse 0.003] 0.7:1M 0.8:6M 0.9:41M
+        s[fmax 1.05 g 4.00 K 48M rmse 0.103] !STEP-NOT-HILL 0.7:>=57M 0.8:>=64M 0.9:>=75M
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
    32k
         d[fmax 1.02 g 0.65 K 3M rmse 0.000] 0.7:10M 0.8:22M 0.9:>=69M
+        s[fmax 1.05 g 4.00 K 66M rmse 0.032] !STEP-NOT-HILL 0.7:>=78M 0.8:>=88M 0.9:>=103M
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
 
 === oolong
     2k
@@ -66,10 +74,16 @@
 === qdmatch_nq
     8k
         d[fmax 0.98 g 0.52 K 0M rmse 0.003] 0.7:1M 0.8:2M 0.9:10M
+        s[fmax 0.59 g 4.00 K 123M rmse 0.023] !STEP-NOT-HILL 0.7:above ceiling 0.59 0.8:above ceiling 0.59 0.9:above ceiling 0.59
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
    16k
         d[fmax 0.97 g 0.36 K 0M rmse 0.002] 0.7:1M 0.8:8M 0.9:133M
+        s[fmax 0.29 g 4.00 K 132M rmse 0.009] !STEP-NOT-HILL 0.7:above ceiling 0.29 0.8:above ceiling 0.29 0.9:above ceiling 0.29
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
    32k
         d[fmax 1.05 g 0.18 K 3M rmse 0.003] 0.7:116M 0.8:>=1491M 0.9:>=45412M
+        s[fmax 0.08 g 4.00 K 175M rmse 0.000] !STEP-NOT-HILL 0.7:above ceiling 0.08 0.8:above ceiling 0.08 0.9:above ceiling 0.08
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
 
 === reorder
     2k  s[flat at the floor -- no fit]
@@ -80,7 +94,7 @@
         d[fmax 0.50 g 2.92 K 22M rmse 0.000] 0.7:above ceiling 0.50 0.8:above ceiling 0.50 0.9:above ceiling 0.50
     8k  s[flat at the floor -- no fit]
     8k
-        d[fmax 0.07 g 4.00 K 40M rmse 0.000] 0.7:above ceiling 0.07 0.8:above ceiling 0.07 0.9:above ceiling 0.07
+        d[fmax 0.07 g 4.00 K 40M rmse 0.000] !STEP-NOT-HILL 0.7:above ceiling 0.07 0.8:above ceiling 0.07 0.9:above ceiling 0.07
    16k  d[flat at the floor -- no fit]
 
 === textgroups
@@ -97,5 +111,13 @@
 === xabsence
     4k
         d[fmax 1.00 g 3.86 K 0M rmse 0.000] 0.7:0M 0.8:1M 0.9:1M
+        s[fmax 0.41 g 0.10 K 0M rmse 0.064] !STEP-NOT-HILL 0.7:above ceiling 0.41 0.8:above ceiling 0.41 0.9:above ceiling 0.41
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
     8k
         d[fmax 1.00 g 1.08 K 0M rmse 0.001] 0.7:0M 0.8:0M 0.9:1M
+        s[fmax 0.23 g 0.10 K 0M rmse 0.006] 0.7:above ceiling 0.23 0.8:above ceiling 0.23 0.9:above ceiling 0.23
+        CROSSOVER none below 10B
+   16k
+        s[fmax 0.09 g 0.10 K 0M rmse 0.003] 0.7:above ceiling 0.09 0.8:above ceiling 0.09 0.9:above ceiling 0.09
+   32k
+        s[fmax 0.05 g 0.36 K 14M rmse 0.001] 0.7:above ceiling 0.05 0.8:above ceiling 0.05 0.9:above ceiling 0.05

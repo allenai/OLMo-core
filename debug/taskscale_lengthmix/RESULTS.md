@@ -101,6 +101,42 @@ Correct claim, unchanged and now better supported: on outlier, sparse reaches WA
 dense at 16k-32k despite needing ~1.5x the tokens. The fitted crossings near 0.75-1.0 node-hours are
 curves resolving a difference the data does not resolve.
 
+## Sparse-landmark ladders are STEPS, not Hill curves (2026-09-03)
+
+Four sparse arms that had trained to exit 0 on 2026-08-31 were never evaluated. Their numbers turn
+nq and qdmatch_nq from 1-budget sparse ladders (unfittable) into 3-budget ones, and the shape they
+reveal is not the smooth saturating curve the whole analysis assumes:
+
+  nq sparse, eval_size 600:
+    2k  16M .087 | 32M .137 | 48M .912
+    8k  16M .022 | 32M .023 | 48M .728
+   16k  16M .015 | 32M .015 | 48M .608
+   32k  16M .003 | 32M .002 | 48M .248
+
+  qdmatch_nq sparse, eval_size 600:
+    8k  64M .002 | 160M .448 | 320M .569
+   16k  64M .000 | 160M .205 | 320M .283
+   32k  64M .001 | 160M .034 | 320M .076
+
+Below a takeoff budget the model sits at the floor; above it, it jumps. nq@8k goes .023 -> .728 for
+a 1.5x budget increase. Dense on the same rungs is already at .917 with 16M tokens and moves by
+.016 across the same range -- there is no threshold on the dense side.
+
+**The floor is a real collapse, not the empty-generation bug.** Pulled the generations for
+qdmatch sparse 64M: 600 examples produce 25 distinct strings, all well-formed
+(`[[10, 51], [11, 71], [20, 70]]` x186) and none overlapping gold. Same signature as contradiction
+sparse. The model has learned the output format and nothing else.
+
+**Consequence for the fits: a step breaks the Hill law, and the fitter does not say so.** Every
+sparse fit on these ladders pinned the exponent at its g=4.0 bound with rmse .10-.16 (dense rmse is
+.002), then reported a crossover at 74-109M -- a number produced entirely by the wrong functional
+form. `fit_crossover.py` now flags any fit with g at the bound or rmse > .05 as `!STEP-NOT-HILL`
+and SUPPRESSES its crossover. 13 fits are flagged; the nq and qdmatch_nq crossovers are withdrawn.
+
+This is also the cleanest explanation of the campaign headline. "Sparse never leads on tokens" is
+not sparse being uniformly a constant factor behind -- on several tasks sparse spends its first
+tens of millions of tokens learning nothing measurable, and that threshold is the deficit.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
