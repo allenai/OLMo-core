@@ -17,6 +17,17 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 
 ``--model_size`` selects the variant: ``4b`` (Qwen3-4B, the default) or ``8b`` (Qwen3-8B).
 
+``--pointing_data`` selects the pointing/counting group: ``v1`` (the released Molmo2 pretrain's
+sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, image-grouped
+PixMo-Points build with sub-sampled absence queries, plus the audited PixMo-Count build). The v2
+knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2.filter_audit=true``.
+
+``--ocr_rate`` (default 0) adds the OCR group: olmOCR-mix page transcription (rendered from PDFs,
+needs ``pypdfium2``) plus the oe-encoder caption tars (text-rich captions, Cambrian OCR subsets,
+TextCaps, scene text), paid for by the caption group. ``--ocr_sources=[...]`` picks the sources
+(see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` config fields
+are the two source templates, e.g. ``--olmocr.languages=null``.
+
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
     torchrun --nproc-per-node=1 src/scripts/train/Molmo2-Stage1.py train smoke \\
@@ -33,7 +44,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import List, Optional, Tuple, cast
+from typing import List, Optional, Sequence, Tuple, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import (
@@ -41,10 +52,20 @@ from olmo_core.data.multimodal import (
     MixtureDataLoader,
     MultimodalCollatorConfig,
     MultimodalDataLoader,
+    OcrCaptionTarsDatasetConfig,
+    OlmOcrMixDatasetConfig,
     PixMoCapDatasetConfig,
     PixMoCountDatasetConfig,
+    PixMoCountV2DatasetConfig,
     PixMoPointsDatasetConfig,
+    PixMoPointsV2DatasetConfig,
     Tulu4DatasetConfig,
+)
+from olmo_core.data.multimodal.mixtures.ocr import (
+    DEFAULT_OCR_SOURCES,
+    DUPLICATE_OLMOCR_SOURCES,
+    OCR_SOURCE_NAMES,
+    build_ocr_source,
 )
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
@@ -245,9 +266,50 @@ POINTING_DATASET_KWARGS = {
     "loss_token_weighting": "none",
 }
 
-# remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
+# remainder (1 - POINTING_RATE - NLP_RATE - OCR_RATE). Set all three to 0.0 for a caption-only run.
 POINTING_RATE = 0.30
 NLP_RATE = 0.10
+# The OCR group (`olmo_core.data.multimodal.mixtures.ocr`): olmOCR-mix page transcription
+# (mm_olmo train_molmo3_stage1 `_base_mixture`, 0.075 there) plus the oe-encoder caption tars
+# (text-rich captions, Cambrian OCR subsets, TextCaps, scene text), one dataset per source and
+# the group's rate split by sqrt(size) like mm_olmo's default `root_size_factor`. Paid for out of
+# the caption group. Off by default so the default run stays the released Molmo2 pretrain
+# mixture; `--ocr_rate=0.15` enables it (mm_olmo spends 0.075 + 0.075 on its two OCR groups).
+# `DEFAULT_OCR_SOURCES` leaves out the `s2pdf` / `iabooks` tars, which are the same pages as
+# olmOCR-mix documents / books. olmOCR-mix pages are rendered from PDFs at load time, which needs
+# `pypdfium2` (installed by the launch `post_setup` below).
+OCR_RATE = 0.0
+OCR_SOURCES = DEFAULT_OCR_SOURCES
+# The OCR user turn is the bare `<style>:` tag (`olmocr:` / `ocr_caption:` / `scene_text:`),
+# mm_olmo's molmo3 stage-1 `style_and_length_v3` family (v3 reserves the length bucket for
+# captions / transcripts). This deliberately differs from the `style_and_length_v2` family the
+# caption and pointing sources use: mm_olmo never trains olmOCR-mix under v2, so v3 is the form
+# with a reference run behind it.
+OCR_SYSTEM_PROMPT = "style_and_length_v3"
+
+# Which sources `POINTING_RATE` buys.
+#   "v1": the released Molmo2 pretrain's group (mm_olmo train_captioner.py `--pointing`):
+#         pixmo_points_train, pixmo_count_train, pixmo_points_high_freq_train, cosyn_point,
+#         split within the group by sqrt(size).
+#   "v2": mm_olmo's molmo3 stage-1 group (launch_scripts/train_molmo3_stage1.py
+#         `_base_mixture`): the audited, image-grouped PixMo-Points build with absence queries
+#         (`PixMoPointsV2DatasetConfig`), the audited PixMo-Count build
+#         (`PixMoCountV2DatasetConfig`) and cosyn_point, split *linearly* by size (mm_olmo
+#         `size_weighted=1`). That group also carries a COCO detection-as-pointing source
+#         (`CocoTrain`) which has no olmo-core port yet.
+# The v2 knobs are the `pointing_v2` / `count_v2` config fields (`--pointing_v2.<field>=...`).
+POINTING_DATA = "v1"
+POINTING_DATA_CHOICES = ("v1", "v2")
+# mm_olmo `_base_mixture` settings for the v2 sources. Audit-failed point sets are kept but
+# rendered behind the `aux_*` marker styles (set `filter_audit=true` to drop them instead;
+# both work). The absence queries are SUB-SAMPLED -- 2 easy negatives per image and a quarter
+# of the paired (hard) negatives per epoch: training on all of them makes the model prone to
+# refusing to point. `v2_paired_negatives` follows the dataset class default (mm_olmo's stage-1
+# arms flip it per trainer).
+POINTING_V2_AUDIT_STYLE = ("aux_point_count", "aux_pointing")
+POINTING_V2_FILTER_AUDIT = False
+POINTING_V2_N_EASY_NEGATIVES = 2
+POINTING_V2_P_PAIRED_NEGATIVES = 0.25
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -275,6 +337,16 @@ class ExperimentConfig(Config):
     collator: MultimodalCollatorConfig
     train_module: MultimodalTransformerTrainModuleConfig
     trainer: TrainerConfig
+    pointing_v2: PixMoPointsV2DatasetConfig
+    """The audited PixMo-Points source; used when ``pointing_data == "v2"``."""
+    count_v2: PixMoCountV2DatasetConfig
+    """The audited PixMo-Count source; used when ``pointing_data == "v2"``."""
+    olmocr: OlmOcrMixDatasetConfig
+    """Template for the olmOCR-mix OCR sources (``subset`` is set per source); used when
+    ``ocr_rate > 0``."""
+    ocr_tars: OcrCaptionTarsDatasetConfig
+    """Template for the caption-tars OCR sources (``dataset_path`` / ``style`` /
+    ``strip_text_tags`` are set per source); used when ``ocr_rate > 0``."""
     model_size: str = MODEL_SIZE
     """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
     the released checkpoint used by ``--init_from=molmo2``."""
@@ -287,6 +359,14 @@ class ExperimentConfig(Config):
     """Fraction of mixture samples from pointing/counting sources (mm_olmo ``--pointing``)."""
     nlp_rate: float = NLP_RATE
     """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
+    pointing_data: str = POINTING_DATA
+    """``"v1"`` (released Molmo2 pretrain sources) or ``"v2"`` (mm_olmo molmo3 stage-1 sources:
+    audited points + sub-sampled absence queries); see :data:`POINTING_DATA`."""
+    ocr_rate: float = OCR_RATE
+    """Fraction of mixture samples from the OCR group; see :data:`OCR_RATE`."""
+    ocr_sources: Tuple[str, ...] = OCR_SOURCES
+    """OCR sources in the group, each a separate dataset (names from
+    :data:`olmo_core.data.multimodal.mixtures.ocr.OCR_SOURCE_NAMES`)."""
     train_vit: bool = TRAIN_VIT
     """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
     the encoder is frozen and kept in eval mode."""
@@ -398,6 +478,38 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
         loss_token_weighting="none",
         seed=95818,
+    )
+
+    # The v2 pointing sources (mm_olmo `_base_mixture`); only built when `pointing_data == "v2"`.
+    pointing_v2_config = PixMoPointsV2DatasetConfig(
+        p_paired_negatives=POINTING_V2_P_PAIRED_NEGATIVES,
+        n_easy_samples=POINTING_V2_N_EASY_NEGATIVES,
+        audit_style=POINTING_V2_AUDIT_STYLE,
+        filter_audit=POINTING_V2_FILTER_AUDIT,
+        max_crops=MAX_CROPS,
+        **POINTING_DATASET_KWARGS,
+    )
+    count_v2_config = PixMoCountV2DatasetConfig(
+        audit_style=POINTING_V2_AUDIT_STYLE,
+        filter_audit=POINTING_V2_FILTER_AUDIT,
+        max_crops=MAX_CROPS,
+        **POINTING_DATASET_KWARGS,
+    )
+    # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
+    # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user
+    # turn is the bare `<style>:` tag (OCR_SYSTEM_PROMPT). Long pages are tail-truncated to the
+    # sequence length.
+    olmocr_config = OlmOcrMixDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+        system_prompt=OCR_SYSTEM_PROMPT,
+    )
+    ocr_tars_config = OcrCaptionTarsDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+        system_prompt=OCR_SYSTEM_PROMPT,
     )
 
     # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a
@@ -526,7 +638,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # The pointing/counting Arrow datasets on weka were saved with `datasets >= 4`, whose
     # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
     # package install (olmo-core does not pin `datasets`, so this is not clobbered).
-    launch_config.post_setup = "pip install -U 'datasets>=4,<6'"
+    # `pypdfium2` renders the olmOCR-mix PDF pages at load time (`--ocr_rate > 0`); a small
+    # self-contained wheel, so it is installed unconditionally.
+    launch_config.post_setup = "pip install -U 'datasets>=4,<6' pypdfium2"
     # Optionally use the fused FlexAttention backend for the multimodal masks (~+8% MFU on
     # the stage-1 mixture vs the dense `torch` backend; see USE_FLEX_ATTN).
     if USE_FLEX_ATTN:
@@ -541,7 +655,37 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         train_module=train_module_config,
         trainer=trainer_config,
         launch=launch_config,
+        pointing_v2=pointing_v2_config,
+        count_v2=count_v2_config,
+        olmocr=olmocr_config,
+        ocr_tars=ocr_tars_config,
     ).merge(overrides)
+
+    if config.pointing_data not in POINTING_DATA_CHOICES:
+        raise OLMoConfigurationError(
+            f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
+        )
+    if config.ocr_rate > 0 and not config.ocr_sources:
+        raise OLMoConfigurationError("ocr_rate > 0 needs at least one entry in ocr_sources")
+    unknown = [n for n in config.ocr_sources if n not in OCR_SOURCE_NAMES]
+    if unknown:
+        raise OLMoConfigurationError(
+            f"Unknown ocr_sources {unknown}; expected names from {OCR_SOURCE_NAMES}"
+        )
+    if len(set(config.ocr_sources)) != len(config.ocr_sources):
+        raise OLMoConfigurationError(f"ocr_sources has duplicates: {config.ocr_sources}")
+    for tar_name, mix_name in DUPLICATE_OLMOCR_SOURCES.items():
+        if tar_name in config.ocr_sources and mix_name in config.ocr_sources:
+            log.warning(
+                "ocr_sources has both %s and %s, which are the same pages rendered by two "
+                "pipelines: those pages will be sampled twice.",
+                tar_name,
+                mix_name,
+            )
+    if config.pointing_rate + config.nlp_rate + config.ocr_rate > 1.0:
+        raise OLMoConfigurationError(
+            "pointing_rate + nlp_rate + ocr_rate exceeds 1: nothing is left for the caption source"
+        )
 
     # `_resolve_model_spec` already validated the pre-merge values; re-check the merged
     # config so a stray `--model_size`/`--init_from`/`--train_vit` cannot slip through, and
@@ -690,45 +834,107 @@ def _init_weights_from_scratch(
     model.connector.reset_parameters()
 
 
-def _build_mixture_sources(tokenizer, config: ExperimentConfig):
-    """Build the caption + pointing + NLP sources and their sampling weights (mm_olmo
-    SubMixture): caption gets ``1 - pointing_rate - nlp_rate``; the pointing group shares
-    ``pointing_rate`` split by sqrt(size); NLP gets ``nlp_rate``."""
+def _size_fractions(sizes: Sequence[int], rule: str):
+    """Split one group's rate among its sources from their sizes (mm_olmo SubMixture math):
+    ``"sqrt"`` is ``root_size_factor=None``, ``"linear"`` is ``size_weighted=1``."""
     import numpy as np
 
-    p, n = config.pointing_rate, config.nlp_rate
+    sizes_arr = np.asarray(sizes, dtype=np.float64)
+    if rule == "sqrt":
+        frac = np.sqrt(sizes_arr)
+    elif rule == "linear":
+        frac = sizes_arr
+    else:
+        raise OLMoConfigurationError(f"unknown size rule {rule!r}")
+    return frac / frac.sum()
+
+
+def _pointing_group_fractions(sizes: Sequence[int], pointing_data: str):
+    """How the pointing group's rate is split among its sources, from their sizes.
+
+    ``"v1"`` follows mm_olmo's captioner (``root_size_factor=None``: sqrt of the size);
+    ``"v2"`` follows mm_olmo's molmo3 stage 1 (``size_weighted=1``: linear in the size).
+    """
+    if pointing_data == "v1":
+        return _size_fractions(sizes, "sqrt")
+    if pointing_data == "v2":
+        return _size_fractions(sizes, "linear")
+    raise OLMoConfigurationError(
+        f"pointing_data={pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
+    )
+
+
+def _build_mixture_sources(tokenizer, config: ExperimentConfig):
+    """Build the caption + pointing + NLP + OCR sources, their sampling weights (mm_olmo
+    SubMixture) and their names: caption gets ``1 - pointing_rate - nlp_rate - ocr_rate``; the
+    pointing group shares ``pointing_rate`` (split per :func:`_pointing_group_fractions`); NLP
+    gets ``nlp_rate``; the OCR sources share ``ocr_rate`` split by sqrt(size)."""
+    p, n, o = config.pointing_rate, config.nlp_rate, config.ocr_rate
     datasets: List = [config.dataset.build(tokenizer)]  # caption
-    weights: List[float] = [max(1.0 - p - n, 0.0)]
+    weights: List[float] = [max(1.0 - p - n - o, 0.0)]
+    names: List[str] = ["pixmo_cap"]
 
     if p > 0:
-        pointing = [
-            PixMoPointsDatasetConfig(
-                kind="basic", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
-            ).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
-                tokenizer
-            ),
-            PixMoPointsDatasetConfig(
-                kind="high_frequency", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
-            ).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
-                tokenizer
-            ),
-        ]
-        frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
-        frac = frac / frac.sum()
+        if config.pointing_data == "v1":
+            pointing_names = [
+                "pixmo_points_train",
+                "pixmo_count_train",
+                "pixmo_points_high_freq_train",
+                "cosyn_point",
+            ]
+            pointing = [
+                PixMoPointsDatasetConfig(
+                    kind="basic", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
+                ).build(tokenizer),
+                PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                    tokenizer
+                ),
+                PixMoPointsDatasetConfig(
+                    kind="high_frequency", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
+                ).build(tokenizer),
+                CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                    tokenizer
+                ),
+            ]
+        elif config.pointing_data == "v2":
+            # mm_olmo train_molmo3_stage1 `_base_mixture` pointing group, minus `CocoTrain`.
+            pointing_names = ["pixmo_points_v2", "pixmo_count_v2", "cosyn_point"]
+            pointing = [
+                config.pointing_v2.build(tokenizer),
+                config.count_v2.build(tokenizer),
+                CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                    tokenizer
+                ),
+            ]
+        else:
+            raise OLMoConfigurationError(
+                f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
+            )
+        frac = _pointing_group_fractions([len(d) for d in pointing], config.pointing_data)
         datasets += pointing
         weights += [p * float(f) for f in frac]
+        names += pointing_names
 
     if n > 0:
         datasets.append(Tulu4DatasetConfig().build(tokenizer))
         weights.append(n)
+        names.append("tulu4")
+
+    if o > 0:
+        ocr = [
+            build_ocr_source(name, tokenizer, olmocr=config.olmocr, tars=config.ocr_tars)
+            for name in config.ocr_sources
+        ]
+        frac = _size_fractions([len(d) for d in ocr], "sqrt")
+        datasets += ocr
+        weights += [o * float(f) for f in frac]
+        names += list(config.ocr_sources)
 
     log.info(
-        "Mixture sources / weights: %s",
-        [(type(d).__name__, round(w, 3)) for d, w in zip(datasets, weights)],
+        "Mixture sources / sizes / weights: %s",
+        [(name, len(d), round(w, 4)) for name, d, w in zip(names, datasets, weights)],
     )
-    return datasets, weights
+    return datasets, weights, names
 
 
 def train(config: ExperimentConfig):
@@ -755,12 +961,13 @@ def train(config: ExperimentConfig):
     dp_pg = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
 
-    if config.pointing_rate > 0 or config.nlp_rate > 0:
-        datasets, weights = _build_mixture_sources(tokenizer, config)
+    if config.pointing_rate > 0 or config.nlp_rate > 0 or config.ocr_rate > 0:
+        datasets, weights, names = _build_mixture_sources(tokenizer, config)
         data_loader = MixtureDataLoader(
             datasets,
             weights,
             collator,
+            dataset_names=names,
             work_dir=config.trainer.save_folder,
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
@@ -814,6 +1021,15 @@ Print the config:
 
 8B from-scratch run:
 › python {sys.argv[0]} launch molmo2-stage1-8b --model_size=8b
+
+Audited (v2) pointing sources, dropping audit-failed points instead of marking them:
+› python {sys.argv[0]} launch molmo2-stage1-v2pts --pointing_data=v2 --pointing_v2.filter_audit=true
+
+OCR group at 15% (olmOCR-mix + text-rich / Cambrian / TextCaps captions + scene text):
+› python {sys.argv[0]} launch molmo2-stage1-ocr --ocr_rate=0.15
+Only the olmOCR-mix page transcription sources:
+› python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \
+      --ocr_sources=[olmocr_documents,olmocr_books,olmocr_loc_transcripts,olmocr_national_archives]
 
 Local synthetic smoke test:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke \\
