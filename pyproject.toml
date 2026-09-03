@@ -78,7 +78,7 @@ fla = ["flash-linear-attention==0.5.2"]
 # in a private allenai repo, so it is pinned to a commit and deliberately left out of `all`
 # — CI has no token for it. Bump the commit to pick up a new kernel release.
 kernel-fun = [
-    "kernel-fun @ git+https://github.com/allenai/kernel-fun.git@738ec2fb431243b2072abc32bfb3ef30bb3f8c2e#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
+    "kernel-fun @ git+ssh://git@github.com/allenai/kernel-fun.git@738ec2fb431243b2072abc32bfb3ef30bb3f8c2e#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
 ]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
