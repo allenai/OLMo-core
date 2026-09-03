@@ -134,6 +134,9 @@ SYSTEMS = {
     "medium-pp1-ep8-mb1": SystemConfig("medium", 1, 1, 8, 1, 512 * 1024),
     "medium-pp1-ep8-mb2": SystemConfig("medium", 1, 1, 8, 2, 512 * 1024),
     "medium-pp1-ep8-mb4": SystemConfig("medium", 1, 1, 8, 4, 512 * 1024),
+    # Full-batch one-node control. This intentionally matches the optimizer-step amortization of
+    # the original 2.0B throughput result instead of production-scale per-rank batch geometry.
+    "medium-full8mi-pp1-ep4-mb1": SystemConfig("medium", 1, 1, 4, 1, 8 * MIB),
     # One-node PP probes trade pipeline overhead for fewer locally resident layers. This lets us
     # test larger microbatches and a lower EP degree without increasing parameter memory per GPU.
     "medium-pp2-ep2-mb2": SystemConfig("medium", 1, 2, 2, 2, 512 * 1024),
@@ -144,10 +147,21 @@ SYSTEMS = {
     # one-node screens while preserving the production gradient-accumulation geometry.
     "g16-medium-pp1-ep4-mb2": SystemConfig("medium", 2, 1, 4, 2, 1 * MIB),
     "g16-medium-pp1-ep4-mb4": SystemConfig("medium", 2, 1, 4, 4, 1 * MIB),
+    "g16-medium-pp1-ep8-mb1": SystemConfig("medium", 2, 1, 8, 1, 1 * MIB),
+    "g16-medium-pp1-ep8-mb2": SystemConfig("medium", 2, 1, 8, 2, 1 * MIB),
+    "g16-medium-pp2-ep8-mb1": SystemConfig("medium", 2, 2, 8, 1, 1 * MIB),
+    "g16-medium-pp2-ep8-mb2": SystemConfig("medium", 2, 2, 8, 2, 1 * MIB),
     # Reduced batches retain the corresponding 8 Mi-token production GA at 256 GPUs.
     "large-pp2-ep8-mb1": SystemConfig("large", 2, 2, 8, 1, 512 * 1024),
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
     "large-pp2-ep8-mb4": SystemConfig("large", 2, 2, 8, 4, 512 * 1024),
+    # PP4's practical two-node minimum uses EP4. PP4/EP8 requires four nodes because EP must
+    # divide the dense-DP dimension and remain within one eight-GPU node.
+    "large-pp4-ep4-mb1": SystemConfig("large", 2, 4, 4, 1, 512 * 1024),
+    "large-pp4-ep4-mb2": SystemConfig("large", 2, 4, 4, 2, 512 * 1024),
+    "g32-large-pp4-ep8-mb1": SystemConfig("large", 4, 4, 8, 1, 1 * MIB),
+    "g32-large-pp4-ep8-mb2": SystemConfig("large", 4, 4, 8, 2, 1 * MIB),
+    "g32-large-pp4-ep8-mb4": SystemConfig("large", 4, 4, 8, 4, 1 * MIB),
     # Full-batch 64-GPU throughput qualifications using the best passing microbatch settings.
     "g64-small-pp1-ep1-mb4": SystemConfig("small", 8, 1, 1, 4, 8 * MIB),
     "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
@@ -369,6 +383,7 @@ def build_trainer_config(
         f"ep:{system.ep}",
         f"mb:{system.rank_microbatch_sequences}",
         f"grad-accum:{system.gradient_accumulation_steps}",
+        f"gbs-tokens:{system.global_batch_size}",
         *emo_tags(emo),
     ]
     return (
