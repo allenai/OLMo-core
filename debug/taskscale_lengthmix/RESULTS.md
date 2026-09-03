@@ -137,6 +137,34 @@ This is also the cleanest explanation of the campaign headline. "Sparse never le
 not sparse being uniformly a constant factor behind -- on several tasks sparse spends its first
 tens of millions of tokens learning nothing measurable, and that threshold is the deficit.
 
+## A 4th budget moves the extrapolated crossovers by 2x or deletes them (2026-09-03)
+
+oolong is the first task with FOUR budgets on both arms (20/40/80/160M). The 160M pair, scores at
+eval_size 500 except 2k at 600:
+
+           2k     8k    16k    32k
+  dense   .941   .742   .676   .652
+  sparse  .870   .666   .607   .554
+
+Refitting with that one extra point per arm moves the fitted sparse-overtakes-dense budgets a long
+way:
+
+  rung   3-budget fit      4-budget fit
+   8k    301M              none below 10B
+  16k    460M              922M
+  32k    5404M             none below 10B
+
+Two of the three crossovers disappear and the survivor doubles. The cause is visible in the fitted
+ceilings: with three points sparse@16k fit fmax 1.05 (its bound -- unconstrained, still rising),
+and the 160M point pins it to 0.83. **An extrapolated crossover is a statement about an
+unconstrained ceiling, not about the data.** Treat every "CROSSOVER NNNM PAST the largest measured
+budget" line as an upper-bound-shaped guess that a single further budget can erase.
+
+Meanwhile the actual comparison is not close on this task. At matched TOKENS sparse trails dense by
+.07-.10 at all four rungs and is not converging. At matched WALL-CLOCK (sparse@160M costs what
+dense@96M costs) dense still leads: 8k .702 vs .666, 32k .624 vs .554. oolong is a clean sparse
+loss at every budget and every rung we have measured.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung

@@ -41,21 +41,21 @@
 
 === oolong
     2k
-        d[fmax 1.00 g 0.34 K 0M rmse 0.002] 0.7:1M 0.8:5M 0.9:55M
-        s[fmax 1.05 g 0.23 K 0M rmse 0.008] 0.7:2M 0.8:17M 0.9:>=285M
+        d[fmax 1.05 g 0.29 K 0M rmse 0.004] 0.7:1M 0.8:6M 0.9:51M
+        s[fmax 0.95 g 0.33 K 0M rmse 0.007] 0.7:2M 0.8:16M 0.9:>=646M
         CROSSOVER none below 10B
     8k
-        d[fmax 0.72 g 0.84 K 2M rmse 0.000] 0.7:>=123M 0.8:above ceiling 0.72 0.9:above ceiling 0.72
-        s[fmax 1.05 g 0.27 K 19M rmse 0.009] 0.7:>=256M 0.8:>=1494M 0.9:>=15801M
-        CROSSOVER 301M = 3.8x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.72 / sparse 1.05
+        d[fmax 1.05 g 0.20 K 2M rmse 0.007] 0.7:74M 0.8:>=788M 0.9:>=18475M
+        s[fmax 1.05 g 0.26 K 19M rmse 0.008] 0.7:>=271M 0.8:>=1662M 0.9:>=18769M
+        CROSSOVER none below 10B
    16k
-        d[fmax 0.68 g 1.64 K 7M rmse 0.000] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
-        s[fmax 1.05 g 0.22 K 29M rmse 0.008] 0.7:>=676M 0.8:>=5706M 0.9:>=98891M
-        CROSSOVER 460M = 5.7x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.68 / sparse 1.05
+        d[fmax 0.68 g 1.65 K 7M rmse 0.000] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
+        s[fmax 0.83 g 0.28 K 4M rmse 0.008] 0.7:>=1731M 0.8:>=768317M 0.9:above ceiling 0.83
+        CROSSOVER 922M = 5.8x PAST the largest measured budget (160M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.68 / sparse 0.83
    32k
-        d[fmax 0.62 g 2.23 K 7M rmse 0.000] 0.7:above ceiling 0.62 0.8:above ceiling 0.62 0.9:above ceiling 0.62
-        s[fmax 0.63 g 0.50 K 3M rmse 0.000] 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
-        CROSSOVER 5404M = 67.6x PAST the largest measured budget (80M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.62 / sparse 0.63
+        d[fmax 0.74 g 0.38 K 1M rmse 0.006] 0.7:>=1939M 0.8:above ceiling 0.74 0.9:above ceiling 0.74
+        s[fmax 0.68 g 0.36 K 2M rmse 0.003] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
+        CROSSOVER none below 10B
 
 === outlier
     8k
