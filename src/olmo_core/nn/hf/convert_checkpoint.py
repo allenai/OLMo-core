@@ -112,7 +112,7 @@ def convert_checkpoint_to_hf(
     :param model_state_dict: Optional pre-gathered model state dict. If provided, weights are
         taken from this instead of loading from ``original_checkpoint_path``.
     :param hf_router_overlay_template: Existing HF checkpoint to copy before replacing only its
-        router tensors with native FP32 values. This avoids re-exporting experimental model
+        router tensors with native values rounded to ``dtype``. This avoids re-exporting
         components that the generic HF converter cannot represent.
     """
     if model_state_dict is None and original_checkpoint_path is None:
@@ -291,11 +291,14 @@ def convert_checkpoint_to_hf(
         hybrid = is_olmo_hybrid_model(model)
 
         if hf_router_overlay_template is not None:
-            log.info("Copying HF template and overlaying native FP32 router tensors")
+            log.info(
+                "Copying HF template and overlaying native router tensors as %s", dtype.as_pt()
+            )
             save_hf_model_with_native_router_overlay(
                 output_path,
                 hf_router_overlay_template,
                 model_state_dict,
+                dtype=dtype,
             )
         elif hybrid:
             log.info("Detected hybrid model (GDN + attention layers)")

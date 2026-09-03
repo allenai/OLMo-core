@@ -424,7 +424,7 @@ class Olmo3MoeRouter(nn.Module):
         self.restore_weight_scale = config.restore_weight_scale
 
     def forward(self, x):
-        logits = self.gate(x)
+        logits = F.linear(x.float(), self.gate.weight.float())
 
         if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)

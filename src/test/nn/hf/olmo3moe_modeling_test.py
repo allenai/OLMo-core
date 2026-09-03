@@ -51,6 +51,21 @@ def _small_config():
 
 
 @requires_olmo3moe
+def test_olmo3moe_router_uses_bf16_storage_and_fp32_compute():
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
+
+    router = Olmo3MoeRouter(_small_config()).to(torch.bfloat16)
+    hidden = torch.randn(1, 3, router.hidden_size, dtype=torch.bfloat16, requires_grad=True)
+    scores, _ = router(hidden)
+
+    assert router.gate.weight.dtype == torch.bfloat16
+    assert scores.dtype == torch.float32
+    scores.sum().backward()
+    assert router.gate.weight.grad is not None
+    assert router.gate.weight.grad.dtype == torch.bfloat16
+
+
+@requires_olmo3moe
 def test_olmo3moe_logprobs_match_after_conversion_roundtrip():
     from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM

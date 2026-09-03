@@ -48,12 +48,15 @@ def save_hf_model_with_native_router_overlay(
     save_dir: PathOrStr,
     template_dir: PathOrStr,
     model_state_dict: Dict[str, Any],
+    *,
+    dtype: DType = DType.bfloat16,
 ) -> None:
-    """Copy an existing HF export and replace its MoE routers from native FP32 state.
+    """Copy an existing HF export and replace its MoE routers from native state.
 
     This is intended for experimental GDN+MoE checkpoints whose complete Hugging Face
-    architecture is already available, but whose native OLMo-core router weights retain
-    higher precision than the older BF16 HF export. Only router tensors are changed.
+    architecture is already available. Router tensors are rounded to the requested model
+    storage dtype, matching the values visible to the OLMo-core forward pass. Only
+    router tensors are changed.
     """
     save_path = Path(save_dir)
     template_path = Path(template_dir)
@@ -71,7 +74,7 @@ def save_hf_model_with_native_router_overlay(
         if not torch.is_tensor(tensor):
             raise TypeError(f"Expected tensor router state for {name!r}, found {type(tensor)}")
         replacements[f"model.layers.{match.group(1)}.mlp.router.gate.weight"] = (
-            tensor.detach().float().cpu().contiguous()
+            tensor.detach().to(dtype=dtype.as_pt(), device="cpu").contiguous()
         )
     if not replacements:
         raise RuntimeError("Native checkpoint contains no routed-expert router weights")
@@ -116,7 +119,12 @@ def save_hf_model_with_native_router_overlay(
             tensors[name] = replacement
         save_file(tensors, shard_path, metadata=metadata)
 
-    log.info("Overlaid %d native FP32 router tensors onto %s", len(replacements), save_path)
+    log.info(
+        "Overlaid %d native router tensors as %s onto %s",
+        len(replacements),
+        dtype.as_pt(),
+        save_path,
+    )
 
 
 def _cast_hybrid_export_dtype(
@@ -348,7 +356,7 @@ def save_hf_hybrid_model(
     dtype: Optional[DType] = None,
     vocab_size: Optional[int] = None,
     max_sequence_length: int = 65536,
-    preserve_router_precision: bool = True,
+    preserve_router_precision: bool = False,
 ) -> None:
     """
     Save a hybrid (GDN + attention) model as ``config.json`` + ``model.safetensors``.
@@ -362,9 +370,9 @@ def save_hf_hybrid_model(
     :param dtype: Optional dtype to cast weights to.
     :param vocab_size: If set, truncate embeddings/lm_head to this size.
     :param max_sequence_length: Maximum sequence length for ``max_position_embeddings``.
-    :param preserve_router_precision: Preserve native FP32 routed-expert router weights when
-        casting the rest of the exported checkpoint to ``dtype``. Router weights are small and
-        top-k selection is sensitive to quantization near routing boundaries.
+    :param preserve_router_precision: Legacy opt-in to preserve native FP32 routed-expert
+        router storage while casting the rest of the checkpoint to ``dtype``. The default
+        rounds routers to the model storage dtype, matching OLMo-core training semantics.
     """
     import json
 

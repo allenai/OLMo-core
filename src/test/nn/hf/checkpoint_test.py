@@ -150,8 +150,8 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     )
 
     exported = load_file(output / "model.safetensors")
-    assert torch.equal(exported[hf_router_name], native_router.reshape(4, 3))
-    assert exported[hf_router_name].dtype == torch.float32
+    assert torch.equal(exported[hf_router_name], native_router.reshape(4, 3).to(torch.bfloat16))
+    assert exported[hf_router_name].dtype == torch.bfloat16
     assert torch.equal(exported[hf_dense_name], original_dense)
     assert (output / "config.json").read_text() == (template / "config.json").read_text()
     with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
