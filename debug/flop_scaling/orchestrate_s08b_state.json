@@ -1,0 +1,230 @@
+{
+ "runs": {
+  "fs35s08b-oolong-dense-s20M": {
+   "ex": "01M1JYWB6NP7BRXKYY0QG2WNFT",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "dense",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K0D7K6Q43YNHJ7ETETS5XE",
+   "s2": null
+  },
+  "fs35s08b-oolong-kv17-s20M": {
+   "ex": "01M1JYX8AX161JW9EXDAS5QZC2",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "kv17",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K3H4XHTAPA31KECABRQQ32",
+   "s2": null
+  },
+  "fs35s08b-oolong-ffnmoe-t10-s20M": {
+   "ex": "01M1JYY5SJNNPQN4S0J9DS5YNS",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-t10",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K1A2DRM208K4G0QKQ7KT4P",
+   "s2": null
+  },
+  "fs35s08b-oolong-dense-s80M": {
+   "ex": "01M1JYZ0T792CFEMPWCPPT1TX3",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "dense",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K2VW6HEV5JTE9E1P54GCP6",
+   "s2": null
+  },
+  "fs35s08b-oolong-kv17-s80M": {
+   "ex": "01M1JZ017C29PDAQYGHY0M0FWZ",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "kv17",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K808KRGQJPGAYGBPSK0HHS",
+   "s2": null
+  },
+  "fs35s08b-oolong-ffnmoe-t10-s80M": {
+   "ex": "01M1JZ0WQPGAKSZ244K0YM65MD",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "ffnmoe-t10",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K3HWY0BH1JAZ1W87PJXKBP",
+   "s2": null
+  },
+  "fs35s08b-contradiction-dense-s14M": {
+   "ex": "01M1JZ1SWA571FHE9HCP83FHRP",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "dense",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K1XHXT6Z9AZRBJNXV36E8T",
+   "s2": null
+  },
+  "fs35s08b-contradiction-kv33-s14M": {
+   "ex": "01M1JZ2W40VG51D98M1DJWQ9NY",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "kv33",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K3JRDDKHH43A71DHWW1ZG4",
+   "s2": null
+  },
+  "fs35s08b-contradiction-ffnmoe-t10-s14M": {
+   "ex": "01M1JZ3R1DS3NC1Q2TCTZE9XFR",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-t10",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K1YJ52ZZSPMC9N63FTCNXM",
+   "s2": null
+  },
+  "fs35s08b-contradiction-dense-s56M": {
+   "ex": "01M1JZ4P2VTJFY87X0XPXM5XSB",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "dense",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K365F2TXGG9D3TSEMWWS8K",
+   "s2": null
+  },
+  "fs35s08b-contradiction-kv33-s56M": {
+   "ex": "01M1JZ5JK8XSB3SBEKXNQMZRYY",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "kv33",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K5YC1JMW11JD0DM8J4NXJJ",
+   "s2": null
+  },
+  "fs35s08b-contradiction-ffnmoe-t10-s56M": {
+   "ex": "01M1JZ6XVMB39108BKX192PP3X",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "ffnmoe-t10",
+   "scale": "0.8b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1K36Y4NQAKM25K49XATC5PS",
+   "s2": null
+  }
+ },
+ "evals": {
+  "fs35s08b-oolong-dense-s20M": {
+   "ex": "01M1K0D7K6Q43YNHJ7ETETS5XE",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-oolong-ffnmoe-t10-s20M": {
+   "ex": "01M1K1A2DRM208K4G0QKQ7KT4P",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-dense-s14M": {
+   "ex": "01M1K1XHXT6Z9AZRBJNXV36E8T",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-ffnmoe-t10-s14M": {
+   "ex": "01M1K1YJ52ZZSPMC9N63FTCNXM",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-oolong-dense-s80M": {
+   "ex": "01M1K2VW6HEV5JTE9E1P54GCP6",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-dense-s56M": {
+   "ex": "01M1K365F2TXGG9D3TSEMWWS8K",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-ffnmoe-t10-s56M": {
+   "ex": "01M1K36Y4NQAKM25K49XATC5PS",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-oolong-kv17-s20M": {
+   "ex": "01M1K3H4XHTAPA31KECABRQQ32",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-oolong-ffnmoe-t10-s80M": {
+   "ex": "01M1K3HWY0BH1JAZ1W87PJXKBP",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-kv33-s14M": {
+   "ex": "01M1K3JRDDKHH43A71DHWW1ZG4",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-contradiction-kv33-s56M": {
+   "ex": "01M1K5YC1JMW11JD0DM8J4NXJJ",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s08b-oolong-kv17-s80M": {
+   "ex": "01M1K808KRGQJPGAYGBPSK0HHS",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  }
+ },
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 1788427278.6205957,
+ "harvest_ex": "01M1K955WZ7YDK5EY8R2VESNMY",
+ "done": true,
+ "launched": true
+}
