@@ -71,6 +71,7 @@ RANK_MICROBATCH_SIZE = 16 * SEQUENCE_LENGTH
 MAX_STEPS = 11_920
 CHECKPOINT_INTERVAL = 596
 LEARNING_RATE = 8e-4
+B300_BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-2026-07-03"
 
 CHECKPOINT_MOUNT = "/weka/olmo-3p5-checkpoints"
 CHECKPOINT_ROOT = f"{CHECKPOINT_MOUNT}/checkpoints"
@@ -173,6 +174,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         cluster=cli_context.cluster,
         workspace="ai2/scaling-ladders",
         budget="ai2/oe-other",
+        beaker_image=B300_BEAKER_IMAGE,
         num_nodes=1,
         nccl_debug=False,
         step_timeout=None,
