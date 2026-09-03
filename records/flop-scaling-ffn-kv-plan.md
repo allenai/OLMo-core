@@ -204,3 +204,25 @@ docs are always among the few real ones). Gold-blind arms `kvb33` (all budgets) 
 Dense baseline gap: the outlier dense campaign scored only the 8k rung at 16M/32M. Their 16k/32k
 rungs were launched by hand (`dense_extra_evals.tsv`); rows whose mean covers a rung subset carry
 `partial=1` and are excluded from the fits.
+
+## 11. Phase 2 (overnight 2026-09-02/03): speed at fixed cost levels, and the model-scale ladder
+
+**(a) Speed.** `debug/flop_scaling/bench_ffn_speed.py` forces every layer's router to one rung
+(cost 1, 1/4, 1/16, 1/64, 1/256, 8/H, 1/H, null) and times train / prefill / decode-shaped
+forwards on Qwen3.5 0.8B–27B plus a 70B Qwen3.5-like geometry (2- vs 4-layer probes for sizes
+that do not fit). Results: `results/flop_scaling/ffn_speed_a100.{json,md}` (A100-80GB).
+Measured wall-clock speedups saturate by cost 1/16 and reach 1.1x (0.8B) → 1.4x (4B) → 1.9x
+(9B) → 2.0x (27B) → 2.8x (70B geometry) at 8k, against FLOP theory of 1.5x → 2.2x → 2.9x → 3.7x
+→ 5.8x: the non-FFN work (GatedDeltaNet, attention, head) runs at lower utilization than the
+wide FFN GEMMs, so its wall-clock share exceeds its FLOP share. 8/H and 1/H buy nothing over
+1/16 in wall-clock. H100 runs on the training image (with FFN-isolated timings) are queued.
+
+**(b) Model scale.** `orchestrate_scale.py`, `collect_scale.py`, `results/flop_scaling/scale_report.md`.
+Contradiction: the KV gold+1/3 multiplier vs dense rises 0.87 (2B) → 1.00 (4B) → **1.66 (9B)**;
+routed FFN 0.76 → 0.81 → 0.91. Oolong: KV 1/6 saturates at f1 ≈ 0.66 at every size while dense
+climbs, so its win at small scales (2.9x at 0.8B, 1.6x at 2B) becomes a tie at 4B and a loss at
+9B. Small budgets lose everywhere. Bases: 0.8B/2B repaired from the modelonly conversions, 9B
+converted from Hugging Face and repaired (`prep_bases_beaker.sh`). Traps hit: 0.8B needs
+`--activation-checkpointing full` at 65k on 80GB; on 8-rank FSDP the tolerant loader's stats
+read an empty local DTensor shard (fixed: `full_tensor()`); a watchdog double-start launched
+11 duplicate runs (cancelled at job level; lock file added).
