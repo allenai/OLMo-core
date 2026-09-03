@@ -20,6 +20,7 @@ S3 two-step::
 """
 
 import argparse
+import os
 
 import torch
 
@@ -63,7 +64,7 @@ def main() -> None:
     from transformers import AutoTokenizer
 
     ids = RESERVED_IDS[FAMILY]
-    tok = AutoTokenizer.from_pretrained(TOKENIZER)
+    tok = AutoTokenizer.from_pretrained(os.environ.get("FIX_TOKENIZER", TOKENIZER))  # FIX_TOKENIZER: local/weka copy when the Hub is offline or rate-limited
 
     model = FACTORIES[args.model_scale](vocab_size=VOCAB_SIZE).build(init_device="cpu")
     load_model_and_optim_state(args.base, model)

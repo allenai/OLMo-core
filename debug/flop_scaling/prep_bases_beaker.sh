@@ -16,7 +16,7 @@ $PYBIN -c "import olmo_core.nn.transformer; from olmo_core.nn.attention.recurren
 EOP
 if [ "$MODE" = fix ]; then
   SCALES="${SCALES:-0.8b 2b}"
-  WORK="$PRE"$'\n'"for S in $SCALES; do T=\$(echo \$S | tr -d .); SRC=$W/ctc_suite/bases/q35-\${T}-base-modelonly/model_and_optim; OUT=$W/ctc_suite/bases/q35-\${T}-base-markerfix; [ -f \$OUT/model_and_optim/.metadata ] && { echo \"[skip] \$OUT\"; continue; }; echo \"--- fix \$S: \$SRC -> \$OUT\"; \$PYBIN src/scripts/data/fix_marker_embeddings_qwen35.py --base \$SRC --out \$OUT --model-scale \$S || { echo \"!!! fix failed \$S\"; exit 1; }; done; echo PREP_DONE"
+  WORK="$PRE"$'\n'"export FIX_TOKENIZER=$W/hf_tokenizers/Qwen3.5-0.8B-Base; for S in $SCALES; do T=\$(echo \$S | tr -d .); SRC=$W/ctc_suite/bases/q35-\${T}-base-modelonly/model_and_optim; OUT=$W/ctc_suite/bases/q35-\${T}-base-markerfix; [ -f \$OUT/model_and_optim/.metadata ] && { echo \"[skip] \$OUT\"; continue; }; echo \"--- fix \$S: \$SRC -> \$OUT\"; \$PYBIN src/scripts/data/fix_marker_embeddings_qwen35.py --base \$SRC --out \$OUT --model-scale \$S || { echo \"!!! fix failed \$S\"; exit 1; }; done; echo PREP_DONE"
   NAME="fs35-prepfix-$(date +%m%d%H%M)"; MEM=64GiB; CPUS=8
 else
   SCALE="${SCALE:?}"; HF="${HF:?}"; T=$(echo $SCALE | tr -d .); HFDIR=$W/hf_models/$(basename $HF)
@@ -31,7 +31,7 @@ for i in range(10):
 else:
     raise SystemExit('download failed')
 PY
-export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 FIX_TOKENIZER=$W/hf_tokenizers/Qwen3.5-0.8B-Base
 OUT0=$W/ctc_suite/bases/q35-${T}-base-modelonly; OUT1=$W/ctc_suite/bases/q35-${T}-base-markerfix
 [ -f \$OUT0/model_and_optim/.metadata ] || \$PYBIN src/scripts/train/memexpress/ctc_suite/convert_qwen35_base.py --base-dir $HFDIR --out \$OUT0 || { echo '!!! convert failed'; exit 1; }
 [ -f \$OUT1/model_and_optim/.metadata ] || \$PYBIN src/scripts/data/fix_marker_embeddings_qwen35.py --base \$OUT0/model_and_optim --out \$OUT1 --model-scale $SCALE || { echo '!!! fix failed'; exit 1; }
