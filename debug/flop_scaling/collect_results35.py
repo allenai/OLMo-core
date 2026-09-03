@@ -37,15 +37,17 @@ def budget_tokens(b):
     return int(b[:-1]) * 1_000_000
 
 
-_MODEL = None
+_MODELS = {}
+SCALE = "4b"  # FLOP pricing follows the model scale (collect_scale.py switches this per ladder rung)
 
 
 def _model():
-    global _MODEL
-    if _MODEL is None:
-        from olmo_core.nn.transformer import TransformerConfig
-        _MODEL = TransformerConfig.qwen3_5_4B(vocab_size=248320).build(init_device="meta")
-    return _MODEL
+    from olmo_core.nn.transformer import TransformerConfig
+    if SCALE not in _MODELS:
+        fac = {"0.8b": TransformerConfig.qwen3_5_0_8B, "2b": TransformerConfig.qwen3_5_2B, "4b": TransformerConfig.qwen3_5_4B,
+               "9b": TransformerConfig.qwen3_5_9B, "27b": TransformerConfig.qwen3_5_27B}[SCALE]
+        _MODELS[SCALE] = fac(vocab_size=248320).build(init_device="meta")
+    return _MODELS[SCALE]
 
 
 def fpt(L):
@@ -68,9 +70,9 @@ def arm_flops(lengths, ffn_cost=1.0):
     total = 0.0
     for L in lengths:
         b = max(256, (int(L) + 255) // 256 * 256)
-        if b not in _FPT_CACHE:
-            _FPT_CACHE[b] = fpt(b)
-        total += L * (_FPT_CACHE[b] - ffn * (1.0 - ffn_cost))
+        if (SCALE, b) not in _FPT_CACHE:
+            _FPT_CACHE[(SCALE, b)] = fpt(b)
+        total += L * (_FPT_CACHE[(SCALE, b)] - ffn * (1.0 - ffn_cost))
     return total / 1e15
 
 
@@ -118,13 +120,16 @@ def fetch_eval(run, ex):
     return d if glob.glob(f"{d}/**/*multirung*.json", recursive=True) else None
 
 
-def main():
-    st = json.load(open(STATE)) if os.path.exists(STATE) else {"runs": {}, "evals": {}}
+def main(state_path=STATE, out_csv=None, scale="4b", prior_dense=True, run_fit=True):
+    global SCALE
+    SCALE = scale
+    out_csv = out_csv or f"{OUT}/results35.csv"
+    st = json.load(open(state_path)) if os.path.exists(state_path) else {"runs": {}, "evals": {}}
     fpt65k = dense_flops_per_token()
     rows = []
     # dense baseline from the prior campaigns (+ rungs those campaigns never scored, launched by
     # hand for this study and listed in dense_extra_evals.tsv: run, savedir, ex, task, rungs, when)
-    pts = json.load(open(POINTS))
+    pts = json.load(open(POINTS)) if prior_dense else {}
     extra = {}
     xp = f"{D}/dense_extra_evals.tsv"
     if os.path.exists(xp):
@@ -214,14 +219,18 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     if not rows:
         print("nothing to collect"); return
-    keys = ["task", "arm", "budget", "tokens", "actual_pflops", "dense_equiv_pflops", "flop_ratio", "mean_f1", "partial"] + sorted({k for r in rows for k in r if k.startswith("f1_")}) + ["run"]
-    with open(f"{OUT}/results35.csv", "w", newline="") as f:
+    for r in rows:
+        r["scale"] = scale
+    keys = ["task", "scale", "arm", "budget", "tokens", "actual_pflops", "dense_equiv_pflops", "flop_ratio", "mean_f1", "partial"] + sorted({k for r in rows for k in r if k.startswith("f1_")}) + ["run"]
+    with open(out_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys); w.writeheader(); w.writerows(rows)
-    print(f"wrote {OUT}/results35.csv ({len(rows)} rows)")
+    print(f"wrote {out_csv} ({len(rows)} rows)")
     for r in sorted(rows, key=lambda x: (x["task"], x["arm"], x["tokens"])):
         print(f"{r['task']:14s} {r['arm']:10s} {r['budget']:>5s} mean_f1={None if r['mean_f1'] is None else round(r['mean_f1'],3)} "
               f"PF={None if r['actual_pflops'] is None else round(r['actual_pflops'],1)} ratio={None if r['flop_ratio'] is None else round(r['flop_ratio'],3)}")
-    subprocess.run([sys.executable, f"{D}/fit_scaling.py", "--in", f"{OUT}/results35.csv", "--tag", "35"], env=ENV)
+    if run_fit:
+        subprocess.run([sys.executable, f"{D}/fit_scaling.py", "--in", out_csv, "--tag", "35"], env=ENV)
+    return rows
 
 
 if __name__ == "__main__":
