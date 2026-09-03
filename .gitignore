@@ -96,3 +96,4 @@ core
 
 # repo-root symlink to src/scripts/train/memexpress (the training-code hub) for quick inspection
 /training
+src/scripts/train/memexpress/loss_bench/error_correlation/artifact_data.json

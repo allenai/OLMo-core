@@ -317,14 +317,19 @@ def main():
 
     my_gidx = list(range(rank, len(examples), world))
     local = []
-    skipped = 0
     for gi in my_gidx:
         raw = examples[gi].get("ex", examples[gi])
         prefill = build_prefill(raw)
         if len(prefill) > cap:
-            skipped += 1
-            local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-            continue
+            # An over-budget prefill used to be scored as an empty generation, i.e. graded WRONG on
+            # an example the model was never shown. That silently contaminates the metric with a
+            # config error, and it reads as a long-context collapse. Fail instead.
+            raise SystemExit(
+                f"[maxlen] example {gi} builds a {len(prefill)}-token prefill, past the {cap}-token "
+                f"cap (--max-length {args.max_length} minus max_new_tokens {max_new_tokens}). "
+                f"Scoring it as empty would grade the model on an example it never saw. "
+                f"Re-run with --max-length >= {len(prefill) + max_new_tokens}."
+            )
         # Per-example top-k from a fraction of this prompt's landmark blocks (landmark variant only).
         if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
             n_blocks = max(1, len(prefill) // block_size)
@@ -352,7 +357,6 @@ def main():
             "task": seg_task,
             "data": eval_data,
             "n": len(examples),
-            "skipped_too_long": skipped,
             "landmark_top_k_blocks": args.landmark_top_k_blocks,
             "landmark_top_k_fraction": args.landmark_top_k_fraction,
             # keep the legacy "oolong" key for the existing dashboard when task==oolong.
@@ -363,7 +367,7 @@ def main():
             json.dump(summary, f, indent=2)
         # Print whatever scalar metrics the scorer returned (per-task primary keys differ).
         scalars = {k: v for k, v in res.items() if isinstance(v, (int, float))}
-        print(f"[{seg_task}] n={len(examples)} skipped={skipped} " + " ".join(
+        print(f"[{seg_task}] n={len(examples)} " + " ".join(
             f"{k}={v:.3f}" for k, v in scalars.items()), flush=True)
     if world > 1:
         torch.distributed.barrier()

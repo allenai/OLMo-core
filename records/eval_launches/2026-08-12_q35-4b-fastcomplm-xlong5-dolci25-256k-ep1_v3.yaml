@@ -32,23 +32,29 @@ common:
 
 # ---- DEVIATIONS FROM THE run-evals SKILL, recorded deliberately ----
 deviations:
-  - eval_version is v3, not v2. The skill says the eval set is standardized on
+  - >-
+    eval_version is v3, not v2. The skill says the eval set is standardized on
     _eval_bundle_eval500_v2_clean; this launch deliberately overrides CONTRADICTION ONLY to the
     realistic-mode v3 bundle. Every other task still reads v2_clean, so only contradiction rows
     are non-comparable to prior v2 numbers.
-  - The skill states v2 is the only supported ladder. v3 support was added and pushed in 79b969c01;
+  - >-
+    The skill states v2 is the only supported ladder. v3 support was added and pushed in 79b969c01;
     the skill text predates it and should be updated.
-  - cluster is ai2/saturn, not ai2/jupiter-cirrascale-2: jupiter was at 902/902 slots (0 free)
+  - >-
+    cluster is ai2/saturn, not ai2/jupiter-cirrascale-2; jupiter was at 902/902 slots (0 free)
     with strict-priority/unallocated-only-backfill, so urgent jobs could not schedule at all.
     Saturn is eager with A100-80GB, which also satisfies the >=256k 80GB requirement.
-  - The skill's --eval-tag and --xlong-only flags DO NOT EXIST in the launcher or the on-node
+  - >-
+    The skill's --eval-tag and --xlong-only flags DO NOT EXIST in the launcher or the on-node
     runner (0 occurrences of either, or of EVAL_TAG/XLONG_ONLY). --results-dir -> EVAL_OUT_DIR is
     used instead for collision avoidance. Consequence: the xlong passes will ALSO re-run 2k-32k at
     bs=1, which is wasted GPU but not a wrong number. No supported way to suppress it today.
-  - Pass B is contra-only rather than the skill's contra,nq,outlier,rerank,oolong: the v3 change
+  - >-
+    Pass B is contra-only rather than the skill's contra,nq,outlier,rerank,oolong: the v3 change
     touches contradiction only, and these checkpoints already have v2 xlong rows for the other
     four, so including them would duplicate rather than measure.
-  - make_yarn_copy.py takes --serving-copy (a vLLM serving dir), not --src <step> as the skill
+  - >-
+    make_yarn_copy.py takes --serving-copy (a vLLM serving dir), not --src <step> as the skill
     shows; the yarn2 copies here are built by patching the olmo-core config.json rope scaling.
 
 passes:
@@ -61,44 +67,76 @@ passes:
     ngpu: 2
     max_length_realized: 40960
     batch_size_requested: 2   # runner forces 1 for compressive/landmark — record realized at pull time
-    status: submitted
+    status: failed
     jobs:
       - task: contra
         beaker_job_name: ev-contra-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-dd9ab8d3
         beaker_experiment_id: 01KZTJ0Z9G9PER8CGQKT38RVE3
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: nq
         beaker_job_name: ev-nq-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-01f5edbd
         beaker_experiment_id: 01KZTJ133DJRYNSCP8S29FCKFB
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: rerank
         beaker_job_name: ev-rerank-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-f0dc66b7
         beaker_experiment_id: 01KZTJ16Q5V5E9ZMGNW8VDRYXH
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: outlier
         beaker_job_name: ev-outlier-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-76ab9264
         beaker_experiment_id: 01KZTJ1ACFBMGC34DY6M3K5KPD
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: oolong
         beaker_job_name: ev-oolong-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-b2429938
         beaker_experiment_id: 01KZTJ1E3MRH4ZB16JPVGE2TC3
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: fiqa
         beaker_job_name: ev-fiqa-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-23970bd9
         beaker_experiment_id: 01KZTJ1HPG8RYYW5TE7EHM19YE
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: scifact
         beaker_job_name: ev-scifact-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-2499d257
         beaker_experiment_id: 01KZTJ1NC1ADFGTGSCKXFY71AR
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: outlier_review
         beaker_job_name: ev-outlier_review-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-ed31d932
         beaker_experiment_id: 01KZTJ1S0JMDDAJCTK5K9KP6FF
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
       - task: contra_fever
         beaker_job_name: ev-contra_fever-q35-4b-fastcomplm-xlong5-dolci25-256k-ep1-9629bdc2
         beaker_experiment_id: 01KZTJ1WHVW5HHPMQXYDV8EPQ8
-        status: submitted
+        status: failed
+        pulled_at: 2026-08-13
+        notes: >-
+          exit 0 with ~0.000 on every task and rung: ran the Qwen3 tokenizer (pad/eos 151643/151645) against a Qwen3.5 model (vocab 248320). Generations are degenerate base-LM continuations. Needs relaunch with TOKENIZER=Qwen/Qwen3.5-0.8B.
+    resolution_2026_08_31: >-
+      This ledger's base pass never got a recorded relaunch (the tokenizer bug above), but
+      results-hub already carries base 2k-32k for all 9 tasks under the
+      "q35-4b-fastcomplm-xlong5-dolci25-256k-ep1" slug with the correct Qwen3.5 tokenizer.
+      Verified 2026-08-31; no relaunch needed from here.
 
   - name: xlong_native
     results_dir: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_native
@@ -109,6 +147,12 @@ passes:
     yarn_factor: null
     status: pending_orchestrator   # launched by debug/ctc_contra_iid_eval/overnight_xlong_orchestrator.sh
     jobs: []
+    resolution_2026_08_31: >-
+      Never actually submitted from here (jobs: [] -- no beaker_experiment_id on file).
+      results-hub already has contradiction/nq/outlier @ 64k/128k for this checkpoint.
+      NOT full coverage though: oolong and rerank stop at the base pass (8k-32k / 3k-16k)
+      with no xlong rows at all for this specific ep1 checkpoint (unlike the step560
+      epoch-0 sibling, which has full xlong coverage for both). Verified 2026-08-31.
 
   - name: xlong_yarn2
     results_dir: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/v3_q35_fclep1_xlong_yarn2
@@ -122,4 +166,10 @@ passes:
       ~10% above the rung label, so 256k and 512k both need factor 2. Any >=256k number from this
       pass must carry yarn_factor=2 in other_notes or it is unusable.
     status: pending_orchestrator
+    resolution_2026_08_31: >-
+      Never actually submitted from here either. results-hub has contradiction/nq/outlier @
+      256k for this checkpoint, but NOT 512k, and no yarn4/1M pass exists for this
+      checkpoint at all (unlike the step560 epoch-0 sibling, which has both). This is a
+      REAL gap -- 512k and 1M are genuinely missing for the ep1 checkpoint. Verified
+      2026-08-31; if 512k/1M numbers are wanted for ep1, they need an actual launch.
     jobs: []

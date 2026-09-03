@@ -457,14 +457,20 @@ def main():
             # bs=1 DP shard: this rank decodes global indices [rank, rank+world, ...].
             my_gidx = list(range(rank, len(examples), world))
             local = []
-            skipped = 0
             for gi in my_gidx:
                 raw = examples[gi].get("ex", examples[gi])
                 prefill = build_prefill(raw, loadtask, chunk_by, item_regex)
                 if len(prefill) > cap:
-                    skipped += 1
-                    local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-                    continue
+                    # An over-budget prefill used to be scored as an empty generation, i.e. graded
+                    # WRONG on an example the model was never shown -- a config error laundered
+                    # into the rung's metric, where it reads as a long-context collapse. Fail.
+                    raise SystemExit(
+                        f"[maxlen] {task}@{label} example {gi} builds a {len(prefill)}-token "
+                        f"prefill, past the {cap}-token cap (--max-length {args.max_length} minus "
+                        f"max_new_tokens {max_new_tokens}). Scoring it as empty would grade the "
+                        f"model on an example it never saw. Re-run with --max-length >= "
+                        f"{len(prefill) + max_new_tokens}."
+                    )
                 if is_landmark and args.landmark_top_k_fraction is not None:
                     n_blocks = max(1, len(prefill) // block_size)
                     gm.model.set_landmark_eval_top_k(
@@ -493,7 +499,7 @@ def main():
                 summary["eval_size"][f"{task}_{label}"] = len(examples)
                 print(f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
                       f"{prim if prim is None else round(float(prim), 3)} "
-                      f"(eval_size={len(examples)}, skipped_too_long={skipped})", flush=True)
+                      f"(eval_size={len(examples)})", flush=True)
                 flush()
             if world > 1:
                 torch.distributed.barrier()

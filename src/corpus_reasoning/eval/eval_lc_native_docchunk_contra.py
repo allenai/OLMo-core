@@ -534,15 +534,27 @@ def main():
         )
 
     local = []
-    skipped = 0
+
+    def _reject_too_long(gi, n_prefill):
+        """An over-budget prefill is a config error, not a wrong answer -- refuse to score it.
+
+        Scoring it as an empty generation (the old behaviour) grades the model on an example it
+        was never shown, laundering a --max-length mistake into the metric where it reads as a
+        long-context collapse.
+        """
+        raise SystemExit(
+            f"[maxlen] example {gi} builds a {n_prefill}-token prefill, past the {cap}-token cap "
+            f"(--max-length {args.max_length} minus max_new_tokens {max_new_tokens}). Scoring it "
+            f"as empty would grade the model on an example it never saw. Re-run with "
+            f"--max-length >= {n_prefill + max_new_tokens}."
+        )
+
     if args.batch_size <= 1:
         for gi in my_gidx:
             raw = examples[gi].get("ex", examples[gi])
             prefill = build_prefill(raw)
             if len(prefill) > cap:
-                skipped += 1
-                local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-                continue
+                _reject_too_long(gi, len(prefill))
             if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
                 n_blocks = max(1, len(prefill) // block_size)
                 gm.model.set_landmark_eval_top_k(
@@ -562,10 +574,8 @@ def main():
             raw = examples[gi].get("ex", examples[gi])
             prefill = build_prefill(raw)
             if len(prefill) > cap:
-                skipped += 1
-                local.append((gi, ""))
-            else:
-                keep.append((gi, prefill))
+                _reject_too_long(gi, len(prefill))
+            keep.append((gi, prefill))
 
         def is_answer_complete(content):
             return bool(content) and content[-1] == NEWLINE_ID and _answer_complete(content)

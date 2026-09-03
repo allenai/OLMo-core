@@ -121,10 +121,24 @@ def main():
         my_gidx = list(range(rank, len(prompts), world))
         lp = [prompts[i] for i in my_gidx]
         lout = []
+        cap = args.max_length - max_new_tokens
         for i in range(0, len(lp), args.batch_size):
             chunk = lp[i:i + args.batch_size]
-            enc = tok(chunk, return_tensors="pt", padding=True, truncation=True,
-                      max_length=args.max_length - max_new_tokens, add_special_tokens=False)
+            # truncation=False is DELIBERATE: the cut lands on the prompt TAIL, where the question
+            # lives, so a truncated example scores the model on input it never saw (f1 0.000 at
+            # parse_rate 1.0, indistinguishable from a real long-context collapse). Raise instead.
+            enc = tok(chunk, return_tensors="pt", padding=True, truncation=False,
+                      add_special_tokens=False)
+            lens = enc["attention_mask"].sum(dim=1).tolist()
+            if max(lens, default=0) > cap:
+                over = [(my_gidx[i + j], n) for j, n in enumerate(lens) if n > cap]
+                worst = max(n for _, n in over)
+                raise SystemExit(
+                    f"[maxlen] {len(over)}/{len(chunk)} prompts exceed the {cap}-token prompt cap "
+                    f"(--max-length {args.max_length} minus max_new_tokens {max_new_tokens}); "
+                    f"longest is {worst} tokens (example indices {[g for g, _ in over][:8]}). "
+                    f"Re-run with --max-length >= {worst + max_new_tokens}."
+                )
             ids = enc["input_ids"].to(device)
             mask = enc["attention_mask"].to(device)
             # Per-row string early-stop (stops near the actual answer length instead of running to

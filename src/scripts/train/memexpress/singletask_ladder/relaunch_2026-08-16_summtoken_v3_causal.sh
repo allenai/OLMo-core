@@ -34,6 +34,12 @@ BUDGET="${BUDGET:-ai2/oe-other}"        # ai2/oe-training is deprecated; this is
 BRANCH="${BRANCH:-amandab/hils-eval}"
 REF="${REF:-6e3a4e309347430bc0b222ea256f5c2acbe90a7e}"   # the summary-mask-mode commit
 STEP_DIR="${STEP_DIR:-step1772}"
+# The locally-installed `gantry` (v3.2.0) predates --min-runtime; pin the newer CLI via uvx.
+GANTRY_BIN="${GANTRY_BIN:-uvx --from beaker-gantry@3.7.0 gantry}"
+# CLAUDE.md/standing preference: default to no minRuntime (unallocated, always-preemptible).
+# Only set MIN_RUNTIME (e.g. `MIN_RUNTIME=10m`) when explicitly asked for a specific launch --
+# do not change this default.
+MIN_RUNTIME="${MIN_RUNTIME:-}"
 CKPT_ROOT=/weka/oe-training-default/ai2-llm/checkpoints/amandab
 LEDGER_DIR="${LEDGER_DIR:-records/eval_launches}"
 
@@ -49,9 +55,12 @@ submit() {                              # submit <name> <env-prefix string>
     echo "     $cmd"
     return 0
   fi
-  gantry run \
+  local min_runtime_args=()
+  [ -n "$MIN_RUNTIME" ] && min_runtime_args=(--min-runtime "$MIN_RUNTIME")
+  $GANTRY_BIN run \
     --name "$name" --task-name eval \
     --workspace "$WORKSPACE" --cluster "$CLUSTER" --priority "$PRIORITY" \
+    "${min_runtime_args[@]}" \
     --beaker-image "$IMAGE" --gpus "$NGPU" --shared-memory 10GiB \
     --weka oe-training-default:/weka/oe-training-default \
     --budget "$BUDGET" \

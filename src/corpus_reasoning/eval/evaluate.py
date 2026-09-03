@@ -1400,9 +1400,21 @@ def main():
                     prompt = ex["prompt"]
                     if args.enable_thinking:
                         prompt = prompt + "<think>\n"
+                    # truncation=False: `truncation=True` with no max_length silently cut at
+                    # tokenizer.model_max_length -- a number nobody passed and nobody sees --
+                    # removing the prompt TAIL, where the question is. Fail instead.
                     input_ids = tokenizer(
-                        prompt, return_tensors="pt", truncation=True,
-                    ).input_ids.to(device)
+                        prompt, return_tensors="pt", truncation=False,
+                    ).input_ids
+                    _tok_cap = getattr(tokenizer, "model_max_length", None)
+                    if _tok_cap is not None and input_ids.shape[1] > _tok_cap:
+                        raise ValueError(
+                            f"[maxlen] prompt is {input_ids.shape[1]} tokens, past the tokenizer's "
+                            f"model_max_length {_tok_cap} ({label}, task={args.task}). Raise "
+                            f"model_max_length on the tokenizer or evaluate a shorter rung -- "
+                            f"truncating would silently drop the end of the prompt."
+                        )
+                    input_ids = input_ids.to(device)
                     response = generate_hf(
                         model, tokenizer, input_ids, doc_start_id, doc_end_id,
                         max_new_tokens=args.max_tokens, stop_token_ids=stop_ids,
@@ -1420,11 +1432,22 @@ def main():
                 # token IDs (and so the patched FlexAttention backend can
                 # locate them). vLLM accepts prompt_token_ids directly.
                 from vllm import TokensPrompt
+                # truncation=False on purpose -- see the note on the per-example hf path above.
+                # An over-budget prompt is a --max-model-len error to fix, not a tail to discard.
                 prompt_token_ids = [
-                    chunked_tokenizer(p, truncation=True,
-                                      max_length=args.max_model_len).input_ids
-                    for p in prompts
+                    chunked_tokenizer(p, truncation=False).input_ids for p in prompts
                 ]
+                _cap = args.max_model_len - args.max_tokens
+                _over = [(i, len(t)) for i, t in enumerate(prompt_token_ids) if len(t) > _cap]
+                if _over:
+                    _worst = max(n for _, n in _over)
+                    raise ValueError(
+                        f"[maxlen] {len(_over)}/{len(prompt_token_ids)} prompts exceed the "
+                        f"{_cap}-token prompt cap (--max-model-len {args.max_model_len} minus "
+                        f"max_tokens {args.max_tokens}); longest is {_worst} tokens "
+                        f"(example indices {[i for i, _ in _over][:8]}). Re-run with "
+                        f"--max-model-len >= {_worst + args.max_tokens}."
+                    )
                 inputs = [TokensPrompt(prompt_token_ids=t) for t in prompt_token_ids]
                 outputs = llm.generate(inputs, sampling_params, lora_request=lora_request)
                 responses = [o.outputs[0].text for o in outputs]

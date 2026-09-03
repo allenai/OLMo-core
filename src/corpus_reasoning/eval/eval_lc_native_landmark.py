@@ -159,8 +159,18 @@ def main():
         my_gidx = list(range(rank, len(prompts), world))
         lp = [prompts[i] for i in my_gidx]
         max_in = args.max_length - max_new_tokens
-        toks = [tok(p, truncation=True, max_length=max_in, add_special_tokens=False)["input_ids"]
-                for p in lp]
+        # truncation=False is DELIBERATE: cutting to max_in drops the prompt TAIL, where the
+        # question lives, and scores the model on an example it never saw. Raise instead.
+        toks = [tok(p, truncation=False, add_special_tokens=False)["input_ids"] for p in lp]
+        _over = [(my_gidx[i], len(t)) for i, t in enumerate(toks) if len(t) > max_in]
+        if _over:
+            _worst = max(n for _, n in _over)
+            raise SystemExit(
+                f"[maxlen] {len(_over)}/{len(toks)} prompts exceed the {max_in}-token prompt cap "
+                f"(--max-length {args.max_length} minus max_new_tokens {max_new_tokens}); longest "
+                f"is {_worst} tokens (example indices {[g for g, _ in _over][:8]}). Re-run with "
+                f"--max-length >= {_worst + max_new_tokens}."
+            )
         lout = [None] * len(lp)
 
         use_fast = (not args.no_fast_batch) and gm.supports_landmark_ragged_batch()

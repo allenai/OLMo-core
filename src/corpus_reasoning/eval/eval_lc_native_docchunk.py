@@ -532,15 +532,27 @@ def main():
 
     my_gidx = list(range(rank, len(examples), world))
     local = []
-    skipped = 0
+
+    def _reject_too_long(gi, n_prefill):
+        """An over-budget prefill is a config error, not a wrong answer -- refuse to score it.
+
+        Scoring it as an empty generation (the old behaviour) grades the model on an example it
+        was never shown, laundering a --max-length mistake into the metric where it reads as a
+        long-context collapse.
+        """
+        raise SystemExit(
+            f"[maxlen] example {gi} builds a {n_prefill}-token prefill, past the {cap}-token cap "
+            f"(--max-length {args.max_length} minus max_new_tokens {max_new_tokens}). Scoring it "
+            f"as empty would grade the model on an example it never saw. Re-run with "
+            f"--max-length >= {n_prefill + max_new_tokens}."
+        )
+
     if args.batch_size <= 1:
         for gi in my_gidx:
             raw = examples[gi].get("ex", examples[gi])
             prefill = build_prefill(raw)
             if len(prefill) > cap:
-                skipped += 1
-                local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-                continue
+                _reject_too_long(gi, len(prefill))
             # Per-example top-k from a fraction of this prompt's landmark blocks (landmark only).
             if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
                 n_blocks = max(1, len(prefill) // block_size)
@@ -563,10 +575,8 @@ def main():
             raw = examples[gi].get("ex", examples[gi])
             prefill = build_prefill(raw)
             if len(prefill) > cap:
-                skipped += 1
-                local.append((gi, ""))
-            else:
-                keep.append((gi, prefill))
+                _reject_too_long(gi, len(prefill))
+            keep.append((gi, prefill))
 
         def is_answer_complete(content):
             return bool(content) and should_stop(content[-1], content)
@@ -618,7 +628,6 @@ def main():
             "task": seg_task,
             "data": eval_data,
             "eval_size": len(examples),
-            "skipped_too_long": skipped,
             "landmark_top_k_blocks": args.landmark_top_k_blocks,
             "landmark_top_k_fraction": args.landmark_top_k_fraction,
             # keep the legacy "oolong" key for the existing dashboard when task==oolong.
@@ -630,7 +639,7 @@ def main():
         # Print whatever scalar metrics the scorer returned (per-task primary keys differ).
         scalars = {k: v for k, v in res.items() if isinstance(v, (int, float))}
         print(
-            f"[{seg_task}] n={len(examples)} skipped={skipped} "
+            f"[{seg_task}] n={len(examples)} "
             + " ".join(f"{k}={v:.3f}" for k, v in scalars.items()),
             flush=True,
         )
