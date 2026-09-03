@@ -215,7 +215,7 @@ Measured wall-clock speedups saturate by cost 1/16 and reach 1.1x (0.8B) → 1.4
 (9B) → 2.0x (27B) → 2.8x (70B geometry) at 8k, against FLOP theory of 1.5x → 2.2x → 2.9x → 3.7x
 → 5.8x: the non-FFN work (GatedDeltaNet, attention, head) runs at lower utilization than the
 wide FFN GEMMs, so its wall-clock share exceeds its FLOP share. 8/H and 1/H buy nothing over
-1/16 in wall-clock. H100 runs on the training image (with FFN-isolated timings) are queued.
+1/16 in wall-clock. H100 (training image, `results/flop_scaling/ffn_speed_h100.md`): model-level 1.05x / 1.14x / 1.22x / 1.41x / 1.61x / 2.2x (0.8B / 2B / 4B / 9B@32k / 27B / 70B-geometry, train) — smaller than on A100 because Hopper speeds the FFN GEMMs most; FFN-only at cost 1/16 delivers 1.8x (0.8B/8k) to 11.4x (70B-geometry/32k) of the theoretical 16x, with a per-token routing floor of ~1.3–2 ms per 32k-token layer.
 
 **(b) Model scale.** `orchestrate_scale.py`, `collect_scale.py`, `results/flop_scaling/scale_report.md`.
 Contradiction: the KV gold+1/3 multiplier vs dense rises 0.87 (2B) → 1.00 (4B) → **1.66 (9B)**;
