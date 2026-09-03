@@ -168,6 +168,7 @@ SYSTEMS = {
     # sharding. They determine whether medium can avoid pipeline parallelism at useful MB=2.
     "g32-medium-pp1-ep4-mb2": SystemConfig("medium", 4, 1, 4, 2, 2 * MIB),
     "g32-medium-pp1-ep8-mb2": SystemConfig("medium", 4, 1, 8, 2, 2 * MIB),
+    "g32-medium-pp1-ep8-mb4": SystemConfig("medium", 4, 1, 8, 4, 2 * MIB),
     # Reduced batches retain the corresponding 8 Mi-token production GA at 256 GPUs.
     "large-pp2-ep8-mb1": SystemConfig("large", 2, 2, 8, 1, 512 * 1024),
     "large-pp2-ep8-mb2": SystemConfig("large", 2, 2, 8, 2, 512 * 1024),
@@ -183,6 +184,10 @@ SYSTEMS = {
     "g64-small-pp1-ep1-mb4": SystemConfig("small", 8, 1, 1, 4, 8 * MIB),
     "g64-small-pp1-ep4-mb4": SystemConfig("small", 8, 1, 4, 4, 8 * MIB),
     "g64-medium-pp1-ep4-mb1": SystemConfig("medium", 8, 1, 4, 1, 8 * MIB),
+    # Half-scale medium probes preserve the gradient-accumulation geometry of the intended
+    # 128-GPU / 8 Mi-token production job.
+    "g64-medium-pp1-ep4-mb2": SystemConfig("medium", 8, 1, 4, 2, 4 * MIB),
+    "g64-medium-pp1-ep8-mb4": SystemConfig("medium", 8, 1, 8, 4, 4 * MIB),
     "g64-large-pp2-ep8-mb1": SystemConfig("large", 8, 2, 8, 1, 8 * MIB),
 }
 
