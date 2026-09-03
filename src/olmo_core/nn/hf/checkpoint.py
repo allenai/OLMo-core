@@ -1,5 +1,6 @@
 import logging
 import re
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Generator, Optional
@@ -41,6 +42,43 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
+_FP32_ROUTER_LINEAR = re.compile(
+    r"logits\s*=\s*F\.linear\(\s*x\.float\(\),\s*self\.gate\.weight\.float\(\),?\s*\)"
+)
+_LEGACY_ROUTER_LINEAR = re.compile(
+    r"^(?P<indent>\s*)logits\s*=\s*self\.gate\(x\)\s*$",
+    re.MULTILINE,
+)
+
+
+def _ensure_fp32_router_compute_descriptor(save_path: Path) -> None:
+    modeling_path = save_path / "modeling_olmo3moe.py"
+    if not modeling_path.is_file():
+        raise FileNotFoundError(
+            f"HF router-overlay template must contain remote model code: {modeling_path}"
+        )
+    source = modeling_path.read_text(encoding="utf-8")
+    if _FP32_ROUTER_LINEAR.search(source):
+        return
+    matches = list(_LEGACY_ROUTER_LINEAR.finditer(source))
+    if len(matches) != 1:
+        raise RuntimeError(
+            "HF router-overlay template is not FP32-router-safe and its router projection "
+            f"could not be upgraded unambiguously: {modeling_path}"
+        )
+    match = matches[0]
+    indent = match.group("indent")
+    replacement = (
+        f"{indent}logits = F.linear(\n"
+        f"{indent}    x.float(),\n"
+        f"{indent}    self.gate.weight.float(),\n"
+        f"{indent})"
+    )
+    source = source[: match.start()] + replacement + source[match.end() :]
+    if not _FP32_ROUTER_LINEAR.search(source):
+        raise RuntimeError(f"Failed to upgrade HF router computation in {modeling_path}")
+    modeling_path.write_text(source, encoding="utf-8")
+    log.info("Upgraded copied HF descriptor to BF16 router storage with FP32 computation")
 
 
 @beta_feature
@@ -62,7 +100,7 @@ def save_hf_model_with_native_router_overlay(
     template_path = Path(template_dir)
     if not template_path.is_dir():
         raise FileNotFoundError(template_path)
-    copy_dir(template_path, save_path, save_overwrite=True)
+    shutil.copytree(template_path, save_path, dirs_exist_ok=True)
 
     replacements: Dict[str, torch.Tensor] = {}
     router_pattern = re.compile(r"blocks\.(\d+)\.routed_experts_router\.weight")
@@ -119,6 +157,7 @@ def save_hf_model_with_native_router_overlay(
             tensors[name] = replacement
         save_file(tensors, shard_path, metadata=metadata)
 
+    _ensure_fp32_router_compute_descriptor(save_path)
     log.info(
         "Overlaid %d native router tensors as %s onto %s",
         len(replacements),

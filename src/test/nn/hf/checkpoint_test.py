@@ -130,6 +130,13 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     output = tmp_path / "output"
     template.mkdir()
     (template / "config.json").write_text('{"model_type": "olmo3moe"}\n')
+    (template / "modeling_olmo3moe.py").write_text(
+        "import torch.nn.functional as F\n"
+        "class Olmo3MoeRouter:\n"
+        "    def forward(self, x):\n"
+        "        logits = self.gate(x)\n"
+        "        return logits\n"
+    )
     hf_router_name = "model.layers.1.mlp.router.gate.weight"
     hf_dense_name = "model.layers.1.self_attn.q_proj.weight"
     original_dense = torch.randn(3, 3, dtype=torch.bfloat16)
@@ -154,6 +161,12 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     assert exported[hf_router_name].dtype == torch.bfloat16
     assert torch.equal(exported[hf_dense_name], original_dense)
     assert (output / "config.json").read_text() == (template / "config.json").read_text()
+    modeling = (output / "modeling_olmo3moe.py").read_text()
+    assert "logits = F.linear(" in modeling
+    assert "self.gate.weight.float()" in modeling
+    assert "logits = self.gate(x)" in (template / "modeling_olmo3moe.py").read_text()
+    template_weights = load_file(template / "model.safetensors")
+    assert torch.equal(template_weights[hf_router_name], torch.zeros(4, 3, dtype=torch.bfloat16))
     with safe_open(output / "model.safetensors", framework="pt") as checkpoint:
         assert checkpoint.metadata() == {"format": "pt"}
 
