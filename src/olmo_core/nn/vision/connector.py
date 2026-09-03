@@ -389,6 +389,10 @@ class VisionConnector(nn.Module):
         :returns: ``(B, n_pooled, output_dim)``.
         """
         cfg = self.cfg
+        # Advanced indexing and pooling are compiled with dynamic group counts.  Normalize
+        # caller-provided views so a crop-count change cannot reuse a graph with stale strides.
+        image_features = image_features.contiguous()
+        pooled_patches_idx = pooled_patches_idx.contiguous()
         B, _, dim = image_features.shape
         n_pooled, pool_size = pooled_patches_idx.shape[1], pooled_patches_idx.shape[2]
         valid = pooled_patches_idx >= 0

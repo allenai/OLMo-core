@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed compiled vision training for batches with different crop counts by using dynamic ViT
+  shapes and canonical contiguous layouts at vision/connector boundaries, preventing stale
+  activation strides during backward.
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.
