@@ -176,6 +176,7 @@ MODEL_FACTORIES = {
         "2b": TransformerConfig.qwen3_5_2B,
         "4b": TransformerConfig.qwen3_5_4B,
         "9b": TransformerConfig.qwen3_5_9B,
+        "27b": TransformerConfig.qwen3_5_27B,
     },
     "qwen3": {
         "0.6b": TransformerConfig.qwen3_0_6B,
@@ -517,7 +518,7 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
 #: on that path so its proven runs don't change. 2B is grouped with the large scales: it is 2.4B
 #: params and the model-scale study runs it on 80GB A100s, where even 0.8B needs full sharding +
 #: AC at 40960 (lambda_cluster.md).
-_LARGE_SCALES = ("2b", "4b", "9b")
+_LARGE_SCALES = ("2b", "4b", "9b", "27b")
 
 
 def resolve_activation_checkpointing(opts: argparse.Namespace) -> str:
@@ -1293,7 +1294,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--model-scale",
         default="0.8b",
-        help="scale key within the resolved family: qwen3_5={0.8b,4b,9b}; qwen3={0.6b,1.7b,4b,8b}",
+        help="scale key within the resolved family: qwen3_5={0.8b,2b,4b,9b,27b}; qwen3={0.6b,1.7b,4b,8b}",
     )
     ap.add_argument(
         "--variant",
