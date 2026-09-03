@@ -161,6 +161,7 @@ SYSTEMS = {
     "g16-medium-pp1-ep4-mb4": SystemConfig("medium", 2, 1, 4, 4, 1 * MIB),
     "g16-medium-pp1-ep8-mb1": SystemConfig("medium", 2, 1, 8, 1, 1 * MIB),
     "g16-medium-pp1-ep8-mb2": SystemConfig("medium", 2, 1, 8, 2, 1 * MIB),
+    "g16-medium-pp1-ep8-mb4": SystemConfig("medium", 2, 1, 8, 4, 1 * MIB),
     "g16-medium-pp2-ep8-mb1": SystemConfig("medium", 2, 2, 8, 1, 1 * MIB),
     "g16-medium-pp2-ep8-mb2": SystemConfig("medium", 2, 2, 8, 2, 1 * MIB),
     # Four-node PP1 probes retain the same production GA geometry while increasing optimizer
