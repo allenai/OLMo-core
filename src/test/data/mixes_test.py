@@ -4,6 +4,16 @@ from olmo_core.data import DataMix, TokenizerName
 from olmo_core.io import file_exists
 
 
+def test_dolma3p5_mix_has_preinterpolated_paths():
+    paths, labels = DataMix.Dolma3p5_14t.build("s3://ai2-llm", TokenizerName.dolma2)
+    assert len(paths) == len(labels) == 1167
+    assert paths[0].startswith(
+        "s3://ai2-llm/preprocessed/dolma3p5-14t/materialized/dolma3p5-14t-e6c5a51bd6b9/"
+    )
+    assert "/allenai/dolma2-tokenizer/" in paths[0]
+    assert "{TOKENIZER}" not in paths[0]
+
+
 def test_olmoe_mix():
     from botocore.exceptions import NoCredentialsError
 
