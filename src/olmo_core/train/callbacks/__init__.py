@@ -5,6 +5,7 @@ Trainer :class:`Callback` implementations.
 from .batch_size_scheduler import BatchSizeSchedulerCallback
 from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
+from .checkpoint_ready_notifier import CheckpointReadyNotifierCallback
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .comet import CometCallback, CometNotificationSetting
 from .config_saver import ConfigSaverCallback
@@ -34,6 +35,7 @@ __all__ = [
     "CallbackConfig",
     "CheckpointerCallback",
     "CheckpointRemovalStrategy",
+    "CheckpointReadyNotifierCallback",
     "CometCallback",
     "CometNotificationSetting",
     "ConfigSaverCallback",

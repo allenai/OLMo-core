@@ -44,6 +44,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
     OLMo_mix_0925_official = "OLMo-mix-0925-official"
+    Dolma3p5_14t = "Dolma3p5-14t"
 
     # Midtraining mixes
     OLMo_midtraining_mix_0625_100B = "OLMo-midtraining-mix-0625-100B"
@@ -109,6 +110,8 @@ class DataMix(DataMixBase):
         elif tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
             tokenizer_id = "gpt-neox-olmo-dolma-v1_5"
 
+        already_interpolated = self == DataMix.Dolma3p5_14t
+
         paths = []
         labels = []
         with _get_data_mix_path(self) as mix_path:
@@ -118,10 +121,13 @@ class DataMix(DataMixBase):
                     if not line or line.startswith("#"):
                         continue
                     label, path = line.split(",")
-                    if "{TOKENIZER}" not in path:
+                    if already_interpolated:
+                        paths.append(f"{base_dir}{path}")
+                    elif "{TOKENIZER}" not in path:
                         raise ValueError(f"line {line_num + 1} in data mix '{self}' is invalid")
-                    path = path.replace("{TOKENIZER}", tokenizer_id)
-                    paths.append(f"{base_dir}{path}")
+                    else:
+                        path = path.replace("{TOKENIZER}", tokenizer_id)
+                        paths.append(f"{base_dir}{path}")
                     labels.append(label)
         return paths, labels
 
