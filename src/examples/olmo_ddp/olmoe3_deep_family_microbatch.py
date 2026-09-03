@@ -64,6 +64,18 @@ MXFP8_MLP = os.environ.get("OLMOE3_MXFP8_MLP", "0").strip().lower() in {
     "yes",
     "on",
 }
+SHARE_EP_OUTPUTS = os.environ.get("OLMOE3_SHARE_EP_OUTPUTS", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+USE_REDUCE_SCATTER = os.environ.get("OLMOE3_USE_REDUCE_SCATTER", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 EP_CAPACITY_FACTOR = 1.25
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 WANDB_PROJECT = "olmoe3-deep-family-microbatch"
@@ -173,13 +185,12 @@ SYSTEMS = {
 def select_system(model_size: str) -> tuple[str, SystemConfig]:
     preset_name = os.environ.get("OLMOE3_DEEP_MB_SYSTEM_PRESET")
     if preset_name is None:
-        raise ValueError("Set OLMOE3_DEEP_MB_SYSTEM_PRESET to one of " f"{tuple(SYSTEMS)}")
+        raise ValueError(f"Set OLMOE3_DEEP_MB_SYSTEM_PRESET to one of {tuple(SYSTEMS)}")
     try:
         system = SYSTEMS[preset_name]
     except KeyError as exc:
         raise ValueError(
-            f"Unknown OLMOE3_DEEP_MB_SYSTEM_PRESET={preset_name!r}; "
-            f"choose from {tuple(SYSTEMS)}"
+            f"Unknown OLMOE3_DEEP_MB_SYSTEM_PRESET={preset_name!r}; choose from {tuple(SYSTEMS)}"
         ) from exc
     if system.model_size != model_size:
         raise ValueError(
@@ -225,6 +236,8 @@ def build_common_components(
             "OLMO_ROWWISE_DEBUG_RANKS",
             "OLMO_EP_NO_SYNC_FORBID_RUNTIME_SYMM_ALLOC",
             "OLMOE3_MXFP8_MLP",
+            "OLMOE3_SHARE_EP_OUTPUTS",
+            "OLMOE3_USE_REDUCE_SCATTER",
             "OLMOE3_DEEP_WSD_WARMUP_STEPS",
             "OLMOE3_DEEP_WSD_DECAY_STEPS",
             *EMO_ENV_VARS,
@@ -290,7 +303,7 @@ def build_model_config_from_common(common: CommonComponents, system: SystemConfi
         emo=emo,
         mxfp8_mlp=MXFP8_MLP,
     )
-    if system.model_size == "large":
+    if system.model_size == "large" or SHARE_EP_OUTPUTS:
         for block in [model.block, *model.block_overrides.values()]:
             if block.routed_experts is not None:
                 block.ep.share_dispatch_out = True
@@ -342,6 +355,7 @@ def build_train_module_config(
             name=DataParallelType.ddp,
             reduce_grads_in_fp32=True,
             accumulate_grads_in_fp32=True,
+            use_reduce_scatter=USE_REDUCE_SCATTER,
         ),
         ep_config=(TransformerExpertParallelConfig(degree=system.ep) if system.ep > 1 else None),
         pp_config=pp_config,
@@ -376,6 +390,8 @@ def build_trainer_config(
         "moe:fused-v2",
         "recompute:false",
         f"mxfp8-mlp:{str(MXFP8_MLP).lower()}",
+        f"share-ep-outputs:{str(SHARE_EP_OUTPUTS).lower()}",
+        f"reduce-scatter:{str(USE_REDUCE_SCATTER).lower()}",
         f"system:{preset_name}",
         f"size:{system.model_size}",
         f"gpus:{system.num_gpus}",
@@ -413,6 +429,8 @@ def build_trainer_config(
                     f"grad accum={system.gradient_accumulation_steps}; "
                     f"{emo_note(emo)}; "
                     f"routed-MLP MXFP8={MXFP8_MLP}; "
+                    f"shared EP outputs={SHARE_EP_OUTPUTS}; "
+                    f"normal-gradient reduce-scatter={USE_REDUCE_SCATTER}; "
                     "no recomputation; default attention + scalable softmax; "
                     f"WSD={WSD_WARMUP_STEPS} warmup / stable / {WSD_DECAY_STEPS} decay"
                 ),

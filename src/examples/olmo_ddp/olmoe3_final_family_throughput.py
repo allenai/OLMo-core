@@ -120,6 +120,7 @@ DEFAULT_SYSTEMS = {
 # EP is kept within each 8-GPU node; with PP as the leading mesh dimension,
 # PP peers span nodes while EP rank groups remain node-local.
 QUALIFICATION_SYSTEMS = {
+    "8gpu-2p0b-pp1-ep4-mb1": SystemConfig("2p0b", 1, 1, 4, 1),
     "g64-0p5b-pp1-ep1-mb8": SystemConfig("0p5b", 8, 1, 1, 8),
     "g64-0p9b-pp1-ep1-mb4": SystemConfig("0p9b", 8, 1, 1, 4),
     "g64-2p0b-pp1-ep4-mb2": SystemConfig("2p0b", 8, 1, 4, 2),
@@ -395,7 +396,7 @@ def build_trainer_config(
             "wandb",
             WandBCallback(
                 name=common.run_name,
-                group=(f"olmoe3-final-family-8Mi-{system.num_gpus}gpu-" f"wsd-{EXPERT_VARIANT}"),
+                group=(f"olmoe3-final-family-8Mi-{system.num_gpus}gpu-wsd-{EXPERT_VARIANT}"),
                 project=WANDB_PROJECT,
                 entity="ai2-llm",
                 enabled=True,
