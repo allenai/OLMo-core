@@ -34,7 +34,7 @@ from olmo_core.float8 import Float8Config
 from olmo_core.internal.common import build_launch_config
 from olmo_core.internal.cookbook import configure_required_callbacks
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, main
-from olmo_core.launch.beaker import BeakerWekaBucket
+from olmo_core.launch.beaker import BeakerEnvSecret, BeakerWekaBucket
 from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
@@ -183,6 +183,21 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     launch.min_runtime = "8h"
     launch.retries = 10
     launch.follow = False
+    launch.env_secrets = [
+        BeakerEnvSecret(
+            name="BEAKER_TOKEN",
+            secret="jacobm_BEAKER_TOKEN",
+            required=True,
+        ),
+        BeakerEnvSecret(
+            name="WANDB_API_KEY",
+            secret="jacobm_WANDB_API_KEY",
+            required=True,
+        ),
+    ]
+    launch.google_credentials_secret = None
+    launch.aws_config_secret = "jacobm_AWS_CONFIG"
+    launch.aws_credentials_secret = "jacobm_AWS_CREDENTIALS"
 
     train_module = TransformerTrainModuleConfig(
         rank_microbatch_size=RANK_MICROBATCH_SIZE,
