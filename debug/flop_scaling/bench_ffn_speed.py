@@ -118,7 +118,7 @@ def cost_of(level: str, widths: List[int]) -> float:
 
 def rung_for(level: str, widths: List[int]) -> int:
     if level == "0":
-        return len(widths)  # null rung (appended last)
+        return widths.index(0)  # the null rung is already in the ladder's width list (width 0)
     target_w = max(1, round(cost_of(level, widths) * widths[0]))
     return min(range(len(widths)), key=lambda i: abs(widths[i] - target_w))
 
@@ -201,7 +201,7 @@ def main():
             for L in [int(s) for s in args.seq_lens.split(",")]:
                 fns = shapes(model, L, device, args.decode_batch)
                 for lvl in levels:
-                    r = rung_for(lvl, widths); force_rung(ffs, r); c = widths[r] / H if r < len(widths) else 0.0
+                    r = rung_for(lvl, widths); force_rung(ffs, r); c = widths[r] / H
                     for shape, fn in fns.items():
                         if shape == "decode" and L != int(args.seq_lens.split(",")[0]):
                             continue
@@ -234,7 +234,7 @@ def main():
             for L in [int(s) for s in args.seq_lens.split(",")]:
                 fns = shapes(model, L, device, args.decode_batch)
                 for lvl in levels:
-                    r = rung_for(lvl, widths); force_rung(ffs, r); c = widths[r] / H if r < len(widths) else 0.0
+                    r = rung_for(lvl, widths); force_rung(ffs, r); c = widths[r] / H
                     th, ffn_frac = theoretical(model, L, c, n_full, n_full)
                     for shape, fn in fns.items():
                         if shape == "decode" and L != int(args.seq_lens.split(",")[0]):
