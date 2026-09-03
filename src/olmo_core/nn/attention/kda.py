@@ -14,7 +14,11 @@ from torch.distributed.tensor import Placement
 
 from olmo_core.config import DType
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
-from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda, has_fla
+from olmo_core.nn.attention.flash_linear_attn_api import (
+    dispatch_chunk_kda,
+    has_fla,
+    has_kernel_fun,
+)
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
@@ -64,6 +68,11 @@ class KimiDeltaAttention(SequenceMixer):
             raise RuntimeError(
                 "KimiDeltaAttention requires flash-linear-attention with fla.ops.kda"
             )
+        if use_cute_kernel and not has_kernel_fun():
+            raise RuntimeError(
+                "KimiDeltaAttention(use_cute_kernel=True) requires the kernel-fun package; "
+                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
+            )
         from fla.modules import FusedRMSNormGated
 
         self.d_model = d_model
@@ -77,13 +86,13 @@ class KimiDeltaAttention(SequenceMixer):
         if use_cute_kernel:
             log_once(
                 log,
-                "KDA is running with the EXPERIMENTAL cute-kda kernels "
+                "KDA is running with the EXPERIMENTAL cute-kda kernels from kernel-fun "
                 "(use_cute_kernel=True). These are new, are not numerically identical to "
                 "FLA's kernels, and only engage on Blackwell at chunk size 64 without "
                 "packed-document cu_seqlens; every other shape falls back to FLA — which "
                 "the kernels log, with the reason, once per process. Set "
                 "KERNEL_FUN_DISABLE=1 to force FLA everywhere without a config change. "
-                "See olmo_core.nn.attention.kda_cute for the supported box.",
+                "See the kernel_fun.kda package for the supported box.",
                 level=logging.WARNING,
             )
 
@@ -181,6 +190,16 @@ class KimiDeltaAttention(SequenceMixer):
         k = k.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
+
+        if self.use_cute_kernel:
+            # Once per process, from the first forward (not __init__, which may run on the
+            # meta device before CUDA is up): everything that decides what kernel-fun computes
+            # and how fast. Two of these (the CuTe DSL and cuda-python) are pinned by nothing
+            # and arrive with the base image; when a run is slower than the last one, this is
+            # the first thing to diff.
+            import kernel_fun
+
+            log_once(log, "kernel-fun %s", kernel_fun.versions())
 
         o, _ = dispatch_chunk_kda(
             q=q,
@@ -310,8 +329,10 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
     :param use_cute_kernel: **Experimental.** Whether to use the CuTe/Triton KDA kernels
-        from :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
-        Only takes effect on hardware/shapes those kernels support (Blackwell,
+        from the ``kernel-fun`` package (:func:`kernel_fun.kda.chunk_kda`) for the
+        fixed-length chunk path. Requires the package, installed with the ``kernel-fun``
+        extra (``pip install 'ai2-olmo-core[kernel-fun]'``); building the layer without it
+        raises. Only takes effect on hardware/shapes those kernels support (Blackwell,
         chunk-size-64, no packed-document ``cu_seqlens``); otherwise the layer
         silently falls back to FLA's kernel.
 
@@ -320,10 +341,15 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
         turned off. Swapped in are the forward scan+readout, the gate activation (fused
         into the cumsum rather than run as eager fp32 ops), and four of the backward's
         seven stages; the rest are FLA's own kernels at FLA's own stage boundaries. At the
-        production shape this measured 1.545x on the op. Leave it off unless you are
+        production shape this measured 1.54x on the op. Leave it off unless you are
         deliberately testing the kernels, and check the ``kernel-fun kda`` lines in the
         training log to confirm they engaged — the fallback is silent by design and reads
         as a correct 1.00x. ``KERNEL_FUN_DISABLE=1`` forces FLA everywhere at runtime.
+
+        Independently of this flag, when ``kernel-fun`` is installed the layer's three
+        causal convolutions run its fused short-conv kernels (see
+        :func:`~olmo_core.nn.attention.flash_linear_attn_api.dispatch_causal_conv1d`);
+        ``KERNEL_FUN_CCONV_DISABLE=1`` routes those back to FLA.
     :param dtype: The parameter dtype.
     """
 

@@ -8,10 +8,27 @@ try:
 except ImportError:
     fla = None
 
+try:
+    # Cheap on a machine with no GPU: the package imports nothing (no torch, triton, or the
+    # CuTe DSL) until one of its op families is actually used.
+    import kernel_fun
+except ImportError:
+    kernel_fun = None
+
 
 def has_fla() -> bool:
     """Check if flash-linear-attention (fla) is installed."""
     return fla is not None
+
+
+def has_kernel_fun() -> bool:
+    """Check if ``kernel-fun`` is installed.
+
+    ``kernel-fun`` ships CuTe/Triton drop-ins for FLA's KDA chunk kernel and short
+    convolution. Install it with the ``kernel-fun`` extra:
+    ``pip install 'ai2-olmo-core[kernel-fun]'``.
+    """
+    return kernel_fun is not None
 
 
 def dispatch_chunk_gated_delta_rule(
@@ -61,17 +78,23 @@ def dispatch_chunk_kda(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Dispatch Moonshot's pinned Triton KDA training kernel lazily.
 
-    With ``use_cute_kernel=True``, calls the **experimental** CuTe/Triton kernels vendored
-    in :mod:`olmo_core.nn.attention.kda_cute` instead. That entry point is a drop-in with
-    this exact signature and forwards any call it does not support (packed documents,
-    non-Blackwell, off-shape, graph capture) to FLA itself — so there is no predicate to
-    check here, and the branch below is only about not importing the kernels at all when
-    the flag is off. Those kernels are not numerically identical to FLA's, so opt in only
-    when you are deliberately testing them.
+    With ``use_cute_kernel=True``, calls the **experimental** CuTe/Triton kernels from the
+    ``kernel-fun`` package (:func:`kernel_fun.kda.chunk_kda`) instead. That entry point is a
+    drop-in with this exact signature and forwards any call it does not support (packed
+    documents, non-Blackwell, off-shape, graph capture) to FLA itself — so there is no
+    predicate to check here, and the branch below is only about not importing the kernels
+    at all when the flag is off. Those kernels are not numerically identical to FLA's, so
+    opt in only when you are deliberately testing them. ``KERNEL_FUN_DISABLE=1`` (or
+    ``KERNEL_FUN_KDA_DISABLE=1``) forces FLA everywhere without a config change.
     """
     assert has_fla()
     if use_cute_kernel:
-        from olmo_core.nn.attention.kda_cute import cute_chunk_kda
+        if not has_kernel_fun():
+            raise RuntimeError(
+                "use_cute_kernel=True requires the kernel-fun package; "
+                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
+            )
+        from kernel_fun.kda import chunk_kda as cute_chunk_kda
 
         return cute_chunk_kda(
             q=q,
@@ -153,7 +176,16 @@ def dispatch_causal_conv1d(
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
 ) -> torch.Tensor:
     assert has_fla()
-    from fla.modules.convolution import causal_conv1d
+    if has_kernel_fun():
+        # kernel-fun's fused short-conv kernels. Same signature and return contract as FLA's;
+        # anything outside its box (bias, packed-document cu_seqlens, activation=None,
+        # backend="cuda", an unsupported device) is forwarded to FLA by the package itself,
+        # which also honours KERNEL_FUN_CCONV_DISABLE=1 / KERNEL_FUN_DISABLE=1 per call. So
+        # there is no flag here: installing the package is the opt-in, and the env var is the
+        # way back. The package logs once per process whether its kernels engaged.
+        from kernel_fun.cconv import causal_conv1d
+    else:
+        from fla.modules.convolution import causal_conv1d
 
     return causal_conv1d(
         x=x,

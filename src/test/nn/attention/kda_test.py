@@ -5,7 +5,7 @@ from olmo_core.nn.attention import KimiDeltaAttentionConfig
 from olmo_core.testing import requires_gpu
 from olmo_core.testing.utils import requires_fla
 
-# The vendored kernels carry two independent CTA floors and quietly hand the work back to
+# The kernel-fun kernels carry two independent CTA floors and quietly hand the work back to
 # FLA below either one: the chain needs B * HV * (V // 64) >= 256, and the MMA intra
 # backward needs B * (T / 64) * HV >= 1024 of its own. Every cute arm below is sized to
 # clear both — B=4, T=1024, HV=16, V=256 gives exactly 256 and 1024 — because a test run
@@ -22,7 +22,8 @@ def _skip_unless_cute() -> None:
     """
     import torch
 
-    from olmo_core.nn.attention.kda_cute import is_supported
+    pytest.importorskip("kernel_fun", reason="requires the kernel-fun package")
+    from kernel_fun.kda import is_supported
 
     if not torch.cuda.is_available():
         pytest.skip("no CUDA device")
