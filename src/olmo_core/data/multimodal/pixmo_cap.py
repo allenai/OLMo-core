@@ -29,9 +29,17 @@ import numpy as np
 from olmo_core.config import Config
 
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import example_rng, build_branched_sequence
+from .sequence_builder import build_branched_sequence, example_rng
 
-__all__ = ["PixMoCapDataset", "PixMoCapDatasetConfig", "CAPTION_PROMPTS", "TRANSCRIPT_PROMPTS"]
+__all__ = [
+    "PixMoCapDataset",
+    "PixMoCapDatasetConfig",
+    "CAPTION_PROMPTS",
+    "TRANSCRIPT_PROMPTS",
+    "style_length_prefix",
+    "style_tag_prompt",
+    "STYLE_TAG_FAMILIES",
+]
 
 # Prompt pools mirroring mm_olmo's ``GENERAL_PROMPTS_V1`` (data_formatter.py); one is
 # sampled per example (seeded) so the user turn matches the caption-pretraining mix.
@@ -65,6 +73,54 @@ TRANSCRIPT_STYLE = "transcript"
 _LENGTH_BUCKET = 15
 _LENGTH_NOISE_STD = 25.0
 _LENGTH_KEEP_PROB = 0.90
+
+
+def style_length_prefix(style: str, text: str, rng: np.random.RandomState) -> str:
+    """mm_olmo ``style_and_length_v2`` prefix: ``"<style> <bucket>:"`` (90%) or ``"<style>:"``
+    (10%), where ``bucket = (len(text) + N(0, 25)) // 15`` (data_formatter.py:1736-1749).
+
+    Shared by every stage-1 source whose response is free text (captions, transcripts, OCR
+    pages): the tag lets the model condition its output length on the prompt.
+    """
+    if rng.rand() < _LENGTH_KEEP_PROB:
+        n = len(text) + int(rng.normal(scale=_LENGTH_NOISE_STD))
+        n = n // _LENGTH_BUCKET
+        return f"{style} {n}:"
+    return f"{style}:"
+
+
+#: mm_olmo ``system_prompt`` families understood by :func:`style_tag_prompt`
+#: (``DataFormatter.get_system_prompt``, data_formatter.py:1690-1756).
+STYLE_TAG_FAMILIES = frozenset(
+    {
+        "style_and_length",
+        "style_and_length_v2",
+        "style_and_length_v3",
+        "demo_or_style_v2",
+        "demo_or_style_v3",
+        "none",
+    }
+)
+
+
+def style_tag_prompt(style: str, text: str, rng: np.random.RandomState, system_prompt: str) -> str:
+    """The user turn of a free-text response source that has no question of its own (olmOCR-mix
+    and the caption tars): just the style tag, rendered per mm_olmo's ``system_prompt`` family.
+
+    ``style_and_length[_v2]`` gives the length-conditioned ``"<style> <bucket>:"``;
+    ``style_and_length_v3`` (which reserves the bucket for captions / transcripts) and the
+    ``demo_or_style`` families (which prefix every non-demo style) give the bare ``"<style>:"``;
+    ``none`` gives no prefix at all.
+    """
+    if system_prompt not in STYLE_TAG_FAMILIES:
+        raise ValueError(
+            f"system_prompt={system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
+        )
+    if system_prompt in ("style_and_length", "style_and_length_v2"):
+        return style_length_prefix(style, text, rng)
+    if system_prompt == "none":
+        return ""
+    return f"{style}:"
 
 
 @dataclass
@@ -204,13 +260,8 @@ class PixMoCapDataset:
         return branches
 
     def _style_length_prefix(self, style: str, text: str, rng: np.random.RandomState) -> str:
-        """mm_olmo ``style_and_length_v2`` prefix: ``"<style> <bucket>:"`` (90%) or
-        ``"<style>:"`` (10%), where ``bucket = (len(text) + N(0, 25)) // 15``."""
-        if rng.rand() < _LENGTH_KEEP_PROB:
-            n = len(text) + int(rng.normal(scale=_LENGTH_NOISE_STD))
-            n = n // _LENGTH_BUCKET
-            return f"{style} {n}:"
-        return f"{style}:"
+        """See :func:`style_length_prefix`."""
+        return style_length_prefix(style, text, rng)
 
     def _sample_prompt(self, style: str, rng: np.random.RandomState) -> str:
         pool = TRANSCRIPT_PROMPTS if style == TRANSCRIPT_STYLE else CAPTION_PROMPTS
