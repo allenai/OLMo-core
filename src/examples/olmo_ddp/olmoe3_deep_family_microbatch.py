@@ -82,7 +82,10 @@ USE_REDUCE_SCATTER = os.environ.get("OLMOE3_USE_REDUCE_SCATTER", "0").strip().lo
     "on",
 }
 EP_CAPACITY_FACTOR = 1.25
-WORKSPACE = "ai2/OLMo-3-moe-experiments"
+WORKSPACE = os.environ.get(
+    "OLMOE3_BEAKER_WORKSPACE", "ai2/OLMo-3-moe-experiments"
+)
+BEAKER_PRIORITY = os.environ.get("OLMOE3_BEAKER_PRIORITY", "urgent")
 WANDB_PROJECT = "olmoe3-deep-family-microbatch"
 BEAKER_IMAGE = "akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24"
 PRESET = get_preset("olmo-ddp")
@@ -237,7 +240,7 @@ def build_common_components(
             raise RuntimeError("Could not determine Beaker username")
         secret_prefix = beaker_user.lower()
         launch.workspace = WORKSPACE
-        launch.priority = "urgent"
+        launch.priority = BEAKER_PRIORITY
         launch.min_runtime = "30m"
         launch.preemptible = None
         launch.budget = "ai2/oe-other"
