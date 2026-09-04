@@ -73,8 +73,9 @@ def launch_train(st, task, budget, arm):
             largs = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", str(KV_MICRO[SCALE]),
                      "--base-checkpoint", BASES[SCALE]]
     nodes = NUM_NODES.get(SCALE, 1)
-    if arm == "ffnmoe-t10p":
-        nodes = 1  # frozen FFN tail: grads + Adam only for ~35% of params -> one 80GB node holds 27B
+    # (ffnmoe-t10p on ONE 80GB node at 27B was tried 2026-09-04 and OOMed at 75 GB: the frozen tail
+    # still holds fp32 shards, the forward concatenates full weights per layer, and the 65k row's
+    # checkpointed activations are ~43 GB. It runs on the same 2-node/CP-2 footprint as the others.)
     if nodes > 1 and not arm.startswith("kv"):
         # packed arms keep global batch 8 (one 65k row per DP rank): with 2 nodes = 16 ranks that
         # needs Ulysses CP 2 (dp 8 x cp 2), same batch/schedule as every other scale. KV arms
