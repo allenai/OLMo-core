@@ -149,12 +149,16 @@ eval_size 500 except 2k at 600:
 Refitting with that one extra point per arm moves the fitted sparse-overtakes-dense budgets a long
 way:
 
-  rung   3-budget fit      4-budget fit
-   8k    301M              none below 10B
-  16k    460M              922M
-  32k    5404M             none below 10B
+  rung   3-budget fit   4-budget fit   5-budget fit (320M, 2026-09-03)
+   8k    301M           none <10B      none <10B
+  16k    460M           922M           none <10B
+  32k    5404M          none <10B      none <10B
 
-Two of the three crossovers disappear and the survivor doubles. The cause is visible in the fitted
+Two of the three crossovers disappear and the survivor doubles -- and at the FIFTH budget the
+survivor disappears too. oolong now has 20/40/80/160/320M on both arms and **no fitted crossover on
+any rung below 10B**. The 16k sparse ceiling walked 1.05 -> 0.83 -> 0.75 as budgets were added,
+each new point pulling it down; the crossover was always an artifact of how far the previous
+ceiling was allowed to float. The cause is visible in the fitted
 ceilings: with three points sparse@16k fit fmax 1.05 (its bound -- unconstrained, still rising),
 and the 160M point pins it to 0.83. **An extrapolated crossover is a statement about an
 unconstrained ceiling, not about the data.** Treat every "CROSSOVER NNNM PAST the largest measured

@@ -3,19 +3,29 @@
 
 === absence
     2k
+        d[fmax 1.01 g 0.89 K 1M rmse 0.000] 0.7:2M 0.8:4M 0.9:8M
         s[fmax 0.37 g 4.00 K 37M rmse 0.008] !STEP-NOT-HILL 0.7:above ceiling 0.37 0.8:above ceiling 0.37 0.9:above ceiling 0.37
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
     4k
+        d[fmax 1.00 g 1.43 K 2M rmse 0.000] 0.7:4M 0.8:6M 0.9:11M
         s[fmax 0.36 g 4.00 K 52M rmse 0.002] !STEP-NOT-HILL 0.7:above ceiling 0.36 0.8:above ceiling 0.36 0.9:above ceiling 0.36
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
     8k
+        d[fmax 1.00 g 2.78 K 6M rmse 0.000] 0.7:9M 0.8:10M 0.9:14M
         s[fmax 0.63 g 4.00 K 89M rmse 0.000] !STEP-NOT-HILL 0.7:above ceiling 0.63 0.8:above ceiling 0.63 0.9:above ceiling 0.63
+        CROSSOVER suppressed -- sparse is a step, not a Hill curve
 
 === contradiction
+    2k  s[flat at the floor -- no fit]
     2k
         d[fmax 0.99 g 2.06 K 4M rmse 0.000] 0.7:7M 0.8:9M 0.9:13M
+    8k  s[flat at the floor -- no fit]
     8k
         d[fmax 0.99 g 1.52 K 5M rmse 0.000] 0.7:8M 0.8:12M 0.9:21M
+   16k  s[flat at the floor -- no fit]
    16k
         d[fmax 1.00 g 1.17 K 6M rmse 0.000] 0.7:11M 0.8:18M 0.9:35M
+   32k  s[flat at the floor -- no fit]
    32k
         d[fmax 1.05 g 0.97 K 11M rmse 0.011] 0.7:22M 0.8:37M 0.9:>=70M
 
@@ -41,20 +51,20 @@
 
 === oolong
     2k
-        d[fmax 1.05 g 0.29 K 0M rmse 0.004] 0.7:1M 0.8:6M 0.9:51M
-        s[fmax 0.95 g 0.33 K 0M rmse 0.007] 0.7:2M 0.8:16M 0.9:>=646M
+        d[fmax 1.05 g 0.31 K 0M rmse 0.005] 0.7:1M 0.8:7M 0.9:50M
+        s[fmax 0.97 g 0.31 K 0M rmse 0.007] 0.7:2M 0.8:17M 0.9:>=497M
         CROSSOVER none below 10B
     8k
-        d[fmax 1.05 g 0.20 K 2M rmse 0.007] 0.7:74M 0.8:>=788M 0.9:>=18475M
-        s[fmax 1.05 g 0.26 K 19M rmse 0.008] 0.7:>=271M 0.8:>=1662M 0.9:>=18769M
+        d[fmax 1.05 g 0.30 K 6M rmse 0.026] 0.7:59M 0.8:277M 0.9:>=2215M
+        s[fmax 1.05 g 0.26 K 19M rmse 0.007] 0.7:264M 0.8:>=1579M 0.9:>=17250M
         CROSSOVER none below 10B
    16k
-        d[fmax 0.68 g 1.65 K 7M rmse 0.000] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
-        s[fmax 0.83 g 0.28 K 4M rmse 0.008] 0.7:>=1731M 0.8:>=768317M 0.9:above ceiling 0.83
-        CROSSOVER 922M = 5.8x PAST the largest measured budget (160M) -- EXTRAPOLATION, and the fitted ceilings driving it are dense 0.68 / sparse 0.83
+        d[fmax 0.87 g 0.33 K 2M rmse 0.014] 0.7:166M 0.8:>=3843M 0.9:above ceiling 0.87
+        s[fmax 0.75 g 0.36 K 3M rmse 0.007] 0.7:>=4405M 0.8:above ceiling 0.75 0.9:above ceiling 0.75
+        CROSSOVER none below 10B
    32k
-        d[fmax 0.74 g 0.38 K 1M rmse 0.006] 0.7:>=1939M 0.8:above ceiling 0.74 0.9:above ceiling 0.74
-        s[fmax 0.68 g 0.36 K 2M rmse 0.003] 0.7:above ceiling 0.68 0.8:above ceiling 0.68 0.9:above ceiling 0.68
+        d[fmax 1.05 g 0.17 K 8M rmse 0.007] 0.7:>=463M 0.8:>=7228M 0.9:>=285485M
+        s[fmax 0.69 g 0.36 K 3M rmse 0.004] 0.7:above ceiling 0.69 0.8:above ceiling 0.69 0.9:above ceiling 0.69
         CROSSOVER none below 10B
 
 === outlier
