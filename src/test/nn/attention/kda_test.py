@@ -35,6 +35,18 @@ def _skip_unless_cute() -> None:
         pytest.skip(f"the cute KDA kernels decline this box: {reason}")
 
 
+def _set_use_cute_kernel(module, use_cute: bool) -> None:
+    """Flip the one cute flag on a built layer, convolutions included.
+
+    ``use_cute_kernel`` is a single switch over both kernel families, so a test that flips
+    it after ``build()`` has to reach the three ``CausalConv1d`` children too — otherwise
+    the arm labelled "cute" would still be running FLA's short conv.
+    """
+    module.use_cute_kernel = use_cute
+    for conv in (module.q_conv1d, module.k_conv1d, module.v_conv1d):
+        conv.use_cute_kernel = use_cute
+
+
 def _init_real_weights(module, d_model: int, seed: int = 777) -> None:
     """Apply the real init: exp(A_log) in [1, 16] gives per-step decays of ~16 log2
     units per channel — the strong-decay regime where unbounded exp2 factorizations
@@ -191,7 +203,7 @@ def test_kimi_delta_attention_cute_matches_fla():
 
     results = {}
     for use_cute in (False, True):
-        module.use_cute_kernel = use_cute
+        _set_use_cute_kernel(module, use_cute)
         module.zero_grad(set_to_none=True)
         xi = x.clone().requires_grad_(True)
         with torch.autocast(device_type=device, dtype=dtype):
