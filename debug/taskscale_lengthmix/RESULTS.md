@@ -216,6 +216,30 @@ not a smooth rise.
 the measurement has to be several seeds per budget with the takeoff FRACTION reported, not one run
 with an f1. Two seeds is already enough to show the effect; it is not enough to estimate the rate.
 
+### Four seeds at each takeoff budget (2026-09-04) -- both tasks are bimodal
+
+Seeds 1/3/4/5 at the takeoff budget, f1 @8k, eval_size 600:
+
+  nq @48M          .728   .785   .020   .687     -> 3 of 4 took off
+  qdmatch @160M    .448   .002   .138   .002     -> 1 of 4 clean, 1 partial, 2 floor
+
+nq is bimodal too -- I called it "reliable, only the level moves" after three seeds, and the fourth
+landed on the floor (.210 @2k, .020 @8k). Neither task has a takeoff budget in the sense of "past
+here it works"; both have a budget past which it works SOMETIMES. qdmatch's seed 4 at .138 also
+shows the outcome is not strictly binary: there is a partial-credit mode between floor and takeoff.
+
+Per-seed full ladders are banked as `sparse_seed{3,4,5}` alongside the original `sparse`.
+
+**What this means for the published ladders.** The qdmatch sparse ladder reads .002 / .448 / .569
+at 64/160/320M. Its 160M point is a 1-in-4 draw; a different seed would have made the same ladder
+read .002 / .002 / .569 and moved the apparent takeoff a full budget to the right. The 64M and 320M
+points are single runs and have never been replicated, so the ladder's SHAPE is not established.
+The nq ladder has the same problem at 48M with a 3-in-4 draw.
+
+**The honest summary is that sparse-landmark near threshold is not characterized by a mean.** Two
+seeds per point would still be misleading here; the quantity is a distribution with mass at the
+floor, and reporting it needs the fraction plus the spread of the non-floor mode.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
