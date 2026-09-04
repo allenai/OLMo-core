@@ -92,29 +92,33 @@ def ready_checkpoint() -> dict[str, Any] | None:
 
 
 def existing_experiment() -> dict[str, Any] | None:
-    result = subprocess.run(
-        [
-            "beaker",
-            "workspace",
-            "experiments",
-            TARGET_WORKSPACE,
-            "--text",
-            BRANCH_RUN_ID,
-            "--format",
-            "json",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    # The lightweight Gantry runtime provides the Beaker Python SDK but does
+    # not necessarily include the separate Go CLI binary.
+    from beaker import Beaker
+
+    beaker = Beaker.from_env(
+        default_workspace=TARGET_WORKSPACE,
+        check_for_upgrades=False,
     )
-    experiments = json.loads(result.stdout)
+    workspace = beaker.workspace.get(TARGET_WORKSPACE)
     prefix = f"{BRANCH_RUN_ID}-train-"
-    matches = [
-        experiment
-        for experiment in experiments
-        if experiment.get("name") == f"{BRANCH_RUN_ID}-train"
-        or str(experiment.get("name", "")).startswith(prefix)
-    ]
+    matches: list[dict[str, Any]] = []
+    for workload in beaker.workload.list(
+        workspace=workspace,
+        name_or_description=BRANCH_RUN_ID,
+        limit=100,
+    ):
+        if not workload.HasField("experiment"):
+            continue
+        experiment = workload.experiment
+        if experiment.name == f"{BRANCH_RUN_ID}-train" or experiment.name.startswith(prefix):
+            matches.append(
+                {
+                    "id": experiment.id,
+                    "name": experiment.name,
+                    "created": experiment.created.ToDatetime().isoformat(),
+                }
+            )
     if not matches:
         return None
     return max(matches, key=lambda experiment: experiment.get("created", ""))
