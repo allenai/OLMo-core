@@ -356,7 +356,8 @@ def build_trainer_config(common: CommonComponents, phase: Phase) -> TrainerConfi
                 save_interval=phase.checkpoint_interval,
                 ephemeral_save_interval=None,
                 pre_train_checkpoint=None,
-                save_async=True,
+                # OLMoDDP checkpoints currently require the synchronous path.
+                save_async=False,
                 remove=CheckpointRemovalStrategy.never,
                 max_checkpoints=None,
             ),
