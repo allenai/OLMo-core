@@ -28,17 +28,24 @@ TAG = "s" + SCALE.replace(".", "")          # s08b, s2b, s9b
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 BASES = {"0.8b": f"{W}/ctc_suite/bases/q35-08b-base-markerfix/model_and_optim",
          "2b": f"{W}/ctc_suite/bases/q35-2b-base-markerfix/model_and_optim",
+         "4b": f"{W}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim",
          "9b": f"{W}/ctc_suite/bases/q35-9b-base-markerfix/model_and_optim",
          "27b": f"{W}/ctc_suite/bases/q35-27b-base-markerfix/model_and_optim"}
 N_LAYERS = {"0.8b": 24, "2b": 24, "4b": 32, "9b": 32, "27b": 64}
-GPUS = {"0.8b": 4, "2b": 4, "9b": 8, "27b": 8}
+FFN_H = {"0.8b": 3584, "2b": 6144, "4b": 9216, "9b": 12288, "27b": 17408}   # intermediate width per scale
+TRAINABLE_W = {s: h // 16 for s, h in FFN_H.items()}                          # "train what you route to": H/16 prefix
+GPUS = {"0.8b": 4, "2b": 4, "4b": 4, "9b": 8, "27b": 8}
 # 27B full fine-tune on 80GB H100s: fp32 master + grads + Adam = 16 B/param = 432 GB sharded ->
 # 54 GB/GPU on one node before activations, so default to TWO nodes (27 GB/GPU). FS_NUM_NODES overrides.
 NUM_NODES = {"0.8b": 1, "2b": 1, "9b": 1, "27b": int(os.environ.get("FS_NUM_NODES", "2"))}
-KV_MICRO = {"0.8b": 2, "2b": 2, "9b": 1, "27b": 1}
+KV_MICRO = {"0.8b": 2, "2b": 2, "4b": 2, "9b": 1, "27b": 1}
 TASKS = os.environ.get("FS_TASKS", "oolong,contradiction").split(",")
 BUDGETS = {"oolong": ["20M", "80M"], "contradiction": ["14M", "56M"]}
 ARMS = {"oolong": ["dense", "kv17", "ffnmoe-t10"], "contradiction": ["dense", "kv33", "ffnmoe-t10"]}
+if os.environ.get("FS_ARMS"):  # FS_ARMS=ffnmoe-t10p limits every task to these arms
+    ARMS = {t: os.environ["FS_ARMS"].split(",") for t in ARMS}
+if os.environ.get("FS_EXTRA_ARMS"):  # FS_EXTRA_ARMS=ffnmoe-t10p appends to each task's list
+    ARMS = {t: a + [x for x in os.environ["FS_EXTRA_ARMS"].split(",") if x not in a] for t, a in ARMS.items()}
 CLUSTER = os.environ.get("FS35_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale")
 STATE = f"{D}/orchestrate_{TAG}_state.json"
 o35.STATE = STATE  # orchestrate35.save/load write this file
@@ -61,20 +68,24 @@ def launch_train(st, task, budget, arm):
             # "layers 12+" of a 32-layer model = the top 62.5%; keep that fraction at other depths
             start = round(N_LAYERS[SCALE] * 12 / 32)
             extra = extra.replace("--ffn-moe-start-layer 12", f"--ffn-moe-start-layer {start}")
+            extra = extra.replace("--ffn-moe-trainable-width 576", f"--ffn-moe-trainable-width {TRAINABLE_W[SCALE]}")
         if arm.startswith("kv"):  # padded single-example rows; micro-batch by scale
             largs = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", str(KV_MICRO[SCALE]),
                      "--base-checkpoint", BASES[SCALE]]
-    if NUM_NODES.get(SCALE, 1) > 1 and not arm.startswith("kv"):
+    nodes = NUM_NODES.get(SCALE, 1)
+    if arm == "ffnmoe-t10p":
+        nodes = 1  # frozen FFN tail: grads + Adam only for ~35% of params -> one 80GB node holds 27B
+    if nodes > 1 and not arm.startswith("kv"):
         # packed arms keep global batch 8 (one 65k row per DP rank): with 2 nodes = 16 ranks that
         # needs Ulysses CP 2 (dp 8 x cp 2), same batch/schedule as every other scale. KV arms
         # (160 padded rows/step) split across 16 ranks without CP.
-        largs = largs + ["--cp-degree", str(NUM_NODES[SCALE])]
+        largs = largs + ["--cp-degree", str(nodes)]
     if SCALE == "0.8b":
         # the trainer's scale default for 0.8b is NO activation checkpointing (fits on 141GB H200s);
         # a 65k packed row OOMs an 80GB H100 without it (fs35s08b-oolong-dense-s20M, 23:20)
         extra = (extra + " --activation-checkpointing full").strip()
     cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", "qwen3_5", "--model-scale", SCALE,
-           "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", str(NUM_NODES.get(SCALE, 1)), "--num-gpus", str(GPUS[SCALE]),
+           "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", str(nodes), "--num-gpus", str(GPUS[SCALE]),
            "--epochs", "1", "--lr", "5e-6", "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
            "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + ["launch"]
     rc, out = o35.sh(cmd, timeout=1200)

@@ -120,6 +120,7 @@ def post_build_hook_from_config(model_path: str):
             divisors=[float(x) for x in str(block["divisors"]).split(",")],
             include_null=bool(block.get("include_null", True)),
             width_multiple=int(block.get("width_multiple", 8)),
+            trainable_width=int(block.get("trainable_width", 0) or 0),
         )
         log.info(
             "[ffn-moe] routing enabled from config.json: start_layer=%s divisors=%s rungs=%s",
@@ -521,13 +522,44 @@ class NestedFFNRouter(nn.Module):
         return self.w(x)
 
 
+def _ffn_weights(ff: nn.Module):
+    """The FFN's effective ``(w1, w3, w2)`` weights.
+
+    "Train what you route to" (``trainable_width`` > 0): the base FFN weights are FROZEN and the
+    first ``k`` hidden units live in separate trainable parameters ``_nffnp_w1/_nffnp_w3`` (k x d)
+    and ``_nffnp_w2`` (d x k); the effective weight is their concatenation with the frozen tail.
+    The frozen rows carry no gradient and no optimizer state, which is what makes a 27B routed
+    fine-tune fit one 80GB node. Without ``trainable_width`` the plain weights are returned.
+    """
+    k = getattr(ff, "_nffn_trainable_width", 0)
+    w1, w2, w3 = ff.w1.weight, ff.w2.weight, ff.w3.weight  # type: ignore[union-attr]
+    if not k:
+        return w1, w3, w2
+    return (
+        torch.cat([ff._nffnp_w1, w1[k:]], dim=0),  # type: ignore[attr-defined]
+        torch.cat([ff._nffnp_w3, w3[k:]], dim=0),  # type: ignore[attr-defined]
+        torch.cat([ff._nffnp_w2, w2[:, k:]], dim=1),  # type: ignore[attr-defined]
+    )
+
+
+def _full_ffn(ff: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """The un-routed gated MLP on the EFFECTIVE weights (identical to ``ff.forward`` unless a
+    trainable prefix is installed, in which case ``ff.forward`` would read the frozen base)."""
+    if not getattr(ff, "_nffn_trainable_width", 0):
+        return ff._nffn_orig_forward(x)  # type: ignore[attr-defined]
+    w1, w3, w2 = _ffn_weights(ff)
+    h = ff.activation_fn(F.linear(x, w1, ff.w1.bias)) * F.linear(x, w3, ff.w3.bias)  # type: ignore[union-attr]
+    return F.linear(h, w2, ff.w2.bias)  # type: ignore[union-attr]
+
+
 def _slice_ffn(ff: nn.Module, x: torch.Tensor, width: int) -> torch.Tensor:
     """Run ``ff``'s gated MLP using only its first ``width`` hidden units."""
-    w1, w2, w3 = ff.w1, ff.w2, ff.w3  # type: ignore[union-attr]
-    h1 = F.linear(x, w1.weight[:width], None if w1.bias is None else w1.bias[:width])
-    h3 = F.linear(x, w3.weight[:width], None if w3.bias is None else w3.bias[:width])
+    w1, w3, w2 = _ffn_weights(ff)
+    b1, b3, b2 = ff.w1.bias, ff.w3.bias, ff.w2.bias  # type: ignore[union-attr]
+    h1 = F.linear(x, w1[:width], None if b1 is None else b1[:width])
+    h3 = F.linear(x, w3[:width], None if b3 is None else b3[:width])
     h = ff.activation_fn(h1) * h3  # type: ignore[union-attr]
-    return F.linear(h, w2.weight[:, :width], w2.bias)
+    return F.linear(h, w2[:, :width], b2)
 
 
 #: Set to ``False`` to route through plain autograd over weight slices (the reference path).
@@ -667,7 +699,7 @@ def _forward_generator(self: nn.Module, device: torch.device, stream: int = 0) -
 
 def _nested_forward(self: nn.Module, x: torch.Tensor) -> torch.Tensor:
     holder: NestedFFNHolder = self._nffn_holder  # type: ignore[attr-defined]
-    orig = self._nffn_orig_forward  # type: ignore[attr-defined]
+    orig = lambda t: _full_ffn(self, t)  # noqa: E731  (effective weights, see _ffn_weights)
     if not holder.enabled:
         return orig(x)
 
@@ -727,9 +759,8 @@ def _nested_forward(self: nn.Module, x: torch.Tensor) -> torch.Tensor:
     idxs = torch.split(order, usage)
 
     if _fused_ladder_ok(self):
-        out = _NestedLadderFn.apply(
-            tuple(widths), flat, self.w1.weight, self.w3.weight, self.w2.weight, *idxs  # type: ignore[union-attr]
-        )
+        w1_eff, w3_eff, w2_eff = _ffn_weights(self)
+        out = _NestedLadderFn.apply(tuple(widths), flat, w1_eff, w3_eff, w2_eff, *idxs)
     else:
         # Reference path: plain autograd over weight slices. Correct, but see _NestedLadderFn for
         # why its backward is slow.
@@ -801,10 +832,16 @@ def install_nested_ffn_moe(
     widths: Sequence[int],
     costs: Sequence[float],
     init_device: str = "cpu",
+    trainable_width: int = 0,
 ) -> List[str]:
     """
     Attach a router + per-rung gains to every block at or after ``start_layer`` and shadow its
     ``feed_forward.forward`` with the nested-rung version.
+
+    ``trainable_width`` > 0 = "train what you route to": the routed FFN's base weights are frozen
+    and only the first ``trainable_width`` hidden units train, as separate parameters
+    ``_nffnp_w1/_nffnp_w3/_nffnp_w2`` (see :func:`_ffn_weights`). New state-dict keys; the frozen
+    base keys are unchanged, so a base checkpoint still loads.
 
     The FFN's own weights and state-dict keys are untouched; the only new keys are
     ``<block>.feed_forward.{_nffn_router.w.weight,_nffn_router.w.bias,_nffn_gain}``.
@@ -852,6 +889,18 @@ def install_nested_ffn_moe(
         ff._nffn_widths = list(widths)
         ff._nffn_costs = list(costs)
         ff._nffn_layer_idx = int(key)
+        ff._nffn_trainable_width = int(trainable_width or 0)
+        if trainable_width:
+            k = int(trainable_width)
+            if not (0 < k < ff.w1.out_features):
+                raise ValueError(f"block {key}: trainable_width {k} must be in (0, {ff.w1.out_features})")
+            for lin in (ff.w1, ff.w2, ff.w3):
+                lin.weight.requires_grad_(False)
+                if lin.bias is not None:
+                    lin.bias.requires_grad_(False)
+            ff._nffnp_w1 = nn.Parameter(ff.w1.weight.detach()[:k].clone())
+            ff._nffnp_w3 = nn.Parameter(ff.w3.weight.detach()[:k].clone())
+            ff._nffnp_w2 = nn.Parameter(ff.w2.weight.detach()[:, :k].clone())
         ff._nffn_orig_forward = ff.forward
         ff.forward = MethodType(_nested_forward, ff)
         # Built on ``meta`` (every FSDP/Beaker run), the gains above are an EMPTY tensor and the
@@ -872,11 +921,30 @@ def _nested_reset_parameters(self: nn.Module) -> None:
     reset_nested_ffn_extras(self)
 
 
-def reset_nested_ffn_extras(ff: nn.Module) -> None:
-    """Set ``ff``'s router to pick the full rung and its per-rung gains to 1 (an exact base model)."""
+def reset_nested_ffn_extras(ff: nn.Module, parts: Optional[Sequence[str]] = None) -> None:
+    """Deterministic init of the nested-FFN extras: router to the full rung, gains to 1, and the
+    trainable prefix copied from the (already loaded) frozen base weights, so the effective FFN
+    equals the base exactly. ``parts`` restricts this to a subset of {"router", "gain", "prefix"}
+    (a stage-2 warm start loads its router and must not have it reset)."""
+    parts = set(parts) if parts is not None else {"router", "gain", "prefix"}
     with torch.no_grad():
-        ff._nffn_gain.fill_(1.0)  # type: ignore[attr-defined]
-        ff._nffn_router.reset_parameters()  # type: ignore[attr-defined]
+        if "gain" in parts:
+            ff._nffn_gain.fill_(1.0)  # type: ignore[attr-defined]
+        if "router" in parts:
+            ff._nffn_router.reset_parameters()  # type: ignore[attr-defined]
+        if "prefix" in parts and getattr(ff, "_nffn_trainable_width", 0):
+            k = ff._nffn_trainable_width  # type: ignore[attr-defined]
+            for name, src, sl in (("_nffnp_w1", ff.w1.weight, (slice(None, k),)),  # type: ignore[union-attr]
+                                  ("_nffnp_w3", ff.w3.weight, (slice(None, k),)),  # type: ignore[union-attr]
+                                  ("_nffnp_w2", ff.w2.weight, (slice(None), slice(None, k)))):  # type: ignore[union-attr]
+                dst = getattr(ff, name)
+                full = src.full_tensor() if hasattr(src, "full_tensor") else src
+                val = full[sl]
+                if hasattr(dst, "device_mesh"):  # FSDP DTensor: re-shard the prefix like the param
+                    from torch.distributed.tensor import distribute_tensor
+
+                    val = distribute_tensor(val.to(dst.dtype), dst.device_mesh, dst.placements)
+                dst.copy_(val)
 
 
 @torch.no_grad()

@@ -436,6 +436,7 @@ class Transformer(nn.Module):
         seed: int = 0,
         layer_curriculum_calls: int = 0,
         width_multiple: int = 8,
+        trainable_width: int = 0,
     ) -> None:
         """
         Enable the nested-width FFN mixture (see :mod:`olmo_core.nn.nested_ffn_moe`): from
@@ -495,7 +496,8 @@ class Transformer(nn.Module):
             layer_curriculum_calls=layer_curriculum_calls,
         )
         routed = install_nested_ffn_moe(
-            self.blocks, holder, start_layer=start_layer, widths=widths, costs=costs
+            self.blocks, holder, start_layer=start_layer, widths=widths, costs=costs,
+            trainable_width=trainable_width,
         )
         if not routed:
             raise OLMoConfigurationError("enable_nested_ffn_moe routed no blocks")

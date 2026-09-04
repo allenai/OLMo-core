@@ -902,7 +902,7 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     state_dict = _prepare_state_dict(model, None)
     model_sd = state_dict["model"]
     missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
-    allowed = ("._nffn_router.", "._nffn_gain", "pooled_projector.", "._pooled_projector")
+    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "pooled_projector.", "._pooled_projector")
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
         raise SystemExit(
@@ -918,19 +918,23 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     # The new keys must start from their DETERMINISTIC init, not from whatever the meta-device
     # materialization left in memory: re-run each owner's reset for every missing key.
     # (Only missing keys -- a stage-2 warm start LOADS its router/gains from stage 1.)
-    reset_owners = set()
+    reset_owners: dict = {}
     for k in missing:
-        if "._nffn_" in k:
-            reset_owners.add(k.split("._nffn_")[0])
+        if "._nffn_router." in k:
+            reset_owners.setdefault(k.split("._nffn_router.")[0], set()).add("router")
+        elif "._nffn_gain" in k:
+            reset_owners.setdefault(k.split("._nffn_gain")[0], set()).add("gain")
+        elif "._nffnp_" in k:
+            reset_owners.setdefault(k.split("._nffnp_")[0], set()).add("prefix")
         elif "pooled_projector" in k:
-            reset_owners.add(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector")
+            reset_owners.setdefault(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set())
     stats = []
     for owner in sorted(reset_owners):
         mod = model.get_submodule(owner)
         if hasattr(mod, "_nffn_gain"):
             from olmo_core.nn.nested_ffn_moe import reset_nested_ffn_extras
 
-            reset_nested_ffn_extras(mod)
+            reset_nested_ffn_extras(mod, parts=reset_owners[owner])
             # Under FSDP these are DTensors sharded across ranks; with 8 ranks and 7 rungs one
             # rank's local shard is EMPTY and .min() raises there (9B ladder, 2026-09-03), which
             # hangs every other rank at the next collective. Gather before reading.
@@ -1106,6 +1110,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             entropy_weight=opts.ffn_moe_entropy_weight,
             seed=opts.seed,
             layer_curriculum_calls=int(total_calls * opts.ffn_moe_layer_curriculum_frac),
+            trainable_width=opts.ffn_moe_trainable_width,
             width_multiple=opts.ffn_moe_width_multiple,
         )
         print(
@@ -1257,6 +1262,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                         "divisors": opts.ffn_moe_divisors,
                         "include_null": not opts.ffn_moe_no_null,
                         "width_multiple": opts.ffn_moe_width_multiple,
+                        "trainable_width": opts.ffn_moe_trainable_width,
                     }
                     if opts.variant == "ffnmoe"
                     else None
@@ -1327,6 +1333,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ffn-moe-target", type=float, default=0.01, help="budget: mean FFN cost on routed layers")
     ap.add_argument("--ffn-moe-budget-weight", type=float, default=1.0)
     ap.add_argument("--ffn-moe-hinge-power", type=int, default=1)
+    ap.add_argument("--ffn-moe-trainable-width", type=int, default=0,
+                    help="'train what you route to': freeze the routed FFNs beyond this many hidden units "
+                    "(only the prefix + router + gains train; 0 = whole FFN trains)")
     ap.add_argument("--ffn-moe-two-sided", action="store_true",
                     help="budget = |mean_cost - target| (pulls an undershooting router back up to the target)")
     ap.add_argument("--ffn-moe-target-anneal-frac", type=float, default=0.3, help="0 = hinge active from step 0 (stage 2 of the two-stage recipe)")

@@ -73,6 +73,14 @@ def arm_args(task, arm, budget):
         extra = (f"--ffn-moe-start-layer 0 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
                  "--ffn-moe-target 0.02 --ffn-moe-target-anneal-frac 0.0 --ffn-moe-explore-anneal-frac 0.3")
         return "ffnmoe", data, packed + ["--base-checkpoint", s1], extra
+    if arm == "ffnmoe-t10p":
+        # "train what you route to" (Prasann 2026-09-04): t10 with the routed FFNs FROZEN beyond the
+        # H/16 rung (576 of 9216 on 4B); only the prefix + router + gains train. A flag, not the
+        # default, so the whole-FFN arm stays the reference if this is worse.
+        extra = (f"--ffn-moe-start-layer 12 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
+                 "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 --ffn-moe-trainable-width 576 "
+                 "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
+        return "ffnmoe", data, packed + ["--base-checkpoint", BASE], extra
     if arm in ("ffnmoe-t10", "ffnmoe-a10"):
         # Milder, TWO-SIDED budget arms (2026-09-02 04:40): the stage-1 recipe undershot its 0.01
         # target 4x on these 30-90 step runs (nq 16M: mean cost 0.0026, 52% of routed-layer tokens
