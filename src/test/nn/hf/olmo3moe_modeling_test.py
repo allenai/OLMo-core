@@ -79,6 +79,25 @@ def test_olmo3moe_router_uses_bf16_storage_and_fp32_compute_under_autocast():
         logits = F.linear(hidden.float(), router.gate.weight.float())
         expected = logits.softmax(dim=-1)
         expected_scores, expected_indices = torch.topk(expected, router.num_experts_per_tok, dim=-1)
+        if router.normalize_expert_weights is not None:
+            expected_scores = expected_scores.div(
+                torch.norm(
+                    expected_scores,
+                    p=router.normalize_expert_weights,
+                    dim=-1,
+                    keepdim=True,
+                )
+            )
+        if router.restore_weight_scale:
+            expected_scores = expected_scores * router.num_experts_per_tok
+        if (
+            router.original_num_experts_per_tok is not None
+            and router.num_experts_per_tok != router.original_num_experts_per_tok
+        ):
+            expected_scores = (
+                expected_scores
+                * (router.original_num_experts_per_tok / router.num_experts_per_tok) ** 0.5
+            )
 
     assert router.gate.weight.dtype == torch.bfloat16
     assert scores.dtype == torch.float32
