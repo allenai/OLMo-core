@@ -99,13 +99,42 @@ for KEY in sparselm_32k fastlm_32k dense_xlong5_256k fastlm_33344_datamatch \
     --cluster ai2/jupiter --gpus 1 --priority urgent \
     --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
     --weka oe-training-default:/weka/oe-training-default \
+    --python-manager conda --system-python \
     --install true --allow-dirty --timeout 0 --yes -- bash -c "
+      ROOT=\$(pwd)
+      pip install -q dataclass-extensions==0.5.0 flash-linear-attention==0.4.1
       cd src/scripts/train/memexpress/loss_bench
-      PYTHONPATH=/olmo-core/src:/olmo-core/src/scripts python compute_loss.py --model-key $KEY
+      PYTHONPATH=\$ROOT/src:\$ROOT/src/scripts python compute_loss.py --model-key $KEY
     "
 done
 ```
 
-Pull results from `models.RESULTS_DIR` (`.../loss_bench_2026-08-31/results/<key>.json`) once each
-job finishes — `beaker experiment logs` / `beaker experiment get --format json` per `beaker.md`'s
-monitoring section.
+**Four startup traps, all from `--install true` skipping the editable install** (validated
+2026-09-04; the earlier form of this recipe hit every one of them in turn, each failing ~5s in):
+
+1. `--python-manager conda --system-python` is REQUIRED, or gantry builds its own interpreter and
+   the job dies on `No module named 'numpy'` — the baked image's deps are invisible to it.
+2. `PYTHONPATH` must be derived from `$(pwd)`, not hardcoded. Gantry checks out to
+   `/gantry-runtime`, not `/olmo-core`, and with `--install true` there is no installed copy, so a
+   stale absolute path means `No module named 'olmo_core'`.
+3. `dataclass-extensions==0.5.0` is not in the image. Pin with `==`, not `>=` — a resolved older
+   version fails Qwen3.5 hybrids with `TransformerBlockConfig has no field 'gdn'`.
+4. `flash-linear-attention==0.4.1` (the `[fla]` extra) is not in the image either. Every Qwen3.5
+   checkpoint here is a GDN hybrid, so `GatedDeltaNet.__init__`'s `assert has_fla()` fires during
+   model *build*, long after a healthy-looking startup.
+
+A good run prints `[load] built <ckpt> in Ns` then, for landmark models, a
+`[landmark] mem_freq=.. num_landmarks=.. mem_id=.. placement=..` line. If the `[landmark]` line is
+missing on a landmark model the run is invalid — see the landmark-token note below.
+
+**Landmark models need `--landmark-placement`.** Landmark tokens are inserted by the *data loader*
+(`LandmarkPackingInstanceSource`) at training time, not baked into the shards, so neither the val
+prompts nor the train manifest carries them. `compute_loss.py` inserts them itself:
+`prompt_only` (what `generate_batch` serves at eval time) or `throughout` (what training did).
+Results are written to `results/<key>_<placement>.json` so the two cannot overwrite each other.
+Numbers produced before 2026-09-04 scored landmark models on a stream with **no** landmark tokens
+at all and should be treated as void, not as a baseline.
+
+Pull results from `models.RESULTS_DIR` (`.../loss_bench_2026-08-31/results/<key>.json`, or
+`<key>_<placement>.json` for landmark models) once each job finishes — `beaker experiment logs` /
+`beaker experiment get --format json` per `beaker.md`'s monitoring section.
