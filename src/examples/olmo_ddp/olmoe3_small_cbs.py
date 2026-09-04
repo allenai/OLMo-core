@@ -81,7 +81,10 @@ REFERENCE_CHECKPOINT = f"{CHECKPOINT_BASE}/{REFERENCE_RUN_ID}/step{REFERENCE_STE
 # Dolma 3.5 mirror is still being completed. Both lineages must use the same
 # source and fingerprint when restoring trainer/data-loader state.
 DATA_ROOT = "s3://ai2-llm"
-WORK_DIR = "/tmp/olmoe3-small-cbs-dataset-cache"
+# Multi-node data loading requires every replica to see the same shuffled
+# global-indices file. Keep this cache on the shared checkpoint mount instead
+# of node-local /tmp so resumes and the 16 MiB branch reuse the same ordering.
+WORK_DIR = f"{CHECKPOINT_BASE}/work/{REFERENCE_RUN_ID}"
 
 WORKSPACE = os.environ.get("OLMOE3_BEAKER_WORKSPACE", "ai2/olmo3p5-training")
 BEAKER_PRIORITY = os.environ.get("OLMOE3_BEAKER_PRIORITY", "urgent")
