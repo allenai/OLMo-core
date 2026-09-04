@@ -70,6 +70,13 @@ class ExpertActivation(StrEnum):
     gpt_oss_swiglu = "gpt_oss_swiglu"
 
 
+class RoutedExpertsBackend(StrEnum):
+    """Backend used to execute the routed expert MLPs."""
+
+    grouped_mm = "grouped_mm"
+    sonic = "sonic"
+
+
 def _debug_is_inf_or_nan(x):
     return torch.logical_or(~torch.isfinite(x), torch.isnan(x))
 
@@ -406,6 +413,7 @@ class RoutedExpertsConfig(Config):
     activation: ExpertActivation = ExpertActivation.swiglu
     activation_alpha: float = 1.702
     activation_limit: Optional[float] = None
+    backend: RoutedExpertsBackend = RoutedExpertsBackend.grouped_mm
 
     def build(
         self,
@@ -475,6 +483,7 @@ class RoutedExperts(nn.Module):
         activation: ExpertActivation = ExpertActivation.swiglu,
         activation_alpha: float = 1.702,
         activation_limit: Optional[float] = None,
+        backend: RoutedExpertsBackend = RoutedExpertsBackend.grouped_mm,
         init_device: str = "cpu",
     ):
         super().__init__()
@@ -484,6 +493,7 @@ class RoutedExperts(nn.Module):
         self.activation = ExpertActivation(activation)
         self.activation_alpha = float(activation_alpha)
         self.activation_limit = None if activation_limit is None else float(activation_limit)
+        self.backend = RoutedExpertsBackend(backend)
         self.bias = bias
         up_factor = (
             2
@@ -536,6 +546,12 @@ class RoutedExperts(nn.Module):
         self.ep_dim: int = 1
         self.ep_rank: int = 0
         self.rowwise_fp8 = normalize_rowwise_fp8_config(rowwise_fp8)
+        if self.backend == RoutedExpertsBackend.sonic and (
+            self.activation != ExpertActivation.swiglu
+            or self.bias
+            or (self.rowwise_fp8 is not None and self.rowwise_fp8.enabled)
+        ):
+            raise ValueError("The Sonic backend requires non-FP8, bias-free SwiGLU experts")
         if self.rowwise_fp8 is not None and self.rowwise_fp8.enabled:
             # Config-only check here; runtime CUDA support is asserted at FP8 buffer build.
             self.rowwise_fp8.validate()
@@ -1110,6 +1126,9 @@ class RoutedExperts(nn.Module):
         return h
 
     def apply_ep(self, ep_mesh: DeviceMesh, **kwargs):
+        if self.backend == RoutedExpertsBackend.sonic:
+            raise NotImplementedError("The Sonic routed-expert backend does not support EP")
+
         # shard dim 0 to ep_mp, replicate on ep_dp mesh
         self.ep_mesh = ep_mesh["ep_dp", "ep_mp"]
         # with torch.no_grad():  # just to avoid tracking the rebind below
@@ -1193,4 +1212,7 @@ class RoutedExperts(nn.Module):
         self._ep_sharded = True
 
     def extra_repr(self):
-        return f"num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}"
+        return (
+            f"num_experts={self.num_experts}, hidden_size={self.hidden_size}, "
+            f"d_model={self.d_model}, backend={self.backend.value}"
+        )

@@ -14,7 +14,7 @@ from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.moe import MoERouterGatingFunction
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.fp8 import MoERowwiseFP8Config
-from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
+from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsBackend, RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     OLMoDDPModelConfig,
@@ -42,6 +42,7 @@ def _build_block(
     uniform_expert_assignment: bool = True,
     rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
     routed_rowwise_fp8: Optional[MoERowwiseFP8Config] = None,
+    routed_backend: RoutedExpertsBackend = RoutedExpertsBackend.grouped_mm,
     init_device: str = "cuda",
 ) -> OLMoDDPTransformerBlock:
     layer_norm = LayerNormConfig(
@@ -82,6 +83,7 @@ def _build_block(
             bias=False,
             dtype=DType.float32,
             rowwise_fp8=routed_rowwise_fp8,
+            backend=routed_backend,
         ),
         feed_forward_norm=layer_norm,
         ep=ExpertParallelConfig(path=ExpertParallelPath.sync_1d, major_align=1),
@@ -259,6 +261,43 @@ def test_v2_no_ep_apply_compile_forward_smoke():
 
     assert y.shape == x.shape
     assert torch.isfinite(y).all()
+
+
+@requires_gpu
+@requires_compute_capability(min_cc=9)
+def test_v2_no_ep_sonic_apply_compile_forward_backward_smoke():
+    pytest.importorskip("sonicmoe")
+    block = _build_block(
+        d_model=512,
+        hidden_size=512,
+        num_experts=4,
+        top_k=1,
+        routed_backend=RoutedExpertsBackend.sonic,
+        init_device="cuda",
+    )
+    _init_block_params(block)
+    block.to(dtype=torch.bfloat16)
+    _install_forced_router(block)
+    block.train()
+    block.apply_compile()
+
+    x = torch.randn(
+        1,
+        16,
+        block.d_model,
+        device="cuda",
+        dtype=torch.bfloat16,
+        requires_grad=True,
+    )
+    y = block(x)
+    assert y.shape == x.shape
+    assert torch.isfinite(y).all()
+
+    y.float().square().mean().backward()
+    assert x.grad is not None and torch.isfinite(x.grad).all()
+    assert block.routed_experts is not None
+    assert block.routed_experts.w_up_gate.grad is not None
+    assert block.routed_experts.w_down.grad is not None
 
 
 def _build_model_config(*, d_model: int = 128, n_layers: int = 2) -> OLMoDDPModelConfig:
