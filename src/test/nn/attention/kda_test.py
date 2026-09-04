@@ -22,8 +22,7 @@ def _skip_unless_cute() -> None:
     """
     import torch
 
-    pytest.importorskip("kernel_fun", reason="requires the kernel-fun package")
-    from kernel_fun.kda import is_supported
+    from olmo_core.kernel_fun.kda import is_supported
 
     if not torch.cuda.is_available():
         pytest.skip("no CUDA device")
