@@ -165,6 +165,31 @@ Meanwhile the actual comparison is not close on this task. At matched TOKENS spa
 dense@96M costs) dense still leads: 8k .702 vs .666, 32k .624 vs .554. oolong is a clean sparse
 loss at every budget and every rung we have measured.
 
+## The takeoff reproduces; its LEVEL does not (2026-09-03)
+
+nq sparse 48M re-run at seed 3, against seed 1, eval_size 600:
+
+  rung   seed1  seed3   diff
+    2k   .912   .932   +.020
+    8k   .728   .785   +.057
+   16k   .608   .725   +.117
+   32k   .248   .545   +.297
+
+The step is real -- both seeds sit far above the 32M budget's .023 at 8k, so sparse genuinely
+takes off between 32M and 48M and it is not one lucky run. But the post-takeoff LEVEL is wildly
+seed-dependent, and the dependence grows with context length: +.02 at 2k, +.30 at 32k. Against a
+2 SE band of .058 on a difference, the 16k and 32k gaps are 2x and 5x outside eval noise -- this is
+training variance, not measurement variance.
+
+**Consequence: no single-seed sparse number above its takeoff should be quoted at 16k or 32k.**
+That covers most of the sparse points in this campaign. The qualitative claims survive (sparse
+still trails dense at 48M: seed-3 .545 vs dense .873 at 32k) but any quantitative sparse ladder,
+Hill fit, or crossover built on one seed per budget is resting on +-.15-.30 error bars at the long
+rungs, not the +-.02 the eval-size arithmetic suggests.
+
+Banked as the `sparse_seed3` arm under nq so the single-seed fits are unaffected until this is
+properly folded in.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
