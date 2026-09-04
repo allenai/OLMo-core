@@ -256,6 +256,10 @@ belongs to: it is a property of SPARSE-LANDMARK TRAINING, not of the arm, the bu
 mix, or the eval. Dense at these budgets is comfortably above its own threshold and behaves the way
 the whole scaling-law framing assumes -- reproducible to within eval noise.
 
+qdmatch@160M gives the same answer independently -- dense s1 vs s3: 8k .956/.955, 16k .901/.900,
+32k .709/.727. Two rungs reproduce to .001; the largest dense move across both control tasks and
+all seven rungs is .018.
+
 This is also why the dense ladders in this campaign are trustworthy at one seed per budget while
 the sparse ones are not. The asymmetry is not a double standard; it is measured.
 
