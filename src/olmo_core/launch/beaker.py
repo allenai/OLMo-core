@@ -42,6 +42,7 @@ from ..utils import (
     prepare_cli_environment,
 )
 from ..version import VERSION
+from .utils import is_running_in_beaker, is_running_in_beaker_batch_job
 
 log = logging.getLogger(__name__)
 
@@ -61,23 +62,6 @@ __all__ = [
 _LOCAL = threading.local()
 _DEFAULT_TORCH = "2.10.0".replace(".", "")
 _DEFAULT_CUDA = "12.8".replace(".", "")
-
-
-def is_running_in_beaker() -> bool:
-    """
-    Check if the current process is running inside of a Beaker job (batch or session).
-    """
-    # There's a number of different environment variables set by the Beaker executor.
-    # Checking any one of these would suffice, but we check a couple to reduce the
-    # risk of false positives.
-    return "BEAKER_JOB_ID" in os.environ and "BEAKER_NODE_ID" in os.environ
-
-
-def is_running_in_beaker_batch_job() -> bool:
-    """
-    Check if the current process is running inside a Beaker batch job (as opposed to a session).
-    """
-    return is_running_in_beaker() and os.environ.get("BEAKER_JOB_KIND") == "batch"
 
 
 def get_beaker_experiment_id() -> str | None:
