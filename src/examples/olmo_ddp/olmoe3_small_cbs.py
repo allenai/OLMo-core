@@ -3,6 +3,8 @@
 The reference trajectory trains with an 8 Mi-token batch through 100.66B
 tokens.  The branch resumes from reference step 4,000 with a 16 Mi-token
 batch and a square-root-scaled learning rate, reaching the same token horizon.
+The 4 Mi-token and 32 Mi-token probes branch from the same checkpoint and stop
+after another 16.78B tokens, preserving the longer WSD schedule for extensions.
 
 Examples::
 
@@ -11,6 +13,12 @@ Examples::
 
     OLMOE3_SMALL_CBS_PHASE=16mi python src/examples/olmo_ddp/olmoe3_small_cbs.py \
         launch olmoe3-small-cbs-16mi-from-step4000-lr1p85em3-uploader-r1 ai2/holmes
+
+    OLMOE3_SMALL_CBS_PHASE=4mi python src/examples/olmo_ddp/olmoe3_small_cbs.py \
+        launch olmoe3-small-cbs-4mi-from-step4000-lr9p2em4-probe-uploader-r1 ai2/holmes
+
+    OLMOE3_SMALL_CBS_PHASE=32mi python src/examples/olmo_ddp/olmoe3_small_cbs.py \
+        launch olmoe3-small-cbs-32mi-from-step4000-lr2p6em3-probe-uploader-r1 ai2/holmes
 """
 
 from __future__ import annotations
@@ -66,6 +74,7 @@ NUM_NODES = 8
 RANK_MICROBATCH_SEQUENCES = 4
 WARMUP_STEPS = 2_000
 TARGET_TOKENS = 100_663_296_000
+PROBE_STOP_TOKENS = 50_331_648_000
 REFERENCE_LR = 1.3e-3
 BRANCH_LR = 1.85e-3
 REFERENCE_STEP = 4_000
@@ -100,6 +109,7 @@ class Phase:
     learning_rate: float
     checkpoint_interval: int
     load_path: str | None
+    hard_stop_tokens: int | None = None
 
     @property
     def gradient_accumulation_steps(self) -> int:
@@ -123,6 +133,24 @@ PHASES = {
         learning_rate=BRANCH_LR,
         checkpoint_interval=250,
         load_path=REFERENCE_CHECKPOINT,
+    ),
+    "4mi": Phase(
+        name="4mi",
+        run_id="olmoe3-small-cbs-4mi-from-step4000-lr9p2em4-probe-uploader-r1",
+        global_batch_size=4 * 1024 * 1024,
+        learning_rate=9.2e-4,
+        checkpoint_interval=1000,
+        load_path=REFERENCE_CHECKPOINT,
+        hard_stop_tokens=PROBE_STOP_TOKENS,
+    ),
+    "32mi": Phase(
+        name="32mi",
+        run_id="olmoe3-small-cbs-32mi-from-step4000-lr2p6em3-probe-uploader-r1",
+        global_batch_size=32 * 1024 * 1024,
+        learning_rate=2.6e-3,
+        checkpoint_interval=125,
+        load_path=REFERENCE_CHECKPOINT,
+        hard_stop_tokens=PROBE_STOP_TOKENS,
     ),
 }
 
@@ -349,6 +377,10 @@ def build_trainer_config(common: CommonComponents, phase: Phase) -> TrainerConfi
         metrics_collect_interval=1,
         cancel_check_interval=10,
         max_duration=Duration.tokens(TARGET_TOKENS),
+        # A probe stop must not move the WSD decay to its earlier endpoint.
+        hard_stop=(
+            Duration.tokens(phase.hard_stop_tokens) if phase.hard_stop_tokens is not None else None
+        ),
         no_evals=True,
     )
     return (
@@ -391,7 +423,8 @@ def build_trainer_config(common: CommonComponents, phase: Phase) -> TrainerConfi
                     "512 experts, top-16; EMO 16->512; BF16; 64 B300 GPUs; PP1/EP1/MB4; "
                     "new CuTe KDA PR837; no recomputation, MXFP8, shared EP outputs, or "
                     f"reduce-scatter; phase={phase.name}, GBS={phase.global_batch_size:,}, "
-                    f"peak LR={phase.learning_rate:.8g}, checkpoint interval={phase.checkpoint_interval}"
+                    f"peak LR={phase.learning_rate:.8g}, checkpoint interval={phase.checkpoint_interval}, "
+                    f"stop tokens={phase.hard_stop_tokens or TARGET_TOKENS:,}"
                 ),
                 cancel_check_interval=10,
             ),
