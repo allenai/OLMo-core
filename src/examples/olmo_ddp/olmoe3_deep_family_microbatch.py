@@ -196,8 +196,12 @@ SYSTEMS = {
     # 128-GPU / 8 Mi-token production job.
     "g64-medium-pp1-ep4-mb2": SystemConfig("medium", 8, 1, 4, 2, 4 * MIB),
     "g64-medium-pp1-ep8-mb4": SystemConfig("medium", 8, 1, 8, 4, 4 * MIB),
-    # Intended production scale. The 8 Mi and 16 Mi variants use GA=2 and GA=4,
-    # respectively, while keeping the same PP1/EP8/rank-MB4 execution geometry.
+    # Intended production scale. MB=2 is the no-recompute fallback after MB=4 exhausted
+    # H100 memory during the first KDA forward. Its 8 Mi and 16 Mi variants use GA=4 and
+    # GA=8, respectively, while keeping the same PP1/EP8 execution geometry.
+    "g128-medium-pp1-ep8-mb2": SystemConfig("medium", 16, 1, 8, 2, 8 * MIB),
+    "g128-medium-pp1-ep8-mb2-16mi": SystemConfig("medium", 16, 1, 8, 2, 16 * MIB),
+    # Retain the failed MB=4 candidates for reproducibility and future KDA peak-memory work.
     "g128-medium-pp1-ep8-mb4": SystemConfig("medium", 16, 1, 8, 4, 8 * MIB),
     "g128-medium-pp1-ep8-mb4-16mi": SystemConfig("medium", 16, 1, 8, 4, 16 * MIB),
     "g64-large-pp2-ep8-mb1": SystemConfig("large", 8, 2, 8, 1, 8 * MIB),
