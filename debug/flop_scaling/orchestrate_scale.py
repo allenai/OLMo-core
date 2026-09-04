@@ -64,6 +64,11 @@ def launch_train(st, task, budget, arm):
         if arm.startswith("kv"):  # padded single-example rows; micro-batch by scale
             largs = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", str(KV_MICRO[SCALE]),
                      "--base-checkpoint", BASES[SCALE]]
+    if NUM_NODES.get(SCALE, 1) > 1 and not arm.startswith("kv"):
+        # packed arms keep global batch 8 (one 65k row per DP rank): with 2 nodes = 16 ranks that
+        # needs Ulysses CP 2 (dp 8 x cp 2), same batch/schedule as every other scale. KV arms
+        # (160 padded rows/step) split across 16 ranks without CP.
+        largs = largs + ["--cp-degree", str(NUM_NODES[SCALE])]
     if SCALE == "0.8b":
         # the trainer's scale default for 0.8b is NO activation checkpointing (fits on 141GB H200s);
         # a 65k packed row OOMs an 80GB H100 without it (fs35s08b-oolong-dense-s20M, 23:20)
