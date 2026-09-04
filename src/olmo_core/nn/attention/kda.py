@@ -188,16 +188,11 @@ class KimiDeltaAttention(SequenceMixer):
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
 
-        if self.use_cute_kernel:
-            # Once per process, from the first forward (not __init__, which may run on the
-            # meta device before CUDA is up): everything that decides what kernel-fun computes
-            # and how fast. Two of these (the CuTe DSL and cuda-python) are pinned by nothing
-            # and arrive with the base image; when a run is slower than the last one, this is
-            # the first thing to diff.
-            from olmo_core import kernel_fun
-
-            log_once(log, "kernel-fun %s", kernel_fun.versions())
-
+        # No kernel-fun version log here. The kernels log `kernel_fun.versions()`
+        # themselves, once per process, from inside their `torch.compiler.disable`d entry
+        # points — free, where this frame is compiled and a call here cost two graph
+        # breaks. It also raised `TypeError: unhashable type: 'dict'`: `log_once` is
+        # `lru_cache`d and `versions()` returns a dict.
         o, _ = dispatch_chunk_kda(
             q=q,
             k=k,

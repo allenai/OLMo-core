@@ -36,6 +36,21 @@ def log_once(message: str, level: int = logging.INFO) -> None:
     log.log(level, message)
 
 
+def log_versions_once() -> None:
+    """Log `versions()` the first time any family engages.
+
+    This belongs HERE, not in the caller's module: every entry point that calls it is
+    already `torch.compiler.disable`d, so the line costs no graph break, whereas the same
+    call from a compiled `forward` splits the block (and, in olmo-core, hit `lru_cache` on
+    a dict return and raised `TypeError: unhashable type: 'dict'`). Two of these versions
+    — the CuTe DSL and cuda-python — are pinned by nothing and ride in with the image,
+    so when a run is slower than the last one this is the first thing to diff.
+    """
+    from .. import versions
+
+    log_once(f"kernel-fun {versions()}")
+
+
 @cache
 def has_cute() -> bool:
     """Is the CuTe DSL importable? Cached: the import pulls MLIR and costs seconds."""

@@ -182,6 +182,7 @@ def causal_conv1d(
     # already is, so this is a no-op in production and a correctness guard elsewhere.
     w = weight if weight.is_contiguous() else weight.contiguous()
     B, T, D = x.shape
+    support.log_versions_once()
     support.log_once(
         f"kernel-fun cconv: engaged (B={B} T={T} D={D} W={w.shape[1]} {x.dtype} "
         f"weight={w.dtype})"

@@ -177,6 +177,7 @@ def chunk_kda(
     if h0_was_none:
         h0 = chain.zero_state(B, HV, K, v.shape[-1], q.device)
 
+    support.log_versions_once()
     support.log_once(
         f"kernel-fun kda: engaged (B={B} T={T} H={H} HV={HV} K={K} V={v.shape[-1]} "
         f"chunk={chunk_size} l2norm={use_qk_l2norm_in_kernel} gate={use_gate_in_kernel})"
