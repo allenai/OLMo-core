@@ -190,6 +190,28 @@ rungs, not the +-.02 the eval-size arithmetic suggests.
 Banked as the `sparse_seed3` arm under nq so the single-seed fits are unaffected until this is
 properly folded in.
 
+### qdmatch is worse: at the takeoff budget the outcome is BINARY
+
+The same replicate on qdmatch_nq sparse 160M did not merely shift the level -- it did not take off
+at all, eval_size 600:
+
+  rung   seed1  seed3
+    8k   .448   .002
+   16k   .205   .000
+   32k   .034   .001
+
+Same data, same budget, same LR, different training seed: one run clears the threshold and one
+stays on the floor. So a "takeoff budget" is not a budget at which the task is learned; it is the
+budget at which the task becomes learnABLE with some probability per seed. A ladder built one run
+per budget cannot distinguish "160M is below threshold" from "160M is above threshold and this
+seed lost the coin flip" -- and the qdmatch ladder as published reads .002 / .448 / .569 at
+64/160/320M, which under this result may be one floor draw, one lucky draw, and one settled point,
+not a smooth rise.
+
+**This retires per-budget single-run ladders for sparse near the threshold.** Where it matters,
+the measurement has to be several seeds per budget with the takeoff FRACTION reported, not one run
+with an f1. Two seeds is already enough to show the effect; it is not enough to estimate the rate.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
