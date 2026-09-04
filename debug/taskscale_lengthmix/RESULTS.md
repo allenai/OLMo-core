@@ -240,6 +240,25 @@ The nq ladder has the same problem at 48M with a 3-in-4 draw.
 seeds per point would still be misleading here; the quantity is a distribution with mass at the
 floor, and reporting it needs the fraction plus the spread of the non-floor mode.
 
+### The DENSE control: none of this happens on the dense side
+
+Same arm, same budget, same data, `--variant full` at seed 3 vs seed 1 (nq@48M, eval_size 600):
+
+  rung   dense s1   dense s3    diff      sparse 4-seed spread
+    2k     .973       .982     +.009            .722
+    8k     .933       .938     +.005            .765
+   16k     .910       .905     -.005            .715
+   32k     .873       .863     -.010            .542
+
+**Dense moves by at most .010 where sparse spans .54-.77.** That is a 50-100x difference in
+seed sensitivity on identical data at an identical budget, and it settles what the bimodality
+belongs to: it is a property of SPARSE-LANDMARK TRAINING, not of the arm, the budget, the data
+mix, or the eval. Dense at these budgets is comfortably above its own threshold and behaves the way
+the whole scaling-law framing assumes -- reproducible to within eval noise.
+
+This is also why the dense ladders in this campaign are trustworthy at one seed per budget while
+the sparse ones are not. The asymmetry is not a double standard; it is measured.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
