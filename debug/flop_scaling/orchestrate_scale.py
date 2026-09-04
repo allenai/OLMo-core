@@ -32,6 +32,9 @@ BASES = {"0.8b": f"{W}/ctc_suite/bases/q35-08b-base-markerfix/model_and_optim",
          "27b": f"{W}/ctc_suite/bases/q35-27b-base-markerfix/model_and_optim"}
 N_LAYERS = {"0.8b": 24, "2b": 24, "4b": 32, "9b": 32, "27b": 64}
 GPUS = {"0.8b": 4, "2b": 4, "9b": 8, "27b": 8}
+# 27B full fine-tune on 80GB H100s: fp32 master + grads + Adam = 16 B/param = 432 GB sharded ->
+# 54 GB/GPU on one node before activations, so default to TWO nodes (27 GB/GPU). FS_NUM_NODES overrides.
+NUM_NODES = {"0.8b": 1, "2b": 1, "9b": 1, "27b": int(os.environ.get("FS_NUM_NODES", "2"))}
 KV_MICRO = {"0.8b": 2, "2b": 2, "9b": 1, "27b": 1}
 TASKS = os.environ.get("FS_TASKS", "oolong,contradiction").split(",")
 BUDGETS = {"oolong": ["20M", "80M"], "contradiction": ["14M", "56M"]}
@@ -66,7 +69,7 @@ def launch_train(st, task, budget, arm):
         # a 65k packed row OOMs an 80GB H100 without it (fs35s08b-oolong-dense-s20M, 23:20)
         extra = (extra + " --activation-checkpointing full").strip()
     cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", "qwen3_5", "--model-scale", SCALE,
-           "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS[SCALE]),
+           "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", str(NUM_NODES.get(SCALE, 1)), "--num-gpus", str(GPUS[SCALE]),
            "--epochs", "1", "--lr", "5e-6", "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
            "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + ["launch"]
     rc, out = o35.sh(cmd, timeout=1200)
