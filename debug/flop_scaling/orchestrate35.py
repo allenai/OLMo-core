@@ -43,6 +43,7 @@ EVAL_CFG = {
     "outlier": ("8k,16k,32k", "outlier_lengthmix/eval_rungs", ""),
     "nq": ("2k,8k,16k,32k", "outlier_lengthmix/eval_rungs", ""),
 }
+EVAL_CLUSTER = os.environ.get("FS_EVAL_CLUSTER", "ai2/neptune")  # 27B evals need titan (B200, 192GB) -- neptune L40S / H100 cannot hold it
 KV_TOKENIZER = os.environ.get("FS_KV_TOKENIZER", "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base")  # weka-staged, no Hub calls
 KV_S3_TASKS = {"outlier", "nq"}  # marker shards built on mooney -> S3 -> weka
 KV_WEKA_TASKS = {"contradiction", "oolong"}  # built straight onto weka by the gantry jobs
@@ -131,7 +132,7 @@ def launch_eval(st, name):
     r = st["runs"][name]
     rungs, root, extra = EVAL_CFG[r["task"]]
     if r["arm"].startswith("kv"):
-        cmd = [PY, "-u", f"{REPO}/src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py", name, "ai2/neptune",
+        cmd = [PY, "-u", f"{REPO}/src/scripts/train/memexpress/singletask_ladder/run_q4b_beaker_multirung_eval.py", name, EVAL_CLUSTER,
                "--task", TASK_KEY[r["task"]], "--variant", "docchunk", "--ckpt", f"{W}/ctc_suite/ckpts/{name}",
                "--query-position", "after", "--cot-mode", "none", "--tokenizer", KV_TOKENIZER,
                "--ngpu", "2", "--max-test", "600", "--priority", "urgent",
@@ -139,7 +140,7 @@ def launch_eval(st, name):
                "--dc-rungs", ",".join(next(iter(KV_RUNG_FILES[r["task"]].values())).keys())]
     else:
         cmd = [PY, "-u", f"{REPO}/debug/outlier_lengthmix_scaling/beaker_native_lengthmix_eval.py", name, name,
-               "--ladder-tasks", r["task"], "--ladder-rungs", rungs, "--cluster", "ai2/neptune", "--eval500-root", root] + (extra.split() if extra else [])
+               "--ladder-tasks", r["task"], "--ladder-rungs", rungs, "--cluster", EVAL_CLUSTER, "--eval500-root", root] + (extra.split() if extra else [])
     rc, out = sh(cmd, timeout=1200)
     ex = parse_id(out)
     st["evals"][name] = {"ex": ex, "state": "S" if ex else "LAUNCH-FAILED", "rc": None, "retries": st["evals"].get(name, {}).get("retries", 0)}
