@@ -8,10 +8,10 @@ from typing import Any, Dict, Generator, Optional
 import torch
 import torch.distributed as dist
 from huggingface_hub import repo_exists
-from torch.distributed.tensor import DTensor, distribute_tensor
-from transformers import AutoModelForCausalLM, AutoTokenizer
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
+from torch.distributed.tensor import DTensor, distribute_tensor
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -42,11 +42,20 @@ except ImportError:
 
 
 log = logging.getLogger(__name__)
-_FP32_ROUTER_LINEAR = re.compile(
-    r"logits\s*=\s*F\.linear\(\s*x\.float\(\),\s*self\.gate\.weight\.float\(\),?\s*\)"
+_AUTOCAST_SAFE_FP32_ROUTER_LINEAR = re.compile(
+    r"with\s+torch\.autocast\(\s*device_type\s*=\s*x\.device\.type,"
+    r"\s*enabled\s*=\s*False\s*\):\s*"
+    r"logits\s*=\s*F\.linear\(\s*x\.float\(\),"
+    r"\s*self\.gate\.weight\.float\(\),?\s*\)"
+)
+_UNSAFE_FP32_ROUTER_LINEAR = re.compile(
+    r"^(?P<indent>[ \t]*)logits[ \t]*=[ \t]*F\.linear\("
+    r"[ \t\r\n]*x\.float\(\),[ \t\r\n]*"
+    r"self\.gate\.weight\.float\(\),?[ \t\r\n]*\)[ \t]*$",
+    re.MULTILINE,
 )
 _LEGACY_ROUTER_LINEAR = re.compile(
-    r"^(?P<indent>\s*)logits\s*=\s*self\.gate\(x\)\s*$",
+    r"^(?P<indent>[ \t]*)logits\s*=\s*self\.gate\(x\)\s*$",
     re.MULTILINE,
 )
 
@@ -58,27 +67,33 @@ def _ensure_fp32_router_compute_descriptor(save_path: Path) -> None:
             f"HF router-overlay template must contain remote model code: {modeling_path}"
         )
     source = modeling_path.read_text(encoding="utf-8")
-    if _FP32_ROUTER_LINEAR.search(source):
+    if _AUTOCAST_SAFE_FP32_ROUTER_LINEAR.search(source):
         return
-    matches = list(_LEGACY_ROUTER_LINEAR.finditer(source))
+    matches = [
+        *list(_LEGACY_ROUTER_LINEAR.finditer(source)),
+        *list(_UNSAFE_FP32_ROUTER_LINEAR.finditer(source)),
+    ]
     if len(matches) != 1:
         raise RuntimeError(
-            "HF router-overlay template is not FP32-router-safe and its router projection "
-            f"could not be upgraded unambiguously: {modeling_path}"
+            "HF router-overlay template is not autocast-safe for FP32 routing and its "
+            f"projection could not be upgraded unambiguously: {modeling_path}"
         )
     match = matches[0]
     indent = match.group("indent")
     replacement = (
-        f"{indent}logits = F.linear(\n"
-        f"{indent}    x.float(),\n"
-        f"{indent}    self.gate.weight.float(),\n"
-        f"{indent})"
+        f"{indent}with torch.autocast(device_type=x.device.type, enabled=False):\n"
+        f"{indent}    logits = F.linear(\n"
+        f"{indent}        x.float(),\n"
+        f"{indent}        self.gate.weight.float(),\n"
+        f"{indent}    )"
     )
     source = source[: match.start()] + replacement + source[match.end() :]
-    if not _FP32_ROUTER_LINEAR.search(source):
-        raise RuntimeError(f"Failed to upgrade HF router computation in {modeling_path}")
+    if not _AUTOCAST_SAFE_FP32_ROUTER_LINEAR.search(source):
+        raise RuntimeError(f"Failed to make HF router computation autocast-safe: {modeling_path}")
     modeling_path.write_text(source, encoding="utf-8")
-    log.info("Upgraded copied HF descriptor to BF16 router storage with FP32 computation")
+    log.info(
+        "Upgraded copied HF descriptor to BF16 router storage with autocast-safe FP32 computation"
+    )
 
 
 @beta_feature
@@ -180,9 +195,7 @@ def _cast_hybrid_export_dtype(
             and key.endswith(".mlp.router.gate.weight")
             and torch.is_tensor(state)
             and state.dtype == torch.float32
-            else state.to(target_dtype)
-            if torch.is_tensor(state)
-            else state
+            else state.to(target_dtype) if torch.is_tensor(state) else state
         )
         for key, state in state_dict.items()
     }

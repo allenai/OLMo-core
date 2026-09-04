@@ -512,9 +512,12 @@ class MoERouterV2(nn.Module):
         weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model)
         bias = None if self.bias is None else get_local_tensor(self.bias)
         if self.router_logits_in_fp32:
-            x = x.float()
-            weight = weight.float()
-            bias = None if bias is None else bias.float()
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                return F.linear(
+                    x.float(),
+                    weight.float(),
+                    None if bias is None else bias.float(),
+                )
         return F.linear(
             x,
             weight,

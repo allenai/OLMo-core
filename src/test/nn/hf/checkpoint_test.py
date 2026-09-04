@@ -131,6 +131,7 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     template.mkdir()
     (template / "config.json").write_text('{"model_type": "olmo3moe"}\n')
     (template / "modeling_olmo3moe.py").write_text(
+        "import torch\n"
         "import torch.nn.functional as F\n"
         "class Olmo3MoeRouter:\n"
         "    def forward(self, x):\n"
@@ -162,6 +163,7 @@ def test_native_router_overlay_preserves_template_and_replaces_only_routers(tmp_
     assert torch.equal(exported[hf_dense_name], original_dense)
     assert (output / "config.json").read_text() == (template / "config.json").read_text()
     modeling = (output / "modeling_olmo3moe.py").read_text()
+    assert "with torch.autocast(device_type=x.device.type, enabled=False):" in modeling
     assert "logits = F.linear(" in modeling
     assert "self.gate.weight.float()" in modeling
     assert "logits = self.gate(x)" in (template / "modeling_olmo3moe.py").read_text()

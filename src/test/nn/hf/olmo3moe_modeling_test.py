@@ -9,6 +9,7 @@ model's real parameter set (strict ``load_state_dict``). Requires ``transformers
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 
 def _has_olmo3moe() -> bool:
@@ -51,15 +52,38 @@ def _small_config():
 
 
 @requires_olmo3moe
-def test_olmo3moe_router_uses_bf16_storage_and_fp32_compute():
+def test_olmo3moe_router_uses_bf16_storage_and_fp32_compute_under_autocast():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
 
     router = Olmo3MoeRouter(_small_config()).to(torch.bfloat16)
-    hidden = torch.randn(1, 3, router.hidden_size, dtype=torch.bfloat16, requires_grad=True)
-    scores, _ = router(hidden)
+    hidden = torch.linspace(
+        -0.75,
+        0.875,
+        steps=3 * router.hidden_size,
+        dtype=torch.bfloat16,
+    ).reshape(1, 3, router.hidden_size)
+    hidden.requires_grad_(True)
+    with torch.no_grad():
+        router.gate.weight.copy_(
+            torch.linspace(
+                -0.5,
+                0.625,
+                steps=router.gate.weight.numel(),
+                dtype=torch.bfloat16,
+            ).reshape_as(router.gate.weight)
+        )
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        scores, indices = router(hidden)
+    with torch.autocast(device_type="cpu", enabled=False):
+        logits = F.linear(hidden.float(), router.gate.weight.float())
+        expected = logits.softmax(dim=-1)
+        expected_scores, expected_indices = torch.topk(expected, router.num_experts_per_tok, dim=-1)
 
     assert router.gate.weight.dtype == torch.bfloat16
     assert scores.dtype == torch.float32
+    torch.testing.assert_close(scores, expected_scores, rtol=0, atol=0)
+    torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
     scores.sum().backward()
     assert router.gate.weight.grad is not None
     assert router.gate.weight.grad.dtype == torch.bfloat16

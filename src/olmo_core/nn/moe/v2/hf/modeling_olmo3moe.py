@@ -424,41 +424,45 @@ class Olmo3MoeRouter(nn.Module):
         self.restore_weight_scale = config.restore_weight_scale
 
     def forward(self, x):
-        logits = F.linear(x.float(), self.gate.weight.float())
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            logits = F.linear(
+                x.float(),
+                self.gate.weight.float(),
+            )
 
-        if self.gating_function == "softmax":
-            scores = logits.softmax(dim=-1)
-        elif self.gating_function == "sigmoid":
-            scores = torch.sigmoid(logits)
-            # to avoid NaNs in the load balancing loss
-            # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
-            scores = scores + 1e-7
-        else:
-            raise NotImplementedError(self.gating_function)
+            if self.gating_function == "softmax":
+                scores = logits.softmax(dim=-1)
+            elif self.gating_function == "sigmoid":
+                scores = torch.sigmoid(logits)
+                # to avoid NaNs in the load balancing loss
+                # if all logits of a token are very negative for all experts, sigmoid gives 0 for all experts, causing NaNs when we div by the sum.
+                scores = scores + 1e-7
+            else:
+                raise NotImplementedError(self.gating_function)
 
-        expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
+            expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
 
-        if self.normalize_expert_weights is not None:
-            expert_weights = expert_weights.div(
-                torch.norm(
-                    expert_weights,
-                    p=self.normalize_expert_weights,
-                    dim=-1,
-                    keepdim=True,
+            if self.normalize_expert_weights is not None:
+                expert_weights = expert_weights.div(
+                    torch.norm(
+                        expert_weights,
+                        p=self.normalize_expert_weights,
+                        dim=-1,
+                        keepdim=True,
+                    )
                 )
-            )
 
-        if self.restore_weight_scale:
-            expert_weights = expert_weights * self.num_experts_per_tok
+            if self.restore_weight_scale:
+                expert_weights = expert_weights * self.num_experts_per_tok
 
-        if (
-            self.original_num_experts_per_tok is not None
-            and self.num_experts_per_tok != self.original_num_experts_per_tok
-        ):
-            expert_weights = (
-                expert_weights
-                * (self.original_num_experts_per_tok / self.num_experts_per_tok) ** 0.5
-            )
+            if (
+                self.original_num_experts_per_tok is not None
+                and self.num_experts_per_tok != self.original_num_experts_per_tok
+            ):
+                expert_weights = (
+                    expert_weights
+                    * (self.original_num_experts_per_tok / self.num_experts_per_tok) ** 0.5
+                )
 
         return expert_weights, expert_indices
 
