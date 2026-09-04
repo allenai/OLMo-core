@@ -15,10 +15,21 @@ Two things this family does differently from kda, both on purpose:
   - No CuTe, no sm100 gate. Both kernels are Triton, so the arch floor is sm90. They have
     only been TIMED on sm100 (B300); on an H100 they compute the same thing at an
     unmeasured speed.
-  - No `torch.compiler.disable`. fla's `causal_conv1d` is plain Python around an
-    `autograd.Function`, and so is this one, so Dynamo treats the two calls alike and the
-    graph-break count of a compiled block does not change. Adding the decorator here would
-    ADD a break fla does not have. Keep every tensor operation inside the Function.
+  - `torch.compiler.disable`, but for a different reason than kda's. This family used to
+    go undecorated on the theory that fla's `causal_conv1d` is plain Python around an
+    `autograd.Function` and so is this one, so Dynamo would treat the two alike and the
+    graph-break count of a compiled block would not change. Production falsified that on
+    the 30M mainline ladder (2026-09-04): Dynamo took OUR `autograd.Function` down its
+    `trace_backward_graph` path — two tensor arguments and nothing else is exactly the
+    shape it agrees to speculate, where fla's eleven-argument Function is not — and
+    speculating `cconv_bwd` died on `dy.stride(0)` with a symbolic stride
+    (`AssertionError: Cannot construct ConstantVariable for value of type torch.SymInt`),
+    a Dynamo bug we cannot fix from here. The decorator makes the entry point opaque, so
+    the backward runs eagerly under the autograd engine like kda's does. It also REDUCES
+    the break count rather than raising it: the undecorated form already broke twice
+    inside this function (at `is_supported`, then at `log_once`) and now breaks once at
+    the call. Keep every tensor operation inside the Function anyway — a `.float()` in
+    the caller would split a compiled block for no reason.
 """
 
 from __future__ import annotations
@@ -120,6 +131,7 @@ def _make_fn():
 _FN = None
 
 
+@torch.compiler.disable
 def causal_conv1d(
     x: torch.Tensor,
     weight: torch.Tensor | None = None,
@@ -137,7 +149,13 @@ def causal_conv1d(
 ):
     """Drop-in for ``fla.modules.convolution.causal_conv1d``. See that function for the
     full argument docs. Returns ``(y, None)`` on our path, exactly fla's contract when
-    ``output_final_state`` is False."""
+    ``output_final_state`` is False.
+
+    ``@torch.compiler.disable``: Dynamo must not speculate this family's backward — see
+    the module docstring for the crash that taught us so. Unlike kda's decorator this one
+    ADDS a break relative to fla (whose conv is traceable), while removing the two the
+    undecorated form already cost inside this function. Keep every tensor operation
+    inside the Function."""
     global _FN
     from fla.modules.convolution import causal_conv1d as fla_causal_conv1d
 

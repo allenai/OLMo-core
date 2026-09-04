@@ -1,6 +1,6 @@
 """A vendored copy of the ``kernel-fun`` package.
 
-Source: ``allenai/kernel-fun`` @ ``0c5f7f2`` (2026-09-04),
+Source: ``allenai/kernel-fun`` @ ``578b2fb`` (2026-09-04),
 ``packages/kernel-fun/src/kernel_fun/``. The subtrees below — ``_common/``, ``kda/`` and
 ``cconv/`` — are **byte-identical** to that package; only this file differs, and only to
 record where the copy came from. This directory exists so a training run can use these
@@ -43,7 +43,7 @@ __version__ = "0.2.0.dev0"
 
 #: The ``allenai/kernel-fun`` commit this tree was copied from. Reported by
 #: :func:`versions`, so a training log says which copy ran and not just which release.
-VENDORED_FROM = "0c5f7f24f03a32f1708135a3b890eeec67f64ff8"
+VENDORED_FROM = "578b2fb592cc1097b469af65953f32914cd93054"
 
 
 def versions() -> dict[str, str]:
