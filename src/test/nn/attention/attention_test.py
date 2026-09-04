@@ -136,6 +136,14 @@ def test_attention_backend(
         pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
         pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "qk_norm_per_head_gains": True,
+            },
+            id="head-qk-norm-per-head-gains",
+        ),
     ],
 )
 def test_attention(
@@ -897,6 +905,29 @@ def test_attention_leftpad_shift_equivalence(use_rope):
             ),
             id="scalable-softmax",
         ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                use_head_qk_norm=True,
+            ),
+            id="GQA-head-qk-norm",
+        ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                use_head_qk_norm=True,
+                qk_norm_per_head_gains=True,
+            ),
+            id="GQA-head-qk-norm-per-head-gains",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
@@ -908,6 +939,34 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
+
+def test_qk_norm_per_head_gains():
+    d_model, n_heads, n_kv_heads = 128, 8, 2
+    head_dim = d_model // n_heads
+
+    attn = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        qk_norm=LayerNormConfig(),
+        use_head_qk_norm=True,
+        qk_norm_per_head_gains=True,
+    )
+    assert attn.q_norm is not None and attn.k_norm is not None
+    assert attn.q_norm.weight.shape == (n_heads, head_dim)
+    assert attn.k_norm.weight.shape == (n_kv_heads, head_dim)
+    # Statistics should still be computed per-head over 'head_dim'.
+    assert attn.q_norm.normalized_shape == (head_dim,)
+    assert attn.k_norm.normalized_shape == (head_dim,)
+
+    with pytest.raises(OLMoConfigurationError, match="use_head_qk_norm"):
+        Attention(
+            d_model=d_model,
+            n_heads=n_heads,
+            qk_norm=LayerNormConfig(),
+            qk_norm_per_head_gains=True,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1254,6 +1313,14 @@ def _run_tensor_parallel_attention(
         pytest.param(
             {"qk_norm": LayerNormConfig(), "use_head_qk_norm": True, "rope": RoPEConfig()},
             id="headwise-qk-layernorm-rope",
+        ),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "qk_norm_per_head_gains": True,
+            },
+            id="headwise-qk-layernorm-per-head-gains",
         ),
         pytest.param(
             {"gate": GateConfig(granularity=GateGranularity.headwise)},

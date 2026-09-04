@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -95,17 +95,30 @@ class LayerNormConfig(ModuleConfig):
                 ln_params += size
         return ln_params
 
-    def build(self, size: int, init_device: str = "cpu") -> "LayerNorm":
+    def build(
+        self,
+        size: int,
+        init_device: str = "cpu",
+        weight_shape: Optional[Tuple[int, ...]] = None,
+    ) -> "LayerNorm":
         """
         Construct the corresponding LayerNorm class.
 
         :param size: The size of the input along the dimension to be normalized.
         :param init_device: The device initialize the parameters on, e.g. "cpu", "meta".
+        :param weight_shape: An optional shape for the element-wise weight/bias parameters, if it
+            should differ from ``(size,)``. Normalization statistics are always computed over the
+            last ``size`` elements of the input regardless of this value; see :class:`LayerNorm`
+            for a detailed explanation. Not supported by the kernel-backed implementations
+            (:class:`FusedRMSNorm`, :class:`CuTeRMSNorm`), which require the weight shape to
+            match ``(size,)``.
         """
         kwargs = self.as_dict(exclude_none=True)
         kwargs.pop("name")
         if (dtype := kwargs.pop("dtype", None)) is not None:
             kwargs.update(dtype=dtype.as_pt())
+        if weight_shape is not None:
+            kwargs.update(weight_shape=weight_shape)
 
         try:
             if self.name == LayerNormType.default:
@@ -134,6 +147,27 @@ class LayerNorm(nn.Module):
     """
     Layer normalization.
 
+    This module (and its subclasses) distinguishes between two shapes that coincide in a
+    conventional layer norm but can be configured independently here:
+
+    - ``normalized_shape``: always ``(size,)``. This determines which elements the normalization
+      *statistics* (mean/variance, or RMS) are computed over — namely the last ``size`` elements
+      of the input. Every window of ``size`` elements along the last dimension is normalized
+      using only its own statistics.
+    - ``weight_shape``: the shape of the learnable element-wise weight (gain) and bias
+      parameters. By default this is also ``(size,)``, in which case the same gains are applied
+      to every normalized window. Passing an explicit ``weight_shape`` decouples the two: the
+      statistics are still computed over the last dimension only, but the affine transform is
+      applied by broadcasting the weight/bias against the (normalized) input, so different
+      windows can receive different gains.
+
+    For example, for per-head QK-norm with per-head gains on an input of shape
+    ``(batch, seq_len, n_heads, head_dim)``, use ``size=head_dim`` together with
+    ``weight_shape=(n_heads, head_dim)``. Each head is normalized with its own statistics
+    (from ``normalized_shape=(head_dim,)``), and the ``(n_heads, head_dim)`` weight broadcasts
+    over the batch and sequence dimensions to give each head its own gains. With the default
+    ``weight_shape=(head_dim,)`` instead, all heads would share a single gain vector.
+
     :param size: The size of the input along the dimension to be normalized.
     :param eps: The epsilon used for numerical stability.
     :param elementwise_affine: Whether to include an element-wise affine transform.
@@ -145,6 +179,12 @@ class LayerNorm(nn.Module):
         If ``full_precision=False`` it can be useful to set this to the expected input data type.
         Ignored if ``elementwise_affine=False``.
     :param init_device: The device used when initializing the element-wise weight/bias.
+    :param weight_shape: An optional shape for the element-wise weight/bias parameters, if it
+        should differ from ``(size,)``. This only affects the affine transform, never the
+        normalization statistics, which are always computed over the last ``size`` elements of
+        the input. The shape must broadcast against the input, e.g. ``(n_heads, size)`` for a
+        per-head affine on input of shape ``(batch, seq_len, n_heads, size)``.
+        Ignored if ``elementwise_affine=False``.
     """
 
     def __init__(
@@ -157,18 +197,20 @@ class LayerNorm(nn.Module):
         full_precision: bool = True,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
+        weight_shape: Optional[Tuple[int, ...]] = None,
     ):
         super().__init__()
         self.normalized_shape = (size,)
+        self.weight_shape = tuple(weight_shape) if weight_shape is not None else (size,)
         self.eps = eps
         self.full_precision = full_precision
         if elementwise_affine:
             self.weight = nn.Parameter(
-                torch.ones(self.normalized_shape, dtype=dtype, device=init_device)
+                torch.ones(self.weight_shape, dtype=dtype, device=init_device)
             )
             if bias:
                 self.bias = nn.Parameter(
-                    torch.zeros(self.normalized_shape, dtype=dtype, device=init_device)
+                    torch.zeros(self.weight_shape, dtype=dtype, device=init_device)
                 )
             else:
                 self.register_parameter("bias", None)
@@ -203,13 +245,21 @@ class LayerNorm(nn.Module):
             if self.full_precision:
                 x = x.float()
 
-            x = F.layer_norm(
-                x,
-                self.normalized_shape,
-                weight=None if self.weight is None else self.weight.type_as(x),
-                bias=None if self.bias is None else self.bias.type_as(x),
-                eps=self.eps,
-            )
+            if self.weight is not None and self.weight_shape != self.normalized_shape:
+                # 'F.layer_norm' requires the weight/bias to match 'normalized_shape', so apply
+                # the element-wise affine manually (via broadcasting) after normalizing.
+                x = F.layer_norm(x, self.normalized_shape, eps=self.eps)
+                x = self.weight.type_as(x) * x
+                if self.bias is not None:
+                    x = x + self.bias.type_as(x)
+            else:
+                x = F.layer_norm(
+                    x,
+                    self.normalized_shape,
+                    weight=None if self.weight is None else self.weight.type_as(x),
+                    bias=None if self.bias is None else self.bias.type_as(x),
+                    eps=self.eps,
+                )
 
             return x.to(og_dtype)
 
@@ -310,6 +360,7 @@ class CuTeRMSNorm(RMSNorm):
         full_precision: bool = True,
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
+        weight_shape: Optional[Tuple[int, ...]] = None,
     ):
         from quack import rmsnorm as rms_norm_fn  # type: ignore
 
@@ -317,6 +368,11 @@ class CuTeRMSNorm(RMSNorm):
             # the CUTE kernel always casts to full precision internally
             raise NotImplementedError(
                 f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
+            )
+        if weight_shape is not None and tuple(weight_shape) != (size,):
+            # the CUTE kernel only supports a 1D weight matching the normalized dimension
+            raise NotImplementedError(
+                f"Custom 'weight_shape' is not supported with '{self.__class__.__name__}'"
             )
 
         super().__init__(
@@ -360,6 +416,7 @@ class FusedRMSNorm(RMSNorm):
         full_precision: bool = True,
         init_device: str = "cpu",
         dtype: torch.dtype = torch.float32,
+        weight_shape: Optional[Tuple[int, ...]] = None,
     ):
         from flash_attn.ops.triton.layer_norm import rms_norm_fn  # type: ignore
 
@@ -371,6 +428,11 @@ class FusedRMSNorm(RMSNorm):
             # the triton kernel always casts to full precision internally
             raise NotImplementedError(
                 f"Currently only 'full_precision=True' is supported with '{self.__class__.__name__}'"
+            )
+        if weight_shape is not None and tuple(weight_shape) != (size,):
+            # the triton kernel only supports a 1D weight matching the normalized dimension
+            raise NotImplementedError(
+                f"Custom 'weight_shape' is not supported with '{self.__class__.__name__}'"
             )
 
         super().__init__(
