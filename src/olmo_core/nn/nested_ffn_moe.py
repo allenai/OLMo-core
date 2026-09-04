@@ -249,6 +249,7 @@ class NestedFFNHolder:
         self.n_layers = int(n_layers)
         self.layer_curriculum_calls = int(layer_curriculum_calls)
         self.n_rungs = len(self.costs)
+        self._choice_cache: Dict[tuple, torch.Tensor] = {}
         self.target_cost = float(target_cost)
         self.budget_weight = float(budget_weight)
         self.hinge_power = int(hinge_power)
@@ -304,6 +305,11 @@ class NestedFFNHolder:
         self._reset_accumulators()
         self.collect_loss = collect_loss
         self.calls += 1
+        # Routing decisions of THIS forward, per layer, replayed by the activation-checkpoint
+        # recompute (see _nested_forward): a fresh argmax in the recompute can flip a token when
+        # the upstream kernels are not bit-reproducible, and torch then aborts with
+        # "Recomputed values ... have different metadata" (27B, 2026-09-04).
+        self._choice_cache = {}
 
     def set_calls(self, calls: int) -> None:
         """
@@ -692,14 +698,23 @@ def _nested_forward(self: nn.Module, x: torch.Tensor) -> torch.Tensor:
 
     logits = self._nffn_router(flat)  # type: ignore[operator]
     probs = torch.softmax(logits.float(), dim=-1)
-    choice = probs.argmax(dim=-1)
-
-    explore = holder.current_explore()
-    if self.training and explore > 0:
-        gen = _forward_generator(self, flat.device)
-        rand_rung = torch.randint(0, len(widths), (n_tokens,), device=flat.device, generator=gen)
-        take = torch.rand(n_tokens, device=flat.device, generator=gen) < explore
-        choice = torch.where(take, rand_rung, choice)
+    # Routing must be a pure function of the forward: the activation-checkpoint recompute re-enters
+    # this layer within the same ``holder.calls`` and MUST reproduce the same token->rung split
+    # (every downstream index tensor's shape depends on it). Replay the cached decision.
+    cache_key = (int(self._nffn_layer_idx), int(n_tokens))  # type: ignore[attr-defined]
+    cache = getattr(holder, "_choice_cache", None)
+    if self.training and cache is not None and cache_key in cache:
+        choice = cache[cache_key]
+    else:
+        choice = probs.argmax(dim=-1)
+        explore = holder.current_explore()
+        if self.training and explore > 0:
+            gen = _forward_generator(self, flat.device)
+            rand_rung = torch.randint(0, len(widths), (n_tokens,), device=flat.device, generator=gen)
+            take = torch.rand(n_tokens, device=flat.device, generator=gen) < explore
+            choice = torch.where(take, rand_rung, choice)
+        if self.training and cache is not None:
+            cache[cache_key] = choice
 
     gain = self._nffn_gain  # type: ignore[attr-defined]
     # ONE host sync per layer: the rung counts. Tokens are then grouped by a stable argsort and
