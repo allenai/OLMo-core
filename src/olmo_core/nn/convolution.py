@@ -25,6 +25,7 @@ class CausalConv1d(nn.Conv1d):
         dtype: torch.dtype | None = None,
         init_device: str = "cpu",
         activation: Literal["silu", "swish"] | None = "silu",
+        use_cute_kernel: bool = False,
     ):
         """
         :param hidden_size: Number of input/output channels (must be equal for depthwise conv).
@@ -34,6 +35,10 @@ class CausalConv1d(nn.Conv1d):
         :param dtype: The data type of the convolution weights and bias.
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         :param activation: Activation function ('silu' or 'swish').
+        :param use_cute_kernel: **Experimental.** Whether to run the fused short-conv kernels
+            from the ``kernel-fun`` package instead of FLA's, see
+            :func:`~olmo_core.nn.attention.flash_linear_attn_api.dispatch_causal_conv1d`.
+            Requires the package, installed with the ``kernel-fun`` extra.
         """
         super().__init__(
             in_channels=hidden_size,
@@ -48,6 +53,7 @@ class CausalConv1d(nn.Conv1d):
         self.hidden_size = hidden_size
         self.backend = backend
         self.activation = activation
+        self.use_cute_kernel = use_cute_kernel
         self.cp_enabled = False
 
     def forward(  # type: ignore[override]
@@ -79,6 +85,7 @@ class CausalConv1d(nn.Conv1d):
             activation=self.activation,
             backend=self.backend,
             cu_seqlens=cu_seqlens,
+            use_cute_kernel=self.use_cute_kernel,
         )
         return output[0]
 

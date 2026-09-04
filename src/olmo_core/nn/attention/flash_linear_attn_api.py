@@ -174,15 +174,28 @@ def dispatch_causal_conv1d(
     activation: str | None,
     backend: Literal["triton", "cuda"] = "triton",
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+    use_cute_kernel: bool = False,
 ) -> torch.Tensor:
+    """Dispatch FLA's short convolution lazily.
+
+    With ``use_cute_kernel=True``, calls the **experimental** fused short-conv kernels from
+    the ``kernel-fun`` package (:func:`kernel_fun.cconv.causal_conv1d`) instead. That entry
+    point is a drop-in with this exact signature and return contract, and forwards any call
+    it does not support (bias, packed-document ``cu_seqlens``, ``activation=None``,
+    ``backend="cuda"``, an unsupported device) to FLA itself — so there is no predicate to
+    check here, and the branch below is only about not importing the kernels at all when the
+    flag is off. The package logs once per process whether its kernels engaged. This is the
+    same flag that selects the CuTe KDA kernels in :func:`dispatch_chunk_kda`.
+    ``KERNEL_FUN_DISABLE=1`` (or ``KERNEL_FUN_CCONV_DISABLE=1``) forces FLA everywhere
+    without a config change.
+    """
     assert has_fla()
-    if has_kernel_fun():
-        # kernel-fun's fused short-conv kernels. Same signature and return contract as FLA's;
-        # anything outside its box (bias, packed-document cu_seqlens, activation=None,
-        # backend="cuda", an unsupported device) is forwarded to FLA by the package itself,
-        # which also honours KERNEL_FUN_CCONV_DISABLE=1 / KERNEL_FUN_DISABLE=1 per call. So
-        # there is no flag here: installing the package is the opt-in, and the env var is the
-        # way back. The package logs once per process whether its kernels engaged.
+    if use_cute_kernel:
+        if not has_kernel_fun():
+            raise RuntimeError(
+                "use_cute_kernel=True requires the kernel-fun package; "
+                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
+            )
         from kernel_fun.cconv import causal_conv1d
     else:
         from fla.modules.convolution import causal_conv1d
