@@ -153,16 +153,25 @@ def dispatch_causal_conv1d(
     activation: str | None,
     backend: Literal["triton", "cuda"] = "triton",
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
+    use_cute_kernel: bool = False,
 ) -> torch.Tensor:
+    """Dispatch FLA's short convolution lazily.
+
+    With ``use_cute_kernel=True``, calls the **experimental** fused short-conv kernels
+    vendored from the ``kernel-fun`` package
+    (:func:`olmo_core.kernel_fun.cconv.causal_conv1d`) instead. Same signature and return
+    contract as FLA's, and anything outside its box (bias, packed-document ``cu_seqlens``,
+    ``activation=None``, ``backend="cuda"``, an unsupported device) is forwarded to FLA by
+    the package itself — so there is no predicate to check here, and the branch below is
+    only about not importing the kernels at all when the flag is off. The package also
+    honours ``KERNEL_FUN_CCONV_DISABLE=1`` / ``KERNEL_FUN_DISABLE=1`` per call, and logs
+    once per process whether its kernels engaged.
+    """
     assert has_fla()
-    # kernel-fun's fused short-conv kernels, vendored under olmo_core.kernel_fun. Same
-    # signature and return contract as FLA's; anything outside its box (bias,
-    # packed-document cu_seqlens, activation=None, backend="cuda", an unsupported device) is
-    # forwarded to FLA by the package itself, which also honours KERNEL_FUN_CCONV_DISABLE=1
-    # / KERNEL_FUN_DISABLE=1 per call. There is no flag here, and on this branch there is no
-    # install to opt in with either: the kernels are always present, the env var is the way
-    # back, and the package logs once per process whether they engaged.
-    from olmo_core.kernel_fun.cconv import causal_conv1d
+    if use_cute_kernel:
+        from olmo_core.kernel_fun.cconv import causal_conv1d
+    else:
+        from fla.modules.convolution import causal_conv1d
 
     return causal_conv1d(
         x=x,
