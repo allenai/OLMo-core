@@ -44,6 +44,7 @@ import argparse
 import json
 import os
 import time
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -149,11 +150,41 @@ def example_loss(gm, device, ids: List[int], label_mask: List[bool]) -> Optional
     return float(ce.sum().item()), int(keep.numel())
 
 
+def apply_landmarks_to_manifest_example(
+    ids: List[int], mask: List[bool], geom: LandmarkGeom
+) -> Tuple[List[int], List[bool]]:
+    """
+    Insert landmark tokens into a prebuilt train-manifest example.
+
+    The manifest stores a whole training document as ``(input_ids, label_mask)`` with the mask
+    ``False`` over the prompt and ``True`` over the answer, so the prompt/answer split needed for
+    ``"prompt_only"`` placement is recoverable as the leading run of ``False``.
+
+    :param ids: Manifest token ids.
+    :param mask: Manifest label mask.
+    :param geom: Landmark geometry and placement.
+
+    :returns: ``(input_ids, label_mask)`` with landmarks inserted.
+    """
+    if geom.placement == "throughout":
+        return _insert_landmarks(ids, mask, geom)
+    if geom.placement != "prompt_only":
+        raise ValueError(f"unknown landmark placement {geom.placement!r}")
+
+    try:
+        split = mask.index(True)
+    except ValueError:
+        # No label tokens at all; nothing is scored, so placement cannot matter.
+        return _insert_landmarks(ids, mask, geom)
+    p_ids, p_mask = _insert_landmarks(ids[:split], mask[:split], geom)
+    return p_ids + ids[split:], p_mask + mask[split:]
+
+
 def assign_train_buckets(max_ctx: int) -> List[str]:
     return [lab for thr, lab in zip(LENGTH_LADDER, LENGTH_LADDER_LABELS) if thr <= max_ctx]
 
 
-def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
+def run_train_loss(spec, gm, tok, ids_set, device, landmark_geom=None) -> dict:
     npz_path = f"{TRAIN_MANIFEST_DIR}/{spec.data_group}.npz"
     idx_path = f"{TRAIN_MANIFEST_DIR}/{spec.data_group}.index.json"
     npz = np.load(npz_path)
@@ -173,6 +204,13 @@ def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
         key = f"{task}__{bucket}__{i}"
         ids = npz[f"{key}__ids"].tolist()
         mask = npz[f"{key}__mask"].tolist()
+        if landmark_geom is not None:
+            # The manifest shards carry NO landmark tokens. build_train_manifest.py assumes every
+            # structural augmentation is "already baked into the stored tokens", which holds for
+            # docchunk/summary-token (inserted at the conversion step) but NOT for landmark: those
+            # are inserted by LandmarkPackingInstanceSource in the *data loader*, so the raw
+            # token_ids_part_*.npy shards these samples come from never saw one.
+            ids, mask = apply_landmarks_to_manifest_example(ids, mask, landmark_geom)
         if len(ids) > spec.max_context_length:
             n_skipped_too_long += 1
             continue
@@ -217,15 +255,132 @@ def run_train_loss(spec, gm, tok, ids_set, device) -> dict:
     return out
 
 
-def build_dense_or_landmark_example(tok, ex: dict, eos_id: int) -> Tuple[List[int], List[bool]]:
+@dataclass
+class LandmarkGeom:
+    """
+    Landmark geometry read off the built model, plus where to place the landmark tokens.
+
+    :param mem_freq: Content tokens between landmark runs.
+    :param num_landmarks: Landmark tokens appended to each block.
+    :param mem_id: The landmark ("memory") token id.
+    :param placement: ``"prompt_only"`` or ``"throughout"`` -- see
+        :func:`build_dense_or_landmark_example`.
+    """
+
+    mem_freq: int
+    num_landmarks: int
+    mem_id: int
+    placement: str
+
+    @property
+    def block_size(self) -> int:
+        return self.mem_freq + self.num_landmarks
+
+
+def landmark_geom_for(gm, ids_set, placement: str) -> Optional[LandmarkGeom]:
+    """
+    Read the landmark geometry off a built model, or ``None`` if it is not a landmark model.
+
+    Derived from the model rather than the registry so a checkpoint whose geometry differs from what
+    a spec claims cannot be scored under the wrong block size.
+
+    :param gm: The built generation module.
+    :param ids_set: The tokenizer family's reserved ids (supplies the landmark token id).
+    :param placement: Where to place landmarks; see :func:`build_dense_or_landmark_example`.
+
+    :returns: The geometry, or ``None`` for non-landmark models.
+    """
+    layers = gm._landmark_attention_layers()
+    if not layers:
+        return None
+    mem_freqs = {int(getattr(a, "mem_freq")) for a in layers}
+    nums = {int(getattr(a, "num_landmarks", 1)) for a in layers}
+    if len(mem_freqs) != 1 or len(nums) != 1:
+        raise ValueError(f"inconsistent landmark geometry: mem_freq={mem_freqs} num={nums}")
+    return LandmarkGeom(
+        mem_freq=mem_freqs.pop(),
+        num_landmarks=nums.pop(),
+        mem_id=ids_set.landmark,
+        placement=placement,
+    )
+
+
+def _insert_landmarks(
+    ids: List[int], mask: List[bool], geom: LandmarkGeom
+) -> Tuple[List[int], List[bool]]:
+    """
+    Insert a landmark run after every ``mem_freq`` tokens, mirroring
+    :class:`~olmo_core.data.composable.landmark_instance_source.LandmarkInstanceSource`.
+
+    A trailing partial block is left without landmarks, exactly as the training source and
+    ``_insert_landmark_tokens`` both do. Landmark positions are never loss targets.
+    """
+    out_ids: List[int] = []
+    out_mask: List[bool] = []
+    content_len = (len(ids) // geom.mem_freq) * geom.mem_freq
+    for start in range(0, content_len, geom.mem_freq):
+        out_ids.extend(ids[start : start + geom.mem_freq])
+        out_mask.extend(mask[start : start + geom.mem_freq])
+        out_ids.extend([geom.mem_id] * geom.num_landmarks)
+        out_mask.extend([False] * geom.num_landmarks)
+    out_ids.extend(ids[content_len:])
+    out_mask.extend(mask[content_len:])
+    return out_ids, out_mask
+
+
+def build_dense_or_landmark_example(
+    tok, ex: dict, eos_id: int, geom: Optional[LandmarkGeom] = None
+) -> Tuple[List[int], List[bool]]:
+    """
+    Build ``(input_ids, label_mask)`` for a dense or landmark model.
+
+    For landmark models the landmark tokens have to be **in the token stream**. The attention derives
+    its block structure from absolute position alone (``is_mem = arange(T) % block_size ==
+    block_size - 1``, see :meth:`FastLandmarkAttention._attn_core` and
+    :func:`sparse_landmark_attention_ref`), so it imposes that structure whether or not the tokens
+    are there. Scoring a bare ``prompt + answer`` stream does not disable landmark attention -- it
+    feeds an ordinary content token's embedding into every landmark slot, and for
+    ``sparse_landmark`` those slots are the *only* channel by which a query reaches a past chunk.
+
+    Two placements, because training and inference genuinely disagree:
+
+    - ``"prompt_only"``: landmarks in the prompt, none among the answer tokens. This is what
+      :meth:`TransformerGenerationModule.generate_batch` serves -- it calls ``_build_landmark_prompt``
+      on the prompt and appends bare generated tokens -- so the loss is comparable to the generation
+      evals.
+    - ``"throughout"``: landmarks every ``mem_freq`` tokens across prompt *and* answer, which is what
+      :class:`LandmarkInstanceSource` did when these checkpoints were trained.
+
+    The two are not interchangeable and their difference is the landmark train/serve gap.
+
+    :param tok: The tokenizer.
+    :param ex: The manifest example (``prompt`` / ``expected_output``).
+    :param eos_id: EOS id appended after the answer.
+    :param geom: Landmark geometry, or ``None`` for a dense model (no insertion).
+
+    :returns: ``(input_ids, label_mask)``.
+    """
     prompt_text = tok.apply_chat_template(
         [{"role": "user", "content": ex["prompt"]}], tokenize=False, add_generation_prompt=True
     )
-    prompt_ids = tok(prompt_text, add_special_tokens=False).input_ids
-    answer_ids = tok(ex["expected_output"], add_special_tokens=False).input_ids
-    ids = prompt_ids + answer_ids + [eos_id]
-    mask = [False] * len(prompt_ids) + [True] * (len(answer_ids) + 1)
-    return ids, mask
+    prompt_ids = list(tok(prompt_text, add_special_tokens=False).input_ids)
+    answer_ids = list(tok(ex["expected_output"], add_special_tokens=False).input_ids)
+
+    if geom is None:
+        ids = prompt_ids + answer_ids + [eos_id]
+        mask = [False] * len(prompt_ids) + [True] * (len(answer_ids) + 1)
+        return ids, mask
+
+    if geom.placement == "prompt_only":
+        p_ids, p_mask = _insert_landmarks(prompt_ids, [False] * len(prompt_ids), geom)
+        return p_ids + answer_ids + [eos_id], p_mask + [True] * (len(answer_ids) + 1)
+
+    if geom.placement == "throughout":
+        ids = prompt_ids + answer_ids + [eos_id]
+        mask = [False] * len(prompt_ids) + [True] * (len(answer_ids) + 1)
+        return _insert_landmarks(ids, mask, geom)
+
+    raise ValueError(f"unknown landmark placement {geom.placement!r}")
 
 
 def build_chunked_example(
@@ -267,7 +422,7 @@ def build_chunked_example(
     return ids, mask
 
 
-def run_val_loss(spec, gm, tok, ids_set, device) -> dict:
+def run_val_loss(spec, gm, tok, ids_set, device, landmark_geom=None) -> dict:
     # Requires PYTHONPATH to include `<repo>/src/scripts` (same convention as
     # run_beaker_multirung_eval.sh) so `ctc_eval.eval.evaluate` resolves.
     from ctc_eval.eval.evaluate import load_unified_examples
@@ -314,7 +469,7 @@ def run_val_loss(spec, gm, tok, ids_set, device) -> dict:
                         num_summary_tokens=5,
                     )
                 else:
-                    ids, mask = build_dense_or_landmark_example(tok, ex, ids_set.eos)
+                    ids, mask = build_dense_or_landmark_example(tok, ex, ids_set.eos, landmark_geom)
                 if len(ids) > spec.max_context_length:
                     continue
                 result = example_loss(gm, device, ids, mask)
@@ -350,6 +505,16 @@ def main() -> None:
     ap.add_argument("--model-key", required=True, choices=sorted(MODELS))
     ap.add_argument("--skip-train", action="store_true")
     ap.add_argument("--skip-val", action="store_true")
+    ap.add_argument(
+        "--landmark-placement",
+        choices=["prompt_only", "throughout"],
+        default="prompt_only",
+        help="landmark models only: where to put the landmark tokens. "
+        "'prompt_only' matches what generate_batch serves at eval time; "
+        "'throughout' matches how LandmarkInstanceSource built the training data. "
+        "These give different numbers and their difference IS the landmark "
+        "train/serve gap -- see build_dense_or_landmark_example.",
+    )
     args = ap.parse_args()
 
     spec = MODELS[args.model_key]
@@ -366,13 +531,30 @@ def main() -> None:
         "query_position": spec.query_position,
         "summary_mask_mode": spec.summary_mask_mode,
     }
+
+    landmark_geom = landmark_geom_for(gm, ids_set, args.landmark_placement)
+    if landmark_geom is not None:
+        print(
+            f"[landmark] mem_freq={landmark_geom.mem_freq} "
+            f"num_landmarks={landmark_geom.num_landmarks} mem_id={landmark_geom.mem_id} "
+            f"placement={landmark_geom.placement}",
+            flush=True,
+        )
+    elif spec.architecture == "landmark":
+        raise RuntimeError(
+            f"{args.model_key} is registered as architecture='landmark' but the built model has no "
+            "landmark attention layers -- the checkpoint is not the architecture the spec claims."
+        )
+    result["landmark_placement"] = None if landmark_geom is None else landmark_geom.placement
+
     if not args.skip_train:
-        result["train"] = run_train_loss(spec, gm, tok, ids_set, device)
+        result["train"] = run_train_loss(spec, gm, tok, ids_set, device, landmark_geom)
     if not args.skip_val:
-        result["val"] = run_val_loss(spec, gm, tok, ids_set, device)
+        result["val"] = run_val_loss(spec, gm, tok, ids_set, device, landmark_geom)
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out_path = f"{RESULTS_DIR}/{args.model_key}.json"
+    suffix = "" if landmark_geom is None else f"_{landmark_geom.placement}"
+    out_path = f"{RESULTS_DIR}/{args.model_key}{suffix}.json"
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     print(f"[done] wrote {out_path}")
