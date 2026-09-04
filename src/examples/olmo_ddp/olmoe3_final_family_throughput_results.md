@@ -1,6 +1,6 @@
 # Provisional final-family throughput qualification
 
-Date: 2026-08-20 (status refreshed 2026-08-25)
+Date: 2026-08-20 (status refreshed 2026-09-04)
 
 All runs use sequence length 8,192, an 8 Mi-token global batch, one 8-GPU
 Holmes B300 node, BF16 training, the optimized CuTe KDA kernel, and no
@@ -49,3 +49,24 @@ The 256/top-8 variant also reduced active memory by 7.85 GiB at 0.5B and
 
 - 0.5B 256/top-8: https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01M0GGBKPH9DX017E68GZ2EHY8
 - 0.9B 256/top-8: https://beaker.org/orgs/ai2/workspaces/OLMo-3-moe-experiments/work/01M0GGBNTWMB9642VK6H1496GH
+
+## Deeper production-family candidates
+
+These rows track the replacement 16/24/40-layer family separately from the
+shallower configurations above. Throughput is the arithmetic mean over the
+last 20 of 100 logged optimizer steps. The run uses Holmes B300s, sequence
+length 8,192, BF16, the CuTe KDA PR 837 kernel, and EMO document pools from 16
+to 512 experts (512 for evaluation). It disables MXFP8, activation
+recomputation, shared EP output buffers, and normal-gradient reduce-scatter.
+
+| Active rung | Active / total params | GPUs | Global batch | PP | EP | Rank microbatch | Accumulation | Result | TPS / GPU | Aggregate TPS | TFLOPs / GPU | MFU | Active / reserved memory | Mean step time |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|
+| Medium | 2.388B / 42.760B | 128 | 8 Mi tokens | 1 | 8 | 2 sequences / 16,384 tokens | 4 | pass, 100 steps | 14.81k | 1.896M | 207.8 | 9.24% | 184.1 / 210.0 GiB | 4.425 s |
+
+The run had zero skipped optimizer updates. Peak active memory during startup
+was 205.7 GiB; the table reports its steady-state active allocation and peak
+reserved allocation. The two canceled replica attempts shown by Beaker were
+rescheduled successfully, and all 16 eight-GPU tasks ultimately succeeded.
+
+- Medium 8 Mi Beaker: https://beaker.org/orgs/ai2/workspaces/olmo3p5-training/work/01M1N6WE5A2B1YQ4MV77N574XY
+- Medium 8 Mi W&B: https://wandb.ai/ai2-llm/olmoe3-deep-family-microbatch/runs/2auonolg
