@@ -47,4 +47,6 @@ Trace-supported additional ideas are in scope; unrelated jobs are not.
 ## Live ledger
 
 - Starting source:2b57788dc, clean branch `codex/small-16mi-profile-v2`.
-- A/A repeat-name support being prepared; no new experiment launched yet.
+- A/A200 four-arm control: `01M1R6VP5BYAKDABEE8B5Q03JT`, source `c51e30792`,
+  64 GPUs urgent/allocated; collector `01M1R6TW08XDS8EGXY8CBTVKBB` (0GPU).
+- Document-pool one-GPU compiled exact-mask/latency probe prepared, benchmark-only.
