@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Tuple, Union
 
 import torch
@@ -21,6 +22,7 @@ class EmoRouterV2(MoERouterV2):
     def __init__(self, *, emo: EmoRouterConfig, **kwargs):
         super().__init__(**kwargs)
         self.emo = emo
+        self._profile_document_pool = os.environ.get("OLMO_PROFILE_EMO_DOCUMENT_POOL", "0") == "1"
         self.emo.validate_for_router(num_experts=self.num_experts, top_k=self.top_k)
 
         unsupported = {
@@ -92,8 +94,13 @@ class EmoRouterV2(MoERouterV2):
         else:
             raise NotImplementedError(self.gating_function)
 
-        document_scores = ops.doc_sum_scatter(scores, segment_ids)
-        keep = ops.pool_keep_mask(document_scores, self._pool_sizes(segment_ids))
+        if self._profile_document_pool and scores.is_cuda and self.num_experts == 512:
+            from olmo_core.ops.emo_document_pool import document_pool_keep_mask
+
+            keep = document_pool_keep_mask(scores, segment_ids, self._pool_sizes(segment_ids))
+        else:
+            document_scores = ops.doc_sum_scatter(scores, segment_ids)
+            keep = ops.pool_keep_mask(document_scores, self._pool_sizes(segment_ids))
 
         if self.gating_function == MoERouterGatingFunction.topk_softmax:
             selection_logits = logits.masked_fill(~keep, float("-inf"))
