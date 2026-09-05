@@ -123,7 +123,7 @@ def main():
     """Use isolated processes so an illegal instruction cannot poison the next case."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--layout", choices=("no-saved", "interleaved-saved", "packed-control"))
-    parser.add_argument("--tile", choices=("small", "large"), default="small")
+    parser.add_argument("--tile", choices=("small", "wide", "large"), default="small")
     parser.add_argument("--production", action="store_true")
     args = parser.parse_args()
     output = Path("/results/gemm-isolate")
@@ -131,7 +131,9 @@ def main():
     if args.layout:
         run_case(
             args.layout,
-            (128, 128, 1, 1) if args.tile == "small" else (256, 256, 2, 1),
+            {"small": (128, 128, 1, 1), "wide": (128, 256, 1, 1), "large": (256, 256, 2, 1)}[
+                args.tile
+            ],
             args.production,
             output / f"{args.layout}-{args.tile}-{args.production}.json",
         )
@@ -139,7 +141,7 @@ def main():
     cases = []
     for production in (False, True):
         for layout in ("no-saved", "interleaved-saved", "packed-control"):
-            command = [sys.executable, "-u", __file__, "--layout", layout]
+            command = [sys.executable, "-u", __file__, "--layout", layout, "--tile", args.tile]
             if production:
                 command += ["--production"]
             try:
@@ -148,6 +150,8 @@ def main():
                 code = "timeout"
             cases.append({"layout": layout, "production": production, "exit_code": code})
             (output / "cases.json").write_text(json.dumps(cases, indent=2))
+    if any(case["exit_code"] != 0 for case in cases):
+        raise RuntimeError("One or more isolated cases failed; inspect cases.json")
 
 
 if __name__ == "__main__":
