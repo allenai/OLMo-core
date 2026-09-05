@@ -141,7 +141,10 @@ def main():
     )
     for index, (name, variant, mode) in enumerate(named_pairs):
         test_label = variant
-        if variant in (
+        from olmoe3_ep_profile_plan import EPProfileTopology
+
+        topology = EPProfileTopology.from_test_label(test_label)
+        if test_label.startswith("ep") or variant in (
             "optimized",
             "deferred",
             "simple",
@@ -185,6 +188,7 @@ def main():
             OLMO_PROFILE_EMO_DOCUMENT_POOL="1" if "-doc-pool" in variant else "0",
             OLMO_PROFILE_EMO_TOP16="1" if "-top16" in variant else "0",
             OLMO_PROFILE_ROUNDED_WGRAD="1" if "-wgrad-fused" in variant else "0",
+            OLMO_PROFILE_ROUNDED_WGRAD_EP="1" if topology.ep > 1 else "0",
             OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS=(
                 "1" if test_label in ("deferred", "deferred-lb", "deferred-lb-batched") else "0"
             ),

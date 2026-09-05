@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 
@@ -15,6 +15,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import olmoe3_small_medium_profile as base
+from olmoe3_ep_profile_plan import EPProfileTopology
 from olmoe3_nsys_tools import NsysSettings
 
 from olmo_core.distributed.utils import get_rank
@@ -46,7 +47,10 @@ LEARNING_RATE = 1.85e-3
 PASS = os.environ.get("OLMOE3_DEEP_PROFILE_PASS", "nsys")
 VARIANT = os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
 STEPS = int(os.environ.get("OLMOE3_DEEP_PROFILE_STEPS", "100" if PASS == "nsys" else "60"))
-SYSTEM = base.SYSTEMS["small-64g"]
+TOPOLOGY = EPProfileTopology.from_test_label(os.environ.get("OLMOE3_DEEP_PROFILE_TEST", ""))
+SYSTEM = replace(
+    base.SYSTEMS["small-64g"], ep=TOPOLOGY.ep, rank_microbatch_sequences=TOPOLOGY.microbatch
+)
 PROFILE_RANKS = list(range(0, 64, 8))
 NSYS_SETTINGS = NsysSettings.from_env()
 
@@ -63,6 +67,20 @@ class ProfileMetrics(Callback):
                 f"Expected trained checkpoint step {SOURCE_STEP}; loaded {self.step}"
             )
         optim = self.trainer.train_module.optim
+        tm = self.trainer.train_module
+        if tm.dp_world_size != 64 or tm.pp_enabled:
+            raise RuntimeError("EP throughput comparison requires dense DP64 and PP1")
+        if TOPOLOGY.ep > 1:
+            import torch.distributed as dist
+
+            if not tm.ep_enabled or dist.get_world_size(tm.ep_mp_group) != TOPOLOGY.ep:
+                raise RuntimeError("Runtime EP degree differs from requested topology")
+            hosts = [None] * 64
+            dist.all_gather_object(hosts, os.environ["BEAKER_NODE_HOSTNAME"])
+            groups = tm.moe_mesh.mesh.reshape(-1, TOPOLOGY.ep).tolist()
+            TOPOLOGY.validate_rank_groups(groups, dict(enumerate(hosts)))
+        elif tm.ep_enabled:
+            raise RuntimeError("EP1 control unexpectedly enabled EP")
         for group in optim.param_groups:
             for key in ("lr", "initial_lr"):
                 if abs(float(group[key]) - LEARNING_RATE) > 1e-9:
@@ -77,8 +95,12 @@ class ProfileMetrics(Callback):
                 "source_step": SOURCE_STEP,
                 "global_batch_tokens": GLOBAL_BATCH_SIZE,
                 "gpus": 64,
-                "microbatch_sequences": 4,
-                "gradient_accumulation": 8,
+                "microbatch_sequences": TOPOLOGY.microbatch,
+                "gradient_accumulation": TOPOLOGY.accumulation,
+                "dense_dp": 64,
+                "expert_parallel": TOPOLOGY.ep,
+                "expert_dp": TOPOLOGY.expert_dp,
+                "pipeline_parallel": 1,
                 "lr": LEARNING_RATE,
                 "pass": PASS,
                 "variant": VARIANT,
@@ -99,6 +121,7 @@ class ProfileMetrics(Callback):
                 "document_pool_selection": os.environ.get("OLMO_PROFILE_EMO_DOCUMENT_POOL") == "1",
                 "native_tie_top16": os.environ.get("OLMO_PROFILE_EMO_TOP16") == "1",
                 "rounded_wgrad_accumulation": os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD") == "1",
+                "rounded_wgrad_ep_buffers": os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD_EP") == "1",
                 "reduce_scatter_single_param_fast_path": os.environ.get(
                     "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"
                 )
@@ -124,6 +147,13 @@ class ProfileMetrics(Callback):
             (output / "provenance.json").write_text(json.dumps(provenance, indent=2))
 
     def log_metrics(self, step, metrics):
+        if TOPOLOGY.ep > 1:
+            for name, value in metrics.items():
+                if name.endswith("token drop rate") and float(value) != 0.0:
+                    raise RuntimeError(
+                        f"EP comparison dropped expert routes at step{step}: {name}={value}; "
+                        "do not report dropped-work throughput as a speedup"
+                    )
         if get_rank() == 0:
             with (Path(self.output_dir) / "metrics.jsonl").open("a") as handle:
                 handle.write(json.dumps({"step": step, **metrics}) + "\n")
@@ -289,8 +319,9 @@ def trainer_config(common):
     config.callbacks["wandb"].tags = [
         "small-64g",
         "16mi",
-        "mb4",
-        "ga8",
+        f"mb{TOPOLOGY.microbatch}",
+        f"ga{TOPOLOGY.accumulation}",
+        f"ep{TOPOLOGY.ep}",
         "emo",
         "qknorm-pr855",
         "kernel-fun-7a6983b",
@@ -306,7 +337,8 @@ def trainer_config(common):
     config.callbacks["wandb"].notes = (
         "Small 794M active / 12.496B total; 16 layers, d=1024, latent=512, "
         f"14 KDA/2 FA; source step{SOURCE_STEP}; per-head QK gains; "
-        "BF16, FA4/scalable-softmax, EMO16->512, PP1 EP1 DP64 MB4 GA8; "
+        f"BF16, FA4/scalable-softmax, EMO16->512, PP1 EP{TOPOLOGY.ep} DP64 "
+        f"MB{TOPOLOGY.microbatch} GA{TOPOLOGY.accumulation}; "
         "no recomputation/MXFP8/shared EP outputs; lr=.00185 constant WSD. "
         "Use only clean windows in provenance.json for throughput."
     )
