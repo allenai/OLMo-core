@@ -169,3 +169,12 @@ Only the validation URI changes; train data remains Dolma3.5 S3. Retry uses the
 same untouched smoke roots/registrations. Audit collector r2
 `01M1RF8RSF9GN7T976PB7EDFPF` handles explicitly unvisited partial-eval subsets and
 requires the current manifest's digest to match the read-back-verified publication.
+
+- Corrected smoke retry: `01M1RFHFA1GFSQMDN4Q3QRQ15B`, source811cdf62a.
+- Extra trace-supported router FP32 BLAS probe: `01M1RFWPEHENKEQXW1MV7ZWN0M`,
+  sourced88078408, one B300, exit0. cuBLAS / cuBLASLt / cuBLAS bracketing at
+  M32768,D1024,E512, all precision=highest and TF32 disabled. All three dispatches
+  used the same actual CUDA kernels and produced bit-identical FP32/BF16 results.
+  Forward~.613ms, input-gradient~.558ms, weight-gradient~.646ms. No useful gain;
+  no global BLAS preference change in training. Artifacts:
+  `profiling-analysis-20260905/router-blas-r1`, dataset01M1RFWPESG0YGM3RW92AVRY99.
