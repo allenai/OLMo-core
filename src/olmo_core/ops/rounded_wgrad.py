@@ -1,7 +1,8 @@
 """Experimental BF16-rounded weight GEMM into an owned FP32 DDP bucket.
 
-Restricted to BF16, EP1, no output buffers, and exclusive one-use-per-forward
-expert parameters. Never fabricates a dummy gradient to trigger autograd hooks.
+Restricted to BF16 and exclusive one-use-per-forward expert parameters.
+The opt-in EP qualification also supports the existing rowwise output/dgrad buffers.
+Never fabricates a dummy gradient to trigger autograd hooks.
 The explicit DDP completion callback runs after the real accumulation is enqueued.
 """
 
@@ -100,10 +101,27 @@ def rounded_wgrad_add(a, b, output, cumulative):
 
 class _RoundedWeightGemm(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, weight, cumulative, transpose):
+    def forward(ctx, x, weight, cumulative, transpose, out, input_grad_out):
+        from olmo_core.kernels.grouped_mm import (
+            _check_input_grad_out_buffer,
+            _check_out_buffer,
+            _grouped_mm_out_cuda,
+        )
+
         ctx.save_for_backward(x, weight, cumulative)
         ctx.transpose = transpose
-        return F.grouped_mm(x, weight.transpose(1, 2) if transpose else weight, offs=cumulative[1:])
+        ctx.input_grad_out = input_grad_out
+        rhs = weight.transpose(1, 2) if transpose else weight
+        if input_grad_out is not None:
+            _check_input_grad_out_buffer(input_grad_out=input_grad_out, mat_a=x)
+        if out is not None:
+            _check_out_buffer(out=out, mat_a=x, mat_b=rhs, offs=cumulative[1:], out_dtype=None)
+            result = _grouped_mm_out_cuda(x, rhs, out=out, offs=cumulative[1:], bias=None)
+            if result is not out:
+                raise RuntimeError("Rounded weight GEMM did not preserve output-buffer identity")
+            ctx.mark_dirty(out)
+            return out
+        return F.grouped_mm(x, rhs, offs=cumulative[1:])
 
     @staticmethod
     def backward(ctx, grad):
@@ -122,16 +140,27 @@ class _RoundedWeightGemm(torch.autograd.Function):
         dx = None
         if ctx.needs_input_grad[0]:
             rhs = weight if ctx.transpose else weight.transpose(1, 2)
-            dx = F.grouped_mm(grad, rhs, offs=cumulative[1:])
-        return dx, None, None, None
+            if ctx.input_grad_out is None:
+                dx = F.grouped_mm(grad, rhs, offs=cumulative[1:])
+            else:
+                from olmo_core.kernels.grouped_mm import _grouped_mm_out_cuda
+
+                # Rowwise EP deliberately aliases this buffer with x. Wgrad must
+                # consume x first, on this same stream, before dgrad overwrites it.
+                dx = _grouped_mm_out_cuda(
+                    grad, rhs, out=ctx.input_grad_out, offs=cumulative[1:], bias=None
+                )
+                if dx is not ctx.input_grad_out:
+                    raise RuntimeError("Rounded weight GEMM did not preserve dgrad-buffer identity")
+        return dx, None, None, None, None, None
 
 
 @torch.compiler.disable
-def rounded_weight_gmm(x, weight, counts, transpose):
+def rounded_weight_gmm(x, weight, counts, transpose, *, out=None, input_grad_out=None):
     """Graph-break prototype: qualify ordering and measure overhead before promotion."""
     if not hasattr(weight, "_olmo_profile_begin_external_grad"):
         raise RuntimeError("Rounded weight GEMM requires explicit FP32 DDP bucket ownership")
     if not weight.is_leaf or not weight.requires_grad:
         raise RuntimeError("Rounded weight GEMM requires an exclusive trainable leaf parameter")
     cumulative = torch.cat((counts.new_zeros(1), counts.cumsum(0, dtype=torch.int32)))
-    return _RoundedWeightGemm.apply(x, weight, cumulative, transpose)
+    return _RoundedWeightGemm.apply(x, weight, cumulative, transpose, out, input_grad_out)

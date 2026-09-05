@@ -928,13 +928,17 @@ class RoutedExperts(nn.Module):
         if self._profile_rounded_wgrad and torch.is_grad_enabled():
             from olmo_core.ops.rounded_wgrad import rounded_weight_gmm
 
-            if self.ep_dim != 1 or down_proj_out is not None or up_proj_input_grad_out is not None:
+            ep_qualification = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD_EP", "0") == "1"
+            if not ep_qualification and (
+                self.ep_dim != 1 or down_proj_out is not None or up_proj_input_grad_out is not None
+            ):
                 raise RuntimeError(
-                    "Rounded weight-gradient probe supports only EP1 without buffers"
+                    "Rounded weight-gradient EP/buffer support requires the explicit "
+                    "OLMO_PROFILE_ROUNDED_WGRAD_EP qualification flag"
                 )
 
             def projection(a, b, counts, trans_b=False, **kwargs):
-                return rounded_weight_gmm(a, b, counts, trans_b)
+                return rounded_weight_gmm(a, b, counts, trans_b, **kwargs)
 
         # up (+ gate) projection
         up_gate = projection(
