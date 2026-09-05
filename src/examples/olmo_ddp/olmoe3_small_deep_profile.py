@@ -155,6 +155,10 @@ def common_components(cli_context, **kwargs):
 
 
 def model_config(common):
+    if VARIANT == "emo-inverse-scatter":
+        import olmo_core.ops.moe as moe_ops
+
+        moe_ops.pool_keep_mask = moe_ops.pool_keep_mask_inverse_scatter
     if VARIANT == "kda-128":
         # Profiling-only performance gate, qualified separately. The package explicitly
         # documents this CTA floor as a heuristic, not a correctness restriction.
@@ -178,7 +182,7 @@ def train_module_config(common):
     config.expand_shared_qk_norm_on_load = True
     if VARIANT == "reduce-scatter":
         config.dp_config.use_reduce_scatter = True
-    elif VARIANT not in ("baseline", "kda-128", "compile-noop-nvtx"):
+    elif VARIANT not in ("baseline", "kda-128", "compile-noop-nvtx", "emo-inverse-scatter"):
         raise ValueError(f"Unknown variant: {VARIANT}")
     return config
 

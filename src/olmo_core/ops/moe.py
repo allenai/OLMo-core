@@ -526,3 +526,20 @@ def pool_keep_mask(
     """Return a mask retaining each document's highest-scoring expert pool."""
     ranks = document_scores.argsort(dim=-1, descending=True).argsort(dim=-1)
     return ranks < pool_size_per_token.unsqueeze(-1)
+
+
+def pool_keep_mask_inverse_scatter(
+    document_scores: torch.Tensor,
+    pool_size_per_token: torch.Tensor,
+) -> torch.Tensor:
+    """Invert the same sorting permutation with scatter instead of a second sort.
+
+    This preserves the first argsort's tie policy exactly. Each destination is written
+    once because ``order`` is a permutation, so there are no scatter write collisions.
+    Kept separate until controlled profiling qualifies the alternative implementation.
+    """
+    order = document_scores.argsort(dim=-1, descending=True)
+    positions = torch.arange(order.shape[-1], device=order.device, dtype=order.dtype)
+    ranks = torch.empty_like(order)
+    ranks.scatter_(-1, order, positions.expand_as(order))
+    return ranks < pool_size_per_token.unsqueeze(-1)
