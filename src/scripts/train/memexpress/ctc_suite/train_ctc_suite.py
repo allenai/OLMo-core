@@ -625,7 +625,7 @@ def build_train_module_config(
             + (
                 [
                     OptimGroupOverride(
-                        params=["blocks.*.attention._kvr_router.*", "kvr_routers.*"],
+                        params=["kvr_routers.*"],  # root-located routers (router_location=root)
                         opts=dict(lr=opts.router_lr, weight_decay=0.0),
                     )
                 ]
