@@ -274,33 +274,45 @@ not yet established. It is not enabled in the baseline.
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
 CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
 
-## Nsight repair and next sequence (2026-09-05 04:30 UTC)
+## Nsight repair and next sequence (2026-09-05 05:00 UTC)
 
 Two-GPU repro `01M1QWYVBR97EA4G9RXCCC82TE` (source `772a914b2`) reproduced the installed
 2025.3.1 segfault in both matched/full and reduced tracing settings. The identical
 workload passed both settings under standalone 2026.4.1.191, with real CUDA/copy/NCCL
 events validated from SQLite. No driver/runtime or model workaround is needed for this
-reproducer. The full compiled-MoE verification is next, not yet claimed complete.
+reproducer. Full compiled-MoE verification `01M1QXEK2Q7TEPDQZBWKAVEYKR` (source
+`f7c61144d`) completed exit0 on all eight nodes at 04:57 UTC. All eight selected
+reports have 68,955 kernels, 105 memory copies, 344 NCCL kernels, and valid SQLite
+exports. CPU collection also completed, dataset `01M1QXFYFW0KHGAKMF14D14BEQ`.
 
 The current healthy same-node unprofiled result is 78,115 → 82,190 → 85,888 median
 TPS/GPU for baseline → KDA cutoff128 → KDA+EMO inverse scatter, respectively.
 All use step7500, 60 updates, and the same BF16 model/training settings. The combined
 candidate is +9.95% over baseline, 374.38 idealized TFLOPs/GPU. Its separate healthy
-PyTorch capture is finishing; use that instead of the earlier degraded-fabric capture
-to prioritize work.
+PyTorch capture completed at 04:33 UTC; use that instead of the earlier degraded-fabric
+capture to prioritize work. Nsight has substantial capture/flush overhead, so preserve
+the clean timing windows and do not use its raw communication fractions as production
+critical-path estimates.
 
 Next actions:
 
-1. Full-model Nsight verification with the pinned standalone binary, one rank per node,
-   capture updates36–37 of 60, KDA+EMO candidate. Existing NVTX annotations remain on.
-   Do not overlap PyTorch profiling; require CUDA/copy/NCCL validation for every selected rank.
-2. Compare the healthy PyTorch and Nsight timelines: separate expert GEMMs, KDA,
-   gradient accumulation, routing/activation work, and exposed communication. Preserve
-   nonadditive/overlap caveats; profiler overhead is not production throughput.
-3. Use Nsight Compute on isolated hot compute kernels with matching shapes/routing,
-   not replay of whole NCCL-containing training steps. Verify performance-counter access
-   in a small allocation first. Measure memory traffic, tensor-core utilization, and
-   occupancy before implementing fusion.
+1. Measure vectorized FP32 gradient addition in the full-model A/B
+   `01M1QYS6RMFNV0BP28QXW16W4A`, source `1c3d41fac`, with collector
+   `01M1QYT2B1XGS0QPMQ1R901X9N`. Two-GPU sharded-Adam qualification passed exact
+   gradients/weights/states plus four existing NCCL tests. The isolated kernel is
+   2.12–2.13× faster; serial extrapolation is ~158ms/update, not 2× training. Both A/B
+   arms use the same trained restore/allocation and timing window. Check all 60 losses,
+   skipped steps, first-update agreement, memory, and gain versus timing variability.
+2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
+   keeping instrumented versus clean timing separate. A CPU-only SQLite analyzer merges
+   intervals per device; it never adds overlapping kernels into a step-time budget.
+   Prioritize expert GEMMs and activation/backward traffic after the gradient-add result.
+   FP32 router GEMMs are visible but changing their precision is not a free optimization.
+3. Hardware-counter probe `01M1QXWSA88MHCEG947BFK6VZS` established that Nsight Compute
+   is blocked by `ERR_NVGPUCTRPERM`, not a crashing workload. Ask infra to enable permitted
+   GPU counter access; do not bypass host controls. Once available, counter-profile
+   isolated hot kernels with representative shapes/routing, not replay of NCCL training.
+   In the meantime, exact-parity microbenchmarks and full-model timing A/Bs can continue.
 4. If the healthy timeline supports it, qualify the already-tested communication-copy
    prototypes at larger rank count and in an optimizer step. The two-GPU bucket/gather
    improvements are milliseconds, not 13–32% end-to-end gains. Preserve asynchronous

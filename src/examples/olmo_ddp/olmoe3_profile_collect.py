@@ -105,7 +105,9 @@ def main():
             validation = run / f"nsys-rank-{rank}-validation.json"
             if validation.is_file():
                 shutil.copy2(validation, destination / validation.name)
-            output = destination / f"nsys-rank-{rank}-stats.txt"
+            # Autograd emits unique op IDs: the full NVTX projection is ~17MiB/rank.
+            # Keep it with raw Weka artifacts, not in result datasets or output logs.
+            output = run / f"nsys-rank-{rank}-stats.txt"
             with output.open("w") as handle:
                 result = subprocess.run(
                     [
@@ -121,9 +123,18 @@ def main():
                 )
             if result.returncode:
                 print(f"Nsight stats failed for rank{rank}; retained diagnostic output", flush=True)
+            compact = []
+            with output.open() as handle:
+                for line in handle:
+                    if "/nvtx_gpu_proj_sum.py" in line:
+                        break
+                    compact.append(line)
+            compact.append(f"\nFull per-op NVTX GPU projection retained on Weka: {output}\n")
+            (destination / output.name).write_text("".join(compact))
             if rank == 0:
                 print("NSYS_RANK0_STATS_START", name, flush=True)
-                print(output.read_text(), flush=True)
+                print("".join(line[:240] + "\n" for line in compact[:30]), flush=True)
+                print("Full CUDA summaries in results; full NVTX projection on Weka.", flush=True)
                 print("NSYS_RANK0_STATS_END", name, flush=True)
         print(f"Collected small summaries for {name} in {destination}", flush=True)
 

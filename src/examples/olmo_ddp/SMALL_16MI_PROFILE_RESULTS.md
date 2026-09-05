@@ -4,6 +4,14 @@ Updated 2026-09-05 UTC. See [protocol and run ledger](SMALL_16MI_DEEP_PROFILE.md
 for source revisions, exact model settings, checkpoint migration, and failed attempts.
 No production/CBS checkpoint or uploader state is modified by these tests.
 
+**Current status (05:00 UTC):** Nsight Systems is fixed and validated on the full
+64-B300 model under standalone 2026.4.1. The latest healthy same-node comparison is
+78,115 → 82,190 → 85,888 median TPS/GPU for baseline → KDA128 → KDA128+EMO inverse
+scatter (+9.95%, 374.38 idealized TFLOPs/GPU). A new default-off gradient-add candidate
+passed exact two-GPU sharded-Adam qualification and is in a queued same-node A/B.
+See the dated healthy-confirmation and Nsight sections below; the earlier bad-fabric
+capture is retained as diagnostic history, not the current performance reference.
+
 ## Controlled same-node comparisons
 
 All rows below: eight Holmes nodes / 64 B300s, 16,777,216 tokens/update,
@@ -313,9 +321,20 @@ Serial extrapolation at 120 pairs/update suggests about 158ms saved, before over
 interference, and hook overhead. This is not a 2× training speedup. The kernel is now
 available behind default-off `OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE=1`, only for contiguous
 CUDA BF16-to-FP32 additions of at least 64Mi elements; other inputs keep the native path.
-Distributed qualification covers eight microbatches, three Adam updates, exact reduced
-gradients/model weights/optimizer states, and both zeroing and buffer rebinding. A
-full-model A/B is conditional on those checks passing; no production default is changed.
+[Two-GPU distributed qualification](https://beaker.org/ex/01M1QYBC15BSMXYRV476B450A7),
+source `1c3d41fac`, completed exit0 at 04:54 UTC. Eight microbatches × three Adam
+updates matched reduced gradients, model weights, and optimizer states with zero
+numerical tolerance, including ordinary zeroing and buffer rebinding. The test checked
+24 calls through the actual >=64Mi-element fast path; four existing NCCL gradient/
+no-sync tests also passed. Local CPU fallback passed separately. Dataset
+`01M1QYBC1EBXV2CBH3Y3HWTE2E` retains the test outputs.
+
+The [64-GPU timing A/B](https://beaker.org/ex/01M1QYS6RMFNV0BP28QXW16W4A) is queued
+at the same source: KDA128+EMO inverse scatter, then the identical setup with vectorized
+gradient addition. Each independently restores step7500 for 60 updates; compare only
+updates31–60, not compilation or tracing. Host485 is excluded and all nodes must pass
+NVLink preflight. [CPU-only result collector](https://beaker.org/ex/01M1QYT2B1XGS0QPMQ1R901X9N)
+is attached. No full-model gain is claimed yet; no production default is changed.
 
 ### Nsight capture repair
 
@@ -346,9 +365,23 @@ the collector waits for the selected reports and their validation, not all 64 re
 PyTorch and Nsight capture remain separate processes/passes.
 
 Full-model retry: [Nsight 2026.4.1 capture](https://beaker.org/ex/01M1QXEK2Q7TEPDQZBWKAVEYKR),
-source `f7c61144d`, 64 B300s, urgent/allocated1h, host485 excluded. It is queued, not yet
-validated on the full model. [CPU-only collector](https://beaker.org/ex/01M1QXFYFH2XXTHYKHRYRBC5R5),
-same source, urgent/unallocated0s, automatically exports only compact summaries.
+source `f7c61144d`, 64 B300s, urgent/allocated1h, host485 excluded. **All eight training
+tasks completed exit0 at 04:57 UTC.** Every selected rank has 68,955 CUDA kernels,
+105 memory copies, 344 NCCL kernels, and 208,556 NVTX events; all eight validation
+markers passed. The compiled full-model capture, not just the small reproducer, works.
+[CPU-only collector](https://beaker.org/ex/01M1QXFYFH2XXTHYKHRYRBC5R5) also completed
+exit0, dataset `01M1QXFYFW0KHGAKMF14D14BEQ`. Raw reports and SQLite exports stay on Weka.
+This first collector also exported ~140MiB of verbose per-op NVTX statistics; subsequent
+collectors retain those full statistics on Weka and publish bounded CUDA summaries.
+
+Rank0's two-update kernel sums confirm the same large gradient-add (0.662s), expert
+activation backward (0.435s), remaining EMO sort (0.220s), and FP32 router GEMMs
+(0.446s) seen in PyTorch. H2D CUDA-copy sum is just 0.471ms. NCCL duration sum is
+2.447s, but this is an instrumented capture, not a normal-run exposed-communication
+budget. The capture/flush updates slow substantially; clean pre/post windows recover
+83,938 / 83,958 median TPS/GPU on this allocation. Do not substitute Nsight's timings
+for the independent same-node timing results. A read-only CPU analysis extracts
+per-device interval unions and inclusive CPU API costs for comparison with PyTorch.
 
 ### Next isolated candidate: optimizer model-weight gathering
 
