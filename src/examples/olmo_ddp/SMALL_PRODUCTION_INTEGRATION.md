@@ -76,8 +76,11 @@ Artifacts and checkpoints live under
 `/weka/olmo-3p5-checkpoints/production-integration/<run-name>`.
 Beaker results must contain only small diagnostics, never the checkpoint tree.
 The uploader discovers completed registered checkpoint directories by polling;
-no trainer callback or uploader restart is needed. A matching enabled
-`report_only` registration is required by the training audit before stepping.
+no trainer callback or uploader restart is needed. The original experiment used
+matching enabled `report_only` registrations. After explicit September 5 cleanup
+approval, the audit also accepts inherited/apply policies with at least two
+verified local checkpoints protected and a one-hour grace period. Trainer-side
+checkpoint pruning remains disabled.
 
 ## Entry points
 
@@ -117,11 +120,42 @@ For the subsequent assessment:
   wall-clock tokens/sec including compilation, synchronous saves and validation;
   do not use the former as an end-to-end measurement.
 - Confirm all 25 checkpoint records per run are complete and remotely verified,
-  with no uploader deletion and no unexpected rewrite of an older checkpoint.
-  Upload lag is allowed while local capacity remains ample; keep checkpoints.
+  with no unexpected rewrite of an older checkpoint. The initial comparison used
+  no deletion. Subsequent explicitly approved uploader cleanup may remove eligible
+  local copies, never HF backups, while protecting the newest two verified local
+  checkpoints. Upload lag is allowed; unverified checkpoints must stay local.
 - Investigate reproducible loss/held-out degradation or excess norm/skip behavior.
   Two short repeats measure an observed variability envelope, not a universal
   acceptance threshold. Do not describe close BF16 trajectories as bit-identical.
 - Keep broader deployment approval separate from this experiment. In particular,
   small-model EP1 qualification does not establish medium/large/EP/PP correctness
   or performance, and 100B tokens do not establish 14T-run stability.
+
+## Final 100B results, September 5
+
+Both runs finished 6000 updates / 100.663296B tokens, with all eight replicas exit0.
+Optimized: https://beaker.org/ex/01M1RN3NHFH32P2Z952BCR03YD (WandB `p21bkf81`).
+Reference: https://beaker.org/ex/01M1RN3TK5Q4GCM5JYNJ20W1XZ (WandB `x7urehin`).
+Frozen training source: `107dfa3ff42f4ee4984d5c445d587ceb7db5e4f4`.
+
+| Median updates 31–6000 | Reference | Optimized |
+|---|---:|---:|
+| TPS/GPU | 76,848 | 100,645 |
+| TFLOP/s/GPU (model FLOPs) | 334.98 | 438.71 |
+| MFU vs 2250 TFLOP/s BF16 peak | 14.89% | 19.50% |
+| Seconds/update | 3.411 | 2.605 |
+| Skipped updates over entire run | 12 | 1 |
+
+Steady-state median excludes only the first30 updates; it is not an end-to-end
+training-time measurement. Final500-update medians are 76,905 / 99,304 TPS/GPU
+(+29.13%). Matched final500 mean CE is 1.968182 / 1.967852.
+Final held-out optimized perplexity is lower on8/11 subsets. The three higher
+values are books +0.487%, pes2o +0.013%, and wikitext103 +0.202%; largest reduction
+is m2d2_s2orc -1.688%. Earlier evaluation differences and all skips remain part of
+the assessment. One run pair does not prove quality equivalence or14T stability.
+
+The user approved this optimized run as the next performance baseline. New
+communication/kernel probes remain default-off and require their own qualification.
+Cleanup was enabled for all eleven managed test lineages and future inherited
+registrations after a live guarded dry-run. Remote verification is still catching
+up with final checkpoints; training completion is not upload completion.
