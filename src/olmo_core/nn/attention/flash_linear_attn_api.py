@@ -22,12 +22,7 @@ def has_fla() -> bool:
 
 
 def has_kernel_fun() -> bool:
-    """Check if ``kernel-fun`` is installed.
-
-    ``kernel-fun`` ships CuTe/Triton drop-ins for FLA's KDA chunk kernel and short
-    convolution. Install it with the ``kernel-fun`` extra:
-    ``pip install 'ai2-olmo-core[kernel-fun]'``.
-    """
+    """Check if ``kernel-fun`` is installed."""
     return kernel_fun is not None
 
 
@@ -76,16 +71,6 @@ def dispatch_chunk_kda(
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
     use_cute_kernel: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
-    """Dispatch Moonshot's pinned Triton KDA training kernel lazily.
-
-    With ``use_cute_kernel=True``, calls the **experimental** CuTe/Triton kernels from the
-    ``kernel-fun`` package (:func:`kernel_fun.kda.chunk_kda`) instead. That entry point is a
-    drop-in with this exact signature and forwards any call it does not support (packed
-    documents, non-Blackwell, off-shape, graph capture) to FLA itself — so there is no
-    predicate to check here, and the branch below is only about not importing the kernels
-    at all when the flag is off. Those kernels are not numerically identical to FLA's, so
-    opt in only when you are deliberately testing them.
-    """
     assert has_fla()
     if use_cute_kernel:
         if not has_kernel_fun():
@@ -175,18 +160,8 @@ def dispatch_causal_conv1d(
     cu_seqlens: torch.LongTensor | torch.Tensor | None = None,
     use_cute_kernel: bool = False,
 ) -> torch.Tensor:
-    """Dispatch FLA's short convolution lazily.
-
-    With ``use_cute_kernel=True``, calls the **experimental** fused short-conv kernels from
-    the ``kernel-fun`` package (:func:`kernel_fun.cconv.causal_conv1d`) instead. That entry
-    point is a drop-in with this exact signature and return contract, and forwards any call
-    it does not support (bias, packed-document ``cu_seqlens``, ``activation=None``,
-    ``backend="cuda"``, an unsupported device) to FLA itself — so there is no predicate to
-    check here, and the branch below is only about not importing the kernels at all when the
-    flag is off. The package logs once per process whether its kernels engaged. This is the
-    same flag that selects the CuTe KDA kernels in :func:`dispatch_chunk_kda`.
-    """
     assert has_fla()
+
     if use_cute_kernel:
         if not has_kernel_fun():
             raise RuntimeError(
