@@ -54,3 +54,27 @@ Trace-supported additional ideas are in scope; unrelated jobs are not.
   all10 random/tied cases exact. At16/128/1024 tokens/document, about1.1ms→0.15–0.16ms;
   length1 regresses1.15→1.42ms. Qualify mixed lengths and actual router before full-model.
 - Rounded BF16 weight-gradient/FP32 accumulation epilogue probe prepared; benchmark-only.
+- Rounded probe `01M1R79CDKFTF1DP9W26ASP52H`, source8b1d2d52a, exit0:
+  eight exact accumulation updates, four uniform/skew up/down cases. Isolated
+  GEMM+accumulation latency reduced17–34%; not yet a training gain.
+- Document router r1 `01M1R7GYA4SBK4SJ19P54X45WC`: exact-only compiled check
+  failed on FP32 weights (first max difference5.96e-8). Diagnostic A/A + candidate
+  `01M1R88TFFBH9N28DMYDHZGT3X`, sourcec4b64e137, passed: zero routing-index/count
+  mismatches through3x8 microbatches/Adam updates; A/A exact. Candidate max relative
+  L2 input-gradient4.66e-5, router gradient1.20e-6, parameter1.96e-6. Numerically
+  close, NOT bit-identical. Local results: profiling-analysis-20260905/document-router-r2.
+- Document-pool full-model A/B `01M1R8KM6BCVZCWGB09QS96QG2`, sourcea97e8b133,
+  64GPU urgent/allocated,60updates per arm; collector `01M1R8RRV3921XMJ8F6WPA1GVW`.
+- Top16 first probe `01M1R8EQA6EQ4E2RSVCC60HQCH`: ~0.71ms→0.18ms, but tie
+  ordering differed (even4 random-case indices). Rejected as-is. Native-tie
+  emulation r2 had a Triton constexpr-reassignment compile error; corrected r3
+  `01M1R94AYDN2PK92SX2G4M2RYC`, source69bd7c392, pending.
+- KDA WY r1 lacked pinned FLA; r2 corrected FLA0.5.2 but rejected4-warps schedule
+  on dbeta differences. r3 `01M1R8RGFPSN1T81T83ZRVE4RH`: main stages2/4 exact for
+  weak/strong decay with beta>1, but host-driven whole-chain timings did not show
+  a reproducible improvement. Device-time graph diagnostic r4
+  `01M1R94GAXA9FP1M1VZS00TXS2`, source69bd7c392. No schedule promoted yet.
+- Rounded-wgrad DDP prototype source0f68f5634: dedicated QuACK compiler/cache,
+  explicit bucket ownership/completion (no fake gradients), fail-closed reuse and
+  mixed-native-gradient guards.2GPU qualification `01M1R945X0FWPBZH0SE540T5EE`,
+  source69bd7c392. Local CPU regression9passed4GPUskipped. Not full-model enabled.
