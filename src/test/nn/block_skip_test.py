@@ -82,3 +82,28 @@ def test_budget_gradient_and_joint_budget():
     assert g is not None and g.item() > 0  # run-all at init, budget pushes the run prob DOWN
     assert model.blocks["0"].attention._kvr_router.w.bias.grad is not None
     assert 0.9 < jb["last_cost"] <= 1.0 + 1e-6
+
+
+def test_activation_checkpointing_matches_and_frees():
+    """With full AC the skip wrapper is checkpointed as one region: same outputs/grads as without."""
+    from olmo_core.nn.transformer import TransformerActivationCheckpointingMode
+
+    ids = torch.randint(0, 128, (1, 24))
+    outs = []
+    for ac in (False, True):
+        model = _tiny_model()
+        model.enable_block_skip(target=0.5)
+        for blk in model.blocks.values():  # a real skip pattern: half the tokens skip block 1
+            blk._bskip_router.w.weight.data.normal_(0, 0.5)
+            blk._bskip_router.w.bias.data.fill_(0.0)
+        if ac:
+            model.apply_activation_checkpointing(TransformerActivationCheckpointingMode.full)
+        out = model(ids, labels=ids.clone())
+        out.loss.backward()
+        blk = model.blocks["1"]
+        inner = getattr(blk, "_checkpoint_wrapped_module", blk)
+        outs.append((out.loss.detach().clone(), inner._bskip_router.w.weight.grad.clone(),
+                     model._block_skip["holder"].mean_keep(last_forward=False)))
+    torch.testing.assert_close(outs[0][0], outs[1][0])
+    torch.testing.assert_close(outs[0][1], outs[1][1], atol=1e-5, rtol=1e-4)
+    assert outs[0][2] == outs[1][2] and 0.0 < outs[0][2] < 1.0

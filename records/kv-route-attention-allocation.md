@@ -257,3 +257,17 @@ slow to teach it in ~100 steps. All Qwen3 arms relaunched at the suite's Qwen3 d
 (`FS_LR`), fresh run names `fs35q3s4b{dense2,flex2,flexs2}-…` (old states archived as
 `*_lr5e-6_state.json`). Qwen3.5 and Qwen3 are therefore NOT at matched LR; comparisons are within
 family.
+
+**Memory profile (Beaker 1-GPU, Qwen3-4B 12 layers, 65k packed row, full AC, block stack only —
+`debug/flop_scaling/mem_profile_routers.py`, 2026-09-05 13:45):** dense peak +18.5 GB; +KV router
++1.3 GB; +FFN router +5.4 GB *independent of how many layers are routed* (one transient inside the
+ladder backward); +block skip +9.2 GB of which 3.8 GB was RETAINED through the forward — the ST
+mixing ran outside the checkpointed block and kept every block output alive (0.31 GB/block →
+12 GB at 36 layers). Fixed: the skip wrapper now checkpoints router+block+mixing as one region on
+the unwrapped block (`_skip_and_run`), decision cache makes the recompute exact; CPU test
+`test_activation_checkpointing_matches_and_frees`. The earlier attribution of the 77 GB two-router
+footprint to "~40 GB of retained activations" is therefore wrong for the block stack; the FSDP
+trainer's remaining gap vs this single-GPU profile is not yet explained (LM-head/CE and FSDP
+all-gather transients are the candidates). Decision: `flexs` keeps the FFN router on L12+ (block
+skipping already removes all FFN work for skipped tokens); the all-layer two-router arm `flexa`
+is dropped on Qwen3 for now.

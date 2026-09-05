@@ -79,6 +79,7 @@ class BlockSkipHolder:
         self._hard_kept: Dict[int, float] = {}
         self._n_tokens: Dict[int, int] = {}
         self._depth_count: Optional[torch.Tensor] = None
+        self._seen: set = set()
         self.last_per_layer_keep: Dict[int, float] = {}
         self.last_depth_hist: List[float] = []
         self.cum_kept = 0.0
@@ -87,6 +88,7 @@ class BlockSkipHolder:
     def _reset(self) -> None:
         self._exp_keep, self._exp_layers, self._hard_kept, self._n_tokens = [], [], {}, {}
         self._depth_count = None
+        self._seen = set()
 
     def begin_forward(self, *, collect_loss: bool = True) -> None:
         if self._n_tokens:
@@ -205,23 +207,42 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
         out = block(h, **kwargs)
         return torch.where(keep[:, :, None], out, h)
 
-    logits = block._bskip_router(h)  # type: ignore[attr-defined]  (B, T)
+    inner = getattr(block, "_checkpoint_wrapped_module", None)
+    if inner is not None:
+        # The block is activation-checkpointed. Run the router + block + straight-through mixing
+        # as ONE checkpointed region on the unwrapped block: otherwise the mixing runs outside the
+        # checkpoint and keeps every block's output alive for backward (+0.31 GB per block at 65k,
+        # 12 GB on a 36-layer model -- the memory profile of 2026-09-05). The decision cache makes
+        # the recompute reproduce the same skip set.
+        import torch.utils.checkpoint as cp
+
+        return cp.checkpoint(
+            _skip_and_run, inner, block, h, kwargs, holder, layer_idx, use_reentrant=False
+        )
+    return _skip_and_run(block, block, h, kwargs, holder, layer_idx)
+
+
+def _skip_and_run(run_block, owner, h, kwargs, holder, layer_idx):
+    B, T, _ = h.shape
+    logits = owner._bskip_router(h)  # (B, T)
     p = torch.sigmoid(logits)
     key = (layer_idx, B, T)
     cache = holder._choice_cache
-    if block.training and key in cache:
+    if owner.training and key in cache:
         keep = cache[key]
     else:
         keep = logits.detach() > 0
-        if block.training:
+        if owner.training:
             cache[key] = keep
-    holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+    if layer_idx not in holder._seen:  # once per forward: the checkpoint recompute re-enters here
+        holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+        holder._seen.add(layer_idx)
 
     if "block_keep" in kwargs and kwargs["block_keep"] is not None:
         keep_attn = kwargs["block_keep"] & keep
     else:
         keep_attn = keep
-    out = block(h, **{**kwargs, "block_keep": keep_attn})
+    out = run_block(h, **{**kwargs, "block_keep": keep_attn})
     # Straight-through on the residual UPDATE of kept tokens (value: out; grad to p_keep through
     # <dL/dy, out - h>); skipped tokens pass h through untouched.
     p_sel = torch.where(keep, p, 1.0 - p)

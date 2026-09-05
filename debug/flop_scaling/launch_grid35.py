@@ -105,7 +105,10 @@ def arm_args(task, arm, budget):
         kv = f"--kv-route-start-layer 0 --kv-route-target {tgt:.2f} --kv-route-target-anneal-frac 0.3"
         if arm.startswith("attnroute"):
             return "kvroute", data, packed + ["--base-checkpoint", BASE], kv
-        ffn_start = 0 if arm.startswith(("flexa", "flexs")) else 12  # flexa/flexs = FFN routed on ALL layers
+        # flexa = FFN routed on ALL layers (two routers). flexs keeps the FFN router on L12+: block
+        # skipping already removes every layer's FFN for skipped tokens, and the all-layer FFN
+        # router's extra transient did not fit next to the KV router on 36 layers at 65k.
+        ffn_start = 0 if arm.startswith("flexa") else 12
         # flexs = the three-router arm: + per-token block skipping (olmo_core.nn.block_skip), all
         # blocks routed; the joint budget owns all three targets (the per-router ones must parse).
         skip = " --block-skip-target 0.5 --block-skip-start-layer 0" if arm.startswith("flexs") else ""
