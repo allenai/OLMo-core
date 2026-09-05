@@ -63,10 +63,12 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
     )
     # Include an independent reference/reference control. Mask/selected-index
     # equality is strict; changing the graph may change fused FP32 arithmetic.
-    for enabled in (False, False, True):
+    settings = ((False, False), (False, False), (True, False), (False, True), (True, True))
+    for document_pool, top16 in settings:
         torch.manual_seed(754)
         router = config.build(init_device="cuda")
-        router._profile_document_pool = enabled
+        router._profile_document_pool = document_pool
+        router._profile_top16 = top16
         with torch.no_grad():
             router.weight.normal_(std=0.02)
         routers.append(torch.compile(router, dynamic=False))
@@ -100,8 +102,8 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
 
     for update in range(3):
         inputs = [torch.randn(2, 257, 1024, device="cuda", dtype=torch.bfloat16) for _ in range(8)]
-        outputs = [[], [], []]
-        input_grads = [[], [], []]
+        outputs = [[] for _ in settings]
+        input_grads = [[] for _ in settings]
         for arm, router in enumerate(routers):
             for microbatch, original in enumerate(inputs):
                 x = original.detach().clone().requires_grad_(True)
@@ -114,7 +116,7 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
                     (weights.detach(), indices, counts, loss.detach(), aux[0].detach())
                 )
                 input_grads[arm].append(x.grad)
-        for arm in (1, 2):
+        for arm in range(1, len(settings)):
             prefix = f"update{update}/arm{arm}"
             for mb, (reference, candidate) in enumerate(zip(outputs[0], outputs[arm])):
                 for field, (left, right) in enumerate(zip(reference, candidate)):
@@ -127,7 +129,7 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
         for optim in optimizers:
             optim.step()
             optim.zero_grad(set_to_none=True)
-        for arm in (1, 2):
+        for arm in range(1, len(settings)):
             for index, (left, right) in enumerate(
                 zip(routers[0].parameters(), routers[arm].parameters())
             ):

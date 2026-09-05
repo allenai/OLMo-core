@@ -23,6 +23,7 @@ class EmoRouterV2(MoERouterV2):
         super().__init__(**kwargs)
         self.emo = emo
         self._profile_document_pool = os.environ.get("OLMO_PROFILE_EMO_DOCUMENT_POOL", "0") == "1"
+        self._profile_top16 = os.environ.get("OLMO_PROFILE_EMO_TOP16", "0") == "1"
         self.emo.validate_for_router(num_experts=self.num_experts, top_k=self.top_k)
 
         unsupported = {
@@ -109,7 +110,12 @@ class EmoRouterV2(MoERouterV2):
             expert_weights = selected_logits.softmax(dim=-1)
         else:
             selection_scores = scores.masked_fill(~keep, float("-inf"))
-            _, expert_indices = selection_scores.topk(self.top_k, dim=-1)
+            if self._profile_top16 and self.top_k == 16 and self.num_experts == 512:
+                from olmo_core.ops.moe_top16 import top16_native_indices
+
+                expert_indices = top16_native_indices(selection_scores)
+            else:
+                _, expert_indices = selection_scores.topk(self.top_k, dim=-1)
             expert_weights = scores.gather(-1, expert_indices)
 
         if self.normalize_expert_weights is not None:
