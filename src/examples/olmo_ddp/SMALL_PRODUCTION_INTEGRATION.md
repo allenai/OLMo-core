@@ -1,8 +1,9 @@
 # Small-model production integration, September 5
 
-Status: prepared; launch only after the feature qualification and combined smoke
-gates in `SMALL_OPTIMIZATION_SIGNOFF.md`. This is an experiment, not broad rollout
-approval. A100B run cannot establish14T stability.
+Status at 2026-09-05 11:08 UTC: production save/restore/eval/upload smoke passed;
+final combined A/A repeats in progress. Launch after their numerical review.
+This is an experiment, not broad rollout approval. A 100B run cannot establish
+14T stability. See `SMALL_OPTIMIZATION_SIGNOFF.md` for the evidence and caveats.
 
 ## Fixed comparison
 
@@ -63,3 +64,32 @@ the **qualified** `OLMOE3_INTEGRATION_POLICY`. Submit with the standard `launch`
 subcommand on a clean pushed commit. Supply the same eligible Holmes host list,
 excluding the known unhealthy485/516 hosts. Do not use unsupported policy strings
 or change model/training settings between arms.
+
+## Long-run assessment after launch
+
+The registered run IDs are `olmoe3-small-16mi-100b-reference-r1` and
+`olmoe3-small-16mi-100b-optimized-r1`. Both use WandB group
+`small-production-integration-20260905`. The initial launch check requires all
+eight workers to initialize, matching weight and first-batch fingerprints, and
+several finite actual optimization updates. It does not mean the 100B comparison
+has already passed.
+
+For the subsequent assessment:
+
+- Compare CE and norms by update/token count, including rolling means and tails,
+  not by wall clock. Keep every skipped update and restart visible. A single skip
+  is not automatically a regression: the earlier paired A/A control had one.
+- Compare the same observed held-out subsets at each 1,000-update checkpoint and
+  finish; do not average unmeasured/NaN subsets or mix partial and full evaluations.
+- Use steady-state median TPS/GPU for kernel throughput. Separately report elapsed
+  wall-clock tokens/sec including compilation, synchronous saves and validation;
+  do not use the former as an end-to-end measurement.
+- Confirm all 25 checkpoint records per run are complete and remotely verified,
+  with no uploader deletion and no unexpected rewrite of an older checkpoint.
+  Upload lag is allowed while local capacity remains ample; keep checkpoints.
+- Investigate reproducible loss/held-out degradation or excess norm/skip behavior.
+  Two short repeats measure an observed variability envelope, not a universal
+  acceptance threshold. Do not describe close BF16 trajectories as bit-identical.
+- Keep broader deployment approval separate from this experiment. In particular,
+  small-model EP1 qualification does not establish medium/large/EP/PP correctness
+  or performance, and 100B tokens do not establish 14T-run stability.

@@ -205,3 +205,61 @@ requires the current manifest's digest to match the read-back-verified publicati
   dataset/data-loader, eval and optimizer/scheduler config equality; only the
   intentional `dp_config.use_reduce_scatter` field differs. Retention never,
   no max-checkpoint removal, sync saves, MB4, no AC/FP8 all asserted locally.
+
+## September 5, 11:03 UTC: production smoke signed off
+
+- All eight workers of corrected smoke `01M1RFHFA1GFSQMDN4Q3QRQ15B` exited0.
+  Both arms trained0->4, restored model/Adam/trainer in a separate process, then
+  trained4->8 and evaluated. All64 initial-weight fingerprints and128 first/resumed
+  batch fingerprints per arm match. Partial smoke evaluation had72 finite observed
+  metric records and16 explicitly unmeasured records per arm; final runs evaluate
+  the complete validation epoch, not this two-batch smoke subset.
+- Audit `01M1RH9SS78TSBTENE8R1Z9CF2` exited0 at10:56:28; all eight gates true.
+  All six step0/4/8 checkpoints were remotely verified on their first upload attempt,
+  and both current manifests were published and read-back verified. Latest upload
+  verification10:56:20. Each checkpoint has1,092 files and~150.055GB. No deletion.
+  Weka free space39.346TB, versus~7.50TB required for both full runs.
+  Small audit dataset `01M1RH9SSHQSNCYQ5KGGR2RKFX`, local
+  `profiling-analysis-20260905/integration-smoke-signoff-r3`.
+- First combined direct-RS repeat finished:100,515.67 TPS/GPU,2.607991s/update,
+  +30.75% versus its76,877.45 reference; AR97,633.10 (+27.0%). Median updates31–200,
+  all200 loss/norm records finite and no skipped steps in any of these three arms.
+  RS/reference CE mean absolute difference.00130818, maximum.00510883. However,
+  maximum absolute20/50/100-step mean differences.00290349/.00124829/.00060260
+  exceed the corresponding earlier A/A windows. Do not call the trajectories
+  bit-identical or declare every numerical statistic within the old A/A envelope.
+  Second repeats and the planned100B comparison are required follow-up evidence.
+- Final combined-RS Nsight `01M1RJ0FGZ2M9CY12VSGKSGR5M` completed100 updates;
+  collector `01M1RJ3VFYZFKTWQ9BT85DQ32J` exited0. All eight sampled CUDA traces
+  valid. Uncaptured31–70 median98,231 TPS/GPU; post-capture81–100 median94,627.
+  Instrumentation/allocation differences make this inappropriate to replace the
+  same-allocation unprofiled A/A timing. Dataset `01M1RJ3VGA18NGJN520AAXXEAP`.
+  Read-only timeline-union analysis `01M1RKPRPZWNJNAG6VXP69EATB` also exited0;
+  no raw traces/checkpoints are exported to Beaker results.
+
+### Residual headroom, not additional approved gains
+
+The final three-update capture has99,359 kernels per sampled rank and9.35–10.15s
+kernel spans. Union-of-intervals analysis finds2.04–3.12s of collective activity
+without another recorded kernel and0.19–1.08s with no recorded GPU operation.
+Those are instrumented observations, not additive/removable critical-path budgets:
+capture perturbs launch timing and collectives include cross-rank waits. Rank0
+has one644ms uint64 collective versus~10ms for the other two instances; its cause
+is not isolated here, so do not extrapolate that outlier as steady-state overhead.
+
+Gross kernel sums per captured update, across the eight sampled ranks:
+
+| Area | Approximate kernel time/update | Decision for this integration |
+|---|---:|---|
+| Grouped expert GEMMs including rounded wgrad |572–586ms|Keep qualified rounded-wgrad; activation fusion rejected as-is|
+| KDA-family kernels |355–364ms|Keep qualified CTA policy; WY scheduling probes did not win|
+| Strict-FP32 router GEMMs |228–239ms|BLAS preference probe no gain; no precision change|
+| Paired SwiGLU backward |94–96ms|Keep qualified implementation|
+| Native-tie top16 |34ms|Keep qualified implementation|
+
+These kernel sums overlap other streams and must not be added to the interval
+unions or interpreted as attainable speedups. Future work could target expert
+projection/activation fusion, KDA intermediate traffic, router GEMMs, or optimizer
+communication, but none has another qualified improvement ready for this bundle.
+Freeze the current candidate after its repeats rather than adding an unmeasured
+last-minute switch. Detailed timeline dataset `01M1RKPRQ9311VN6Z3QT3HBPHN`.
