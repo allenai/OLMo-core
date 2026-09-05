@@ -6,6 +6,17 @@ Frozen candidate: `core-docpool-top16-wgrad-rs`.
 This is an experiment, not broad rollout approval. A 100B run cannot establish
 14T stability. See `SMALL_OPTIMIZATION_SIGNOFF.md` for the evidence and caveats.
 
+Submitted at 11:26 UTC from clean pushed commit
+`107dfa3ff42f4ee4984d5c445d587ceb7db5e4f4`:
+
+- Reference: https://beaker.org/ex/01M1RN3TK5Q4GCM5JYNJ20W1XZ
+- Optimized: https://beaker.org/ex/01M1RN3NHFH32P2Z952BCR03YD
+- Read-only start observer: https://beaker.org/ex/01M1RN5CGDCZGY23T10MHW7GTZ
+
+Each training arm is urgent/allocated, 8x8 B300s in `ai2/olmo3p5-training`,
+excluding Holmes hosts 485 and 516. Startup is being verified; submission alone
+does not satisfy the successful-training gate.
+
 ## Fixed comparison
 
 | Setting | Both arms |
