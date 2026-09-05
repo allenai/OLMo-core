@@ -55,7 +55,21 @@ def main():
             return (y, *gradients)
 
         schedule(baseline)
+        wy_arguments = {}
+        original_wy = bwd_wy_t.chunk_kda_bwd_wy_dqkg_t
+
+        def capture_wy_arguments(**kwargs):
+            wy_arguments.update(
+                {
+                    key: value.detach() if isinstance(value, torch.Tensor) else value
+                    for key, value in kwargs.items()
+                }
+            )
+            return original_wy(**kwargs)
+
+        bwd_wy_t.chunk_kda_bwd_wy_dqkg_t = capture_wy_arguments
         expected = tuple(t.detach().clone() for t in execute())
+        bwd_wy_t.chunk_kda_bwd_wy_dqkg_t = original_wy
         assert all(bool(torch.isfinite(t).all()) for t in expected)
 
         def measure():
@@ -74,17 +88,21 @@ def main():
             return {"median_ms": statistics.median(values), "mean_ms": statistics.mean(values)}
 
         def graph_measure():
-            # Remove host-launch jitter from the small, many-kernel chain. This
-            # is a diagnostic device-time measurement, not production graph use.
+            # The full kernel-fun wrapper intentionally does not support capture.
+            # Time ONLY this pure-Triton WY stage on real captured stage inputs;
+            # no support guard is disabled, and no CuTe host call cache is captured.
+            def stage():
+                return original_wy(**wy_arguments)
+
             stream = torch.cuda.Stream()
             stream.wait_stream(torch.cuda.current_stream())
             with torch.cuda.stream(stream):
                 for _ in range(5):
-                    execute()
+                    stage()
             stream.synchronize()
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, stream=stream):
-                captured = execute()
+                captured = stage()
             pairs = []
             for _ in range(10):
                 a, b = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
@@ -119,7 +137,7 @@ def main():
                 "errors_y_dq_dk_dv_dg_dbeta": deltas,
                 "qualified_exact": exact,
                 **(measure() if exact else {"rejected": "non-exact outputs or gradients"}),
-                "graph_device_time": graph_measure() if exact else None,
+                "wy_stage_graph_device_time": graph_measure() if exact else None,
             }
             summary["cases"].append(row)
             (output / "summary.json").write_text(json.dumps(summary, indent=2))
