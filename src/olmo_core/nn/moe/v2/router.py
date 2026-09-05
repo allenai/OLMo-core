@@ -775,7 +775,13 @@ class MoERouterV2(nn.Module):
         """
         if not self.global_load_balancing or self.lb_process_group is None:
             raise RuntimeError("Early count reduction requires a load-balancing process group")
-        return funcol.all_reduce(counts.float(), "sum", self.lb_process_group)
+        # The convenience funcol.all_reduce wrapper inserts wait_tensor while
+        # tracing in PyTorch 2.11. That defeats an explicit delayed-consumption
+        # path unless a later compiler pass happens to move the wait. Keep the
+        # registered functional collective tensor raw; compute_aux_loss performs
+        # its one explicit wait after the independent expert computation.
+        group_name = funcol._resolve_group_name(self.lb_process_group)
+        return torch.ops._c10d_functional.all_reduce(counts.float(), "sum", group_name)
 
     @nvtx.annotate("MoERouter.compute_aux_loss")
     def compute_aux_loss(

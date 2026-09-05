@@ -5,6 +5,7 @@ import copy
 import pytest
 import torch
 import torch.distributed as dist
+import torch.distributed._functional_collectives as funcol
 
 from olmo_core.config import DType
 from olmo_core.distributed.utils import backend_supports_cuda
@@ -126,4 +127,43 @@ def test_early_global_count_reduction_parity(backend: str, compiled: bool, emo: 
         backend=backend,
         start_method="spawn",
         func_kwargs={"compiled": compiled, "emo": emo},
+    )
+
+
+def _run_explicit_wait_graph():
+    router = MoERouterConfigV2(
+        d_model=16, num_experts=8, top_k=2, global_load_balancing=True
+    ).build(init_device="cpu")
+    router.set_load_balancing_process_group(dist.group.WORLD)
+    graphs = []
+
+    def forward(counts, matrix):
+        pending = router.start_global_count_reduce(counts)
+        independent = matrix @ matrix
+        reduced = funcol.wait_tensor(pending)
+        return reduced, independent
+
+    def capture(graph, _inputs):
+        graphs.append(graph)
+        return graph.forward
+
+    counts = torch.arange(8) + dist.get_rank()
+    matrix = torch.eye(16)
+    reduced, independent = torch.compile(forward, backend=capture, fullgraph=True)(counts, matrix)
+    torch.testing.assert_close(reduced, 2 * torch.arange(8).float() + 1, rtol=0, atol=0)
+    torch.testing.assert_close(independent, matrix, rtol=0, atol=0)
+    assert len(graphs) == 1
+    targets = [str(node.target) for node in graphs[0].graph.nodes if node.op == "call_function"]
+    launches = [i for i, name in enumerate(targets) if "all_reduce" in name]
+    waits = [i for i, name in enumerate(targets) if "wait_tensor" in name]
+    compute = [i for i, name in enumerate(targets) if "matmul" in name]
+    assert len(launches) == len(waits) == len(compute) == 1, targets
+    assert launches[0] < compute[0] < waits[0], targets
+    print("EXPLICIT_WAIT_CAPTURE", graphs[0].code, flush=True)
+
+
+def test_captured_count_launch_does_not_insert_an_early_wait():
+    """Guard FX launch/compute/wait order; runtime overlap still needs a GPU trace."""
+    run_distributed_test(
+        _run_explicit_wait_graph, world_size=2, backend="gloo", start_method="spawn"
     )

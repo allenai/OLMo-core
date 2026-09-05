@@ -82,3 +82,16 @@ resets batching to zero, and reference arms always disable it. The selectors onl
 prepare the gated smoke workflow. This probe has passed small numerical tests but
 is not a qualified production candidate; full-size speed/memory, fresh trace and
 save/restore/eval/upload smoke gates must pass before any longer integration.
+
+## Explicit-wait overlap correction (not yet qualified)
+
+The first two200-update overlap pairs used PyTorch's convenience functional
+all-reduce. Neither standalone nor combined early-overlap gains repeated. The
+PyTorch2.11 wrapper inserts `wait_tensor` while tracing, which may defeat the
+intended launch-before-experts/wait-after-experts schedule. The experimental
+start method now returns the low-level registered functional collective tensor;
+the existing consumption site performs its sole explicit wait. There is no
+mutable per-router work handle. This remains behind the default-off overlap
+switch, mutually exclusive with batching. Re-run numerical/optimizer tests and
+verify the captured FX launch/compute/wait order, then use a fresh full-model
+trace/timing before claiming actual runtime overlap or promoting the correction.
