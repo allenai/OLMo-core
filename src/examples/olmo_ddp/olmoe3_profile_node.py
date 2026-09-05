@@ -137,7 +137,15 @@ def main():
     )
     for index, (name, variant, mode) in enumerate(named_pairs):
         test_label = variant
-        if variant in ("optimized", "deferred", "simple", "lb-overlap", "deferred-lb"):
+        if variant in (
+            "optimized",
+            "deferred",
+            "simple",
+            "lb-overlap",
+            "deferred-lb",
+            "lb-batched",
+            "deferred-lb-batched",
+        ):
             variant = OPTIMIZED_VARIANT
         # A separate agent and port avoids retaining rendezvous keys from the previous
         # training process. The same eight nodes are retained for fair timing comparisons.
@@ -174,10 +182,13 @@ def main():
             OLMO_PROFILE_EMO_TOP16="1" if "-top16" in variant else "0",
             OLMO_PROFILE_ROUNDED_WGRAD="1" if "-wgrad-fused" in variant else "0",
             OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS=(
-                "1" if test_label in ("deferred", "deferred-lb") else "0"
+                "1" if test_label in ("deferred", "deferred-lb", "deferred-lb-batched") else "0"
             ),
             OLMO_PROFILE_LB_COUNT_OVERLAP=(
                 "1" if test_label in ("lb-overlap", "deferred-lb") else "0"
+            ),
+            OLMO_PROFILE_LB_COUNT_BATCHED=(
+                "1" if test_label in ("lb-batched", "deferred-lb-batched") else "0"
             ),
             OLMO_PROFILE_DDP_BUCKET_SUMMARY="1",
         )

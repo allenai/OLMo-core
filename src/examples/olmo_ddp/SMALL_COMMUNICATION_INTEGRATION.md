@@ -58,3 +58,22 @@ payloads stay on Weka/HF, never in the Beaker results dataset.
 
 These switches are prepared for the performance/numerical gates; their presence
 in this branch does not mean the follow-up integration has passed or been launched.
+
+## Additional unqualified batched-count probe
+
+`OLMO_PROFILE_LB_COUNT_BATCHED=1` separately investigates packing the 15 local
+layer-count vectors into one all-reduce per microbatch (120→8 count collectives
+per optimizer update). This is mutually exclusive with early per-layer overlap.
+No batching across microbatches or recomputation is introduced. Original local
+scores/logits and count vectors are explicit block outputs, consumed once by the
+same per-router loss/metric calculation after the final block. No collection is
+stored on a model or reused by another forward. Each reduced row is cloned before
+normalization to avoid autograd version-counter aliasing between views.
+
+The path rejects PP/EP/TP/CP, TBO and activation checkpointing. It changes backward
+scheduling and prolongs scores/logits lifetimes; the raw tensors total up to
+1.875GiB for the small configuration, but that is not a measured incremental
+peak-memory cost. Numerical, optimizer, memory and end-to-end speed gates are
+required. Timing aliases are `lb-batched` and `deferred-lb-batched`; every other
+timing arm and all current integration policies explicitly reset batching to zero.
+This probe is not part of the qualified communication candidate yet.
