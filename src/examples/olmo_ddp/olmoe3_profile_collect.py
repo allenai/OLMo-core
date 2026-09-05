@@ -12,6 +12,7 @@ ROOT = Path("/weka/olmo-3p5-checkpoints/production-profiling")
 
 
 def main():
+    """Wait for completed passes and analyze artifacts without consuming any GPUs."""
     results = Path(os.environ.get("RESULTS_DIR", "/results")) / "profile-summaries"
     results.mkdir(parents=True, exist_ok=True)
     for name in sys.argv[1:]:

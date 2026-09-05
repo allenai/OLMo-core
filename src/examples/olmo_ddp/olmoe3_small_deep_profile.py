@@ -140,6 +140,10 @@ def common_components(cli_context, **kwargs):
             [
                 BeakerEnvVar("OLMOE3_DEEP_PROFILE_VARIANT", VARIANT),
                 BeakerEnvVar(
+                    "OLMOE3_DEEP_PROFILE_VARIANTS",
+                    os.environ.get("OLMOE3_DEEP_PROFILE_VARIANTS", VARIANT),
+                ),
+                BeakerEnvVar(
                     "OLMOE3_DEEP_PROFILE_PASSES",
                     os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch"),
                 ),

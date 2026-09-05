@@ -7,12 +7,14 @@ Ready markers are keyed by actual job ID, so an old job cannot satisfy the barri
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 
 def resolve_ready_leader(beaker, workload, ready_dir: Path, expected_nodes: int):
+    """Return the current leader only once every current job has published readiness."""
     tasks = workload.experiment.tasks
     if len(tasks) != expected_nodes:
         raise RuntimeError(f"Expected {expected_nodes} tasks, found {len(tasks)}")
@@ -36,6 +38,7 @@ def resolve_ready_leader(beaker, workload, ready_dir: Path, expected_nodes: int)
 
 
 def main():
+    """Run isolated distributed agents per variant/pass on the same allocation."""
     from beaker import Beaker
 
     run_name, cluster = sys.argv[1:]
@@ -69,23 +72,37 @@ def main():
         f"injected hostname was {os.environ.get('BEAKER_LEADER_REPLICA_HOSTNAME')}",
         flush=True,
     )
-    command = [
-        sys.executable,
-        "-m",
-        "torch.distributed.run",
-        f"--nnodes={nodes}",
-        f"--nproc-per-node={gpus}",
-        f"--node-rank={rank}",
-        "--rdzv-backend=static",
-        f"--rdzv-endpoint={hostname}:{port}",
-        f"--rdzv-id={workload_id}",
-        "--rdzv-conf=read_timeout=900",
-        "--max-restarts=0",
-        "src/examples/olmo_ddp/olmoe3_profile_worker.py",
-        run_name,
-        cluster,
-    ]
-    os.execv(sys.executable, command)
+    variants = os.environ.get(
+        "OLMOE3_DEEP_PROFILE_VARIANTS", os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
+    ).split(",")
+    modes = os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(",")
+    for index, (variant, mode) in enumerate((v, m) for v in variants for m in modes):
+        # A separate agent and port avoids retaining rendezvous keys from the previous
+        # training process. The same eight nodes are retained for fair timing comparisons.
+        name = f"{run_name}-{variant}" if len(variants) > 1 else run_name
+        command = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            f"--nnodes={nodes}",
+            f"--nproc-per-node={gpus}",
+            f"--node-rank={rank}",
+            "--rdzv-backend=static",
+            f"--rdzv-endpoint={hostname}:{port + index}",
+            f"--rdzv-id={workload_id}-{index}",
+            "--rdzv-conf=read_timeout=900",
+            "--max-restarts=0",
+            "src/examples/olmo_ddp/olmoe3_profile_worker.py",
+            name,
+            cluster,
+        ]
+        env = dict(
+            os.environ,
+            OLMOE3_DEEP_PROFILE_VARIANT=variant,
+            OLMOE3_DEEP_PROFILE_PASSES=mode,
+        )
+        print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
+        subprocess.run(command, env=env, check=True)
 
 
 if __name__ == "__main__":

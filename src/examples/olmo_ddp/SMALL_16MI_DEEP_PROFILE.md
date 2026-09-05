@@ -71,6 +71,14 @@ bucket sizing/communication scheduling, compiled/fused pointwise work compatible
 per-head gains and scalable softmax, KDA dispatch tuning. Keep precision/model changes
 and recomputation out of this baseline.
 
+For final small-gain claims, run plain timing arms on the same allocation, with no CUPTI
+profiler in any arm: `OLMOE3_DEEP_PROFILE_PASSES=timing` and
+`OLMOE3_DEEP_PROFILE_VARIANTS=baseline,reduce-scatter,kda-128`. Each arm restores the same
+checkpoint/data position and runs 60 updates; compare updates31–60. Each variant/pass gets
+a separate torchrun agent and rendezvous port. This also avoids reusing store keys across
+fresh training processes. The reduce-scatter arm changes communication, not precision or
+model/optimizer math; measure its packing overhead and numerical agreement too.
+
 ## Run ledger (2026-09-05 UTC)
 
 - Qualification: https://beaker.org/ex/01M1QH72PZCX87XR0KA6JX5VRJ
