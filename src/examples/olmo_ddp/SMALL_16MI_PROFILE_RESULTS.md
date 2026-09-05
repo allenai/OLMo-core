@@ -225,6 +225,25 @@ preflights passed. At 03:57 the baseline was still in cold compilation, so there
 was not yet a fresh steady-state TPS measurement. The infrastructure team has been
 alerted to host485 by the user.
 
+**Fresh baseline completed 04:04 UTC:** all 60 updates finished and all 64 memory
+completion markers were collected. Unprofiled updates31–60:
+
+| Healthy confirmation arm | Mean TPS/GPU | Median TPS/GPU | Median TFLOPs/GPU | Median step (s) | Mean CE | Window skips |
+|---|---:|---:|---:|---:|---:|---:|
+| Baseline, default KDA dispatch | 78,092 | 78,115 | 340.500 | 3.3559 | 1.950790 | 0 |
+| KDA cutoff128 | — | — | — | — | — | — |
+| KDA cutoff128 + EMO inverse scatter | — | — | — | — | — | — |
+
+Baseline TPS standard deviation is 289 across the 30 timed updates. Median cluster
+throughput is approximately 5.00M tokens/s. This is within 0.14% of the original
+healthy 78,222 median, and 32.8% faster than the degraded 58,832 median. Different
+allocations were used for the hardware comparison, so this is strong corroboration
+of the confirmed NVLink fault rather than a perfectly isolated one-node swap test.
+First-update CE is 1.9896239042; gradient norm 0.0734193027. Active/reserved memory
+in the clean window is 175.466 / 178.504 GiB. The remaining two timing arms and
+combined PyTorch capture are sequentially scheduled on this same allocation; no
+fresh combined throughput is claimed yet. The CPU collector is still running.
+
 ### Next isolated candidate: optimizer model-weight gathering
 
 `olmoe3_model_gather_bench.py` is a standalone prototype, **not wired into training**.
@@ -238,7 +257,10 @@ updates including unchanged masters, a singleton process group, replicated param
 unchanged master storage, and stable model/view pointers. These are gather-operation
 tests, not end-to-end optimizer or training qualification.
 
-The planned two-B300 qualification repeats those tests with NCCL and times packed /
+The [two-B300 qualification](https://beaker.org/ex/01M1QVEPE4DD7TG6QGSFFPV09N)
+completed exit0 at 04:02 UTC, source `c9894426f`. All six NCCL layout tests passed,
+and all three benchmark arms verified every output element and unchanged source
+masters. It times packed /
 direct-large / packed on a **synthetic** 22.676-GiB BF16 layout containing 15 pairs of
 the real 0.5/1-GiB expert tensor sizes plus synthetic smaller weights. It measures
 CUDA and synchronized wall time, additional allocated-memory peaks, and verifies
@@ -246,8 +268,45 @@ every output element. The prototype makes 33 collectives instead of one, so addi
 launch/network overhead may outweigh copying savings, especially at 64 ranks. A local
 microbenchmark gain will not be called a whole-training gain or justify deployment.
 
+| Isolated weight-gather arm | Median CUDA time (ms) | Median synchronized wall time (ms) | Additional peak allocated memory (GiB) |
+|---|---:|---:|---:|
+| Current packed path, before | 37.4641 | 37.4947 | 34.0137 |
+| Direct large + coalesced small | 32.5820 | 32.6161 | 0.7500 |
+| Current packed path, after | 37.4622 | 37.4938 | 34.0137 |
+
+This is about **13.0% lower isolated gather latency**, or **4.88ms**, not 13% lower
+training time. Five warmups and 20 measurements per arm, taking the slower rank for
+each sample. GPU events include conversion/copy/collectives; wall time also includes
+host submission and the terminal GPU wait. Input creation, barriers, and correctness
+checks are outside those windows. The model/master buffers exist in every arm; the
+memory column is additional live allocation, not reserved memory or model peak memory.
+
+The two-rank local input is much larger than the 64-rank input. Accordingly neither
+the latency nor the 34-GiB transient reduction transfers directly to production.
+Moreover the real small model peaks during forward/backward, not this optimizer
+copy stage; this result does **not** establish that MB8 would fit. The prototype
+remains benchmark-only. Result dataset: `01M1QVEPEF8VKF6MC1P73HER2H`.
+
+### Priorities after healthy confirmation
+
+1. Finish same-allocation baseline/KDA/KDA+EMO timing, then analyze the combined
+   healthy PyTorch capture. Do not use degraded-topology communication percentages
+   as the optimization budget for a healthy production allocation.
+2. If communication remains substantial, qualify packing-free reduce-scatter and
+   the gather prototype at the relevant inter-node scale before full-model A/Bs.
+   Their isolated savings are milliseconds, not yet large end-to-end improvements.
+3. Rank grouped expert GEMMs, FP32 gradient-accumulation traffic, and remaining KDA
+   work from the healthy trace. Only then choose further kernel/epilogue fusion.
+   Preserve architecture, BF16 computation, FP32 accumulation, scalable softmax,
+   EMO, batch, LR, and the no-recomputation policy.
+
+At this branch's FLOP accounting, 600 TFLOPs/GPU requires approximately 137.65k
+TPS/GPU (1.904s/update), about 67.5% above the previous 82.16k KDA result. The small
+copy optimizations alone cannot close that gap. No additional 64-GPU allocation
+was launched solely for either copy prototype while the healthy capture is pending.
+
 No experimental flag was enabled in the original CBS/production branch. No model
-fusion, optimizer all-gather rewrite, precision change, recomputation, or shared EP
+fusion, training optimizer all-gather rewrite, precision change, recomputation, or shared EP
 output buffers were introduced.
 
 ## PR859 audit: already-covered kernel implementation

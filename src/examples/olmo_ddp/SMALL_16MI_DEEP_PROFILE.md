@@ -220,6 +220,14 @@ GPU1 was disconnected from NVLink and caused an eight-node job to use nine NCCL 
 four collective channels and no NVLS. The node driver now rejects any local eight-GPU
 topology containing off-diagonal non-NVLink paths before workers compile.
 
+Standalone follow-up on 2026-09-05 (source `c9894426f`):
+[optimizer model-gather qualification](https://beaker.org/ex/01M1QVEPE4DD7TG6QGSFFPV09N),
+two B300s / one Holmes node, urgent allocated10m in `ai2/olmo3p5-training`, no data
+or checkpoint mounts. Completed exit0 at 04:02 UTC; six NCCL layout tests passed.
+Synthetic 22.676-GiB packed/direct/packed gather medians: 37.464 / 32.582 / 37.462ms.
+This prototype lives only in the benchmark, not optimizer/training configuration.
+Result dataset `01M1QVEPEF8VKF6MC1P73HER2H`; full caveats in the results report.
+
 `OLMOE3_DEEP_PROFILE_PLAN` optionally specifies an ordered `variant:pass` list instead
 of the Cartesian product of variants and passes. For example:
 
