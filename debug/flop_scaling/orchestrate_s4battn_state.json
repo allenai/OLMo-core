@@ -1,0 +1,176 @@
+{
+ "runs": {
+  "fs35s4battn-oolong-attnroute-c50-s20M": {
+   "ex": "01M1QZHZ0ZZTPDKDETK77K801J",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "attnroute-c50",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-oolong-attnroute-c25-s20M": {
+   "ex": "01M1QZJTS0FFZ91YWV742Y4RMQ",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "attnroute-c25",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-oolong-attnroute-c10-s20M": {
+   "ex": "01M1QZM89ZQYFW397EFB55XVVB",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "attnroute-c10",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-oolong-attnroute-c50-s80M": {
+   "ex": "01M1QZNE0G0X5R0WPSMBH8FR18",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "attnroute-c50",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-oolong-attnroute-c25-s80M": {
+   "ex": "01M1QZPFTX0KA6X4X5HJSGK2XD",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "attnroute-c25",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-oolong-attnroute-c10-s80M": {
+   "ex": "01M1QZQS0WPCWGYXDWDK8X3M25",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "attnroute-c10",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c50-s14M": {
+   "ex": "01M1QZRRY98JJ9GAYCPWZT99Q2",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "attnroute-c50",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1R14VPCP0CWS1558S80M1G9",
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c25-s14M": {
+   "ex": "01M1QZSTGT3VM420XA27XZH3AE",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "attnroute-c25",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1R15S6SPQ3PKR40Y5R325AZ",
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c10-s14M": {
+   "ex": "01M1QZV2P1B4JSHND9PY09WVVE",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "attnroute-c10",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1R16QGBRAZPPT0DB4YWXKPH",
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c50-s56M": {
+   "ex": "01M1QZW1FWR3FQ02F6K0748CPJ",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "attnroute-c50",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c25-s56M": {
+   "ex": "01M1QZX6NR07SW7FJW709KKF37",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "attnroute-c25",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  },
+  "fs35s4battn-contradiction-attnroute-c10-s56M": {
+   "ex": "01M1QZYCP4NB9W2GAERETEQGPP",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "attnroute-c10",
+   "scale": "4b",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null,
+   "s2": null
+  }
+ },
+ "evals": {
+  "fs35s4battn-contradiction-attnroute-c50-s14M": {
+   "ex": "01M1R14VPCP0CWS1558S80M1G9",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-contradiction-attnroute-c25-s14M": {
+   "ex": "01M1R15S6SPQ3PKR40Y5R325AZ",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-contradiction-attnroute-c10-s14M": {
+   "ex": "01M1R16QGBRAZPPT0DB4YWXKPH",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  }
+ },
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 1788585402.1526723,
+ "harvest_ex": "01M1QZYQET9WB7T313Y10VETBA",
+ "done": false,
+ "launched": true
+}

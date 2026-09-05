@@ -1,0 +1,86 @@
+{
+ "runs": {
+  "fs35s4b-oolong-ffnmoe-t10p-s20M": {
+   "ex": "01M1PV89PXQ924CNKPRZE755GC",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "ffnmoe-t10p",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1QAA72RPTGAT52C45YS0ZZG",
+   "s2": null
+  },
+  "fs35s4b-oolong-ffnmoe-t10p-s80M": {
+   "ex": "01M1PV94EXJJZK0V6AB9FVGP5G",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "ffnmoe-t10p",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1QFHM7G86J5P1KRS3X0H8ER",
+   "s2": null
+  },
+  "fs35s4b-contradiction-ffnmoe-t10p-s14M": {
+   "ex": "01M1PV9YGCG8RFRMQXP5EA33QM",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "ffnmoe-t10p",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1QC2D25EK2STJQ85FPJMCE1",
+   "s2": null
+  },
+  "fs35s4b-contradiction-ffnmoe-t10p-s56M": {
+   "ex": "01M1PVAR4G92SH62XG89P2KCV8",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "ffnmoe-t10p",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1QFJCRYEVC08A10X5Q2V9NM",
+   "s2": null
+  }
+ },
+ "evals": {
+  "fs35s4b-oolong-ffnmoe-t10p-s20M": {
+   "ex": "01M1QAA72RPTGAT52C45YS0ZZG",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4b-contradiction-ffnmoe-t10p-s14M": {
+   "ex": "01M1QC2D25EK2STJQ85FPJMCE1",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4b-oolong-ffnmoe-t10p-s80M": {
+   "ex": "01M1QFHM7G86J5P1KRS3X0H8ER",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4b-contradiction-ffnmoe-t10p-s56M": {
+   "ex": "01M1QFJCRYEVC08A10X5Q2V9NM",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  }
+ },
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 1788586612.7018516,
+ "harvest_ex": "01M1R13NKAYCAW1VZT3BPSHT7T",
+ "done": true,
+ "launched": true
+}
