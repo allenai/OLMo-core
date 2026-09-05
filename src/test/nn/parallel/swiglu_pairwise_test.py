@@ -50,7 +50,7 @@ def test_compiled_pairwise_activation():
     torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0)
 
 
-def _run_routed_adam_parity(candidate="activation"):
+def _run_routed_adam_parity(candidate="activation", reduction="all-reduce"):
     rank, world = dist.get_rank(), dist.get_world_size()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -74,8 +74,14 @@ def _run_routed_adam_parity(candidate="activation"):
                 param.normal_(std=0.02)
         model.compile(dynamic=False)
         ddp = MultiGroupDistributedDataParallel(
-            model, init_sync=False, accumulate_grads_in_fp32=True, reduce_grads_in_fp32=True
+            model,
+            init_sync=False,
+            accumulate_grads_in_fp32=True,
+            reduce_grads_in_fp32=True,
+            use_reduce_scatter=reduction != "all-reduce",
+            bucket_cap_mb=1,
         )
+        ddp._reduce_scatter_single_param_fast_path = reduction == "reduce-scatter-direct"
         optim = OLMoDDPOptimizer(
             [{"named_params": dict(ddp.named_parameters()), "pg": "dp"}],
             world_mesh={"dense": mesh, "moe": None},
@@ -86,6 +92,10 @@ def _run_routed_adam_parity(candidate="activation"):
             betas=(0.9, 0.95),
             max_grad_norm=1.0,
         )
+        if reduction != "all-reduce":
+            ddp.configure_reduce_scatter_params(optim.normal_params_with_sharded_optimizer_state())
+            assert all(bucket.reduce_scatter for bucket in ddp._grad_buckets)
+            assert all(len(bucket.params) == 1 for bucket in ddp._grad_buckets)
         stacks.append((ddp, optim))
     os.environ.pop("OLMO_PROFILE_ROUNDED_WGRAD", None)
     counts = torch.tensor([16, 16, 32, 32, 32, 32, 48, 48], device=device, dtype=torch.int32)
@@ -105,6 +115,13 @@ def _run_routed_adam_parity(candidate="activation"):
         torch.testing.assert_close(losses[0], losses[1], rtol=0, atol=0)
         for old, new in zip(stacks[0][0].parameters(), stacks[1][0].parameters()):
             torch.testing.assert_close(old._main_grad_fp32, new._main_grad_fp32, rtol=0, atol=0)
+            if reduction != "all-reduce":
+                torch.testing.assert_close(
+                    old._olmo_ddp_reduced_grad_shard,
+                    new._olmo_ddp_reduced_grad_shard,
+                    rtol=0,
+                    atol=0,
+                )
         for _, optim in stacks:
             optim.step()
             assert not bool(optim._step_skipped.item())
@@ -128,9 +145,14 @@ def test_pairwise_routed_experts_sharded_adam():
 
 
 @pytest.mark.gpu
-def test_rounded_wgrad_routed_experts_sharded_adam():
+@pytest.mark.parametrize(
+    "reduction", ("all-reduce", "reduce-scatter-packed", "reduce-scatter-direct")
+)
+def test_rounded_wgrad_routed_experts_sharded_adam(reduction):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two CUDA devices")
     run_distributed_test(
-        partial(_run_routed_adam_parity, "rounded-wgrad"), backend="nccl", start_method="spawn"
+        partial(_run_routed_adam_parity, "rounded-wgrad", reduction),
+        backend="nccl",
+        start_method="spawn",
     )

@@ -264,8 +264,8 @@ class MultiGroupDistributedDataParallel(Module):
         # materialization so meta->CUDA parameter replacement cannot lose ownership.
         for child in module.modules():
             if getattr(child, "_profile_rounded_wgrad", False):
-                if not self._accumulate_grads_in_fp32 or self.use_reduce_scatter:
-                    raise RuntimeError("Rounded wgrad probe requires FP32 all-reduce DDP")
+                if not self._accumulate_grads_in_fp32 or not self._reduce_grads_in_fp32:
+                    raise RuntimeError("Rounded wgrad probe requires FP32 accumulation/reduction")
                 for param in (child.w_up_gate, child.w_down):
                     if param not in self._param_to_bucket_view:
                         raise RuntimeError("Rounded wgrad parameter is not managed by this DDP")

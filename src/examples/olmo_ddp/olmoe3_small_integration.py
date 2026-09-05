@@ -77,6 +77,7 @@ def apply_policy():
         "core-docpool-top16",
         "core-docpool-wgrad",
         "core-docpool-top16-wgrad",
+        "core-docpool-top16-wgrad-rs",
     ):
         raise ValueError((ARM, POLICY))
     flags = dict(FLAGS)
@@ -89,6 +90,7 @@ def apply_policy():
             flags[key] = "1"
         flags["OLMO_PROFILE_EMO_TOP16"] = "1" if "top16" in POLICY else "0"
         flags["OLMO_PROFILE_ROUNDED_WGRAD"] = "1" if "wgrad" in POLICY else "0"
+        flags["OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"] = "1" if POLICY.endswith("-rs") else "0"
     os.environ.update(flags)
     return flags
 
@@ -224,10 +226,11 @@ def model_config(common):
 
 
 def train_module_config(common):
-    """Freeze production optimizer, WSD, BF16, MB4 and all-reduce settings."""
+    """Freeze production optimizer, WSD, BF16 and MB4; select qualified collective policy."""
     config = base.build_train_module_config(common, SYSTEM)
     config.optim.lr = LR
     config.scheduler = WSD(warmup=2000, decay=1, decay_fraction=None)
+    config.dp_config.use_reduce_scatter = ARM == "optimized" and POLICY.endswith("-rs")
     return config
 
 

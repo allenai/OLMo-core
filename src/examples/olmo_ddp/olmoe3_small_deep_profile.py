@@ -202,6 +202,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16-wgrad-fused",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16-wgrad-fused-rs-fast",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
@@ -217,6 +218,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16-wgrad-fused",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16-wgrad-fused-rs-fast",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
