@@ -67,6 +67,22 @@ in independent unprofiled baselines. Instrumentation/compiler effects and node d
 are not separated, so the profile identifies candidate work, not a clean speedup budget.
 The kernel names alone also do not establish which NCCL protocol was selected.
 
+The [read-only diagnostic export](https://beaker.org/ex/01M1QQYF7BVWQ6RB9WAW8XZ61F)
+confirms each update has approximately **46.55 GiB of logical FP32 gradient all-reduce
+input**, plus a BF16 parameter all-gather with **23.28 GiB full output** (0.364 GiB
+input per rank). These are tensor payloads, not measured network-wire bytes. There are
+also 120 small 512-element FP32 all-reduces per update, matching 15 MoE layers ×
+8 microbatches of global load-balancing statistics. The optimizer-sharded reduction
+experiment includes ordinary BF16 expert parameters too; "normal" excludes FP8 stores,
+not experts. No further collective change is made from these counts alone.
+
+Rank0's end-of-capture snapshot has 72.06 GiB allocated and 178.33 GiB reserved.
+The 100,000-event history is full/truncated, so it cannot establish a full-run peak.
+Its largest cumulative allocation sites are expert activation/backward and grouped
+GEMM buffers, consistent with the transient-memory bottleneck. Cumulative allocations
+are traffic, not simultaneous live memory. All raw captures and source checkpoints
+remain untouched; the diagnostic job used no GPUs.
+
 ## Other controlled candidates
 
 - [Compiler-safe disabled NVTX A/B](https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605): completed.
@@ -120,6 +136,10 @@ real traces to inform that work. Preserve expand_v=2, negative eigenvalues, FP32
 state semantics, gradients, and the existing no-CUDA-graph-capture safety fallback.
 Assess the full KDA forward/backward region including projections and epilogues rather
 than summing overlapping kernel scopes, and validate with the same clean timing window.
+The user clarified that the author's **original ~30% regression referred to overall
+training TPS when replacing attention with KDA**, not an isolated layer benchmark.
+That historical comparison is distinct from his prospective further-fusion estimate.
+Further fusion is deferred until the current controlled comparisons are settled.
 
 ## The 600-TFLOPs target
 
