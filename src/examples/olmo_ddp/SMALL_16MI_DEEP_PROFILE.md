@@ -71,6 +71,25 @@ bucket sizing/communication scheduling, compiled/fused pointwise work compatible
 per-head gains and scalable softmax, KDA dispatch tuning. Keep precision/model changes
 and recomputation out of this baseline.
 
+## Run ledger (2026-09-05 UTC)
+
+- Qualification: https://beaker.org/ex/01M1QH72PZCX87XR0KA6JX5VRJ
+  (one B300, source `a7848229a`). Nsight capture and source metadata checks passed.
+  KDA full-layer microbenchmark uses BF16 autocast with FP32 parameter storage; it is
+  a kernel qualification probe, not an end-to-end throughput claim. FLA median/mean
+  10.149/10.215 ms; new default 10.084/9.952 ms. Default-path relative L2 error:
+  output 0.0177%, maximum gradient error 0.169%. Lower-cutoff arm pending.
+- Full profile: https://beaker.org/ex/01M1QHSZGC0V64F63Q99YVS7C4
+  (`olmoe3-small-16mi-deep-profile-v2-r1`, source `3a148a86b`), queued on 64 B300s,
+  urgent/allocated, one-hour minimum runtime; zero automatic task retries.
+- Local checks: nine migration tests (including two-rank DCP save/load/reshard),
+  fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
+  formatting checks passed for new scripts.
+- Matched reference from completed 16Mi CBS history, same global step range:
+  steps7531–7570 median 76,494 TPS/GPU, mean CE 1.95184; steps7581–7600 median
+  76,452 TPS/GPU, mean CE 1.95538. Original step7501 CE=1.98832607,
+  total grad norm=.07320063 (independent-head gains will change future gradients).
+
 ## Launch
 
 From this clean, pushed branch, with the Beaker and Python environment configured:
