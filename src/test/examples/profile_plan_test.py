@@ -42,6 +42,21 @@ def test_repeated_names_do_not_change_variants():
             _MODULE.named_profile_plan("aa", pairs, invalid)
 
 
+def test_reverse_second_repeat_preserves_arm_names():
+    pairs = [("optimized", "timing"), ("deferred-lb-batched", "timing")]
+    plan = _MODULE.named_profile_plan("abba", pairs, 2, reverse_even=True)
+    assert [item[1] for item in plan] == [
+        "optimized",
+        "deferred-lb-batched",
+        "deferred-lb-batched",
+        "optimized",
+    ]
+    assert plan[2][0] == "abba-repeat2-deferred-lb-batched"
+    assert plan[3][0] == "abba-repeat2-optimized"
+    assert len({item[0] for item in plan}) == 4
+    assert pairs == [("optimized", "timing"), ("deferred-lb-batched", "timing")]
+
+
 @pytest.mark.parametrize(
     "plan", ["x:timing,x:timing", "../x:timing", "x:typo", "x", "x:timing:other"]
 )

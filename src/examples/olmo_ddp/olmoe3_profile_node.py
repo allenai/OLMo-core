@@ -37,7 +37,7 @@ def profile_plan(variants, modes, explicit_plan=""):
     return pairs
 
 
-def named_profile_plan(run_name, pairs, repeats=1):
+def named_profile_plan(run_name, pairs, repeats=1, reverse_even=False):
     """Give independent A/A restores unique paths without changing implementation flags."""
     if not 1 <= repeats <= 4:
         raise ValueError("Profile repeats must be in [1,4]")
@@ -45,7 +45,8 @@ def named_profile_plan(run_name, pairs, repeats=1):
     output = []
     for repeat in range(1, repeats + 1):
         prefix = f"{run_name}-repeat{repeat}" if repeats > 1 else run_name
-        for variant, mode in pairs:
+        ordered_pairs = list(reversed(pairs)) if reverse_even and repeat % 2 == 0 else pairs
+        for variant, mode in ordered_pairs:
             name = f"{prefix}-{variant}" if multiple_variants else prefix
             output.append((name, variant, mode))
     return output
@@ -133,7 +134,10 @@ def main():
         flush=True,
     )
     named_pairs = named_profile_plan(
-        run_name, pairs, int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1"))
+        run_name,
+        pairs,
+        int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1")),
+        reverse_even=os.environ.get("OLMOE3_DEEP_PROFILE_REVERSE_EVEN", "0") == "1",
     )
     for index, (name, variant, mode) in enumerate(named_pairs):
         test_label = variant
