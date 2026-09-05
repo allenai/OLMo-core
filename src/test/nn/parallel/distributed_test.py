@@ -444,9 +444,11 @@ def _run_reduce_scatter_no_sync_skipped_param_preserved(d: int):
             torch.testing.assert_close(main_grad, expected[name], rtol=1e-5, atol=1e-6)
 
 
-def _build_optimizer_test_stack(
-    d: int, *, use_reduce_scatter: bool
-) -> tuple[MultiGroupDistributedDataParallel, OLMoDDPOptimizer, FP8WeightStore,]:
+def _build_optimizer_test_stack(d: int, *, use_reduce_scatter: bool) -> tuple[
+    MultiGroupDistributedDataParallel,
+    OLMoDDPOptimizer,
+    FP8WeightStore,
+]:
     device = get_default_device()
     seed_all(0)
     model = MixedReductionModel(d).to(device=device, dtype=torch.bfloat16)
@@ -740,7 +742,11 @@ def _run_ep_optimizer_reduce_scatter_matches_all_reduce(d: int):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_mixed_reduce_scatter_all_reduce_matches_reference(backend: str):
+@pytest.mark.parametrize("defer_replicated", [False, True])
+def test_mixed_reduce_scatter_all_reduce_matches_reference(
+    backend: str, defer_replicated, monkeypatch
+):
+    monkeypatch.setenv("OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS", str(int(defer_replicated)))
     run_distributed_test(
         _run_mixed_reduce_scatter_all_reduce_matches_reference,
         backend=backend,
@@ -750,7 +756,11 @@ def test_mixed_reduce_scatter_all_reduce_matches_reference(backend: str):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_reduce_scatter_no_sync_skipped_param_preserved(backend: str):
+@pytest.mark.parametrize("defer_replicated", [False, True])
+def test_reduce_scatter_no_sync_skipped_param_preserved(
+    backend: str, defer_replicated, monkeypatch
+):
+    monkeypatch.setenv("OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS", str(int(defer_replicated)))
     run_distributed_test(
         _run_reduce_scatter_no_sync_skipped_param_preserved,
         backend=backend,
@@ -763,7 +773,11 @@ def test_reduce_scatter_no_sync_skipped_param_preserved(backend: str):
     "backend",
     [pytest.param("cuda:nccl,cpu:gloo", marks=MULTI_GPU_MARKS)],
 )
-def test_optimizer_step_reduce_scatter_matches_all_reduce(backend: str):
+@pytest.mark.parametrize("defer_replicated", [False, True])
+def test_optimizer_step_reduce_scatter_matches_all_reduce(
+    backend: str, defer_replicated, monkeypatch
+):
+    monkeypatch.setenv("OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS", str(int(defer_replicated)))
     run_distributed_test(
         _run_optimizer_step_reduce_scatter_matches_all_reduce,
         backend=backend,

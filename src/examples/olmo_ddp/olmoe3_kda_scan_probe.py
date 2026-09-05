@@ -6,6 +6,7 @@ negative eigenvalues, and L2-normalized Q/K. Report all input gradients; full-la
 optimizer qualification is a separate gate if any candidate improves latency.
 """
 
+import importlib.metadata
 import json
 import os
 import statistics
@@ -20,6 +21,7 @@ def main():
     from kernel_fun.kda import chunk_kda
     from kernel_fun.kda._kernels import bwd_dhu, bwd_scan
 
+    assert importlib.metadata.version("flash-linear-attention") == "0.5.2"
     torch.cuda.set_device(0)
     torch.set_num_threads(1)
     torch.manual_seed(20260905)

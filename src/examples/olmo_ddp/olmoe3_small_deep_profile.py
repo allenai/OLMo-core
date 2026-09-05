@@ -32,10 +32,10 @@ from olmo_core.train.callbacks import (
 from olmo_core.train.common import LoadStrategy
 
 CHECKPOINT_ROOT = "/weka/olmo-3p5-checkpoints"
-SOURCE_STEP = 7500
-SOURCE_CHECKPOINT = (
-    f"{CHECKPOINT_ROOT}/production-cbs/"
-    "olmoe3-small-cbs-16mi-from-step4000-lr1p85em3-uploader-r1/step7500"
+SOURCE_STEP = int(os.environ.get("OLMOE3_DEEP_PROFILE_SOURCE_STEP", "6000"))
+SOURCE_CHECKPOINT = os.environ.get(
+    "OLMOE3_DEEP_PROFILE_SOURCE_CHECKPOINT",
+    f"{CHECKPOINT_ROOT}/production-integration/olmoe3-small-16mi-100b-optimized-r1/step6000",
 )
 DATA_WORK_DIR = (
     f"{CHECKPOINT_ROOT}/production-cbs/work/" "olmoe3-small-cbs-8mi-100b-lr1p3em3-uploader-r1"
@@ -82,6 +82,12 @@ class ProfileMetrics(Callback):
                 "lr": LEARNING_RATE,
                 "pass": PASS,
                 "variant": VARIANT,
+                "test": os.environ.get("OLMOE3_DEEP_PROFILE_TEST", VARIANT),
+                "deferred_replicated_reductions": os.environ.get(
+                    "OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS"
+                )
+                == "1",
+                "nccl_proto": os.environ.get("NCCL_PROTO", "auto"),
                 "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
                 "vectorized_fp32_grad_add": os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE")
                 == "1",
@@ -99,13 +105,11 @@ class ProfileMetrics(Callback):
                 "clean_windows_relative_steps": (
                     NSYS_SETTINGS.clean_windows(STEPS)
                     if PASS == "nsys"
-                    else [[31, STEPS]]
-                    if PASS == "timing"
-                    else [[21, 30], [51, 60]]
+                    else [[31, STEPS]] if PASS == "timing" else [[21, 30], [51, 60]]
                 ),
-                "nsys_relative_steps": [NSYS_SETTINGS.start, NSYS_SETTINGS.end]
-                if PASS == "nsys"
-                else None,
+                "nsys_relative_steps": (
+                    [NSYS_SETTINGS.start, NSYS_SETTINGS.end] if PASS == "nsys" else None
+                ),
                 "nsys_profiled_ranks": list(NSYS_SETTINGS.ranks) if PASS == "nsys" else None,
                 "nsys_version": NSYS_SETTINGS.version if PASS == "nsys" else None,
                 "nsys_trace": NSYS_SETTINGS.trace if PASS == "nsys" else None,
@@ -241,7 +245,7 @@ def train_module_config(common):
     config = base.build_train_module_config(common, SYSTEM)
     config.optim.lr = LEARNING_RATE
     config.scheduler = WSD(warmup=2000, decay=1, decay_fraction=None)
-    config.expand_shared_qk_norm_on_load = True
+    config.expand_shared_qk_norm_on_load = SOURCE_STEP == 7500
     if VARIANT in ("reduce-scatter", "reduce-scatter-single-param") or VARIANT.endswith("-rs-fast"):
         config.dp_config.use_reduce_scatter = True
     elif VARIANT not in (
@@ -275,7 +279,8 @@ def trainer_config(common):
     config.load_strategy = LoadStrategy.always
     config.load_optim_state = True
     config.load_trainer_state = True
-    config.max_duration = Duration.tokens(100_663_296_000)
+    # Stay in the constant WSD region beyond the completed 100B source run.
+    config.max_duration = Duration.steps(SOURCE_STEP + STEPS + 1000)
     config.hard_stop = Duration.steps(SOURCE_STEP + STEPS)
     config.callbacks["wandb"].tags = [
         "small-64g",
@@ -296,7 +301,7 @@ def trainer_config(common):
     ]
     config.callbacks["wandb"].notes = (
         "Small 794M active / 12.496B total; 16 layers, d=1024, latent=512, "
-        "14 KDA/2 FA; trained step7500 with shared QK gains and Adam moments expanded; "
+        f"14 KDA/2 FA; source step{SOURCE_STEP}; per-head QK gains; "
         "BF16, FA4/scalable-softmax, EMO16->512, PP1 EP1 DP64 MB4 GA8; "
         "no recomputation/MXFP8/shared EP outputs; lr=.00185 constant WSD. "
         "Use only clean windows in provenance.json for throughput."

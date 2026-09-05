@@ -13,6 +13,10 @@ import sys
 import time
 from pathlib import Path
 
+OPTIMIZED_VARIANT = (
+    "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16-wgrad-fused-rs-fast"
+)
+
 
 def profile_plan(variants, modes, explicit_plan=""):
     """Allow timing several variants but capturing only the selected candidate."""
@@ -132,6 +136,9 @@ def main():
         run_name, pairs, int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1"))
     )
     for index, (name, variant, mode) in enumerate(named_pairs):
+        test_label = variant
+        if variant in ("optimized", "deferred", "simple"):
+            variant = OPTIMIZED_VARIANT
         # A separate agent and port avoids retaining rendezvous keys from the previous
         # training process. The same eight nodes are retained for fair timing comparisons.
         command = [
@@ -153,17 +160,26 @@ def main():
         env = dict(
             os.environ,
             OLMOE3_DEEP_PROFILE_VARIANT=variant,
+            OLMOE3_DEEP_PROFILE_TEST=test_label,
             OLMOE3_DEEP_PROFILE_PASSES=mode,
             OLMO_PROFILE_SAFE_NOOP_NVTX="1" if variant == "compile-noop-nvtx" else "0",
-            OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH="1"
-            if variant == "reduce-scatter-single-param" or variant.endswith("-rs-fast")
-            else "0",
+            OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH=(
+                "1"
+                if variant == "reduce-scatter-single-param" or variant.endswith("-rs-fast")
+                else "0"
+            ),
             OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE="1" if "-grad-add" in variant else "0",
             OLMO_PROFILE_SWIGLU_PAIRWISE="1" if "-act-pair" in variant else "0",
             OLMO_PROFILE_EMO_DOCUMENT_POOL="1" if "-doc-pool" in variant else "0",
             OLMO_PROFILE_EMO_TOP16="1" if "-top16" in variant else "0",
             OLMO_PROFILE_ROUNDED_WGRAD="1" if "-wgrad-fused" in variant else "0",
+            OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS="1" if test_label == "deferred" else "0",
+            OLMO_PROFILE_DDP_BUCKET_SUMMARY="1",
         )
+        if test_label == "simple":
+            env["NCCL_PROTO"] = "Simple"
+        else:
+            env.pop("NCCL_PROTO", None)
         print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
         subprocess.run(command, env=env, check=True)
 

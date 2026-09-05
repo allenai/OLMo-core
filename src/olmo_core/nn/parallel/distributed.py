@@ -316,6 +316,21 @@ class MultiGroupDistributedDataParallel(Module):
 
     def _build_grad_buckets(self) -> None:
         params_in_reduce_order = [p for p in self._reversed_module_parameters if p.requires_grad]
+        if (
+            os.environ.get("OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS", "0") == "1"
+            and self.use_reduce_scatter
+            and self._reduce_scatter_params
+        ):
+            # EP1-only experiment: tiny replicated tensors otherwise split contiguous
+            # RS buckets and put many small all-reduces ahead of ready expert shards.
+            # Preserve reverse order within each class; all ranks use the same order.
+            # Delaying replicated gradients is safe: optimizer consumption still waits
+            # for every bucket in finalize_grad_reduce(). No gradient storage aliases change.
+            if len({id(self.param_to_process_group[p]) for p in params_in_reduce_order}) != 1:
+                raise RuntimeError("Deferred replicated reductions require one process group")
+            params_in_reduce_order = [
+                p for p in params_in_reduce_order if p in self._reduce_scatter_params
+            ] + [p for p in params_in_reduce_order if p not in self._reduce_scatter_params]
 
         current_params: list[torch.nn.Parameter] = []
         current_ranges: list[tuple[int, int]] = []
@@ -443,6 +458,18 @@ class MultiGroupDistributedDataParallel(Module):
 
         flush_current_bucket()
         self._bucket_ready_count = [0 for _ in self._grad_buckets]
+        if os.environ.get("OLMO_PROFILE_DDP_BUCKET_SUMMARY", "0") == "1":
+            logger.info(
+                "DDP bucket layout: %s",
+                [
+                    {
+                        "kind": "RS" if b.reduce_scatter else "AR",
+                        "parameters": len(b.params),
+                        "bytes": b.numel * b.flat_storage.element_size(),
+                    }
+                    for b in self._grad_buckets
+                ],
+            )
 
     def configure_reduce_scatter_params(self, params: set[torch.nn.Parameter]) -> None:
         """Configure optimizer-sharded parameters before the first forward pass.
