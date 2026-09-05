@@ -583,6 +583,11 @@ def _slice_ffn(ff: nn.Module, x: torch.Tensor, width: int) -> torch.Tensor:
 USE_FUSED_LADDER = True
 
 
+#: Row chunk for the ladder backward (see ``_NestedLadderFn.backward``): 8192 rows x 9728 width x
+#: six bf16 intermediates ~ 1 GB transient instead of ~10 GB for a 65k row.
+_BWD_CHUNK = 8192
+
+
 class _NestedLadderFn(torch.autograd.Function):
     """
     Every rung of one nested FFN as ONE autograd node.
@@ -655,16 +660,32 @@ class _NestedLadderFn(torch.autograd.Function):
             whole = n == n_tokens
             xs = x if whole else x.index_select(0, idx)
             dys = dout if whole else dout.index_select(0, idx)
-            a = F.silu(h1)
-            h = a * h3
-            dh = F.linear(dys, w2[:, :width].t())  # (n, width)
-            dw2 = dys.t().mm(h)  # (D, width)
-            sig = torch.sigmoid(h1)
-            dh1 = dh * h3 * (sig * (1 + h1 * (1 - sig)))
-            dh3 = dh * a
-            dw1 = dh1.t().mm(xs)  # (width, D)
-            dw3 = dh3.t().mm(xs)
-            dxs = dh1.mm(w1[:width]).add_(dh3.mm(w3[:width]))
+            # Chunk over token rows: the un-chunked version materialised six (n, width) bf16
+            # intermediates at once -- ~10 GB for a 65k row at width 9728 -- which is what pushed
+            # the three-router Qwen3-4B runs over 80 GB (2026-09-05). Weight grads accumulate in
+            # fp32 across chunks, the input grad is concatenated.
+            dw1 = dw3 = dw2 = None
+            dx_parts = []
+            for s0 in range(0, n, _BWD_CHUNK):
+                sl = slice(s0, min(n, s0 + _BWD_CHUNK))
+                h1c, h3c, xc, dyc = h1[sl], h3[sl], xs[sl], dys[sl]
+                a = F.silu(h1c)
+                h = a * h3c
+                dh = F.linear(dyc, w2[:, :width].t())  # (c, width)
+                dw2c = dyc.t().mm(h)  # (D, width)
+                sig = torch.sigmoid(h1c)
+                dh1 = dh * h3c * (sig * (1 + h1c * (1 - sig)))
+                dh3 = dh * a
+                dw1c = dh1.t().mm(xc)  # (width, D)
+                dw3c = dh3.t().mm(xc)
+                dx_parts.append(dh1.mm(w1[:width]).add_(dh3.mm(w3[:width])))
+                if dw1 is None:
+                    dw1, dw3, dw2 = dw1c.float(), dw3c.float(), dw2c.float()
+                else:
+                    dw1.add_(dw1c.float()); dw3.add_(dw3c.float()); dw2.add_(dw2c.float())
+                del a, h, dh, sig, dh1, dh3, dw1c, dw3c, dw2c
+            dw1, dw3, dw2 = dw1.to(w1.dtype), dw3.to(w3.dtype), dw2.to(w2.dtype)
+            dxs = dx_parts[0] if len(dx_parts) == 1 else torch.cat(dx_parts, 0)
             if whole:
                 dx = dxs
             else:
