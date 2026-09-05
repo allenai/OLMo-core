@@ -145,6 +145,10 @@ class Transformer(nn.Module):
         self._role_gated_ffn: Optional[Dict[str, Any]] = None
         # Nested-width FFN mixture (learned router): set by ``enable_nested_ffn_moe``.
         self._nested_ffn_moe: Optional[Dict[str, Any]] = None
+        # Per-layer KV-cache allocation router: set by ``enable_kv_route``.
+        self._kv_route: Optional[Dict[str, Any]] = None
+        # Joint FFN+attention budget over both routers: set by ``joint_budget.install_joint_budget``.
+        self._joint_budget: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -514,6 +518,52 @@ class Transformer(nn.Module):
             widths,
             [round(c, 5) for c in costs],
             target_cost,
+        )
+
+    def enable_kv_route(
+        self,
+        *,
+        start_layer: int = 0,
+        target: float = 0.5,
+        budget_weight: float = 1.0,
+        two_sided: bool = True,
+        target_anneal_calls: int = 0,
+        explore_prob: float = 0.0,
+        explore_anneal_calls: int = 0,
+        seed: int = 0,
+    ) -> None:
+        """
+        Enable learned per-layer KV-cache allocation (see :mod:`olmo_core.nn.attention.kv_route`):
+        every plain full-attention layer at or after ``start_layer`` gets a per-token keep/drop
+        router; dropped keys leave that layer's cache, and a budget term pulls the mean keep
+        fraction (over tokens and routed layers) to ``target``.
+
+        Adds NEW state-dict keys (``blocks.<i>.attention._kvr_router.w.*``), initialised to keep
+        everything so an enabled-but-untrained model reproduces its base exactly. Call BEFORE
+        building the optimizer / applying data parallelism.
+
+        :raises OLMoConfigurationError: If no attention layer was routed.
+        """
+        from ..attention.kv_route import KVRouteHolder, install_kv_route
+
+        holder = KVRouteHolder(
+            target=target,
+            budget_weight=budget_weight,
+            two_sided=two_sided,
+            target_anneal_calls=target_anneal_calls,
+            explore_prob=explore_prob,
+            explore_anneal_calls=explore_anneal_calls,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+        )
+        routed = install_kv_route(self.blocks, holder, start_layer=start_layer)
+        if not routed:
+            raise OLMoConfigurationError("enable_kv_route routed no attention layers")
+        self._kv_route = {"start_layer": int(start_layer), "routed": routed, "holder": holder}
+        log.info(
+            "KV routing enabled on %d attention layers %s (start_layer=%d) target=%.3f",
+            len(routed), routed, start_layer, target,
         )
 
     def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
@@ -1268,6 +1318,8 @@ class Transformer(nn.Module):
         # schedules. Loss terms are only collected when we are actually computing a loss.
         if self._nested_ffn_moe is not None:
             self._nested_ffn_moe["holder"].begin_forward(collect_loss=labels is not None)
+        if self._kv_route is not None:
+            self._kv_route["holder"].begin_forward(collect_loss=labels is not None)
 
         (
             input_ids,
@@ -1356,6 +1408,16 @@ class Transformer(nn.Module):
                     nffn_loss = self._nested_ffn_moe["holder"].regularization_loss()
                     if nffn_loss is not None:
                         loss = loss + nffn_loss.to(loss.dtype)
+                if self._kv_route is not None:
+                    kvr_loss = self._kv_route["holder"].regularization_loss()
+                    if kvr_loss is not None:
+                        loss = loss + kvr_loss.to(loss.dtype)
+                if self._joint_budget is not None:
+                    from ..joint_budget import joint_budget_loss
+
+                    jb_loss = joint_budget_loss(self)
+                    if jb_loss is not None:
+                        loss = loss + jb_loss.to(loss.dtype)
                 if distill_teacher is not None and labels is not None:
                     # Map teacher (row, ORIGINAL position) -> student compacted column via the
                     # per-row ascending position_ids (free/answer tokens survive compaction).

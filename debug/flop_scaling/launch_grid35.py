@@ -57,7 +57,7 @@ FFN_TAG = os.environ.get("FS35_FFN_TAG", "r2")
 
 
 def run_name(task, arm, budget):
-    tag = FFN_TAG if arm.startswith("ffnmoe") else ""
+    tag = FFN_TAG if arm.startswith(("ffnmoe", "attnroute", "flex")) else ""
     return f"fs35{tag}-{task}-{arm}-s{budget}"
 
 
@@ -95,6 +95,20 @@ def arm_args(task, arm, budget):
                  "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
                  "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
         return "ffnmoe", data, packed + ["--base-checkpoint", BASE], extra
+    if arm.startswith("attnroute-c") or arm.startswith("flex-c"):
+        # Learned KV-cache allocation (olmo_core.nn.attention.kv_route): per full-attention layer a
+        # router keeps or evicts each key; two-sided budget on the mean keep fraction, annealed from
+        # 1.0 over the first 30% of steps. "c50" = keep target 0.50 (attnroute) / total-FLOP target
+        # 0.50 (flex = FFN router + KV router under ONE joint budget). Arm names must not start
+        # with "kv": orchestrate35 routes "kv*" arms to the soft-token evaluator.
+        tgt = int(arm.split("-c")[1]) / 100
+        kv = f"--kv-route-start-layer 0 --kv-route-target {tgt:.2f} --kv-route-target-anneal-frac 0.3"
+        if arm.startswith("attnroute"):
+            return "kvroute", data, packed + ["--base-checkpoint", BASE], kv
+        ffn = (f"--ffn-moe-start-layer 12 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
+               "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
+               "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
+        return "flexcompute", data, packed + ["--base-checkpoint", BASE], f"{ffn} {kv} --flex-joint-target {tgt:.2f}"
     if arm in KV_FRAC:
         frac = KV_FRAC[arm]
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]

@@ -61,6 +61,9 @@ class FlopMeterCallback(Callback):
         self._real_tokens_this_step = int(n.item())
     _ffn_per_tok: Optional[int] = None
     _dense_per_tok: Optional[int] = None
+    _attn_score_per_tok: Optional[int] = None
+    _kv_keep_weighted: float = 0.0
+    _ffn_cost_weighted: float = 0.0
 
     def _model(self):
         return self.trainer.train_module.model  # type: ignore[union-attr]
@@ -93,6 +96,24 @@ class FlopMeterCallback(Callback):
             cost_all = (sum(per_layer.values()) + (n_layers - len(per_layer))) / n_layers
             actual = tokens * (dense_tok - ffn_tok * (1.0 - cost_all))
             self.trainer.record_metric("flop_meter/ffn_cost_all_layers", cost_all)
+            self._ffn_cost_weighted += cost_all * tokens
+
+        kvr = getattr(m, "_kv_route", None)
+        if kvr is not None:
+            # Routed attention layers score only KEPT keys: their length-dependent (QK^T, PV)
+            # FLOPs scale with the hard keep fraction of this step's last forward.
+            keep = float(kvr["holder"].mean_keep(last_forward=True))
+            if self._attn_score_per_tok is None:
+                self._attn_score_per_tok = int(
+                    sum(
+                        m.blocks[str(li)].attention.num_flops_per_token(self.seq_len)
+                        - m.blocks[str(li)].attention.num_flops_per_token(0)
+                        for li in kvr["routed"]
+                    )
+                )
+            actual -= tokens * self._attn_score_per_tok * (1.0 - keep)
+            self._kv_keep_weighted += keep * tokens
+            self.trainer.record_metric("flop_meter/kv_keep", keep)
 
         comp = getattr(m, "_soft_token_compaction", None)
         if comp is not None and comp["tokens_out"] > 0:
@@ -130,6 +151,12 @@ class FlopMeterCallback(Callback):
             "actual_over_dense": self._actual / max(1.0, self._dense),
             "tokens_processed": self._tokens,
             "tokens_are_real": self.pad_id is not None,
+            "ffn_cost_frac": (
+                self._ffn_cost_weighted / self._tokens if self._ffn_cost_weighted > 0 and self._tokens else None
+            ),
+            "kv_route_keep_frac": (
+                self._kv_keep_weighted / self._tokens if self._kv_keep_weighted > 0 and self._tokens else None
+            ),
             "steps": self.step,
             "seq_len": self.seq_len,
         }

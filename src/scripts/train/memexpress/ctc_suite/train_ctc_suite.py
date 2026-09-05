@@ -80,6 +80,7 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     FlopMeterCallback,
+    KVRouteCallback,
     NestedFFNMoECallback,
     CheckpointerCallback,
     ConfigSaverCallback,
@@ -617,7 +618,17 @@ def build_train_module_config(
                         opts=dict(lr=opts.router_lr, weight_decay=0.0),
                     )
                 ]
-                if opts.variant == "ffnmoe"
+                if opts.variant in ("ffnmoe", "flexcompute")
+                else []
+            )
+            + (
+                [
+                    OptimGroupOverride(
+                        params=["blocks.*.attention._kvr_router.*"],
+                        opts=dict(lr=opts.router_lr, weight_decay=0.0),
+                    )
+                ]
+                if opts.variant in ("kvroute", "flexcompute")
                 else []
             ),
         ),
@@ -902,7 +913,7 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     state_dict = _prepare_state_dict(model, None)
     model_sd = state_dict["model"]
     missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
-    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "pooled_projector.", "._pooled_projector")
+    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "pooled_projector.", "._pooled_projector")
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
         raise SystemExit(
@@ -926,11 +937,19 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
             reset_owners.setdefault(k.split("._nffn_gain")[0], set()).add("gain")
         elif "._nffnp_" in k:
             reset_owners.setdefault(k.split("._nffnp_")[0], set()).add("prefix")
+        elif "._kvr_router." in k:
+            reset_owners.setdefault(k.split("._kvr_router.")[0], set()).add("kv_router")
         elif "pooled_projector" in k:
             reset_owners.setdefault(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set())
     stats = []
     for owner in sorted(reset_owners):
         mod = model.get_submodule(owner)
+        if "kv_router" in reset_owners[owner]:
+            from olmo_core.nn.attention.kv_route import reset_kv_route_extras
+
+            reset_kv_route_extras(mod)
+            stats.append(f"{owner}: kv router reset (keep-all)")
+            continue
         if hasattr(mod, "_nffn_gain"):
             from olmo_core.nn.nested_ffn_moe import reset_nested_ffn_extras
 
@@ -1001,12 +1020,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             # base does not have; the trainer's own load is strict, so those arms load the base
             # themselves below with strict=False (new keys keep their init: router -> full rung,
             # projector -> identity). load_path stays None for them so fit() does not re-load.
-            load_path=None if opts.variant in ("ffnmoe", "softtoken") else base_checkpoint,
+            load_path=None if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute") else base_checkpoint,
             # ...and "always" would then demand a checkpoint that no longer exists: those arms
             # resume from the save folder only if a step checkpoint is there.
             load_strategy=(
                 LoadStrategy.if_available
-                if opts.variant in ("ffnmoe", "softtoken")
+                if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute")
                 else LoadStrategy.always
             ),
             load_trainer_state=False,
@@ -1093,7 +1112,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
     accum = max(1, opts.global_batch // (world_size * opts.micro_batch_instances))
     total_calls = max(1, steps_total * accum)
-    if opts.variant == "ffnmoe":
+    if opts.variant in ("ffnmoe", "flexcompute"):
         model.enable_nested_ffn_moe(
             start_layer=opts.ffn_moe_start_layer,
             divisors=[float(x) for x in opts.ffn_moe_divisors.split(",")],
@@ -1119,6 +1138,30 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"{int(total_calls * opts.ffn_moe_target_anneal_frac)}/{total_calls} calls",
             flush=True,
         )
+    if opts.variant in ("kvroute", "flexcompute"):
+        model.enable_kv_route(
+            start_layer=opts.kv_route_start_layer,
+            target=opts.kv_route_target,
+            budget_weight=opts.kv_route_budget_weight,
+            two_sided=not opts.kv_route_one_sided,
+            target_anneal_calls=int(total_calls * opts.kv_route_target_anneal_frac),
+            explore_prob=opts.kv_route_explore,
+            explore_anneal_calls=int(total_calls * opts.kv_route_explore_anneal_frac),
+            seed=opts.seed,
+        )
+        print(
+            f"[ctc-suite] kvroute: routed attention layers {model._kv_route['routed']}, keep target "
+            f"{opts.kv_route_target} annealed over {int(total_calls * opts.kv_route_target_anneal_frac)}/{total_calls} calls",
+            flush=True,
+        )
+    if opts.variant == "flexcompute" and opts.flex_joint_target is not None:
+        # One budget over BOTH routers, weighted by each block's share of dense FLOPs, so the
+        # model decides per task how to split its saving between FFN width and KV keeping.
+        from olmo_core.nn.joint_budget import install_joint_budget
+
+        install_joint_budget(model, target=opts.flex_joint_target, seq_len=opts.seq_len,
+                             anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac))
+        print(f"[ctc-suite] flexcompute: JOINT FFN+attention budget target {opts.flex_joint_target}", flush=True)
     if opts.variant == "softtoken":
         model.enable_pooled_soft_tokens(
             ids.doc_start,
@@ -1176,9 +1219,13 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"{len(gold_table)} fingerprints from {sidecar}",
             flush=True,
         )
-    if opts.variant == "ffnmoe":
+    if opts.variant in ("ffnmoe", "flexcompute"):
         trainer_config = trainer_config.with_callback(
             "ffn_moe", NestedFFNMoECallback(calls_per_step=accum)
+        )
+    if opts.variant in ("kvroute", "flexcompute"):
+        trainer_config = trainer_config.with_callback(
+            "kv_route", KVRouteCallback(calls_per_step=accum)
         )
     # Method-aware training FLOPs for every arm (records/flop-scaling-ffn-kv-plan.md §5).
     trainer_config = trainer_config.with_callback(
@@ -1222,7 +1269,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         source, dp_process_group=train_module.dp_process_group
     )
     trainer = trainer_config.build(train_module, data_loader)
-    if opts.variant in ("ffnmoe", "softtoken"):
+    if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute"):
         _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
     trainer.fit()
 
@@ -1264,7 +1311,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                         "width_multiple": opts.ffn_moe_width_multiple,
                         "trainable_width": opts.ffn_moe_trainable_width,
                     }
-                    if opts.variant == "ffnmoe"
+                    if opts.variant in ("ffnmoe", "flexcompute")
+                    else None
+                ),
+                "kv_route": (
+                    {"start_layer": opts.kv_route_start_layer, "target": opts.kv_route_target}
+                    if opts.variant in ("kvroute", "flexcompute")
                     else None
                 ),
                 "softtoken": (
@@ -1310,7 +1362,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--variant",
-        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken"],
+        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken", "kvroute", "flexcompute"],
         required=True,
         help="full = plain causal (no document_chunk_attention); chunked = pure document-chunked "
         "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p); "
@@ -1346,6 +1398,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ffn-moe-entropy-weight", type=float, default=0.0)
     ap.add_argument("--ffn-moe-layer-curriculum-frac", type=float, default=0.0)
     ap.add_argument("--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)")
+    ap.add_argument("--kv-route-start-layer", type=int, default=0, help="kvroute: first routed attention layer")
+    ap.add_argument("--kv-route-target", type=float, default=0.5, help="kvroute: mean KEEP fraction budget (1 = keep all)")
+    ap.add_argument("--kv-route-budget-weight", type=float, default=1.0)
+    ap.add_argument("--kv-route-one-sided", action="store_true", help="hinge instead of |mean-target|")
+    ap.add_argument("--kv-route-target-anneal-frac", type=float, default=0.3)
+    ap.add_argument("--kv-route-explore", type=float, default=0.0)
+    ap.add_argument("--kv-route-explore-anneal-frac", type=float, default=0.3)
+    ap.add_argument("--flex-joint-target", type=float, default=None,
+                    help="flexcompute: ONE budget on total (FFN + attention-score) FLOPs as a fraction of dense; "
+                         "replaces the two per-router budgets")
     # ---- softtoken (records/pooled-doc-kv-handoff.md; v20 = --st-n-random 128, v22 = 256) ----
     ap.add_argument("--st-n-random", type=int, default=128, help="random non-gold docs kept real per example")
     ap.add_argument("--st-n-random-range", default="", help="lo,hi log-uniform breadth per call (overrides --st-n-random)")
@@ -1613,9 +1675,14 @@ def parse_args() -> argparse.Namespace:
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False
-    if opts.variant == "ffnmoe" and opts.compile:
+    if opts.variant in ("ffnmoe", "flexcompute") and opts.compile:
         print("[ctc-suite] ffnmoe: forcing --no-compile (data-dependent per-rung GEMM shapes)")
         opts.compile = False
+    if opts.variant in ("kvroute", "flexcompute") and opts.compile:
+        print("[ctc-suite] kvroute: forcing --no-compile (FlexAttention compiles its own kernel)")
+        opts.compile = False
+    if opts.variant in ("kvroute", "flexcompute") and not opts.pack:
+        ap.error("--variant kvroute/flexcompute expects the packed (--pack) data path")
     return opts
 
 

@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--variant",
         required=True,
-        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken"],
+        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken", "kvroute", "flexcompute"],
     )
     ap.add_argument(
         "--model-scale",

@@ -108,13 +108,21 @@ def post_build_hook_from_config(model_path: str):
 
     try:
         with open(os.path.join(model_path, "config.json")) as f:
-            block = json.load(f).get("ffn_moe")
+            cfg = json.load(f)
     except (OSError, ValueError):
         return None
-    if not block:
+    block = cfg.get("ffn_moe")
+    kv_block = cfg.get("kv_route")  # the attention-side router; same "enable before load" need
+    if not block and not kv_block:
         return None
 
     def hook(model):
+        if kv_block:
+            from .attention.kv_route import enable_from_config_block
+
+            enable_from_config_block(model, kv_block)
+        if not block:
+            return
         model.enable_nested_ffn_moe(
             start_layer=int(block["start_layer"]),
             divisors=[float(x) for x in str(block["divisors"]).split(",")],

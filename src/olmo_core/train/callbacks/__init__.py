@@ -23,6 +23,7 @@ from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
 from .flop_meter import FlopMeterCallback
+from .kv_route import KVRouteCallback
 from .nested_ffn_moe import NestedFFNMoECallback
 from .profiler import ProfilerCallback
 from .sequence_length_scheduler import SequenceLengthSchedulerCallback
@@ -47,6 +48,7 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "FlopMeterCallback",
+    "KVRouteCallback",
     "NestedFFNMoECallback",
     "HFConverterCallback",
     "ProfilerCallback",

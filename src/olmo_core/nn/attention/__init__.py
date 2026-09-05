@@ -1451,7 +1451,15 @@ class Attention(SequenceMixer):
                 )
             )
 
-        if attn_bias is not None:
+        kv_route = getattr(self, "_kv_route", None)
+        if kv_route is not None and kv_route["holder"].enabled and attn_bias is None:
+            # Learned KV-cache allocation: keep/drop each key at this layer (kv_route.py).
+            from .kv_route import kv_route_attention
+
+            att = kv_route_attention(
+                self, x, q, k, v, cu_doc_lens=cu_doc_lens, cache_leftpad=cache_leftpad
+            )
+        elif attn_bias is not None:
             # Soft-token aux path: position-causal + shadow-blocked masked SDPA.
             from ..pooled_soft_token import masked_sdpa
 

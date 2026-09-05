@@ -62,17 +62,36 @@ def ffn_per_token():
 _FPT_CACHE = {}
 
 
-def arm_flops(lengths, ffn_cost=1.0):
-    """Sum over examples of L * [fpt(L) - ffn_per_tok * (1 - ffn_cost)], with attention priced at
-    each example's REAL length (the dense arms train packed with per-example masking; the padded
-    65536 window the meter uses would inflate attention ~10x). Lengths are bucketed to 256."""
+_ATTN_CACHE = {}
+
+
+def attn_score_per_token(L):
+    """Length-dependent (QK^T + PV) FLOPs/token summed over the FULL-attention layers -- the part
+    of attention the KV router scales by its keep fraction."""
+    from olmo_core.nn.attention import Attention
+    if (SCALE, L) not in _ATTN_CACHE:
+        m = _model()
+        _ATTN_CACHE[(SCALE, L)] = int(sum(
+            b.attention.num_flops_per_token(int(L)) - b.attention.num_flops_per_token(0)
+            for b in m.blocks.values() if type(b.attention) is Attention))
+    return _ATTN_CACHE[(SCALE, L)]
+
+
+def arm_flops(lengths, ffn_cost=1.0, attn_keep=1.0):
+    """Sum over examples of L * [fpt(L) - ffn_per_tok * (1 - ffn_cost) - attn_score(L) * (1 - attn_keep)],
+    with attention priced at each example's REAL length (the dense arms train packed with
+    per-example masking; the padded 65536 window the meter uses would inflate attention ~10x).
+    ``attn_keep`` is the KV router's mean kept fraction. Lengths are bucketed to 256."""
     ffn = ffn_per_token()
     total = 0.0
     for L in lengths:
         b = max(256, (int(L) + 255) // 256 * 256)
         if (SCALE, b) not in _FPT_CACHE:
             _FPT_CACHE[(SCALE, b)] = fpt(b)
-        total += L * (_FPT_CACHE[(SCALE, b)] - ffn * (1.0 - ffn_cost))
+        per_tok = _FPT_CACHE[(SCALE, b)] - ffn * (1.0 - ffn_cost)
+        if attn_keep < 1.0:
+            per_tok -= attn_score_per_token(b) * (1.0 - attn_keep)
+        total += L * per_tok
     return total / 1e15
 
 
@@ -197,7 +216,12 @@ def main(state_path=STATE, out_csv=None, scale="4b", prior_dense=True, run_fit=T
         if r["arm"] == "dense":
             pf = dpf  # --max-tokens dense anchor: priced like the prior dense points, scaled to its budget
         elif fl:
-            if r["arm"].startswith("ffnmoe"):
+            if r["arm"].startswith(("attnroute", "flex")):
+                # meter summary carries the token-weighted routing fractions directly
+                keep = fl.get("kv_route_keep_frac") or 1.0
+                c = fl.get("ffn_cost_frac") or 1.0
+                pf = arm_flops(lens, ffn_cost=c, attn_keep=keep) if lens else fl["actual_pflops"]
+            elif r["arm"].startswith("ffnmoe"):
                 # back out the mean routed FFN cost from the meter's own (padded-window) ratio,
                 # then re-price with real lengths: ratio = 1 - ffn_frac65k * (1 - c)
                 ffn_frac = ffn_per_token() / fpt(65536)

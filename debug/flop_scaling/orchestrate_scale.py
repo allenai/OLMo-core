@@ -24,7 +24,7 @@ import launch_grid35 as lg  # noqa: E402
 import orchestrate35 as o35  # noqa: E402
 
 SCALE = os.environ["FS_SCALE"]            # 0.8b | 2b | 9b | 27b
-TAG = "s" + SCALE.replace(".", "")          # s08b, s2b, s9b
+TAG = "s" + SCALE.replace(".", "") + os.environ.get("FS_TAG_SUFFIX", "")  # s08b, s2b, s9b; suffix = new state file
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 BASES = {"0.8b": f"{W}/ctc_suite/bases/q35-08b-base-markerfix/model_and_optim",
          "2b": f"{W}/ctc_suite/bases/q35-2b-base-markerfix/model_and_optim",
@@ -37,7 +37,7 @@ TRAINABLE_W = {s: h // 16 for s, h in FFN_H.items()}                          # 
 GPUS = {"0.8b": 4, "2b": 4, "4b": 4, "9b": 8, "27b": 8}
 # 27B full fine-tune on 80GB H100s: fp32 master + grads + Adam = 16 B/param = 432 GB sharded ->
 # 54 GB/GPU on one node before activations, so default to TWO nodes (27 GB/GPU). FS_NUM_NODES overrides.
-NUM_NODES = {"0.8b": 1, "2b": 1, "9b": 1, "27b": int(os.environ.get("FS_NUM_NODES", "2"))}
+NUM_NODES = {"0.8b": 1, "2b": 1, "4b": 1, "9b": 1, "27b": int(os.environ.get("FS_NUM_NODES", "2"))}
 KV_MICRO = {"0.8b": 2, "2b": 2, "4b": 2, "9b": 1, "27b": 1}
 TASKS = os.environ.get("FS_TASKS", "oolong,contradiction").split(",")
 BUDGETS = {"oolong": ["20M", "80M"], "contradiction": ["14M", "56M"]}
