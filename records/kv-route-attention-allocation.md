@@ -105,7 +105,7 @@ design 6, not built). The reports quote both numbers: routed-share speedup and t
 | task / budget | dense | KV route 0.50 | KV route 0.25 | KV route 0.10 | soft-token ref | routed FFN t10 |
 |---|---|---|---|---|---|---|
 | oolong 80M | 0.723 | 0.671 | 0.643 | 0.625 | kv17 0.665 / kv33 0.675 | 0.688 |
-| contradiction 56M | 0.944 | (pending) | **0.005** | **0.002** | kv33 0.861 | 0.880 |
+| contradiction 56M | 0.944 | **0.894** (2k .969 / 8k .950 / 16k .888 / 32k .770) | **0.005** | **0.002** | kv33 0.861 | 0.880 |
 | contradiction 14M (router stuck at keep 0.93) | 0.772 | 0.783 | 0.783 | 0.783 | kv33 0.525 | 0.579 |
 
 - oolong degrades smoothly with cache size (−0.05 / −0.08 / −0.10), evenly across rungs; the
@@ -119,3 +119,25 @@ design 6, not built). The reports quote both numbers: routed-share speedup and t
   next knob.
 - the 14M controls (keep 0.93) match/slightly beat dense (0.783 vs 0.772, within ±0.02 noise):
   evicting the 7% the router chose first is free.
+
+### Compute axis (Stage A complete, 2026-09-05 01:00)
+
+Priced at real example lengths (`results/flop_scaling/results_scale_s4battn.csv`), the *training*
+FLOP saving of KV routing is small: ratio 0.955 (keep 0.5), 0.93 (0.25), 0.92 (0.10). The
+attention-score share of training FLOPs on this short-heavy 2k–32k mix is only ~10–15% at 4B, so
+even emptying the caches cannot buy much on that axis, and the matched-compute multipliers are all
+< 1 (contradiction keep-0.5: dense reaches 0.894 at ~890 PF vs 1286 PF spent → 0.69x; oolong
+keep-0.5 0.71x, keep-0.10 ~0.7x). On the training-FLOP axis KV routing therefore cannot be
+compute-optimal at these lengths — the same conclusion the soft-token arms reached, and for the
+same reason: attention is not where 4B training FLOPs go below 32k.
+
+The axis where it pays is **inference**: a 50% smaller KV cache on every full-attention layer
+(decode memory / bandwidth ∝ cache) for −0.05 mean f1 on contradiction (0.894 vs 0.944; still
+above soft-token 1/3 at 0.861 and routed FFN at 0.880) and −0.05 on oolong; a 10x smaller cache
+for −0.10 on oolong. Contradiction cannot go below half.
+
+**Stage B (combined, `flex-c70` / `flex-c60`)** launched on the large budgets only: joint budget
+with FLOP shares evaluated at 8k (`--flex-share-seq-len`), because shares at the 65k padded window
+over-credit attention (score FLOPs ≈ 50% there vs ~12% at real lengths) and would steer the whole
+saving into eviction. Achievable floor at 8k ≈ 1 − 0.36 (FFN L12+) − 0.12 (attn) ≈ 0.52, so 0.70
+and 0.60 leave the router a real choice of split.

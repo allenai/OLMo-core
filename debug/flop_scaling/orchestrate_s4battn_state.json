@@ -6,10 +6,10 @@
    "budget": "20M",
    "arm": "attnroute-c50",
    "scale": "4b",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 1,
-   "eval": null,
+   "eval": "01M1R469G55YBXG9P6DWSJNJ9K",
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c25-s20M": {
@@ -18,10 +18,10 @@
    "budget": "20M",
    "arm": "attnroute-c25",
    "scale": "4b",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 1,
-   "eval": null,
+   "eval": "01M1R4GE1MPDGW3TX82FPPCB80",
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c10-s20M": {
@@ -30,10 +30,10 @@
    "budget": "20M",
    "arm": "attnroute-c10",
    "scale": "4b",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 1,
-   "eval": null,
+   "eval": "01M1R4V6MX3DQKFFRJ15SNTXSY",
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c50-s80M": {
@@ -42,10 +42,10 @@
    "budget": "80M",
    "arm": "attnroute-c50",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R3W45808HRQMS8MZXY7J07",
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c25-s80M": {
@@ -54,10 +54,10 @@
    "budget": "80M",
    "arm": "attnroute-c25",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R383BPWAY5D45KB8KNJRRS",
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c10-s80M": {
@@ -66,10 +66,10 @@
    "budget": "80M",
    "arm": "attnroute-c10",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R2WK4GVV2GX0YPJEC0NJJR",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c50-s14M": {
@@ -114,10 +114,10 @@
    "budget": "56M",
    "arm": "attnroute-c50",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R2XHNDK4Q8SDVDRDTCVGYJ",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c25-s56M": {
@@ -126,10 +126,10 @@
    "budget": "56M",
    "arm": "attnroute-c25",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R2JBPPX693471ZBKP9NQ0V",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c10-s56M": {
@@ -138,39 +138,93 @@
    "budget": "56M",
    "arm": "attnroute-c10",
    "scale": "4b",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null,
+   "eval": "01M1R28695M0JVQ9P9F5Q7N4P0",
    "s2": null
   }
  },
  "evals": {
   "fs35s4battn-contradiction-attnroute-c50-s14M": {
    "ex": "01M1R1VY3FSZT00S4YC8H0GY3Q",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 1
   },
   "fs35s4battn-contradiction-attnroute-c25-s14M": {
    "ex": "01M1R1X3NKRRBZHAAA36YPK6PR",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 1
   },
   "fs35s4battn-contradiction-attnroute-c10-s14M": {
    "ex": "01M1R1XWPGW2EX63CRYPGWCNB1",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 1
+  },
+  "fs35s4battn-contradiction-attnroute-c10-s56M": {
+   "ex": "01M1R28695M0JVQ9P9F5Q7N4P0",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-contradiction-attnroute-c25-s56M": {
+   "ex": "01M1R2JBPPX693471ZBKP9NQ0V",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c10-s80M": {
+   "ex": "01M1R2WK4GVV2GX0YPJEC0NJJR",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-contradiction-attnroute-c50-s56M": {
+   "ex": "01M1R2XHNDK4Q8SDVDRDTCVGYJ",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c25-s80M": {
+   "ex": "01M1R383BPWAY5D45KB8KNJRRS",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c50-s80M": {
+   "ex": "01M1R3W45808HRQMS8MZXY7J07",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c50-s20M": {
+   "ex": "01M1R469G55YBXG9P6DWSJNJ9K",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c25-s20M": {
+   "ex": "01M1R4GE1MPDGW3TX82FPPCB80",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4battn-oolong-attnroute-c10-s20M": {
+   "ex": "01M1R4V6MX3DQKFFRJ15SNTXSY",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
   }
  },
  "kv_synced": {},
  "kv_launched": {},
  "s1_launched": false,
  "sync_ex": null,
- "last_harvest": 1788585402.1526723,
- "harvest_ex": "01M1QZYQET9WB7T313Y10VETBA",
- "done": false,
+ "last_harvest": 1788595090.0541797,
+ "harvest_ex": "01M1R96CA4T9NGD4PQKN593CKH",
+ "done": true,
  "launched": true
 }
