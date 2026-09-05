@@ -28,8 +28,8 @@ def test_run_all_matches_base():
 def test_skip_all_is_identity_through_blocks():
     model = _tiny_model()
     model.enable_block_skip(target=0.5)
-    for blk in model.blocks.values():
-        blk._bskip_router.w.bias.data.fill_(-10.0)
+    for r in model.bskip_routers.values():
+        r.w.bias.data.fill_(-10.0)
     ids = torch.randint(0, 128, (1, 12))
     with torch.no_grad():
         out = model(ids)
@@ -47,17 +47,15 @@ def test_skipped_tokens_are_not_keys():
     ids = torch.randint(0, 128, (1, 10))
     with torch.no_grad():
         ref = model(ids)
-    blk = model.blocks["1"]
-    # steer token 3 to skip block 1 via a huge weight on a one-hot-ish direction: simpler to
-    # monkeypatch the router output
-    orig = blk._bskip_router.forward
+    router = model.bskip_routers["1"]
+    orig = router.forward
 
-    def routed(x):
+    def routed(x):  # steer token 3 to skip block 1
         out = orig(x)
         out[:, 3] = -10.0
         return out
 
-    blk._bskip_router.forward = routed
+    router.forward = routed
     with torch.no_grad():
         out = model(ids)
     torch.testing.assert_close(out[:, :3], ref[:, :3])
@@ -78,7 +76,7 @@ def test_budget_gradient_and_joint_budget():
     ids = torch.randint(0, 128, (1, 24))
     out = model(ids, labels=ids.clone())
     out.loss.backward()
-    g = model.blocks["0"]._bskip_router.w.bias.grad
+    g = model.bskip_routers["0"].w.bias.grad
     assert g is not None and g.item() > 0  # run-all at init, budget pushes the run prob DOWN
     assert model.blocks["0"].attention._kvr_router.w.bias.grad is not None
     assert 0.9 < jb["last_cost"] <= 1.0 + 1e-6
@@ -93,16 +91,14 @@ def test_activation_checkpointing_matches_and_frees():
     for ac in (False, True):
         model = _tiny_model()
         model.enable_block_skip(target=0.5)
-        for blk in model.blocks.values():  # a real skip pattern: half the tokens skip block 1
-            blk._bskip_router.w.weight.data.normal_(0, 0.5)
-            blk._bskip_router.w.bias.data.fill_(0.0)
+        for r in model.bskip_routers.values():  # a real skip pattern
+            r.w.weight.data.normal_(0, 0.5)
+            r.w.bias.data.fill_(0.0)
         if ac:
             model.apply_activation_checkpointing(TransformerActivationCheckpointingMode.full)
         out = model(ids, labels=ids.clone())
         out.loss.backward()
-        blk = model.blocks["1"]
-        inner = getattr(blk, "_checkpoint_wrapped_module", blk)
-        outs.append((out.loss.detach().clone(), inner._bskip_router.w.weight.grad.clone(),
+        outs.append((out.loss.detach().clone(), model.bskip_routers["1"].w.weight.grad.clone(),
                      model._block_skip["holder"].mean_keep(last_forward=False)))
     torch.testing.assert_close(outs[0][0], outs[1][0])
     torch.testing.assert_close(outs[0][1], outs[1][1], atol=1e-5, rtol=1e-4)

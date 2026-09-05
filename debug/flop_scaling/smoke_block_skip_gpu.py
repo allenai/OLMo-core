@@ -25,10 +25,10 @@ with torch.no_grad(): out = m(ids, **dl).float()
 d = (out - ref).abs().max().item() / ref.abs().max().item(); print(f"[1] run-all + keep-all vs base: rel {d:.2e}"); assert d < 2e-2
 
 m.train(); o = m(ids, labels=ids.clone(), **dl); o.loss.backward()
-g = m.blocks["0"]._bskip_router.w.bias.grad.item(); print(f"[2] loss {o.loss.item():.3f} skip-router grad {g:.2e} (>0), run {m._block_skip['holder'].mean_keep(last_forward=False):.3f}"); assert g > 0
+g = m.bskip_routers["0"].w.bias.grad.item(); print(f"[2] loss {o.loss.item():.3f} skip-router grad {g:.2e} (>0), run {m._block_skip['holder'].mean_keep(last_forward=False):.3f}"); assert g > 0
 m.zero_grad(set_to_none=True); m.eval()
 for li in ("1", "2"):
-    m.blocks[li]._bskip_router.w.weight.data.normal_(0, 0.5); m.blocks[li]._bskip_router.w.bias.data.fill_(0.0)
+    m.bskip_routers[li].w.weight.data.normal_(0, 0.5); m.bskip_routers[li].w.bias.data.fill_(0.0)
     m.blocks[li].attention._kvr_router.w.weight.data.normal_(0, 0.5); m.blocks[li].attention._kvr_router.w.bias.data.fill_(0.5)
 with torch.no_grad(): out2 = m(ids, **dl).float()
 print(f"[2] forced skips: run {m._block_skip['holder'].per_layer_keep(last_forward=False)} kv keep {m._kv_route['holder'].mean_keep(last_forward=False):.3f}; output rel change {(out2-ref).abs().max().item()/ref.abs().max().item():.3f}")
@@ -50,5 +50,5 @@ m2 = build(); m2.enable_block_skip(target=0.5); m2.enable_kv_route(target=0.5)
 m2.enable_nested_ffn_moe(start_layer=2, divisors=(1, 4, 16), width_multiple=1, target_cost=0.1)
 jb = install_joint_budget(m2, target=0.5, seq_len=T); m2.train()
 o = m2(ids, labels=ids.clone(), **dl); o.loss.backward()
-print(f"[4] joint cost {jb['last_cost']:.3f} target {jb['last_target']:.3f}; grads: skip {m2.blocks['0']._bskip_router.w.bias.grad.item():.2e} kv {m2.blocks['0'].attention._kvr_router.w.bias.grad.item():.2e} ffn {m2.blocks['2'].feed_forward._nffn_router.w.bias.grad.abs().sum().item():.2e}")
+print(f"[4] joint cost {jb['last_cost']:.3f} target {jb['last_target']:.3f}; grads: skip {m2.bskip_routers['0'].w.bias.grad.item():.2e} kv {m2.blocks['0'].attention._kvr_router.w.bias.grad.item():.2e} ffn {m2.blocks['2'].feed_forward._nffn_router.w.bias.grad.abs().sum().item():.2e}")
 print("SMOKE OK")

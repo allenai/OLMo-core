@@ -185,7 +185,7 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
     Run ``block`` on ``h`` with per-token skipping.
 
     :param block: A transformer block carrying ``_bskip`` (holder + layer index) and
-        ``_bskip_router``.
+        ``_bskip`` (holder, layer index, router).
     :param h: ``(B, T, d_model)`` block input.
     :param kwargs: The block kwargs; ``block_keep`` is added for the attention layer.
     """
@@ -202,7 +202,7 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
         # to every layer's cache -- a per-row skip would need per-row cache lengths, which the
         # flash cached path does not have. The only deviation from training semantics is that a
         # skipped generated token remains a KEY for later generated tokens at that layer.
-        logits = block._bskip_router(h)  # type: ignore[attr-defined]
+        logits = cfg["router"](h)
         keep = logits > 0
         out = block(h, **kwargs)
         return torch.where(keep[:, :, None], out, h)
@@ -224,7 +224,7 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
 
 def _skip_and_run(run_block, owner, h, kwargs, holder, layer_idx):
     B, T, _ = h.shape
-    logits = owner._bskip_router(h)  # (B, T)
+    logits = owner._bskip["router"](h)  # (B, T)
     p = torch.sigmoid(logits)
     key = (layer_idx, B, T)
     cache = holder._choice_cache
@@ -252,9 +252,19 @@ def _skip_and_run(run_block, owner, h, kwargs, holder, layer_idx):
 
 
 def install_block_skip(
-    blocks: nn.ModuleDict, holder: BlockSkipHolder, *, start_layer: int = 0
+    blocks: nn.ModuleDict, holder: BlockSkipHolder, *, start_layer: int = 0, owner: nn.Module
 ) -> List[int]:
-    """Attach a router to every block at or after ``start_layer``; returns the routed indices."""
+    """
+    Attach a run/skip router for every block at or after ``start_layer`` and register the routers
+    as ``owner.bskip_routers`` (a :class:`~torch.nn.ModuleDict` keyed by layer index) on the MODEL
+    ROOT, not inside the blocks: the router runs *before* its block's forward, and under FSDP2 a
+    block-child parameter is still sharded at that point (``aten.addmm: got mixed torch.Tensor and
+    DTensor``, Qwen3 flexs runs 2026-09-05). Root-level parameters are gathered at the start of
+    every forward. State-dict keys: ``bskip_routers.<i>.w.{weight,bias}``.
+
+    :returns: The routed layer indices.
+    """
+    routers = nn.ModuleDict()
     routed: List[int] = []
     for key, block in blocks.items():
         li = int(key)
@@ -264,18 +274,17 @@ def install_block_skip(
         ref = getattr(attn, "w_q", None)
         if ref is None:  # recurrent / other mixers: skipping needs the attention-side key mask
             continue
-        block._bskip_router = BlockSkipRouter(  # type: ignore[attr-defined]
-            ref.in_features, device=ref.weight.device, dtype=ref.weight.dtype
-        )
-        block._bskip = {"holder": holder, "layer_idx": li}  # type: ignore[attr-defined]
+        routers[key] = BlockSkipRouter(ref.in_features, device=ref.weight.device, dtype=ref.weight.dtype)
+        block._bskip = {"holder": holder, "layer_idx": li, "router": routers[key]}  # type: ignore[attr-defined]
         routed.append(li)
+    owner.bskip_routers = routers  # type: ignore[assignment]
     holder.routed_layers = routed
     return routed
 
 
-def reset_block_skip_extras(block: nn.Module) -> None:
+def reset_block_skip_extras(router: nn.Module) -> None:
     """Re-run the deterministic router init (after a strict=False base load)."""
-    block._bskip_router.reset_parameters()  # type: ignore[attr-defined]
+    router.reset_parameters()
 
 
 def enable_from_config_block(model: Any, block: Dict[str, Any]) -> None:
