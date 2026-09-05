@@ -125,6 +125,7 @@ def main():
             "throughput/device/data loading (s)",
             "train/CE loss",
             "optim/total grad norm",
+            "optim/step skipped",
         ):
             values = [row[key] for row in window if key in row]
             if values:

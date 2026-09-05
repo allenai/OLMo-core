@@ -111,6 +111,9 @@ model/optimizer math; measure its packing overhead and numerical agreement too.
   an explicitly disabled `CheckpointerCallback`, so no new checkpoints are written.
 - CPU collector r2: https://beaker.org/ex/01M1QJZ5TH49B512H9366H5753; canceled when its
   upstream r2 jobs failed. No GPU resources used by the collector.
+- Corrected full profile r3: https://beaker.org/ex/01M1QKFYH4HKM3BEK7TJ2A31YN
+  (`olmoe3-small-16mi-deep-profile-v2-r3`, source `b0124be9c`). Beaker replaced replica5
+  after an interconnect health-check failure, before any model code ran.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
