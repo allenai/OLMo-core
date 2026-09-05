@@ -130,6 +130,7 @@ def post_build_hook_from_config(model_path: str):
             width_multiple=int(block.get("width_multiple", 8)),
             trainable_width=int(block.get("trainable_width", 0) or 0),
         )
+        print(f"[ffn-moe] routing enabled from config.json: rungs {model._nested_ffn_moe['widths']}", flush=True)
         log.info(
             "[ffn-moe] routing enabled from config.json: start_layer=%s divisors=%s rungs=%s",
             block["start_layer"],

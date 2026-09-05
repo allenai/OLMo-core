@@ -522,6 +522,9 @@ def reset_kv_route_extras(attn: nn.Module) -> None:
 def enable_from_config_block(model: Any, block: Dict[str, Any]) -> None:
     """Enable routing on a built model exactly as a trainer's ``config.json`` ``kv_route`` block says."""
     model.enable_kv_route(start_layer=int(block.get("start_layer", 0)))
+    # stdout as well as the logger: eval jobs surface only prints, and a routed checkpoint scored
+    # WITHOUT its router is indistinguishable from a dense model in the logs otherwise.
+    print(f"[kv-route] routing enabled from config.json: routed layers {model._kv_route['routed']}", flush=True)
     log.info(
         "[kv-route] routing enabled from config.json: start_layer=%s routed=%s",
         block.get("start_layer", 0),
