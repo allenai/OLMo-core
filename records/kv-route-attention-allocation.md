@@ -99,3 +99,23 @@ design 6, not built). The reports quote both numbers: routed-share speedup and t
   oolong 80M 0.204 / 0.262 / 0.283. Contradiction breaks below half cache, oolong degrades
   gracefully; per-layer choice differs by task (contradiction spends a 10% budget on layer 3,
   oolong on layer 7).
+
+## Stage A held-out results (4B, mean f1 over 2k/8k/16k/32k, eval_size 500 per rung)
+
+| task / budget | dense | KV route 0.50 | KV route 0.25 | KV route 0.10 | soft-token ref | routed FFN t10 |
+|---|---|---|---|---|---|---|
+| oolong 80M | 0.723 | 0.671 | 0.643 | 0.625 | kv17 0.665 / kv33 0.675 | 0.688 |
+| contradiction 56M | 0.944 | (pending) | **0.005** | **0.002** | kv33 0.861 | 0.880 |
+| contradiction 14M (router stuck at keep 0.93) | 0.772 | 0.783 | 0.783 | 0.783 | kv33 0.525 | 0.579 |
+
+- oolong degrades smoothly with cache size (−0.05 / −0.08 / −0.10), evenly across rungs; the
+  keep-0.10 point sits near the soft-token 1/6 arm at a smaller cache.
+- contradiction COLLAPSES below half cache: keep 0.25 and 0.10 score ~0 at every rung. Generations
+  are well-formed pair lists (`[[3, 85], [47, 86], [65, 87]]` vs gold `[[3, 91], ...]`), i.e. the
+  format is learned but retrieval is impossible once layers 11–31 hold ≤10% of keys. Consistent
+  with train CE 0.53 / 0.67 vs 0.04 dense. The router's choice to keep two whole early layers and
+  empty the rest is what a mean-keep budget rewards, but it removes the late-layer retrieval the
+  task needs — a per-layer floor or a cost that penalises emptying a layer entirely is the obvious
+  next knob.
+- the 14M controls (keep 0.93) match/slightly beat dense (0.783 vs 0.772, within ±0.02 noise):
+  evicting the 7% the router chose first is free.
