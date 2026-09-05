@@ -162,3 +162,40 @@ that attention is the cheap thing to cut. Contradiction at 0.60 sits at CE 0.058
 with L12+ FFN at 1/120 width AND 44% of keys evicted; the eval will say whether that holds.
 (Dense-priced: 0.60 of dense training FLOPs = 1.67x; on the ROUTED share it is FFN 120x x
 attention 1.8x.)
+
+### Stage B held-out results (2026-09-05 03:20) — the combined router is the first compute-optimal routed point
+
+Mean f1 over 2k/8k/16k/32k; PF = training FLOPs priced at real example lengths (token-weighted
+routing fractions over the whole run, anneal included); mult = FLOPs dense needs for the same f1 ÷
+FLOPs spent (>1 = compute-optimal vs the 4B dense curve).
+
+| task | arm | what it ended with (inference) | f1 | 32k | PF | train ratio | mult |
+|---|---|---|---|---|---|---|---|
+| contradiction 56M | dense | — | 0.944 | 0.881 | 1347 | 1.00 | — |
+| contradiction 56M | **flex-c70** | FFN(L12+) 7x, keep 1.00 | **0.927** | 0.850 | 1020 | 0.757 | **1.15** |
+| contradiction 56M | flex-c60 | FFN(L12+) ~120x, keep 0.56 | 0.893 | 0.782 | 918 | 0.681 | 0.97 |
+| contradiction 56M | ffnmoe-t10 (FFN only, 7x) | | 0.880 | 0.741 | 998 | 0.74 | 0.81 |
+| contradiction 56M | attnroute-c50 (KV only) | keep 0.50 | 0.894 | 0.770 | 1286 | 0.955 | 0.70 |
+| contradiction 56M | kv33 (soft tokens) | | 0.861 | 0.719 | 695 | 0.52 | 1.00 |
+| oolong 80M | dense | — | 0.723 | 0.617 | 1946 | 1.00 | — |
+| oolong 80M | flex-c70 | FFN 7x, keep 1.00 | 0.696 | 0.606 | 1468 | 0.754 | 0.73 |
+| oolong 80M | flex-c60 | FFN ~110x, keep 0.58 | 0.647 | 0.549 | 1314 | 0.675 | 0.27 |
+| oolong 80M | ffnmoe-t10 | | 0.688 | 0.581 | 1437 | 0.74 | 0.62 |
+| oolong 80M | attnroute-c50 | keep 0.50 | 0.671 | 0.562 | 1858 | 0.955 | 0.33 |
+
+- **Contradiction flex-c70 is compute-optimal (1.15x)** — the first routed-FFN-family point above
+  1 at 4B (FFN-only t10 was 0.81x with the SAME final FFN cut). The joint budget did not use the
+  cache at all here; what changed is that the joint target (0.70 of total FLOPs ≈ FFN cost 0.14)
+  is milder than t10's per-router 0.10 and the anneal reaches it, so the router lands at 7x on
+  L12+ without the accuracy cliff. It also beats KV-only at half cache (0.894) and soft tokens.
+- **flex-c60 (FFN 120x + 44% keys evicted) holds 0.893** — the same mean as KV-only keep-0.5
+  (0.894) with a far more aggressive cut on the routed share (FFN 120x, attention 1.8x): the
+  combination is where the "dramatic routed-share speedup" lives; on total training FLOPs it is
+  0.68 of dense because the un-routed 52% (projections, GDN layers, embeddings) is untouched.
+- **oolong**: nothing beats dense on compute (flat dense curve); flex-c70 (0.696) still edges the
+  FFN-only arm (0.688) at the same cut.
+- Learned preference on both tasks: cut FFN first, cache last (Stage B split table above).
+
+Next knobs (not run): per-layer keep floor for the KV router (contradiction dies when L11+ empty);
+route the GDN layers / block-skip rung to reach the un-routed 52%; flex at 9B/27B where the FFN
+share is larger and the FFN-only multiplier was already 0.91.

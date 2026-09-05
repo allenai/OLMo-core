@@ -1,0 +1,86 @@
+{
+ "runs": {
+  "fs35s4bflex-oolong-flex-c70-s80M": {
+   "ex": "01M1R9E5HWN37HE4ZW272V8QN9",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "flex-c70",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1REKTK4E408ZCTEKBECBVG6",
+   "s2": null
+  },
+  "fs35s4bflex-oolong-flex-c60-s80M": {
+   "ex": "01M1R9F1CGDHRRSRRDQZ6YSGY1",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "flex-c60",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1RDQ71YKTREAJRE3S6EQ1FR",
+   "s2": null
+  },
+  "fs35s4bflex-contradiction-flex-c70-s56M": {
+   "ex": "01M1R9GGHCVHTJ960M27DTV3EZ",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "flex-c70",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1RDCFM984Y0XS8QJ280SKMV",
+   "s2": null
+  },
+  "fs35s4bflex-contradiction-flex-c60-s56M": {
+   "ex": "01M1R9HMN7X6FAT56FK9V5Y24R",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "flex-c60",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1RCRJ0W90DZS58Q9R4N466Y",
+   "s2": null
+  }
+ },
+ "evals": {
+  "fs35s4bflex-contradiction-flex-c60-s56M": {
+   "ex": "01M1RCRJ0W90DZS58Q9R4N466Y",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4bflex-contradiction-flex-c70-s56M": {
+   "ex": "01M1RDCFM984Y0XS8QJ280SKMV",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4bflex-oolong-flex-c60-s80M": {
+   "ex": "01M1RDQ71YKTREAJRE3S6EQ1FR",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35s4bflex-oolong-flex-c70-s80M": {
+   "ex": "01M1REKTK4E408ZCTEKBECBVG6",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  }
+ },
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 1788603499.5195048,
+ "harvest_ex": "01M1RH70MC20GDBAXGBED6AR8V",
+ "done": true,
+ "launched": true
+}
