@@ -788,6 +788,7 @@ class MoERouterV2(nn.Module):
         pending_global_counts: Optional[torch.Tensor] = None,
         *,
         accumulate_metrics: bool = True,
+        reduced_global_counts: Optional[torch.Tensor] = None,
     ) -> Optional[torch.Tensor]:
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
@@ -802,7 +803,17 @@ class MoERouterV2(nn.Module):
                 # DDP averages parameter gradients, and the training module supplies a
                 # loss_div_factor normalized by the DP world size. Average the global counts
                 # to preserve the single-rank-equivalent auxiliary-loss scale.
-                if pending_global_counts is None:
+                if reduced_global_counts is not None:
+                    if pending_global_counts is not None:
+                        raise RuntimeError("Cannot provide pending and already reduced counts")
+                    if (
+                        reduced_global_counts.shape != (self.num_experts,)
+                        or reduced_global_counts.dtype != torch.float32
+                        or reduced_global_counts.requires_grad
+                    ):
+                        raise RuntimeError("Reduced counts must be detached FP32 expert statistics")
+                    global_batch_size_per_expert = reduced_global_counts
+                elif pending_global_counts is None:
                     global_batch_size_per_expert = batch_size_per_expert.float().clone()
                     dist.all_reduce(
                         global_batch_size_per_expert,

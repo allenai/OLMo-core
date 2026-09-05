@@ -31,13 +31,16 @@ def combined_forward_no_ep(
     *,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
-) -> torch.Tensor:
-    """Forward function without expert parallelism."""
+) -> Union[torch.Tensor, tuple[torch.Tensor, Optional[tuple]]]:
+    """Forward without EP; the explicit experimental caller may request local aux inputs."""
     self = block
     assert self.routed_experts is not None
     assert self.routed_experts_router is not None
 
     B, S, D = x.shape
+    return_router_aux = kwargs.pop("_profile_return_router_aux", False)
+    if return_router_aux and os.environ.get("OLMO_PROFILE_LB_COUNT_OVERLAP", "0") == "1":
+        raise RuntimeError("Batched and early per-layer LB reductions are mutually exclusive")
 
     block_inp = x
     del x
@@ -208,6 +211,11 @@ def combined_forward_no_ep(
     mlp_out = self._merge_routed_and_shared(x_moe, mixed_shared_out)
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
+
+    if return_router_aux:
+        # Experimental caller consumes these exact same local auxiliary inputs once
+        # after the final block; nothing is stored on the block or across microbatches.
+        return final_out, routed_expert_router_aux_loss_info
 
     return self._attach_routed_aux_loss(
         final_out,

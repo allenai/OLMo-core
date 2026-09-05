@@ -1217,6 +1217,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     def _forward_blocks(
         self, h, all_block_kwargs: Dict[str, Any], per_block_kwargs: Dict[int, Dict[str, Any]]
     ) -> torch.Tensor:
+        if (
+            os.environ.get("OLMO_PROFILE_LB_COUNT_BATCHED", "0") == "1"
+            and self.training
+            and torch.is_grad_enabled()
+        ):
+            return self._profile_forward_blocks_batched_lb(h, all_block_kwargs, per_block_kwargs)
         # Run each block.
         for block_idx, (block_key, block) in enumerate(self.blocks.items()):
             # Mark sizes as dynamic for torch.compile().
@@ -1283,6 +1289,49 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         return h
 
+    def _profile_forward_blocks_batched_lb(self, h, all_block_kwargs, per_block_kwargs):
+        """Experimental explicit aux-output path; no mutable cross-forward collection."""
+        from olmo_core.ops.batched_router_aux import (
+            compiled_finish_batched_router_aux,
+            finish_batched_router_aux,
+        )
+
+        if (
+            self.tbo
+            or self.pp_enabled
+            or self.tp_enabled
+            or self.ep_enabled
+            or self.recompute_each_block
+            or self.recompute_all_blocks_by_chunk
+            or self.recompute_block_keys
+        ):
+            raise RuntimeError("Batched LB probe requires PP1/EP1/TP1, no TBO or recomputation")
+        records = []
+        for block_key, block in self.blocks.items():
+            if not isinstance(block, OLMoDDPTransformerBlock) or (
+                block.ep_enabled
+                or block.checkpoint_attn
+                or block.checkpoint_permute_moe_unpermute
+                or block.checkpoint_second_unpermute
+            ):
+                raise RuntimeError("Unsupported block in batched LB probe")
+            kwargs = {**all_block_kwargs, **per_block_kwargs.get(int(block_key), {})}
+            router = block.routed_experts_router
+            if router is not None:
+                if not router.global_load_balancing or router.cp_mesh is not None:
+                    raise RuntimeError("Batched LB probe requires global load balancing without CP")
+                kwargs["_profile_return_router_aux"] = True
+                h, aux = self._forwrad_one_block(h, block_key, kwargs)
+                records.append((router, aux))
+            else:
+                h = self._forwrad_one_block(h, block_key, kwargs)
+        finish = (
+            compiled_finish_batched_router_aux
+            if self.compile_enabled
+            else finish_batched_router_aux
+        )
+        return finish(h, records)
+
     def _forwrad_one_block(
         self,
         h,
@@ -1332,6 +1381,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         :returns: The logits if ``labels`` is ``None`` or the losses if ``labels`` is not ``None``.
         """
+        if self.tbo and os.environ.get("OLMO_PROFILE_LB_COUNT_BATCHED", "0") == "1":
+            raise RuntimeError("Batched LB probe does not support TBO")
         if self.tbo:
             return self.forward_tbo(
                 input_ids,
