@@ -3,7 +3,7 @@
 The reference trajectory trains with an 8 Mi-token batch through 100.66B
 tokens.  The branch resumes from reference step 4,000 with a 16 Mi-token
 batch and a square-root-scaled learning rate, reaching the same token horizon.
-The 4 Mi-token and 32 Mi-token probes branch from the same checkpoint and stop
+The 4, 32, and 64 Mi-token probes branch from the same checkpoint and stop
 after another 16.78B tokens, preserving the longer WSD schedule for extensions.
 
 Examples::
@@ -19,6 +19,9 @@ Examples::
 
     OLMOE3_SMALL_CBS_PHASE=32mi python src/examples/olmo_ddp/olmoe3_small_cbs.py \
         launch olmoe3-small-cbs-32mi-from-step4000-lr2p6em3-probe-uploader-r1 ai2/holmes
+
+    OLMOE3_SMALL_CBS_PHASE=64mi python src/examples/olmo_ddp/olmoe3_small_cbs.py \
+        launch olmoe3-small-cbs-64mi-from-step4000-lr3p68em3-probe-uploader-r1 ai2/holmes
 """
 
 from __future__ import annotations
@@ -149,6 +152,17 @@ PHASES = {
         global_batch_size=32 * 1024 * 1024,
         learning_rate=2.6e-3,
         checkpoint_interval=125,
+        load_path=REFERENCE_CHECKPOINT,
+        hard_stop_tokens=PROBE_STOP_TOKENS,
+    ),
+    "64mi": Phase(
+        name="64mi",
+        run_id="olmoe3-small-cbs-64mi-from-step4000-lr3p68em3-probe-uploader-r1",
+        global_batch_size=64 * 1024 * 1024,
+        learning_rate=3.68e-3,
+        # The previous 4.19B-token interval would be 62.5 updates here.
+        # Use 50 updates (3.36B tokens), giving five evenly spaced saves.
+        checkpoint_interval=50,
         load_path=REFERENCE_CHECKPOINT,
         hard_stop_tokens=PROBE_STOP_TOKENS,
     ),
