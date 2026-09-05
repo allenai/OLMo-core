@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 
+import torch
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import olmoe3_small_medium_profile as base
@@ -66,6 +68,8 @@ class ProfileMetrics(Callback):
             output.mkdir(parents=True, exist_ok=True)
             provenance = {
                 "source_checkpoint": SOURCE_CHECKPOINT,
+                "git_commit": os.environ.get("GIT_REF"),
+                "flops_per_token": self.trainer.train_module.num_flops_per_token(8192),
                 "source_step": SOURCE_STEP,
                 "global_batch_tokens": GLOBAL_BATCH_SIZE,
                 "gpus": 64,
@@ -89,6 +93,21 @@ class ProfileMetrics(Callback):
         if get_rank() == 0:
             with (Path(self.output_dir) / "metrics.jsonl").open("a") as handle:
                 handle.write(json.dumps({"step": step, **metrics}) + "\n")
+
+    def pre_load_batch(self):
+        if self.step == SOURCE_STEP + 30:
+            torch.cuda.reset_peak_memory_stats()
+
+    def post_train(self):
+        memory = {
+            "rank": get_rank(),
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+            "allocated_bytes_at_end": torch.cuda.memory_allocated(),
+        }
+        output = Path(self.output_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / f"memory-rank-{get_rank()}.json").write_text(json.dumps(memory, indent=2))
 
 
 def common_components(cli_context, **kwargs):
