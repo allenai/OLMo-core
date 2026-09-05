@@ -78,11 +78,16 @@ class ProfileMetrics(Callback):
                 "lr": LEARNING_RATE,
                 "pass": PASS,
                 "variant": VARIANT,
+                "kda_min_ctas": 128 if VARIANT == "kda-128" else 256,
                 "kernel_fun_commit": "7a6983baf2beb4ec4d7fe914ec9f6670438af99b",
                 "qk_norm_pr": 855,
-                "clean_windows_relative_steps": [[31, 70], [81, 100]]
-                if PASS == "nsys"
-                else [[21, 30], [51, 60]],
+                "clean_windows_relative_steps": (
+                    [[31, 70], [81, 100]]
+                    if PASS == "nsys"
+                    else [[31, STEPS]]
+                    if PASS == "timing"
+                    else [[21, 30], [51, 60]]
+                ),
                 "nsys_relative_steps": [71, 73] if PASS == "nsys" else None,
                 "torch_relative_steps": [36, 37] if PASS == "torch" else None,
                 "memory_relative_steps": [45, 46] if PASS == "torch" else None,
@@ -143,6 +148,14 @@ def common_components(cli_context, **kwargs):
 
 
 def model_config(common):
+    if VARIANT == "kda-128":
+        # Profiling-only performance gate, qualified separately. The package explicitly
+        # documents this CTA floor as a heuristic, not a correctness restriction.
+        from kernel_fun._common import support
+
+        if support.MIN_CTAS not in (128, 256):
+            raise RuntimeError("Kernel-fun CTA heuristic changed; requalify this experiment")
+        support.MIN_CTAS = 128
     model = base.build_model_config_from_common(common, SYSTEM)
     for block in model.block_overrides.values():
         mixer = block.sequence_mixer
@@ -158,7 +171,7 @@ def train_module_config(common):
     config.expand_shared_qk_norm_on_load = True
     if VARIANT == "reduce-scatter":
         config.dp_config.use_reduce_scatter = True
-    elif VARIANT != "baseline":
+    elif VARIANT not in ("baseline", "kda-128"):
         raise ValueError(f"Unknown variant: {VARIANT}")
     return config
 

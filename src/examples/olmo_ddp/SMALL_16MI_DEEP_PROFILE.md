@@ -78,7 +78,9 @@ and recomputation out of this baseline.
   KDA full-layer microbenchmark uses BF16 autocast with FP32 parameter storage; it is
   a kernel qualification probe, not an end-to-end throughput claim. FLA median/mean
   10.149/10.215 ms; new default 10.084/9.952 ms. Default-path relative L2 error:
-  output 0.0177%, maximum gradient error 0.169%. Lower-cutoff arm pending.
+  output 0.0177%, maximum gradient error 0.169%. Lower-cutoff arm passed:
+  median/mean 8.992/8.986 ms, output error 0.404%, maximum gradient error 0.570%.
+  This is ~10.8% less layer time than new default, not a whole-model gain.
 - Full profile: https://beaker.org/ex/01M1QHSZGC0V64F63Q99YVS7C4
   (`olmoe3-small-16mi-deep-profile-v2-r1`, source `3a148a86b`), queued on 64 B300s,
   urgent/allocated, one-hour minimum runtime; zero automatic task retries.
@@ -115,3 +117,9 @@ python src/examples/olmo_ddp/olmoe3_small_deep_profile.py launch \
 For a later timing-only reduce-scatter comparison, set
 `OLMOE3_DEEP_PROFILE_PASSES=timing OLMOE3_DEEP_PROFILE_VARIANT=reduce-scatter` and use
 a new run name. Do not compare a traced step against an untraced baseline step.
+
+The corresponding controlled KDA heuristic comparison uses
+`OLMOE3_DEEP_PROFILE_PASSES=timing OLMOE3_DEEP_PROFILE_VARIANT=kda-128`.
+This lowers only the pinned package's performance cutoff, not the model dimensions,
+batch size, precision, LR, or checkpoint. It remains experimental pending the
+end-to-end timing/loss comparison; it is not enabled in the baseline.
