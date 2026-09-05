@@ -685,3 +685,34 @@ report mismatch counts/errors (not assume bitwise parity). Bracket candidates wi
 Torch timings on the same GPU,25 samples after5 warmups. Initial tolerances are only
 a screening gate; actual trained-routing, compiled autograd/optimizer and full-model
 qualification are required before promotion. Only compact JSON goes to Beaker results.
+
+## September 5, 11:24 UTC — frozen integration candidate
+
+The six-target follow-up campaign is complete. The qualified bundle combines
+CTA128 KDA dispatch, vectorized FP32 gradient accumulation, paired SwiGLU backward,
+document-level EMO pool selection, native-tie top16, rounded BF16 wgrad/FP32
+accumulation fusion, and direct single-parameter reduce-scatter packing. The
+document-level path supersedes the earlier inverse-scatter mask path where active.
+No activation checkpointing, precision or architecture changes.
+
+| Same-allocation 200-update repeat | Baseline TPS/GPU | Optimized TPS/GPU | Gain | Optimized TFLOPs/GPU |
+|---|---:|---:|---:|---:|
+| 1 |76,877|100,516|30.75%|438.14|
+| 2 |76,926|101,549|32.01%|442.65|
+
+Median updates 31–200. Both baseline and candidate repeated twice, plus two
+combined-all-reduce arms; all 1,200 updates finite, no skips. Selected candidate
+loss differences are within the newly measured baseline A/A loss summaries,
+including 20/50/100-update rolling means. Not bitwise identity or 14T sign-off.
+Experiment: https://beaker.org/ex/01M1RERW7CSCBHWKDDGEED3AFT
+
+Production-scale fresh and resumed smoke passed on 64 GPUs: matching initial
+weights and data; both arms 0->4->8; synchronous saves; held-out evaluation; all
+six checkpoints uploaded and verified; no deletion. Full evidence, unsuccessful
+probes, final Nsight residuals and numerical caveats are in
+`SMALL_OPTIMIZATION_SIGNOFF.md`. The 100B comparison policy is in
+`SMALL_PRODUCTION_INTEGRATION.md`.
+
+KDA contribution: https://github.com/allenai/kernel-fun/pull/2 (not merged).
+WY scheduling changes did not win. GEMM/activation fusion did not qualify and
+is not enabled. A strict-FP32 router BLAS preference probe gave no speedup.

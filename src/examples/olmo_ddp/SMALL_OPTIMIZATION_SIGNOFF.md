@@ -263,3 +263,46 @@ projection/activation fusion, KDA intermediate traffic, router GEMMs, or optimiz
 communication, but none has another qualified improvement ready for this bundle.
 Freeze the current candidate after its repeats rather than adding an unmeasured
 last-minute switch. Detailed timeline dataset `01M1RKPRQ9311VN6Z3QT3HBPHN`.
+
+## September 5, 11:24 UTC: final short-run qualification
+
+All eight workers of `01M1RERW7CSCBHWKDDGEED3AFT` and collector
+`01M1RF3AX73HKHV3HS7VRCHD7M` exited 0. All six arms contain exactly 200 finite
+CE/norm updates, steps 7501–7700, with zero skipped updates (1,200 updates total).
+Dataset `01M1RF3AXH0PN8SN64XX5NCSPG`; local
+`profiling-analysis-20260905/combined-aa200-r1`.
+
+| Arm | Repeat | Median TPS/GPU | Median TFLOPs/GPU | Median seconds/update |
+|---|---:|---:|---:|---:|
+| Original baseline |1|76,877|335.10|3.409895|
+| Original baseline |2|76,926|335.31|3.407748|
+| Combined, all-reduce |1|97,633|425.58|2.684991|
+| Combined, all-reduce |2|97,978|427.08|2.675541|
+| Combined, direct reduce-scatter |1|100,516|438.14|2.607991|
+| Combined, direct reduce-scatter |2|101,549|442.65|2.581451|
+
+Timing uses median updates 31–200, excluding compilation/warm-up. Same allocation,
+same checkpoint/data, interleaved repeats. Selected RS gains are **30.75%/32.01%**
+over their corresponding references, not a multiplication of individual gains.
+
+| Loss difference over all 200 updates | Mean absolute | Maximum absolute | Max absolute rolling mean, 20 / 50 / 100 updates |
+|---|---:|---:|---|
+| Baseline A/A |0.0013690|0.0067981|0.0030669 /0.0015430 /0.0006711|
+| Combined AR A/A |0.0011448|0.0058104|0.0016575 /0.0005822 /0.0003767|
+| Combined RS A/A |0.0012270|0.0049865|0.0011117 /0.0005560 /0.0001915|
+| RS minus baseline, repeat1 |0.0013082|0.0051088|0.0029035 /0.0012483 /0.0006026|
+| RS minus baseline, repeat2 |0.0013322|0.0066297|0.0015583 /0.0005535 /0.0003538|
+
+The newly repeated original baseline shows larger short-window excursions than
+the earlier pre-paired reference A/A, resolving the earlier concern about that
+comparison envelope. The selected RS/baseline loss summaries above are within
+this new observed baseline A/A envelope. This is not proof of bitwise identity or
+long-horizon equivalence. Norm mean absolute differences are 0.01029/0.01168 versus
+baseline A/A 0.01155; maximum differences 0.04517/0.05656 versus A/A 0.06548. Thus
+do not claim every norm statistic is strictly bounded by the A/A result either.
+
+Decision: freeze `core-docpool-top16-wgrad-rs` for the authorized 100B experimental
+comparison. Primitive/optimizer tests, repeated training, and production-scale
+fresh save/restore/eval/upload smoke passed. Retain all noted rounding/outlier
+caveats. No additional kernel, precision, architecture or parallelism switch.
+Broad deployment still requires reviewing the long-run results.

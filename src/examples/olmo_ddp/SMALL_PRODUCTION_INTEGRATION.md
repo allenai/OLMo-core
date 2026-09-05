@@ -1,7 +1,8 @@
 # Small-model production integration, September 5
 
-Status at 2026-09-05 11:08 UTC: production save/restore/eval/upload smoke passed;
-final combined A/A repeats in progress. Launch after their numerical review.
+Status at 2026-09-05 11:24 UTC: production save/restore/eval/upload smoke and final
+combined A/A review passed for launching the experimental 100B comparison.
+Frozen candidate: `core-docpool-top16-wgrad-rs`.
 This is an experiment, not broad rollout approval. A 100B run cannot establish
 14T stability. See `SMALL_OPTIMIZATION_SIGNOFF.md` for the evidence and caveats.
 
