@@ -175,6 +175,7 @@ def common_components(cli_context, **kwargs):
         )
         for name in (
             "OLMOE3_DEEP_PROFILE_STEPS",
+            "OLMOE3_DEEP_PROFILE_REPEATS",
             "OLMOE3_NSYS_VERSION",
             "OLMOE3_NSYS_RANKS",
             "OLMOE3_NSYS_START",

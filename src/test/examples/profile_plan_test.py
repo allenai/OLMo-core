@@ -26,6 +26,22 @@ def test_explicit_plan():
     ]
 
 
+def test_repeated_names_do_not_change_variants():
+    pairs = [("baseline", "timing"), ("kda-128", "timing")]
+    assert _MODULE.named_profile_plan("aa", pairs, 2) == [
+        ("aa-repeat1-baseline", "baseline", "timing"),
+        ("aa-repeat1-kda-128", "kda-128", "timing"),
+        ("aa-repeat2-baseline", "baseline", "timing"),
+        ("aa-repeat2-kda-128", "kda-128", "timing"),
+    ]
+    assert _MODULE.named_profile_plan("old", [("baseline", "timing")]) == [
+        ("old", "baseline", "timing")
+    ]
+    for invalid in (0, 5):
+        with pytest.raises(ValueError):
+            _MODULE.named_profile_plan("aa", pairs, invalid)
+
+
 @pytest.mark.parametrize(
     "plan", ["x:timing,x:timing", "../x:timing", "x:typo", "x", "x:timing:other"]
 )

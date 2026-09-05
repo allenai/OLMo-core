@@ -33,6 +33,20 @@ def profile_plan(variants, modes, explicit_plan=""):
     return pairs
 
 
+def named_profile_plan(run_name, pairs, repeats=1):
+    """Give independent A/A restores unique paths without changing implementation flags."""
+    if not 1 <= repeats <= 4:
+        raise ValueError("Profile repeats must be in [1,4]")
+    multiple_variants = len({variant for variant, _ in pairs}) > 1
+    output = []
+    for repeat in range(1, repeats + 1):
+        prefix = f"{run_name}-repeat{repeat}" if repeats > 1 else run_name
+        for variant, mode in pairs:
+            name = f"{prefix}-{variant}" if multiple_variants else prefix
+            output.append((name, variant, mode))
+    return output
+
+
 def resolve_ready_leader(beaker, workload, ready_dir: Path, expected_nodes: int):
     """Return the current leader only once every current job has published readiness."""
     tasks = workload.experiment.tasks
@@ -114,11 +128,12 @@ def main():
         f"injected hostname was {os.environ.get('BEAKER_LEADER_REPLICA_HOSTNAME')}",
         flush=True,
     )
-    multiple_variants = len({variant for variant, _ in pairs}) > 1
-    for index, (variant, mode) in enumerate(pairs):
+    named_pairs = named_profile_plan(
+        run_name, pairs, int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1"))
+    )
+    for index, (name, variant, mode) in enumerate(named_pairs):
         # A separate agent and port avoids retaining rendezvous keys from the previous
         # training process. The same eight nodes are retained for fair timing comparisons.
-        name = f"{run_name}-{variant}" if multiple_variants else run_name
         command = [
             sys.executable,
             "-m",
