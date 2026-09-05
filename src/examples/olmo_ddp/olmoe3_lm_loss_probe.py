@@ -94,7 +94,7 @@ def main():
         labels = torch.randint(100352, (32768,), device="cuda")
         labels[::17] = -100
 
-        def step(fn):
+        def step(fn, x=x, weight=weight, labels=labels):
             x.grad = None
             weight.grad = None
             with torch.autocast("cuda", dtype=torch.bfloat16):
