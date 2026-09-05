@@ -12,7 +12,39 @@ from pathlib import Path
 MOUNT = Path("/weka/olmo-3p5-checkpoints")
 
 
-def snapshot(name: str) -> tuple[dict, dict]:
+def checkpoint_accounted_for(item: dict, manifest: dict, allow_cleanup: bool) -> bool:
+    """Accept a removed source only with published, verified successor/retention evidence."""
+    if item["source_complete"]:
+        return True
+    if not allow_cleanup or not item.get("local_deleted"):
+        return False
+    records = {cp["step"]: cp for cp in manifest.get("checkpoints", [])}
+    record = records.get(item["step"], {})
+    successor = records.get(record.get("successor_checkpoint_step"), {})
+    local = sorted(
+        cp["step"] for cp in records.values() if cp["local_present"] and cp["remote_verified"]
+    )
+    floor = manifest.get("deletion_policy", {}).get("min_local_checkpoints", 0)
+    protected = sorted(cp["step"] for cp in records.values() if cp["retention_protected"])
+    return bool(
+        manifest.get("auto_delete_enabled")
+        and floor >= 2
+        and len(local) >= floor
+        and protected == local[-floor:]
+        and manifest["deletion_policy"].get("grace_seconds", 0) >= 3600
+        and record.get("source_complete")
+        and record.get("remote_verified")
+        and record.get("receipt_sha256")
+        and record.get("local_deleted")
+        and not record.get("local_present", True)
+        and not record.get("retention_protected", True)
+        and not record.get("deletion_last_error")
+        and successor.get("remote_verified")
+        and successor.get("step", -1) > item["step"]
+    )
+
+
+def snapshot(name: str, allow_cleanup: bool = False) -> tuple[dict, dict]:
     """Read only small audit/checkpoint metadata, never model or optimizer tensors."""
     root = MOUNT / "production-integration" / name
     audit = root / "audit"
@@ -22,9 +54,22 @@ def snapshot(name: str) -> tuple[dict, dict]:
     evidence = {"weights": None, "inputs": {}}
     if registration.is_file():
         reg = json.loads(registration.read_text())
-        assert reg["deletion_mode"] == "report_only" and reg["enabled"]
+        policy = reg
+        if reg.get("deletion_mode", "report_only") == "inherit":
+            defaults = MOUNT / "uploader/control/deletion-defaults.json"
+            policy = json.loads(defaults.read_text()) if defaults.is_file() else {}
+        mode = policy.get("deletion_mode", "report_only")
+        assert reg["enabled"]
+        if allow_cleanup:
+            assert mode in ("report_only", "dry_run", "apply")
+            if mode != "report_only":
+                assert policy.get("min_local_checkpoints", 0) >= 2
+                assert policy.get("delete_grace_seconds", 0) >= 3600
+        else:
+            assert mode == "report_only"
         assert reg["checkpoint_root"] == str(root)
         result["registration"] = reg
+        result["effective_deletion_policy"] = policy
     for path in sorted(audit.glob("session-*.json")):
         result["sessions"].append(json.loads(path.read_text()))
     weights = audit / "initial-weights-sha256.json"
@@ -68,7 +113,8 @@ def snapshot(name: str) -> tuple[dict, dict]:
         }
         if record_path.is_file():
             record = json.loads(record_path.read_text())
-            assert not record["local_deleted"] and record["deletion_attempts"] == 0
+            if not allow_cleanup:
+                assert not record["local_deleted"] and record["deletion_attempts"] == 0
             item.update(
                 {
                     key: record.get(key)
@@ -90,11 +136,16 @@ def snapshot(name: str) -> tuple[dict, dict]:
     manifest = state / "manifests" / f"{name}.json"
     published = state / "manifests" / f"{name}.published.sha256"
     result["manifest_published"] = False
+    manifest_data = {}
     if manifest.is_file() and published.is_file():
         payload = manifest.read_bytes()
         result["manifest_published"] = (
             hashlib.sha256(payload).hexdigest() == published.read_text().strip()
         )
+        if result["manifest_published"]:
+            manifest_data = json.loads(payload)
+    for item in result["checkpoints"]:
+        item["accounted_for"] = checkpoint_accounted_for(item, manifest_data, allow_cleanup)
     return result, evidence
 
 
@@ -133,8 +184,8 @@ def compare(reports: list[dict], evidence: list[dict]) -> dict:
             )
             for report in reports
         ),
-        "all_six_checkpoints_complete": all(
-            item["source_complete"] for report in reports for item in report["checkpoints"]
+        "all_six_checkpoints_accounted_for": all(
+            item["accounted_for"] for report in reports for item in report["checkpoints"]
         ),
         "all_six_uploads_verified": all(
             item["remote_verified"] for report in reports for item in report["checkpoints"]
@@ -149,6 +200,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("name")
     parser.add_argument("--wait-seconds", type=int, default=7200)
+    parser.add_argument(
+        "--allow-cleanup",
+        action="store_true",
+        help="Accept uploader-verified deletion while still requiring the protected local pair",
+    )
     args = parser.parse_args()
     if Path(args.name).name != args.name or not args.name.startswith("olmoe3-small-"):
         raise ValueError("Expected an integration smoke run name, not a path")
@@ -159,7 +215,10 @@ def main():
     previous = None
     while True:
         reports, evidence = zip(
-            *(snapshot(f"{args.name}-{arm}") for arm in ("reference", "optimized"))
+            *(
+                snapshot(f"{args.name}-{arm}", args.allow_cleanup)
+                for arm in ("reference", "optimized")
+            )
         )
         report = compare(list(reports), list(evidence))
         report["free_bytes"] = shutil.disk_usage(MOUNT).free
