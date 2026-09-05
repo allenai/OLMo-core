@@ -276,8 +276,46 @@ in this pass return to 85,674 and 86,063 median TPS/GPU, agreeing with the indep
 85,888 timing arm. The updated diagnostic export includes hot-op shapes/dtypes/strides
 when present in the PyTorch trace. A one-GPU probe qualifies Nsight Compute counter
 access and benchmarks a narrow vectorized gradient-add prototype with FP32 arithmetic;
-it is **not wired into training**. Synthetic uniform expert routing is explicitly
+it is **not enabled in production**. Synthetic uniform expert routing is explicitly
 labeled and will not be reported as trained-routing performance.
+
+The [shape/stride diagnostic](https://beaker.org/ex/01M1QXT5KQA29CW7RBSGKM1QYM)
+completed at 04:40 UTC. It confirms the two large gradient adds are contiguous in
+both arguments: FP32 destination / BF16 source, `[512,2048,512]` and `[512,1024,512]`.
+Together they sum to 0.627s over two updates (240 calls of each shape). Router matrix
+multiplies are FP32, with `[32768,1024] × [1024,512]` forward and corresponding backward
+shapes. Those three FP32 GEMM shapes sum to 0.454s over the capture. Precision has not
+been changed to accelerate them.
+
+### Vectorized gradient-add qualification
+
+[One-B300 probe](https://beaker.org/ex/01M1QXWSA88MHCEG947BFK6VZS), source `c21fade64`:
+the standalone numerical/memory-bandwidth benchmark passed. Hardware-counter collection
+then failed with `ERR_NVGPUCTRPERM` for native add, Triton add, and grouped GEMM. All three
+workloads themselves completed with finite outputs. This is a Beaker/host counter-access
+restriction, not a kernel crash. No host privileges, clock locks, or driver settings
+were changed. Nsight Systems does not require these hardware counters.
+
+| Gradient shape | Native before/after (median ms) | Triton block2048/4warps (median ms) | Isolated speedup | Logical traffic rate, native → Triton |
+|---|---:|---:|---:|---:|
+| `[512,1024,512]` | 0.83293 / 0.83299 | 0.39370 | 2.12× | 3.22 → 6.82 TB/s |
+| `[512,2048,512]` | 1.65840 / 1.65842 | 0.77738 | 2.13× | 3.24 → 6.91 TB/s |
+
+Five warmups and 20 CUDA-event timed calls per arm, native / three Triton launch settings /
+native. Every arm matched after 25 additions with zero numerical tolerance. Separate
+checks covered empty/tail tensors, repeated additions, infinities, NaNs, and large values.
+The other two block/warp settings were within about 0.5% of block2048; no broad tuning
+sweep is warranted. Logical traffic is 10 bytes/element (FP32 read/write + BF16 read),
+not measured HBM-counter traffic. Dataset `01M1QXWSAFH471B2YQFGKF92AG` retains both the
+successful benchmark and the counter-access failure.
+
+Serial extrapolation at 120 pairs/update suggests about 158ms saved, before overlap,
+interference, and hook overhead. This is not a 2× training speedup. The kernel is now
+available behind default-off `OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE=1`, only for contiguous
+CUDA BF16-to-FP32 additions of at least 64Mi elements; other inputs keep the native path.
+Distributed qualification covers eight microbatches, three Adam updates, exact reduced
+gradients/model weights/optimizer states, and both zeroing and buffer rebinding. A
+full-model A/B is conditional on those checks passing; no production default is changed.
 
 ### Nsight capture repair
 

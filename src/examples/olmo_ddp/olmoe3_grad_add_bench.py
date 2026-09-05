@@ -7,36 +7,8 @@ from functools import partial
 from pathlib import Path
 
 import torch
-import triton
-import triton.language as tl
 
-
-@triton.jit
-def _gradient_add(destination, source, elements, BLOCK: tl.constexpr):
-    offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-    mask = offsets < elements
-    x = tl.load(destination + offsets, mask=mask, other=0)
-    y = tl.load(source + offsets, mask=mask, other=0).to(tl.float32)
-    tl.store(destination + offsets, x + y, mask=mask)
-
-
-def gradient_add(destination, source, block=4096, warps=4):
-    """Preserve FP32 accumulation with a narrow contiguous mixed-dtype contract."""
-    if (
-        not destination.is_cuda
-        or destination.device != source.device
-        or destination.dtype != torch.float32
-        or source.dtype != torch.bfloat16
-        or destination.shape != source.shape
-        or not destination.is_contiguous()
-        or not source.is_contiguous()
-    ):
-        raise ValueError("Expected same-shape contiguous CUDA FP32 destination and BF16 source")
-    if destination.numel():
-        _gradient_add[(triton.cdiv(destination.numel(), block),)](
-            destination, source, destination.numel(), BLOCK=block, num_warps=warps
-        )
-    return destination
+from olmo_core.ops.grad_accum import gradient_add
 
 
 def qualify():

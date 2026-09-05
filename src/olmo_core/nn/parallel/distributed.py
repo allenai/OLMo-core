@@ -154,6 +154,9 @@ class MultiGroupDistributedDataParallel(Module):
         self._reduce_scatter_single_param_fast_path = (
             os.environ.get("OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH", "0") == "1"
         )
+        self._vectorized_fp32_grad_add = (
+            os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE", "0") == "1"
+        )
 
         if self._accumulate_grads_in_fp32 and not self._reduce_grads_in_fp32:
             raise ValueError("accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True")
@@ -565,7 +568,20 @@ class MultiGroupDistributedDataParallel(Module):
                 "External grad buffer replacement is not supported in bucket-view mode."
             )
 
-        main_grad.add_(g)
+        if (
+            self._vectorized_fp32_grad_add
+            and g.is_cuda
+            and g.dtype == torch.bfloat16
+            and main_grad.dtype == torch.float32
+            and g.numel() >= 64 * 1024 * 1024
+            and g.is_contiguous()
+            and main_grad.is_contiguous()
+        ):
+            from olmo_core.ops.grad_accum import gradient_add
+
+            gradient_add(main_grad, g)
+        else:
+            main_grad.add_(g)
         param.grad = None
 
     def _get_reduce_scatter_pack_scratch(self, bucket: _GradBucket) -> torch.Tensor:

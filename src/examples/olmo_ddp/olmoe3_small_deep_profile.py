@@ -82,6 +82,8 @@ class ProfileMetrics(Callback):
                 "pass": PASS,
                 "variant": VARIANT,
                 "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
+                "vectorized_fp32_grad_add": os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE")
+                == "1",
                 "reduce_scatter_single_param_fast_path": os.environ.get(
                     "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"
                 )
@@ -183,11 +185,19 @@ def common_components(cli_context, **kwargs):
 
 
 def model_config(common):
-    if VARIANT in ("emo-inverse-scatter", "kda-128-emo-inverse-scatter"):
+    if VARIANT in (
+        "emo-inverse-scatter",
+        "kda-128-emo-inverse-scatter",
+        "kda-128-emo-inverse-scatter-grad-add",
+    ):
         import olmo_core.ops.moe as moe_ops
 
         moe_ops.pool_keep_mask = moe_ops.pool_keep_mask_inverse_scatter
-    if VARIANT in ("kda-128", "kda-128-emo-inverse-scatter"):
+    if VARIANT in (
+        "kda-128",
+        "kda-128-emo-inverse-scatter",
+        "kda-128-emo-inverse-scatter-grad-add",
+    ):
         # Profiling-only performance gate, qualified separately. The package explicitly
         # documents this CTA floor as a heuristic, not a correctness restriction.
         from kernel_fun._common import support
@@ -216,6 +226,7 @@ def train_module_config(common):
         "compile-noop-nvtx",
         "emo-inverse-scatter",
         "kda-128-emo-inverse-scatter",
+        "kda-128-emo-inverse-scatter-grad-add",
     ):
         raise ValueError(f"Unknown variant: {VARIANT}")
     return config
