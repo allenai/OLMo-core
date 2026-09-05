@@ -146,6 +146,10 @@ and numerical validation remain required; the flag is off in the baseline.
 - Independent PyTorch capture replacement:
   https://beaker.org/ex/01M1QNHVHXXPSJHBFF7KBB7SCV
   (`olmoe3-small-16mi-torch-profile-v2-r4`, source `dbaa6d5f9`).
+  Completed: all eight jobs exited0; all eight representative-rank Chrome traces,
+  distributed-event summaries, and rank0 memory snapshot exist (about 176 MiB total).
+  Interpretation and the profile-vs-unprofiled timing caveat are recorded in
+  [SMALL_16MI_PROFILE_RESULTS.md](SMALL_16MI_PROFILE_RESULTS.md).
 - Same-node compiler-no-op A/B:
   https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605
   (`olmoe3-small-16mi-noop-ab-v2-r1`, source `dbaa6d5f9`), baseline then
@@ -172,6 +176,22 @@ and numerical validation remain required; the flag is off in the baseline.
   steps7531–7570 median 76,494 TPS/GPU, mean CE 1.95184; steps7581–7600 median
   76,452 TPS/GPU, mean CE 1.95538. Original step7501 CE=1.98832607,
   total grad norm=.07320063 (independent-head gains will change future gradients).
+- EMO inverse-scatter GPU qualification r2 passed:
+  https://beaker.org/ex/01M1QQ1MGM97EYNDDTZ379CPWE (source `c0f49384f`).
+  The first attempt's eager-vs-compiled tie comparison was invalid even for the
+  unchanged baseline; corrected comparisons require exact equality within each mode.
+  Compiled median mask time 1.7313ms -> 1.1354ms, not an end-to-end speedup claim.
+- Same-node EMO full-model matrix launched:
+  https://beaker.org/ex/01M1QQCYKN4AGBMRHX84618N6C (source `680ed4ae2`).
+  Independent baseline, `emo-inverse-scatter`, `kda-128-emo-inverse-scatter` arms,
+  each 60 unprofiled updates from step7500. Analysis automation:
+  https://beaker.org/ex/01M1QQEP0RE71VBZZA2CRHXJ6V (CPU only, unallocated).
+  The latter also completed the enhanced PyTorch trace analysis.
+- PR859 reviewed at `fe0195dd845a3dd786e4fc80d52eed9e7ce404b0`:
+  its 23 vendored kernel files are byte-identical to our installed `kernel-fun`
+  revision `7a6983baf2beb4ec4d7fe914ec9f6670438af99b`. It is an alternative
+  distribution, not another kernel implementation to benchmark. No duplicate merge
+  or GPU job. See the results document for the exact comparison and implications.
 
 ## Launch
 
@@ -202,8 +222,9 @@ a new run name. Do not compare a traced step against an untraced baseline step.
 The corresponding controlled KDA heuristic comparison uses
 `OLMOE3_DEEP_PROFILE_PASSES=timing OLMOE3_DEEP_PROFILE_VARIANT=kda-128`.
 This lowers only the pinned package's performance cutoff, not the model dimensions,
-batch size, precision, LR, or checkpoint. It remains experimental pending the
-end-to-end timing/loss comparison; it is not enabled in the baseline.
+batch size, precision, LR, or checkpoint. The completed 60-update comparison improved
+median TPS by 5.03%, with finite losses and no skipped steps; long-run stability is
+not yet established. It is not enabled in the baseline.
 
 `olmoe3_profile_collect.py` can run in a separate CPU-only job with the checkpoint Weka
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
