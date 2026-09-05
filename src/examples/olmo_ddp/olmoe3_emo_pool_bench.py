@@ -38,22 +38,32 @@ def main():
         "shape": list(scores.shape),
         "git_commit": os.environ.get("GIT_REF"),
     }
-    reference = pool_keep_mask(scores, pools)
-    tied_reference = pool_keep_mask(tied_scores, pools)
+    destination = Path(os.environ.get("RESULTS_DIR", "/results"))
+    destination.mkdir(parents=True, exist_ok=True)
+    eager_tied_reference = pool_keep_mask(tied_scores, pools)
     for mode in ("eager", "compiled"):
+        baseline = (
+            torch.compile(pool_keep_mask, fullgraph=True) if mode == "compiled" else pool_keep_mask
+        )
+        reference = baseline(scores, pools)
+        tied_reference = baseline(tied_scores, pools)
+        # Unstable argsort is allowed to break ties differently between eager and
+        # Inductor. Compare the replacement against the baseline in the SAME mode.
+        results[f"{mode}:baseline_eager_tie_mask_differences"] = int(
+            (tied_reference != eager_tied_reference).sum().item()
+        )
         for name, function in (
-            ("double-sort", pool_keep_mask),
+            ("double-sort", baseline),
             ("inverse-scatter", pool_keep_mask_inverse_scatter),
         ):
-            if mode == "compiled":
+            if mode == "compiled" and name != "double-sort":
                 function = torch.compile(function, fullgraph=True)
             assert torch.equal(function(scores, pools), reference), (mode, name, "random")
             assert torch.equal(function(tied_scores, pools), tied_reference), (mode, name, "ties")
             measurement = measure(function, scores, pools)
             results[f"{mode}:{name}"] = {"exact_masks": True, **measurement}
+            (destination / "emo-pool-bench.json").write_text(json.dumps(results, indent=2))
             print("EMO_POOL_BENCH", mode, name, json.dumps(measurement), flush=True)
-    destination = Path(os.environ.get("RESULTS_DIR", "/results"))
-    destination.mkdir(parents=True, exist_ok=True)
     (destination / "emo-pool-bench.json").write_text(json.dumps(results, indent=2))
     print(json.dumps(results, indent=2), flush=True)
 
