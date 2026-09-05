@@ -98,7 +98,7 @@ def main():
             "throughput/device/MFU (%)",
             "throughput/device/data loading (s)",
             "train/CE loss",
-            "optim/grad_norm",
+            "optim/total grad norm",
         ):
             values = [row[key] for row in window if key in row]
             if values:

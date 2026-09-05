@@ -84,6 +84,9 @@ and recomputation out of this baseline.
 - Full profile: https://beaker.org/ex/01M1QHSZGC0V64F63Q99YVS7C4
   (`olmoe3-small-16mi-deep-profile-v2-r1`, source `3a148a86b`), queued on 64 B300s,
   urgent/allocated, one-hour minimum runtime; zero automatic task retries.
+- KDA cutoff comparison: https://beaker.org/ex/01M1QJ5SRMTM4GFMDRWSA0Z00Y
+  (`olmoe3-small-16mi-kda128-v2-r1`, source `b2892e0f0`), 64 B300s, 60 updates,
+  timing only. Same model/checkpoint/batch/LR/precision, with cutoff128 enabled only here.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
