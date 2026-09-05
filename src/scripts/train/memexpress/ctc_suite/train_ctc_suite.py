@@ -1335,7 +1335,18 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     trainer = trainer_config.build(train_module, data_loader)
     if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute"):
         _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
-    trainer.fit()
+    if opts.mem_snapshot:
+        try:
+            trainer.fit()
+        except torch.OutOfMemoryError:
+            # the attribution is most useful exactly when the step OOMs: print it, then re-raise
+            from olmo_core.nn.mem_attribution import summarize_peak
+
+            print("[mem-snapshot] OOM during the step; attribution of the trace so far:", flush=True)
+            summarize_peak(torch.cuda.memory._snapshot(), top=16)
+            raise
+    else:
+        trainer.fit()
 
     # Save a model-only checkpoint in the eval loader's expected layout (config.json +
     # model_and_optim/) so the docchunk eval scripts load it directly.
