@@ -33,6 +33,13 @@ def test_disconnected_gpu_fails():
         _MODULE.validate_topology(_matrix(disconnected=1))
 
 
+def test_two_visible_gpus_require_explicit_count():
+    topology = "GPU0 X NV18\nGPU1 NV18 X"
+    assert _MODULE.validate_topology(topology, expected_gpus=2)["all_pairs_nvlink"]
+    with pytest.raises(ValueError, match="Expected GPU0"):
+        _MODULE.validate_topology(topology)
+
+
 def test_missing_gpu_fails():
     with pytest.raises(ValueError, match="Expected GPU0"):
         _MODULE.validate_topology("\n".join(_matrix().splitlines()[:-1]))

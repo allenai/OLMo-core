@@ -2,7 +2,7 @@
 # Disposable two-GPU qualification only; no training/checkpoint/uploader state is touched.
 set -euo pipefail
 export OMP_NUM_THREADS=1
-python src/examples/olmo_ddp/olmoe3_profile_topology.py /results/topology
+python src/examples/olmo_ddp/olmoe3_profile_topology.py /results/topology --gpus 2
 python -m pytest -q src/test/nn/parallel/reduce_scatter_fast_path_test.py -k nccl
 OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH=1 python -m pytest -q \
   src/test/nn/parallel/distributed_test.py -k 'reduce_scatter and nccl'

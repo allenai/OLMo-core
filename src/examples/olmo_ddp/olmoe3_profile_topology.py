@@ -11,8 +11,9 @@ from pathlib import Path
 def validate_topology(output: str, expected_gpus: int = 8) -> dict:
     """Require every off-diagonal GPU link to be an active NVLink connection.
 
-    This check is deliberately specific to our full eight-B300-node speed tests,
-    not PCIe systems or jobs using a subset of a host's GPUs.
+    The default checks a full eight-B300 node. A two-GPU qualification can explicitly
+    check its visible pair, but that does not certify the host's hidden six GPUs.
+    This is not a check for PCIe-only systems.
     """
     output = re.sub(r"\x1b\[[0-9;]*m", "", output)
     rows = {}
@@ -41,6 +42,7 @@ def main():
     """Save read-only topology evidence, and reject disconnected GPUs."""
     parser = argparse.ArgumentParser()
     parser.add_argument("output_dir", type=Path)
+    parser.add_argument("--gpus", type=int, choices=(2, 8), default=8)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     topology = subprocess.check_output(["nvidia-smi", "topo", "-m"], text=True, timeout=30)
@@ -55,7 +57,7 @@ def main():
     )
     report = {"hostname": socket.getfqdn(), "inventory": inventory, "raw_topology": topology}
     try:
-        report.update(validate_topology(topology))
+        report.update(validate_topology(topology, expected_gpus=args.gpus))
     except ValueError as error:
         report["error"] = str(error)
         raise
