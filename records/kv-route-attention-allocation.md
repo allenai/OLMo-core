@@ -249,3 +249,11 @@ one 65k×9728 bf16 FFN intermediate per layer) — not yet diagnosed; suspect so
 ladder's saved tensors or the flex compile escaping the checkpoint. Workaround for flexa/flexs:
 `--seq-len 40960` (every example fits, max 36.7k; same tokens, 1.6x more optimizer steps than
 the dense/flex arms). Diagnose with a memory snapshot before any 9B Qwen3 attempt.
+
+**LR (2026-09-05 12:10).** At the Qwen3.5 study's lr 5e-6 the Qwen3-4B base barely fits: dense
+contradiction 56M ended at CE 0.54 (Qwen3.5: 0.04), oolong 80M at 1.3 (Qwen3.5: 0.2), starting
+from CE 2.1 / 5.3 vs 0.7 / 0.8 — the Qwen3 base does not know the answer formats and 5e-6 is too
+slow to teach it in ~100 steps. All Qwen3 arms relaunched at the suite's Qwen3 default **5e-5**
+(`FS_LR`), fresh run names `fs35q3s4b{dense2,flex2,flexs2}-…` (old states archived as
+`*_lr5e-6_state.json`). Qwen3.5 and Qwen3 are therefore NOT at matched LR; comparisons are within
+family.
