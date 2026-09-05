@@ -36,6 +36,8 @@ def integration_policy(arm, policy, baseline="original", communication="none"):
         "deferred",
         "lb-overlap",
         "deferred-lb",
+        "lb-batched",
+        "deferred-lb-batched",
     ):
         raise ValueError((baseline, communication))
     if baseline == "original" and communication != "none":
@@ -56,10 +58,13 @@ def integration_policy(arm, policy, baseline="original", communication="none"):
         flags["OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"] = "1" if policy.endswith("-rs") else "0"
     if baseline == "optimized100b" and arm == "optimized":
         flags["OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS"] = (
-            "1" if communication in ("deferred", "deferred-lb") else "0"
+            "1" if communication in ("deferred", "deferred-lb", "deferred-lb-batched") else "0"
         )
         flags["OLMO_PROFILE_LB_COUNT_OVERLAP"] = (
             "1" if communication in ("lb-overlap", "deferred-lb") else "0"
+        )
+        flags["OLMO_PROFILE_LB_COUNT_BATCHED"] = (
+            "1" if communication in ("lb-batched", "deferred-lb-batched") else "0"
         )
     return {
         "flags": flags,

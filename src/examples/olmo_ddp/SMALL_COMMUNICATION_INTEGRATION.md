@@ -18,7 +18,9 @@ OLMOE3_INTEGRATION_COMMUNICATION=deferred-lb
 ```
 
 The final value is a candidate selector, not a sign-off: valid alternatives are
-`none`, `deferred`, `lb-overlap`, `deferred-lb`. In the reference arm the new
+`none`, `deferred`, `lb-overlap`, `deferred-lb`, `lb-batched`,
+`deferred-lb-batched`. Batched counts and early overlap are mutually exclusive.
+In the reference arm the new
 collective flags are always zero, regardless of ambient environment. Both arms
 retain CTA128, inverse-scatter, vectorized gradient addition, paired activation,
 document pool, native-tie top16, rounded wgrad and direct reduce-scatter. The
@@ -74,6 +76,9 @@ The path rejects PP/EP/TP/CP, TBO and activation checkpointing. It changes backw
 scheduling and prolongs scores/logits lifetimes; the raw tensors total up to
 1.875GiB for the small configuration, but that is not a measured incremental
 peak-memory cost. Numerical, optimizer, memory and end-to-end speed gates are
-required. Timing aliases are `lb-batched` and `deferred-lb-batched`; every other
-timing arm and all current integration policies explicitly reset batching to zero.
-This probe is not part of the qualified communication candidate yet.
+required. Timing aliases and explicit integration selectors are `lb-batched` and
+`deferred-lb-batched`; every other timing arm and integration selection explicitly
+resets batching to zero, and reference arms always disable it. The selectors only
+prepare the gated smoke workflow. This probe has passed small numerical tests but
+is not a qualified production candidate; full-size speed/memory, fresh trace and
+save/restore/eval/upload smoke gates must pass before any longer integration.

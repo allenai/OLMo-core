@@ -12,6 +12,7 @@ _SPEC.loader.exec_module(_MODULE)
 POLICY = _MODULE.QUALIFIED_POLICY
 DEFER = "OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS"
 OVERLAP = "OLMO_PROFILE_LB_COUNT_OVERLAP"
+BATCHED = "OLMO_PROFILE_LB_COUNT_BATCHED"
 
 
 def test_original_campaign_unchanged():
@@ -26,7 +27,10 @@ def test_original_campaign_unchanged():
     assert optimized["flags"][DEFER] == optimized["flags"][OVERLAP] == "0"
 
 
-@pytest.mark.parametrize("communication", ["none", "deferred", "lb-overlap", "deferred-lb"])
+@pytest.mark.parametrize(
+    "communication",
+    ["none", "deferred", "lb-overlap", "deferred-lb", "lb-batched", "deferred-lb-batched"],
+)
 def test_wave2_baseline_and_only_selected_switches(communication, monkeypatch):
     # Ambient experiments must not enable switches in the reference arm.
     for key in _MODULE.FLAGS:
@@ -39,9 +43,13 @@ def test_wave2_baseline_and_only_selected_switches(communication, monkeypatch):
     for key in ("kda_min_ctas", "reduce_scatter", "inverse_scatter"):
         assert reference[key] == candidate[key] == old_optimized[key]
     expected = dict(reference["flags"])
-    expected[DEFER] = "1" if communication in ("deferred", "deferred-lb") else "0"
+    expected[DEFER] = (
+        "1" if communication in ("deferred", "deferred-lb", "deferred-lb-batched") else "0"
+    )
     expected[OVERLAP] = "1" if communication in ("lb-overlap", "deferred-lb") else "0"
+    expected[BATCHED] = "1" if communication in ("lb-batched", "deferred-lb-batched") else "0"
     assert candidate["flags"] == expected
+    assert not (int(candidate["flags"][OVERLAP]) and int(candidate["flags"][BATCHED]))
 
 
 @pytest.mark.parametrize(
@@ -52,6 +60,7 @@ def test_wave2_baseline_and_only_selected_switches(communication, monkeypatch):
         ("optimized", POLICY, "bad", "none"),
         ("optimized", POLICY, "optimized100b", "bad"),
         ("optimized", POLICY, "original", "deferred-lb"),
+        ("optimized", POLICY, "original", "deferred-lb-batched"),
         ("optimized", "core-docpool", "optimized100b", "deferred-lb"),
     ],
 )
