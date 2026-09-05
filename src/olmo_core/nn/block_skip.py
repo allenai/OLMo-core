@@ -193,11 +193,17 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
     if not holder.enabled:
         return block(h, **kwargs)
     B, T, _ = h.shape
-    # Decode step (single new token with a live cache): generated tokens always run every block --
-    # a per-row skip would need per-row cache lengths, and the cost is negligible.
     kvm = getattr(getattr(block, "attention", None), "kv_cache_manager", None)
     if kvm is not None and T == 1:
-        return block(h, **kwargs)
+        # Decode step with a live cache: honour the router on the QUERY side (a skipped token's
+        # output is its input, exactly as in training) but let the block append the token's K/V
+        # to every layer's cache -- a per-row skip would need per-row cache lengths, which the
+        # flash cached path does not have. The only deviation from training semantics is that a
+        # skipped generated token remains a KEY for later generated tokens at that layer.
+        logits = block._bskip_router(h)  # type: ignore[attr-defined]
+        keep = logits > 0
+        out = block(h, **kwargs)
+        return torch.where(keep[:, :, None], out, h)
 
     logits = block._bskip_router(h)  # type: ignore[attr-defined]  (B, T)
     p = torch.sigmoid(logits)
