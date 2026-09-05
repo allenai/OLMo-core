@@ -165,7 +165,24 @@ def main():
         report["free_bytes"] = shutil.disk_usage(MOUNT).free
         (output / "signoff.json").write_text(json.dumps(report, indent=2))
         (output / "fingerprints.json").write_text(json.dumps(evidence, indent=2))
-        status = {"gates": report["gates"], "checkpoints": [r["checkpoints"] for r in reports]}
+        status = {
+            "gates": report["gates"],
+            "checkpoints": [r["checkpoints"] for r in reports],
+            "progress": [
+                {
+                    "run": r["run"],
+                    "session_start_steps": [s["start_step"] for s in r["sessions"]],
+                    "latest_step": max((m["step"] for m in r["metrics"]), default=None),
+                    "finite_eval_metrics": sum(
+                        key.startswith("eval/") and value is not None
+                        for m in r["metrics"]
+                        for key, value in m.items()
+                    ),
+                    "unmeasured_eval_metrics": len(r["unmeasured_eval"]),
+                }
+                for r in reports
+            ],
+        }
         if status != previous:
             print("INTEGRATION_SMOKE_AUDIT", json.dumps(status), flush=True)
             previous = status
