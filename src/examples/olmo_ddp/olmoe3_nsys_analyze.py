@@ -19,9 +19,33 @@ def interval_union(intervals):
     return total
 
 
+def interval_metrics(groups, first, last):
+    """Measure clipped interval unions, never adding time from overlapping CUDA streams."""
+
+    def clipped(kind):
+        return [(max(first, a), min(last, b)) for a, b in groups[kind] if a < last and b > first]
+
+    compute, collective, memory = (clipped(k) for k in ("compute", "collective", "memory"))
+    kernels = compute + collective
+    busy = interval_union(kernels)
+    compute_busy = interval_union(compute)
+    comm_busy = interval_union(collective)
+    all_busy = interval_union(kernels + memory)
+    return {
+        "span_ms": (last - first) / 1e6,
+        "compute_union_ms": compute_busy / 1e6,
+        "collective_union_ms": comm_busy / 1e6,
+        "collective_without_other_kernel_ms": (busy - compute_busy) / 1e6,
+        "collective_overlapping_other_kernel_ms": (compute_busy + comm_busy - busy) / 1e6,
+        "no_recorded_gpu_operation_ms": (last - first - all_busy) / 1e6,
+    }
+
+
 def summarize_timeline(path):
     """Keep CPU-inclusive sums distinct from per-device GPU interval unions."""
     devices = defaultdict(lambda: {"compute": [], "collective": [], "memory": []})
+    anchors = defaultdict(list)
+    collective_calls = defaultdict(list)
     with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ("CUPTI_ACTIVITY_KIND_KERNEL", "CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL"):
@@ -38,6 +62,10 @@ def summarize_timeline(path):
             ):
                 kind = "collective" if "nccl" in label.lower() else "compute"
                 devices[dev][kind].append((start, end))
+                if kind == "collective":
+                    collective_calls[dev].append((start, end, label))
+                    if "AllReduce" in label and "u64" in label:
+                        anchors[dev].append((start, end))
         for table in ("CUPTI_ACTIVITY_KIND_MEMCPY", "CUPTI_ACTIVITY_KIND_MEMSET"):
             if table not in tables:
                 continue
@@ -93,6 +121,22 @@ def summarize_timeline(path):
                 "no_recorded_gpu_operation_in_kernel_span_ms": (last - first - all_busy) / 1e6,
             }
         )
+        starts = sorted({start for start, _ in anchors[dev]})
+        timelines[-1]["inferred_update_spans"] = [
+            {"index": index + 1, "anchor_start_ns": start, **interval_metrics(groups, start, stop)}
+            for index, (start, stop) in enumerate(zip(starts, starts[1:] + [last]))
+        ]
+        timelines[-1]["update_span_caveat"] = (
+            "Inferred from uint64 all-reduce starts (global loss-token count in this recipe). "
+            "Check anchor count against expected captured updates before interpreting. "
+            "Final span ends at the last captured kernel; not a synchronized wall-clock step timer."
+        )
+        timelines[-1]["longest_collective_kernels"] = [
+            {"start_ns": start, "duration_ms": (end - start) / 1e6, "name": label}
+            for start, end, label in sorted(
+                collective_calls[dev], key=lambda item: item[1] - item[0], reverse=True
+            )[:12]
+        ]
     return {
         "database": str(path),
         "devices": timelines,
