@@ -7,15 +7,19 @@ sys.path.insert(0, "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/sr
 from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig, TransformerActivationCheckpointingMode
 T = int(sys.argv[1]) if len(sys.argv) > 1 else 16384
+N_LAYERS = int(sys.argv[2]) if len(sys.argv) > 2 else 36
+ONLY = sys.argv[3] if len(sys.argv) > 3 else None  # run one config per process (CUDA memory is not reliably freed between models)
 dev = torch.device("cuda")
 
 def build():
-    cfg = TransformerConfig.qwen3_4B(vocab_size=151936)
+    cfg = TransformerConfig.qwen3_4B(vocab_size=151936, n_layers=N_LAYERS)
     cfg.apply(lambda c: setattr(c, "backend", AttentionBackendName("flash_2")) if hasattr(c, "backend") else None)
     m = cfg.build(init_device="cuda").to(torch.bfloat16); m.init_weights()
     return m
 
 def run(name, enable):
+    if ONLY and name != ONLY:
+        return
     gc.collect(); torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
     m = build(); enable(m)
     m.apply_activation_checkpointing(TransformerActivationCheckpointingMode.full)
@@ -36,13 +40,13 @@ def run(name, enable):
             frames = b.get("frames", [])
             src = next((f["filename"].split("/")[-1] + ":" + str(f["line"]) for f in frames if "olmo_core" in f["filename"]), frames[0]["filename"].split("/")[-1] if frames else "?")
             by_src[src] += b["size"]
-    print(f"{name:28s} after-fwd +{fwd_alloc/2**30:.2f} GB  peak +{peak/2**30:.2f} GB (params {base/2**30:.1f} GB) | live-after-bwd top: " +
+    print(f"T={T} L={N_LAYERS} {name:20s} after-fwd +{fwd_alloc/2**30:.2f} GB  peak +{peak/2**30:.2f} GB (params {base/2**30:.1f} GB) | live-after-bwd top: " +
           ", ".join(f"{k} {v/2**30:.2f}GB" for k, v in by_src.most_common(4)), flush=True)
     del m, out; gc.collect(); torch.cuda.empty_cache()
 
 run("dense", lambda m: None)
 run("kv", lambda m: m.enable_kv_route(target=0.5))
-run("kv+ffn L12+", lambda m: (m.enable_kv_route(target=0.5), m.enable_nested_ffn_moe(start_layer=12, divisors=(1, 16, 64, 256, 1024, 9728), width_multiple=1, target_cost=0.1)))
+run("kv+ffn L12+", lambda m: (m.enable_kv_route(target=0.5), m.enable_nested_ffn_moe(start_layer=N_LAYERS // 3, divisors=(1, 16, 64, 256, 1024, 9728), width_multiple=1, target_cost=0.1)))
 run("kv+ffn all", lambda m: (m.enable_kv_route(target=0.5), m.enable_nested_ffn_moe(start_layer=0, divisors=(1, 16, 64, 256, 1024, 9728), width_multiple=1, target_cost=0.1)))
 run("kv+ffn all+skip", lambda m: (m.enable_kv_route(target=0.5), m.enable_nested_ffn_moe(start_layer=0, divisors=(1, 16, 64, 256, 1024, 9728), width_multiple=1, target_cost=0.1), m.enable_block_skip(target=0.5)))
 print("PROFILE DONE")
