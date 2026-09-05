@@ -86,11 +86,6 @@ def launch_train(st, task, budget, arm):
                      "--base-checkpoint", BASES[SCALE]]
     if FAMILY == "qwen3":
         data = data.replace("arms_tokenized/", "arms_tokenized_qwen3/")
-        if arm.startswith(("flexa", "flexs")):
-            # all-layer FFN routing on 36 layers OOMs 8x80GB at a 65k window even with the
-            # block-level mask (two-router L12+ arms sit at 77 GB). 40960 holds every example
-            # (max 36.7k tokens) -- same tokens, 1.6x more optimizer steps; noted in the record.
-            largs = [("40960" if (largs[i - 1] == "--seq-len" and x == "65536") else x) for i, x in enumerate(largs)]
     nodes = NUM_NODES.get(SCALE, 1)
     # (ffnmoe-t10p on ONE 80GB node at 27B was tried 2026-09-04 and OOMed at 75 GB: the frozen tail
     # still holds fp32 shards, the forward concatenates full weights per layer, and the 65k row's
