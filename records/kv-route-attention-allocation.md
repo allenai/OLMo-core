@@ -240,3 +240,12 @@ the one documented deviation from training semantics); joint budget grads reach 
 Three-router arms launched on Qwen3-4B: flexs-c30 / c15 / c05 (total-FLOP targets 0.30 / 0.15 /
 0.05, i.e. 3.3x / 6.7x / 20x on training FLOPs; floor ≈ LM head + embeddings) at contradiction
 56M / oolong 80M, run names `fs35q3s4bflexs-…`.
+
+**Memory on Qwen3-4B (2026-09-05 12:00).** Dense 65k window on 4 GPUs: 45 GB. Two-router L12+ arms
+(flex-c60/c45) on 8 GPUs: 77 GB — they fit but only just; all-layer FFN arms (flexa, flexs) OOM
+inside `_NestedLadderFn.backward` even with the block-level mask. Dense at 8 ranks would be ~37
+GB, so the routers add ~40 GB of retained activations under full AC (~1.1 GB per routed layer ≈
+one 65k×9728 bf16 FFN intermediate per layer) — not yet diagnosed; suspect something in the
+ladder's saved tensors or the flex compile escaping the checkpoint. Workaround for flexa/flexs:
+`--seq-len 40960` (every example fits, max 36.7k; same tokens, 1.6x more optimizer steps than
+the dense/flex arms). Diagnose with a memory snapshot before any 9B Qwen3 attempt.
