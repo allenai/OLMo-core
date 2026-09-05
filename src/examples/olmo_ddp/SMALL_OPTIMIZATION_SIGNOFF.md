@@ -178,3 +178,30 @@ requires the current manifest's digest to match the read-back-verified publicati
   Forward~.613ms, input-gradient~.558ms, weight-gradient~.646ms. No useful gain;
   no global BLAS preference change in training. Artifacts:
   `profiling-analysis-20260905/router-blas-r1`, dataset01M1RFWPESG0YGM3RW92AVRY99.
+
+## September 5, 10:35 UTC: partial combined results
+
+- First200-update original baseline: median76,877.45 TPS/GPU,3.409895s/update;
+  first combined AR:97,633.10 TPS/GPU,2.684991s/update (+27.0%). Windows31–200,
+  no skipped updates. CE means1.955127/1.954813. These are first-repeat results,
+  not the final A/A numerical assessment. Combined direct RS is running near101k.
+- Fresh smoke reference completed0->4->8 with held-out metrics; optimized saved
+  step0/4, evaluated, and restored step4. All64 distributed initial-weight hashes
+  match. Full batch/resume/upload sign-off is still pending.
+- CPU audit now `01M1RH9SS78TSBTENE8R1Z9CF2` (source7c304206d), replacing the
+  earlier collectors only to improve diagnostics/partial-eval handling. No uploader
+  or training restart for these collector changes. Superseded CPU collectors stopped.
+- Read-only checkpoint immutability audit `01M1RHYJYQ0WJKR78JDWZXKEYA` passed:
+  all1,092 recorded files each for reference0/4 and optimized0 still have matching
+  sizes/mtimes after resume. Reference4 remotely verified on first attempt at10:30:11,
+  after starting10:10:58. Optimized0 verified10:32:21. Uploader high-performance
+  mode is enabled (8CPU,32GiB,node-local Xet cache); do not treat the much faster
+  step0 transfer as physical bandwidth, since deduplication can dominate it.
+- Final light combined-RS Nsight capture queued:
+  `01M1RJ0FGZ2M9CY12VSGKSGR5M`, source7c304206d,64GPUs,100updates,
+  standalone2026.4.1, ranks0/8/.../56, capture71–73, autograd NVTX off.
+  Collector `01M1RJ3VFYZFKTWQ9BT85DQ32J`; only small summaries go to results.
+- Rechecked final serialized configs after the GCS/RS changes: exact model,
+  dataset/data-loader, eval and optimizer/scheduler config equality; only the
+  intentional `dp_config.use_reduce_scatter` field differs. Retention never,
+  no max-checkpoint removal, sync saves, MB4, no AC/FP8 all asserted locally.
