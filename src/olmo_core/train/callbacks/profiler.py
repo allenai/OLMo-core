@@ -155,7 +155,7 @@ class ProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
-    ranks: str | None = None
+    ranks: str | list[int] | None = None
     """
     Ranks to profile. Can be:
 
@@ -181,6 +181,8 @@ class ProfilerCallback(Callback):
 
         if self.ranks is None:
             return current_rank == 0
+        elif isinstance(self.ranks, list):
+            return current_rank in self.ranks
         elif isinstance(self.ranks, str):  # Handle string shortcuts for parallel groups
             world_mesh = get_world_mesh()
             if world_mesh is None:

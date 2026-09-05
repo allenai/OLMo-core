@@ -76,7 +76,7 @@ fa4 = [
 # this against its Torch 2.11 / CUDA 13 Beaker image before production use.
 fla = ["flash-linear-attention==0.5.2"]
 kernel-fun = [
-    "kernel-fun @ git+https://github.com/allenai/kernel-fun.git@7a6983b592cc1097b469af65953f32914cd93054#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
+    "kernel-fun @ git+https://github.com/allenai/kernel-fun.git@7a6983baf2beb4ec4d7fe914ec9f6670438af99b#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
 ]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]

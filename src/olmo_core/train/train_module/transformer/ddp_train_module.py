@@ -134,6 +134,7 @@ class OLMoDDPTrainModule(TrainModule):
         load_key_mapping: Optional[Dict[str, str]] = None,
         reset_optimizer_states_on_load: bool = False,
         reset_optimizer_states_on_resume: bool = False,
+        expand_shared_qk_norm_on_load: bool = False,
         label_ignore_index: int = -100,
         eval_only: bool = False,
     ):
@@ -149,6 +150,7 @@ class OLMoDDPTrainModule(TrainModule):
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_only = eval_only
+        self.expand_shared_qk_norm_on_load = expand_shared_qk_norm_on_load
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
@@ -1280,6 +1282,17 @@ class OLMoDDPTrainModule(TrainModule):
                             sd_to_load.pop(key)
 
             if not loaded_model_directly:
+                from .headwise_qk_checkpoint import finish_qk_expansion, prepare_qk_expansion
+
+                expansions = {}
+                if self.expand_shared_qk_norm_on_load:
+                    gain_shapes = {
+                        name: tuple(param.shape)
+                        for group in optim.param_groups
+                        for name, param in group["named_params"].items()
+                        if name.endswith((".q_norm.weight", ".k_norm.weight")) and param.ndim == 2
+                    }
+                    expansions = prepare_qk_expansion(sd_to_load, metadata, gain_shapes)
                 dist_cp.state_dict_loader.load(
                     sd_to_load,
                     checkpoint_id=dir,
@@ -1287,6 +1300,8 @@ class OLMoDDPTrainModule(TrainModule):
                     process_group=process_group,
                     # planner=FlatLoadPlanner(),
                 )
+
+                finish_qk_expansion(sd_to_load, expansions)
 
                 optim.load_state_dict(sd_to_load)
 

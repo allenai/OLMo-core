@@ -523,6 +523,8 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     load_key_mapping: Optional[Dict[str, str]] = None
     reset_optimizer_states_on_load: bool = False
     reset_optimizer_states_on_resume: bool = False
+    expand_shared_qk_norm_on_load: bool = False
+    """Opt in to expanding shared Q/K norm gains and Adam moments to independent head gains."""
 
     # Other train settings.
 
