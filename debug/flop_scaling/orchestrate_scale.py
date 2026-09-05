@@ -24,7 +24,8 @@ import launch_grid35 as lg  # noqa: E402
 import orchestrate35 as o35  # noqa: E402
 
 SCALE = os.environ["FS_SCALE"]            # 0.8b | 2b | 9b | 27b
-TAG = "s" + SCALE.replace(".", "") + os.environ.get("FS_TAG_SUFFIX", "")  # s08b, s2b, s9b; suffix = new state file
+FAMILY = os.environ.get("FS_FAMILY", "qwen3_5")  # qwen3_5 (GDN hybrid) | qwen3 (dense; arms re-tokenized, see build_task_rungs TASKSCALE_*)
+TAG = ("q3" if FAMILY == "qwen3" else "") + "s" + SCALE.replace(".", "") + os.environ.get("FS_TAG_SUFFIX", "")  # s08b, s2b, s9b; suffix = new state file
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 BASES = {"0.8b": f"{W}/ctc_suite/bases/q35-08b-base-markerfix/model_and_optim",
          "2b": f"{W}/ctc_suite/bases/q35-2b-base-markerfix/model_and_optim",
@@ -33,6 +34,10 @@ BASES = {"0.8b": f"{W}/ctc_suite/bases/q35-08b-base-markerfix/model_and_optim",
          "27b": f"{W}/ctc_suite/bases/q35-27b-base-markerfix/model_and_optim"}
 N_LAYERS = {"0.8b": 24, "2b": 24, "4b": 32, "9b": 32, "27b": 64}
 FFN_H = {"0.8b": 3584, "2b": 6144, "4b": 9216, "9b": 12288, "27b": 17408}   # intermediate width per scale
+if FAMILY == "qwen3":  # dense Qwen3: every layer is attention+FFN; marker-repaired base from the q3-vs-q35 study
+    BASES = {"4b": f"{W}/ctc_suite/bases/qwen3-4b-base-trainedmark/model_and_optim"}
+    N_LAYERS = {"4b": 36}
+    FFN_H = {"4b": 9728}
 TRAINABLE_W = {s: h // 16 for s, h in FFN_H.items()}                          # "train what you route to": H/16 prefix
 GPUS = {"0.8b": 4, "2b": 4, "4b": 4, "9b": 8, "27b": 8}
 # 27B full fine-tune on 80GB H100s: fp32 master + grads + Adam = 16 B/param = 432 GB sharded ->
@@ -67,7 +72,7 @@ def launch_train(st, task, budget, arm):
         variant, data, largs, extra = "full", f"{W}/{lg.ARMS[task][budget]}", ["--pack", "--seq-len", "65536", "--global-batch", "8", "--micro-batch-instances", "1", "--base-checkpoint", BASES[SCALE]], ""
     else:
         variant, data, largs, extra = lg.arm_args(task, arm, budget)
-        if arm.startswith("ffnmoe"):
+        if arm.startswith(("ffnmoe", "flex-")):  # (flexa keeps start-layer 0)
             # "layers 12+" of a 32-layer model = the top 62.5%; keep that fraction at other depths
             start = round(N_LAYERS[SCALE] * 12 / 32)
             extra = extra.replace("--ffn-moe-start-layer 12", f"--ffn-moe-start-layer {start}")
@@ -75,6 +80,8 @@ def launch_train(st, task, budget, arm):
         if arm.startswith("kv"):  # padded single-example rows; micro-batch by scale
             largs = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", str(KV_MICRO[SCALE]),
                      "--base-checkpoint", BASES[SCALE]]
+    if FAMILY == "qwen3":
+        data = data.replace("arms_tokenized/", "arms_tokenized_qwen3/")
     nodes = NUM_NODES.get(SCALE, 1)
     # (ffnmoe-t10p on ONE 80GB node at 27B was tried 2026-09-04 and OOMed at 75 GB: the frozen tail
     # still holds fp32 shards, the forward concatenates full weights per layer, and the 65k row's
@@ -88,7 +95,7 @@ def launch_train(st, task, budget, arm):
         # the trainer's scale default for 0.8b is NO activation checkpointing (fits on 141GB H200s);
         # a 65k packed row OOMs an 80GB H100 without it (fs35s08b-oolong-dense-s20M, 23:20)
         extra = (extra + " --activation-checkpointing full").strip()
-    cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", "qwen3_5", "--model-scale", SCALE,
+    cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", FAMILY, "--model-scale", SCALE,
            "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", str(nodes), "--num-gpus", str(GPUS[SCALE]),
            "--epochs", "1", "--lr", "5e-6", "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
            "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + ["launch"]

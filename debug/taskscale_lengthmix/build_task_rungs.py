@@ -48,8 +48,12 @@ WEKA = pathlib.Path(
 )
 SRC = WEKA / "src"  # staged inputs -- fixed, so --smoke reroutes only the OUTPUTS
 
-TOKENIZER = "Qwen/Qwen3.5-0.8B-Base"
-EOS = 248044
+# Family overrides (2026-09-05, Qwen3 flex-routing arms): TASKSCALE_TOKENIZER=Qwen/Qwen3-4B
+# TASKSCALE_EOS=151643 TASKSCALE_TOK_SUBDIR=arms_tokenized_qwen3 re-tokenizes the SAME composed arms
+# for the dense Qwen3 family into a sibling tree; pools/arms are untouched.
+TOKENIZER = os.environ.get("TASKSCALE_TOKENIZER", "Qwen/Qwen3.5-0.8B-Base")
+EOS = int(os.environ.get("TASKSCALE_EOS", "248044"))
+TOK_SUBDIR = os.environ.get("TASKSCALE_TOK_SUBDIR", "arms_tokenized")
 MAX_SEQ = 40960
 QUERY_POSITION = "after"
 SHUFFLE_SEED = 7113
@@ -354,7 +358,7 @@ def compose(task):
             continue
         random.Random(SHUFFLE_SEED).shuffle(lines)
         arm = f"{task}_mix_s{int(B/1e6)}M"
-        if (WEKA / "arms_tokenized" / arm / "metadata.json").exists():
+        if (WEKA / TOK_SUBDIR / arm / "metadata.json").exists():
             # Already tokenized and already measured. Recomposing it from a deeper
             # pool would silently change what that budget means.
             log(f"[skip] {arm}: already tokenized, leaving as-is")
@@ -381,7 +385,7 @@ def compose(task):
 def tokenize(task):
     arms = json.loads((WEKA / "arms" / f"MANIFEST_{task}.json").read_text())
     for arm in arms:
-        d = WEKA / "arms_tokenized" / arm
+        d = WEKA / TOK_SUBDIR / arm
         if (d / "metadata.json").exists():
             log(f"[skip] tokenize {arm}")
             continue
