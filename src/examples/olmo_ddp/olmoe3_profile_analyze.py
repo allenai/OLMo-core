@@ -60,19 +60,38 @@ def summarize_trace(path):
         (collective if kind == "collective" else compute).append(interval)
     busy = union_duration(compute + collective)
     compute_busy = union_duration(compute)
+    span = (
+        max(end for _, end in compute + collective)
+        - min(start for start, _ in compute + collective)
+        if kernels
+        else 0
+    )
+    cpu = defaultdict(lambda: [0, 0.0])
+    for event in events:
+        if event.get("cat") in ("cpu_op", "user_annotation", "cuda_runtime"):
+            if event.get("dur", 0) > 0:
+                value = cpu[(event["cat"], event["name"])]
+                value[0] += 1
+                value[1] += event["dur"]
     return {
         "trace": str(path),
         "kernel_count": len(kernels),
         "gpu_kernel_busy_union_ms": busy / 1000,
         "collective_union_ms": union_duration(collective) / 1000,
         "collective_without_other_kernel_ms": (busy - compute_busy) / 1000,
+        "first_to_last_kernel_span_ms": span / 1000,
+        "no_kernel_in_span_ms": (span - busy) / 1000,
+        "top_cpu_events_by_inclusive_duration_nonadditive": [
+            {"category": cat, "name": name, "count": count, "total_ms": us / 1000}
+            for (cat, name), (count, us) in sorted(cpu.items(), key=lambda p: -p[1][1])[:50]
+        ],
         "kernel_duration_sums_ms_nonadditive": {
             k: v / 1000 for k, v in sorted(grouped.items(), key=lambda p: -p[1])
         },
         "top_kernels_by_duration_sum_ms": [
             (name, us / 1000) for name, us in sorted(names.items(), key=lambda p: -p[1])[:35]
         ],
-        "caveat": "Kernel durations overlap. Communication-only union is not a measured counterfactual speedup or a complete critical-path analysis.",
+        "caveat": "Kernel durations and CPU scopes overlap. No-kernel time can contain memory operations. Communication-only union is not a measured counterfactual speedup or a complete critical-path analysis.",
     }
 
 
@@ -89,6 +108,13 @@ def main():
     if len(steps) != len(set(steps)):
         raise ValueError("Duplicate logged steps: separate attempts before comparing throughput")
     summary = {"provenance": provenance, "windows": []}
+    summary["first_updates"] = [
+        {key: row[key] for key in ("step", "train/CE loss", "optim/total grad norm") if key in row}
+        for row in rows[:5]
+    ]
+    summary["memory_by_rank"] = [
+        json.loads(path.read_text()) for path in sorted(args.run_dir.glob("memory-rank-*.json"))
+    ]
     for first, last in provenance["clean_windows_relative_steps"]:
         window = [row for row in rows if first <= row["step"] - provenance["source_step"] <= last]
         metrics = {}

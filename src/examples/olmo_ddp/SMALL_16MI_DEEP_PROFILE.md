@@ -93,6 +93,10 @@ and recomputation out of this baseline.
   for all eight current job-ID-specific readiness markers before invoking torchrun.
   It retains host networking, leader selection and failure propagation; stale injected
   hostnames and markers from replaced jobs are not used for rendezvous.
+- Replacement full profile: https://beaker.org/ex/01M1QJT2NVG2WXVNEPQ1KPDT5M
+  (`olmoe3-small-16mi-deep-profile-v2-r2`, source `e90ee93ee`).
+- Replacement cutoff comparison: https://beaker.org/ex/01M1QJT0K2X5P2JCCWXVQS8GP2
+  (`olmoe3-small-16mi-kda128-v2-r2`, same source). Both urgent, allocated, 64 B300s.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
@@ -107,7 +111,7 @@ From this clean, pushed branch, with the Beaker and Python environment configure
 
 ```bash
 python src/examples/olmo_ddp/olmoe3_small_deep_profile.py launch \
-  olmoe3-small-16mi-deep-profile-v2-r1 ai2/holmes
+  olmoe3-small-16mi-deep-profile-v2-r2 ai2/holmes
 ```
 
 The launcher uses `ai2/olmo3p5-training`, urgent priority, allocated with a one-hour
@@ -132,3 +136,7 @@ The corresponding controlled KDA heuristic comparison uses
 This lowers only the pinned package's performance cutoff, not the model dimensions,
 batch size, precision, LR, or checkpoint. It remains experimental pending the
 end-to-end timing/loss comparison; it is not enabled in the baseline.
+
+`olmoe3_profile_collect.py` can run in a separate CPU-only job with the checkpoint Weka
+mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
+CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
