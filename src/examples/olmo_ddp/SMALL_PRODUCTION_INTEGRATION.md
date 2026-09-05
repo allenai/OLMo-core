@@ -1,7 +1,8 @@
 # Small-model production integration, September 5
 
-Status at 2026-09-05 11:24 UTC: production save/restore/eval/upload smoke and final
-combined A/A review passed for launching the experimental 100B comparison.
+Status at 2026-09-05 11:48 UTC: both 100B integration arms are training successfully.
+The production save/restore/eval/upload smoke, final combined A/A review, and
+matched long-run startup audit all passed.
 Frozen candidate: `core-docpool-top16-wgrad-rs`.
 This is an experiment, not broad rollout approval. A 100B run cannot establish
 14T stability. See `SMALL_OPTIMIZATION_SIGNOFF.md` for the evidence and caveats.
@@ -14,8 +15,23 @@ Submitted at 11:26 UTC from clean pushed commit
 - Read-only start observer: https://beaker.org/ex/01M1RN5CGDCZGY23T10MHW7GTZ
 
 Each training arm is urgent/allocated, 8x8 B300s in `ai2/olmo3p5-training`,
-excluding Holmes hosts 485 and 516. Startup is being verified; submission alone
-does not satisfy the successful-training gate.
+excluding Holmes hosts 485 and 516. Beaker replaced optimized replica5 after a
+pre-start health-check failure on host555; the replacement on host493 is running.
+No model error or configuration change was involved.
+
+The start observer exited0 at11:48:22. At its final snapshot, reference had8 and
+optimized57 finite, non-skipped updates. All64 initial-weight fingerprints and
+all64 first-batch fingerprints match; both use the same source commit. Both
+step-0 checkpoints are remotely verified on their first upload attempt, and both
+current manifests are published. Weka has39.044TB free. Small evidence dataset:
+`01M1RN5CGQCKZKB5NHMBQX6MXD`, local `profiling-analysis-20260905/integration-start-r1`.
+
+WandB:
+
+- Reference: https://wandb.ai/ai2-llm/olmoe3-production-profiling/runs/x7urehin
+- Optimized: https://wandb.ai/ai2-llm/olmoe3-production-profiling/runs/p21bkf81
+
+Launch success is established; long-horizon loss/eval assessment is still pending.
 
 ## Fixed comparison
 

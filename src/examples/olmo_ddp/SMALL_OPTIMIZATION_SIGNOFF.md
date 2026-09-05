@@ -306,3 +306,32 @@ comparison. Primitive/optimizer tests, repeated training, and production-scale
 fresh save/restore/eval/upload smoke passed. Retain all noted rounding/outlier
 caveats. No additional kernel, precision, architecture or parallelism switch.
 Broad deployment still requires reviewing the long-run results.
+
+## September 5, 11:48 UTC: required integration launch condition achieved
+
+Both 100B jobs were submitted at11:26 UTC from clean/pushed source
+`107dfa3ff42f4ee4984d5c445d587ceb7db5e4f4` and are taking real updates:
+
+- Reference: https://beaker.org/ex/01M1RN3TK5Q4GCM5JYNJ20W1XZ
+- Optimized: https://beaker.org/ex/01M1RN3NHFH32P2Z952BCR03YD
+- Read-only startup audit: https://beaker.org/ex/01M1RN5CGDCZGY23T10MHW7GTZ
+
+Each has eight running workers,64 B300s,urgent/allocated in the production
+workspace. The optimized replica5's first assignment failed a node health check
+on555 before execution; Beaker moved it to493 successfully. No training retry,
+kernel change, or source change was needed. The known485/516 exclusions remain.
+
+Audit exited0 at11:48:22, with all seven gates true: matching initial weights,
+matching first token batches, both sessions/source recorded, at least five finite
+non-skipped updates per arm, and complete/remotely verified step-0 checkpoints.
+Its final snapshot contains reference steps1–8 and optimized1–57, all unskipped.
+Both published manifests also match their verified publication digests. All eight
+matched initial CE values differ by at most0.00009823 (mean absolute0.00006270).
+This small startup check is not a substitute for the planned100B loss/eval review.
+
+Reference step0 uploaded/verified11:41:04; optimized step0 at11:44:38. Both first
+attempt,1,092 files/~150.055GB each, no error, no deletion. Free Weka39.044TB.
+Small evidence dataset `01M1RN5CGQCKZKB5NHMBQX6MXD`; local
+`profiling-analysis-20260905/integration-start-r1`. Training, periodic synchronous
+checkpoints/evals and the existing uploader continue; no further experiments or
+deletion are launched as part of this handoff.
