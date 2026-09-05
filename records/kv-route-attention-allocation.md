@@ -85,3 +85,17 @@ design 6, not built). The reports quote both numbers: routed-share speedup and t
   cache almost entirely at every budget; the first three keep most of it.
 - The 14M contradiction runs (27 steps, anneal 8 steps) finished at keep ≈0.93 for all three
   targets — the anneal never reached them. They are near-dense controls, not budget points.
+- Eval-time routing confirmed: every export's `config.json` carries the `kv_route` block (harvest
+  2026-09-04 23:55), so `post_build_hook_from_config` enables the router before the strict load.
+  (Eval logs hide INFO; both hooks now also print to stdout.)
+- **Budget dynamics under Adam.** The three 14M contradiction runs and the three 20M oolong runs
+  have byte-identical token-weighted keep fractions across targets 0.5/0.25/0.1 (0.9616 and
+  0.8523). The two-sided |mean − target| term has a constant-magnitude gradient while the mean is
+  above target, and Adam normalises it away, so the router descends at a rate fixed by its LR
+  (1e-3) until it crosses a target; a 27-step run never gets there. The target anneal therefore
+  does not pace eviction — the router LR does. Fix if short runs must hit budget: squared hinge or
+  a higher router LR. Long-budget runs did converge onto target (0.51/0.25/0.09 hard keep).
+- Final train CE (last 10 steps): contradiction 56M 0.039 / 0.53 / 0.67 at keep 0.5 / 0.25 / 0.1;
+  oolong 80M 0.204 / 0.262 / 0.283. Contradiction breaks below half cache, oolong degrades
+  gracefully; per-layer choice differs by task (contradiction spends a 10% budget on layer 3,
+  oolong on layer 7).
