@@ -132,6 +132,36 @@ and numerical validation remain required; the flag is off in the baseline.
 - Same-allocation timing matrix: https://beaker.org/ex/01M1QM9ZVJG0CB5B2609FW77SX
   (`olmoe3-small-16mi-timing-matrix-v2-r3`, source `41084cc46`), baseline then
   reduce-scatter then cutoff128, 60 updates each from the same checkpoint.
+- Its baseline completed all 60 updates. Clean updates31–60: median/mean
+  78,222/78,081 TPS/GPU, median 340.965 TFLOPs/GPU, median step 3.35128s.
+  Mean CE=1.951015, zero skipped steps; mean data loading=.002708s/update.
+  Per-step rank-reduced memory: 175.466 GiB active, 178.563 GiB reserved.
+  End-of-run allocator counters are **not** full-run peaks: the standard memory
+  callback resets them each step. Use logged per-step peaks or memory snapshots.
+- Nsight r3 failed immediately after capture began at step7571: rank55 segfaulted
+  in the CUDA host-to-device copy path, and sibling jobs then stopped. Updates31–69
+  before capture remain usable timing data (39 updates, median 76,729 TPS/GPU),
+  but this is not a completed 100-update run. The surviving report has no CUDA data;
+  no kernel-level conclusions can be drawn from it.
+- Independent PyTorch capture replacement:
+  https://beaker.org/ex/01M1QNHVHXXPSJHBFF7KBB7SCV
+  (`olmoe3-small-16mi-torch-profile-v2-r4`, source `dbaa6d5f9`).
+- Same-node compiler-no-op A/B:
+  https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605
+  (`olmoe3-small-16mi-noop-ab-v2-r1`, source `dbaa6d5f9`), baseline then
+  `compile-noop-nvtx`, 60 unprofiled updates each. Experimental flag remains off
+  by default and has not yet established a speedup.
+- Partial recovery completed successfully:
+  https://beaker.org/ex/01M1QNM5FA1E56B4C50T6P1XJE
+  (result dataset `01M1QNM5FGV2W0BVVNVHEHE068`). A redundant replacement was stopped.
+- Active CPU collector:
+  https://beaker.org/ex/01M1QNWGMB6NHEQPSCPKP45C16, collecting all six timing/torch
+  passes independently as they complete. It skips package installation because its
+  analysis uses only the standard library and the existing Nsight binary. Previous
+  collector r5 was stopped/replaced; its first timing summary is retained in dataset
+  `01M1QNM636RNYZPXQ33V9NPMTY`.
+- The dry run consumes EMO RNG draws. All comparison arms use the same resume and
+  warmup procedure, but this is not a bitwise replay of uninterrupted CBS training.
 - CPU collector `01M1QMAARSW1HQ6EPFM5NJ46C1` was stopped before upstream completion
   to replace it with a version that exposes intermediate summaries directly in logs;
   training allocations were not changed.

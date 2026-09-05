@@ -115,6 +115,11 @@ def main():
     summary["memory_by_rank"] = [
         json.loads(path.read_text()) for path in sorted(args.run_dir.glob("memory-rank-*.json"))
     ]
+    summary["memory_caveat"] = (
+        "The regular GPU memory callback resets peak counters every step. End-of-run "
+        "memory-rank files are not full-run activation peaks. Use the per-step gpu_memory "
+        "metrics below (rank-reduced by the trainer), or explicit memory snapshots."
+    )
     for first, last in provenance["clean_windows_relative_steps"]:
         window = [row for row in rows if first <= row["step"] - provenance["source_step"] <= last]
         metrics = {}
@@ -126,6 +131,8 @@ def main():
             "train/CE loss",
             "optim/total grad norm",
             "optim/step skipped",
+            "gpu_memory/GPU active mem (GiB)",
+            "gpu_memory/GPU reserved mem (GiB)",
         ):
             values = [row[key] for row in window if key in row]
             if values:
