@@ -41,6 +41,9 @@ NUM_NODES = {"0.8b": 1, "2b": 1, "4b": 1, "9b": 1, "27b": int(os.environ.get("FS
 KV_MICRO = {"0.8b": 2, "2b": 2, "4b": 2, "9b": 1, "27b": 1}
 TASKS = os.environ.get("FS_TASKS", "oolong,contradiction").split(",")
 BUDGETS = {"oolong": ["20M", "80M"], "contradiction": ["14M", "56M"]}
+if os.environ.get("FS_BUDGETS"):  # FS_BUDGETS=oolong:80M,contradiction:56M restricts per task
+    for kv in os.environ["FS_BUDGETS"].split(","):
+        t, b = kv.split(":"); BUDGETS[t] = b.split("+")
 ARMS = {"oolong": ["dense", "kv17", "ffnmoe-t10"], "contradiction": ["dense", "kv33", "ffnmoe-t10"]}
 if os.environ.get("FS_ARMS"):  # FS_ARMS=ffnmoe-t10p limits every task to these arms
     ARMS = {t: os.environ["FS_ARMS"].split(",") for t in ARMS}

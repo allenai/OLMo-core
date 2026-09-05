@@ -108,7 +108,9 @@ def arm_args(task, arm, budget):
         ffn = (f"--ffn-moe-start-layer 12 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
                "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
                "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
-        return "flexcompute", data, packed + ["--base-checkpoint", BASE], f"{ffn} {kv} --flex-joint-target {tgt:.2f}"
+        # joint FLOP shares at 8k (real lengths), see --flex-share-seq-len; the KV router's own target
+        # is irrelevant under the joint budget (its budget weight is zeroed) but must parse.
+        return "flexcompute", data, packed + ["--base-checkpoint", BASE], f"{ffn} {kv} --flex-joint-target {tgt:.2f} --flex-share-seq-len 8192"
     if arm in KV_FRAC:
         frac = KV_FRAC[arm]
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]

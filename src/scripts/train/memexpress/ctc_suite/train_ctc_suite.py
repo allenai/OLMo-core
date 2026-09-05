@@ -1159,7 +1159,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # model decides per task how to split its saving between FFN width and KV keeping.
         from olmo_core.nn.joint_budget import install_joint_budget
 
-        install_joint_budget(model, target=opts.flex_joint_target, seq_len=opts.seq_len,
+        install_joint_budget(model, target=opts.flex_joint_target, seq_len=opts.flex_share_seq_len or opts.seq_len,
                              anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac))
         print(f"[ctc-suite] flexcompute: JOINT FFN+attention budget target {opts.flex_joint_target}", flush=True)
     if opts.variant == "softtoken":
@@ -1405,6 +1405,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--kv-route-target-anneal-frac", type=float, default=0.3)
     ap.add_argument("--kv-route-explore", type=float, default=0.0)
     ap.add_argument("--kv-route-explore-anneal-frac", type=float, default=0.3)
+    ap.add_argument("--flex-share-seq-len", type=int, default=8192,
+                    help="flexcompute: sequence length the FFN/attention FLOP shares of the joint budget are evaluated "
+                         "at (real example length, NOT the padded window: at 65k attention-score FLOPs are ~50%% of "
+                         "dense vs ~12%% at real 2k-32k lengths, which would steer every saving into eviction)")
     ap.add_argument("--flex-joint-target", type=float, default=None,
                     help="flexcompute: ONE budget on total (FFN + attention-score) FLOPs as a fraction of dense; "
                          "replaces the two per-router budgets")

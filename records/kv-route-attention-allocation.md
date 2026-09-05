@@ -126,8 +126,9 @@ Priced at real example lengths (`results/flop_scaling/results_scale_s4battn.csv`
 FLOP saving of KV routing is small: ratio 0.955 (keep 0.5), 0.93 (0.25), 0.92 (0.10). The
 attention-score share of training FLOPs on this short-heavy 2k–32k mix is only ~10–15% at 4B, so
 even emptying the caches cannot buy much on that axis, and the matched-compute multipliers are all
-< 1 (contradiction keep-0.5: dense reaches 0.894 at ~890 PF vs 1286 PF spent → 0.69x; oolong
-keep-0.5 0.71x, keep-0.10 ~0.7x). On the training-FLOP axis KV routing therefore cannot be
+< 1 (contradiction keep-0.5: dense reaches 0.894 at ~900 PF vs 1286 PF spent → 0.70x; oolong
+keep-0.5 0.33x, keep-0.25 0.18x, keep-0.10 0.12x — oolong's dense curve is flat in FLOPs, so
+every f1 point lost costs a lot of matched compute). On the training-FLOP axis KV routing therefore cannot be
 compute-optimal at these lengths — the same conclusion the soft-token arms reached, and for the
 same reason: attention is not where 4B training FLOPs go below 32k.
 
