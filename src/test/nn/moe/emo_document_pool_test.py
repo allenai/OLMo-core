@@ -44,7 +44,8 @@ def test_mixed_document_masks():
 
 
 @pytest.mark.gpu
-def test_compiled_router_gradients_and_adam(monkeypatch):
+@pytest.mark.parametrize("track_trajectory", (False, True))
+def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
     if not torch.cuda.is_available():
         pytest.skip("CUDA required")
     import olmo_core.ops.moe as moe_ops
@@ -77,9 +78,12 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
     boundaries = torch.rand(2, 257, device="cuda") < 0.07
     boundaries[:, 0] = False
     segments = boundaries.long().cumsum(1)
-    coefficient = torch.randn(2, 257, 16, device="cuda")
+    # The expert's contribution follows its identity, not its top-k slot. A
+    # slot-specific coefficient invents a loss discontinuity when near ties swap.
+    coefficient = torch.randn(2, 257, 512, device="cuda")
     report = []
-    output = Path(os.environ.get("RESULTS_DIR", "/results")) / "document-router.json"
+    mode = "trajectory" if track_trajectory else "same-weights"
+    output = Path(os.environ.get("RESULTS_DIR", "/results")) / f"document-router-{mode}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
 
     def compare(left, right, label, *, exact=False, relative_limit=2e-4):
@@ -101,6 +105,11 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
             assert relative_l2 <= relative_limit, (label, report[-1])
 
     for update in range(3):
+        if not track_trajectory:
+            with torch.no_grad():
+                for router in routers[1:]:
+                    for left, right in zip(routers[0].parameters(), router.parameters()):
+                        right.copy_(left)
         inputs = [torch.randn(2, 257, 1024, device="cuda", dtype=torch.bfloat16) for _ in range(8)]
         outputs = [[] for _ in settings]
         input_grads = [[] for _ in settings]
@@ -110,7 +119,9 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
                 torch.manual_seed(1000 + update * 8 + microbatch)
                 weights, indices, counts, aux = router(x, False, segment_ids=segments)
                 # Both routing weights and all-expert auxiliary scores affect backward.
-                loss = ((weights * coefficient).sum() + aux[0].square().sum() * 0.01) / 8
+                loss = (
+                    (weights * coefficient.gather(-1, indices)).sum() + aux[0].square().sum() * 0.01
+                ) / 8
                 loss.backward()
                 outputs[arm].append(
                     (weights.detach(), indices, counts, loss.detach(), aux[0].detach())
@@ -120,6 +131,11 @@ def test_compiled_router_gradients_and_adam(monkeypatch):
             prefix = f"update{update}/arm{arm}"
             for mb, (reference, candidate) in enumerate(zip(outputs[0], outputs[arm])):
                 for field, (left, right) in enumerate(zip(reference, candidate)):
+                    if field == 1 and track_trajectory and update > 0:
+                        # The independent optimizer trajectories need not preserve
+                        # rank order for near ties. Still require the SAME selected
+                        # experts. Primitive and same-weight checks require order too.
+                        left, right = left.sort(-1).values, right.sort(-1).values
                     compare(left, right, f"{prefix}/mb{mb}/output{field}", exact=field in (1, 2))
                 compare(input_grads[0][mb], input_grads[arm][mb], f"{prefix}/mb{mb}/dx")
             for index, (left, right) in enumerate(

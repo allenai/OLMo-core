@@ -156,7 +156,7 @@ def main():
             OLMOE3_DEEP_PROFILE_PASSES=mode,
             OLMO_PROFILE_SAFE_NOOP_NVTX="1" if variant == "compile-noop-nvtx" else "0",
             OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH="1"
-            if variant == "reduce-scatter-single-param"
+            if variant == "reduce-scatter-single-param" or variant.endswith("-rs-fast")
             else "0",
             OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE="1" if "-grad-add" in variant else "0",
             OLMO_PROFILE_SWIGLU_PAIRWISE="1" if "-act-pair" in variant else "0",

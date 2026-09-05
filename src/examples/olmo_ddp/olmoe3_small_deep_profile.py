@@ -198,6 +198,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add-act-pair",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
         import olmo_core.ops.moe as moe_ops
 
@@ -209,6 +210,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add-act-pair",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
         # Profiling-only performance gate, qualified separately. The package explicitly
         # documents this CTA floor as a heuristic, not a correctness restriction.
@@ -230,7 +232,7 @@ def train_module_config(common):
     config.optim.lr = LEARNING_RATE
     config.scheduler = WSD(warmup=2000, decay=1, decay_fraction=None)
     config.expand_shared_qk_norm_on_load = True
-    if VARIANT in ("reduce-scatter", "reduce-scatter-single-param"):
+    if VARIANT in ("reduce-scatter", "reduce-scatter-single-param") or VARIANT.endswith("-rs-fast"):
         config.dp_config.use_reduce_scatter = True
     elif VARIANT not in (
         "baseline",
