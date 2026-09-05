@@ -97,6 +97,7 @@ def common_components(cli_context, **kwargs):
     common.save_folder = f"{ARTIFACT_ROOT}/{common.run_name}"
     if (launch := common.launch) is not None:
         launch.min_runtime = "1h"
+        launch.retries = 0
         launch.preemptible = False
         launch.shared_filesystem = True
         launch.weka_buckets = [BeakerWekaBucket("olmo-3p5-checkpoints", CHECKPOINT_ROOT)]
