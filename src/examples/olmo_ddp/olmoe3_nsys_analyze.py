@@ -3,6 +3,7 @@
 import argparse
 import json
 import sqlite3
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -39,6 +40,23 @@ def interval_metrics(groups, first, last):
         "collective_overlapping_other_kernel_ms": (compute_busy + comm_busy - busy) / 1e6,
         "no_recorded_gpu_operation_ms": (last - first - all_busy) / 1e6,
     }
+
+
+def collective_summary(calls, first, last):
+    """Count kernel starts per interval; duration sums are explicitly nonadditive."""
+    names = defaultdict(list)
+    for start, end, name in calls:
+        if first <= start < last:
+            names[name].append((min(end, last) - start) / 1e6)
+    return [
+        {
+            "name": name,
+            "calls": len(durations),
+            "kernel_sum_ms_nonadditive": sum(durations),
+            "median_kernel_ms": statistics.median(durations),
+        }
+        for name, durations in sorted(names.items())
+    ]
 
 
 def summarize_timeline(path):
@@ -123,7 +141,13 @@ def summarize_timeline(path):
         )
         starts = sorted({start for start, _ in anchors[dev]})
         timelines[-1]["inferred_update_spans"] = [
-            {"index": index + 1, "anchor_start_ns": start, **interval_metrics(groups, start, stop)}
+            {
+                "index": index + 1,
+                "anchor_start_ns": start,
+                "right_censored": index == len(starts) - 1,
+                **interval_metrics(groups, start, stop),
+                "collective_kernels": collective_summary(collective_calls[dev], start, stop),
+            }
             for index, (start, stop) in enumerate(zip(starts, starts[1:] + [last]))
         ]
         timelines[-1]["update_span_caveat"] = (

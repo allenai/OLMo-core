@@ -2,7 +2,11 @@
 
 import sqlite3
 
-from examples.olmo_ddp.olmoe3_nsys_analyze import interval_union, summarize_timeline
+from examples.olmo_ddp.olmoe3_nsys_analyze import (
+    collective_summary,
+    interval_union,
+    summarize_timeline,
+)
 
 
 def test_interval_union():
@@ -41,3 +45,17 @@ def test_empty_timeline(tmp_path):
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE unrelated (value INTEGER)")
     assert summarize_timeline(path)["devices"] == []
+
+
+def test_collective_start_counts_and_duration_clipping():
+    calls = [
+        (0, 4000000, "AR"),
+        (2000000, 3000000, "AR"),
+        (4000000, 8000000, "RS"),
+        (6000000, 7000000, "AR"),
+    ]
+    assert collective_summary(calls, 1000000, 6000000) == [
+        {"name": "AR", "calls": 1, "kernel_sum_ms_nonadditive": 1.0, "median_kernel_ms": 1.0},
+        {"name": "RS", "calls": 1, "kernel_sum_ms_nonadditive": 2.0, "median_kernel_ms": 2.0},
+    ]
+    assert collective_summary(calls, 8000000, 9000000) == []
