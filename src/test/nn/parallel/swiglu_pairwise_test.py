@@ -1,6 +1,8 @@
 """Qualify compiled activation integration and actual routed experts with sharded Adam."""
 
+import os
 from contextlib import nullcontext
+from functools import partial
 
 import pytest
 import torch
@@ -48,7 +50,7 @@ def test_compiled_pairwise_activation():
     torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0)
 
 
-def _run_routed_adam_parity():
+def _run_routed_adam_parity(candidate="activation"):
     rank, world = dist.get_rank(), dist.get_world_size()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -56,6 +58,8 @@ def _run_routed_adam_parity():
     stacks = []
     for enabled in (False, True):
         torch.manual_seed(731)
+        if candidate == "rounded-wgrad":
+            os.environ["OLMO_PROFILE_ROUNDED_WGRAD"] = "1" if enabled else "0"
         model = RoutedExperts(
             d_model=512,
             hidden_size=1024,
@@ -64,7 +68,7 @@ def _run_routed_adam_parity():
             dtype=DType.bfloat16,
             init_device=str(device),
         )
-        model._profile_pairwise_swiglu = enabled
+        model._profile_pairwise_swiglu = enabled if candidate == "activation" else True
         with torch.no_grad():
             for param in model.parameters():
                 param.normal_(std=0.02)
@@ -83,6 +87,7 @@ def _run_routed_adam_parity():
             max_grad_norm=1.0,
         )
         stacks.append((ddp, optim))
+    os.environ.pop("OLMO_PROFILE_ROUNDED_WGRAD", None)
     counts = torch.tensor([16, 16, 32, 32, 32, 32, 48, 48], device=device, dtype=torch.int32)
     for step in range(3):
         torch.manual_seed(199 + step + rank)
@@ -120,3 +125,12 @@ def test_pairwise_routed_experts_sharded_adam():
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two CUDA devices")
     run_distributed_test(_run_routed_adam_parity, backend="nccl", start_method="spawn")
+
+
+@pytest.mark.gpu
+def test_rounded_wgrad_routed_experts_sharded_adam():
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two CUDA devices")
+    run_distributed_test(
+        partial(_run_routed_adam_parity, "rounded-wgrad"), backend="nccl", start_method="spawn"
+    )

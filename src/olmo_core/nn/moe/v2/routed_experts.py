@@ -483,6 +483,7 @@ class RoutedExperts(nn.Module):
         self.num_experts = num_experts
         self.activation = ExpertActivation(activation)
         self._profile_pairwise_swiglu = os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE", "0") == "1"
+        self._profile_rounded_wgrad = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD", "0") == "1"
         self.activation_alpha = float(activation_alpha)
         self.activation_limit = None if activation_limit is None else float(activation_limit)
         self.bias = bias
@@ -923,8 +924,20 @@ class RoutedExperts(nn.Module):
         w_up_gate = self.w_up_gate  # (E, H, 2D)
         w_down = self.w_down  # (E, H, D)
 
+        projection = gmm
+        if self._profile_rounded_wgrad and torch.is_grad_enabled():
+            from olmo_core.ops.rounded_wgrad import rounded_weight_gmm
+
+            if self.ep_dim != 1 or down_proj_out is not None or up_proj_input_grad_out is not None:
+                raise RuntimeError(
+                    "Rounded weight-gradient probe supports only EP1 without buffers"
+                )
+
+            def projection(a, b, counts, trans_b=False, **kwargs):
+                return rounded_weight_gmm(a, b, counts, trans_b)
+
         # up (+ gate) projection
-        up_gate = gmm(
+        up_gate = projection(
             x,
             w_up_gate,
             batch_size_per_expert_tensor,
@@ -951,7 +964,7 @@ class RoutedExperts(nn.Module):
             h = h * row_weights.reshape(-1, 1).to(dtype=h.dtype)
 
         # down projection
-        down = gmm(
+        down = projection(
             h,
             w_down,
             batch_size_per_expert_tensor,

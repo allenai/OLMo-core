@@ -233,6 +233,8 @@ class MultiGroupDistributedDataParallel(Module):
         self._grad_views_need_rebind = False
         self._warned_grad_view_rebind = False
         self._forwards_since_finalize = 0
+        self._profile_forward_epoch = 0
+        self._profile_external_written = {}
         self._has_started_forward = False
 
         self._build_grad_buckets()
@@ -258,6 +260,17 @@ class MultiGroupDistributedDataParallel(Module):
 
         # Hooks that control bucketed gradient reduction.
         self._register_accum_grad_hook()
+        # Experimental, explicitly exclusive expert-leaf accumulation. Bind after
+        # materialization so meta->CUDA parameter replacement cannot lose ownership.
+        for child in module.modules():
+            if getattr(child, "_profile_rounded_wgrad", False):
+                if not self._accumulate_grads_in_fp32 or self.use_reduce_scatter:
+                    raise RuntimeError("Rounded wgrad probe requires FP32 all-reduce DDP")
+                for param in (child.w_up_gate, child.w_down):
+                    if param not in self._param_to_bucket_view:
+                        raise RuntimeError("Rounded wgrad parameter is not managed by this DDP")
+                    self._profile_external_written[param] = -1
+                    param._olmo_profile_begin_external_grad = self._profile_begin_external_grad
 
     def __getattr__(self, name: str) -> Any:
         """Forward missing attributes to the wrapped module."""
@@ -554,6 +567,8 @@ class MultiGroupDistributedDataParallel(Module):
         g = param.grad
         if g is None:
             return
+        if param in self._profile_external_written:
+            raise RuntimeError("External-accumulation parameter also received a native gradient")
 
         expected_view = self._param_to_bucket_view[param]
         main_grad = getattr(param, "_main_grad_fp32", None)
@@ -681,26 +696,32 @@ class MultiGroupDistributedDataParallel(Module):
             self._launch_bucket_grad_reduce(self._next_reduce_bucket_idx)
             self._next_reduce_bucket_idx += 1
 
-    def _register_accum_grad_hook(self):
-        def notify_grad_ready(
-            param,
+    def _notify_grad_ready(self, param):
+        if not self.require_backward_grad_sync or self._param_grad_ready[param]:
+            return
+        self._param_grad_ready[param] = True
+        bucket_idx = self._param_to_bucket_idx[param]
+        self._bucket_ready_count[bucket_idx] += 1
+        if self.overlap_grad_reduce:
+            self._maybe_kick_start_grad_reduce()
+
+    def _profile_begin_external_grad(self, param):
+        """Fail closed on duplicate uses, detached buffers, or mixed native gradients."""
+        if self._forwards_since_finalize < 1 or param.grad is not None:
+            raise RuntimeError("External gradient outside a clean DDP accumulation window")
+        if self._profile_external_written[param] == self._profile_forward_epoch:
+            raise RuntimeError("External gradient parameter reused within one forward")
+        if self._param_grad_ready[param]:
+            raise RuntimeError("External gradient write after gradient reduction was scheduled")
+        destination = getattr(param, "_main_grad_fp32", None)
+        if destination is None or not self._is_expected_grad_view(
+            destination, self._param_to_bucket_view[param]
         ):
-            if not self.require_backward_grad_sync:
-                return
+            raise RuntimeError("External gradient destination is not the owned FP32 bucket view")
+        self._profile_external_written[param] = self._profile_forward_epoch
+        return destination, lambda: self._notify_grad_ready(param)
 
-            if self._param_grad_ready[param]:
-                return
-
-            self._param_grad_ready[param] = True
-            bucket_idx = self._param_to_bucket_idx[param]
-            self._bucket_ready_count[bucket_idx] += 1
-
-            # do this in backward
-            if self.overlap_grad_reduce:
-                self._maybe_kick_start_grad_reduce()
-
-            # Otherwise, leave the collective to finalize_grad_reduce().
-
+    def _register_accum_grad_hook(self):
         for index, param in enumerate(self._module_parameters):
             if not param.requires_grad:
                 continue
@@ -712,7 +733,7 @@ class MultiGroupDistributedDataParallel(Module):
             # hook only reports readiness. The AR or RS collective is launched
             # later in bucket order.
             self._accum_grad_hooks.append(
-                param.register_post_accumulate_grad_hook(notify_grad_ready)
+                param.register_post_accumulate_grad_hook(self._notify_grad_ready)
             )
 
     def finalize_grad_reduce(self):
@@ -828,6 +849,7 @@ class MultiGroupDistributedDataParallel(Module):
         self._ensure_grad_views_bound(allow_none_rebind=True, where="forward")
         self._has_started_forward = True
         self._forwards_since_finalize += 1
+        self._profile_forward_epoch += 1
         return inputs, kwargs
 
     def _post_forward(self, output):
