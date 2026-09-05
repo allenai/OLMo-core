@@ -4,13 +4,14 @@ Updated 2026-09-05 UTC. See [protocol and run ledger](SMALL_16MI_DEEP_PROFILE.md
 for source revisions, exact model settings, checkpoint migration, and failed attempts.
 No production/CBS checkpoint or uploader state is modified by these tests.
 
-**Current status (06:03 UTC):** Nsight Systems is fixed and validated on the full
+**Current status (06:05 UTC):** Nsight Systems is fixed and validated on the full
 64-B300 model under standalone 2026.4.1. The latest healthy same-node comparison is
 78,115 → 82,190 → 85,888 median TPS/GPU for baseline → KDA128 → KDA128+EMO inverse
 scatter (+9.95%, 374.38 idealized TFLOPs/GPU). The default-off gradient-add candidate
 passed exact two-GPU sharded-Adam qualification and improved its subsequent same-node
 A/B from 84,523 to 88,234 median TPS/GPU (+4.39%, 384.61 idealized TFLOPs/GPU).
-The faster candidate is running fresh timing/PyTorch/light-Nsight passes. The next
+The faster candidate's fresh timing repeat is 87,766 median TPS/GPU, within 0.53%
+of the prior result on a different allocation; PyTorch/light-Nsight passes follow. The next
 paired-SwiGLU backward candidate passed exact one-GPU and two-GPU compiled/sharded-Adam
 checks; its 64-GPU same-allocation A/B is submitted, with no full-model gain claimed yet.
 See the dated healthy-confirmation and Nsight sections below; the earlier bad-fabric
@@ -379,6 +380,14 @@ source `a401daccf`, is running with [CPU collector](https://beaker.org/ex/01M1R1
 It uses the gradient-add candidate, three independent 60-update restores, and
 `OLMOE3_NSYS_AUTOGRAD_NVTX=0`. The revised callback passed lifecycle tests with and
 without autograd annotations. This run does not contain the new activation prototype.
+
+Its fresh unprofiled timing pass completed and was collected at 06:05 UTC:
+mean/median TPS/GPU **87,712 / 87,766**, median **382.57 TFLOPs/GPU**,
+**2.98684s/update**, TPS standard deviation209.12 (updates31–60). This is 0.53% below
+the separate 88,234 result, consistent with the observed allocation variability;
+it is not another controlled old/new comparison. Mean CE1.950824, no skipped steps
+in that window, and unchanged 175.465GiB active memory. The CPU collector has exported
+this timing summary while the separate PyTorch and light-Nsight passes remain pending.
 
 ### Next target: expert activation backward
 

@@ -274,7 +274,7 @@ not yet established. It is not enabled in the baseline.
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
 CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
 
-## Nsight repair and next sequence (2026-09-05 06:03 UTC)
+## Nsight repair and next sequence (2026-09-05 06:05 UTC)
 
 Two-GPU repro `01M1QWYVBR97EA4G9RXCCC82TE` (source `772a914b2`) reproduced the installed
 2025.3.1 segfault in both matched/full and reduced tracing settings. The identical
@@ -312,6 +312,9 @@ Next actions:
    These are running as `01M1R17MJ5BNM7QS6NPVTBJQY8`, source `a401daccf`, with CPU
    collector `01M1R17XVBFB9MNDG4MRX93Y28`. Nsight 2026.4.1 captures ranks0/8/.../56
    at updates36–37 with per-op autograd NVTX disabled; application NVTX remains.
+   The timing repeat was collected at 06:05: median87,766 TPS/GPU / 382.57 TFLOPs/GPU,
+   2.98684s/update, same active memory. It is within 0.53% of the earlier candidate
+   on different nodes, not a new same-allocation old/new comparison. Trace passes follow.
 2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
    keeping instrumented versus clean timing separate. CPU-only SQLite analysis
    `01M1QZ3PNYDRJR54GDRBZ89RAG` completed exit0, dataset `01M1QZ3PPA7ES6SGR0H8811RDP`.
