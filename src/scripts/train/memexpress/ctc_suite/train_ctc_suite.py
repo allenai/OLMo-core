@@ -1313,9 +1313,13 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
         class _MemSnapshot(_CB):
             def pre_train(self):
+                import torch
+
                 torch.cuda.memory._record_memory_history(max_entries=400000)
 
             def post_step(self):
+                import torch
+
                 if self.step >= 1:
                     from olmo_core.nn.mem_attribution import summarize_peak
 
