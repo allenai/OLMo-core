@@ -182,12 +182,30 @@ and numerical validation remain required; the flag is off in the baseline.
   The first attempt's eager-vs-compiled tie comparison was invalid even for the
   unchanged baseline; corrected comparisons require exact equality within each mode.
   Compiled median mask time 1.7313ms -> 1.1354ms, not an end-to-end speedup claim.
-- Same-node EMO full-model matrix launched:
+- Same-node EMO full-model matrix completed (all eight jobs exit0):
   https://beaker.org/ex/01M1QQCYKN4AGBMRHX84618N6C (source `680ed4ae2`).
   Independent baseline, `emo-inverse-scatter`, `kda-128-emo-inverse-scatter` arms,
   each 60 unprofiled updates from step7500. Analysis automation:
   https://beaker.org/ex/01M1QQEP0RE71VBZZA2CRHXJ6V (CPU only, unallocated).
-  The latter also completed the enhanced PyTorch trace analysis.
+  The latter also completed the enhanced PyTorch trace analysis, and all results were
+  downloaded in dataset `01M1QQEP128HQJHQXDJEBH1FFB`. Median TPS/GPU was 58,832 baseline,
+  60,991 EMO (+3.67%), 63,007 combined (+7.10%), zero skips. This allocation and the
+  earlier capture included host485's disconnected NVLink GPU; comparisons must be
+  confirmed on healthy nodes before claiming production throughput.
+- Healthy confirmation/capture queued at source `5c7d46b4d`:
+  https://beaker.org/ex/01M1QT33FG4X90DBC4WE44ZP3V. Three unprofiled arms (baseline,
+  KDA128, KDA128+EMO) then one combined PyTorch capture, all on the same eight nodes.
+  Host485 excluded and each node must pass the full NVLink topology check.
+  CPU result collector: https://beaker.org/ex/01M1QT82PQS02QRDBM3KDSF63X.
+  All eight training jobs had started by 03:44 UTC; no completed timing yet.
+- Two-GPU RS qualification: https://beaker.org/ex/01M1QT7ZYNN58QK72YMY2CKDXK,
+  source `92a24ffa0`, completed exit0. Nine new NCCL parity cases and three existing
+  gradient/optimizer tests passed (two four-GPU tests skipped). Single-parameter
+  bucket operation medians: 1GiB 2.157->1.461ms, 2GiB 4.158->2.823ms; repeated old
+  arms 2.151/4.149ms. Approximately 32% lower isolated latency, not training TPS.
+  Result dataset `01M1QT7ZYYQY7EXGNFZAG642PM`. First attempt
+  `01M1QT0W0CRGTESJNZ7M0KTNHT` stopped at a full-eight-GPU guard in a two-visible-GPU
+  container. The corrected explicit `--gpus 2` option does not weaken full-node checks.
 - PR859 reviewed at `fe0195dd845a3dd786e4fc80d52eed9e7ce404b0`:
   its 23 vendored kernel files are byte-identical to our installed `kernel-fun`
   revision `7a6983baf2beb4ec4d7fe914ec9f6670438af99b`. It is an alternative

@@ -108,7 +108,7 @@ NCCL 2.28.9+cuda13.0, model, batch, and relevant launch flags.
 | Original timing matrix | 78,222 median | 8 | 28 | 32 |
 | Compiler-no-op A/B | 76,921 median | 8 | 16 | 32 |
 | PyTorch capture | ~58,800, uncaptured windows | 9 | 4 | 0 |
-| First EMO matrix | ~58,800, provisional logs | 9 | 4 | 0 |
+| First EMO matrix | 58,832 median | 9 | 4 | 0 |
 
 This is a concrete hardware/fabric degradation and the leading explanation for the
 slow tier, not a new model/compiler regression. A fresh healthy-node comparison is
@@ -130,7 +130,7 @@ administrator action was attempted. Infrastructure needs to inspect/repair this 
 - Nine new CPU/gloo distributed tests passed (three layout/group patterns × three
   precision modes, both old/new paths, repeated reductions). Three existing gloo
   gradient/accumulation/group-routing tests also passed with the flag enabled; two
-  GPU-only cases were skipped locally. Ten topology/sequential-plan tests passed.
+  GPU-only cases were skipped locally. Eleven topology/sequential-plan tests passed.
 - GPU qualification runs the new NCCL parity tests, existing optimizer/gradient tests,
   and an isolated 1/2-GiB gradient-bucket microbenchmark in old/new/old order on two B300s.
   Isolated timing must not be reported as a 64-GPU whole-model gain.
@@ -139,6 +139,26 @@ administrator action was attempted. Infrastructure needs to inspect/repair this 
   directly into the model buffer would change layout; simply retaining the 23.28-GiB
   temporary can increase live memory despite allocator caching. No such change is made
   without new lifetime/layout tests and evidence from a healthy-node profile.
+
+Two-B300 GPU qualification completed successfully (exit0). Nine new NCCL parity
+cases and three existing gradient/optimizer cases passed; two tests requiring four
+GPUs were deliberately skipped. All six isolated benchmark arms checked their exact
+reduced gradients. Times include gradient scaling and reduce-scatter, but exclude
+initialization, input filling, and the inter-iteration barrier; five warmups and
+20 timed iterations per arm, using the slower rank's CUDA-event duration each time.
+
+| FP32 gradient bucket | Old packing, before (median ms) | Single-param path (median ms) | Old packing, after (median ms) | Latency reduction vs mean of old medians |
+|---|---:|---:|---:|---:|
+| 1 GiB | 2.1572 | 1.4609 | 2.1507 | 32.18% |
+| 2 GiB | 4.1583 | 2.8231 | 4.1491 | 32.03% |
+
+This is **not a 32% training speedup**. A crude serial sum of the saved milliseconds
+over 15 one-GiB and 15 two-GiB expert buckets is about 30ms/update, before considering
+different 64-rank collective algorithms and overlap. It motivates a narrow follow-up,
+not changing the production default or prioritizing another 64-GPU allocation before
+the healthy-node profile. Source `92a24ffa0`; result dataset
+`01M1QT7ZYYQY7EXGNFZAG642PM`. Kernel-fun is not used by this isolated DDP operation;
+the full-model comparison separately verifies its pinned package during setup.
 
 ## Other controlled candidates
 
@@ -159,10 +179,49 @@ administrator action was attempted. Infrastructure needs to inspect/repair this 
   The first qualification attempt incorrectly compared compiled results against eager
   results on tied scores; even the unchanged baseline differs across those modes because
   the argsort is not stable. The corrected test compares like execution modes.
-- [Full-model EMO A/B](https://beaker.org/ex/01M1QQCYKN4AGBMRHX84618N6C): launched.
+- [Full-model EMO A/B](https://beaker.org/ex/01M1QQCYKN4AGBMRHX84618N6C): completed,
+  all eight jobs exit0.
   Same eight nodes, independent step7500 restores: baseline, inverse-scatter alone,
   inverse-scatter plus KDA cutoff128. Source `680ed4ae2`. No model/batch/precision changes.
-  The mask microbenchmark improvement is not yet an end-to-end improvement claim.
+  All three arms completed 60 finite-loss updates with zero skipped optimizer steps.
+  The allocation included the disconnected-NVLink host described above: these are
+  controlled **degraded-topology** improvements, not healthy production throughput.
+
+| First EMO matrix arm (degraded topology) | Mean TPS/GPU | Median TPS/GPU | Change vs its baseline | Median step (s) | Mean CE |
+|---|---:|---:|---:|---:|---:|
+| Baseline | 58,781 | 58,832 | — | 4.4558 | 1.951032 |
+| EMO inverse scatter | 60,950 | 60,991 | +3.67% | 4.2981 | 1.950536 |
+| KDA cutoff128 + EMO inverse scatter | 62,944 | 63,007 | +7.10% | 4.1605 | 1.950713 |
+
+Same updates31–60 and FLOP accounting as the healthy timing table. First-update CE
+is 1.98963308 baseline, 1.98964000 EMO, and 1.98960662 combined; gradient norms
+0.07341947, 0.07342064, and 0.07343025. This supports short-run numerical agreement,
+not long-run equivalence or a quality ranking. Do not combine this +7.10% with the
+earlier healthy KDA-only +5.03% as though they were additive gains.
+
+## Follow-up jobs launched 2026-09-05
+
+- [Healthy-node confirmation and capture](https://beaker.org/ex/01M1QT33FG4X90DBC4WE44ZP3V),
+  source `5c7d46b4d`: one eight-node / 64-B300 allocation, urgent, allocated with
+  1h minimum runtime. Same-node baseline, KDA-only, and KDA+EMO unprofiled timings,
+  then a short KDA+EMO PyTorch capture. Host485 excluded; strict full-node NVLink
+  preflight. Model, precision, checkpoint, batch, LR, and parallelism unchanged.
+- [Two-GPU reduce-scatter qualification r2](https://beaker.org/ex/01M1QT7ZYNN58QK72YMY2CKDXK),
+  source `92a24ffa0`, urgent/allocated10m: completed exit0 at 03:43 UTC, with all
+  12 selected NCCL/gradient/optimizer tests passing and both bucket sizes faster.
+  r1 (`01M1QT0W0CRGTESJNZ7M0KTNHT`) stopped at the guard because its container exposed
+  two GPUs, not eight. Fixed by an explicit `--gpus 2` option; the 64-GPU guard remains
+  strict. No training/model failure occurred in r1 and it is not still running.
+- [Automatic CPU-only collector](https://beaker.org/ex/01M1QT82PQS02QRDBM3KDSF63X),
+  source `92a24ffa0`, Rhea, urgent/unallocated0s, waiting for all four healthy passes.
+  Only small summaries become Beaker results; raw traces remain on Weka.
+
+At 03:44 UTC all eight healthy-confirmation jobs had started; the collector was
+running and waiting for completed passes. No throughput result is claimed yet.
+
+No experimental flag was enabled in the original CBS/production branch. No model
+fusion, optimizer all-gather rewrite, precision change, recomputation, or shared EP
+output buffers were introduced.
 
 ## PR859 audit: already-covered kernel implementation
 
