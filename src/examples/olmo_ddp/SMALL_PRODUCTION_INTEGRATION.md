@@ -57,6 +57,10 @@ no trainer callback or uploader restart is needed. A matching enabled
 - `olmoe3_integration_node.py`: current-Beaker-job rendezvous and independent
   torchrun agents. Smoke mode runs both arms and their restores on one allocation.
 - `olmoe3_profile_setup.sh`: frozen kernel-fun commit and runtime checks.
+- `olmoe3_integration_start_check.py`: read-only CPU observer for the fixed final
+  run IDs; requires matched source/weights/data, five non-skipped finite updates
+  per arm, and complete, remotely verified step-0 checkpoints. Writes only small
+  diagnostics to Beaker results, never to the checkpoint mount.
 
 Set `OLMOE3_INTEGRATION_SMOKE=1` for the paired smoke. For each long run set
 `OLMOE3_INTEGRATION_ARM=reference` or `optimized`, leave smoke disabled, and choose
