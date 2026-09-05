@@ -78,13 +78,22 @@ def main():
             actual = execute()
             deltas = []
             for left, right in zip(expected, actual):
-                torch.testing.assert_close(left, right, rtol=0, atol=0)
-                deltas.append(float((left.float() - right.float()).abs().max()))
+                delta = left.float() - right.float()
+                deltas.append(
+                    {
+                        "max_abs": float(delta.abs().max()),
+                        "mismatches": int((left != right).sum()),
+                        "relative_l2": float(delta.norm() / left.float().norm().clamp_min(1e-20)),
+                        "finite": bool(torch.isfinite(right).all()),
+                    }
+                )
+            exact = all(d["mismatches"] == 0 and d["finite"] for d in deltas)
             row = {
                 "decay_strength": strength,
                 "schedule": config,
-                "max_abs_errors": deltas,
-                **measure(),
+                "errors_y_dq_dk_dv_dg_dbeta": deltas,
+                "qualified_exact": exact,
+                **(measure() if exact else {"rejected": "non-exact outputs or gradients"}),
             }
             summary["cases"].append(row)
             (output / "summary.json").write_text(json.dumps(summary, indent=2))

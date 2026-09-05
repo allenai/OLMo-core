@@ -27,6 +27,47 @@ def _top16(scores, output, ROWS: tl.constexpr, LOWER_INDEX_FIRST: tl.constexpr):
     tl.store(output + row * 16 + tl.arange(0, 16), result.to(tl.int64))
 
 
+@triton.jit
+def _native_tie_top16(scores, output):
+    row = tl.program_id(0)
+    index = tl.arange(0, 512)
+    value = tl.load(scores + row * 512 + index)
+    bits = tl.where(value >= 0, value.to(tl.uint32, bitcast=True), 0)
+    key = (bits.to(tl.uint64) << 32) | (511 - index).to(tl.uint64)
+    selected = 511 - tl.topk(key, 16).to(tl.uint32)
+    selected_values = tl.gather(value, selected.to(tl.int32), 0)
+    threshold = tl.min(selected_values, 0)
+    # Reconstruct CUDA gatherTopK order: >threshold in source order, then the
+    # first remaining threshold ties in source order. No floating perturbations.
+    priority = (selected_values > threshold).to(tl.uint32) * 512 + 511 - selected
+    ordered = tl.sort(priority, descending=True) % 512
+    selected = 511 - ordered
+    # CUDA small-sort uses a 32-element bitonic network with 16 invalid tails.
+    # Reproduce its comparator/swap directions, including equal-key swaps.
+    lane = tl.arange(0, 32)
+    valid = lane < 16
+    ids = tl.gather(selected, lane % 16, 0).to(tl.int32)
+    values = tl.gather(value, ids, 0)
+    for log_size in tl.static_range(1, 6):
+        for log_stride in tl.static_range(log_size - 1, -1, -1):
+            stride: tl.constexpr = 1 << log_stride
+            partner = lane ^ stride
+            other_values = tl.gather(values, partner, 0)
+            other_ids = tl.gather(ids, partner, 0)
+            other_valid = tl.gather(valid, partner, 0)
+            lower = (lane & stride) == 0
+            left = tl.where(lower, values, other_values)
+            right = tl.where(lower, other_values, values)
+            valid_left = tl.where(lower, valid, other_valid)
+            valid_right = tl.where(lower, other_valid, valid)
+            direction = ((lane & (1 << log_size)) != 0) if log_size < 5 else False
+            swap = (((left > right) & valid_left) | ~valid_right) == direction
+            values = tl.where(swap, other_values, values)
+            ids = tl.where(swap, other_ids, ids)
+            valid = tl.where(swap, other_valid, valid)
+    tl.store(output + row * 16 + lane, ids.to(tl.int64), lane < 16)
+
+
 def main():
     """Compare indices and selected values, then time with bracketing controls."""
     torch.cuda.set_device(0)
@@ -65,11 +106,14 @@ def main():
             x.masked_fill_(torch.rand_like(x) < 0.3, float("-inf"))
         expected = reference(x)
         reference_before = timing(lambda: reference(x))
-        for lower_first in (True, False):
+        for lower_first in (True, False, "native_tie"):
             actual = torch.empty_like(expected)
 
             def candidate():
-                _top16[(x.shape[0],)](x, actual, x.shape[0], lower_first, num_warps=4)
+                if lower_first == "native_tie":
+                    _native_tie_top16[(x.shape[0],)](x, actual, num_warps=4)
+                else:
+                    _top16[(x.shape[0],)](x, actual, x.shape[0], lower_first, num_warps=4)
 
             candidate()
             row = {
