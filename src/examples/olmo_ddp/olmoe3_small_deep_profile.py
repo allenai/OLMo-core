@@ -87,6 +87,7 @@ class ProfileMetrics(Callback):
                 == "1",
                 "pairwise_swiglu_backward": os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE") == "1",
                 "document_pool_selection": os.environ.get("OLMO_PROFILE_EMO_DOCUMENT_POOL") == "1",
+                "native_tie_top16": os.environ.get("OLMO_PROFILE_EMO_TOP16") == "1",
                 "rounded_wgrad_accumulation": os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD") == "1",
                 "reduce_scatter_single_param_fast_path": os.environ.get(
                     "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"
@@ -198,6 +199,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add",
         "kda-128-emo-inverse-scatter-grad-add-act-pair",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
@@ -210,6 +212,7 @@ def model_config(common):
         "kda-128-emo-inverse-scatter-grad-add",
         "kda-128-emo-inverse-scatter-grad-add-act-pair",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-rs-fast",
     ):
@@ -244,6 +247,7 @@ def train_module_config(common):
         "kda-128-emo-inverse-scatter-grad-add",
         "kda-128-emo-inverse-scatter-grad-add-act-pair",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair-doc-pool-top16",
         "kda-128-emo-inverse-scatter-grad-add-act-pair-wgrad-fused",
     ):
         raise ValueError(f"Unknown variant: {VARIANT}")

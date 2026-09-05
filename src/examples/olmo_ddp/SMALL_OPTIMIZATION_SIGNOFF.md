@@ -78,3 +78,45 @@ Trace-supported additional ideas are in scope; unrelated jobs are not.
   explicit bucket ownership/completion (no fake gradients), fail-closed reuse and
   mixed-native-gradient guards.2GPU qualification `01M1R945X0FWPBZH0SE540T5EE`,
   source69bd7c392. Local CPU regression9passed4GPUskipped. Not full-model enabled.
+
+## September 5, 08:48 UTC results and follow-through
+
+- A/A200 completed all four arms successfully. Median TPS/GPU: reference repeat1
+  87,209, repeat2 87,627; paired repeat1 90,325, repeat2 90,656 (~3.5% gain).
+  Mean absolute per-step CE A/A difference: reference .001210, paired .001073;
+  paired-v-reference A/B .001115/.001080. Similar observed loss variability,
+  not proof of exactness. Paired repeat2 skipped step7645 (norm .203071); other
+  arms had no skips. Preserve this outlier for long-run sign-off, do not hide it.
+- Document-pool A/B completed: 92,236 ->95,376 median TPS/GPU (+3.4%),
+  402.05 ->415.74 TFLOPs/GPU; mean absolute CE difference .0003983, max .002128,
+  no skipped updates. All60 steps finite. Local `profiling-analysis-20260905/docpool-ab-r1`.
+- Top16 native primitive r3 passed exact indices/values at ~.259ms vs .71ms.
+  Combined router initial synthetic test failed two reordered entries after
+  independent Adam trajectories. Original synthetic loss attached signal to
+  top-k slot rather than expert identity, creating artificial reorder sensitivity.
+  Fixed test separates same-weight correctness from independent trajectories and
+  gathers expert-identity loss signals. `01M1RBNHSQB7YHMT170TVA2CMB`, source34757f9df,
+  passed4 tests (all24 primitive cases, ragged docs, same-weight and trajectory
+  router/gradient/Adam gates). Same-weight requires exact order; trajectory permits
+  order changes but still requires the same selected sets/counts and numeric bounds.
+- Rounded-wgrad two-GPU qualification `01M1R945X0FWPBZH0SE540T5EE` passed3 tests:
+  exact losses, FP32 accumulation/reduction, weights and Adam states through3x8.
+  Full A/B r1 `01M1R9QBA0A02NCE5YRXQ4BPVH` reference ran, candidate failed before
+  training because its WandB tag was65 chars. Fixed bounded tags, no kernel fix.
+  Full A/B r2 `01M1RBP5RSDYB622KG4PERXGMJ`, source34757f9df, launched.
+- RS packing requalification `01M1RBNQGDSW0Y630E1Z79JV0G`, source34757f9df:
+  correctness suites passed, latency benchmark still running at08:48.
+- KDA WY r4 full graph capture hit the package's intentional graph fallback.
+  r5 `01M1RA42V2T8FXN4XXEPHNYASG` captures only pure-Triton WY using real inputs:
+  baseline3stages ~.597-.600ms;2stages ~.613-.615ms;4stages ~.709-.712ms.
+  Before/after baseline matched. Reject2/4stages for speed; reject4sidewarps for
+  dbeta differences. No new WY schedule promoted.
+- GEMM/SwiGLU r1 `01M1RA3W3NXQDZKPE6Q770X1NY` hit QuACK concat-layout + ragged
+  saved-preactivation TMA layout incompatibility, before numerical/timing checks.
+  Do not enable unrounded/default QuACK SwiGLU as a substitute.
+- Integration configs prepared, not yet launched: same fresh seeds12536/928543231,
+  same serialized model/training/data configs verified locally; private shared
+  uploader bucket, unique run prefixes and mandatory report_only registration.
+  50TB volume has~40.25TB free; two25-checkpoint runs require~7.50TB, plus smokes.
+  Smoke plan: reference0->4->8, optimized0->4->8, identical allocation, sync
+  step0/4/8 saves, short held-out eval and first-batch/initial-weight fingerprints.

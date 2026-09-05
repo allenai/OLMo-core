@@ -161,6 +161,7 @@ def main():
             OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE="1" if "-grad-add" in variant else "0",
             OLMO_PROFILE_SWIGLU_PAIRWISE="1" if "-act-pair" in variant else "0",
             OLMO_PROFILE_EMO_DOCUMENT_POOL="1" if "-doc-pool" in variant else "0",
+            OLMO_PROFILE_EMO_TOP16="1" if "-top16" in variant else "0",
             OLMO_PROFILE_ROUNDED_WGRAD="1" if "-wgrad-fused" in variant else "0",
         )
         print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
