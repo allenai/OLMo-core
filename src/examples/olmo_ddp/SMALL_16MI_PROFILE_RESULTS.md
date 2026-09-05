@@ -219,6 +219,33 @@ earlier healthy KDA-only +5.03% as though they were additive gains.
 At 03:44 UTC all eight healthy-confirmation jobs had started; the collector was
 running and waiting for completed passes. No throughput result is claimed yet.
 
+At 03:47 UTC the healthy run's NCCL initialization confirmed `nRanks64 nNodes8`,
+28 collective channels and 32 NVLS channels. All eight strict local topology
+preflights passed. At 03:57 the baseline was still in cold compilation, so there
+was not yet a fresh steady-state TPS measurement. The infrastructure team has been
+alerted to host485 by the user.
+
+### Next isolated candidate: optimizer model-weight gathering
+
+`olmoe3_model_gather_bench.py` is a standalone prototype, **not wired into training**.
+It compares the real optimizer packed-gather method with individual direct-to-final-view
+gathers for large tensors plus bounded packed gathers for small tensors. Group routing,
+FP32-master to model-dtype conversion, contiguous parameter storage, and synchronous
+collectives remain unchanged. No persistent global temporary is introduced.
+
+Six CPU/gloo layout tests passed: FP32/BF16, all-direct/mixed/all-packed cases, repeated
+updates including unchanged masters, a singleton process group, replicated parameters,
+unchanged master storage, and stable model/view pointers. These are gather-operation
+tests, not end-to-end optimizer or training qualification.
+
+The planned two-B300 qualification repeats those tests with NCCL and times packed /
+direct-large / packed on a **synthetic** 22.676-GiB BF16 layout containing 15 pairs of
+the real 0.5/1-GiB expert tensor sizes plus synthetic smaller weights. It measures
+CUDA and synchronized wall time, additional allocated-memory peaks, and verifies
+every output element. The prototype makes 33 collectives instead of one, so additional
+launch/network overhead may outweigh copying savings, especially at 64 ranks. A local
+microbenchmark gain will not be called a whole-training gain or justify deployment.
+
 No experimental flag was enabled in the original CBS/production branch. No model
 fusion, optimizer all-gather rewrite, precision change, recomputation, or shared EP
 output buffers were introduced.
