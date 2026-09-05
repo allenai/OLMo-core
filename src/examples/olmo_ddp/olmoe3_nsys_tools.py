@@ -25,6 +25,7 @@ class NsysSettings:
     trace: str
     start: int
     end: int
+    autograd_nvtx: bool = True
 
     @classmethod
     def from_env(cls, environ=None, world_size=64):
@@ -48,7 +49,10 @@ class NsysSettings:
         trace = env.get("OLMOE3_NSYS_TRACE", "cuda,nvtx,osrt")
         if trace not in ("cuda,nvtx", "cuda,nvtx,osrt", "cuda-sw,nvtx", "cuda-sw,nvtx,osrt"):
             raise ValueError(f"Unexpected Nsight trace selection: {trace}")
-        return cls(version, ranks, trace, start, end)
+        autograd_nvtx = env.get("OLMOE3_NSYS_AUTOGRAD_NVTX", "1")
+        if autograd_nvtx not in ("0", "1"):
+            raise ValueError("OLMOE3_NSYS_AUTOGRAD_NVTX must be 0 or 1")
+        return cls(version, ranks, trace, start, end, autograd_nvtx == "1")
 
     def clean_windows(self, steps):
         """Exclude capture and a post-capture settling period from throughput."""

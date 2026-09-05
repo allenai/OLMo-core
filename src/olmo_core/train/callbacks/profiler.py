@@ -329,17 +329,32 @@ class NvidiaProfilerCallback(Callback):
     The ranks to profile.
     """
 
+    emit_autograd_nvtx: bool = True
+    """
+    Annotate every autograd operation and shape. Disable for a lighter CUDA/NCCL timeline;
+    existing application NVTX ranges remain visible to the external profiler.
+    """
+
     _nvtx_ctx = None
+    _capture_active: bool = field(default=False, init=False, repr=False)
 
     def pre_load_batch(self):
         # `pre_load_batch` runs before the trainer increments its step counter, so `self.step`
         # here is the previously completed step; compare against `start - 1` so the capture
         # window actually begins on the requested `start` step.
-        if self.enabled and get_rank() in self.profile_ranks and self.step == self.start - 1:
+        if (
+            self.enabled
+            and not self._capture_active
+            and get_rank() in self.profile_ranks
+            and self.step == self.start - 1
+        ):
             log.info(f"Starting NVIDIA profiler at rank={get_rank()} step={self.start}...")
             torch.cuda.cudart().cudaProfilerStart()
-            self._nvtx_ctx = torch.autograd.profiler.emit_nvtx(record_shapes=True)
-            self._nvtx_ctx.__enter__()
+            self._capture_active = True
+            if self.emit_autograd_nvtx:
+                context = torch.autograd.profiler.emit_nvtx(record_shapes=True)
+                context.__enter__()
+                self._nvtx_ctx = context
 
     def post_train_batch(self):
         if self.step == self.end:
@@ -351,11 +366,15 @@ class NvidiaProfilerCallback(Callback):
         self._stop()
 
     def _stop(self):
-        if self._nvtx_ctx is not None:
+        if self._capture_active:
             log.info(f"Stopping NVIDIA profiler at rank={get_rank()}...")
-            self._nvtx_ctx.__exit__(None, None, None)
-            self._nvtx_ctx = None
-            torch.cuda.cudart().cudaProfilerStop()
+            try:
+                if self._nvtx_ctx is not None:
+                    self._nvtx_ctx.__exit__(None, None, None)
+            finally:
+                self._nvtx_ctx = None
+                self._capture_active = False
+                torch.cuda.cudart().cudaProfilerStop()
 
 
 @dataclass

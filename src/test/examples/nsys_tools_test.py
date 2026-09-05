@@ -11,6 +11,7 @@ def test_settings_preserve_historical_capture():
     settings = NsysSettings.from_env({})
     assert settings.ranks == tuple(range(64))
     assert settings.version == "installed"
+    assert settings.autograd_nvtx is True
     assert settings.clean_windows(100) == [[31, 70], [81, 100]]
 
 
@@ -21,10 +22,12 @@ def test_selective_short_capture():
             "OLMOE3_NSYS_RANKS": "0,8,16,24,32,40,48,56",
             "OLMOE3_NSYS_START": "36",
             "OLMOE3_NSYS_END": "37",
+            "OLMOE3_NSYS_AUTOGRAD_NVTX": "0",
         }
     )
     assert settings.ranks == tuple(range(0, 64, 8))
     assert settings.clean_windows(60) == [[31, 35], [45, 60]]
+    assert settings.autograd_nvtx is False
     with pytest.raises(ValueError, match="ends before capture"):
         settings.clean_windows(35)
 
@@ -33,6 +36,11 @@ def test_selective_short_capture():
 def test_invalid_capture_ranks(ranks):
     with pytest.raises(ValueError):
         NsysSettings.from_env({"OLMOE3_NSYS_RANKS": ranks})
+
+
+def test_invalid_nvtx_setting():
+    with pytest.raises(ValueError, match="must be 0 or 1"):
+        NsysSettings.from_env({"OLMOE3_NSYS_AUTOGRAD_NVTX": "maybe"})
 
 
 def test_empty_report(tmp_path):

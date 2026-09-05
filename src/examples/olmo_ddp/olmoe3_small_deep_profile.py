@@ -104,6 +104,7 @@ class ProfileMetrics(Callback):
                 "nsys_profiled_ranks": list(NSYS_SETTINGS.ranks) if PASS == "nsys" else None,
                 "nsys_version": NSYS_SETTINGS.version if PASS == "nsys" else None,
                 "nsys_trace": NSYS_SETTINGS.trace if PASS == "nsys" else None,
+                "nsys_autograd_nvtx": NSYS_SETTINGS.autograd_nvtx if PASS == "nsys" else None,
                 "torch_relative_steps": [36, 37] if PASS == "torch" else None,
                 "memory_relative_steps": [45, 46] if PASS == "torch" else None,
             }
@@ -178,6 +179,7 @@ def common_components(cli_context, **kwargs):
             "OLMOE3_NSYS_START",
             "OLMOE3_NSYS_END",
             "OLMOE3_NSYS_TRACE",
+            "OLMOE3_NSYS_AUTOGRAD_NVTX",
         ):
             if name in os.environ:
                 launch.env_vars.append(BeakerEnvVar(name, os.environ[name]))
@@ -275,6 +277,7 @@ def trainer_config(common):
                 start=SOURCE_STEP + NSYS_SETTINGS.start,
                 end=SOURCE_STEP + NSYS_SETTINGS.end,
                 profile_ranks=list(NSYS_SETTINGS.ranks),
+                emit_autograd_nvtx=NSYS_SETTINGS.autograd_nvtx,
             ),
         )
     elif PASS == "torch":

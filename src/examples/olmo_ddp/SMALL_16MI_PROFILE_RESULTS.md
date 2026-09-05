@@ -4,11 +4,12 @@ Updated 2026-09-05 UTC. See [protocol and run ledger](SMALL_16MI_DEEP_PROFILE.md
 for source revisions, exact model settings, checkpoint migration, and failed attempts.
 No production/CBS checkpoint or uploader state is modified by these tests.
 
-**Current status (05:00 UTC):** Nsight Systems is fixed and validated on the full
+**Current status (05:38 UTC):** Nsight Systems is fixed and validated on the full
 64-B300 model under standalone 2026.4.1. The latest healthy same-node comparison is
 78,115 → 82,190 → 85,888 median TPS/GPU for baseline → KDA128 → KDA128+EMO inverse
-scatter (+9.95%, 374.38 idealized TFLOPs/GPU). A new default-off gradient-add candidate
-passed exact two-GPU sharded-Adam qualification and is in a queued same-node A/B.
+scatter (+9.95%, 374.38 idealized TFLOPs/GPU). The default-off gradient-add candidate
+passed exact two-GPU sharded-Adam qualification and improved its subsequent same-node
+A/B from 84,523 to 88,234 median TPS/GPU (+4.39%, 384.61 idealized TFLOPs/GPU).
 See the dated healthy-confirmation and Nsight sections below; the earlier bad-fabric
 capture is retained as diagnostic history, not the current performance reference.
 
@@ -329,12 +330,41 @@ numerical tolerance, including ordinary zeroing and buffer rebinding. The test c
 no-sync tests also passed. Local CPU fallback passed separately. Dataset
 `01M1QYBC1EBXV2CBH3Y3HWTE2E` retains the test outputs.
 
-The [64-GPU timing A/B](https://beaker.org/ex/01M1QYS6RMFNV0BP28QXW16W4A) is queued
+The [64-GPU timing A/B](https://beaker.org/ex/01M1QYS6RMFNV0BP28QXW16W4A) completed
 at the same source: KDA128+EMO inverse scatter, then the identical setup with vectorized
 gradient addition. Each independently restores step7500 for 60 updates; compare only
 updates31–60, not compilation or tracing. Host485 is excluded and all nodes must pass
 NVLink preflight. [CPU-only result collector](https://beaker.org/ex/01M1QYT2B1XGS0QPMQ1R901X9N)
-is attached. No full-model gain is claimed yet; no production default is changed.
+completed exit0 at 05:31 UTC, dataset `01M1QYT2B7DDJF9AR8HYY70CDH`. All eight training
+tasks completed successfully. Beaker replaced a node after a pre-start health-check
+failure; no replacement occurred between arms. All nodes passed mandatory NVLink preflight.
+
+| Same-allocation arm, updates31–60 | Mean TPS/GPU | Median TPS/GPU | Median TFLOPs/GPU | Median step (s) | Mean CE |
+|---|---:|---:|---:|---:|---:|
+| KDA128 + EMO inverse scatter | 84,408 | 84,523 | 368.43 | 3.10145 | 1.951235 |
+| + vectorized FP32 gradient add | 88,129 | 88,234 | 384.61 | 2.97100 | 1.950901 |
+
+The measured gain is **4.39% TPS**, saving **130.44ms/update**, consistent with the
+isolated ~158ms serial estimate after overlap/overhead. TPS standard deviations are
+365/436; the timing sample ranges do not overlap. Both arms use exactly the same
+provenance except variant name and gradient-add flag. Active memory is unchanged at
+175.465GiB; reserved memory is 178.361/175.799GiB (allocator behavior, not a claimed
+reduction in required model memory). All 60 updates per arm have finite CE/gradient
+norms and zero skipped optimizer steps.
+
+First-update CE difference is -1.19e-7 and gradient-norm difference +2.10e-6. Across all
+60 updates, mean CE difference is -0.000178; maximum absolute per-step CE difference
+is 0.006344 at step7555, whose gradient norm also differs by 0.0450. Therefore the full
+trajectories are **not bitwise equivalent**, despite exact isolated/distributed add
+checks. No long-run quality/stability claim or production default change is made.
+The earlier 85,888-TPS combined arm ran on a different allocation; use 84,523 here
+for this optimization's controlled comparison.
+
+Next wave: a fresh timing/torch/light-Nsight pass of the improved candidate, and a
+one-B300 probe of the existing compiled expert SwiGLU at `[524288,2048]`. The latter
+compares default / pointwise-coordinate tuning / default with exact forward/backward
+checks and saved generated code, before any new activation implementation. The lighter
+Nsight mode disables per-op autograd NVTX only; CUDA/NCCL and application NVTX remain.
 
 ### Nsight capture repair
 

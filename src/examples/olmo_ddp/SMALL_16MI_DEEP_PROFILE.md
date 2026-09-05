@@ -274,7 +274,7 @@ not yet established. It is not enabled in the baseline.
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
 CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
 
-## Nsight repair and next sequence (2026-09-05 05:00 UTC)
+## Nsight repair and next sequence (2026-09-05 05:38 UTC)
 
 Two-GPU repro `01M1QWYVBR97EA4G9RXCCC82TE` (source `772a914b2`) reproduced the installed
 2025.3.1 segfault in both matched/full and reduced tracing settings. The identical
@@ -296,13 +296,19 @@ critical-path estimates.
 
 Next actions:
 
-1. Measure vectorized FP32 gradient addition in the full-model A/B
+1. Vectorized FP32 gradient addition completed the full-model A/B
    `01M1QYS6RMFNV0BP28QXW16W4A`, source `1c3d41fac`, with collector
    `01M1QYT2B1XGS0QPMQ1R901X9N`. Two-GPU sharded-Adam qualification passed exact
    gradients/weights/states plus four existing NCCL tests. The isolated kernel is
    2.12–2.13× faster; serial extrapolation is ~158ms/update, not 2× training. Both A/B
    arms use the same trained restore/allocation and timing window. Check all 60 losses,
    skipped steps, first-update agreement, memory, and gain versus timing variability.
+   **Result:** 84,523 → 88,234 median TPS/GPU (+4.39%), 130.44ms/update saved,
+   384.61 idealized TFLOPs/GPU. All 60 updates per arm finite, no skipped steps, same
+   active memory. Full trajectories are not bitwise identical; exact primitive/DDP
+   checks do not establish long-run quality. Dataset `01M1QYT2B7DDJF9AR8HYY70CDH`.
+   Continue with fresh unprofiled timing and separate torch/light-Nsight captures of
+   the faster candidate; require its expected Triton gradient-add kernels in the trace.
 2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
    keeping instrumented versus clean timing separate. CPU-only SQLite analysis
    `01M1QZ3PNYDRJR54GDRBZ89RAG` completed exit0, dataset `01M1QZ3PPA7ES6SGR0H8811RDP`.
@@ -310,6 +316,9 @@ Next actions:
    Nsight's exposed-collective intervals exceed the separate PyTorch capture; a lighter
    follow-up without per-op autograd NVTX should precede conclusions about communication.
    Prioritize expert GEMMs and activation/backward traffic after the gradient-add result.
+   A one-B300 activation probe first measures existing compiled BF16 SwiGLU under
+   default / pointwise-coordinate tuning / default, with exact outputs/gradients and
+   generated-code export. No production-wide compiler flags or new activation math.
    FP32 router GEMMs are visible but changing their precision is not a free optimization.
    Any future GEMM/gradient-accumulator fusion must preserve the existing intermediate
    BF16 gradient rounding before FP32 addition; direct unrounded FP32 accumulation is
@@ -336,6 +345,7 @@ export OLMOE3_NSYS_RANKS=0,8,16,24,32,40,48,56
 export OLMOE3_NSYS_START=36
 export OLMOE3_NSYS_END=37
 export OLMOE3_NSYS_TRACE=cuda,nvtx,osrt
+export OLMOE3_NSYS_AUTOGRAD_NVTX=0  # lighter follow-up; historical/default value is 1
 ```
 
 The package is downloaded once per selected node and SHA256-verified/extracted in
