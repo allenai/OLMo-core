@@ -60,6 +60,26 @@ def summarize_trace(path):
         (collective if kind == "collective" else compute).append(interval)
     busy = union_duration(compute + collective)
     compute_busy = union_duration(compute)
+    copies = [
+        (e["ts"], e["ts"] + e["dur"])
+        for e in events
+        if e.get("cat") in ("gpu_memcpy", "gpu_memset") and e.get("dur", 0) > 0
+    ]
+    # External IDs attach GPU work to its originating PyTorch op when Kineto
+    # retained that attribution. Keep this distinct from inclusive CPU time.
+    cpu_by_external_id = {
+        e["args"]["External id"]: e
+        for e in events
+        if e.get("cat") in ("cpu_op", "user_annotation")
+        and e.get("args", {}).get("External id") not in (None, 0)
+    }
+    gpu_by_origin = defaultdict(lambda: [0, 0.0])
+    for event in kernels:
+        origin = cpu_by_external_id.get(event.get("args", {}).get("External id"))
+        if origin is not None:
+            value = gpu_by_origin[origin["name"]]
+            value[0] += 1
+            value[1] += event["dur"]
     span = (
         max(end for _, end in compute + collective)
         - min(start for start, _ in compute + collective)
@@ -79,11 +99,17 @@ def summarize_trace(path):
         "gpu_kernel_busy_union_ms": busy / 1000,
         "collective_union_ms": union_duration(collective) / 1000,
         "collective_without_other_kernel_ms": (busy - compute_busy) / 1000,
+        "gpu_memory_operation_union_ms": union_duration(copies) / 1000,
+        "gpu_kernel_and_memory_busy_union_ms": union_duration(compute + collective + copies) / 1000,
         "first_to_last_kernel_span_ms": span / 1000,
         "no_kernel_in_span_ms": (span - busy) / 1000,
         "top_cpu_events_by_inclusive_duration_nonadditive": [
             {"category": cat, "name": name, "count": count, "total_ms": us / 1000}
             for (cat, name), (count, us) in sorted(cpu.items(), key=lambda p: -p[1][1])[:50]
+        ],
+        "gpu_kernel_time_by_originating_cpu_op_nonadditive": [
+            {"name": name, "kernel_count": count, "kernel_time_ms": us / 1000}
+            for name, (count, us) in sorted(gpu_by_origin.items(), key=lambda p: -p[1][1])[:40]
         ],
         "kernel_duration_sums_ms_nonadditive": {
             k: v / 1000 for k, v in sorted(grouped.items(), key=lambda p: -p[1])
