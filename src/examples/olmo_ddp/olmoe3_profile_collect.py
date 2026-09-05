@@ -1,5 +1,6 @@
 """CPU-only profile analysis; publish only small summaries to Beaker results."""
 
+import argparse
 import json
 import os
 import shutil
@@ -15,23 +16,40 @@ def main():
     """Wait for completed passes and analyze artifacts without consuming any GPUs."""
     results = Path(os.environ.get("RESULTS_DIR", "/results")) / "profile-summaries"
     results.mkdir(parents=True, exist_ok=True)
-    for name in sys.argv[1:]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("names", nargs="+")
+    args = parser.parse_args()
+    pending = list(args.names)
+    deadline = time.monotonic() + 7200
+    for name in pending:
         if Path(name).name != name:
             raise ValueError("Expected a run directory name, not a path")
-        run = ROOT / name
-        deadline = time.monotonic() + 7200
-        while len(list(run.glob("memory-rank-*.json"))) != 64:
+    while pending:
+        ready = []
+        for name in pending:
+            run = ROOT / name
+            if not (run / "provenance.json").is_file() or not (run / "metrics.jsonl").is_file():
+                continue
+            if not args.allow_partial and len(list(run.glob("memory-rank-*.json"))) != 64:
+                continue
+            provenance = json.loads((run / "provenance.json").read_text())
+            if (
+                not args.allow_partial
+                and provenance["pass"] == "nsys"
+                and len(list(run.glob("nsys-rank-*.nsys-rep"))) != 64
+            ):
+                continue
+            ready.append(name)
+        if not ready:
             if time.monotonic() > deadline:
-                raise TimeoutError(f"{name}: all 64 ranks did not finish in two hours")
-            print(f"Waiting for all ranks of {name}", flush=True)
+                raise TimeoutError(f"Runs did not finish in two hours: {pending}")
+            print(f"Waiting for completed passes: {pending}", flush=True)
             time.sleep(30)
-        provenance = json.loads((run / "provenance.json").read_text())
-        if provenance["pass"] == "nsys":
-            while len(list(run.glob("nsys-rank-*.nsys-rep"))) != 64:
-                if time.monotonic() > deadline:
-                    raise TimeoutError(f"{name}: Nsight did not finish exporting all ranks")
-                print(f"Waiting for Nsight report exports for {name}", flush=True)
-                time.sleep(30)
+            continue
+        name = ready[0]
+        pending.remove(name)
+        run = ROOT / name
         destination = results / name
         destination.mkdir(parents=True, exist_ok=True)
         subprocess.run(
@@ -47,6 +65,9 @@ def main():
         for filename in ("analysis.json", "metrics.jsonl", "provenance.json"):
             shutil.copy2(run / filename, destination / filename)
         summary = json.loads((run / "analysis.json").read_text())
+        summary["partial_collection"] = args.allow_partial
+        (destination / "analysis.json").write_text(json.dumps(summary, indent=2))
+        print("PROFILE_PARTIAL_COLLECTION", name, args.allow_partial, flush=True)
         for window in summary["windows"]:
             print("PROFILE_WINDOW", name, json.dumps(window), flush=True)
         print("PROFILE_FIRST_UPDATES", name, json.dumps(summary["first_updates"]), flush=True)
