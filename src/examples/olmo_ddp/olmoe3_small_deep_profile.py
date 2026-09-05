@@ -84,6 +84,7 @@ class ProfileMetrics(Callback):
                 "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
                 "vectorized_fp32_grad_add": os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE")
                 == "1",
+                "pairwise_swiglu_backward": os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE") == "1",
                 "reduce_scatter_single_param_fast_path": os.environ.get(
                     "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"
                 )
@@ -191,6 +192,7 @@ def model_config(common):
         "emo-inverse-scatter",
         "kda-128-emo-inverse-scatter",
         "kda-128-emo-inverse-scatter-grad-add",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair",
     ):
         import olmo_core.ops.moe as moe_ops
 
@@ -199,6 +201,7 @@ def model_config(common):
         "kda-128",
         "kda-128-emo-inverse-scatter",
         "kda-128-emo-inverse-scatter-grad-add",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair",
     ):
         # Profiling-only performance gate, qualified separately. The package explicitly
         # documents this CTA floor as a heuristic, not a correctness restriction.
@@ -229,6 +232,7 @@ def train_module_config(common):
         "emo-inverse-scatter",
         "kda-128-emo-inverse-scatter",
         "kda-128-emo-inverse-scatter-grad-add",
+        "kda-128-emo-inverse-scatter-grad-add-act-pair",
     ):
         raise ValueError(f"Unknown variant: {VARIANT}")
     return config

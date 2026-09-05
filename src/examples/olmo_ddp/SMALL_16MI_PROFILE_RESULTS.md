@@ -366,6 +366,42 @@ compares default / pointwise-coordinate tuning / default with exact forward/back
 checks and saved generated code, before any new activation implementation. The lighter
 Nsight mode disables per-op autograd NVTX only; CUDA/NCCL and application NVTX remain.
 
+Follow-up [64-GPU timing/torch/light-Nsight run](https://beaker.org/ex/01M1R17MJ5BNM7QS6NPVTBJQY8),
+source `a401daccf`, is queued with [CPU collector](https://beaker.org/ex/01M1R17XVBFB9MNDG4MRX93Y28).
+It uses the gradient-add candidate, three independent 60-update restores, and
+`OLMOE3_NSYS_AUTOGRAD_NVTX=0`. The revised callback passed lifecycle tests with and
+without autograd annotations. This run does not contain the new activation prototype.
+
+### Next target: expert activation backward
+
+[One-B300 compiler probe](https://beaker.org/ex/01M1R18061X37H5332NRN9EMCZ), source
+`a401daccf`, completed exit0 at 05:40 UTC. On synthetic `[524288,2048]` BF16 expert
+inputs, default / pointwise-coordinate-tuned / default forward+backward medians were
+2.26384 / 2.16994 / 2.26381ms. All outputs and gradients matched exactly. Tuning alone
+saves ~0.094ms per call, about 11ms/update at 120 calls; no global compiler flag changed.
+Dataset `01M1R180678E07Z4NVFGG4BANZ` includes generated forward/backward source.
+
+The generated backward indexes the concatenated output, separately computes both
+halves, and repeats loads/exponentials. Its intermediates remain FP32; the actual
+generated code (not just its annotated graph) rounds only at the BF16 stores.
+The new paired-output kernel reuses the common inputs while preserving libdevice
+exponential, division, derivative order, and FP32 intermediates. It is not an eager
+BF16-autograd replacement, whose intermediate rounding can differ.
+
+[One-B300 paired-gradient qualification](https://beaker.org/ex/01M1R1FT7TDYNESRG3KSX3FE3M),
+source `2e9613c62`, completed exit0 at 05:45 UTC. Four launch settings passed zero-
+tolerance numerical checks on empty/tail shapes, hidden sizes128/129/512/1024,
+extreme values/nonfinites, and all 1,073,741,824 elements at the real gradient shape.
+The best block1024/4warps backward is 0.76856ms versus ~1.77ms native before/after:
+about **2.3× isolated backward speed**, ~120ms/update serial potential, not a full-model
+gain. Other settings measure 0.77338/0.77912/0.79011ms. Dataset
+`01M1R1FT838RC8AZ7SKA912X1E` retains the full results.
+
+The default-off `OLMO_PROFILE_SWIGLU_PAIRWISE=1` training hook is now prepared, with
+compiled-autograd and two-GPU routed-expert/sharded-Adam tests. No full-model activation
+A/B is launched until these integration checks pass. Model structure and saved
+activation storage remain unchanged; no additional recomputation is introduced.
+
 ### Nsight capture repair
 
 The [two-B300 reproducer](https://beaker.org/ex/01M1QWYVBR97EA4G9RXCCC82TE)

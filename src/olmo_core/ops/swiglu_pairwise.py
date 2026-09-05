@@ -1,11 +1,12 @@
 """Experimental paired-output SwiGLU backward matching the compiled BF16 path.
 
-Benchmark-only until qualified. The baseline Inductor kernel carries intermediate
+Default-off profiling experiment. The baseline Inductor kernel carries intermediate
 values in FP32 and rounds at the BF16 output stores. This is intentionally not a
 claim of bitwise agreement with eager BF16 autograd, which has intermediate stores.
 """
 
 import torch
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 from triton.language.extra.cuda import libdevice
@@ -29,7 +30,7 @@ def _swiglu_backward_pair(x, dy, dx, pairs, HIDDEN: tl.constexpr, BLOCK: tl.cons
     tl.store(dx + base + HIDDEN, grad_gate, mask=mask)
 
 
-def swiglu_backward_pair(x, dy, *, block=2048, warps=4):
+def swiglu_backward_pair(x, dy, *, block=1024, warps=4):
     """Compute contiguous BF16 input gradients without changing input or upstream gradient."""
     if (
         not x.is_cuda
@@ -58,3 +59,21 @@ def swiglu_backward_pair(x, dy, *, block=2048, warps=4):
             enable_fp_fusion=True,
         )
     return out
+
+
+class _PairwiseSwiGLU(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        up, gate = x.chunk(2, dim=-1)
+        return up * F.silu(gate)
+
+    @staticmethod
+    def backward(ctx, grad):
+        (x,) = ctx.saved_tensors
+        return swiglu_backward_pair(x, grad.contiguous())
+
+
+def pairwise_swiglu(x):
+    """Use with torch.compile: unchanged PyTorch forward and a qualified paired backward."""
+    return _PairwiseSwiGLU.apply(x)

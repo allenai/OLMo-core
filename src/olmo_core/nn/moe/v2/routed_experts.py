@@ -482,6 +482,7 @@ class RoutedExperts(nn.Module):
         self.hidden_size = hidden_size
         self.num_experts = num_experts
         self.activation = ExpertActivation(activation)
+        self._profile_pairwise_swiglu = os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE", "0") == "1"
         self.activation_alpha = float(activation_alpha)
         self.activation_limit = None if activation_limit is None else float(activation_limit)
         self.bias = bias
@@ -1087,6 +1088,17 @@ class RoutedExperts(nn.Module):
         # Forward-only EP can skip padded tail rows with a custom kernel while
         # keeping training on the autograd-backed PyTorch activation.
         if self.activation == ExpertActivation.swiglu:
+            if (
+                self._profile_pairwise_swiglu
+                and torch.is_grad_enabled()
+                and up_gate.is_cuda
+                and up_gate.dtype == torch.bfloat16
+                and up_gate.ndim == 2
+                and up_gate.is_contiguous()
+            ):
+                from olmo_core.ops.swiglu_pairwise import pairwise_swiglu
+
+                return pairwise_swiglu(up_gate)
             if (
                 num_elements is not None
                 and up_gate.is_cuda
