@@ -1,0 +1,92 @@
+"""Resolve Beaker's current replica generation before starting per-GPU workers.
+
+Injected leader hostnames can be stale after a pre-training health-check replacement.
+Ready markers are keyed by actual job ID, so an old job cannot satisfy the barrier.
+"""
+
+import hashlib
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+
+def resolve_ready_leader(beaker, workload, ready_dir: Path, expected_nodes: int):
+    tasks = workload.experiment.tasks
+    if len(tasks) != expected_nodes:
+        raise RuntimeError(f"Expected {expected_nodes} tasks, found {len(tasks)}")
+    leaders = [t for t in tasks if t.system_details.replica_group_details.is_leader_replica]
+    if len(leaders) != 1:
+        raise RuntimeError(f"Expected exactly one leader task, found {len(leaders)}")
+    leader = None
+    for task in tasks:
+        job = beaker.workload.get_latest_job(workload, task=task, finalized=False)
+        if job is None or job.status.HasField("exited") or job.status.HasField("canceled"):
+            return None
+        marker = ready_dir / f"{job.id}.json"
+        if not marker.is_file():
+            return None
+        if task.id == leaders[0].id:
+            leader = job
+    if leader is None or not leader.assignment_details.node_id:
+        return None
+    hostname = beaker.node.get(leader.assignment_details.node_id).hostname
+    return leader.id, hostname
+
+
+def main():
+    from beaker import Beaker
+
+    run_name, cluster = sys.argv[1:]
+    workload_id = os.environ["BEAKER_EXPERIMENT_ID"]
+    job_id = os.environ["BEAKER_JOB_ID"]
+    rank = int(os.environ["BEAKER_REPLICA_RANK"])
+    nodes = int(os.environ["BEAKER_REPLICA_COUNT"])
+    gpus = int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"])
+    if nodes != 8 or gpus != 8:
+        raise RuntimeError(f"This profile requires 8x8 GPUs, got {nodes}x{gpus}")
+    ready_dir = Path("/weka/olmo-3p5-checkpoints/production-profiling/rendezvous") / workload_id
+    ready_dir.mkdir(parents=True, exist_ok=True)
+    temporary = ready_dir / f"{job_id}.tmp"
+    temporary.write_text(json.dumps({"job_id": job_id, "node_rank": rank}))
+    temporary.replace(ready_dir / f"{job_id}.json")
+    with Beaker.from_env() as beaker:
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            workload = beaker.workload.get(workload_id)
+            leader = resolve_ready_leader(beaker, workload, ready_dir, nodes)
+            if leader is not None:
+                break
+            print(f"Node {rank}: waiting for all current Beaker jobs to finish setup", flush=True)
+            time.sleep(10)
+        else:
+            raise TimeoutError("Current Beaker replica generation did not become ready in 15m")
+    leader_job, hostname = leader
+    port = 29000 + int(hashlib.sha256(workload_id.encode()).hexdigest()[:8], 16) % 1000
+    print(
+        f"Node {rank}: resolved current leader {leader_job} at {hostname}:{port}; "
+        f"injected hostname was {os.environ.get('BEAKER_LEADER_REPLICA_HOSTNAME')}",
+        flush=True,
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        f"--nnodes={nodes}",
+        f"--nproc-per-node={gpus}",
+        f"--node-rank={rank}",
+        "--rdzv-backend=static",
+        f"--rdzv-endpoint={hostname}:{port}",
+        f"--rdzv-id={workload_id}",
+        "--rdzv-conf=read_timeout=900",
+        "--max-restarts=0",
+        "src/examples/olmo_ddp/olmoe3_profile_worker.py",
+        run_name,
+        cluster,
+    ]
+    os.execv(sys.executable, command)
+
+
+if __name__ == "__main__":
+    main()

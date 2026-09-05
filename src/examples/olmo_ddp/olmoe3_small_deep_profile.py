@@ -125,11 +125,12 @@ def common_components(cli_context, **kwargs):
         launch.preemptible = False
         launch.shared_filesystem = True
         launch.weka_buckets = [BeakerWekaBucket("olmo-3p5-checkpoints", CHECKPOINT_ROOT)]
-        # Gantry wraps this Python worker in torchrun. Each worker launches both passes
-        # sequentially, retaining its distributed environment, with a fresh Python process.
+        # Resolve current job assignments after health checks rather than relying on
+        # Gantry's injected leader hostname, which can refer to a replaced job.
+        launch.torchrun = False
         launch.cmd = [
             "python",
-            "src/examples/olmo_ddp/olmoe3_profile_worker.py",
+            "src/examples/olmo_ddp/olmoe3_profile_node.py",
             cli_context.run_name,
             cli_context.cluster,
         ]

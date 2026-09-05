@@ -82,11 +82,17 @@ and recomputation out of this baseline.
   median/mean 8.992/8.986 ms, output error 0.404%, maximum gradient error 0.570%.
   This is ~10.8% less layer time than new default, not a whole-model gain.
 - Full profile: https://beaker.org/ex/01M1QHSZGC0V64F63Q99YVS7C4
-  (`olmoe3-small-16mi-deep-profile-v2-r1`, source `3a148a86b`), queued on 64 B300s,
-  urgent/allocated, one-hour minimum runtime; zero automatic task retries.
+  (`olmoe3-small-16mi-deep-profile-v2-r1`, source `3a148a86b`), canceled before training.
+  Beaker replaced rank0 after a health-check failure (host516 -> host526), but the other
+  seven jobs retained the old injected leader hostname and stalled in Gantry rendezvous.
 - KDA cutoff comparison: https://beaker.org/ex/01M1QJ5SRMTM4GFMDRWSA0Z00Y
   (`olmoe3-small-16mi-kda128-v2-r1`, source `b2892e0f0`), 64 B300s, 60 updates,
-  timing only. Same model/checkpoint/batch/LR/precision, with cutoff128 enabled only here.
+  timing only; canceled while queued so it can use the same corrected launcher.
+  Same model/checkpoint/batch/LR/precision, with cutoff128 enabled only here.
+- The corrected node launcher queries current Beaker assignments after setup and waits
+  for all eight current job-ID-specific readiness markers before invoking torchrun.
+  It retains host networking, leader selection and failure propagation; stale injected
+  hostnames and markers from replaced jobs are not used for rendezvous.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
