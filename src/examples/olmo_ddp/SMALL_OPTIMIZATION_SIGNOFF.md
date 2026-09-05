@@ -160,3 +160,12 @@ say every single-step difference is within that envelope. Combined repeats follo
   Twelve CPU tests and two exact B300 forward/backward production-shape tests
   passed (`01M1RCTRHBHVSGXRFQRYVFPTRZ`). No WY schedule win promoted, no merge.
   Training still pins7a6983 and the already-qualified CTA128 override.
+
+Smoke first attempt failed before training/checkpoint creation: validation was
+incorrectly addressed as `s3://ai2-llm`, yielding403 on metadata HEAD. The correct
+location is `gs://ai2-llm`. All11 NPY files and11 sidecars verified with metadata
+and byte-range reads using the existing workspace Google credential (not printed).
+Only the validation URI changes; train data remains Dolma3.5 S3. Retry uses the
+same untouched smoke roots/registrations. Audit collector r2
+`01M1RF8RSF9GN7T976PB7EDFPF` handles explicitly unvisited partial-eval subsets and
+requires the current manifest's digest to match the read-back-verified publication.

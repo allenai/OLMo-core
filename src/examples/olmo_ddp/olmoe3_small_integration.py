@@ -266,7 +266,10 @@ def trainer_config(common):
         LMEvaluatorCallbackConfig(
             eval_dataset=NumpyPaddedFSLDatasetConfig.from_data_mix(
                 DataMix.v3_small_ppl_validation,
-                mix_base_dir="s3://ai2-llm",
+                # Validation lives on GCS, not the Dolma training S3 bucket.
+                # All eleven NPY files and metadata sidecars verified readable
+                # with the same workspace GOOGLE_CREDENTIALS secret.
+                mix_base_dir="gs://ai2-llm",
                 sequence_length=8192,
                 tokenizer=common.tokenizer,
                 work_dir=common.work_dir,
