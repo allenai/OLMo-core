@@ -144,6 +144,8 @@ class KVRouteHolder:
         self._tier_count: Optional[torch.Tensor] = None
         self.last_per_layer_keep: Dict[int, float] = {}
         self.last_tier_hist: List[float] = []
+        self.last_exp_per_layer: Dict[int, float] = {}
+        self.last_exp_mean: Optional[float] = None
         self.cum_kept: float = 0.0
         self.cum_tokens: int = 0
 
@@ -159,6 +161,12 @@ class KVRouteHolder:
 
     def begin_forward(self, *, collect_loss: bool = True) -> None:
         """Snapshot the last forward's metrics, reset the accumulators, advance the schedules."""
+        if self._exp_keep:  # lagged expectations for budget_attach
+            self.last_exp_per_layer = {
+                int(li): float(e.detach()) / max(1e-9, w)
+                for li, e, w in zip(self._exp_layers, self._exp_keep, self._exp_weights)
+            }
+            self.last_exp_mean = sum(self.last_exp_per_layer.values()) / len(self.last_exp_per_layer)
         if self._n_tokens:
             self.last_per_layer_keep = {
                 li: self._hard_kept[li] / max(1, self._n_tokens[li]) for li in self._n_tokens

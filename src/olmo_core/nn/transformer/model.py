@@ -151,6 +151,10 @@ class Transformer(nn.Module):
         self._joint_budget: Optional[Dict[str, Any]] = None
         # Per-token block skipping (mixture-of-depths router): set by ``enable_block_skip``.
         self._block_skip: Optional[Dict[str, Any]] = None
+        # Deliver router budget gradients through each block's output instead of a separate loss
+        # term (olmo_core.nn.budget_attach): required under activation checkpointing, where the
+        # separate term forces every block to be recomputed at the start of backward.
+        self.budget_attach: bool = False
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -606,6 +610,63 @@ class Transformer(nn.Module):
             len(routed), start_layer, target,
         )
 
+    def _attach_block_budget(self, h: torch.Tensor, block_idx: int) -> torch.Tensor:
+        """
+        Hand this block's router expectations their budget gradient through ``h`` (see
+        :mod:`olmo_core.nn.budget_attach`). Coefficients are the budget derivatives linearised
+        with the previous forward's values; zero on the first forward.
+        """
+        from ..budget_attach import attach_budget_grads
+
+        nffn = self._nested_ffn_moe
+        kvr = self._kv_route
+        bsk = self._block_skip
+        jb = self._joint_budget
+        terms: List[torch.Tensor] = []
+        coefs: List[float] = []
+
+        def _this_layer(holder, attr):
+            vals = getattr(holder, attr)
+            return [e for li, e in zip(holder._exp_layers, vals) if int(li) == block_idx]
+
+        if jb is not None:
+            if "last_cost" not in jb:
+                return h
+            sign = 1.0 if jb["last_cost"] > jb["last_target"] else -1.0
+            lam = jb["weight"] * sign
+            sh = jb["per_block"][block_idx]
+            keep_prev = bsk["holder"].last_exp_per_layer.get(block_idx, 1.0) if bsk else 1.0
+            ffn_prev = nffn["holder"].last_exp_per_layer.get(block_idx, 1.0) if nffn else 1.0
+            kv_prev = kvr["holder"].last_exp_per_layer.get(block_idx, 1.0) if kvr else 1.0
+            if nffn is not None:
+                for e in _this_layer(nffn["holder"], "_exp_costs"):
+                    terms.append(e)
+                    coefs.append(lam * sh["ffn"] * keep_prev)
+            if kvr is not None:
+                for e in _this_layer(kvr["holder"], "_exp_keep"):
+                    terms.append(e)
+                    coefs.append(lam * sh["attn"] * keep_prev)
+            if bsk is not None:
+                for e in _this_layer(bsk["holder"], "_exp_keep"):
+                    terms.append(e)
+                    coefs.append(lam * (sh["proj"] + sh["ffn"] * ffn_prev + sh["attn"] * kv_prev))
+        else:
+            for cfg, attr in ((nffn, "_exp_costs"), (kvr, "_exp_keep"), (bsk, "_exp_keep")):
+                if cfg is None:
+                    continue
+                holder = cfg["holder"]
+                if holder.budget_weight <= 0 or holder.last_exp_mean is None:
+                    continue
+                gap = holder.last_exp_mean - holder.current_target()
+                if gap <= 0 and not getattr(holder, "two_sided", True):
+                    continue
+                n_layers = max(1, len(holder.last_exp_per_layer))
+                sign = 1.0 if gap > 0 else -1.0
+                for e in _this_layer(holder, attr):
+                    terms.append(e)
+                    coefs.append(holder.budget_weight * sign / n_layers)
+        return attach_budget_grads(h, terms, coefs)
+
     def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
         """Recompute the FFN gate mask from the (possibly compacted) token stream."""
         cfg = self._role_gated_ffn
@@ -774,6 +835,8 @@ class Transformer(nn.Module):
                 h = block_skip_forward(block, h, {**all_block_kwargs, **block_kwargs})
             else:
                 h = block(h, **all_block_kwargs, **block_kwargs)
+            if self.budget_attach and h.requires_grad:
+                h = self._attach_block_budget(h, block_idx)
             if capture_layers is not None and block_idx in capture_layers:
                 captured[block_idx] = h
         return h, captured
@@ -1451,23 +1514,24 @@ class Transformer(nn.Module):
                 if aux_loss is not None:
                     w = self._pooled_soft_tokens["aux_match_weight"]  # type: ignore[index]
                     loss = loss + w * aux_loss.to(loss.dtype)
+                attach = self.budget_attach  # gradients already delivered per block
                 if self._nested_ffn_moe is not None:
                     nffn_loss = self._nested_ffn_moe["holder"].regularization_loss()
-                    if nffn_loss is not None:
+                    if nffn_loss is not None and not attach:
                         loss = loss + nffn_loss.to(loss.dtype)
                 if self._kv_route is not None:
                     kvr_loss = self._kv_route["holder"].regularization_loss()
-                    if kvr_loss is not None:
+                    if kvr_loss is not None and not attach:
                         loss = loss + kvr_loss.to(loss.dtype)
                 if self._block_skip is not None:
                     bs_loss = self._block_skip["holder"].regularization_loss()
-                    if bs_loss is not None:
+                    if bs_loss is not None and not attach:
                         loss = loss + bs_loss.to(loss.dtype)
                 if self._joint_budget is not None:
                     from ..joint_budget import joint_budget_loss
 
-                    jb_loss = joint_budget_loss(self)
-                    if jb_loss is not None:
+                    jb_loss = joint_budget_loss(self)  # also records last_cost / last_target
+                    if jb_loss is not None and not attach:
                         loss = loss + jb_loss.to(loss.dtype)
                 if distill_teacher is not None and labels is not None:
                     # Map teacher (row, ORIGINAL position) -> student compacted column via the

@@ -82,6 +82,8 @@ class BlockSkipHolder:
         self._seen: set = set()
         self.last_per_layer_keep: Dict[int, float] = {}
         self.last_depth_hist: List[float] = []
+        self.last_exp_per_layer: Dict[int, float] = {}
+        self.last_exp_mean: Optional[float] = None
         self.cum_kept = 0.0
         self.cum_tokens = 0
 
@@ -91,6 +93,11 @@ class BlockSkipHolder:
         self._seen = set()
 
     def begin_forward(self, *, collect_loss: bool = True) -> None:
+        if self._exp_keep:  # lagged expectations for budget_attach
+            self.last_exp_per_layer = {
+                int(li): float(e.detach()) for li, e in zip(self._exp_layers, self._exp_keep)
+            }
+            self.last_exp_mean = sum(self.last_exp_per_layer.values()) / len(self.last_exp_per_layer)
         if self._n_tokens:
             self.last_per_layer_keep = {
                 li: self._hard_kept[li] / max(1, self._n_tokens[li]) for li in self._n_tokens

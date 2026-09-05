@@ -265,6 +265,8 @@ class NestedFFNHolder:
         self.layer_curriculum_calls = int(layer_curriculum_calls)
         self.n_rungs = len(self.costs)
         self._choice_cache: Dict[tuple, torch.Tensor] = {}
+        self.last_exp_per_layer: Dict[int, float] = {}
+        self.last_exp_mean: Optional[float] = None
         self.target_cost = float(target_cost)
         self.budget_weight = float(budget_weight)
         self.hinge_power = int(hinge_power)
@@ -317,6 +319,11 @@ class NestedFFNHolder:
             self._last_tokens = self._hard_tokens
             self._last_usage = list(self._usage)
             self._last_usage_layer = {k: list(v) for k, v in self._usage_layer.items()}
+        if self._exp_costs:  # lagged expectations for budget_attach (previous forward's values)
+            self.last_exp_per_layer = {
+                int(li): float(c.detach()) for li, c in zip(self._exp_layers, self._exp_costs)
+            }
+            self.last_exp_mean = sum(self.last_exp_per_layer.values()) / len(self.last_exp_per_layer)
         self._usage_layer = {}
         self._reset_accumulators()
         self.collect_loss = collect_loss

@@ -1157,6 +1157,10 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"{int(total_calls * opts.ffn_moe_target_anneal_frac)}/{total_calls} calls",
             flush=True,
         )
+    if opts.variant in ("ffnmoe", "kvroute", "flexcompute"):
+        # budget gradients through the block outputs (olmo_core.nn.budget_attach): the separate
+        # loss term recomputed every checkpointed block at once (68 GB vs 26 GB dense, 2026-09-05)
+        model.budget_attach = True
     if opts.variant in ("kvroute", "flexcompute"):
         model.enable_kv_route(
             start_layer=opts.kv_route_start_layer,

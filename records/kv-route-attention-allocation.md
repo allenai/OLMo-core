@@ -279,3 +279,18 @@ start of every forward). (2) the fused FFN ladder backward materialised six (65k
 intermediates at once (~10 GB) — the OOM site of every all-layer/three-router attempt; it is now
 chunked over 8192-row blocks (fp32 weight-grad accumulation), ~1 GB transient. Both committed
 (030faa573, a3ff5367b); flexs2 relaunched at 65k on 8 GPUs.
+
+**Root cause of the routed-run memory (14:45, `--mem-snapshot` peak attribution inside the FSDP
+trainer):** dense peaks at 26.5 GB live (one block's intermediates at a time); the two-router run
+peaks at 68.6 GB with the RMSNorm fp32 intermediates of ALL 36 blocks live (24.4 + 12.2 + 11.6 GB)
+plus 7.5 GB residual tensors. Every router's budget expectation is computed inside its block's
+checkpoint region and was summed into the loss as a separate term; those scalars are direct
+children of the loss, so autograd reaches them first and forces the recompute of every checkpointed
+block at the start of backward, all of which stay alive. Fix (`olmo_core.nn.budget_attach`): an
+identity op on each block's output whose backward hands that block's budget scalars their
+gradient coefficient (the budget derivative, linearised with the previous forward's values), so
+each block is recomputed once in the normal order; the reported loss no longer contains the budget
+term. `model.budget_attach = True` for every routed variant in the trainer; CPU test
+`test_budget_attach_matches_loss_term_gradients` shows identical router gradients. This also means
+every earlier routed run (Qwen3.5 included) trained with the wasteful recompute order — correct
+gradients, just ~2x the activation memory.

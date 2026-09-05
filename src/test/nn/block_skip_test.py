@@ -103,3 +103,23 @@ def test_activation_checkpointing_matches_and_frees():
     torch.testing.assert_close(outs[0][0], outs[1][0])
     torch.testing.assert_close(outs[0][1], outs[1][1], atol=1e-5, rtol=1e-4)
     assert outs[0][2] == outs[1][2] and 0.0 < outs[0][2] < 1.0
+
+
+def test_budget_attach_matches_loss_term_gradients():
+    """budget_attach delivers the same router gradients as the separate loss term once the lagged
+    coefficients exist (second forward), for the single-router two-sided budget."""
+    ids = torch.randint(0, 128, (1, 24))
+    grads = []
+    for attach in (False, True):
+        model = _tiny_model()
+        model.enable_block_skip(target=0.25, budget_weight=1.0, target_anneal_calls=0)
+        model.budget_attach = attach
+        for _ in range(2):  # first pass primes the lagged expectations
+            model.zero_grad(set_to_none=True)
+            out = model(ids, labels=ids.clone())
+            out.loss.backward()
+        grads.append(model.bskip_routers["0"].w.bias.grad.clone())
+    # with attach the loss excludes the budget, but the router gradient must be the same sign and
+    # magnitude (the coefficient is the exact derivative of |mean - target| at the lagged point,
+    # which equals the current point here: the router did not move between the two forwards)
+    torch.testing.assert_close(grads[0], grads[1], atol=1e-6, rtol=1e-4)

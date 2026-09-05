@@ -147,7 +147,7 @@ def joint_budget_loss(model: Any) -> Optional[torch.Tensor]:
     for i, sh in enumerate(jb["per_block"]):
         inner = sh["proj"] + sh["ffn"] * ffn_e.get(i, 1.0) + sh["attn"] * kv_e.get(i, 1.0)
         cost = cost + sk_e.get(i, 1.0) * inner
-    if not torch.is_tensor(cost) or not cost.requires_grad:
+    if not torch.is_tensor(cost):
         return None
     calls = max(h["holder"].calls for h in (nffn, kvr, bsk) if h is not None)
     tgt = jb["target"]
@@ -155,4 +155,6 @@ def joint_budget_loss(model: Any) -> Optional[torch.Tensor]:
         tgt = 1.0 + (jb["target"] - 1.0) * min(1.0, calls / jb["anneal_calls"])
     jb["last_cost"] = float(cost.detach())
     jb["last_target"] = tgt
+    if not cost.requires_grad:
+        return None
     return jb["weight"] * (cost - tgt).abs()
