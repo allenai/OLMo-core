@@ -196,6 +196,23 @@ and numerical validation remain required; the flag is off in the baseline.
 
 ## Launch
 
+Before new comparisons, populate `OLMOE3_ALLOWED_HOSTNAMES` with eligible Holmes hosts
+**excluding `holmes-cs-aus-485.reviz.ai2.in`** pending NVLink repair. On 2026-09-05 its
+GPU1 was disconnected from NVLink and caused an eight-node job to use nine NCCL nodes,
+four collective channels and no NVLS. The node driver now rejects any local eight-GPU
+topology containing off-diagonal non-NVLink paths before workers compile.
+
+`OLMOE3_DEEP_PROFILE_PLAN` optionally specifies an ordered `variant:pass` list instead
+of the Cartesian product of variants and passes. For example:
+
+```text
+baseline:timing,kda-128:timing,kda-128-emo-inverse-scatter:timing,kda-128-emo-inverse-scatter:torch
+```
+
+Each pass is a fresh trained-step7500 restore on the same eight nodes, with unique
+artifact paths. This allows controlled unprofiled comparisons followed by a short
+capture without profiling every candidate. Duplicate pairs are rejected.
+
 From this clean, pushed branch, with the Beaker and Python environment configured:
 
 ```bash

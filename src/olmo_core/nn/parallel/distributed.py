@@ -150,6 +150,10 @@ class MultiGroupDistributedDataParallel(Module):
         self._reduce_scatter_configured = not use_reduce_scatter
         self._reduce_scatter_params: set[torch.nn.Parameter] = set()
         self._reduce_scatter_pack_scratch: Dict[tuple[torch.device, torch.dtype], torch.Tensor] = {}
+        # Opt-in profiling experiment; leave the existing production path unchanged.
+        self._reduce_scatter_single_param_fast_path = (
+            os.environ.get("OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH", "0") == "1"
+        )
 
         if self._accumulate_grads_in_fp32 and not self._reduce_grads_in_fp32:
             raise ValueError("accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True")
@@ -587,27 +591,44 @@ class MultiGroupDistributedDataParallel(Module):
         # the optimizer applies the remaining EP-MP factor when building main_grad.
         if bucket.reduce_scatter:
             assert bucket.flat_reduced_storage is not None
-            scratch = self._get_reduce_scatter_pack_scratch(bucket)
-            packed = scratch.view(world_size, bucket.local_numel)
-
-            for (full_start, full_end), (local_start, local_end) in zip(
-                bucket.ranges, bucket.local_ranges
-            ):
-                local_numel = local_end - local_start
-                packed[:, local_start:local_end].copy_(
-                    bucket.flat_storage[full_start:full_end].view(world_size, local_numel)
-                )
-
-            if bucket.storage_dtype == bucket.comm_dtype:
-                bucket.flat_storage.copy_(scratch)
-                tensor_for_reduce = bucket.flat_storage
-                tensor_for_output = bucket.flat_reduced_storage
+            if self._reduce_scatter_single_param_fast_path and len(bucket.params) == 1:
+                # A single parameter is already rank-major. In particular, an expert
+                # parameter larger than the soft bucket cap needs no packing/copy-back.
+                # Keep the collective input in per-bucket storage: shared scratch cannot
+                # be reused until an asynchronous collective has finished reading it.
+                assert bucket.ranges == [(0, bucket.numel)]
+                assert bucket.local_ranges == [(0, bucket.local_numel)]
+                if bucket.storage_dtype == bucket.comm_dtype:
+                    tensor_for_reduce = bucket.flat_storage
+                    tensor_for_output = bucket.flat_reduced_storage
+                else:
+                    assert bucket.flat_comm is not None
+                    assert bucket.flat_reduced_comm is not None
+                    bucket.flat_comm.copy_(bucket.flat_storage)
+                    tensor_for_reduce = bucket.flat_comm
+                    tensor_for_output = bucket.flat_reduced_comm
             else:
-                assert bucket.flat_comm is not None
-                assert bucket.flat_reduced_comm is not None
-                bucket.flat_comm.copy_(scratch)
-                tensor_for_reduce = bucket.flat_comm
-                tensor_for_output = bucket.flat_reduced_comm
+                scratch = self._get_reduce_scatter_pack_scratch(bucket)
+                packed = scratch.view(world_size, bucket.local_numel)
+
+                for (full_start, full_end), (local_start, local_end) in zip(
+                    bucket.ranges, bucket.local_ranges
+                ):
+                    local_numel = local_end - local_start
+                    packed[:, local_start:local_end].copy_(
+                        bucket.flat_storage[full_start:full_end].view(world_size, local_numel)
+                    )
+
+                if bucket.storage_dtype == bucket.comm_dtype:
+                    bucket.flat_storage.copy_(scratch)
+                    tensor_for_reduce = bucket.flat_storage
+                    tensor_for_output = bucket.flat_reduced_storage
+                else:
+                    assert bucket.flat_comm is not None
+                    assert bucket.flat_reduced_comm is not None
+                    bucket.flat_comm.copy_(scratch)
+                    tensor_for_reduce = bucket.flat_comm
+                    tensor_for_output = bucket.flat_reduced_comm
 
             tensor_for_reduce.div_(world_size)
             handle = torch.distributed.reduce_scatter_tensor(

@@ -34,6 +34,10 @@ The tiny mean-CE differences in this table are not evidence of a quality improve
 
 ## Completed profile and bottlenecks
 
+**Topology warning (2026-09-05 03:24 UTC):** the capture below and the first EMO
+matrix both used a degraded node. Their communication timings are not representative
+of a healthy eight-node allocation. See the confirmed NVLink findings below.
+
 - Data loading is not a substantial bottleneck: baseline mean 2.71ms per 3.36s update.
 - Baseline per-step rank-reduced memory: 175.466 GiB active / 178.563 GiB reserved.
   End-of-run allocator counters are reset every step and must not be called full-run peaks.
@@ -63,8 +67,9 @@ kernel count and approximately 9.04s span. This is not predominantly a data-feed
 These durations overlap and must not be added. CPU-side `Command Buffer Full` events
 are queue backpressure, not evidence by themselves that the CPU is starving the GPU.
 The profile run's uncaptured windows were approximately 58.8k TPS/GPU, versus 76.9–78.2k
-in independent unprofiled baselines. Instrumentation/compiler effects and node differences
-are not separated, so the profile identifies candidate work, not a clean speedup budget.
+in independent unprofiled baselines. The later unprofiled EMO baseline also ran near
+58.8k on the same degraded topology. This is not explained by profiler overhead alone;
+the trace identifies candidate work, not a clean healthy-cluster speedup budget.
 The kernel names alone also do not establish which NCCL protocol was selected.
 
 The [read-only diagnostic export](https://beaker.org/ex/01M1QQYF7BVWQ6RB9WAW8XZ61F)
@@ -82,6 +87,58 @@ Its largest cumulative allocation sites are expert activation/backward and group
 GEMM buffers, consistent with the transient-memory bottleneck. Cumulative allocations
 are traffic, not simultaneous live memory. All raw captures and source checkpoints
 remain untouched; the diagnostic job used no GPUs.
+
+## Baseline reproducibility: disconnected NVLink GPU
+
+Read-only host inspection on 2026-09-05 identified **GPU1 on
+`holmes-cs-aus-485.reviz.ai2.in`**, UUID
+`GPU-abfa9313-09fd-6bc9-ca4d-7bedd9019cef`, with all NVLink links inactive.
+`nvidia-smi topo -m` shows GPU1 reaching the other seven GPUs through NODE/SYS,
+whereas their mutual links show NV18. `nvidia-smi nvlink --status -i 1` reports:
+`NVML: Unable to retrieve Nvlink information as all links are inActive`.
+
+The current EMO matrix's node4 job is `01M1QQCZNWS27BTP1E87PRHKQP`. Its NCCL logs
+place global rank33 / GPU1 alone (`localRanks 1`) and its seven peers together
+(`localRanks 7`). Both slow runs report `nRanks 64 nNodes 9`, despite eight physical
+nodes. Healthy timing allocations report eight NCCL nodes. All use the same image,
+NCCL 2.28.9+cuda13.0, model, batch, and relevant launch flags.
+
+| Allocation | Median/observed baseline TPS/GPU | NCCL nodes | Collective channels | NVLS channels |
+|---|---:|---:|---:|---:|
+| Original timing matrix | 78,222 median | 8 | 28 | 32 |
+| Compiler-no-op A/B | 76,921 median | 8 | 16 | 32 |
+| PyTorch capture | ~58,800, uncaptured windows | 9 | 4 | 0 |
+| First EMO matrix | ~58,800, provisional logs | 9 | 4 | 0 |
+
+This is a concrete hardware/fabric degradation and the leading explanation for the
+slow tier, not a new model/compiler regression. A fresh healthy-node comparison is
+still required to quantify recovery and isolate any remaining instrumentation effects.
+Do not force NCCL to assume connectivity that the hardware does not provide.
+
+Follow-ups exclude host485 via the existing `OLMOE3_ALLOWED_HOSTNAMES` allowlist.
+`olmoe3_profile_topology.py` validates the entire eight-GPU local NVLink matrix before
+workers launch, retaining diagnostics on Weka. No GPU reset, node cordon, or other
+administrator action was attempted. Infrastructure needs to inspect/repair this host.
+
+## Non-fusion communication experiments
+
+- Added opt-in `OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH=1`: a single-parameter
+  gradient bucket is already in rank-major order, so it skips scratch packing and
+  copy-back. Dtype conversion still uses a dedicated per-bucket communication buffer.
+  Multi-parameter buckets keep the original permutation and stable asynchronous input
+  ownership. The production/default flag remains off.
+- Nine new CPU/gloo distributed tests passed (three layout/group patterns × three
+  precision modes, both old/new paths, repeated reductions). Three existing gloo
+  gradient/accumulation/group-routing tests also passed with the flag enabled; two
+  GPU-only cases were skipped locally. Ten topology/sequential-plan tests passed.
+- GPU qualification runs the new NCCL parity tests, existing optimizer/gradient tests,
+  and an isolated 1/2-GiB gradient-bucket microbenchmark in old/new/old order on two B300s.
+  Isolated timing must not be reported as a 64-GPU whole-model gain.
+- Optimizer gathering remains investigation-only. It gathers into rank-major temporary
+  storage, then copies into parameter-major contiguous model views. Simply gathering
+  directly into the model buffer would change layout; simply retaining the 23.28-GiB
+  temporary can increase live memory despite allocator caching. No such change is made
+  without new lifetime/layout tests and evidence from a healthy-node profile.
 
 ## Other controlled candidates
 

@@ -80,6 +80,10 @@ class ProfileMetrics(Callback):
                 "pass": PASS,
                 "variant": VARIANT,
                 "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
+                "reduce_scatter_single_param_fast_path": os.environ.get(
+                    "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"
+                )
+                == "1",
                 "kda_min_ctas": 128 if VARIANT.startswith("kda-128") else 256,
                 "kernel_fun_commit": "7a6983baf2beb4ec4d7fe914ec9f6670438af99b",
                 "qk_norm_pr": 855,
@@ -122,6 +126,10 @@ def common_components(cli_context, **kwargs):
     common.work_dir = DATA_WORK_DIR
     common.save_folder = f"{ARTIFACT_ROOT}/{common.run_name}"
     if (launch := common.launch) is not None:
+        # Supply all eligible Holmes hosts except the known disconnected-NVLink host.
+        # The runtime topology preflight also catches degradation on any other host.
+        if launch.hostnames and "holmes-cs-aus-485.reviz.ai2.in" in launch.hostnames:
+            raise ValueError("Host 485 has a disconnected GPU; exclude it pending repair")
         launch.min_runtime = "1h"
         launch.retries = 0
         launch.preemptible = False
@@ -148,6 +156,9 @@ def common_components(cli_context, **kwargs):
                 BeakerEnvVar(
                     "OLMOE3_DEEP_PROFILE_PASSES",
                     os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch"),
+                ),
+                BeakerEnvVar(
+                    "OLMOE3_DEEP_PROFILE_PLAN", os.environ.get("OLMOE3_DEEP_PROFILE_PLAN", "")
                 ),
             ]
         )
@@ -180,7 +191,7 @@ def train_module_config(common):
     config.optim.lr = LEARNING_RATE
     config.scheduler = WSD(warmup=2000, decay=1, decay_fraction=None)
     config.expand_shared_qk_norm_on_load = True
-    if VARIANT == "reduce-scatter":
+    if VARIANT in ("reduce-scatter", "reduce-scatter-single-param"):
         config.dp_config.use_reduce_scatter = True
     elif VARIANT not in (
         "baseline",

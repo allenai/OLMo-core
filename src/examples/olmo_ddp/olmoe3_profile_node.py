@@ -7,10 +7,30 @@ Ready markers are keyed by actual job ID, so an old job cannot satisfy the barri
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+
+def profile_plan(variants, modes, explicit_plan=""):
+    """Allow timing several variants but capturing only the selected candidate."""
+    pairs = (
+        [tuple(item.split(":")) for item in explicit_plan.split(",")]
+        if explicit_plan
+        else [(variant, mode) for variant in variants for mode in modes]
+    )
+    if not pairs or len(pairs) != len(set(pairs)):
+        raise ValueError("Empty or duplicate profile passes would overwrite artifacts")
+    for pair in pairs:
+        if (
+            len(pair) != 2
+            or not re.fullmatch(r"[a-z0-9-]+", pair[0])
+            or pair[1] not in ("timing", "torch", "nsys")
+        ):
+            raise ValueError(f"Invalid profile pair: {pair}")
+    return pairs
 
 
 def resolve_ready_leader(beaker, workload, ready_dir: Path, expected_nodes: int):
@@ -49,6 +69,13 @@ def main():
     gpus = int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"])
     if nodes != 8 or gpus != 8:
         raise RuntimeError(f"This profile requires 8x8 GPUs, got {nodes}x{gpus}")
+    topology_dir = (
+        Path("/weka/olmo-3p5-checkpoints/production-profiling/topology") / workload_id / job_id
+    )
+    subprocess.run(
+        [sys.executable, "src/examples/olmo_ddp/olmoe3_profile_topology.py", str(topology_dir)],
+        check=True,
+    )
     ready_dir = Path("/weka/olmo-3p5-checkpoints/production-profiling/rendezvous") / workload_id
     ready_dir.mkdir(parents=True, exist_ok=True)
     temporary = ready_dir / f"{job_id}.tmp"
@@ -76,10 +103,12 @@ def main():
         "OLMOE3_DEEP_PROFILE_VARIANTS", os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
     ).split(",")
     modes = os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(",")
-    for index, (variant, mode) in enumerate((v, m) for v in variants for m in modes):
+    pairs = profile_plan(variants, modes, os.environ.get("OLMOE3_DEEP_PROFILE_PLAN", ""))
+    multiple_variants = len({variant for variant, _ in pairs}) > 1
+    for index, (variant, mode) in enumerate(pairs):
         # A separate agent and port avoids retaining rendezvous keys from the previous
         # training process. The same eight nodes are retained for fair timing comparisons.
-        name = f"{run_name}-{variant}" if len(variants) > 1 else run_name
+        name = f"{run_name}-{variant}" if multiple_variants else run_name
         command = [
             sys.executable,
             "-m",
@@ -101,6 +130,9 @@ def main():
             OLMOE3_DEEP_PROFILE_VARIANT=variant,
             OLMOE3_DEEP_PROFILE_PASSES=mode,
             OLMO_PROFILE_SAFE_NOOP_NVTX="1" if variant == "compile-noop-nvtx" else "0",
+            OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH="1"
+            if variant == "reduce-scatter-single-param"
+            else "0",
         )
         print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
         subprocess.run(command, env=env, check=True)
