@@ -274,7 +274,7 @@ not yet established. It is not enabled in the baseline.
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
 CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
 
-## Nsight repair and next sequence (2026-09-05 05:38 UTC)
+## Nsight repair and next sequence (2026-09-05 06:03 UTC)
 
 Two-GPU repro `01M1QWYVBR97EA4G9RXCCC82TE` (source `772a914b2`) reproduced the installed
 2025.3.1 segfault in both matched/full and reduced tracing settings. The identical
@@ -309,6 +309,9 @@ Next actions:
    checks do not establish long-run quality. Dataset `01M1QYT2B7DDJF9AR8HYY70CDH`.
    Continue with fresh unprofiled timing and separate torch/light-Nsight captures of
    the faster candidate; require its expected Triton gradient-add kernels in the trace.
+   These are running as `01M1R17MJ5BNM7QS6NPVTBJQY8`, source `a401daccf`, with CPU
+   collector `01M1R17XVBFB9MNDG4MRX93Y28`. Nsight 2026.4.1 captures ranks0/8/.../56
+   at updates36–37 with per-op autograd NVTX disabled; application NVTX remains.
 2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
    keeping instrumented versus clean timing separate. CPU-only SQLite analysis
    `01M1QZ3PNYDRJR54GDRBZ89RAG` completed exit0, dataset `01M1QZ3PPA7ES6SGR0H8811RDP`.
@@ -316,9 +319,22 @@ Next actions:
    Nsight's exposed-collective intervals exceed the separate PyTorch capture; a lighter
    follow-up without per-op autograd NVTX should precede conclusions about communication.
    Prioritize expert GEMMs and activation/backward traffic after the gradient-add result.
-   A one-B300 activation probe first measures existing compiled BF16 SwiGLU under
-   default / pointwise-coordinate tuning / default, with exact outputs/gradients and
-   generated-code export. No production-wide compiler flags or new activation math.
+   The one-B300 activation probe `01M1R18061X37H5332NRN9EMCZ` completed exact
+   outputs/gradients under default / pointwise-coordinate tuning / default, with
+   generated-code export. Forward+backward: 2.26384 / 2.16994 / 2.26381ms. No global
+   compiler flag changed. Generated backward repeats loads/exponentials across the
+   concatenated gradient halves and keeps intermediates FP32 until the BF16 stores.
+   A paired-output implementation preserves this generated arithmetic and passed
+   raw one-GPU checks `01M1R1FT7TDYNESRG3KSX3FE3M`, including all 1,073,741,824 real-
+   shape output elements and empty/tail/nonfinite cases. Backward 1.77 → 0.769ms,
+   ~2.3× isolated speed, not a training gain. Source `2e9613c62`.
+   Default-off integration at `3b020ad05` passed both GPU tests in
+   `01M1R1SNRYD1FP6E56NA5NZZPM`: compiled forward/backward plus actual compiled routed
+   experts with FP32 accumulation/reduction and sharded Adam, three eight-microbatch
+   updates, exact losses/gradients/weights/states. The full-model timing A/B is now
+   submitted as `01M1R2JQX90JAQ5KGQQRHRH5QJ`, collector `01M1R2KKP49KZ03NS7NZ996TJG`.
+   Both arms keep KDA128/EMO-inverse-scatter/vectorized-grad-add and change only
+   `OLMO_PROFILE_SWIGLU_PAIRWISE`, independently restoring step7500 for 60 updates.
    FP32 router GEMMs are visible but changing their precision is not a free optimization.
    Any future GEMM/gradient-accumulator fusion must preserve the existing intermediate
    BF16 gradient rounding before FP32 addition; direct unrounded FP32 accumulation is
@@ -332,6 +348,12 @@ Next actions:
    prototypes at larger rank count and in an optimizer step. The two-GPU bucket/gather
    improvements are milliseconds, not 13–32% end-to-end gains. Preserve asynchronous
    buffer lifetimes and parameter layout; defaults remain unchanged.
+
+Future launch allowlists exclude hosts485 and516. Host485 has the diagnosed disconnected
+NVLink GPU. Host516 separately failed Beaker's pre-start health check twice and was
+replaced before training; the same underlying hardware fault is not established.
+No administrator-level host changes were made. Every full-model launch still requires
+the complete eight-GPU local NVLink preflight on each assigned node.
 
 Selective Nsight launch controls (in addition to the normal launch command and healthy
 host allowlist):

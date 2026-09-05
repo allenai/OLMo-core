@@ -4,12 +4,15 @@ Updated 2026-09-05 UTC. See [protocol and run ledger](SMALL_16MI_DEEP_PROFILE.md
 for source revisions, exact model settings, checkpoint migration, and failed attempts.
 No production/CBS checkpoint or uploader state is modified by these tests.
 
-**Current status (05:38 UTC):** Nsight Systems is fixed and validated on the full
+**Current status (06:03 UTC):** Nsight Systems is fixed and validated on the full
 64-B300 model under standalone 2026.4.1. The latest healthy same-node comparison is
 78,115 → 82,190 → 85,888 median TPS/GPU for baseline → KDA128 → KDA128+EMO inverse
 scatter (+9.95%, 374.38 idealized TFLOPs/GPU). The default-off gradient-add candidate
 passed exact two-GPU sharded-Adam qualification and improved its subsequent same-node
 A/B from 84,523 to 88,234 median TPS/GPU (+4.39%, 384.61 idealized TFLOPs/GPU).
+The faster candidate is running fresh timing/PyTorch/light-Nsight passes. The next
+paired-SwiGLU backward candidate passed exact one-GPU and two-GPU compiled/sharded-Adam
+checks; its 64-GPU same-allocation A/B is submitted, with no full-model gain claimed yet.
 See the dated healthy-confirmation and Nsight sections below; the earlier bad-fabric
 capture is retained as diagnostic history, not the current performance reference.
 
@@ -128,6 +131,11 @@ Follow-ups exclude host485 via the existing `OLMOE3_ALLOWED_HOSTNAMES` allowlist
 `olmoe3_profile_topology.py` validates the entire eight-GPU local NVLink matrix before
 workers launch, retaining diagnostics on Weka. No GPU reset, node cordon, or other
 administrator action was attempted. Infrastructure needs to inspect/repair this host.
+
+From 06:02 UTC, new allocations also exclude host516, which failed Beaker's pre-start
+health check twice (initial tasks in the gradient-add A/B and its subsequent profile).
+Beaker replaced both before training started. This is not evidence of the same NVLink
+fault as host485; no host-level intervention was performed.
 
 ## Non-fusion communication experiments
 
@@ -360,14 +368,14 @@ checks. No long-run quality/stability claim or production default change is made
 The earlier 85,888-TPS combined arm ran on a different allocation; use 84,523 here
 for this optimization's controlled comparison.
 
-Next wave: a fresh timing/torch/light-Nsight pass of the improved candidate, and a
-one-B300 probe of the existing compiled expert SwiGLU at `[524288,2048]`. The latter
-compares default / pointwise-coordinate tuning / default with exact forward/backward
-checks and saved generated code, before any new activation implementation. The lighter
+This wave includes fresh timing/torch/light-Nsight passes of the improved candidate,
+and the completed one-B300 probe of compiled expert SwiGLU at `[524288,2048]` described
+below. That probe compares default / pointwise-coordinate tuning / default with exact
+forward/backward checks and saved generated code. The lighter
 Nsight mode disables per-op autograd NVTX only; CUDA/NCCL and application NVTX remain.
 
 Follow-up [64-GPU timing/torch/light-Nsight run](https://beaker.org/ex/01M1R17MJ5BNM7QS6NPVTBJQY8),
-source `a401daccf`, is queued with [CPU collector](https://beaker.org/ex/01M1R17XVBFB9MNDG4MRX93Y28).
+source `a401daccf`, is running with [CPU collector](https://beaker.org/ex/01M1R17XVBFB9MNDG4MRX93Y28).
 It uses the gradient-add candidate, three independent 60-update restores, and
 `OLMOE3_NSYS_AUTOGRAD_NVTX=0`. The revised callback passed lifecycle tests with and
 without autograd annotations. This run does not contain the new activation prototype.
@@ -397,10 +405,23 @@ about **2.3× isolated backward speed**, ~120ms/update serial potential, not a f
 gain. Other settings measure 0.77338/0.77912/0.79011ms. Dataset
 `01M1R1FT838RC8AZ7SKA912X1E` retains the full results.
 
-The default-off `OLMO_PROFILE_SWIGLU_PAIRWISE=1` training hook is now prepared, with
-compiled-autograd and two-GPU routed-expert/sharded-Adam tests. No full-model activation
-A/B is launched until these integration checks pass. Model structure and saved
-activation storage remain unchanged; no additional recomputation is introduced.
+The default-off `OLMO_PROFILE_SWIGLU_PAIRWISE=1` training hook passed its
+[two-B300 integration qualification](https://beaker.org/ex/01M1R1SNRYD1FP6E56NA5NZZPM)
+at 05:52 UTC, source `3b020ad05`: both tests passed. The first checks compiled forward
+and backward with exact output/gradient agreement and verifies that generated code
+contains the new kernel. The second uses actual compiled routed experts, FP32 gradient
+accumulation/reduction, and sharded Adam: three updates with eight microbatches each,
+including both gradient-clearing modes. Per-microbatch losses, reduced gradients,
+weights, and all local optimizer-state tensors match at zero tolerance; no skips.
+
+That gate passed before submitting the [64-GPU activation A/B](https://beaker.org/ex/01M1R2JQX90JAQ5KGQQRHRH5QJ)
+at 06:02 UTC, with [CPU collector](https://beaker.org/ex/01M1R2KKP49KZ03NS7NZ996TJG).
+Source `3b020ad05`; 8 Holmes nodes, urgent/allocated1h, hosts485/516 excluded.
+Fresh 60-update step7500 restores compare `kda-128-emo-inverse-scatter-grad-add`
+against that same variant plus `-act-pair`, using updates31–60 and no active profiler.
+All model, training, KDA, EMO, and gradient-add settings are identical across arms.
+Model structure and saved activation storage remain unchanged; no additional
+recomputation is introduced. The isolated 2.3× result is not yet a full-model gain.
 
 ### Nsight capture repair
 
@@ -503,27 +524,33 @@ Moreover the real small model peaks during forward/backward, not this optimizer
 copy stage; this result does **not** establish that MB8 would fit. The prototype
 remains benchmark-only. Result dataset: `01M1QVEPEF8VKF6MC1P73HER2H`.
 
-### Priorities after healthy confirmation
+### Current priorities after healthy confirmation
 
-1. Finish same-allocation baseline/KDA/KDA+EMO timing, then analyze the combined
-   healthy PyTorch capture. Do not use degraded-topology communication percentages
-   as the optimization budget for a healthy production allocation.
-2. If communication remains substantial, qualify packing-free reduce-scatter and
-   the gather prototype at the relevant inter-node scale before full-model A/Bs.
-   Their isolated savings are milliseconds, not yet large end-to-end improvements.
-3. Rank grouped expert GEMMs, FP32 gradient-accumulation traffic, and remaining KDA
-   work from the healthy trace. Only then choose further kernel/epilogue fusion.
+1. Collect the faster gradient-add candidate's timing/PyTorch/light-Nsight passes.
+   Confirm the new gradient-add kernel is used, measure remaining activation/GEMM
+   work, and compare instrumentation overhead. Do not treat traced communication
+   fractions as a normal-run removable-time budget.
+2. Collect the paired-SwiGLU full-model A/B after its passed integration tests.
+   Check all 60 losses/gradient norms/skips and actual allocated memory, not just TPS.
+   Compare same-node updates31–60; exact primitive tests do not prove long-run quality.
+3. Use the refreshed traces to choose the next grouped-GEMM or KDA optimization.
    Preserve architecture, BF16 computation, FP32 accumulation, scalable softmax,
-   EMO, batch, LR, and the no-recomputation policy.
+   EMO, batch, LR, and the no-recomputation policy. Future GEMM/gradient-add fusion
+   must retain BF16 weight-gradient rounding before FP32 accumulation.
+4. Nsight Compute hardware counters require infra to enable permitted access
+   (`ERR_NVGPUCTRPERM`). In the meantime use exact microbenchmarks and end-to-end A/Bs.
+   Only pursue the packing/gather prototypes at inter-node scale if the refreshed
+   trace supports it; their demonstrated isolated savings are milliseconds.
 
 At this branch's FLOP accounting, 600 TFLOPs/GPU requires approximately 137.65k
-TPS/GPU (1.904s/update), about 67.5% above the previous 82.16k KDA result. The small
-copy optimizations alone cannot close that gap. No additional 64-GPU allocation
-was launched solely for either copy prototype while the healthy capture is pending.
+TPS/GPU (1.904s/update), about 56.0% above the current 88.23k gradient-add result.
+The small copy optimizations alone cannot close that gap. No additional 64-GPU
+allocation was launched solely for either communication-copy prototype.
 
-No experimental flag was enabled in the original CBS/production branch. No model
-fusion, training optimizer all-gather rewrite, precision change, recomputation, or shared EP
-output buffers were introduced.
+No experimental flag was enabled in the original CBS/production branch. No
+GEMM/KDA-layer fusion, training optimizer all-gather rewrite, precision change,
+recomputation, or shared EP output buffers were introduced. The paired activation
+prototype is a default-off kernel rewrite, not an architecture change.
 
 ## PR859 audit: already-covered kernel implementation
 
@@ -562,8 +589,9 @@ Further fusion is deferred until the current controlled comparisons are settled.
 ## The 600-TFLOPs target
 
 With this FLOP accounting, 600 TFLOPs/GPU requires about 137.65k TPS/GPU and
-1.904s/update. That is 75.97% above the baseline or 67.54% above the cutoff128 result.
-The observed KDA improvement alone is not close. Larger gains need measured reductions
+1.904s/update. That is about 56.0% above the latest 88,234 TPS/GPU / 384.61 TFLOPs/GPU
+gradient-add result. The measured improvements so far do not close that gap.
+Larger gains need measured reductions
 inside each microbatch, not just an optimizer communication flag. Kernel-duration sums
 must not be added across overlapping streams and treated as end-to-end time savings.
 
