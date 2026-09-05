@@ -39,15 +39,28 @@ def budget_tokens(b):
 
 _MODELS = {}
 SCALE = "4b"  # FLOP pricing follows the model scale (collect_scale.py switches this per ladder rung)
+FAMILY = "qwen3_5"  # qwen3_5 (GDN hybrid) | qwen3 (dense; the fs35q3* runs)
 
 
 def _model():
     from olmo_core.nn.transformer import TransformerConfig
-    if SCALE not in _MODELS:
-        fac = {"0.8b": TransformerConfig.qwen3_5_0_8B, "2b": TransformerConfig.qwen3_5_2B, "4b": TransformerConfig.qwen3_5_4B,
-               "9b": TransformerConfig.qwen3_5_9B, "27b": TransformerConfig.qwen3_5_27B}[SCALE]
-        _MODELS[SCALE] = fac(vocab_size=248320).build(init_device="meta")
-    return _MODELS[SCALE]
+    key = (FAMILY, SCALE)
+    if key not in _MODELS:
+        if FAMILY == "qwen3":
+            fac = {"4b": TransformerConfig.qwen3_4B}[SCALE]
+            _MODELS[key] = fac(vocab_size=151936).build(init_device="meta")
+        else:
+            fac = {"0.8b": TransformerConfig.qwen3_5_0_8B, "2b": TransformerConfig.qwen3_5_2B, "4b": TransformerConfig.qwen3_5_4B,
+                   "9b": TransformerConfig.qwen3_5_9B, "27b": TransformerConfig.qwen3_5_27B}[SCALE]
+            _MODELS[key] = fac(vocab_size=248320).build(init_device="meta")
+    return _MODELS[key]
+
+
+def fixed_per_token():
+    """FLOPs/token OUTSIDE the blocks (embeddings, LM head): what block skipping cannot remove."""
+    m = _model()
+    blocks = sum(int(b.feed_forward.num_flops_per_token(1)) + int(b.attention.num_flops_per_token(1)) for b in m.blocks.values())
+    return int(m.num_flops_per_token(1)) - blocks
 
 
 def fpt(L):
@@ -69,15 +82,15 @@ def attn_score_per_token(L):
     """Length-dependent (QK^T + PV) FLOPs/token summed over the FULL-attention layers -- the part
     of attention the KV router scales by its keep fraction."""
     from olmo_core.nn.attention import Attention
-    if (SCALE, L) not in _ATTN_CACHE:
+    if (FAMILY, SCALE, L) not in _ATTN_CACHE:
         m = _model()
-        _ATTN_CACHE[(SCALE, L)] = int(sum(
+        _ATTN_CACHE[(FAMILY, SCALE, L)] = int(sum(
             b.attention.num_flops_per_token(int(L)) - b.attention.num_flops_per_token(0)
             for b in m.blocks.values() if type(b.attention) is Attention))
-    return _ATTN_CACHE[(SCALE, L)]
+    return _ATTN_CACHE[(FAMILY, SCALE, L)]
 
 
-def arm_flops(lengths, ffn_cost=1.0, attn_keep=1.0):
+def arm_flops(lengths, ffn_cost=1.0, attn_keep=1.0, block_keep=1.0):
     """Sum over examples of L * [fpt(L) - ffn_per_tok * (1 - ffn_cost) - attn_score(L) * (1 - attn_keep)],
     with attention priced at each example's REAL length (the dense arms train packed with
     per-example masking; the padded 65536 window the meter uses would inflate attention ~10x).
@@ -86,11 +99,14 @@ def arm_flops(lengths, ffn_cost=1.0, attn_keep=1.0):
     total = 0.0
     for L in lengths:
         b = max(256, (int(L) + 255) // 256 * 256)
-        if (SCALE, b) not in _FPT_CACHE:
-            _FPT_CACHE[(SCALE, b)] = fpt(b)
-        per_tok = _FPT_CACHE[(SCALE, b)] - ffn * (1.0 - ffn_cost)
+        if (FAMILY, SCALE, b) not in _FPT_CACHE:
+            _FPT_CACHE[(FAMILY, SCALE, b)] = fpt(b)
+        per_tok = _FPT_CACHE[(FAMILY, SCALE, b)] - ffn * (1.0 - ffn_cost)
         if attn_keep < 1.0:
             per_tok -= attn_score_per_token(b) * (1.0 - attn_keep)
+        if block_keep < 1.0:  # skipped tokens save the whole block; the fixed part stays
+            fixed = fixed_per_token()
+            per_tok = fixed + block_keep * (per_tok - fixed)
         total += L * per_tok
     return total / 1e15
 
@@ -139,7 +155,10 @@ def fetch_eval(run, ex):
     return d if glob.glob(f"{d}/**/*multirung*.json", recursive=True) else None
 
 
-def main(state_path=STATE, out_csv=None, scale="4b", prior_dense=True, run_fit=True):
+def main(state_path=STATE, out_csv=None, scale="4b", prior_dense=True, run_fit=True, family=None):
+    global FAMILY
+    if family:
+        FAMILY = family
     global SCALE
     SCALE = scale
     out_csv = out_csv or f"{OUT}/results35.csv"
@@ -220,7 +239,8 @@ def main(state_path=STATE, out_csv=None, scale="4b", prior_dense=True, run_fit=T
                 # meter summary carries the token-weighted routing fractions directly
                 keep = fl.get("kv_route_keep_frac") or 1.0
                 c = fl.get("ffn_cost_frac") or 1.0
-                pf = arm_flops(lens, ffn_cost=c, attn_keep=keep) if lens else fl["actual_pflops"]
+                bk = fl.get("block_skip_keep_frac") or 1.0
+                pf = arm_flops(lens, ffn_cost=c, attn_keep=keep, block_keep=bk) if lens else fl["actual_pflops"]
             elif r["arm"].startswith("ffnmoe"):
                 # back out the mean routed FFN cost from the meter's own (padded-window) ratio,
                 # then re-price with real lengths: ratio = 1 - ffn_frac65k * (1 - c)
