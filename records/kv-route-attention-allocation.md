@@ -142,3 +142,23 @@ with FLOP shares evaluated at 8k (`--flex-share-seq-len`), because shares at the
 over-credit attention (score FLOPs ≈ 50% there vs ~12% at real lengths) and would steer the whole
 saving into eviction. Achievable floor at 8k ≈ 1 − 0.36 (FFN L12+) − 0.12 (attn) ≈ 0.52, so 0.70
 and 0.60 leave the router a real choice of split.
+
+### Stage B (joint budget) — how the model splits the saving (2026-09-05 02:00, training-time)
+
+Shares at 8k: FFN(L12+) 0.347, attention-score 0.131, fixed 0.522.
+
+| run | joint target | FFN mean cost (L12+) | KV keep | final train CE |
+|---|---|---|---|---|
+| contradiction 56M flex-c70 | 0.70 | 0.145 (6.9x) | **0.997** | 0.033 |
+| contradiction 56M flex-c60 | 0.60 | 0.008 (~120x) | 0.56 (L3–L11 full, L15 .63, L19–L27 ~.1, L31 .51) | 0.058 |
+| oolong 80M flex-c70 | 0.70 | 0.141 (7.1x) | **0.998** | 0.196 |
+| oolong 80M flex-c60 | 0.60 | 0.009 (112x) | 0.58 (L3–L15 full, L19 .45, L23+ ≤.1) | 0.260 |
+
+Given a free choice, BOTH tasks spend the entire 30% saving on FFN width and keep every key
+(keep 0.998 at target 0.70). Only when the budget exceeds what FFN can give (0.60 needs 0.40 >
+0.347) does the router start evicting cache, and then it still drives FFN to ~1% first. So the
+learned preference is FFN-first, cache-last — the opposite ordering from the Stage A intuition
+that attention is the cheap thing to cut. Contradiction at 0.60 sits at CE 0.058 vs dense 0.04
+with L12+ FFN at 1/120 width AND 44% of keys evicted; the eval will say whether that holds.
+(Dense-priced: 0.60 of dense training FLOPs = 1.67x; on the ROUTED share it is FFN 120x x
+attention 1.8x.)
