@@ -2,7 +2,37 @@
 
 import sqlite3
 
-from examples.olmo_ddp.olmoe3_nsys_tools import summarize_sqlite
+import pytest
+
+from examples.olmo_ddp.olmoe3_nsys_tools import NsysSettings, summarize_sqlite
+
+
+def test_settings_preserve_historical_capture():
+    settings = NsysSettings.from_env({})
+    assert settings.ranks == tuple(range(64))
+    assert settings.version == "installed"
+    assert settings.clean_windows(100) == [[31, 70], [81, 100]]
+
+
+def test_selective_short_capture():
+    settings = NsysSettings.from_env(
+        {
+            "OLMOE3_NSYS_VERSION": "2026.4.1",
+            "OLMOE3_NSYS_RANKS": "0,8,16,24,32,40,48,56",
+            "OLMOE3_NSYS_START": "36",
+            "OLMOE3_NSYS_END": "37",
+        }
+    )
+    assert settings.ranks == tuple(range(0, 64, 8))
+    assert settings.clean_windows(60) == [[31, 35], [45, 60]]
+    with pytest.raises(ValueError, match="ends before capture"):
+        settings.clean_windows(35)
+
+
+@pytest.mark.parametrize("ranks", ["", "0,0", "-1", "64", "0,8,64"])
+def test_invalid_capture_ranks(ranks):
+    with pytest.raises(ValueError):
+        NsysSettings.from_env({"OLMOE3_NSYS_RANKS": ranks})
 
 
 def test_empty_report(tmp_path):

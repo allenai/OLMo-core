@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+from olmoe3_nsys_tools import install_nsys
+
 ROOT = Path("/weka/olmo-3p5-checkpoints/production-profiling")
 
 
@@ -22,6 +24,7 @@ def main():
     args = parser.parse_args()
     pending = list(args.names)
     deadline = time.monotonic() + 7200
+    standalone_nsys = None
     for name in pending:
         if Path(name).name != name:
             raise ValueError("Expected a run directory name, not a path")
@@ -34,12 +37,18 @@ def main():
             if not args.allow_partial and len(list(run.glob("memory-rank-*.json"))) != 64:
                 continue
             provenance = json.loads((run / "provenance.json").read_text())
-            if (
-                not args.allow_partial
-                and provenance["pass"] == "nsys"
-                and len(list(run.glob("nsys-rank-*.nsys-rep"))) != 64
-            ):
-                continue
+            if not args.allow_partial and provenance["pass"] == "nsys":
+                ranks = provenance.get("nsys_profiled_ranks") or list(range(64))
+                if not all((run / f"nsys-rank-{rank}.nsys-rep").is_file() for rank in ranks):
+                    continue
+                if provenance.get("nsys_version") not in (None, "installed"):
+                    markers = [run / f"nsys-rank-{rank}-validation.json" for rank in ranks]
+                    if not all(path.is_file() for path in markers):
+                        continue
+                    if not all(
+                        json.loads(path.read_text())["valid_cuda_trace"] for path in markers
+                    ):
+                        raise RuntimeError(f"Invalid CUDA capture in {name}")
             ready.append(name)
         if not ready:
             if time.monotonic() > deadline:
@@ -65,6 +74,7 @@ def main():
         for filename in ("analysis.json", "metrics.jsonl", "provenance.json"):
             shutil.copy2(run / filename, destination / filename)
         summary = json.loads((run / "analysis.json").read_text())
+        provenance = summary["provenance"]
         summary["partial_collection"] = args.allow_partial
         (destination / "analysis.json").write_text(json.dumps(summary, indent=2))
         print("PROFILE_PARTIAL_COLLECTION", name, args.allow_partial, flush=True)
@@ -84,10 +94,17 @@ def main():
         nsys = (
             shutil.which("nsys") or "/opt/nvidia/nsight-compute/2025.3.1/host/target-linux-x64/nsys"
         )
-        for rank in range(0, 64, 8):
+        if provenance.get("nsys_version") not in (None, "installed"):
+            if standalone_nsys is None:
+                standalone_nsys = install_nsys()
+            nsys = str(standalone_nsys)
+        for rank in provenance.get("nsys_profiled_ranks") or range(0, 64, 8):
             report = run / f"nsys-rank-{rank}.nsys-rep"
             if not report.is_file():
                 continue
+            validation = run / f"nsys-rank-{rank}-validation.json"
+            if validation.is_file():
+                shutil.copy2(validation, destination / validation.name)
             output = destination / f"nsys-rank-{rank}-stats.txt"
             with output.open("w") as handle:
                 result = subprocess.run(

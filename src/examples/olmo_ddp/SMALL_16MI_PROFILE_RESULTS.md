@@ -225,14 +225,14 @@ preflights passed. At 03:57 the baseline was still in cold compilation, so there
 was not yet a fresh steady-state TPS measurement. The infrastructure team has been
 alerted to host485 by the user.
 
-**Fresh baseline completed 04:04 UTC:** all 60 updates finished and all 64 memory
-completion markers were collected. Unprofiled updates31–60:
+**Fresh healthy timings completed 04:22 UTC:** all three 60-update arms finished and
+all 64 memory completion markers per arm were collected. Unprofiled updates31–60:
 
 | Healthy confirmation arm | Mean TPS/GPU | Median TPS/GPU | Median TFLOPs/GPU | Median step (s) | Mean CE | Window skips |
 |---|---:|---:|---:|---:|---:|---:|
 | Baseline, default KDA dispatch | 78,092 | 78,115 | 340.500 | 3.3559 | 1.950790 | 0 |
-| KDA cutoff128 | — | — | — | — | — | — |
-| KDA cutoff128 + EMO inverse scatter | — | — | — | — | — | — |
+| KDA cutoff128 | 82,139 | 82,190 | 358.261 | 3.1895 | 1.950825 | 0 |
+| KDA cutoff128 + EMO inverse scatter | 85,831 | 85,888 | 374.381 | 3.0522 | 1.950823 | 0 |
 
 Baseline TPS standard deviation is 289 across the 30 timed updates. Median cluster
 throughput is approximately 5.00M tokens/s. This is within 0.14% of the original
@@ -240,9 +240,42 @@ healthy 78,222 median, and 32.8% faster than the degraded 58,832 median. Differe
 allocations were used for the hardware comparison, so this is strong corroboration
 of the confirmed NVLink fault rather than a perfectly isolated one-node swap test.
 First-update CE is 1.9896239042; gradient norm 0.0734193027. Active/reserved memory
-in the clean window is 175.466 / 178.504 GiB. The remaining two timing arms and
-combined PyTorch capture are sequentially scheduled on this same allocation; no
-fresh combined throughput is claimed yet. The CPU collector is still running.
+in the clean window is 175.466 / 178.504 GiB. KDA-only improves median TPS by 5.22%;
+the combination improves it by 9.95% over baseline and 4.50% over KDA-only. Combined
+median cluster throughput is 5.497M tokens/s. TPS standard deviations are 289 / 295 /
+357 respectively, across the 30 measured updates. Combined first-update CE is
+1.9896166325, gradient norm 0.0734279081; active/reserved memory is 175.465 / 175.799 GiB.
+Loss agreement is a short-run numerical check, not a long-run stability guarantee.
+The combined PyTorch capture follows on the same allocation; its CPU collector remains
+active. Do not use profiled step timings in the unprofiled comparison above.
+
+### Nsight capture repair
+
+The [two-B300 reproducer](https://beaker.org/ex/01M1QWYVBR97EA4G9RXCCC82TE)
+completed at 04:29 UTC, source `772a914b2`. It exercises pinned H2D copies at the
+actual 4×8192×1024 activation shape, forward/backward, asynchronous gradient reduction,
+and model-weight gathering. Three warmup iterations precede two captured iterations.
+This is a primitive workload, not the full compiled MoE.
+
+| Profiler | Trace setup | Result |
+|---|---|---|
+| Installed 2025.3.1.0 | Both ranks, CUDA/NVTX/OSRT, autograd NVTX enabled | Segfault, exit139 in a traced worker |
+| Installed 2025.3.1.0 | Rank0 only, CUDA/NVTX, autograd NVTX disabled | Segfault, exit139 in the traced worker |
+| Standalone 2026.4.1.191 | Both ranks, CUDA/NVTX/OSRT, autograd NVTX enabled | Pass; both reports have 46 kernels, 8 memory copies, 7 NCCL kernels |
+| Standalone 2026.4.1.191 | Rank0 only, CUDA/NVTX, autograd NVTX disabled | Pass; report has 46 kernels, 8 memory copies, 7 NCCL kernels |
+
+Changing only the profiler version fixes this reproducer. Fewer ranks or disabling
+autograd NVTX alone did not fix the old profiler. The exact vendor-internal defect is
+not established. A `.nsys-rep` file alone is not success: the old profiler also wrote
+reports after crashing. Validation now exports SQLite and requires actual CUDA kernels,
+copies, and NCCL kernels. Compact result dataset: `01M1QWYVC2SDVCYSD10NP78AK5`.
+
+The standalone installer checks NVIDIA's package SHA256 and extracts into container
+`/tmp`; it does not modify drivers, CUDA, PyTorch, or host packages. The next full-model
+capture uses the qualified 2026.4.1 binary, ranks0/8/16/24/32/40/48/56, and two updates
+36–37 of a fresh 60-update restore. The callback and wrapper share rank/window settings;
+the collector waits for the selected reports and their validation, not all 64 reports.
+PyTorch and Nsight capture remain separate processes/passes.
 
 ### Next isolated candidate: optimizer model-weight gathering
 

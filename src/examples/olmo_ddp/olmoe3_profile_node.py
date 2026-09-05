@@ -76,6 +76,21 @@ def main():
         [sys.executable, "src/examples/olmo_ddp/olmoe3_profile_topology.py", str(topology_dir)],
         check=True,
     )
+    pairs = profile_plan(
+        os.environ.get(
+            "OLMOE3_DEEP_PROFILE_VARIANTS",
+            os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline"),
+        ).split(","),
+        os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(","),
+        os.environ.get("OLMOE3_DEEP_PROFILE_PLAN", ""),
+    )
+    if any(mode == "nsys" for _, mode in pairs):
+        from olmoe3_nsys_tools import NsysSettings, install_nsys
+
+        settings = NsysSettings.from_env()
+        if settings.version != "installed" and any(r // gpus == rank for r in settings.ranks):
+            # Install once per selected node, before publishing readiness; never once per GPU.
+            os.environ["OLMOE3_NSYS_BINARY"] = str(install_nsys())
     ready_dir = Path("/weka/olmo-3p5-checkpoints/production-profiling/rendezvous") / workload_id
     ready_dir.mkdir(parents=True, exist_ok=True)
     temporary = ready_dir / f"{job_id}.tmp"
@@ -99,11 +114,6 @@ def main():
         f"injected hostname was {os.environ.get('BEAKER_LEADER_REPLICA_HOSTNAME')}",
         flush=True,
     )
-    variants = os.environ.get(
-        "OLMOE3_DEEP_PROFILE_VARIANTS", os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
-    ).split(",")
-    modes = os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(",")
-    pairs = profile_plan(variants, modes, os.environ.get("OLMOE3_DEEP_PROFILE_PLAN", ""))
     multiple_variants = len({variant for variant, _ in pairs}) > 1
     for index, (variant, mode) in enumerate(pairs):
         # A separate agent and port avoids retaining rendezvous keys from the previous

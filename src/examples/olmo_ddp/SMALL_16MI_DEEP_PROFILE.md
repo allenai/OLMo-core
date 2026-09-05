@@ -273,3 +273,53 @@ not yet established. It is not enabled in the baseline.
 `olmoe3_profile_collect.py` can run in a separate CPU-only job with the checkpoint Weka
 mount. It waits for completed passes, analyzes traces there, and copies only small JSON/
 CSV-like summaries to Beaker results. Raw Nsight/Chrome/memory traces remain on Weka.
+
+## Nsight repair and next sequence (2026-09-05 04:30 UTC)
+
+Two-GPU repro `01M1QWYVBR97EA4G9RXCCC82TE` (source `772a914b2`) reproduced the installed
+2025.3.1 segfault in both matched/full and reduced tracing settings. The identical
+workload passed both settings under standalone 2026.4.1.191, with real CUDA/copy/NCCL
+events validated from SQLite. No driver/runtime or model workaround is needed for this
+reproducer. The full compiled-MoE verification is next, not yet claimed complete.
+
+The current healthy same-node unprofiled result is 78,115 → 82,190 → 85,888 median
+TPS/GPU for baseline → KDA cutoff128 → KDA+EMO inverse scatter, respectively.
+All use step7500, 60 updates, and the same BF16 model/training settings. The combined
+candidate is +9.95% over baseline, 374.38 idealized TFLOPs/GPU. Its separate healthy
+PyTorch capture is finishing; use that instead of the earlier degraded-fabric capture
+to prioritize work.
+
+Next actions:
+
+1. Full-model Nsight verification with the pinned standalone binary, one rank per node,
+   capture updates36–37 of 60, KDA+EMO candidate. Existing NVTX annotations remain on.
+   Do not overlap PyTorch profiling; require CUDA/copy/NCCL validation for every selected rank.
+2. Compare the healthy PyTorch and Nsight timelines: separate expert GEMMs, KDA,
+   gradient accumulation, routing/activation work, and exposed communication. Preserve
+   nonadditive/overlap caveats; profiler overhead is not production throughput.
+3. Use Nsight Compute on isolated hot compute kernels with matching shapes/routing,
+   not replay of whole NCCL-containing training steps. Verify performance-counter access
+   in a small allocation first. Measure memory traffic, tensor-core utilization, and
+   occupancy before implementing fusion.
+4. If the healthy timeline supports it, qualify the already-tested communication-copy
+   prototypes at larger rank count and in an optimizer step. The two-GPU bucket/gather
+   improvements are milliseconds, not 13–32% end-to-end gains. Preserve asynchronous
+   buffer lifetimes and parameter layout; defaults remain unchanged.
+
+Selective Nsight launch controls (in addition to the normal launch command and healthy
+host allowlist):
+
+```bash
+export OLMOE3_DEEP_PROFILE_PASSES=nsys
+export OLMOE3_DEEP_PROFILE_VARIANT=kda-128-emo-inverse-scatter
+export OLMOE3_DEEP_PROFILE_STEPS=60
+export OLMOE3_NSYS_VERSION=2026.4.1
+export OLMOE3_NSYS_RANKS=0,8,16,24,32,40,48,56
+export OLMOE3_NSYS_START=36
+export OLMOE3_NSYS_END=37
+export OLMOE3_NSYS_TRACE=cuda,nvtx,osrt
+```
+
+The package is downloaded once per selected node and SHA256-verified/extracted in
+private container `/tmp` before rendezvous readiness. Collector uses the same version
+for report statistics. Raw reports and SQLite exports remain on Weka.

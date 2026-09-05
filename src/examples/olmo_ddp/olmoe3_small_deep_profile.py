@@ -14,6 +14,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import olmoe3_small_medium_profile as base
+from olmoe3_nsys_tools import NsysSettings
 
 from olmo_core.distributed.utils import get_rank
 from olmo_core.internal.experiment import build_config, main
@@ -46,6 +47,7 @@ VARIANT = os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
 STEPS = int(os.environ.get("OLMOE3_DEEP_PROFILE_STEPS", "100" if PASS == "nsys" else "60"))
 SYSTEM = base.SYSTEMS["small-64g"]
 PROFILE_RANKS = list(range(0, 64, 8))
+NSYS_SETTINGS = NsysSettings.from_env()
 
 
 @dataclass
@@ -88,13 +90,18 @@ class ProfileMetrics(Callback):
                 "kernel_fun_commit": "7a6983baf2beb4ec4d7fe914ec9f6670438af99b",
                 "qk_norm_pr": 855,
                 "clean_windows_relative_steps": (
-                    [[31, 70], [81, 100]]
+                    NSYS_SETTINGS.clean_windows(STEPS)
                     if PASS == "nsys"
                     else [[31, STEPS]]
                     if PASS == "timing"
                     else [[21, 30], [51, 60]]
                 ),
-                "nsys_relative_steps": [71, 73] if PASS == "nsys" else None,
+                "nsys_relative_steps": [NSYS_SETTINGS.start, NSYS_SETTINGS.end]
+                if PASS == "nsys"
+                else None,
+                "nsys_profiled_ranks": list(NSYS_SETTINGS.ranks) if PASS == "nsys" else None,
+                "nsys_version": NSYS_SETTINGS.version if PASS == "nsys" else None,
+                "nsys_trace": NSYS_SETTINGS.trace if PASS == "nsys" else None,
                 "torch_relative_steps": [36, 37] if PASS == "torch" else None,
                 "memory_relative_steps": [45, 46] if PASS == "torch" else None,
             }
@@ -162,6 +169,16 @@ def common_components(cli_context, **kwargs):
                 ),
             ]
         )
+        for name in (
+            "OLMOE3_DEEP_PROFILE_STEPS",
+            "OLMOE3_NSYS_VERSION",
+            "OLMOE3_NSYS_RANKS",
+            "OLMOE3_NSYS_START",
+            "OLMOE3_NSYS_END",
+            "OLMOE3_NSYS_TRACE",
+        ):
+            if name in os.environ:
+                launch.env_vars.append(BeakerEnvVar(name, os.environ[name]))
     return common
 
 
@@ -244,9 +261,9 @@ def trainer_config(common):
         config.add_callback(
             "nsys_capture",
             NvidiaProfilerCallback(
-                start=SOURCE_STEP + 71,
-                end=SOURCE_STEP + 73,
-                profile_ranks=list(range(64)),
+                start=SOURCE_STEP + NSYS_SETTINGS.start,
+                end=SOURCE_STEP + NSYS_SETTINGS.end,
+                profile_ranks=list(NSYS_SETTINGS.ranks),
             ),
         )
     elif PASS == "torch":
