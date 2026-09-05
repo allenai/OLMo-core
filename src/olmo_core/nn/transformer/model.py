@@ -537,6 +537,7 @@ class Transformer(nn.Module):
         explore_prob: float = 0.0,
         explore_anneal_calls: int = 0,
         seed: int = 0,
+        router_location: str = "root",
     ) -> None:
         """
         Enable learned per-layer KV-cache allocation (see :mod:`olmo_core.nn.attention.kv_route`):
@@ -563,10 +564,17 @@ class Transformer(nn.Module):
             start_layer=start_layer,
             n_layers=len(self.blocks),
         )
-        routed = install_kv_route(self.blocks, holder, start_layer=start_layer)
+        routed = install_kv_route(
+            self.blocks, holder, start_layer=start_layer, owner=self, location=router_location
+        )
         if not routed:
             raise OLMoConfigurationError("enable_kv_route routed no attention layers")
-        self._kv_route = {"start_layer": int(start_layer), "routed": routed, "holder": holder}
+        self._kv_route = {
+            "start_layer": int(start_layer),
+            "routed": routed,
+            "holder": holder,
+            "router_location": router_location,
+        }
         log.info(
             "KV routing enabled on %d attention layers %s (start_layer=%d) target=%.3f",
             len(routed), routed, start_layer, target,
@@ -829,12 +837,22 @@ class Transformer(nn.Module):
             block_kwargs = per_block_kwargs.get(block_idx, {})
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            if getattr(block, "_bskip", None) is not None:
-                from ..block_skip import block_skip_forward
+            # Routers evaluated on the block INPUT, outside the checkpoint region (router_fn.py):
+            # a router inside the region kept every layer's norm intermediates alive under FSDP2.
+            extra: Dict[str, Any] = {}
+            attn_mod = getattr(block, "attention", None)
+            kv_cfg = getattr(attn_mod, "_kv_route", None)
+            if kv_cfg is not None and kv_cfg["holder"].enabled and kv_cfg.get("location", "attention") == "root":
+                from ..attention.kv_route import kv_route_decide
 
-                h = block_skip_forward(block, h, {**all_block_kwargs, **block_kwargs})
+                extra.update(kv_route_decide(self, attn_mod, h))
+            if getattr(block, "_bskip", None) is not None:
+                from ..block_skip import block_skip_decide, block_skip_forward
+
+                p_skip, keep_skip = block_skip_decide(block, h)
+                h = block_skip_forward(block, h, {**all_block_kwargs, **block_kwargs, **extra}, p_skip, keep_skip)
             else:
-                h = block(h, **all_block_kwargs, **block_kwargs)
+                h = block(h, **all_block_kwargs, **block_kwargs, **extra)
             if self.budget_attach and h.requires_grad:
                 h = self._attach_block_budget(h, block_idx)
             if capture_layers is not None and block_idx in capture_layers:

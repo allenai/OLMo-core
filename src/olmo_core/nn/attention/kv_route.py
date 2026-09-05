@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "kv_route_decide",
     "KVRouteHolder",
     "KVRouter",
     "install_kv_route",
@@ -523,6 +524,8 @@ def kv_route_attention(
     cu_doc_lens: Optional[torch.Tensor] = None,
     cache_leftpad: Optional[torch.Tensor] = None,
     block_keep: Optional[torch.Tensor] = None,
+    kv_route_p: Optional[torch.Tensor] = None,
+    kv_route_keep: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Routed attention for one layer: decide keep/drop per token, scale K/V by the straight-through
@@ -556,10 +559,21 @@ def kv_route_attention(
         keep = torch.ones(B, T, dtype=torch.bool, device=x.device)
         if block_keep is not None:
             keep = keep & block_keep.to(torch.bool)
+    elif cfg is not None and cfg["holder"].enabled and kv_route_p is not None:
+        # decisions computed by the model on the block input, outside the checkpoint region
+        # (router_fn.py); only the straight-through scaling happens here
+        p = kv_route_p
+        keep = kv_route_keep
+        p_sel = torch.where(keep, p, 1.0 - p)
+        coef = (1.0 + p_sel - p_sel.detach()).to(k.dtype)[:, :, None, None]
+        k = k * coef
+        v = v * coef
+        if block_keep is not None:
+            keep = keep & block_keep.to(torch.bool)
     elif cfg is not None and cfg["holder"].enabled:
         holder: KVRouteHolder = cfg["holder"]
         layer_idx: int = cfg["layer_idx"]
-        router: KVRouter = attn._kvr_router  # type: ignore[attr-defined]
+        router: KVRouter = cfg["router"]
         logits = router(x)  # (B, T) float32
         p = torch.sigmoid(logits)
 
@@ -606,18 +620,62 @@ def kv_route_attention(
     return att
 
 
+def kv_route_decide(model: Any, attn: "Attention", h: torch.Tensor) -> Dict[str, torch.Tensor]:
+    """
+    Evaluate a root-located KV router on the block input ``h`` (outside the checkpoint region),
+    record the expectation with the holder, and return the kwargs the attention layer consumes.
+    """
+    from ..router_fn import router_logits
+
+    cfg = attn._kv_route  # type: ignore[attr-defined]
+    holder: KVRouteHolder = cfg["holder"]
+    layer_idx: int = cfg["layer_idx"]
+    B, T, _ = h.shape
+    logits = router_logits(h, cfg["router"]).squeeze(-1)  # (B, T) fp32
+    p = torch.sigmoid(logits)
+    cache_key = (layer_idx, B, T)
+    cache = holder._choice_cache
+    if attn.training and cache_key in cache:
+        keep = cache[cache_key]
+    else:
+        keep = logits.detach() > 0
+        explore = holder.current_explore()
+        if attn.training and explore > 0:
+            gen = _forward_generator(holder, layer_idx, h.device)
+            flip = torch.rand(B, T, device=h.device, generator=gen) < explore
+            keep = keep ^ flip
+        if attn.training:
+            cache[cache_key] = keep
+    holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+    return {"kv_route_p": p, "kv_route_keep": keep}
+
+
 def install_kv_route(
-    blocks: nn.ModuleDict, holder: KVRouteHolder, *, start_layer: int = 0
+    blocks: nn.ModuleDict,
+    holder: KVRouteHolder,
+    *,
+    start_layer: int = 0,
+    owner: Optional[nn.Module] = None,
+    location: str = "root",
 ) -> List[int]:
     """
-    Attach a :class:`KVRouter` to every plain full-attention layer at or after ``start_layer``
+    Attach a :class:`KVRouter` for every plain full-attention layer at or after ``start_layer``
     (recurrent / sliding-window / landmark mixers are left alone) and register the layer with the
-    holder. Adds NEW state-dict keys ``blocks.<i>.attention._kvr_router.w.{weight,bias}``.
+    holder.
+
+    ``location="root"`` (default for new runs) registers the routers as ``owner.kvr_routers``
+    (state-dict keys ``kvr_routers.<i>.w.*``) and the model evaluates them on the block INPUT,
+    outside the block's checkpoint region (see :mod:`olmo_core.nn.router_fn`); under FSDP2 a
+    block-child router evaluated before the block is still sharded, and a router evaluated inside
+    the region kept every layer's norm intermediates alive. ``location="attention"`` is the legacy
+    layout (``blocks.<i>.attention._kvr_router.*``, router on the attention-norm output inside
+    the block) kept so older checkpoints still load and evaluate.
 
     :returns: The routed layer indices.
     """
     from . import Attention
 
+    routers = nn.ModuleDict()
     routed: List[int] = []
     for key, block in blocks.items():
         li = int(key)
@@ -629,23 +687,33 @@ def install_kv_route(
         if attn.window_size not in (None, (-1, -1), -1):
             continue
         d_model = attn.w_q.in_features
-        attn._kvr_router = KVRouter(  # type: ignore[attr-defined]
-            d_model, device=attn.w_q.weight.device, dtype=attn.w_q.weight.dtype
-        )
-        attn._kv_route = {"holder": holder, "layer_idx": li}  # type: ignore[attr-defined]
+        router = KVRouter(d_model, device=attn.w_q.weight.device, dtype=attn.w_q.weight.dtype)
+        if location == "attention":
+            attn._kvr_router = router  # type: ignore[attr-defined]
+        else:
+            routers[key] = router
+        attn._kv_route = {"holder": holder, "layer_idx": li, "router": router, "location": location}  # type: ignore[attr-defined]
         routed.append(li)
+    if location != "attention":
+        assert owner is not None, "root-located KV routers need the owning model"
+        owner.kvr_routers = routers  # type: ignore[assignment]
     holder.routed_layers = routed
     return routed
 
 
-def reset_kv_route_extras(attn: nn.Module) -> None:
-    """Re-run the deterministic init of a layer's router (after a strict=False base load)."""
-    attn._kvr_router.reset_parameters()  # type: ignore[attr-defined]
+def reset_kv_route_extras(mod: nn.Module) -> None:
+    """Re-run the deterministic router init (after a strict=False base load); ``mod`` is the
+    router itself (root layout) or the attention module (legacy layout)."""
+    router = getattr(mod, "_kvr_router", mod)
+    router.reset_parameters()
 
 
 def enable_from_config_block(model: Any, block: Dict[str, Any]) -> None:
     """Enable routing on a built model exactly as a trainer's ``config.json`` ``kv_route`` block says."""
-    model.enable_kv_route(start_layer=int(block.get("start_layer", 0)))
+    model.enable_kv_route(
+        start_layer=int(block.get("start_layer", 0)),
+        router_location=str(block.get("router_location", "attention")),  # pre-2026-09-05 exports
+    )
     # stdout as well as the logger: eval jobs surface only prints, and a routed checkpoint scored
     # WITHOUT its router is indistinguishable from a dense model in the logs otherwise.
     print(

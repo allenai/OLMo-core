@@ -304,3 +304,17 @@ region, which defeats the region's saved-tensor dropping for the whole block. Fi
 (autograd.Function) runs the compiled kernel under no_grad in forward, saves q/k/v like any other
 tensor, and re-runs kernel+autograd on its own in backward. Verification runs: memsnap8 (KV-only
 peak), kvroute-iso-smoke (correctness).
+
+**Root cause, finally (16:40, ablations `KV_ROUTE_DEBUG=no_router|no_holder`):** KV path with no
+router graph 27.1 GB; KV router evaluated inside the block but handing nothing to the holder
+27.4 GB; router + holder 61 GB. So the trigger is the router's expectation tensor escaping the
+checkpoint region into the holder, which pins every block's saved tensors (the FFN router's
+escaping scalar does not, for reasons not chased). Fix (commit below): the KV and block-skip
+routers now live on the model root (`kvr_routers.<i>`, `bskip_routers.<i>`) and are evaluated on
+the block INPUT outside the region through `router_fn.RouterOnInput` (saves only the block input,
+which the checkpoint already keeps, plus a per-token RMS scale; the decisions and probabilities are
+passed into the block as inputs). Router input changes from attention_norm(x) to RMS-normalised
+h without the learned norm weight — routers are trained from scratch, so this is a variant, not a
+regression. Legacy checkpoints (`router_location: attention`) still load and evaluate; new exports
+record `router_location: root`. The compiled-flex isolation (`_FlexIsolated`) stays: harmless and
+keeps the kernel opaque to the checkpoint.

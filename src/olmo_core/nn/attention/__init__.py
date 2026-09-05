@@ -1346,6 +1346,8 @@ class Attention(SequenceMixer):
         kv_grad_mask: Optional[torch.Tensor] = None,
         soft_kv_override: Optional[dict] = None,
         block_keep: Optional[torch.Tensor] = None,
+        kv_route_p: Optional[torch.Tensor] = None,
+        kv_route_keep: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1456,7 +1458,9 @@ class Attention(SequenceMixer):
 
         kv_route = getattr(self, "_kv_route", None)
         if (
-            (kv_route is not None and kv_route["holder"].enabled) or block_keep is not None
+            (kv_route is not None and kv_route["holder"].enabled)
+            or block_keep is not None
+            or kv_route_p is not None
         ) and attn_bias is None:
             # Learned KV-cache allocation: keep/drop each key at this layer (kv_route.py). Also the
             # path for block skipping's key mask (``block_keep``: tokens skipping this block are
@@ -1465,7 +1469,7 @@ class Attention(SequenceMixer):
 
             att = kv_route_attention(
                 self, x, q, k, v, cu_doc_lens=cu_doc_lens, cache_leftpad=cache_leftpad,
-                block_keep=block_keep,
+                block_keep=block_keep, kv_route_p=kv_route_p, kv_route_keep=kv_route_keep,
             )
         elif attn_bias is not None:
             # Soft-token aux path: position-causal + shadow-blocked masked SDPA.

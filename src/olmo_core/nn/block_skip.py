@@ -187,7 +187,37 @@ class BlockSkipRouter(nn.Module):
         return self.w(x).squeeze(-1).float()
 
 
-def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]) -> torch.Tensor:
+def block_skip_decide(block: nn.Module, h: torch.Tensor):
+    """Evaluate the (root-located) skip router on the block input outside the checkpoint region."""
+    from .router_fn import router_logits
+
+    cfg = block._bskip  # type: ignore[attr-defined]
+    holder: BlockSkipHolder = cfg["holder"]
+    layer_idx: int = cfg["layer_idx"]
+    B, T, _ = h.shape
+    logits = router_logits(h, cfg["router"]).squeeze(-1)
+    p = torch.sigmoid(logits)
+    key = (layer_idx, B, T)
+    cache = holder._choice_cache
+    if block.training and key in cache:
+        keep = cache[key]
+    else:
+        keep = logits.detach() > 0
+        if block.training:
+            cache[key] = keep
+    if layer_idx not in holder._seen:
+        holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+        holder._seen.add(layer_idx)
+    return p, keep
+
+
+def block_skip_forward(
+    block: nn.Module,
+    h: torch.Tensor,
+    kwargs: Dict[str, Any],
+    p: Optional[torch.Tensor] = None,
+    keep: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """
     Run ``block`` on ``h`` with per-token skipping.
 
@@ -214,6 +244,8 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
         out = block(h, **kwargs)
         return torch.where(keep[:, :, None], out, h)
 
+    if p is None or keep is None:
+        p, keep = block_skip_decide(block, h)
     inner = getattr(block, "_checkpoint_wrapped_module", None)
     if inner is not None:
         # The block is activation-checkpointed. Run the router + block + straight-through mixing
@@ -223,28 +255,11 @@ def block_skip_forward(block: nn.Module, h: torch.Tensor, kwargs: Dict[str, Any]
         # the recompute reproduce the same skip set.
         import torch.utils.checkpoint as cp
 
-        return cp.checkpoint(
-            _skip_and_run, inner, block, h, kwargs, holder, layer_idx, use_reentrant=False
-        )
-    return _skip_and_run(block, block, h, kwargs, holder, layer_idx)
+        return cp.checkpoint(_skip_and_run, inner, h, kwargs, p, keep, use_reentrant=False)
+    return _skip_and_run(block, h, kwargs, p, keep)
 
 
-def _skip_and_run(run_block, owner, h, kwargs, holder, layer_idx):
-    B, T, _ = h.shape
-    logits = owner._bskip["router"](h)  # (B, T)
-    p = torch.sigmoid(logits)
-    key = (layer_idx, B, T)
-    cache = holder._choice_cache
-    if owner.training and key in cache:
-        keep = cache[key]
-    else:
-        keep = logits.detach() > 0
-        if owner.training:
-            cache[key] = keep
-    if layer_idx not in holder._seen:  # once per forward: the checkpoint recompute re-enters here
-        holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
-        holder._seen.add(layer_idx)
-
+def _skip_and_run(run_block, h, kwargs, p, keep):
     if "block_keep" in kwargs and kwargs["block_keep"] is not None:
         keep_attn = kwargs["block_keep"] & keep
     else:

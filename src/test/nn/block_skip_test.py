@@ -47,17 +47,23 @@ def test_skipped_tokens_are_not_keys():
     ids = torch.randint(0, 128, (1, 10))
     with torch.no_grad():
         ref = model(ids)
-    router = model.bskip_routers["1"]
-    orig = router.forward
+    import olmo_core.nn.router_fn as rf
 
-    def routed(x):  # steer token 3 to skip block 1
-        out = orig(x)
-        out[:, 3] = -10.0
+    orig = rf.router_logits
+
+    def routed(h, router, eps=1e-6):  # steer token 3 to skip block 1
+        out = orig(h, router, eps)
+        if router is model.bskip_routers["1"]:
+            out = out.clone()
+            out[:, 3] = -10.0
         return out
 
-    router.forward = routed
-    with torch.no_grad():
-        out = model(ids)
+    rf.router_logits = routed
+    try:
+        with torch.no_grad():
+            out = model(ids)
+    finally:
+        rf.router_logits = orig
     torch.testing.assert_close(out[:, :3], ref[:, :3])
     assert not torch.allclose(out[:, 3], ref[:, 3])  # token 3 lost block 1 itself
     assert not torch.allclose(out[:, 4:], ref[:, 4:])  # later tokens lost token 3 as a key
@@ -78,7 +84,7 @@ def test_budget_gradient_and_joint_budget():
     out.loss.backward()
     g = model.bskip_routers["0"].w.bias.grad
     assert g is not None and g.item() > 0  # run-all at init, budget pushes the run prob DOWN
-    assert model.blocks["0"].attention._kvr_router.w.bias.grad is not None
+    assert model.kvr_routers["0"].w.bias.grad is not None
     assert 0.9 < jb["last_cost"] <= 1.0 + 1e-6
 
 

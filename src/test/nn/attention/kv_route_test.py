@@ -66,7 +66,7 @@ def test_budget_gradient_reaches_router_and_loss_terms():
     ids = torch.randint(0, 128, (1, 24))
     out = model(ids, labels=ids.clone())
     out.loss.backward()
-    router = model.blocks["0"].attention._kvr_router
+    router = model.kvr_routers["0"]
     assert router.w.bias.grad is not None and router.w.bias.grad.abs().sum() > 0
     # keep-all at init -> budget pushes probs DOWN (positive gradient on the keep logit)
     assert router.w.bias.grad.item() > 0
@@ -79,7 +79,7 @@ def test_hard_drop_changes_output_and_compacts_cache():
     model.enable_kv_route(target=0.5)
     attn = model.blocks["1"].attention
     # force layer 1 to drop the first half of the tokens
-    attn._kvr_router.w.bias.data.fill_(-10.0)
+    model.kvr_routers["1"].w.bias.data.fill_(-10.0)
     ids = torch.randint(0, 128, (2, 12))
     with torch.no_grad():
         out = model(ids)

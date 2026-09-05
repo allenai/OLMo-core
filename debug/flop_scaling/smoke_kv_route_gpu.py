@@ -53,7 +53,7 @@ def main():
     m.train()
     o = m(ids, labels=ids.clone(), doc_lens=torch.tensor([lens], device=dev), max_doc_lens=[max(lens)])
     o.loss.backward()
-    g = m.blocks["0"].attention._kvr_router.w.bias.grad
+    g = m.kvr_routers["0"].w.bias.grad
     print(f"[2] loss={o.loss.item():.3f} router bias grad={g.item():.3e} mean_keep={m._kv_route['holder'].mean_keep(last_forward=False):.3f}")
     assert g is not None and g.item() > 0
     m.zero_grad(set_to_none=True)
@@ -61,8 +61,8 @@ def main():
 
     # [3] eviction + KV cache: prefill (flex + compaction) then a flash decode step == no-cache routed forward
     for li in ("1", "2"):
-        m.blocks[li].attention._kvr_router.w.weight.data.normal_(0, 0.5)  # random keep/drop pattern
-        m.blocks[li].attention._kvr_router.w.bias.data.fill_(0.0)
+        m.kvr_routers[li].w.weight.data.normal_(0, 0.5)  # random keep/drop pattern
+        m.kvr_routers[li].w.bias.data.fill_(0.0)
     B, P = 2, 300
     prompt = torch.randint(0, 512, (B, P), device=dev)
     nxt = torch.randint(0, 512, (B, 1), device=dev)
@@ -105,13 +105,13 @@ def main():
 
     t_dense = bench(m2)
     m2.enable_kv_route(target=0.25)
-    for blk in m2.blocks.values():
-        blk.attention._kvr_router.w.weight.data.normal_(0, 1.0)
-        blk.attention._kvr_router.w.bias.data.fill_(-1.1)  # ~25% keep
+    for li in m2.kvr_routers:
+        m2.kvr_routers[li].w.weight.data.normal_(0, 1.0)
+        m2.kvr_routers[li].w.bias.data.fill_(-1.1)  # ~25% keep
     t_route = bench(m2)
     kf = m2._kv_route['holder'].mean_keep(last_forward=False)
-    for blk in m2.blocks.values():
-        blk.attention._kvr_router.w.bias.data.fill_(10.0)
+    for li in m2.kvr_routers:
+        m2.kvr_routers[li].w.bias.data.fill_(10.0)
     t_all = bench(m2)
     print(f"[4] 64k fwd+bwd: dense(flash) {t_dense*1e3:.0f} ms | routed keep-all {t_all*1e3:.0f} ms | routed keep~{kf:.2f} {t_route*1e3:.0f} ms")
     print("SMOKE OK")

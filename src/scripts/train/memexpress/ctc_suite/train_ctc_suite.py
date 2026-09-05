@@ -625,7 +625,7 @@ def build_train_module_config(
             + (
                 [
                     OptimGroupOverride(
-                        params=["blocks.*.attention._kvr_router.*"],
+                        params=["blocks.*.attention._kvr_router.*", "kvr_routers.*"],
                         opts=dict(lr=opts.router_lr, weight_decay=0.0),
                     )
                 ]
@@ -924,7 +924,7 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     state_dict = _prepare_state_dict(model, None)
     model_sd = state_dict["model"]
     missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
-    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "bskip_routers.", "pooled_projector.", "._pooled_projector")
+    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "kvr_routers.", "bskip_routers.", "pooled_projector.", "._pooled_projector")
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
         raise SystemExit(
@@ -952,6 +952,8 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
             reset_owners.setdefault(k.split("._kvr_router.")[0], set()).add("kv_router")
         elif k.startswith("bskip_routers."):
             reset_owners.setdefault(k.rsplit(".w.", 1)[0], set()).add("bskip_router")
+        elif k.startswith("kvr_routers."):
+            reset_owners.setdefault(k.rsplit(".w.", 1)[0], set()).add("kv_router")
         elif "pooled_projector" in k:
             reset_owners.setdefault(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set())
     stats = []
@@ -1395,7 +1397,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     else None
                 ),
                 "kv_route": (
-                    {"start_layer": opts.kv_route_start_layer, "target": opts.kv_route_target}
+                    {"start_layer": opts.kv_route_start_layer, "target": opts.kv_route_target,
+                     "router_location": "root"}
                     if opts.variant in ("kvroute", "flexcompute")
                     else None
                 ),
