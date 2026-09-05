@@ -230,3 +230,13 @@ ffn_b·c_b + attn_b·kv_b)`` (`joint_budget.py`), and the FLOP meter prices the 
 outputs discarded): exact MoD semantics, analytical FLOPs, no wall-clock saving yet — the gather/
 scatter compacted variant is the follow-up. CPU tests `src/test/nn/block_skip_test.py`; GPU
 smoke `debug/flop_scaling/smoke_block_skip_gpu.py`.
+
+**Validation (Beaker 1-GPU jobs, 2026-09-05 11:30–11:40).** Block-level BlockMask == dense builder
+(rel diff ≤2e-3 at 4k/64k, keep 1.0/0.3/0.05); at 64k keep 0.05 it is 2.5x faster (11.7 vs 28.7 ms)
+and slower only at keep-all (79.8 vs 55.6 ms: every listed block is partial). KV-route smoke OK
+(keep-all == base, eviction + cache decode == no-cache). Block-skip smoke OK after fixing decode
+to honour the skip decision on the query side (generated tokens still append K/V to every layer,
+the one documented deviation from training semantics); joint budget grads reach all three routers.
+Three-router arms launched on Qwen3-4B: flexs-c30 / c15 / c05 (total-FLOP targets 0.30 / 0.15 /
+0.05, i.e. 3.3x / 6.7x / 20x on training FLOPs; floor ≈ LM head + embeddings) at contradiction
+56M / oolong 80M, run names `fs35q3s4bflexs-…`.
