@@ -159,7 +159,8 @@ def main():
             if variant == "reduce-scatter-single-param"
             else "0",
             OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE="1" if "-grad-add" in variant else "0",
-            OLMO_PROFILE_SWIGLU_PAIRWISE="1" if variant.endswith("-act-pair") else "0",
+            OLMO_PROFILE_SWIGLU_PAIRWISE="1" if "-act-pair" in variant else "0",
+            OLMO_PROFILE_EMO_DOCUMENT_POOL="1" if "-doc-pool" in variant else "0",
         )
         print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
         subprocess.run(command, env=env, check=True)
