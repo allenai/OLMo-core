@@ -551,7 +551,12 @@ def kv_route_attention(
             "kv_route does not support context parallelism (single-rank attention only)"
         )
 
-    if cfg is not None and cfg["holder"].enabled:
+    if cfg is not None and cfg["holder"].enabled and os.environ.get("KV_ROUTE_DEBUG") == "no_router":
+        # memory-diagnostic ablation: flex path with no router graph at all (keep everything)
+        keep = torch.ones(B, T, dtype=torch.bool, device=x.device)
+        if block_keep is not None:
+            keep = keep & block_keep.to(torch.bool)
+    elif cfg is not None and cfg["holder"].enabled:
         holder: KVRouteHolder = cfg["holder"]
         layer_idx: int = cfg["layer_idx"]
         router: KVRouter = attn._kvr_router  # type: ignore[attr-defined]
@@ -581,7 +586,10 @@ def kv_route_attention(
         # outside this router's own budget (the block-skip budget owns them).
         if block_keep is not None:
             keep = keep & block_keep.to(torch.bool)
-        holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+        if os.environ.get("KV_ROUTE_DEBUG") == "no_holder":
+            pass  # memory-diagnostic ablation: router runs, nothing escapes to the holder
+        else:
+            holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
     else:
         assert block_keep is not None, "kv_route_attention needs a router or block_keep"
         keep = block_keep.to(torch.bool)
