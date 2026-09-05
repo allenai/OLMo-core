@@ -84,8 +84,7 @@ def dispatch_chunk_kda(
     documents, non-Blackwell, off-shape, graph capture) to FLA itself — so there is no
     predicate to check here, and the branch below is only about not importing the kernels
     at all when the flag is off. Those kernels are not numerically identical to FLA's, so
-    opt in only when you are deliberately testing them. ``KERNEL_FUN_DISABLE=1`` (or
-    ``KERNEL_FUN_KDA_DISABLE=1``) forces FLA everywhere without a config change.
+    opt in only when you are deliberately testing them.
     """
     assert has_fla()
     if use_cute_kernel:
@@ -186,8 +185,6 @@ def dispatch_causal_conv1d(
     check here, and the branch below is only about not importing the kernels at all when the
     flag is off. The package logs once per process whether its kernels engaged. This is the
     same flag that selects the CuTe KDA kernels in :func:`dispatch_chunk_kda`.
-    ``KERNEL_FUN_DISABLE=1`` (or ``KERNEL_FUN_CCONV_DISABLE=1``) forces FLA everywhere
-    without a config change.
     """
     assert has_fla()
     if use_cute_kernel:

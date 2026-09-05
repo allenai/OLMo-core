@@ -93,9 +93,8 @@ class KimiDeltaAttention(SequenceMixer):
                 "not numerically identical to FLA's kernels. The KDA kernel only engages "
                 "on Blackwell at chunk size 64 without packed-document cu_seqlens; every "
                 "other shape falls back to FLA — which the kernels log, with the reason, "
-                "once per process. Set KERNEL_FUN_DISABLE=1 to force FLA everywhere "
-                "without a config change. See the kernel_fun.kda and kernel_fun.cconv "
-                "packages for the supported box.",
+                "once per process. See the kernel_fun.kda and kernel_fun.cconv packages "
+                "for the supported box.",
                 level=logging.WARNING,
             )
 
@@ -348,9 +347,7 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
         production shape this measured 1.54x on the op. Leave it off unless you are
         deliberately testing the kernels, and check the ``kernel-fun`` lines in the
         training log to confirm they engaged — the fallback is silent by design and reads
-        as a correct 1.00x. ``KERNEL_FUN_DISABLE=1`` forces FLA everywhere at runtime, and
-        ``KERNEL_FUN_KDA_DISABLE=1`` / ``KERNEL_FUN_CCONV_DISABLE=1`` do so for just the
-        chunk kernel or just the convolutions.
+        as a correct 1.00x.
     :param dtype: The parameter dtype.
     """
 
