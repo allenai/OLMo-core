@@ -318,3 +318,10 @@ h without the learned norm weight — routers are trained from scratch, so this 
 regression. Legacy checkpoints (`router_location: attention`) still load and evaluate; new exports
 record `router_location: root`. The compiled-flex isolation (`_FlexIsolated`) stays: harmless and
 keeps the kernel opaque to the checkpoint.
+
+**Verified (17:30):** with root routers evaluated on the block input, KV-only and KV+FFN peak at
+27.4 / 27.6 GB — equal to dense (26.5). The three-router arm still leaked because the skip
+wrapper ran its own checkpoint around the UNWRAPPED block (bypassing the AC+FSDP wrappers: AC is
+applied first, FSDP on the wrapper). The skip mixing now lives inside the block's own patched
+forward (`_skipping_block_forward`, installed by `install_block_skip`), so routed blocks pass
+through the standard wrappers exactly like dense blocks.

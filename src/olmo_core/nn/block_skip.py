@@ -219,58 +219,41 @@ def block_skip_forward(
     keep: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Run ``block`` on ``h`` with per-token skipping.
-
-    :param block: A transformer block carrying ``_bskip`` (holder + layer index) and
-        ``_bskip`` (holder, layer index, router).
-    :param h: ``(B, T, d_model)`` block input.
-    :param kwargs: The block kwargs; ``block_keep`` is added for the attention layer.
+    Run ``block`` on ``h`` with per-token skipping. The decision is made on the block input
+    (outside the block's checkpoint region, :func:`block_skip_decide`); the straight-through
+    mixing happens INSIDE the block's own forward (patched by :func:`install_block_skip`), so the
+    activation-checkpoint / FSDP wrappers around the block are used exactly as for a dense block.
+    (An earlier version ran its own checkpoint around the unwrapped block, which bypassed the
+    FSDP2 hooks and retained every block's saved tensors -- memory attribution 2026-09-05.)
     """
     cfg = block._bskip  # type: ignore[attr-defined]
-    holder: BlockSkipHolder = cfg["holder"]
-    layer_idx: int = cfg["layer_idx"]
-    if not holder.enabled:
+    if not cfg["holder"].enabled:
         return block(h, **kwargs)
-    B, T, _ = h.shape
-    kvm = getattr(getattr(block, "attention", None), "kv_cache_manager", None)
-    if kvm is not None and T == 1:
-        # Decode step with a live cache: honour the router on the QUERY side (a skipped token's
-        # output is its input, exactly as in training) but let the block append the token's K/V
-        # to every layer's cache -- a per-row skip would need per-row cache lengths, which the
-        # flash cached path does not have. The only deviation from training semantics is that a
-        # skipped generated token remains a KEY for later generated tokens at that layer.
-        logits = cfg["router"](h)
-        keep = logits > 0
-        out = block(h, **kwargs)
-        return torch.where(keep[:, :, None], out, h)
-
     if p is None or keep is None:
         p, keep = block_skip_decide(block, h)
-    inner = getattr(block, "_checkpoint_wrapped_module", None)
-    if inner is not None:
-        # The block is activation-checkpointed. Run the router + block + straight-through mixing
-        # as ONE checkpointed region on the unwrapped block: otherwise the mixing runs outside the
-        # checkpoint and keeps every block's output alive for backward (+0.31 GB per block at 65k,
-        # 12 GB on a 36-layer model -- the memory profile of 2026-09-05). The decision cache makes
-        # the recompute reproduce the same skip set.
-        import torch.utils.checkpoint as cp
-
-        return cp.checkpoint(_skip_and_run, inner, h, kwargs, p, keep, use_reentrant=False)
-    return _skip_and_run(block, h, kwargs, p, keep)
+    return block(h, **kwargs, skip_p=p, skip_keep=keep)
 
 
-def _skip_and_run(run_block, h, kwargs, p, keep):
-    if "block_keep" in kwargs and kwargs["block_keep"] is not None:
-        keep_attn = kwargs["block_keep"] & keep
-    else:
-        keep_attn = keep
-    out = run_block(h, **{**kwargs, "block_keep": keep_attn})
+def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_p=None, skip_keep=None, **kwargs):
+    """``TransformerBlock.forward`` with the skip mixing appended (installed on routed blocks)."""
+    orig = self._bskip_orig_forward  # type: ignore[attr-defined]
+    if skip_p is None or skip_keep is None:
+        return orig(x, *args, **kwargs)
+    kvm = getattr(getattr(self, "attention", None), "kv_cache_manager", None)
+    if kvm is not None and x.shape[1] == 1:
+        # Decode step: honour the router on the QUERY side only (the token's K/V is still
+        # appended to every layer's cache -- a per-row skip would need per-row cache lengths).
+        out = orig(x, *args, **kwargs)
+        return torch.where(skip_keep[:, :, None], out, x)
+    block_keep = kwargs.get("block_keep")
+    keep_attn = skip_keep if block_keep is None else (block_keep & skip_keep)
+    out = orig(x, *args, **{**kwargs, "block_keep": keep_attn})
     # Straight-through on the residual UPDATE of kept tokens (value: out; grad to p_keep through
-    # <dL/dy, out - h>); skipped tokens pass h through untouched.
-    p_sel = torch.where(keep, p, 1.0 - p)
-    coef = (1.0 + p_sel - p_sel.detach()).to(h.dtype)[:, :, None]
-    mixed = h + coef * (out - h)
-    return torch.where(keep[:, :, None], mixed, h)
+    # <dL/dy, out - h>); skipped tokens pass x through untouched.
+    p_sel = torch.where(skip_keep, skip_p, 1.0 - skip_p)
+    coef = (1.0 + p_sel - p_sel.detach()).to(x.dtype)[:, :, None]
+    mixed = x + coef * (out - x)
+    return torch.where(skip_keep[:, :, None], mixed, x)
 
 
 def install_block_skip(
@@ -296,8 +279,15 @@ def install_block_skip(
         ref = getattr(attn, "w_q", None)
         if ref is None:  # recurrent / other mixers: skipping needs the attention-side key mask
             continue
-        routers[key] = BlockSkipRouter(ref.in_features, device=ref.weight.device, dtype=ref.weight.dtype)
+        routers[key] = BlockSkipRouter(
+            ref.in_features, device=ref.weight.device, dtype=ref.weight.dtype
+        )
         block._bskip = {"holder": holder, "layer_idx": li, "router": routers[key]}  # type: ignore[attr-defined]
+        if not hasattr(block, "_bskip_orig_forward"):
+            import types
+
+            block._bskip_orig_forward = block.forward  # type: ignore[attr-defined]
+            block.forward = types.MethodType(_skipping_block_forward, block)  # type: ignore[method-assign]
         routed.append(li)
     owner.bskip_routers = routers  # type: ignore[assignment]
     holder.routed_layers = routed
