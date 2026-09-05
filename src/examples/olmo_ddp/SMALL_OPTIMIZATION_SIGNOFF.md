@@ -50,3 +50,7 @@ Trace-supported additional ideas are in scope; unrelated jobs are not.
 - A/A200 four-arm control: `01M1R6VP5BYAKDABEE8B5Q03JT`, source `c51e30792`,
   64 GPUs urgent/allocated; collector `01M1R6TW08XDS8EGXY8CBTVKBB` (0GPU).
 - Document-pool one-GPU compiled exact-mask/latency probe prepared, benchmark-only.
+- Document-pool probe `01M1R70BRD9F5E842SPPB005AF`, source0317e7ec1, exit0:
+  all10 random/tied cases exact. At16/128/1024 tokens/document, about1.1ms→0.15–0.16ms;
+  length1 regresses1.15→1.42ms. Qualify mixed lengths and actual router before full-model.
+- Rounded BF16 weight-gradient/FP32 accumulation epilogue probe prepared; benchmark-only.
