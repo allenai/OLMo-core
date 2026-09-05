@@ -74,6 +74,9 @@ def _run_joint_parity(compiled):
                     param.fill_(1)
                 else:
                     param.normal_(0, 0.02)
+        # Production materializes the entire model in BF16 before optimizer build;
+        # router arithmetic still explicitly casts to FP32 inside its forward.
+        block.to(dtype=torch.bfloat16)
         router = block.routed_experts_router
         router.set_load_balancing_process_group(dist.group.WORLD)
         assert router.load_balancing_loss is not None
