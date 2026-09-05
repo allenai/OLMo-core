@@ -304,10 +304,16 @@ Next actions:
    arms use the same trained restore/allocation and timing window. Check all 60 losses,
    skipped steps, first-update agreement, memory, and gain versus timing variability.
 2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
-   keeping instrumented versus clean timing separate. A CPU-only SQLite analyzer merges
-   intervals per device; it never adds overlapping kernels into a step-time budget.
+   keeping instrumented versus clean timing separate. CPU-only SQLite analysis
+   `01M1QZ3PNYDRJR54GDRBZ89RAG` completed exit0, dataset `01M1QZ3PPA7ES6SGR0H8811RDP`.
+   It merges intervals per device; it never adds overlapping kernels into a step-time budget.
+   Nsight's exposed-collective intervals exceed the separate PyTorch capture; a lighter
+   follow-up without per-op autograd NVTX should precede conclusions about communication.
    Prioritize expert GEMMs and activation/backward traffic after the gradient-add result.
    FP32 router GEMMs are visible but changing their precision is not a free optimization.
+   Any future GEMM/gradient-accumulator fusion must preserve the existing intermediate
+   BF16 gradient rounding before FP32 addition; direct unrounded FP32 accumulation is
+   a numerically different experiment, not an exact replacement.
 3. Hardware-counter probe `01M1QXWSA88MHCEG947BFK6VZS` established that Nsight Compute
    is blocked by `ERR_NVGPUCTRPERM`, not a crashing workload. Ask infra to enable permitted
    GPU counter access; do not bypass host controls. Once available, counter-profile

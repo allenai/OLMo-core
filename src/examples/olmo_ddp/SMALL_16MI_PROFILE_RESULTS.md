@@ -380,8 +380,19 @@ activation backward (0.435s), remaining EMO sort (0.220s), and FP32 router GEMMs
 2.447s, but this is an instrumented capture, not a normal-run exposed-communication
 budget. The capture/flush updates slow substantially; clean pre/post windows recover
 83,938 / 83,958 median TPS/GPU on this allocation. Do not substitute Nsight's timings
-for the independent same-node timing results. A read-only CPU analysis extracts
-per-device interval unions and inclusive CPU API costs for comparison with PyTorch.
+for the independent same-node timing results.
+
+The [read-only CPU timeline analysis](https://beaker.org/ex/01M1QZ3PNYDRJR54GDRBZ89RAG),
+source `aac6442ea`, completed exit0 at 05:03 UTC. Dataset
+`01M1QZ3PPA7ES6SGR0H8811RDP` contains eight compact JSON summaries. Rank0's two-update
+kernel span is 7.536s, kernel-busy union 7.371s, collective-only union 1.923s, and
+collective/other-kernel overlap 0.524s. After including recorded copies/memsets, 0.160s
+has no recorded GPU operation. Across selected ranks, collective-only union ranges
+1.405–1.923s and uncovered time 0.160–0.658s. These exceed the separate healthy PyTorch
+capture's communication-only intervals; tracing mode and allocation differ. The data
+does not justify calling this normal-run CPU starvation or predicting a removable 25%
+communication cost. Before additional collective tuning, consider a reduced-overhead
+Nsight repeat without per-op autograd NVTX; the repaired profiler itself is qualified.
 
 ### Next isolated candidate: optimizer model-weight gathering
 
