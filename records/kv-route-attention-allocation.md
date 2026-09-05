@@ -271,3 +271,11 @@ trainer's remaining gap vs this single-GPU profile is not yet explained (LM-head
 all-gather transients are the candidates). Decision: `flexs` keeps the FFN router on L12+ (block
 skipping already removes all FFN work for skipped tokens); the all-layer two-router arm `flexa`
 is dropped on Qwen3 for now.
+
+**Two more memory/FSDP fixes for the three-router arm (14:15):** (1) the skip routers were block
+children and ran before the block's FSDP2 forward → sharded DTensor params (`aten.addmm: got mixed
+torch.Tensor and DTensor`); they now live on the model root (`bskip_routers.<i>`, gathered at the
+start of every forward). (2) the fused FFN ladder backward materialised six (65k × 9728) bf16
+intermediates at once (~10 GB) — the OOM site of every all-layer/three-router attempt; it is now
+chunked over 8192-row blocks (fp32 weight-grad accumulation), ~1 GB transient. Both committed
+(030faa573, a3ff5367b); flexs2 relaunched at 65k on 8 GPUs.
