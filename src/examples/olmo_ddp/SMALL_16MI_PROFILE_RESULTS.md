@@ -246,8 +246,38 @@ median cluster throughput is 5.497M tokens/s. TPS standard deviations are 289 / 
 357 respectively, across the 30 measured updates. Combined first-update CE is
 1.9896166325, gradient norm 0.0734279081; active/reserved memory is 175.465 / 175.799 GiB.
 Loss agreement is a short-run numerical check, not a long-run stability guarantee.
-The combined PyTorch capture follows on the same allocation; its CPU collector remains
-active. Do not use profiled step timings in the unprofiled comparison above.
+All three full 60-update metric files have now been checked: no skipped updates and
+finite CE throughout. The combined PyTorch capture and collector completed at 04:33 UTC,
+with all eight trace files present. Do not use profiled step timings in the unprofiled
+comparison above. Compact dataset `01M1QT82PW9T4YB5G1FMFRW7FX` is downloaded locally.
+
+### Healthy combined-candidate trace
+
+The two-update rank0 trace spans 6.623s, contains 68,956 kernels, and has a 6.081s
+kernel-busy union. Collective union is 1.053s; collective-only union is 0.492s.
+Across the eight representative ranks, collective-only union ranges 0.492–0.909s
+over the two updates. This is dramatically below the earlier degraded-node capture,
+but different kernel/EMO variants were also used, so it is not a one-variable fabric A/B.
+Do not equate collective-only union with a removable critical-path budget.
+
+| Healthy rank0 work, two updates | GPU duration sum | Immediate use |
+|---|---:|---|
+| `aten::mm` | 1.189s | Recover input shapes and distinguish BF16 tensor-core matmuls from FP32 SIMT matmuls. |
+| `aten::_grouped_mm` | 1.126s | Counter-profile isolated expert GEMM; preserve trained-routing caveat for synthetic inputs. |
+| NCCL | 1.053s | Inspect overlap/launch timing in repaired Nsight; do not prioritize from old bad-node fractions. |
+| `aten::add_` | 0.727s | Dominant 0.680s mixed-type FP32 accumulation kernel; test contiguous vectorized addition independently. |
+| KDA backward | 0.545s | Improved dispatch still leaves material work; counter-profile hot kernels before further fusion. |
+| Expert activation backward | 0.456s | Candidate for later fusion, after memory-traffic and correctness analysis. |
+| Remaining EMO sort/mask core | 0.222s | Inverse permutation is already optimized; the first sort still does real work. |
+| KDA forward | 0.184s | Preserve FP32-sensitive paths and current numerical behavior. |
+
+These are nonadditive attribution sums, not a pie chart of step time. Uncaptured windows
+in this pass return to 85,674 and 86,063 median TPS/GPU, agreeing with the independent
+85,888 timing arm. The updated diagnostic export includes hot-op shapes/dtypes/strides
+when present in the PyTorch trace. A one-GPU probe qualifies Nsight Compute counter
+access and benchmarks a narrow vectorized gradient-add prototype with FP32 arithmetic;
+it is **not wired into training**. Synthetic uniform expert routing is explicitly
+labeled and will not be reported as trained-routing performance.
 
 ### Nsight capture repair
 
@@ -276,6 +306,11 @@ capture uses the qualified 2026.4.1 binary, ranks0/8/16/24/32/40/48/56, and two 
 36–37 of a fresh 60-update restore. The callback and wrapper share rank/window settings;
 the collector waits for the selected reports and their validation, not all 64 reports.
 PyTorch and Nsight capture remain separate processes/passes.
+
+Full-model retry: [Nsight 2026.4.1 capture](https://beaker.org/ex/01M1QXEK2Q7TEPDQZBWKAVEYKR),
+source `f7c61144d`, 64 B300s, urgent/allocated1h, host485 excluded. It is queued, not yet
+validated on the full model. [CPU-only collector](https://beaker.org/ex/01M1QXFYFH2XXTHYKHRYRBC5R5),
+same source, urgent/unallocated0s, automatically exports only compact summaries.
 
 ### Next isolated candidate: optimizer model-weight gathering
 

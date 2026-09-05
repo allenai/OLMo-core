@@ -44,6 +44,53 @@ def main():
     trace_path = next((source / "profiler").glob("rank-0-*.chrome_trace.json.gz"))
     with gzip.open(trace_path, "rt") as handle:
         trace = json.load(handle)
+    # Recover actual op shapes/dtypes/strides when Kineto recorded them. Kernel names
+    # alone cannot tell us whether a gradient input is contiguous or mixed precision.
+    hot_ops = {}
+    for event in trace["traceEvents"]:
+        if event.get("cat") != "cpu_op" or event.get("name") not in (
+            "aten::mm",
+            "aten::_grouped_mm",
+            "aten::add_",
+            "aten::copy_",
+        ):
+            continue
+        metadata = {
+            key: value for key, value in event.get("args", {}).items() if key.startswith("Input ")
+        }
+        key = json.dumps({"name": event["name"], **metadata}, sort_keys=True)
+        entry = hot_ops.setdefault(
+            key, {"count": 0, "cpu_duration_us": 0.0, "gpu_duration_us_sum": 0.0}
+        )
+        entry["count"] += 1
+        entry["cpu_duration_us"] += event.get("dur", 0)
+    by_external = {
+        e["args"]["External id"]: e
+        for e in trace["traceEvents"]
+        if e.get("cat") == "cpu_op" and e.get("args", {}).get("External id")
+    }
+    for event in trace["traceEvents"]:
+        if event.get("cat") != "kernel":
+            continue
+        origin = by_external.get(event.get("args", {}).get("External id"))
+        if origin is not None and origin["name"] in (
+            "aten::mm",
+            "aten::_grouped_mm",
+            "aten::add_",
+            "aten::copy_",
+        ):
+            metadata = {
+                key: value
+                for key, value in origin.get("args", {}).items()
+                if key.startswith("Input ")
+            }
+            key = json.dumps({"name": origin["name"], **metadata}, sort_keys=True)
+            hot_ops[key]["gpu_duration_us_sum"] += event.get("dur", 0)
+    hot_ops = [{"metadata": json.loads(key), **value} for key, value in hot_ops.items()]
+    hot_ops.sort(key=lambda entry: -entry["gpu_duration_us_sum"])
+    (output / "hot-op-shapes.json").write_text(json.dumps(hot_ops, indent=2))
+    for entry in hot_ops[:20]:
+        print("HOT_OP_SHAPE", json.dumps(entry), flush=True)
     communication = defaultdict(lambda: {"count": 0, "cpu_duration_us": 0.0})
     for event in trace["traceEvents"]:
         if event.get("name") != "record_param_comms":
