@@ -153,8 +153,9 @@ and numerical validation remain required; the flag is off in the baseline.
 - Same-node compiler-no-op A/B:
   https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605
   (`olmoe3-small-16mi-noop-ab-v2-r1`, source `dbaa6d5f9`), baseline then
-  `compile-noop-nvtx`, 60 unprofiled updates each. Experimental flag remains off
-  by default and has not yet established a speedup.
+  `compile-noop-nvtx`, 60 unprofiled updates each, both completed. Median TPS/GPU
+  76,921 -> 77,276 (+0.46%), zero skips. This small single-pair difference does not
+  establish a substantial gain. Experimental flag remains off by default.
 - Partial recovery completed successfully:
   https://beaker.org/ex/01M1QNM5FA1E56B4C50T6P1XJE
   (result dataset `01M1QNM5FGV2W0BVVNVHEHE068`). A redundant replacement was stopped.

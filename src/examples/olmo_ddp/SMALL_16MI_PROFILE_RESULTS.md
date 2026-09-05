@@ -69,9 +69,14 @@ The kernel names alone also do not establish which NCCL protocol was selected.
 
 ## Other controlled candidates
 
-- [Compiler-safe disabled NVTX A/B](https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605): pending.
+- [Compiler-safe disabled NVTX A/B](https://beaker.org/ex/01M1QNHSC6ZVAGBGV38KAGW605): completed.
   A local reproducer shows that the current custom no-op context prevents Dynamo
   resuming around opaque calls. The alternative is opt-in and has CPU correctness tests.
+  On its own same-node allocation, median TPS/GPU was 76,921 baseline vs 77,276
+  alternative (+0.46%); means 76,857 vs 77,260 (+0.52%). Both completed 60 updates
+  with finite losses and no skips. This is a small single-pair difference, not a robust
+  large gain; the flag remains off by default. Do not compare its absolute TPS directly
+  against the earlier matrix on different nodes. Mean CE was 1.950748 vs 1.950960.
 - [EMO pool-mask microbenchmark](https://beaker.org/ex/01M1QQ1MGM97EYNDDTZ379CPWE): passed.
   EMO's second argsort only inverts a permutation. Inverse scatter preserves the exact
   first-sort tie policy and removes that redundant sort. Six CPU tests passed.
