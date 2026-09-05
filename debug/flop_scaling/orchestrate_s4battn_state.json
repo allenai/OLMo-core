@@ -1,38 +1,38 @@
 {
  "runs": {
   "fs35s4battn-oolong-attnroute-c50-s20M": {
-   "ex": "01M1QZHZ0ZZTPDKDETK77K801J",
+   "ex": "01M1R1RR4WWWDF43ZCJ559G4V2",
    "task": "oolong",
    "budget": "20M",
    "arm": "attnroute-c50",
    "scale": "4b",
-   "state": "R",
+   "state": "S",
    "rc": null,
-   "retries": 0,
+   "retries": 1,
    "eval": null,
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c25-s20M": {
-   "ex": "01M1QZJTS0FFZ91YWV742Y4RMQ",
+   "ex": "01M1R1SSYSBRGSXNNBMTR5RB40",
    "task": "oolong",
    "budget": "20M",
    "arm": "attnroute-c25",
    "scale": "4b",
-   "state": "R",
+   "state": "S",
    "rc": null,
-   "retries": 0,
+   "retries": 1,
    "eval": null,
    "s2": null
   },
   "fs35s4battn-oolong-attnroute-c10-s20M": {
-   "ex": "01M1QZM89ZQYFW397EFB55XVVB",
+   "ex": "01M1R1TSTTN1W1MHMEB8PHSSFP",
    "task": "oolong",
    "budget": "20M",
    "arm": "attnroute-c10",
    "scale": "4b",
-   "state": "R",
+   "state": "S",
    "rc": null,
-   "retries": 0,
+   "retries": 1,
    "eval": null,
    "s2": null
   },
@@ -81,7 +81,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": "01M1R14VPCP0CWS1558S80M1G9",
+   "eval": "01M1R1VY3FSZT00S4YC8H0GY3Q",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c25-s14M": {
@@ -93,7 +93,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": "01M1R15S6SPQ3PKR40Y5R325AZ",
+   "eval": "01M1R1X3NKRRBZHAAA36YPK6PR",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c10-s14M": {
@@ -105,7 +105,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": "01M1R16QGBRAZPPT0DB4YWXKPH",
+   "eval": "01M1R1XWPGW2EX63CRYPGWCNB1",
    "s2": null
   },
   "fs35s4battn-contradiction-attnroute-c50-s56M": {
@@ -147,22 +147,22 @@
  },
  "evals": {
   "fs35s4battn-contradiction-attnroute-c50-s14M": {
-   "ex": "01M1R14VPCP0CWS1558S80M1G9",
+   "ex": "01M1R1VY3FSZT00S4YC8H0GY3Q",
    "state": "S",
    "rc": null,
-   "retries": 0
+   "retries": 1
   },
   "fs35s4battn-contradiction-attnroute-c25-s14M": {
-   "ex": "01M1R15S6SPQ3PKR40Y5R325AZ",
+   "ex": "01M1R1X3NKRRBZHAAA36YPK6PR",
    "state": "S",
    "rc": null,
-   "retries": 0
+   "retries": 1
   },
   "fs35s4battn-contradiction-attnroute-c10-s14M": {
-   "ex": "01M1R16QGBRAZPPT0DB4YWXKPH",
+   "ex": "01M1R1XWPGW2EX63CRYPGWCNB1",
    "state": "S",
    "rc": null,
-   "retries": 0
+   "retries": 1
   }
  },
  "kv_synced": {},

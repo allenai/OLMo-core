@@ -73,3 +73,15 @@ At 32k context on 4B the per-token training FLOPs split roughly: FFN ≈ 57%, at
 ≈6–8× on total FLOPs. 60× is reachable only on the *routed* share (FFN 100× × attention 20×) or
 if the GDN layers and projections are also routed (a per-token "skip the whole block" rung —
 design 6, not built). The reports quote both numbers: routed-share speedup and total.
+
+## Run log
+
+- 2026-09-04 22:10 Stage A launched (12 runs). Three oolong 20M runs landed on saturn A100s and ran
+  ~20x slower than the H100 runs (TPS 258 vs 5.7k per device; 8 min/step) — FlexAttention on sm80
+  is not viable here; cancelled and relaunched pinned to jupiter, evals pinned to jupiter too.
+- Early routing (step 40–50, budgets on target): the router evicts from the TOP layers first.
+  contradiction keep-0.5: L3/L7 1.00, L11 0.98, L15 0.62, L19 0.37, L23–L31 ≤0.02; oolong
+  keep-0.25: L3–L11 0.47–0.70, L15 0.23, L19+ ≤0.02. The last full-attention layers give up their
+  cache almost entirely at every budget; the first three keep most of it.
+- The 14M contradiction runs (27 steps, anneal 8 steps) finished at keep ≈0.93 for all three
+  targets — the anneal never reached them. They are near-dense controls, not budget points.
