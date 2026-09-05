@@ -22,6 +22,7 @@ from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration
 from olmo_core.train.callbacks import (
     Callback,
+    CheckpointerCallback,
     NvidiaProfilerCallback,
     ProfilerCallback,
     TorchMemoryHistoryCallback,
@@ -183,6 +184,10 @@ def train_module_config(common):
 
 def trainer_config(common):
     config = base.build_trainer_config(common, "small-64g", SYSTEM)
+    # no_checkpoints also disables automatic loading in Trainer.fit(). Keep loading
+    # enabled and disable only the saving callback (including end-of-run saves).
+    config.no_checkpoints = False
+    config.add_callback("checkpointer", CheckpointerCallback(enabled=False))
     config.save_folder = common.save_folder
     config.work_dir = common.save_folder
     config.save_overwrite = False

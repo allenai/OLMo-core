@@ -105,6 +105,12 @@ model/optimizer math; measure its packing overhead and numerical agreement too.
   (`olmoe3-small-16mi-deep-profile-v2-r2`, source `e90ee93ee`).
 - Replacement cutoff comparison: https://beaker.org/ex/01M1QJT0K2X5P2JCCWXVQS8GP2
   (`olmoe3-small-16mi-kda128-v2-r2`, same source). Both urgent, allocated, 64 B300s.
+- Both r2 attempts passed rendezvous but stopped before any training updates: the
+  harness inherited `no_checkpoints=True`, which skips loading as well as saving.
+  The expected-step guard rejected step0. Corrected to enable checkpoint loading with
+  an explicitly disabled `CheckpointerCallback`, so no new checkpoints are written.
+- CPU collector r2: https://beaker.org/ex/01M1QJZ5TH49B512H9366H5753; canceled when its
+  upstream r2 jobs failed. No GPU resources used by the collector.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
