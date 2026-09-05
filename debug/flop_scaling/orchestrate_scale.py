@@ -106,7 +106,7 @@ def launch_train(st, task, budget, arm):
         extra = (extra + " --activation-checkpointing full").strip()
     cmd = [o35.PY, "-u", LAUNCHER, "--task", task, "--variant", variant, "--model-family", FAMILY, "--model-scale", SCALE,
            "--data-root", data, "--run-name", name, "--exact-run-name", "--num-nodes", str(nodes), "--num-gpus", str(GPUS[SCALE]),
-           "--epochs", "1", "--lr", "5e-6", "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
+           "--epochs", "1", "--lr", os.environ.get("FS_LR", "5e-6"), "--cluster", CLUSTER, "--wandb-group", "flop-scaling-q35-scale",
            "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + ["launch"]
     rc, out = o35.sh(cmd, timeout=1200)
     os.makedirs(f"{D}/launch_logs", exist_ok=True)
