@@ -190,7 +190,9 @@ def test_moe_v2_train_module_rejects_per_microbatch_allreduce():
 _MOMENT_SUFFIXES = (".exp_avg", ".exp_avg_sq")
 
 
-def _build_ddp_train_module_for_checkpoint(*, router_bias_gamma: Optional[float] = None):
+def _build_ddp_train_module_for_checkpoint(
+    *, router_bias_gamma: Optional[float] = None, reduce_scatter: bool = False
+):
     model = _tiny_model_config(dtype=DType.bfloat16, router_bias_gamma=router_bias_gamma).build(
         init_device="cuda"
     )
@@ -198,7 +200,9 @@ def _build_ddp_train_module_for_checkpoint(*, router_bias_gamma: Optional[float]
         rank_microbatch_size=512,
         max_sequence_length=512,
         optim=OLMoDDPOptimizerConfig(lr=1e-3),
-        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        dp_config=TransformerDataParallelConfig(
+            name=DataParallelType.ddp, use_reduce_scatter=reduce_scatter
+        ),
     )
     return config.build(model, device=torch.device("cuda"), eval_only=False)
 
@@ -241,6 +245,50 @@ def test_moe_v2_train_module_resume_resets_optimizer_moments(tmp_path):
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
+    )
+
+
+def _run_every_optimizer_state_roundtrips(save_dir, reduce_scatter):
+    original = _build_ddp_train_module_for_checkpoint(reduce_scatter=reduce_scatter)
+    assert original.optim is not None
+    # Distinct nonzero values make missing, swapped and inadvertently reset state obvious.
+    expected = {}
+    with torch.no_grad():
+        for index, (key, state) in enumerate(sorted(original.optim.states.items())):
+            state.to_local().fill_(index + 1)
+            expected[key] = state.to_local().clone()
+    original.save_state_dict_direct(save_dir)
+    restored = _build_ddp_train_module_for_checkpoint(reduce_scatter=reduce_scatter)
+    assert restored.optim is not None
+    restored.load_state_dict_direct(
+        save_dir, load_optim_state=True, reset_optimizer_states_on_load=False
+    )
+    assert set(restored.optim.states) == set(expected)
+    for key, value in expected.items():
+        torch.testing.assert_close(
+            restored.optim.states[key].to_local(), value, rtol=0, atol=0, msg=key
+        )
+    restored.zero_grads()
+    for key, value in expected.items():
+        torch.testing.assert_close(
+            restored.optim.states[key].to_local(),
+            value,
+            rtol=0,
+            atol=0,
+            msg=f"zero_grads modified restored optimizer state: {key}",
+        )
+
+
+@requires_multi_gpu
+@pytest.mark.parametrize("reduce_scatter", [False, True])
+def test_every_optimizer_state_roundtrips(tmp_path, reduce_scatter):
+    """Verify every FP32 master, moment and step tensor survives direct DCP restore exactly."""
+    run_distributed_test(
+        _run_every_optimizer_state_roundtrips,
+        world_size=2,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "checkpoint"), reduce_scatter),
     )
 
 
