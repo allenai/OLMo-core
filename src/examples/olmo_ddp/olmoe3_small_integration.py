@@ -108,13 +108,29 @@ class IntegrationAudit(Callback):
                 / f"{Path(self.trainer.save_folder).name}.json"
             ).read_text()
         )
+        policy = registration
+        if registration.get("deletion_mode", "report_only") == "inherit":
+            defaults = Path("/weka/olmo-3p5-checkpoints/uploader/control/deletion-defaults.json")
+            policy = (
+                json.loads(defaults.read_text())
+                if defaults.exists()
+                else {"deletion_mode": "report_only"}
+            )
         if (
-            registration["deletion_mode"] != "report_only"
+            policy.get("deletion_mode") not in ("report_only", "dry_run", "apply")
             or registration["checkpoint_root"] != str(self.trainer.save_folder)
             or not registration.get("enabled", True)
+            or (
+                policy.get("deletion_mode") != "report_only"
+                and (
+                    policy.get("min_local_checkpoints", 0) < 2
+                    or policy.get("delete_grace_seconds", 0) < 3600
+                )
+            )
         ):
             raise RuntimeError(
-                "Integration requires an enabled, matching report_only uploader registration"
+                "Integration requires a matching enabled uploader registration; cleanup must "
+                "retain at least two checkpoints and use at least a one-hour grace"
             )
         # Automatic retries may resume later than the initial expected step.
         if self.step < EXPECTED_START or self.step > STOP:
@@ -152,7 +168,8 @@ class IntegrationAudit(Callback):
                 "mb_sequences": 4,
                 "ga": 8,
                 "lr": LR,
-                "deletion": "forbidden; trainer never; uploader report_only",
+                "deletion": "trainer never; guarded uploader policy",
+                "uploader_policy": policy,
             }
             path = output / f"session-{os.environ.get('BEAKER_JOB_ID', 'local')}-{self.step}.json"
             path.write_text(json.dumps(provenance, indent=2))
@@ -298,7 +315,7 @@ def trainer_config(common):
     wandb.notes = (
         "Matched fresh initialization, Dolma3.5, BF16, PP1 EP1 DP64 MB4 GA8; "
         "LR .00185, WSD warmup2000 decay1; 6000 updates =100.663296B tokens. "
-        "No activation checkpointing/MXFP8/shared EP outputs. Uploader report_only."
+        "No activation checkpointing/MXFP8/shared EP outputs. Guarded uploader retention policy."
     )
     return config
 
