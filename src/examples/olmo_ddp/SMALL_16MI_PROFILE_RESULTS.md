@@ -671,6 +671,9 @@ Its WY backlog documents prior tiling failures and a more involved warp-speciali
 pipeline direction. Do not repeat broad failed sweeps or change BT/precision casually.
 
 Next: `olmoe3_grouped_gemm_bench.py`, **benchmark-only, never imported by training**.
+Submitted [one-B300 probe](https://beaker.org/ex/01M1R4VZNM6A9H7Z8M282782JD),
+source `e3e41b11b`, urgent/allocated in `ai2/olmo3p5-training`, retries0,
+40-minute outer deadline. No new 64-GPU training allocation for this screening step.
 The existing image has QuACK0.5.0; its inspected public API supports BF16 varlen-M
 forward/input-gradient and varlen-K weight-gradient GEMMs. Compare current Torch against
 three explicit tile/cluster choices:256×256/(2,1),128×128/(1,1),128×256/(1,1).

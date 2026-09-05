@@ -394,3 +394,6 @@ explicit tile choices; FP64-slice and full Torch checks precede each candidate's
 No broad autotune, dependency upgrade, activation fusion, direct-FP32 gradient epilogue,
 or training wiring in this probe. Follow qualified wins with real routing and compiled
 routed-expert/sharded-Adam qualification, then a clean full-model A/B if warranted.
+
+Submitted `01M1R4VZNM6A9H7Z8M282782JD`, source `e3e41b11b`, one B300,
+urgent/allocated, workspace `ai2/olmo3p5-training`, retries0, outer timeout40m.
