@@ -50,7 +50,7 @@ def _native_tie_top16(scores, output):
     values = tl.gather(value, ids, 0)
     for log_size in tl.static_range(1, 6):
         for log_stride in tl.static_range(log_size - 1, -1, -1):
-            stride: tl.constexpr = 1 << log_stride
+            stride = 1 << log_stride
             partner = lane ^ stride
             other_values = tl.gather(values, partner, 0)
             other_ids = tl.gather(ids, partner, 0)

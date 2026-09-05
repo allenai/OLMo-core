@@ -73,6 +73,31 @@ def main():
             values = [a.elapsed_time(b) for a, b in pairs]
             return {"median_ms": statistics.median(values), "mean_ms": statistics.mean(values)}
 
+        def graph_measure():
+            # Remove host-launch jitter from the small, many-kernel chain. This
+            # is a diagnostic device-time measurement, not production graph use.
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                for _ in range(5):
+                    execute()
+            stream.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                captured = execute()
+            pairs = []
+            for _ in range(10):
+                a, b = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                a.record()
+                for _ in range(20):
+                    graph.replay()
+                b.record()
+                pairs.append((a, b))
+            torch.cuda.synchronize()
+            assert all(bool(torch.isfinite(t).all()) for t in captured)
+            values = [a.elapsed_time(b) / 20 for a, b in pairs]
+            return {"median_ms": statistics.median(values), "mean_ms": statistics.mean(values)}
+
         for config in [*schedules, baseline]:
             schedule(config)
             actual = execute()
@@ -94,6 +119,7 @@ def main():
                 "errors_y_dq_dk_dv_dg_dbeta": deltas,
                 "qualified_exact": exact,
                 **(measure() if exact else {"rejected": "non-exact outputs or gradients"}),
+                "graph_device_time": graph_measure() if exact else None,
             }
             summary["cases"].append(row)
             (output / "summary.json").write_text(json.dumps(summary, indent=2))
