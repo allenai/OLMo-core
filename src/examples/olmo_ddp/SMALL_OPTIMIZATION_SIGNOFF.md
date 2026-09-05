@@ -120,3 +120,43 @@ Trace-supported additional ideas are in scope; unrelated jobs are not.
   50TB volume has~40.25TB free; two25-checkpoint runs require~7.50TB, plus smokes.
   Smoke plan: reference0->4->8, optimized0->4->8, identical allocation, sync
   step0/4/8 saves, short held-out eval and first-batch/initial-weight fingerprints.
+
+## September 5, 09:40 UTC: combined qualification
+
+| Isolated full-model A/B | Reference TPS/GPU | Candidate TPS/GPU | Gain |
+|---|---:|---:|---:|
+| Document pool |92,236|95,376|3.4%|
+| Rounded wgrad, r2 |91,907|95,547|4.0%|
+| Native-tie top16, atop docpool |92,951|94,352|1.5%|
+| Direct single-parameter RS packing |90,460|93,582|3.5%|
+
+Each row uses its own same-allocation60-update reference, median steps31–60;
+do not multiply these gains. All60 updates finite, none skipped. Experiment IDs:
+wgrad `01M1RBP5RSDYB622KG4PERXGMJ`, top16 `01M1RC507P0RQ99VX03X3NJPEQ`,
+RS `01M1RC5N6V4FWPA6PWHV8KQS2H`. Wgrad CE mean/max absolute delta
+.000258/.001629; top16 .000824/.007127; RS .000516/.002697. The top16 maximum
+slightly exceeds the prior reference A/A maximum .006603; it is not correct to
+say every single-step difference is within that envelope. Combined repeats follow.
+
+- Combined rounded-wgrad+RS ownership/optimizer test `01M1RE5SV6XQFGMMJT5KSQD1F8`,
+  source35fbbc3a9, passed all3 two-GPU modes: AR, packed RS, direct RS. Exact
+  losses, full gradients, reduced shards, parameters and Adam state through3x8.
+- Combined200-update A/A `01M1RERW7CSCBHWKDDGEED3AFT`, source35fbbc3a9:
+  original baseline, combined candidate AR, combined candidate direct RS, each
+  repeated twice on one64-GPU allocation. Candidate includes CTA128, inverse
+  scatter, vectorized FP32 add, paired activation, docpool, top16 and rounded wgrad.
+- Paired fresh save/restore/eval smoke `01M1RESCKKEN94W5NK0RC9F5Z2`, same source:
+  reference and candidate-RS each0->4->8, separate torchrun agents,64 GPUs.
+  CPU collector compares64 initial-weight and128 batch fingerprints per arm,
+  six completed checkpoints and six remote-verified uploads. No deletion.
+- Four report_only integration registrations created by
+  `01M1RC7QKW6RMX36A1CN6BSA56`; live uploader discovered them without restart.
+- GEMM/SwiGLU fusion r2 `01M1RDF824AB3XZK1XC14FB8MP` corrected saved-output
+  N-layout compilation but failed with CUDA illegal instruction before validation.
+  Reject as-is; no such code is enabled in the training candidates.
+- Consolidated KDA contribution opened: https://github.com/allenai/kernel-fun/pull/2
+  (private fork branch `codex/kda-cta-policy-b300`, ec10bc7). Opt-in top-level
+  CTA dispatch policy; default256 and all safety/internal-kernel guards retained.
+  Twelve CPU tests and two exact B300 forward/backward production-shape tests
+  passed (`01M1RCTRHBHVSGXRFQRYVFPTRZ`). No WY schedule win promoted, no merge.
+  Training still pins7a6983 and the already-qualified CTA128 override.
