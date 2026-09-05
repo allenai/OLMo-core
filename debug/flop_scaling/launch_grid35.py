@@ -95,7 +95,7 @@ def arm_args(task, arm, budget):
                  "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
                  "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
         return "ffnmoe", data, packed + ["--base-checkpoint", BASE], extra
-    if arm.startswith(("attnroute-c", "flex-c", "flexa-c")):
+    if arm.startswith(("attnroute-c", "flex-c", "flexa-c", "flexs-c")):
         # Learned KV-cache allocation (olmo_core.nn.attention.kv_route): per full-attention layer a
         # router keeps or evicts each key; two-sided budget on the mean keep fraction, annealed from
         # 1.0 over the first 30% of steps. "c50" = keep target 0.50 (attnroute) / total-FLOP target
@@ -105,13 +105,16 @@ def arm_args(task, arm, budget):
         kv = f"--kv-route-start-layer 0 --kv-route-target {tgt:.2f} --kv-route-target-anneal-frac 0.3"
         if arm.startswith("attnroute"):
             return "kvroute", data, packed + ["--base-checkpoint", BASE], kv
-        ffn_start = 0 if arm.startswith("flexa") else 12  # flexa = FFN routed on ALL layers
+        ffn_start = 0 if arm.startswith(("flexa", "flexs")) else 12  # flexa/flexs = FFN routed on ALL layers
+        # flexs = the three-router arm: + per-token block skipping (olmo_core.nn.block_skip), all
+        # blocks routed; the joint budget owns all three targets (the per-router ones must parse).
+        skip = " --block-skip-target 0.5 --block-skip-start-layer 0" if arm.startswith("flexs") else ""
         ffn = (f"--ffn-moe-start-layer {ffn_start} --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
                "--ffn-moe-target 0.10 --ffn-moe-two-sided --ffn-moe-explore 0.0 "
                "--ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
         # joint FLOP shares at 8k (real lengths), see --flex-share-seq-len; the KV router's own target
         # is irrelevant under the joint budget (its budget weight is zeroed) but must parse.
-        return "flexcompute", data, packed + ["--base-checkpoint", BASE], f"{ffn} {kv} --flex-joint-target {tgt:.2f} --flex-share-seq-len 8192"
+        return "flexcompute", data, packed + ["--base-checkpoint", BASE], f"{ffn} {kv} --flex-joint-target {tgt:.2f} --flex-share-seq-len 8192{skip}"
     if arm in KV_FRAC:
         frac = KV_FRAC[arm]
         padded = ["--seq-len", "65536", "--global-batch", "160", "--micro-batch-instances", "2", "--base-checkpoint", BASE]

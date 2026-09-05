@@ -64,6 +64,8 @@ class FlopMeterCallback(Callback):
     _attn_score_per_tok: Optional[int] = None
     _kv_keep_weighted: float = 0.0
     _ffn_cost_weighted: float = 0.0
+    _block_flops: Optional[list] = None
+    _skip_keep_weighted: float = 0.0
 
     def _model(self):
         return self.trainer.train_module.model  # type: ignore[union-attr]
@@ -115,6 +117,31 @@ class FlopMeterCallback(Callback):
             self._kv_keep_weighted += keep * tokens
             self.trainer.record_metric("flop_meter/kv_keep", keep)
 
+        bsk = getattr(m, "_block_skip", None)
+        if bsk is not None:
+            # Skipped tokens save the WHOLE block (projections + FFN + scores); the FFN / KV
+            # savings above were computed over all tokens, so charge them only on run tokens by
+            # re-pricing per block: cost_b = keep_b * (proj_b + ffn_b*c_b + attn_b*kv_b).
+            if self._block_flops is None:
+                per = []
+                for blk in m.blocks.values():
+                    ffn = int(blk.feed_forward.num_flops_per_token(self.seq_len)) if hasattr(blk, "feed_forward") else 0
+                    a = getattr(blk, "attention", None)
+                    aa = int(a.num_flops_per_token(self.seq_len)) if a is not None else 0
+                    sc = aa - int(a.num_flops_per_token(0)) if (a is not None and hasattr(a, "w_q")) else 0
+                    per.append((aa - sc, ffn, sc))
+                self._block_flops = per
+            ffn_pl = nffn["holder"].per_layer_cost(last_forward=True) if nffn is not None else {}
+            kv_pl = kvr["holder"].last_per_layer_keep if kvr is not None else {}
+            keep_pl = bsk["holder"].per_layer_keep(last_forward=True)
+            blocks_total = 0.0
+            for i, (proj, ffn, sc) in enumerate(self._block_flops):
+                blocks_total += keep_pl.get(i, 1.0) * (proj + ffn * ffn_pl.get(i, 1.0) + sc * kv_pl.get(i, 1.0))
+            fixed = dense_tok - sum(p + f + c for p, f, c in self._block_flops)
+            actual = tokens * (fixed + blocks_total)
+            self._skip_keep_weighted += bsk["holder"].mean_keep(last_forward=True) * tokens
+            self.trainer.record_metric("flop_meter/block_keep", bsk["holder"].mean_keep(last_forward=True))
+
         comp = getattr(m, "_soft_token_compaction", None)
         if comp is not None and comp["tokens_out"] > 0:
             rows = max(1, comp["rows"])
@@ -153,6 +180,9 @@ class FlopMeterCallback(Callback):
             "tokens_are_real": self.pad_id is not None,
             "ffn_cost_frac": (
                 self._ffn_cost_weighted / self._tokens if self._ffn_cost_weighted > 0 and self._tokens else None
+            ),
+            "block_skip_keep_frac": (
+                self._skip_keep_weighted / self._tokens if self._skip_keep_weighted > 0 and self._tokens else None
             ),
             "kv_route_keep_frac": (
                 self._kv_keep_weighted / self._tokens if self._kv_keep_weighted > 0 and self._tokens else None

@@ -79,6 +79,7 @@ from olmo_core.train import (
     teardown_training_environment,
 )
 from olmo_core.train.callbacks import (
+    BlockSkipCallback,
     FlopMeterCallback,
     KVRouteCallback,
     NestedFFNMoECallback,
@@ -630,6 +631,16 @@ def build_train_module_config(
                 ]
                 if opts.variant in ("kvroute", "flexcompute")
                 else []
+            )
+            + (
+                [
+                    OptimGroupOverride(
+                        params=["blocks.*._bskip_router.*"],
+                        opts=dict(lr=opts.router_lr, weight_decay=0.0),
+                    )
+                ]
+                if opts.variant == "flexcompute" and opts.block_skip_target is not None
+                else []
             ),
         ),
         scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
@@ -913,7 +924,7 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     state_dict = _prepare_state_dict(model, None)
     model_sd = state_dict["model"]
     missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
-    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "pooled_projector.", "._pooled_projector")
+    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "._bskip_router.", "pooled_projector.", "._pooled_projector")
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
         raise SystemExit(
@@ -939,6 +950,8 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
             reset_owners.setdefault(k.split("._nffnp_")[0], set()).add("prefix")
         elif "._kvr_router." in k:
             reset_owners.setdefault(k.split("._kvr_router.")[0], set()).add("kv_router")
+        elif "._bskip_router." in k:
+            reset_owners.setdefault(k.split("._bskip_router.")[0], set()).add("bskip_router")
         elif "pooled_projector" in k:
             reset_owners.setdefault(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set())
     stats = []
@@ -949,6 +962,12 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
 
             reset_kv_route_extras(mod)
             stats.append(f"{owner}: kv router reset (keep-all)")
+            continue
+        if "bskip_router" in reset_owners[owner]:
+            from olmo_core.nn.block_skip import reset_block_skip_extras
+
+            reset_block_skip_extras(mod)
+            stats.append(f"{owner}: block-skip router reset (run-all)")
             continue
         if hasattr(mod, "_nffn_gain"):
             from olmo_core.nn.nested_ffn_moe import reset_nested_ffn_extras
@@ -1154,6 +1173,20 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"{opts.kv_route_target} annealed over {int(total_calls * opts.kv_route_target_anneal_frac)}/{total_calls} calls",
             flush=True,
         )
+    if opts.variant == "flexcompute" and opts.block_skip_target is not None:
+        model.enable_block_skip(
+            start_layer=opts.block_skip_start_layer,
+            target=opts.block_skip_target,
+            budget_weight=opts.kv_route_budget_weight,
+            two_sided=not opts.kv_route_one_sided,
+            target_anneal_calls=int(total_calls * opts.kv_route_target_anneal_frac),
+            seed=opts.seed,
+        )
+        print(
+            f"[ctc-suite] block-skip: routed blocks {model._block_skip['routed']}, run target "
+            f"{opts.block_skip_target}",
+            flush=True,
+        )
     if opts.variant == "flexcompute" and opts.flex_joint_target is not None:
         # One budget over BOTH routers, weighted by each block's share of dense FLOPs, so the
         # model decides per task how to split its saving between FFN width and KV keeping.
@@ -1226,6 +1259,10 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     if opts.variant in ("kvroute", "flexcompute"):
         trainer_config = trainer_config.with_callback(
             "kv_route", KVRouteCallback(calls_per_step=accum)
+        )
+    if opts.variant == "flexcompute" and opts.block_skip_target is not None:
+        trainer_config = trainer_config.with_callback(
+            "block_skip", BlockSkipCallback(calls_per_step=accum)
         )
     # Method-aware training FLOPs for every arm (records/flop-scaling-ffn-kv-plan.md §5).
     trainer_config = trainer_config.with_callback(
@@ -1319,6 +1356,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     if opts.variant in ("kvroute", "flexcompute")
                     else None
                 ),
+                "block_skip": (
+                    {"start_layer": opts.block_skip_start_layer, "target": opts.block_skip_target}
+                    if opts.variant == "flexcompute" and opts.block_skip_target is not None
+                    else None
+                ),
                 "softtoken": (
                     {"n_random": opts.st_n_random, "n_random_range": opts.st_n_random_range,
                      "keep_frac": opts.st_keep_frac, "keep_prob": opts.st_keep_prob,
@@ -1405,6 +1447,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--kv-route-target-anneal-frac", type=float, default=0.3)
     ap.add_argument("--kv-route-explore", type=float, default=0.0)
     ap.add_argument("--kv-route-explore-anneal-frac", type=float, default=0.3)
+    ap.add_argument("--block-skip-target", type=float, default=None,
+                    help="flexcompute: enable per-token block skipping (olmo_core.nn.block_skip) with this mean RUN "
+                         "fraction budget (ignored under --flex-joint-target, which owns the budget)")
+    ap.add_argument("--block-skip-start-layer", type=int, default=0)
     ap.add_argument("--flex-share-seq-len", type=int, default=8192,
                     help="flexcompute: sequence length the FFN/attention FLOP shares of the joint budget are evaluated "
                          "at (real example length, NOT the padded window: at 65k attention-score FLOPs are ~50%% of "

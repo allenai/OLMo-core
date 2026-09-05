@@ -149,6 +149,8 @@ class Transformer(nn.Module):
         self._kv_route: Optional[Dict[str, Any]] = None
         # Joint FFN+attention budget over both routers: set by ``joint_budget.install_joint_budget``.
         self._joint_budget: Optional[Dict[str, Any]] = None
+        # Per-token block skipping (mixture-of-depths router): set by ``enable_block_skip``.
+        self._block_skip: Optional[Dict[str, Any]] = None
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -566,6 +568,44 @@ class Transformer(nn.Module):
             len(routed), routed, start_layer, target,
         )
 
+    def enable_block_skip(
+        self,
+        *,
+        start_layer: int = 0,
+        target: float = 0.5,
+        budget_weight: float = 1.0,
+        two_sided: bool = True,
+        target_anneal_calls: int = 0,
+        seed: int = 0,
+    ) -> None:
+        """
+        Enable learned per-token block skipping (see :mod:`olmo_core.nn.block_skip`): every block at
+        or after ``start_layer`` gets a router deciding per token whether the block runs; skipped
+        tokens pass the residual stream unchanged and are not keys in that block's attention. Adds
+        NEW state-dict keys ``blocks.<i>._bskip_router.w.*`` initialised to run everything.
+
+        :raises OLMoConfigurationError: If no block was routed.
+        """
+        from ..block_skip import BlockSkipHolder, install_block_skip
+
+        holder = BlockSkipHolder(
+            target=target,
+            budget_weight=budget_weight,
+            two_sided=two_sided,
+            target_anneal_calls=target_anneal_calls,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+        )
+        routed = install_block_skip(self.blocks, holder, start_layer=start_layer)
+        if not routed:
+            raise OLMoConfigurationError("enable_block_skip routed no blocks")
+        self._block_skip = {"start_layer": int(start_layer), "routed": routed, "holder": holder}
+        log.info(
+            "Block skipping enabled on %d blocks (start_layer=%d) target=%.3f",
+            len(routed), start_layer, target,
+        )
+
     def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
         """Recompute the FFN gate mask from the (possibly compacted) token stream."""
         cfg = self._role_gated_ffn
@@ -728,7 +768,12 @@ class Transformer(nn.Module):
             block_kwargs = per_block_kwargs.get(block_idx, {})
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+            if getattr(block, "_bskip", None) is not None:
+                from ..block_skip import block_skip_forward
+
+                h = block_skip_forward(block, h, {**all_block_kwargs, **block_kwargs})
+            else:
+                h = block(h, **all_block_kwargs, **block_kwargs)
             if capture_layers is not None and block_idx in capture_layers:
                 captured[block_idx] = h
         return h, captured
@@ -1320,6 +1365,8 @@ class Transformer(nn.Module):
             self._nested_ffn_moe["holder"].begin_forward(collect_loss=labels is not None)
         if self._kv_route is not None:
             self._kv_route["holder"].begin_forward(collect_loss=labels is not None)
+        if self._block_skip is not None:
+            self._block_skip["holder"].begin_forward(collect_loss=labels is not None)
 
         (
             input_ids,
@@ -1412,6 +1459,10 @@ class Transformer(nn.Module):
                     kvr_loss = self._kv_route["holder"].regularization_loss()
                     if kvr_loss is not None:
                         loss = loss + kvr_loss.to(loss.dtype)
+                if self._block_skip is not None:
+                    bs_loss = self._block_skip["holder"].regularization_loss()
+                    if bs_loss is not None:
+                        loss = loss + bs_loss.to(loss.dtype)
                 if self._joint_budget is not None:
                     from ..joint_budget import joint_budget_loss
 

@@ -45,6 +45,7 @@ and priced on the same FLOP axis as the FFN router so the two allocations can be
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
@@ -67,7 +68,7 @@ __all__ = [
 ]
 
 try:
-    from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+    from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 
     _flex_attention = torch.compile(flex_attention, dynamic=True)
     import torch._dynamo
@@ -137,6 +138,7 @@ class KVRouteHolder:
         self._choice_cache: Dict[tuple, torch.Tensor] = {}
         self._exp_keep: List[torch.Tensor] = []
         self._exp_weights: List[float] = []
+        self._exp_layers: List[int] = []
         self._hard_kept: Dict[int, float] = {}
         self._n_tokens: Dict[int, int] = {}
         self._tier_count: Optional[torch.Tensor] = None
@@ -150,6 +152,7 @@ class KVRouteHolder:
     def _reset(self) -> None:
         self._exp_keep = []
         self._exp_weights = []
+        self._exp_layers = []
         self._hard_kept = {}
         self._n_tokens = {}
         self._tier_count = None
@@ -199,6 +202,7 @@ class KVRouteHolder:
         if self.collect_loss:
             self._exp_keep.append(exp_keep * w)
             self._exp_weights.append(w)
+            self._exp_layers.append(int(layer_idx))
         kept = float(keep.sum().item())
         n = int(keep.numel())
         self._hard_kept[layer_idx] = kept
@@ -347,16 +351,21 @@ def _masked_attention(
             d_ok = (~in_c) & ((kj - Kp) == qi) & dropped_q[b, qi]
             return c_ok | d_ok
 
-        block_mask = create_block_mask(
-            mask_mod,
-            B,
-            None,
-            T,
-            Kp + T,
-            device=q.device,
-            BLOCK_SIZE=(FLEX_BLOCK_SIZE, FLEX_BLOCK_SIZE),
-            _compile=True,
-        )
+        if os.environ.get("KV_ROUTE_BLOCKMASK", "block") == "dense":
+            # reference builder: materialises a dense (T x (Kp+T)) bool mask first -- 8.6 GB per
+            # layer at 65k x 131k, which OOMs 36-layer models (Qwen3-4B, 2026-09-05)
+            block_mask = create_block_mask(
+                mask_mod,
+                B,
+                None,
+                T,
+                Kp + T,
+                device=q.device,
+                BLOCK_SIZE=(FLEX_BLOCK_SIZE, FLEX_BLOCK_SIZE),
+                _compile=True,
+            )
+        else:
+            block_mask = _compacted_block_mask(mask_mod, pos_k, counts, doc, T, Kp, q.device)
         out = _flex_attention(
             q_, k_cat, v_cat, block_mask=block_mask, scale=scale, enable_gqa=(Hq != Hk)
         )
@@ -379,6 +388,59 @@ def _masked_attention(
     v_ = _repeat_kv(v, n_rep).transpose(1, 2)
     out = F.scaled_dot_product_attention(q_, k_, v_, attn_mask=allowed[:, None], scale=scale)
     return out.transpose(1, 2).contiguous()
+
+
+def _compacted_block_mask(
+    mask_mod,
+    pos_k: torch.Tensor,
+    counts: torch.Tensor,
+    doc: Optional[torch.Tensor],
+    T: int,
+    Kp: int,
+    device: torch.device,
+):
+    """
+    Build the FlexAttention :class:`BlockMask` for the compacted layout at BLOCK resolution, without
+    ever materialising the token-level mask.
+
+    A (query block ``i``, compacted key block ``j``) pair can hold an allowed entry only if the
+    block's first key position (positions are ascending within the compacted set) is ``<=`` the
+    block's last query position (causal) and the two blocks' document ranges intersect; padded
+    slots carry position ``T + 1`` and fail the causal test. Every diagonal block of the appended
+    full key set is listed (dropped queries read their own key there). Listed blocks are all
+    *partial*: the kernel applies ``mask_mod`` inside them, so an over-approximation here costs
+    compute but never correctness.
+    """
+    bs = FLEX_BLOCK_SIZE
+    B = pos_k.shape[0]
+    nq = -(-T // bs)
+    nkc = Kp // bs
+    nkd = nq
+    pos_pad = torch.arange(nq * bs, device=device).clamp(max=T - 1)
+    q_last = (torch.arange(nq, device=device) * bs + bs - 1).clamp(max=T - 1)  # (nq,)
+    k_first = pos_k[:, ::bs]  # (B, nkc) first slot position of each compacted block (T+1 if padded)
+    causal_ok = k_first[:, None, :] <= q_last[None, :, None]  # (B, nq, nkc)
+    if doc is not None:
+        doc_q = doc[pos_pad].view(nq, bs)
+        q_dmin, q_dmax = doc_q[:, 0], doc_q[:, -1]  # docs ascend with position
+        doc_k = doc[pos_k.clamp(max=T - 1)].view(B, nkc, bs)
+        valid = (torch.arange(Kp, device=device)[None, :] < counts[:, None]).view(B, nkc, bs)
+        big = doc.max() + 1
+        k_dmin = torch.where(valid, doc_k, big).amin(-1)  # (B, nkc)
+        k_dmax = torch.where(valid, doc_k, -1).amax(-1)
+        doc_ok = (k_dmin[:, None, :] <= q_dmax[None, :, None]) & (
+            k_dmax[:, None, :] >= q_dmin[None, :, None]
+        )
+        causal_ok = causal_ok & doc_ok
+    diag = torch.eye(nq, dtype=torch.bool, device=device)[None].expand(B, nq, nkd)
+    dense_blocks = torch.cat([causal_ok, diag], dim=-1)  # (B, nq, nkc + nkd)
+    kv_num_blocks = dense_blocks.sum(-1, dtype=torch.int32)[:, None]  # (B, 1, nq)
+    kv_indices = torch.argsort((~dense_blocks).to(torch.int8), dim=-1, stable=True).to(torch.int32)[
+        :, None
+    ]
+    return BlockMask.from_kv_blocks(
+        kv_num_blocks, kv_indices, BLOCK_SIZE=bs, mask_mod=mask_mod, seq_lengths=(T, Kp + T)
+    )
 
 
 def _write_compacted_cache(
@@ -418,21 +480,24 @@ def kv_route_attention(
     *,
     cu_doc_lens: Optional[torch.Tensor] = None,
     cache_leftpad: Optional[torch.Tensor] = None,
+    block_keep: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Routed attention for one layer: decide keep/drop per token, scale K/V by the straight-through
     coefficient, attend with the kept-key mask, and (at prefill) compact the KV cache.
 
-    :param attn: The attention module (carries ``_kv_route`` and ``_kvr_router``).
+    ``block_keep`` (from :mod:`olmo_core.nn.block_skip`) is ANDed into the key mask: a token
+    skipping this block is not a key here. When the layer has no KV router of its own, only
+    ``block_keep`` masks.
+
+    :param attn: The attention module (carries ``_kv_route`` and ``_kvr_router`` when routed).
     :param x: ``(B, T, d_model)`` block input the router reads.
     :param q: ``(B, T, n_heads, head_dim)`` (RoPE applied).
     :param k: ``(B, T, n_kv_heads, head_dim)``.
     :param v: ``(B, T, n_kv_heads, head_dim)``.
     :returns: ``(B, T, n_heads, head_dim)`` attention output.
     """
-    cfg = attn._kv_route  # type: ignore[attr-defined]
-    holder: KVRouteHolder = cfg["holder"]
-    layer_idx: int = cfg["layer_idx"]
+    cfg = getattr(attn, "_kv_route", None)
     kvm = attn.kv_cache_manager
     B, T, _, _ = q.shape
 
@@ -444,31 +509,40 @@ def kv_route_attention(
             "kv_route does not support context parallelism (single-rank attention only)"
         )
 
-    router: KVRouter = attn._kvr_router  # type: ignore[attr-defined]
-    logits = router(x)  # (B, T) float32
-    p = torch.sigmoid(logits)
+    if cfg is not None and cfg["holder"].enabled:
+        holder: KVRouteHolder = cfg["holder"]
+        layer_idx: int = cfg["layer_idx"]
+        router: KVRouter = attn._kvr_router  # type: ignore[attr-defined]
+        logits = router(x)  # (B, T) float32
+        p = torch.sigmoid(logits)
 
-    cache_key = (layer_idx, B, T)
-    cache = holder._choice_cache
-    if attn.training and cache_key in cache:
-        keep = cache[cache_key]
+        cache_key = (layer_idx, B, T)
+        cache = holder._choice_cache
+        if attn.training and cache_key in cache:
+            keep = cache[cache_key]
+        else:
+            keep = logits.detach() > 0
+            explore = holder.current_explore()
+            if attn.training and explore > 0:
+                gen = _forward_generator(holder, layer_idx, x.device)
+                flip = torch.rand(B, T, device=x.device, generator=gen) < explore
+                keep = keep ^ flip
+            if attn.training:
+                cache[cache_key] = keep
+
+        # Straight-through: value exactly 1 in the forward, gradient 1 w.r.t. p_sel (module doc).
+        p_sel = torch.where(keep, p, 1.0 - p)
+        coef = (1.0 + p_sel - p_sel.detach()).to(k.dtype)[:, :, None, None]
+        k = k * coef
+        v = v * coef
+        # Tokens skipping the whole block are not keys; counted as dropped for the cache size but
+        # outside this router's own budget (the block-skip budget owns them).
+        if block_keep is not None:
+            keep = keep & block_keep.to(torch.bool)
+        holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
     else:
-        keep = logits.detach() > 0
-        explore = holder.current_explore()
-        if attn.training and explore > 0:
-            gen = _forward_generator(holder, layer_idx, x.device)
-            flip = torch.rand(B, T, device=x.device, generator=gen) < explore
-            keep = keep ^ flip
-        if attn.training:
-            cache[cache_key] = keep
-
-    # Straight-through: value exactly 1 in the forward, gradient 1 w.r.t. p_sel (see module doc).
-    p_sel = torch.where(keep, p, 1.0 - p)
-    coef = (1.0 + p_sel - p_sel.detach()).to(k.dtype)[:, :, None, None]
-    k = k * coef
-    v = v * coef
-
-    holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)
+        assert block_keep is not None, "kv_route_attention needs a router or block_keep"
+        keep = block_keep.to(torch.bool)
 
     doc = _doc_ids(cu_doc_lens, T) if cu_doc_lens is not None else None
     if doc is not None and B != 1:
@@ -524,7 +598,10 @@ def enable_from_config_block(model: Any, block: Dict[str, Any]) -> None:
     model.enable_kv_route(start_layer=int(block.get("start_layer", 0)))
     # stdout as well as the logger: eval jobs surface only prints, and a routed checkpoint scored
     # WITHOUT its router is indistinguishable from a dense model in the logs otherwise.
-    print(f"[kv-route] routing enabled from config.json: routed layers {model._kv_route['routed']}", flush=True)
+    print(
+        f"[kv-route] routing enabled from config.json: routed layers {model._kv_route['routed']}",
+        flush=True,
+    )
     log.info(
         "[kv-route] routing enabled from config.json: start_layer=%s routed=%s",
         block.get("start_layer", 0),

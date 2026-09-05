@@ -1345,6 +1345,7 @@ class Attention(SequenceMixer):
         aux_capture: Optional[dict] = None,
         kv_grad_mask: Optional[torch.Tensor] = None,
         soft_kv_override: Optional[dict] = None,
+        block_keep: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1362,6 +1363,8 @@ class Attention(SequenceMixer):
         :param kv_grad_mask: Optional ``(B, T)`` bool; ``False`` columns have their K/V DETACHED
             (static-KV semantics for pooled soft tokens: forward identical, no LM gradient
             through those columns).
+        :param block_keep: Optional ``(B, T)`` bool from :mod:`olmo_core.nn.block_skip`: ``False``
+            tokens skip this block and must not be keys here (ANDed into the KV router's keep).
         :param soft_kv_override: Optional dict replacing this layer's K/V at pooled soft-token
             columns with precomputed oracle slots (see :mod:`olmo_core.nn.oracle_slot`). Keys:
             ``rows``/``cols`` ``(S,)`` batch/column indices, ``pos`` ``(S,)`` absolute doc-center
@@ -1452,12 +1455,17 @@ class Attention(SequenceMixer):
             )
 
         kv_route = getattr(self, "_kv_route", None)
-        if kv_route is not None and kv_route["holder"].enabled and attn_bias is None:
-            # Learned KV-cache allocation: keep/drop each key at this layer (kv_route.py).
+        if (
+            (kv_route is not None and kv_route["holder"].enabled) or block_keep is not None
+        ) and attn_bias is None:
+            # Learned KV-cache allocation: keep/drop each key at this layer (kv_route.py). Also the
+            # path for block skipping's key mask (``block_keep``: tokens skipping this block are
+            # not keys here), with or without a KV router on the layer.
             from .kv_route import kv_route_attention
 
             att = kv_route_attention(
-                self, x, q, k, v, cu_doc_lens=cu_doc_lens, cache_leftpad=cache_leftpad
+                self, x, q, k, v, cu_doc_lens=cu_doc_lens, cache_leftpad=cache_leftpad,
+                block_keep=block_keep,
             )
         elif attn_bias is not None:
             # Soft-token aux path: position-causal + shadow-blocked masked SDPA.

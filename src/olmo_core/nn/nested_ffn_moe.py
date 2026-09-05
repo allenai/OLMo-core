@@ -113,7 +113,8 @@ def post_build_hook_from_config(model_path: str):
         return None
     block = cfg.get("ffn_moe")
     kv_block = cfg.get("kv_route")  # the attention-side router; same "enable before load" need
-    if not block and not kv_block:
+    bs_block = cfg.get("block_skip")  # per-token block skipping
+    if not block and not kv_block and not bs_block:
         return None
 
     def hook(model):
@@ -121,6 +122,10 @@ def post_build_hook_from_config(model_path: str):
             from .attention.kv_route import enable_from_config_block
 
             enable_from_config_block(model, kv_block)
+        if bs_block:
+            from .block_skip import enable_from_config_block as enable_bs
+
+            enable_bs(model, bs_block)
         if not block:
             return
         model.enable_nested_ffn_moe(
@@ -292,6 +297,7 @@ class NestedFFNHolder:
 
     def _reset_accumulators(self) -> None:
         self._exp_costs: List[torch.Tensor] = []
+        self._exp_layers: List[int] = []
         self._entropies: List[torch.Tensor] = []
         self._recons: List[torch.Tensor] = []
         self._hard_cost_sum = 0.0
@@ -415,6 +421,7 @@ class NestedFFNHolder:
         """
         if in_budget and self.collect_loss and exp_cost is not None:
             self._exp_costs.append(exp_cost)
+            self._exp_layers.append(int(layer_idx) if layer_idx is not None else -1)
             self._entropies.append(entropy)
             if recon is not None:
                 self._recons.append(recon)

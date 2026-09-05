@@ -199,3 +199,34 @@ FLOPs spent (>1 = compute-optimal vs the 4B dense curve).
 Next knobs (not run): per-layer keep floor for the KV router (contradiction dies when L11+ empty);
 route the GDN layers / block-skip rung to reach the un-routed 52%; flex at 9B/27B where the FFN
 share is larger and the FFN-only multiplier was already 0.91.
+
+## Stage C — Qwen3-4B (no GDN) and the third router (block skipping), 2026-09-05
+
+Prasann: "Qwen3 for now sounds good", "Building 2 [block skip] while that runs also sounds good".
+
+**Why Qwen3.** On Qwen3.5 the 24 GDN layers were ~40 of the 52% of per-token FLOPs the routers
+cannot reach. Qwen3-4B is 36 attention+FFN layers, all routable. Measured shares at 8k (joint
+budget log): FFN(L12+) 0.255 / FFN(all) 0.418, attention-score 0.375, fixed 0.369 (L12+) or
+0.207 (all-layer FFN). Two-router ceiling ≈ 5x (8k) / 14x (32k) vs ~2x on Qwen3.5.
+
+**Data.** The length-mix arms were Qwen3.5-tokenized; re-tokenized with Qwen/Qwen3-4B (eos 151643)
+into `taskscale_lengthmix/arms_tokenized_qwen3/` (`build_task_rungs.py --stage tokenize` with
+`TASKSCALE_TOKENIZER/EOS/TOK_SUBDIR`; the oolong manifest only lists s320M, so `--arms` names
+s20M/s80M explicitly). Tokenizer staged at `hf_tokenizers/Qwen3-4B` for the evaluators
+(`FS_TOKENIZER`). Base: `ctc_suite/bases/qwen3-4b-base-trainedmark`.
+
+**Runs** (orchestrate_scale `FS_FAMILY=qwen3`, run names `fs35q3s4b{dense,flex}-…`, 8 GPUs per
+routed run — 36 flex-attention layers OOM'd 4×80GB): dense at both budgets (the reference
+curve), flex-c60 (FFN L12+ + KV), flex-c45, flexa-c40 (FFN on all layers + KV) at contradiction
+56M / oolong 80M. Targets chosen against the achievable floors (0.37 / 0.21).
+
+**Block skipping (`olmo_core.nn.block_skip`, arm prefix `flexs-c*`).** Per block a
+`Linear(d_model,1)` run/skip router; a skipped token passes the residual unchanged and is removed
+from that block's key set (``block_keep`` → the KV-route masked attention, so it also leaves the
+KV cache at prefill). Straight-through on the residual update, run-all init, own budget or the
+joint budget. The joint budget is now per block: ``cost = s_fixed + Σ_b keep_b·(proj_b +
+ffn_b·c_b + attn_b·kv_b)`` (`joint_budget.py`), and the FLOP meter prices the same way
+(`flops.json: block_skip_keep_frac`). Realised as a mask (block runs on all tokens, skipped
+outputs discarded): exact MoD semantics, analytical FLOPs, no wall-clock saving yet — the gather/
+scatter compacted variant is the follow-up. CPU tests `src/test/nn/block_skip_test.py`; GPU
+smoke `debug/flop_scaling/smoke_block_skip_gpu.py`.
