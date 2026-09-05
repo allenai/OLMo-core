@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -273,7 +274,11 @@ def trainer_config(common):
         "qknorm-pr855",
         "kernel-fun-7a6983b",
         f"pass:{PASS}",
-        f"variant:{VARIANT}",
+        (
+            f"variant:{VARIANT}"
+            if len(VARIANT) <= 56
+            else f"variant:{VARIANT[:44]}-{hashlib.sha256(VARIANT.encode()).hexdigest()[:8]}"
+        ),
         "trained-routing",
         "no-checkpoints",
     ]
