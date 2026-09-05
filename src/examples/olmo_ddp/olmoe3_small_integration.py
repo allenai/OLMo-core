@@ -1,7 +1,8 @@
 """Matched 100B production-setting integration runs and save/restore smoke tests.
 
 The optimization policy is explicit and recorded. Both arms use identical model,
-data, optimizer, precision and schedules. No checkpoint deletion is permitted.
+data, optimizer, precision and schedules. Only the guarded uploader may delete
+verified local checkpoints; the trainer never prunes them.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import torch.distributed as dist
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import olmoe3_small_medium_profile as base
+from olmoe3_integration_policy import FLAGS, integration_policy
 
 from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
 from olmo_core.distributed.utils import get_rank, get_world_size
@@ -50,15 +52,9 @@ SMOKE = os.environ.get("OLMOE3_INTEGRATION_SMOKE", "0") == "1"
 STOP = int(os.environ.get("OLMOE3_INTEGRATION_STOP", "4" if SMOKE else "6000"))
 EXPECTED_START = int(os.environ.get("OLMOE3_INTEGRATION_EXPECTED_START", "0"))
 POLICY = os.environ.get("OLMOE3_INTEGRATION_POLICY", "core-docpool")
-FLAGS = {
-    "OLMO_PROFILE_SAFE_NOOP_NVTX": "0",
-    "OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH": "0",
-    "OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE": "0",
-    "OLMO_PROFILE_SWIGLU_PAIRWISE": "0",
-    "OLMO_PROFILE_EMO_DOCUMENT_POOL": "0",
-    "OLMO_PROFILE_EMO_TOP16": "0",
-    "OLMO_PROFILE_ROUNDED_WGRAD": "0",
-}
+BASELINE = os.environ.get("OLMOE3_INTEGRATION_BASELINE", "original")
+COMMUNICATION = os.environ.get("OLMOE3_INTEGRATION_COMMUNICATION", "none")
+SETTINGS = integration_policy(ARM, POLICY, BASELINE, COMMUNICATION)
 
 
 def write_or_verify(path: Path, content: str):
@@ -72,25 +68,7 @@ def write_or_verify(path: Path, content: str):
 
 def apply_policy():
     """Reset every experimental switch before constructing either arm."""
-    if ARM not in ("reference", "optimized") or POLICY not in (
-        "core-docpool",
-        "core-docpool-top16",
-        "core-docpool-wgrad",
-        "core-docpool-top16-wgrad",
-        "core-docpool-top16-wgrad-rs",
-    ):
-        raise ValueError((ARM, POLICY))
-    flags = dict(FLAGS)
-    if ARM == "optimized":
-        for key in (
-            "OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE",
-            "OLMO_PROFILE_SWIGLU_PAIRWISE",
-            "OLMO_PROFILE_EMO_DOCUMENT_POOL",
-        ):
-            flags[key] = "1"
-        flags["OLMO_PROFILE_EMO_TOP16"] = "1" if "top16" in POLICY else "0"
-        flags["OLMO_PROFILE_ROUNDED_WGRAD"] = "1" if "wgrad" in POLICY else "0"
-        flags["OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH"] = "1" if POLICY.endswith("-rs") else "0"
+    flags = dict(SETTINGS["flags"])
     os.environ.update(flags)
     return flags
 
@@ -156,6 +134,7 @@ class IntegrationAudit(Callback):
             provenance = {
                 "arm": ARM,
                 "policy": POLICY,
+                "optimization_settings": SETTINGS,
                 "flags": {key: os.environ[key] for key in FLAGS},
                 "source_commit": os.environ.get("GIT_REF"),
                 "start_step": self.step,
@@ -217,6 +196,8 @@ def common_components(cli_context, **kwargs):
         for name, value in {
             "OLMOE3_INTEGRATION_ARM": ARM,
             "OLMOE3_INTEGRATION_POLICY": POLICY,
+            "OLMOE3_INTEGRATION_BASELINE": BASELINE,
+            "OLMOE3_INTEGRATION_COMMUNICATION": COMMUNICATION,
             "OLMOE3_INTEGRATION_SMOKE": "1" if SMOKE else "0",
             "OLMOE3_INTEGRATION_STOP": str(STOP),
             "OLMOE3_INTEGRATION_EXPECTED_START": str(EXPECTED_START),
@@ -232,8 +213,8 @@ def model_config(common):
 
     import olmo_core.ops.moe as moe_ops
 
-    support.MIN_CTAS = 128 if ARM == "optimized" else 256
-    if ARM == "optimized":
+    support.MIN_CTAS = SETTINGS["kda_min_ctas"]
+    if SETTINGS["inverse_scatter"]:
         moe_ops.pool_keep_mask = moe_ops.pool_keep_mask_inverse_scatter
     model = base.build_model_config_from_common(common, SYSTEM)
     for block in model.block_overrides.values():
@@ -247,7 +228,7 @@ def train_module_config(common):
     config = base.build_train_module_config(common, SYSTEM)
     config.optim.lr = LR
     config.scheduler = WSD(warmup=2000, decay=1, decay_fraction=None)
-    config.dp_config.use_reduce_scatter = ARM == "optimized" and POLICY.endswith("-rs")
+    config.dp_config.use_reduce_scatter = SETTINGS["reduce_scatter"]
     return config
 
 
@@ -298,7 +279,11 @@ def trainer_config(common):
     )
     wandb = config.callbacks["wandb"]
     wandb.name = common.run_name
-    wandb.group = "small-production-integration-20260905"
+    wandb.group = (
+        "small-production-integration-wave2-20260905"
+        if BASELINE == "optimized100b"
+        else "small-production-integration-20260905"
+    )
     wandb.tags = [
         "small-64g",
         "16mi",
@@ -308,8 +293,10 @@ def trainer_config(common):
         "qknorm-pr855",
         ARM,
         POLICY,
+        BASELINE,
+        SETTINGS["communication"],
         "smoke" if SMOKE else "100b",
-        "no-deletion",
+        "guarded-uploader-retention",
         "synchronous-checkpoints",
     ]
     wandb.notes = (
