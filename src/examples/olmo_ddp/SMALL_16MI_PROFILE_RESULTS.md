@@ -4,16 +4,20 @@ Updated 2026-09-05 UTC. See [protocol and run ledger](SMALL_16MI_DEEP_PROFILE.md
 for source revisions, exact model settings, checkpoint migration, and failed attempts.
 No production/CBS checkpoint or uploader state is modified by these tests.
 
-**Current status (06:05 UTC):** Nsight Systems is fixed and validated on the full
+**Current status (06:43 UTC):** Nsight Systems is fixed and validated on the full
 64-B300 model under standalone 2026.4.1. The latest healthy same-node comparison is
 78,115 → 82,190 → 85,888 median TPS/GPU for baseline → KDA128 → KDA128+EMO inverse
 scatter (+9.95%, 374.38 idealized TFLOPs/GPU). The default-off gradient-add candidate
 passed exact two-GPU sharded-Adam qualification and improved its subsequent same-node
 A/B from 84,523 to 88,234 median TPS/GPU (+4.39%, 384.61 idealized TFLOPs/GPU).
 The faster candidate's fresh timing repeat is 87,766 median TPS/GPU, within 0.53%
-of the prior result on a different allocation; PyTorch/light-Nsight passes follow. The next
-paired-SwiGLU backward candidate passed exact one-GPU and two-GPU compiled/sharded-Adam
-checks; its 64-GPU same-allocation A/B is submitted, with no full-model gain claimed yet.
+of the prior result on a different allocation; its PyTorch/light-Nsight passes are complete.
+The paired-SwiGLU backward candidate passed exact one-GPU and two-GPU compiled/sharded-Adam
+checks and its 64-GPU same-allocation A/B: **88,120 → 91,836 median TPS/GPU (+4.22%)**,
+or **400.31 idealized TFLOPs/GPU**, saving 120.37ms/update. All 60 updates per arm have
+finite loss/gradient norm and no skipped updates. Full trajectories are not bitwise equal.
+The next bounded experiment is a benchmark-only, one-B300 grouped-GEMM tile/backend probe.
+Async checkpointing is explicitly deferred; activation checkpointing remains disabled.
 See the dated healthy-confirmation and Nsight sections below; the earlier bad-fabric
 capture is retained as diagnostic history, not the current performance reference.
 
@@ -535,14 +539,12 @@ remains benchmark-only. Result dataset: `01M1QVEPEF8VKF6MC1P73HER2H`.
 
 ### Current priorities after healthy confirmation
 
-1. Collect the faster gradient-add candidate's timing/PyTorch/light-Nsight passes.
-   Confirm the new gradient-add kernel is used, measure remaining activation/GEMM
-   work, and compare instrumentation overhead. Do not treat traced communication
-   fractions as a normal-run removable-time budget.
-2. Collect the paired-SwiGLU full-model A/B after its passed integration tests.
-   Check all 60 losses/gradient norms/skips and actual allocated memory, not just TPS.
-   Compare same-node updates31–60; exact primitive tests do not prove long-run quality.
-3. Use the refreshed traces to choose the next grouped-GEMM or KDA optimization.
+1. Completed the gradient-add timing/PyTorch/light-Nsight passes and paired-SwiGLU A/B;
+   results below. Preserve separate unprofiled timing and instrumented attribution.
+2. Run the bounded grouped-GEMM probe below. Only qualify an actual winning candidate
+   in compiled routed experts/sharded Adam before another full-model A/B. Synthetic
+   routing and isolated latency are not end-to-end evidence.
+3. Use the refreshed traces to choose subsequent grouped-GEMM or KDA optimization.
    Preserve architecture, BF16 computation, FP32 accumulation, scalable softmax,
    EMO, batch, LR, and the no-recomputation policy. Future GEMM/gradient-add fusion
    must retain BF16 weight-gradient rounding before FP32 accumulation.
@@ -552,7 +554,7 @@ remains benchmark-only. Result dataset: `01M1QVEPEF8VKF6MC1P73HER2H`.
    trace supports it; their demonstrated isolated savings are milliseconds.
 
 At this branch's FLOP accounting, 600 TFLOPs/GPU requires approximately 137.65k
-TPS/GPU (1.904s/update), about 56.0% above the current 88.23k gradient-add result.
+TPS/GPU (1.904s/update), about 49.9% above the current 91.84k paired-activation result.
 The small copy optimizations alone cannot close that gap. No additional 64-GPU
 allocation was launched solely for either communication-copy prototype.
 
@@ -598,10 +600,85 @@ Further fusion is deferred until the current controlled comparisons are settled.
 ## The 600-TFLOPs target
 
 With this FLOP accounting, 600 TFLOPs/GPU requires about 137.65k TPS/GPU and
-1.904s/update. That is about 56.0% above the latest 88,234 TPS/GPU / 384.61 TFLOPs/GPU
-gradient-add result. The measured improvements so far do not close that gap.
+1.904s/update. That is about 49.9% above the latest 91,836 TPS/GPU / 400.31 TFLOPs/GPU
+paired-activation result. The measured improvements so far do not close that gap.
 Larger gains need measured reductions
 inside each microbatch, not just an optimizer communication flag. Kernel-duration sums
 must not be added across overlapping streams and treated as end-to-end time savings.
 
 All experimental changes remain isolated in `codex/small-16mi-profile-v2`.
+
+## Completed paired-activation A/B — 2026-09-05
+
+[Experiment](https://beaker.org/ex/01M1R2JQX90JAQ5KGQQRHRH5QJ), source `3b020ad05`,
+all eight nodes exit0. Collector `01M1R2KKP49KZ03NS7NZ996TJG`, result dataset
+`01M1R2KKPCXV8TK2SJXA1E4RY6`. Both independent 60-update step7500 restores share the
+allocation and config; provenance differs only in variant name and paired-SwiGLU flag.
+KDA128, inverse-scatter EMO, vectorized gradient addition remain on in both arms.
+
+| Timing arm, updates31–60 | Mean TPS/GPU | Median TPS/GPU | Median TFLOPs/GPU | Median update (s) | Mean CE | Active / reserved GiB |
+|---|---:|---:|---:|---:|---:|---:|
+| Reference | 88,037 | 88,120 | 384.11 | 2.974849 | 1.951374 | 175.465 / 178.381 |
+| + paired SwiGLU backward | 91,858 | 91,836 | 400.31 | 2.854479 | 1.950831 | 175.465 / 175.760 |
+
+Median TPS improves **4.2169%**, or **120.37ms/update**. TPS standard deviations are
+526 and 471 respectively. Allocated memory is unchanged; the lower allocator reserve
+does not establish a smaller activation peak or that MB8 fits. This is a full-training
+gain, distinct from the isolated ~2.3× backward-kernel speedup.
+
+Every update7501–7560 has finite CE and total gradient norm, with zero skipped updates.
+First-update candidate-reference CE delta is -8.34e-7; gradient norm delta -8.20e-7.
+Across 60 updates, maximum absolute CE delta is 0.0027293 (step7548), and maximum
+gradient-norm delta 0.0328917 (step7553). Mean CE delta across all60 is -0.0002409.
+This is not bitwise full-model equivalence or evidence of a quality gain. Exact primitive
+and two-GPU integration checks passed, but same-code A/A variability and the agreed
+long reference/candidate training, eval, save/restore and uploader pilot remain necessary.
+
+## Refreshed gradient-add profile and next GEMM probe — 2026-09-05
+
+[Timing / PyTorch / light-Nsight](https://beaker.org/ex/01M1R17MJ5BNM7QS6NPVTBJQY8)
+completed on all64 GPUs, source `a401daccf`; collector exit0, dataset
+`01M1R17XX9F31Q9T2M26WG6QCK`. This capture precedes paired activation.
+Fresh unprofiled median 87,766 TPS/GPU / 382.57 TFLOPs/GPU. Nsight clean windows
+31–35 / 45–60: 87,834 / 87,545 TPS/GPU; PyTorch windows21–30 / 51–60:
+87,862 / 88,126. All eight Nsight reports have actual CUDA kernels and application NVTX.
+Disabling per-op autograd NVTX reduces NVTX events from208,556 to2,277 per report.
+
+Rank0's two-update PyTorch capture shows these **nonadditive** GPU duration sums:
+
+| Work | GPU duration over two updates (ms) |
+|---|---:|
+| Ordinary matrix multiplies (`aten::mm`) | 1,209.6 |
+| Grouped expert matrix multiplies | 1,146.7 |
+| KDA backward | 542.7 |
+| Expert activation backward (before paired kernel) | 458.1 |
+| Vectorized FP32 gradient add | 285.7 |
+| EMO sort/mask | 222.8 |
+| KDA forward | 185.1 |
+
+The new gradient-add kernel is present: ~286ms versus the prior native large-add
+kernel's ~680ms over two updates. KDA backward's largest subkernels include CuTe intra
+(142.9ms), transposed WY (106.6ms), reverse DH/DV (78.2ms), and recompute W/U (69.8ms).
+Internal KDA algorithm recomputation is distinct from activation checkpointing, which
+remains off. Ordinary GEMMs include FP32 router operations; do not change their precision.
+Grouped GEMMs already use SM100 CUTLASS two-SM tiles, not a naive fallback.
+The trace spans6.784s on rank0; differing exposed-collective intervals across ranks
+and instrumented overhead are not a normal-training removable-time budget.
+
+SSH remote inspection confirms `allenai/kernel-fun` main still points to pinned
+`7a6983baf2beb4ec4d7fe914ec9f6670438af99b`; there is no newer main to pull in.
+Its WY backlog documents prior tiling failures and a more involved warp-specialized
+pipeline direction. Do not repeat broad failed sweeps or change BT/precision casually.
+
+Next: `olmoe3_grouped_gemm_bench.py`, **benchmark-only, never imported by training**.
+The existing image has QuACK0.5.0; its inspected public API supports BF16 varlen-M
+forward/input-gradient and varlen-K weight-gradient GEMMs. Compare current Torch against
+three explicit tile/cluster choices:256×256/(2,1),128×128/(1,1),128×256/(1,1).
+Use both real expert widths, all six forward/dgrad/wgrad operations,512 experts and
+524,288 routed rows, with synthetic uniform and skewed/empty-expert routing.
+No precision or epilogue change, no dependency upgrade, no full-model integration.
+Check every output against Torch and sampled full-reduction slices against FP64;
+report mismatch counts/errors (not assume bitwise parity). Bracket candidates with
+Torch timings on the same GPU,25 samples after5 warmups. Initial tolerances are only
+a screening gate; actual trained-routing, compiled autograd/optimizer and full-model
+qualification are required before promotion. Only compact JSON goes to Beaker results.

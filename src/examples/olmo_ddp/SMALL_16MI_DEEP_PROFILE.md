@@ -314,7 +314,9 @@ Next actions:
    at updates36–37 with per-op autograd NVTX disabled; application NVTX remains.
    The timing repeat was collected at 06:05: median87,766 TPS/GPU / 382.57 TFLOPs/GPU,
    2.98684s/update, same active memory. It is within 0.53% of the earlier candidate
-   on different nodes, not a new same-allocation old/new comparison. Trace passes follow.
+   on different nodes, not a new same-allocation old/new comparison. Both trace passes
+   subsequently completed; expected gradient-add kernels and eight valid light-Nsight
+   reports are present. Dataset `01M1R17XX9F31Q9T2M26WG6QCK`.
 2. Compare healthy PyTorch and repaired Nsight timelines for overlap and host waits,
    keeping instrumented versus clean timing separate. CPU-only SQLite analysis
    `01M1QZ3PNYDRJR54GDRBZ89RAG` completed exit0, dataset `01M1QZ3PPA7ES6SGR0H8811RDP`.
@@ -334,10 +336,13 @@ Next actions:
    Default-off integration at `3b020ad05` passed both GPU tests in
    `01M1R1SNRYD1FP6E56NA5NZZPM`: compiled forward/backward plus actual compiled routed
    experts with FP32 accumulation/reduction and sharded Adam, three eight-microbatch
-   updates, exact losses/gradients/weights/states. The full-model timing A/B is now
-   submitted as `01M1R2JQX90JAQ5KGQQRHRH5QJ`, collector `01M1R2KKP49KZ03NS7NZ996TJG`.
+   updates, exact losses/gradients/weights/states. The full-model timing A/B completed
+   as `01M1R2JQX90JAQ5KGQQRHRH5QJ`, collector `01M1R2KKP49KZ03NS7NZ996TJG`.
    Both arms keep KDA128/EMO-inverse-scatter/vectorized-grad-add and change only
    `OLMO_PROFILE_SWIGLU_PAIRWISE`, independently restoring step7500 for 60 updates.
+   Result:88,120→91,836 median TPS/GPU (+4.2169%),400.31 TFLOPs/GPU,
+   120.37ms/update saved. All60 updates per arm finite, no skips, allocated memory
+   unchanged. Trajectories are not bitwise equal; retain the planned A/A and long pilot.
    FP32 router GEMMs are visible but changing their precision is not a free optimization.
    Any future GEMM/gradient-accumulator fusion must preserve the existing intermediate
    BF16 gradient rounding before FP32 addition; direct unrounded FP32 accumulation is
@@ -376,3 +381,16 @@ export OLMOE3_NSYS_AUTOGRAD_NVTX=0  # lighter follow-up; historical/default valu
 The package is downloaded once per selected node and SHA256-verified/extracted in
 private container `/tmp` before rendezvous readiness. Collector uses the same version
 for report statistics. Raw reports and SQLite exports remain on Weka.
+
+### Next bounded probe, 2026-09-05
+
+Async checkpointing is deferred by user request. Activation checkpointing remains
+`ac_config=None`; all existing model/precision/recomputation constraints still apply.
+Kernel-fun remote main equals our pinned7a6983b revision; no package update to pull in.
+The refreshed profile makes grouped GEMMs a concrete next target. Run the standalone
+`olmoe3_grouped_gemm_bench.py` on one B300 using the unchanged training image and its
+already-installed QuACK0.5.0. Six operations × two routing distributions × three
+explicit tile choices; FP64-slice and full Torch checks precede each candidate's timings.
+No broad autotune, dependency upgrade, activation fusion, direct-FP32 gradient epilogue,
+or training wiring in this probe. Follow qualified wins with real routing and compiled
+routed-expert/sharded-Adam qualification, then a clean full-model A/B if warranted.
