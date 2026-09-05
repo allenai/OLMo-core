@@ -44,6 +44,22 @@ def main():
     module = importlib.import_module("quack.gemm_act")
     module.GemmGatedSm100 = RoundedGatedGemm
     module.gate_fn_map["profile-up-gate-rounded"] = up_gate_swiglu
+    # QuACK's generic concat path chooses the non-contiguous mode. For our saved
+    # row-major [total_tokens, up+gate] tensor that is M, not the desired N, and
+    # produces a hierarchical ragged M that its TMA helper cannot represent.
+    # Probe an explicit N layout without repacking or changing checkpoint weights.
+    # Private process only: only B (rank3) and saved output (rank2) use concat here.
+    from quack import layout_utils
+
+    original_concat = layout_utils.concat_to_interleave
+
+    def output_concat_n(tensor, dim):
+        if cute.rank(tensor) == 2:
+            assert dim == 0
+            return original_concat(tensor, 1)
+        return original_concat(tensor, dim)
+
+    layout_utils.concat_to_interleave = output_concat_n
     output = Path("/results/gemm-swiglu")
     output.mkdir(parents=True, exist_ok=True)
     report = []
