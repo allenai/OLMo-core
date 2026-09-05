@@ -1305,6 +1305,25 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     data_loader = plan["data_loader_config"].build(
         source, dp_process_group=train_module.dp_process_group
     )
+    if opts.mem_snapshot:
+        # Peak-memory attribution from inside the real (FSDP) trainer: record the allocator
+        # history through the dry-run + first step, replay it to the peak, print the live set at
+        # the peak grouped by allocation site, then exit. Debug only (2026-09-05, Qwen3 routers).
+        from olmo_core.train.callbacks.callback import Callback as _CB
+
+        class _MemSnapshot(_CB):
+            def pre_train(self):
+                torch.cuda.memory._record_memory_history(max_entries=400000)
+
+            def post_step(self):
+                if self.step >= 1:
+                    from olmo_core.nn.mem_attribution import summarize_peak
+
+                    summarize_peak(torch.cuda.memory._snapshot(), top=16)
+                    torch.cuda.memory._record_memory_history(enabled=None)
+                    raise SystemExit(0)
+
+        trainer_config = trainer_config.with_callback("mem_snapshot", _MemSnapshot())
     trainer = trainer_config.build(train_module, data_loader)
     if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute"):
         _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
@@ -1451,6 +1470,8 @@ def parse_args() -> argparse.Namespace:
                     help="flexcompute: enable per-token block skipping (olmo_core.nn.block_skip) with this mean RUN "
                          "fraction budget (ignored under --flex-joint-target, which owns the budget)")
     ap.add_argument("--block-skip-start-layer", type=int, default=0)
+    ap.add_argument("--mem-snapshot", action="store_true",
+                    help="debug: print the live allocations at the peak of the first step, then exit")
     ap.add_argument("--flex-share-seq-len", type=int, default=8192,
                     help="flexcompute: sequence length the FFN/attention FLOP shares of the joint budget are evaluated "
                          "at (real example length, NOT the padded window: at 65k attention-score FLOPs are ~50%% of "
