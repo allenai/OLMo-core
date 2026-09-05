@@ -382,8 +382,10 @@ def compose(task):
 
 
 # ------------------------------------------------------------- stage: tokenize
-def tokenize(task):
+def tokenize(task, only_arms=None):
     arms = json.loads((WEKA / "arms" / f"MANIFEST_{task}.json").read_text())
+    if only_arms:  # the manifest only lists the LAST compose (oolong's is s320M); name older arms explicitly
+        arms = list(only_arms)
     for arm in arms:
         d = WEKA / TOK_SUBDIR / arm
         if (d / "metadata.json").exists():
@@ -424,6 +426,7 @@ def main():
         "--stage", default="all", choices=["pools", "measure", "arms", "tokenize", "all"]
     )
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--arms", default="", help="tokenize: comma list of arm dir names instead of the manifest")
     ap.add_argument(
         "--smoke",
         action="store_true",
@@ -445,7 +448,7 @@ def main():
     if a.stage in ("arms", "all"):
         compose(a.task)
     if a.stage in ("tokenize", "all"):
-        tokenize(a.task)
+        tokenize(a.task, only_arms=[x for x in a.arms.split(",") if x])
     log(f"DONE {a.task} {a.stage}")
 
 

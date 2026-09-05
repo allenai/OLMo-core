@@ -40,6 +40,10 @@ if FAMILY == "qwen3":  # dense Qwen3: every layer is attention+FFN; marker-repai
     FFN_H = {"4b": 9728}
 TRAINABLE_W = {s: h // 16 for s, h in FFN_H.items()}                          # "train what you route to": H/16 prefix
 GPUS = {"0.8b": 4, "2b": 4, "4b": 4, "9b": 8, "27b": 8}
+if FAMILY == "qwen3":
+    # 36 attention layers on the flex path OOM a 4x80GB node at 65k (flexa-c40 / flex-c45, 2026-09-05);
+    # 8 ranks halve the FSDP param/optimizer shard per GPU.
+    GPUS = {"4b": 8}
 # 27B full fine-tune on 80GB H100s: fp32 master + grads + Adam = 16 B/param = 432 GB sharded ->
 # 54 GB/GPU on one node before activations, so default to TWO nodes (27 GB/GPU). FS_NUM_NODES overrides.
 NUM_NODES = {"0.8b": 1, "2b": 1, "4b": 1, "9b": 1, "27b": int(os.environ.get("FS_NUM_NODES", "2"))}
@@ -72,7 +76,7 @@ def launch_train(st, task, budget, arm):
         variant, data, largs, extra = "full", f"{W}/{lg.ARMS[task][budget]}", ["--pack", "--seq-len", "65536", "--global-batch", "8", "--micro-batch-instances", "1", "--base-checkpoint", BASES[SCALE]], ""
     else:
         variant, data, largs, extra = lg.arm_args(task, arm, budget)
-        if arm.startswith(("ffnmoe", "flex-")):  # (flexa keeps start-layer 0)
+        if arm.startswith(("ffnmoe", "flex-")):  # (flexa / flexs keep start-layer 0)
             # "layers 12+" of a 32-layer model = the top 62.5%; keep that fraction at other depths
             start = round(N_LAYERS[SCALE] * 12 / 32)
             extra = extra.replace("--ffn-moe-start-layer 12", f"--ffn-moe-start-layer {start}")
