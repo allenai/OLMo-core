@@ -294,3 +294,13 @@ term. `model.budget_attach = True` for every routed variant in the trainer; CPU 
 `test_budget_attach_matches_loss_term_gradients` shows identical router gradients. This also means
 every earlier routed run (Qwen3.5 included) trained with the wasteful recompute order — correct
 gradients, just ~2x the activation memory.
+
+**Correction (15:25):** budget_attach did NOT change the routed peak (68.6 GB again), so the
+"budget term recomputes every block" story was wrong (kept: it is still the right way to deliver
+the gradient, and it removes the budget from the reported loss). Isolation runs: FFN router alone
+26.7 GB (= dense), KV router alone 61 GB with all 36 layers' norm tensors live. The KV path's one
+unusual ingredient is the ``torch.compile``d FlexAttention call inside the eager checkpoint
+region, which defeats the region's saved-tensor dropping for the whole block. Fix: `_FlexIsolated`
+(autograd.Function) runs the compiled kernel under no_grad in forward, saves q/k/v like any other
+tensor, and re-runs kernel+autograd on its own in backward. Verification runs: memsnap8 (KV-only
+peak), kvroute-iso-smoke (correctness).
