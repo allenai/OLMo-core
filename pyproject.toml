@@ -75,6 +75,9 @@ fa4 = [
 # Match the dense ladder's current OLMo Core dependency. The MoE ladder validates
 # this against its Torch 2.11 / CUDA 13 Beaker image before production use.
 fla = ["flash-linear-attention==0.5.2"]
+kernel-fun = [
+    "kernel-fun @ git+https://github.com/allenai/kernel-fun.git@7a6983b592cc1097b469af65953f32914cd93054#subdirectory=packages/kernel-fun ; sys_platform == 'linux'",
+]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]

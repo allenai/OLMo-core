@@ -14,7 +14,11 @@ from torch.distributed.tensor import Placement
 
 from olmo_core.config import DType
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
-from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda, has_fla
+from olmo_core.nn.attention.flash_linear_attn_api import (
+    dispatch_chunk_kda,
+    has_fla,
+    has_kernel_fun,
+)
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
@@ -39,7 +43,8 @@ class KimiDeltaAttention(SequenceMixer):
     document convolutions, initialization, and sequence-mixer interfaces.
 
     .. warning::
-        ``use_cute_kernel`` is **experimental**. See
+        ``use_cute_kernel`` is **experimental**, and covers both the KDA chunk kernel and
+        the short convolutions. See
         :class:`KimiDeltaAttentionConfig` for what opting in entails.
     """
 
@@ -64,6 +69,11 @@ class KimiDeltaAttention(SequenceMixer):
             raise RuntimeError(
                 "KimiDeltaAttention requires flash-linear-attention with fla.ops.kda"
             )
+        if use_cute_kernel and not has_kernel_fun():
+            raise RuntimeError(
+                "KimiDeltaAttention(use_cute_kernel=True) requires the kernel-fun package; "
+                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
+            )
         from fla.modules import FusedRMSNormGated
 
         self.d_model = d_model
@@ -77,12 +87,14 @@ class KimiDeltaAttention(SequenceMixer):
         if use_cute_kernel:
             log_once(
                 log,
-                "KDA is running with the EXPERIMENTAL cute-kda kernels "
-                "(use_cute_kernel=True). These are new, are not numerically identical to "
-                "FLA's kernels, and only engage on Blackwell at chunk size 64 without "
-                "packed-document cu_seqlens; every other shape silently falls back to FLA. "
-                "See olmo_core.nn.attention.kda_cute for the supported box and its "
-                "OLMO_CUTE_KDA_* bisection knobs.",
+                "KDA is running with the EXPERIMENTAL kernels from kernel-fun "
+                "(use_cute_kernel=True): the cute-kda chunk kernel and the fused "
+                "short-conv kernels behind the Q/K/V convolutions. These are new and are "
+                "not numerically identical to FLA's kernels. The KDA kernel only engages "
+                "on Blackwell at chunk size 64 without packed-document cu_seqlens; every "
+                "other shape falls back to FLA — which the kernels log, with the reason, "
+                "once per process. See the kernel_fun.kda and kernel_fun.cconv packages "
+                "for the supported box.",
                 level=logging.WARNING,
             )
 
@@ -122,6 +134,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
         self.k_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
@@ -130,6 +143,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
         self.v_conv1d = CausalConv1d(
             hidden_size=self.value_dim,
@@ -138,6 +152,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
 
         self.g_proj_1 = nn.Linear(d_model, self.head_v_dim, bias=False, **factory)
@@ -181,6 +196,11 @@ class KimiDeltaAttention(SequenceMixer):
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
 
+        # No kernel-fun version log here. The package logs `kernel_fun.versions()` itself,
+        # once per process, from inside its `torch.compiler.disable`d entry points — free,
+        # where this frame is compiled and a call here cost two graph breaks. It also
+        # raised `TypeError: unhashable type: 'dict'`: `log_once` is `lru_cache`d and
+        # `versions()` returns a dict.
         o, _ = dispatch_chunk_kda(
             q=q,
             k=k,
@@ -308,19 +328,26 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
-    :param use_cute_kernel: **Experimental.** Whether to use the CuTe/Triton KDA kernels
-        from :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
-        Only takes effect on hardware/shapes those kernels support (Blackwell,
-        chunk-size-64, no packed-document ``cu_seqlens``); otherwise the layer
-        silently falls back to FLA's kernel.
+    :param use_cute_kernel: **Experimental.** Whether to use the kernels from the
+        ``kernel-fun`` package instead of FLA's: the CuTe/Triton KDA kernels
+        (:func:`kernel_fun.kda.chunk_kda`) for the fixed-length chunk path, and the fused
+        short-conv kernels (:func:`kernel_fun.cconv.causal_conv1d`) for the layer's three
+        causal convolutions. This single flag controls both. Requires the package,
+        installed with the ``kernel-fun`` extra (``pip install
+        'ai2-olmo-core[kernel-fun]'``); building the layer without it raises. Each kernel
+        only takes effect on the hardware/shapes it supports (Blackwell, chunk-size-64, no
+        packed-document ``cu_seqlens`` for KDA; Hopper and up, no bias, no packed-document
+        ``cu_seqlens`` for the conv); otherwise the layer silently falls back to FLA.
 
         These kernels are faster but newer and far less exercised than FLA's: they are
-        not bit-identical to FLA's monolith, so loss curves will not match a run with
-        this turned off, and only the fixed-length forward and the ``bwd_intra`` backward
-        stage are swapped. Leave this off unless you are deliberately testing the kernels,
-        and check the ``cute-kda`` lines in the training log to confirm which arms actually
-        ran. The module docstring of :mod:`olmo_core.nn.attention.kda_cute` documents the
-        ``OLMO_CUTE_KDA_*`` environment variables for isolating a suspect stage.
+        not bit-identical to FLA's monolith, so loss curves will not match a run with this
+        turned off. Swapped in are the forward scan+readout, the gate activation (fused
+        into the cumsum rather than run as eager fp32 ops), and four of the backward's
+        seven stages; the rest are FLA's own kernels at FLA's own stage boundaries. At the
+        production shape this measured 1.54x on the op. Leave it off unless you are
+        deliberately testing the kernels, and check the ``kernel-fun`` lines in the
+        training log to confirm they engaged — the fallback is silent by design and reads
+        as a correct 1.00x.
     :param dtype: The parameter dtype.
     """
 
