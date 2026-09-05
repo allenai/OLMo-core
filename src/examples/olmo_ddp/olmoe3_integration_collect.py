@@ -1,6 +1,7 @@
 """Read-only CPU sign-off for the matched integration smoke and uploader manifests."""
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -17,7 +18,7 @@ def snapshot(name: str) -> tuple[dict, dict]:
     audit = root / "audit"
     state = MOUNT / "uploader/state"
     registration = MOUNT / "uploader/control/registrations" / f"{name}.json"
-    result = {"run": name, "sessions": [], "checkpoints": [], "metrics": []}
+    result = {"run": name, "sessions": [], "checkpoints": [], "metrics": [], "unmeasured_eval": []}
     evidence = {"weights": None, "inputs": {}}
     if registration.is_file():
         reg = json.loads(registration.read_text())
@@ -46,6 +47,12 @@ def snapshot(name: str) -> tuple[dict, dict]:
             }
             for key, value in selected.items():
                 if isinstance(value, (int, float)):
+                    if key.startswith("eval/") and math.isnan(value):
+                        # Two-batch smoke evals do not necessarily visit every subset.
+                        # OLMo's LMEvaluator deliberately reports NaN for zero samples.
+                        result["unmeasured_eval"].append({"step": record["step"], "metric": key})
+                        selected[key] = None
+                        continue
                     assert math.isfinite(value), (name, record["step"], key, value)
             result["metrics"].append(selected)
     for step in (0, 4, 8):
@@ -80,7 +87,14 @@ def snapshot(name: str) -> tuple[dict, dict]:
             item["bytes"] = inventory.get("total_bytes")
             item["files"] = inventory.get("file_count")
         result["checkpoints"].append(item)
-    result["manifest_published"] = (state / "manifests" / f"{name}.published.sha256").is_file()
+    manifest = state / "manifests" / f"{name}.json"
+    published = state / "manifests" / f"{name}.published.sha256"
+    result["manifest_published"] = False
+    if manifest.is_file() and published.is_file():
+        payload = manifest.read_bytes()
+        result["manifest_published"] = (
+            hashlib.sha256(payload).hexdigest() == published.read_text().strip()
+        )
     return result, evidence
 
 
@@ -110,7 +124,13 @@ def compare(reports: list[dict], evidence: list[dict]) -> dict:
             for report in reports
         ),
         "both_evaluated": all(
-            any(any(key.startswith("eval/") for key in row) for row in report["metrics"])
+            any(
+                any(
+                    key.startswith("eval/") and key.endswith("/CE loss") and value is not None
+                    for key, value in row.items()
+                )
+                for row in report["metrics"]
+            )
             for report in reports
         ),
         "all_six_checkpoints_complete": all(
