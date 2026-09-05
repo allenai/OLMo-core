@@ -1,13 +1,10 @@
-# mypy: ignore-errors
-# The CuTe DSL kernels use metaclass-generated attributes and DSL-typed unpacking that mypy
-# cannot follow.
 """Phase 1: bwd_intra restructured — one CTA per (chunk, K-slab), sub-chunks internal.
 
 fla's `chunk_kda_bwd_intra` runs grid (NK*NC, NT, B*HV) = 524k CTAs of [BC=16, BK=32] work
 at prod8192 and costs 12.6ms, ~5x its floors (ALGORITHM.md). This kernel is the SAME math,
 expression for expression — including the one-sided exp2(g_i - g_j) scalar diagonal loops,
 which are the numerics law of this op and must never be refactored through a reference row
-(see ALGORITHM.md "the numerics law") — with two structural
+(see ALGORITHM.md "the numerics law"; the gx16 dbg arm enforces it) — with two structural
 changes only:
 
 1. The NC sub-chunk axis moves inside the CTA (tl.static_range unroll). Each CTA touches
@@ -15,17 +12,17 @@ changes only:
    hits are spread across 4 CTAs on different SMs (DRAM/L2 re-reads), here they are
    same-CTA L1/L2 hits, and the launch count drops 4x. (Measured alone: 12.62 -> 10.44ms
    at prod8192; widening BK past that measured flat, so it is pinned, not autotuned.)
-2. BK is pinned per call (default 64, OLMO_CUTE_KDA_INTRA_BK to A/B) instead of autotuned: with
+2. BK is pinned per call (default 64, KDA002_INTRA_BK to A/B) instead of autotuned: with
    one NK for every config, every autotune config writes every db slab, closing the
    staleness hazard measured as db abs-err up to 3.9 (fla's CachedAutotuner does not run
    reset_to_zero's pre_hook on cached-config launches). BK=128 (NK=1) measured 13.34ms —
    register pressure — so small-BK slabs stay.
 3. The diagonal [BC,BC] blocks are VECTORIZED: fla's two 16-iteration serial scalar
-   j-loops (attributed at ~7.2ms of the 10.4ms kernel via OLMO_CUTE_KDA_INTRA_SKIP=diag) become
+   j-loops (attributed at ~7.2ms of the 10.4ms kernel via KDA002_INTRA_SKIP=diag) become
    j-axis tensor reductions over [BC,BC,BK] elementwise products — still exactly one
    one-sided exp2(g_r - g_s) per (r,s,d) pair, nothing factorized; the dA diag tile loads
    once for both passes. Reduction-tree reassociation puts outputs at ~1e-6 abs of fla
-   instead of bit-exact.
+   instead of bit-exact; dbg_intra budgets 1e-5.
 
 Interface mirrors fla's wrapper (fresh dq2/dk2/dg2 outputs, incoming dq/dk/dg added
 in-kernel). Fixed-length only, BT=64, K <= 128; everything else (varlen, safe_gate)
@@ -39,11 +36,11 @@ iteration-count-bound.
 
 from __future__ import annotations
 
-import os
 
 import torch
 import triton
 import triton.language as tl
+
 from fla.ops.utils.cache import fla_cache_autotune
 from fla.ops.utils.op import exp2
 from fla.utils import autotune_cache_kwargs
@@ -55,10 +52,10 @@ from fla.utils import autotune_cache_kwargs
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3, 4]
     ],
-    key=["BT", "BC", "BK", "K", "HV"],
+    key=['BT', 'BC', 'BK', 'K', 'HV'],
     **autotune_cache_kwargs,
 )
-@triton.jit(do_not_specialize=["B", "T"])
+@triton.jit(do_not_specialize=['B', 'T'])
 def kda_cute_bwd_intra_kernel(
     q,
     k,
@@ -85,9 +82,9 @@ def kda_cute_bwd_intra_kernel(
     SKIP_DIAG: tl.constexpr,
     SKIP_OFFDIAG: tl.constexpr,
 ):
-    # SKIP_* are timing-attribution knobs (OLMO_CUTE_KDA_INTRA_SKIP=diag|offdiag): they delete one
+    # SKIP_* are timing-attribution knobs (KDA002_INTRA_SKIP=diag|offdiag): they delete one
     # half of the work at compile time to see what the other half costs. Results are WRONG
-    # with either set, so nothing but a timing sweep may set them.
+    # with either set; dbg_intra.py --time is the only intended caller.
     i_k, i_t, i_bh = tl.program_id(0), tl.program_id(1).to(tl.int64), tl.program_id(2).to(tl.int64)
     i_b, i_hv = i_bh // HV, i_bh % HV
     i_h = i_hv // (HV // H)
@@ -176,27 +173,25 @@ def kda_cute_bwd_intra_kernel(
                 b_kf = b_k.to(tl.float32)
 
                 # pass A rows: dq/dwk[r,d] += sum_j dA[r,j] * k[j,d] * exp2(g_r - g_j), r >= j
-                m_jr = (o_i[:, None] <= o_i[None, :])[:, :, None]  # [j, r, 1]
-                e_jr = exp2(b_g[None, :, :] - b_g[:, None, :])  # [j, r, d]
-                b_kx = b_kf[:, None, :]  # k_j -> [j, 1, d]
+                m_jr = (o_i[:, None] <= o_i[None, :])[:, :, None]        # [j, r, 1]
+                e_jr = exp2(b_g[None, :, :] - b_g[:, None, :])           # [j, r, d]
+                b_kx = b_kf[:, None, :]                                  # k_j -> [j, 1, d]
                 b_dq2 += tl.sum(
-                    tl.where(m_jr, tl.trans(b_dAd_qk)[:, :, None] * b_kx * e_jr, 0.0), 0
-                )
+                    tl.where(m_jr, tl.trans(b_dAd_qk)[:, :, None] * b_kx * e_jr, 0.), 0)
                 b_dk2 += tl.sum(
-                    tl.where(m_jr, tl.trans(b_dAd_kk)[:, :, None] * b_kx * e_jr, 0.0), 0
-                )
+                    tl.where(m_jr, tl.trans(b_dAd_kk)[:, :, None] * b_kx * e_jr, 0.), 0)
 
                 # pass B columns: dkt[s,d] += sum_r (dAqk[r,s]*q[r,d] + dAkk[r,s]*β_r*k[r,d])
                 #                              * exp2(g_r - g_s), r >= s
-                m_rs = (o_i[:, None] >= o_i[None, :])[:, :, None]  # [r, s, 1]
-                e_rs = exp2(b_g[:, None, :] - b_g[None, :, :])  # [r, s, d]
+                m_rs = (o_i[:, None] >= o_i[None, :])[:, :, None]        # [r, s, 1]
+                e_rs = exp2(b_g[:, None, :] - b_g[None, :, :])           # [r, s, d]
                 b_qx = b_q.to(tl.float32)[:, None, :]
                 b_kbx = (b_kf * b_b[:, None])[:, None, :]
                 b_dktd = tl.sum(
                     tl.where(
                         m_rs,
                         (b_dAd_qk[:, :, None] * b_qx + b_dAd_kk[:, :, None] * b_kbx) * e_rs,
-                        0.0,
+                        0.,
                     ),
                     0,
                 )
@@ -264,6 +259,10 @@ def kda_cute_bwd_intra_kernel(
             tl.store(p_dg2, b_dg2.to(p_dg2.dtype.element_ty), mask=m_ck)
 
 
+# The K slab width, pinned (see the call site for the sweep that chose it).
+_BK = 64
+
+
 def chunk_kda_bwd_intra_cute(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -286,25 +285,14 @@ def chunk_kda_bwd_intra_cute(
         or safe_gate
         or chunk_size != 64
         or k.shape[-1] > 128
-        or os.environ.get("OLMO_CUTE_KDA_INTRA") == "fla"
     ):
         from fla.ops.kda.chunk_intra import chunk_kda_bwd_intra
 
         return chunk_kda_bwd_intra(
-            q=q,
-            k=k,
-            g=g,
-            beta=beta,
-            dAqk=dAqk,
-            dAkk=dAkk,
-            dq=dq,
-            dk=dk,
-            db=db,
-            dg=dg,
-            cu_seqlens=cu_seqlens,
-            chunk_indices=chunk_indices,
-            chunk_size=chunk_size,
-            safe_gate=safe_gate,
+            q=q, k=k, g=g, beta=beta, dAqk=dAqk, dAkk=dAkk,
+            dq=dq, dk=dk, db=db, dg=dg,
+            cu_seqlens=cu_seqlens, chunk_indices=chunk_indices,
+            chunk_size=chunk_size, safe_gate=safe_gate,
         )
 
     B, T, H, K, HV = *k.shape, g.shape[2]
@@ -320,41 +308,21 @@ def chunk_kda_bwd_intra_cute(
     # BK is PINNED per call (not autotuned): every autotune config then has the same NK
     # and writes every db slab, so no benchmarked config can leave stale slab garbage —
     # the hazard only exists when configs differ in NK (fla's CachedAutotuner skips the
-    # reset_to_zero pre_hook on cached-config launches). BK=128 measured 13.34ms vs 10.4
-    # at tuner-chosen BK (register pressure), so the default is 64; OLMO_CUTE_KDA_INTRA_BK
-    # selects for A/B timing.
+    # reset_to_zero pre_hook on cached-config launches).
     # BK sweep with the vectorized diagonal (prod8192): 64 -> 9.26ms, 32 -> 10.19,
-    # 16 -> 11.56, 128 -> register pressure. 64 is the standing default.
-    BK = min(int(os.environ.get("OLMO_CUTE_KDA_INTRA_BK", "64")), triton.next_power_of_2(K))
+    # 16 -> 11.56, 128 -> 13.34 (register pressure). 64 it is.
+    BK = min(_BK, triton.next_power_of_2(K))
     NK = triton.cdiv(K, BK)
     db2 = beta.new_empty(NK, *beta.shape, dtype=torch.float)
 
-    skip = os.environ.get("OLMO_CUTE_KDA_INTRA_SKIP", "")
     kda_cute_bwd_intra_kernel[(NK, NT, B * HV)](
-        q=q,
-        k=k,
-        g=g,
-        beta=beta,
-        dAqk=dAqk,
-        dAkk=dAkk,
-        dq=dq,
-        dq2=dq2,
-        dk=dk,
-        dk2=dk2,
-        dg=dg,
-        dg2=dg2,
-        db=db2,
-        T=T,
-        B=B,
-        H=H,
-        HV=HV,
-        K=K,
-        BT=BT,
-        BC=BC,
-        BK=BK,
-        NC=NC,
-        SKIP_DIAG=1 if skip == "diag" else 0,
-        SKIP_OFFDIAG=1 if skip == "offdiag" else 0,
+        q=q, k=k, g=g, beta=beta, dAqk=dAqk, dAkk=dAkk,
+        dq=dq, dq2=dq2, dk=dk, dk2=dk2, dg=dg, dg2=dg2, db=db2,
+        T=T, B=B, H=H, HV=HV, K=K, BT=BT, BC=BC, BK=BK, NC=NC,
+        # attribution knobs in the research tree; wrong results by construction, so
+        # they are wired off here.
+        SKIP_DIAG=0,
+        SKIP_OFFDIAG=0,
     )
     db_out = db2.sum(0).add_(db)
     return dq2, dk2, db_out, dg2

@@ -77,12 +77,16 @@ class KimiDeltaAttention(SequenceMixer):
         if use_cute_kernel:
             log_once(
                 log,
-                "KDA is running with the EXPERIMENTAL cute-kda kernels "
-                "(use_cute_kernel=True). These are new, are not numerically identical to "
-                "FLA's kernels, and only engage on Blackwell at chunk size 64 without "
-                "packed-document cu_seqlens; every other shape silently falls back to FLA. "
-                "See olmo_core.nn.attention.kda_cute for the supported box and its "
-                "OLMO_CUTE_KDA_* bisection knobs.",
+                "KDA is running with the EXPERIMENTAL kernels vendored from kernel-fun "
+                "(use_cute_kernel=True) for BOTH the chunk kernel and the three Q/K/V "
+                "convolutions. These are new and are not numerically identical to FLA's. "
+                "The chunk kernel only engages on Blackwell at chunk size 64 without "
+                "packed-document cu_seqlens, the conv on Hopper and up at W <= 4 without "
+                "bias; every other shape falls back to FLA per call — which the kernels "
+                "log, with the reason, once per process. KERNEL_FUN_DISABLE=1 forces FLA "
+                "everywhere without a config change, and KERNEL_FUN_KDA_DISABLE=1 / "
+                "KERNEL_FUN_CCONV_DISABLE=1 split it by family. See the "
+                "olmo_core.kernel_fun.kda and .cconv packages for the supported boxes.",
                 level=logging.WARNING,
             )
 
@@ -122,6 +126,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
         self.k_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
@@ -130,6 +135,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
         self.v_conv1d = CausalConv1d(
             hidden_size=self.value_dim,
@@ -138,6 +144,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_cute_kernel=use_cute_kernel,
         )
 
         self.g_proj_1 = nn.Linear(d_model, self.head_v_dim, bias=False, **factory)
@@ -181,6 +188,11 @@ class KimiDeltaAttention(SequenceMixer):
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
 
+        # No kernel-fun version log here. The kernels log `kernel_fun.versions()`
+        # themselves, once per process, from inside their `torch.compiler.disable`d entry
+        # points — free, where this frame is compiled and a call here cost two graph
+        # breaks. It also raised `TypeError: unhashable type: 'dict'`: `log_once` is
+        # `lru_cache`d and `versions()` returns a dict.
         o, _ = dispatch_chunk_kda(
             q=q,
             k=k,
@@ -308,19 +320,31 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
-    :param use_cute_kernel: **Experimental.** Whether to use the CuTe/Triton KDA kernels
-        from :mod:`olmo_core.nn.attention.kda_cute` for the fixed-length chunk path.
-        Only takes effect on hardware/shapes those kernels support (Blackwell,
-        chunk-size-64, no packed-document ``cu_seqlens``); otherwise the layer
-        silently falls back to FLA's kernel.
+    :param use_cute_kernel: **Experimental.** Whether to use the CuTe/Triton kernels
+        vendored from the ``kernel-fun`` package. One flag, both of the layer's hot ops:
+        the fixed-length chunk path runs
+        :func:`olmo_core.kernel_fun.kda.chunk_kda` and the three Q/K/V causal convolutions
+        run :func:`olmo_core.kernel_fun.cconv.causal_conv1d`. Nothing to install: the
+        kernels live in this repo under :mod:`olmo_core.kernel_fun`. Each family only
+        takes effect on the hardware and shapes it supports (Blackwell, chunk-size-64 and
+        no packed-document ``cu_seqlens`` for KDA; Hopper and up, ``W <= 4``, bf16/fp16
+        and no bias for the conv); otherwise that call silently falls back to FLA's kernel,
+        independently of the other.
 
         These kernels are faster but newer and far less exercised than FLA's: they are
-        not bit-identical to FLA's monolith, so loss curves will not match a run with
-        this turned off, and only the fixed-length forward and the ``bwd_intra`` backward
-        stage are swapped. Leave this off unless you are deliberately testing the kernels,
-        and check the ``cute-kda`` lines in the training log to confirm which arms actually
-        ran. The module docstring of :mod:`olmo_core.nn.attention.kda_cute` documents the
-        ``OLMO_CUTE_KDA_*`` environment variables for isolating a suspect stage.
+        not bit-identical, so loss curves will not match a run with this turned off. In
+        KDA the swapped-in stages are the forward scan+readout, the gate activation (fused
+        into the cumsum rather than run as eager fp32 ops), and four of the backward's
+        seven stages; the rest are FLA's own kernels at FLA's own stage boundaries. At the
+        production shape KDA measured 1.54x on the op and the conv 4.65x on its backward /
+        1.62x on its forward. Leave it off unless you are deliberately testing the kernels,
+        and check the ``kernel-fun kda`` / ``kernel-fun cconv`` lines in the training log
+        to confirm they engaged — the fallback is silent by design and reads as a correct
+        1.00x.
+
+        ``KERNEL_FUN_DISABLE=1`` forces FLA everywhere at runtime without a config change;
+        ``KERNEL_FUN_KDA_DISABLE=1`` and ``KERNEL_FUN_CCONV_DISABLE=1`` split it by family,
+        which is how you attribute a step-time change to one of them.
     :param dtype: The parameter dtype.
     """
 

@@ -5,6 +5,34 @@ from olmo_core.nn.attention import KimiDeltaAttentionConfig
 from olmo_core.testing import requires_gpu
 from olmo_core.testing.utils import requires_fla
 
+# The kernel-fun kernels carry two independent CTA floors and quietly hand the work back to
+# FLA below either one: the chain needs B * HV * (V // 64) >= 256, and the MMA intra
+# backward needs B * (T / 64) * HV >= 1024 of its own. Every cute arm below is sized to
+# clear both — B=4, T=1024, HV=16, V=256 gives exactly 256 and 1024 — because a test run
+# under a floor measures FLA against FLA and reports it as a pass.
+_CUTE_B, _CUTE_T, _CUTE_HEADS, _CUTE_DMODEL = 4, 1024, 16, 256
+
+
+def _skip_unless_cute() -> None:
+    """Skip unless these kernels would actually engage on this box.
+
+    Asks the kernels' own predicate rather than re-deriving it here: it owns the arch gate
+    (sm100 exactly — sm_120 is consumer Blackwell with no tcgen05), the DSL probe and the
+    shape floors, and a copy of that logic here would drift from the one that decides.
+    """
+    import torch
+
+    from olmo_core.kernel_fun.kda import is_supported
+
+    if not torch.cuda.is_available():
+        pytest.skip("no CUDA device")
+    kw = {"device": "cuda", "dtype": torch.bfloat16}
+    q = torch.empty(_CUTE_B, _CUTE_T, _CUTE_HEADS, 128, **kw)
+    v = torch.empty(_CUTE_B, _CUTE_T, _CUTE_HEADS, 256, **kw)
+    ok, reason = is_supported(q, v, use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True)
+    if not ok:
+        pytest.skip(f"the cute KDA kernels decline this box: {reason}")
+
 
 def _init_real_weights(module, d_model: int, seed: int = 777) -> None:
     """Apply the real init: exp(A_log) in [1, 16] gives per-step decays of ~16 log2
@@ -63,18 +91,15 @@ def test_kimi_delta_attention_fwd_bwd():
 def test_kimi_delta_attention_cute_under_torch_compile():
     """The train module compiles each block; the cute host path must graph-break cleanly
     (dynamo tracing it used to die on torch.cuda.current_stream().cuda_stream)."""
-    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
-
-    if torch.cuda.get_device_capability()[0] < 10:
-        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
-    if not _has_cute():
-        pytest.skip("CUTLASS CuTe DSL is not installed")
+    _skip_unless_cute()
 
     device = "cuda"
     dtype = torch.bfloat16
-    d_model, seq_len, batch_size = 256, 128, 2
+    d_model, seq_len, batch_size = _CUTE_DMODEL, _CUTE_T, _CUTE_B
     torch.manual_seed(0)
-    config = KimiDeltaAttentionConfig(n_heads=2, head_dim=128, use_cute_kernel=True)
+    config = KimiDeltaAttentionConfig(
+        n_heads=_CUTE_HEADS, head_dim=128, expand_v=2.0, use_cute_kernel=True
+    )
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
     _init_real_weights(module, d_model)
     compiled = torch.compile(module)
@@ -90,26 +115,24 @@ def test_kimi_delta_attention_cute_under_torch_compile():
 
 @requires_fla
 @requires_gpu
-def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
+def test_kimi_delta_attention_cute_extreme_decay():
     """Deterministic worst case for the gate exponents: A_log at its init maximum
     (log 16) and large softplus inputs give per-step decays of ~90 log2 units per
     channel. Any two-sided exp2 factorization in a kernel overflows fp32 here and
-    NaNs — this regime is what the 30m ladder hit on its first optimizer step. The
-    overflow depends only on decay-per-step and the BC=16 sub-chunk, so this small
-    shape covers it. OLMO_CUTE_KDA_INTRA=cutedsl forces the CuTe bwd_intra kernel past its
-    small-grid gate, which this shape is well under — without it the arm would only
-    exercise the Triton fallback."""
-    from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda
-    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
+    NaNs — this regime is what the 30m ladder hit on its first optimizer step.
 
-    if torch.cuda.get_device_capability()[0] < 10:
-        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
-    if not _has_cute():
-        pytest.skip("CUTLASS CuTe DSL is not installed")
-    monkeypatch.setenv("OLMO_CUTE_KDA_INTRA", "cutedsl")
+    Sized to clear both CTA floors so the MMA intra backward — the stage whose diagonal
+    blocks carry the one-sided-exp2 contract — actually runs. Under a floor this arm would
+    exercise the Triton fallback and pass without ever reaching the kernel it guards.
+    This now also drives the gate activation through FLA's fused cumsum rather than eager
+    fp32 torch ops, which is where the exponent is formed in the first place.
+    """
+    from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda
+
+    _skip_unless_cute()
 
     device, dtype = "cuda", torch.bfloat16
-    B, T, H, K, V = 2, 256, 4, 128, 256
+    B, T, H, K, V = _CUTE_B, _CUTE_T, _CUTE_HEADS, 128, 256
     torch.manual_seed(0)
     q = torch.randn(B, T, H, K, device=device, dtype=dtype)
     k = torch.randn(B, T, H, K, device=device, dtype=dtype)
@@ -152,20 +175,15 @@ def test_kimi_delta_attention_cute_extreme_decay(monkeypatch):
 @requires_fla
 @requires_gpu
 def test_kimi_delta_attention_cute_matches_fla():
-    from olmo_core.nn.attention.kda_cute.chunk import _has_cute
-
-    if torch.cuda.get_device_capability()[0] < 10:
-        pytest.skip("the CuTe KDA kernels require Blackwell (sm100+)")
-    if not _has_cute():
-        pytest.skip("CUTLASS CuTe DSL is not installed")
+    _skip_unless_cute()
 
     device = "cuda"
     dtype = torch.bfloat16
-    # The CuTe bwd_intra kernel runs one CTA per (chunk, b * hv) and hands grids under
-    # 1024 CTAs to its Triton fallback; B * (T / 64) * HV = 4 * 16 * 16 = 1024 engages it.
-    d_model, seq_len, batch_size = 256, 1024, 4
+    d_model, seq_len, batch_size = _CUTE_DMODEL, _CUTE_T, _CUTE_B
     torch.manual_seed(0)
-    config = KimiDeltaAttentionConfig(n_heads=16, head_dim=128, expand_v=2.0, allow_neg_eigval=True)
+    config = KimiDeltaAttentionConfig(
+        n_heads=_CUTE_HEADS, head_dim=128, expand_v=2.0, allow_neg_eigval=True
+    )
     module = config.build(d_model, layer_idx=0, n_layers=12, init_device=device)
     _init_real_weights(module, d_model)
     x = torch.randn(batch_size, seq_len, d_model, device=device, dtype=dtype)
