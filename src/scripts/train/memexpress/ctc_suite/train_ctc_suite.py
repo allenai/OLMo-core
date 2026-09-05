@@ -1336,6 +1336,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute"):
         _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
     if opts.mem_snapshot:
+        import torch
+
         try:
             trainer.fit()
         except torch.OutOfMemoryError:
