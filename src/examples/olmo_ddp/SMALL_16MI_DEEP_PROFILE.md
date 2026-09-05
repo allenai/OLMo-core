@@ -79,6 +79,16 @@ a separate torchrun agent and rendezvous port. This also avoids reusing store ke
 fresh training processes. The reduce-scatter arm changes communication, not precision or
 model/optimizer math; measure its packing overhead and numerical agreement too.
 
+Additional compiler candidate: actual compilation logs show `_NoOpRange` contexts preventing
+Dynamo from resuming around intentional graph breaks in the MoE path. A minimal reproducer
+with an opaque call inside the disabled annotation produces zero compiled regions; using
+`nullcontext` permits two compiled regions around the same opaque call, with identical
+outputs. The opt-in `compile-noop-nvtx` variant enables `OLMO_PROFILE_SAFE_NOOP_NVTX=1`:
+disabled decorators become identity decorators, and compiled disabled contexts use the
+standard nullcontext. Real NVTX annotations are unchanged. Two local tests cover identity,
+exception propagation, compiler resumption, and exact output agreement. End-to-end speed
+and numerical validation remain required; the flag is off in the baseline.
+
 ## Run ledger (2026-09-05 UTC)
 
 - Qualification: https://beaker.org/ex/01M1QH72PZCX87XR0KA6JX5VRJ

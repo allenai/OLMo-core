@@ -79,6 +79,7 @@ class ProfileMetrics(Callback):
                 "lr": LEARNING_RATE,
                 "pass": PASS,
                 "variant": VARIANT,
+                "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
                 "kda_min_ctas": 128 if VARIANT == "kda-128" else 256,
                 "kernel_fun_commit": "7a6983baf2beb4ec4d7fe914ec9f6670438af99b",
                 "qk_norm_pr": 855,
@@ -177,7 +178,7 @@ def train_module_config(common):
     config.expand_shared_qk_norm_on_load = True
     if VARIANT == "reduce-scatter":
         config.dp_config.use_reduce_scatter = True
-    elif VARIANT not in ("baseline", "kda-128"):
+    elif VARIANT not in ("baseline", "kda-128", "compile-noop-nvtx"):
         raise ValueError(f"Unknown variant: {VARIANT}")
     return config
 

@@ -18,10 +18,15 @@ so the ``@nvtx.annotate(...)`` annotations become no-ops when nvtx is not instal
 
 from __future__ import annotations
 
-from contextlib import ContextDecorator
+import os
+from contextlib import ContextDecorator, nullcontext
 from typing import Any, Optional
 
+import torch
+
 __all__ = ["nvtx", "maybe_nvtx_annotate"]
+
+_COMPILE_SAFE_NOOP_RANGES = os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX", "0") == "1"
 
 
 class _NoOpRange(ContextDecorator):
@@ -34,12 +39,23 @@ class _NoOpRange(ContextDecorator):
         # Returning None (falsy) means we never suppress exceptions.
         return None
 
+    def __call__(self, func):
+        if _COMPILE_SAFE_NOOP_RANGES:
+            # A disabled annotation need not wrap the function in a context manager.
+            # Such a wrapper can prevent Dynamo resuming after an intentional graph break.
+            return func
+        return super().__call__(func)
+
 
 class _NoOpNvtx:
     """Drop-in stand-in exposing the (sole) ``nvtx.annotate`` API as a no-op."""
 
     @staticmethod
-    def annotate(*args: Any, **kwargs: Any) -> _NoOpRange:
+    def annotate(*args: Any, **kwargs: Any):
+        if _COMPILE_SAFE_NOOP_RANGES and torch.compiler.is_compiling():
+            # Dynamo understands nullcontext across graph breaks. A custom context
+            # can instead cause the entire surrounding region to remain eager.
+            return nullcontext()
         return _NoOpRange()
 
 

@@ -100,6 +100,7 @@ def main():
             os.environ,
             OLMOE3_DEEP_PROFILE_VARIANT=variant,
             OLMOE3_DEEP_PROFILE_PASSES=mode,
+            OLMO_PROFILE_SAFE_NOOP_NVTX="1" if variant == "compile-noop-nvtx" else "0",
         )
         print(f"Node {rank}: starting isolated {variant}/{mode} agent", flush=True)
         subprocess.run(command, env=env, check=True)
