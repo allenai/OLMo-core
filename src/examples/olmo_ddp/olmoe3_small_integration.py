@@ -61,6 +61,15 @@ FLAGS = {
 }
 
 
+def write_or_verify(path: Path, content: str):
+    """Preserve fingerprints across retries and fail on changed inputs or initialization."""
+    if path.exists():
+        if path.read_text() != content:
+            raise RuntimeError(f"Integration fingerprint changed on retry: {path}")
+    else:
+        path.write_text(content)
+
+
 def apply_policy():
     """Reset every experimental switch before constructing either arm."""
     if ARM not in ("reference", "optimized") or POLICY not in (
@@ -124,7 +133,7 @@ class IntegrationAudit(Callback):
             hashes = [None] * get_world_size()
             dist.all_gather_object(hashes, digest.hexdigest(), group=self.trainer.bookkeeping_pg)
             if get_rank() == 0:
-                (output / "initial-weights-sha256.json").write_text(json.dumps(hashes))
+                write_or_verify(output / "initial-weights-sha256.json", json.dumps(hashes))
         if get_rank() == 0:
             provenance = {
                 "arm": ARM,
@@ -152,7 +161,7 @@ class IntegrationAudit(Callback):
             tokens = batch["input_ids"].detach().contiguous().cpu()
             digest = hashlib.sha256(tokens.numpy().tobytes()).hexdigest()
             path = Path(self.output_dir) / f"input-step{self.step}-rank{get_rank()}.sha256"
-            path.write_text(digest)
+            write_or_verify(path, digest)
             self._first_batch = False
 
     def log_metrics(self, step, metrics):
