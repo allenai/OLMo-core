@@ -45,7 +45,6 @@ and priced on the same FLOP axis as the FFN router so the two allocations can be
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
