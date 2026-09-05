@@ -88,6 +88,8 @@ class ProfileMetrics(Callback):
                 )
                 == "1",
                 "nccl_proto": os.environ.get("NCCL_PROTO", "auto"),
+                "load_balancing_count_overlap": os.environ.get("OLMO_PROFILE_LB_COUNT_OVERLAP")
+                == "1",
                 "compile_safe_noop_nvtx": os.environ.get("OLMO_PROFILE_SAFE_NOOP_NVTX") == "1",
                 "vectorized_fp32_grad_add": os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE")
                 == "1",

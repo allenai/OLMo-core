@@ -61,6 +61,23 @@ def combined_forward_no_ep(
         **({"segment_ids": segment_ids} if segment_ids is not None else {}),
     )
 
+    # Launch before permute/shared/routed expert compute; consume only when attaching
+    # the unchanged auxiliary loss at the end of this layer. No EP or precision change.
+    if (
+        os.environ.get("OLMO_PROFILE_LB_COUNT_OVERLAP", "0") == "1"
+        and self.routed_experts_router.global_load_balancing
+        and self.routed_experts_router.training
+        and torch.is_grad_enabled()
+        and routed_expert_router_aux_loss_info is not None
+    ):
+        pending_global_counts = self.routed_experts_router.start_global_count_reduce(
+            local_batch_size_per_global_routed_expert
+        )
+        routed_expert_router_aux_loss_info = (
+            *routed_expert_router_aux_loss_info,
+            pending_global_counts,
+        )
+
     shared_rowwise_fp8_cfg = self.rowwise_fp8
     routed_rowwise_fp8_cfg = self.routed_experts.rowwise_fp8
     # The grouped MXFP8 expert kernels are local compute kernels; they do not

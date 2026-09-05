@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
+import torch.distributed._functional_collectives as funcol
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.device_mesh import DeviceMesh
@@ -764,6 +765,18 @@ class MoERouterV2(nn.Module):
         )
         return expert_weights, expert_indices, batch_size_per_expert, aux_loss_info
 
+    def start_global_count_reduce(self, counts: torch.Tensor) -> torch.Tensor:
+        """Start an out-of-place count reduction without waiting on the compute stream.
+
+        The caller must retain the returned tensor until ``compute_aux_loss`` consumes it.
+        Counts are detached routing statistics, not differentiable expert scores. This is
+        deliberately opt-in at the no-EP call site; no mutable per-router pending state is
+        used, so separate microbatches cannot overwrite one another's reductions.
+        """
+        if not self.global_load_balancing or self.lb_process_group is None:
+            raise RuntimeError("Early count reduction requires a load-balancing process group")
+        return funcol.all_reduce(counts.float(), "sum", self.lb_process_group)
+
     @nvtx.annotate("MoERouter.compute_aux_loss")
     def compute_aux_loss(
         self,
@@ -772,6 +785,7 @@ class MoERouterV2(nn.Module):
         batch_size_per_expert,
         batched_batch_size_per_expert,
         loss_div_factor,
+        pending_global_counts: Optional[torch.Tensor] = None,
         *,
         accumulate_metrics: bool = True,
     ) -> Optional[torch.Tensor]:
@@ -788,16 +802,18 @@ class MoERouterV2(nn.Module):
                 # DDP averages parameter gradients, and the training module supplies a
                 # loss_div_factor normalized by the DP world size. Average the global counts
                 # to preserve the single-rank-equivalent auxiliary-loss scale.
-                global_batch_size_per_expert = batch_size_per_expert.float().clone()
-                # TODO: This is a tiny but synchronous collective for every routed MoE layer
-                # and microbatch, so latency can dominate its bandwidth cost, especially across
-                # nodes. Consider coalescing count reductions across layers/microbatches or
-                # overlapping asynchronous reductions with other work.
-                dist.all_reduce(
-                    global_batch_size_per_expert,
-                    op=dist.ReduceOp.SUM,
-                    group=self.lb_process_group,
-                )
+                if pending_global_counts is None:
+                    global_batch_size_per_expert = batch_size_per_expert.float().clone()
+                    dist.all_reduce(
+                        global_batch_size_per_expert,
+                        op=dist.ReduceOp.SUM,
+                        group=self.lb_process_group,
+                    )
+                else:
+                    # First consumption is after expert computation in the optional no-EP
+                    # path. Functional collectives preserve the local count tensor and make
+                    # the producer/wait dependency visible to Dynamo/Inductor.
+                    global_batch_size_per_expert = funcol.wait_tensor(pending_global_counts)
                 global_batch_size_per_expert.div_(dist.get_world_size(self.lb_process_group))
 
             if self.lb_loss_weight is not None:
