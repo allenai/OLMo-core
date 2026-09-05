@@ -27,9 +27,11 @@ def run(name, enable):
     base = torch.cuda.memory_allocated()
     ids = torch.randint(0, 150000, (1, T), device=dev); lens = [T // 8] * 8
     torch.cuda.memory._record_memory_history(max_entries=200000)
-    out = m(ids, labels=ids.clone(), doc_lens=torch.tensor([lens], device=dev), max_doc_lens=[T // 8])
+    # logits only for the last 8 positions: keeps the LM head (65k x 152k fp32 logits = 40 GB) out of
+    # the measurement so the block stack -- where the routers live -- is what is profiled
+    out = m(ids, logits_to_keep=8, doc_lens=torch.tensor([lens], device=dev), max_doc_lens=[T // 8])
     fwd_alloc = torch.cuda.memory_allocated() - base
-    out.loss.backward()
+    out.float().pow(2).mean().backward()
     peak = torch.cuda.max_memory_allocated() - base
     snap = torch.cuda.memory._snapshot(); torch.cuda.memory._record_memory_history(enabled=None)
     # live blocks at snapshot time (after backward) are small; instead attribute the largest allocations in the trace
