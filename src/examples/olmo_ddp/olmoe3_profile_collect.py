@@ -46,6 +46,13 @@ def main():
         )
         for filename in ("analysis.json", "metrics.jsonl", "provenance.json"):
             shutil.copy2(run / filename, destination / filename)
+        summary = json.loads((run / "analysis.json").read_text())
+        for window in summary["windows"]:
+            print("PROFILE_WINDOW", name, json.dumps(window), flush=True)
+        print("PROFILE_FIRST_UPDATES", name, json.dumps(summary["first_updates"]), flush=True)
+        print("PROFILE_MEMORY", name, json.dumps(summary["memory_by_rank"]), flush=True)
+        for trace in summary.get("traces", []):
+            print("PROFILE_TRACE", name, json.dumps(trace), flush=True)
         inventory = [
             {"name": str(p.relative_to(run)), "bytes": p.stat().st_size}
             for p in run.rglob("*")
@@ -76,6 +83,10 @@ def main():
                 )
             if result.returncode:
                 print(f"Nsight stats failed for rank{rank}; retained diagnostic output", flush=True)
+            if rank == 0:
+                print("NSYS_RANK0_STATS_START", name, flush=True)
+                print(output.read_text(), flush=True)
+                print("NSYS_RANK0_STATS_END", name, flush=True)
         print(f"Collected small summaries for {name} in {destination}", flush=True)
 
 

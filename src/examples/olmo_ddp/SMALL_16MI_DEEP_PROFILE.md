@@ -114,6 +114,17 @@ model/optimizer math; measure its packing overhead and numerical agreement too.
 - Corrected full profile r3: https://beaker.org/ex/01M1QKFYH4HKM3BEK7TJ2A31YN
   (`olmoe3-small-16mi-deep-profile-v2-r3`, source `b0124be9c`). Beaker replaced replica5
   after an interconnect health-check failure, before any model code ran.
+- Full trained-state restore succeeded at 01:51 UTC, including the twelve gain/moment
+  expansions. Dry-run compilation took ~7.7 minutes; later dry-run microbatches were
+  ~0.38s each. Early real updates settle near 76.5k TPS/GPU / 333 TFLOPs/GPU, with
+  finite losses and zero skipped steps. These are provisional logs, not the final
+  clean-window statistics or a performance improvement claim.
+- Same-allocation timing matrix: https://beaker.org/ex/01M1QM9ZVJG0CB5B2609FW77SX
+  (`olmoe3-small-16mi-timing-matrix-v2-r3`, source `41084cc46`), baseline then
+  reduce-scatter then cutoff128, 60 updates each from the same checkpoint.
+- CPU collector `01M1QMAARSW1HQ6EPFM5NJ46C1` was stopped before upstream completion
+  to replace it with a version that exposes intermediate summaries directly in logs;
+  training allocations were not changed.
 - Local checks: nine migration tests (including two-rank DCP save/load/reshard),
   fourteen attention-config/per-head-gain/scalable-softmax tests passed; lint and
   formatting checks passed for new scripts.
