@@ -1,0 +1,133 @@
+"""Exact EP1 checkpoint -> EP2/4/8 restore and synchronous-save state retention."""
+
+import os
+from pathlib import Path
+
+import pytest
+import torch
+import torch.distributed as dist
+from torch.distributed.tensor import Shard
+
+from olmo_core.config import DType
+from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.optim import OLMoDDPOptimizerConfig
+from olmo_core.testing import run_distributed_test
+from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
+from olmo_core.train.train_module.transformer import (
+    TransformerDataParallelConfig,
+    TransformerExpertParallelConfig,
+)
+
+from .rounded_wgrad_ep_test import _build_model
+
+
+def _run_reshard(save_root):
+    rank = dist.get_rank()
+    torch.cuda.set_device(rank)
+    for key in (
+        "OLMO_PROFILE_ROUNDED_WGRAD",
+        "OLMO_PROFILE_LB_COUNT_BATCHED",
+        "OLMO_PROFILE_LB_COUNT_OVERLAP",
+        "OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS",
+    ):
+        os.environ[key] = "0"
+    os.environ["OLMO_EP_NO_SYNC_FORBID_RUNTIME_SYMM_ALLOC"] = "1"
+
+    def build(ep):
+        config = OLMoDDPTrainModuleConfig(
+            rank_microbatch_size=32,
+            max_sequence_length=32,
+            compile_model=False,
+            dp_config=TransformerDataParallelConfig(
+                name=DataParallelType.ddp,
+                accumulate_grads_in_fp32=True,
+                reduce_grads_in_fp32=True,
+                use_reduce_scatter=True,
+            ),
+            ep_config=TransformerExpertParallelConfig(degree=ep) if ep > 1 else None,
+            optim=OLMoDDPOptimizerConfig(
+                lr=1e-3,
+                dtype=DType.float32,
+                use_distributed=True,
+                compile=False,
+            ),
+        )
+        return config.build(
+            _build_model(512, 512, num_experts=16), device=torch.device("cuda", rank)
+        )
+
+    original = build(1)
+    expected = {}
+    with torch.no_grad():
+        for index, (name, state) in enumerate(sorted(original.optim.states.items())):
+            is_sharded = any(isinstance(p, Shard) for p in state.placements)
+            # Distinct per-state AND per-shard values catch wrong EP slice ordering.
+            value = (
+                7.0
+                if name.endswith(".step")
+                else (index + 1 + (rank / 16 if is_sharded else 0)) * 0.001
+            )
+            state.to_local().fill_(value)
+            expected[name] = state.full_tensor().cpu()
+    original.optim._copy_main_params_to_model_params()
+    original.save_state_dict_direct(Path(save_root) / "ep1")
+    for name, state in original.optim.states.items():
+        torch.testing.assert_close(
+            state.full_tensor().cpu(), expected[name], rtol=0, atol=0, msg=name
+        )
+
+    for ep in (2, 4, 8):
+        tm = build(ep)
+        tm.load_state_dict_direct(
+            Path(save_root) / "ep1",
+            load_optim_state=True,
+            reset_optimizer_states_on_load=False,
+        )
+        expert_names = {
+            name
+            for group in tm.optim.param_groups
+            if group["pg"] == "ep_dp"
+            for name in group["named_params"]
+        }
+        ep_rank = dist.get_rank(tm.ep_mp_group)
+        assert tm.optim.states.keys() == expected.keys()
+        saved_locals = {}
+        for name, state in tm.optim.states.items():
+            reference = expected[name]
+            if name.rsplit(".", 1)[0] in expert_names and not name.endswith(".step"):
+                reference = reference.chunk(ep, dim=0)[ep_rank]
+            torch.testing.assert_close(
+                state.full_tensor().cpu(), reference, rtol=0, atol=0, msg=name
+            )
+            saved_locals[name] = state.to_local().clone()
+        for name, param in tm.model.named_parameters():
+            master = tm.optim.states[name + ".main"].full_tensor().reshape_as(param)
+            torch.testing.assert_close(param, master.to(param.dtype), rtol=0, atol=0, msg=name)
+
+        # The direct synchronous save temporarily changes EP checkpoint views and
+        # then reloads live optimizer state. Check that all local shards survive.
+        tm.save_state_dict_direct(Path(save_root) / f"ep{ep}")
+        tm.zero_grads()
+        for name, state in tm.optim.states.items():
+            torch.testing.assert_close(
+                state.to_local(), saved_locals[name], rtol=0, atol=0, msg=name
+            )
+        if rank == 0:
+            print(
+                f"EP_CHECKPOINT ep={ep}: exact masters/moments/steps, BF16 weights, post-save local states pass",
+                flush=True,
+            )
+
+
+@pytest.mark.gpu
+def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path):
+    """Use node-local temporary checkpoints; never touch Weka or user checkpoints."""
+    if torch.cuda.device_count() < 8:
+        pytest.skip("requires8 CUDA GPUs")
+    run_distributed_test(
+        _run_reshard,
+        world_size=8,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(str(tmp_path / "ep-reshard"),),
+    )

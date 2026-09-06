@@ -28,7 +28,7 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _build_model(width, hidden):
+def _build_model(width, hidden, num_experts=512):
     norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=DType.float32)
     return OLMoDDPModelConfig(
         init_seed=12536,
@@ -51,20 +51,22 @@ def _build_model(width, hidden):
             routed_experts=RoutedExpertsConfig(
                 d_model=width,
                 hidden_size=hidden,
-                num_experts=512,
+                num_experts=num_experts,
                 dtype=DType.bfloat16,
                 bias=False,
             ),
             routed_experts_router=MoERouterConfigV2(
                 d_model=width,
-                num_experts=512,
+                num_experts=num_experts,
                 top_k=16,
                 dtype=DType.float32,
                 lb_loss_weight=0.01,
                 z_loss_weight=1e-5,
                 global_load_balancing=True,
                 emo=EmoRouterConfig(
-                    eos_token_id=0, min_document_expert_pool=16, max_document_expert_pool=512
+                    eos_token_id=0,
+                    min_document_expert_pool=16,
+                    max_document_expert_pool=num_experts,
                 ),
             ),
             ep=ExpertParallelConfig(
