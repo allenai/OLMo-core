@@ -344,3 +344,11 @@ outside it (a router expectation to the holder; the ST mixing on the block outpu
 saved tensors under FSDP2 — keep router graphs and mixing outside, pass decisions in.
 Verified: three-router peak 37.2 GB (memsnap18; the two per-block mixing tensors are the
 10.9 + 10.9 GB entries), block-skip GPU smoke OK. `flexs2` arms relaunched 19:05.
+
+### Stage C first three-router result (Qwen3-4B, oolong 80M, joint target 0.30 = 3.3x total)
+
+Trained on target (joint cost 0.289), final train CE ≈0.19 (dense 0.11). Learned split: blocks
+0–20 run for every token, blocks 21–34 skipped for ~99% of tokens (1–2% run), block 35 runs;
+inside the surviving blocks FFN(L12+) 54% null rung, KV cache kept in full on a few layers and
+emptied on the rest. The joint budget's first move on a dense 36-layer model is DEPTH (skip the
+late blocks for context tokens), not width or cache. Memory 48.5 GB/GPU at 65k on 8 ranks.
