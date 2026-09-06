@@ -223,28 +223,20 @@ def block_skip_forward(
     (outside the block's checkpoint region, :func:`block_skip_decide`); the straight-through
     mixing happens INSIDE the block's own forward (patched by :func:`install_block_skip`), so the
     activation-checkpoint / FSDP wrappers around the block are used exactly as for a dense block.
-    (An earlier version ran its own checkpoint around the unwrapped block, which bypassed the
-    FSDP2 hooks and retained every block's saved tensors -- memory attribution 2026-09-05.)
     """
     cfg = block._bskip  # type: ignore[attr-defined]
     if not cfg["holder"].enabled:
         return block(h, **kwargs)
     if p is None or keep is None:
         p, keep = block_skip_decide(block, h)
-    # Hand the decision to the block through an attribute, NOT as keyword arguments of the
-    # (activation-checkpoint + FSDP) wrapper: extra tensor kwargs into the wrapper kept every
-    # block's saved tensors alive under FSDP2 -- 72 GB vs 28 GB with this stash (memory
-    # attribution 2026-09-05; detaching the tensors did not help, so it is the kwargs path itself).
-    block._bskip_stash = (p, keep)  # type: ignore[attr-defined]
-    return block(h, **kwargs)
+    return block(h, **kwargs, skip_p=p, skip_keep=keep)
 
 
-def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_p=None, skip_keep=None, **kwargs):
+def _skipping_block_forward(
+    self: nn.Module, x: torch.Tensor, *args, skip_p=None, skip_keep=None, **kwargs
+):
     """``TransformerBlock.forward`` with the skip mixing appended (installed on routed blocks)."""
     orig = self._bskip_orig_forward  # type: ignore[attr-defined]
-    stash = getattr(self, "_bskip_stash", None)
-    if stash is not None:
-        skip_p, skip_keep = stash  # (kept on the module for the checkpoint recompute)
     if skip_p is None or skip_keep is None:
         return orig(x, *args, **kwargs)
     kvm = getattr(getattr(self, "attention", None), "kv_cache_manager", None)
@@ -253,9 +245,17 @@ def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_p=None
         # appended to every layer's cache -- a per-row skip would need per-row cache lengths).
         out = orig(x, *args, **kwargs)
         return torch.where(skip_keep[:, :, None], out, x)
+    import os
+
+    dbg = os.environ.get("BLOCK_SKIP_DEBUG", "")
     block_keep = kwargs.get("block_keep")
     keep_attn = skip_keep if block_keep is None else (block_keep & skip_keep)
-    out = orig(x, *args, **{**kwargs, "block_keep": keep_attn})
+    if dbg == "no_block_keep":  # memory-diagnostic ablation: skipped tokens stay keys
+        out = orig(x, *args, **kwargs)
+    else:
+        out = orig(x, *args, **{**kwargs, "block_keep": keep_attn})
+    if dbg == "no_mix":  # memory-diagnostic ablation: no residual mixing (wrong semantics)
+        return out
     # Straight-through on the residual UPDATE of kept tokens (value: out; grad to p_keep through
     # <dL/dy, out - h>); skipped tokens pass x through untouched.
     p_sel = torch.where(skip_keep, skip_p, 1.0 - skip_p)
