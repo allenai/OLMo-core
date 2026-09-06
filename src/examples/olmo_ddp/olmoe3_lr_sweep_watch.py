@@ -20,13 +20,17 @@ from olmoe3_lr_sweep_plan import (
     BUCKET,
     CONTROL,
     DEPLOYMENT,
+    EXTENSION_LABEL,
     MOUNT,
     QUALIFIED_EXPERIMENT,
+    QUALIFIED_SMOKE,
+    QUALIFIED_SMOKE_COMMIT,
     STATE,
     SWEEP,
     UPLOADER_EXPERIMENT,
     WORKSPACE,
     checkpoint_complete,
+    extension_runs,
     runs,
     smoke_runs,
     validate_plan,
@@ -150,7 +154,7 @@ def validation_spec(template, commit):
     return {"version": "v2", "tasks": [t], "retry": {"allowedTaskRetries": 0}}
 
 
-def preflight_and_register(beaker):
+def preflight_and_register(beaker, *, items=None, automation=None, minimum_free=28_000_000_000_000):
     """Audit live capacity/bucket/daemon and explicitly register only this sweep."""
     from olmo_checkpoint_uploader.backend import HuggingFaceBucketBackend
     from olmo_checkpoint_uploader.models import Registration
@@ -160,7 +164,7 @@ def preflight_and_register(beaker):
     assert MOUNT.is_mount(), "Refuse to write checkpoints on a container overlay"
     fs = os.statvfs(MOUNT)
     free = fs.f_bavail * fs.f_frsize
-    assert free > 28_000_000_000_000, f"Insufficient worst-case staging capacity: {free}"
+    assert free > minimum_free, f"Insufficient worst-case staging capacity: {free}"
     assert status(beaker.workload.get(UPLOADER_EXPERIMENT)) == "STATUS_RUNNING"
     backend = HuggingFaceBucketBackend()
     backend.assert_private(BUCKET)
@@ -171,7 +175,9 @@ def preflight_and_register(beaker):
         / "global_indices_dataset_size1708983195_epoch1_seed928543231_v1.npy"
     )
     assert cache.is_file(), f"Missing qualified shared data order: {cache}"
-    for r in runs() + smoke_runs():
+    items = runs() + smoke_runs() if items is None else items
+    automation = AUTOMATION if automation is None else automation
+    for r in items:
         r.root.mkdir(parents=True, exist_ok=True)
         registration = Registration(
             run_id=r.run_id,
@@ -185,19 +191,23 @@ def preflight_and_register(beaker):
         )
         created = store.register(registration)
         log("registration ready", run_id=r.run_id, created=created, keep=r.keep)
-    atomic_json(AUTOMATION / "plan.json", validate_plan())
+    atomic_json(automation / "plan.json", [r.as_dict() for r in items])
     log("PREFLIGHT_PASSED", free_bytes=free, bucket=BUCKET, uploader=UPLOADER_EXPERIMENT)
 
 
 class Controller:
     """A single-lock, durable, exact-name reconciled controller."""
 
-    def __init__(self, beaker, commit):
+    def __init__(self, beaker, commit, *, automation=None, items=None, reuse_smoke=False):
         self.beaker = beaker
         self.workspace = beaker.workspace.get(WORKSPACE)
         self.commit = commit
         self.last_status = {}
-        template_path = AUTOMATION / "qualified-template.json"
+        self.automation = AUTOMATION if automation is None else automation
+        self.items = runs() if items is None else items
+        self.reuse_smoke = reuse_smoke
+        self.smoke_verified = False
+        template_path = self.automation / "qualified-template.json"
         if not template_path.exists():
             original = beaker.experiment.get_spec(beaker.workload.get(QUALIFIED_EXPERIMENT))
             atomic_json(template_path, original.to_json())
@@ -207,7 +217,7 @@ class Controller:
         """Submit once; a lost create response is never grounds for another submission."""
         from beaker import BeakerExperimentSpec
 
-        path = AUTOMATION / "submissions" / f"{name}.json"
+        path = self.automation / "submissions" / f"{name}.json"
         digest = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
         entry = json.loads(path.read_text()) if path.exists() else None
         if entry:
@@ -240,7 +250,7 @@ class Controller:
         else:
             # The SDK consumes dictionary entries while parsing; preserve the durable spec.
             parsed = BeakerExperimentSpec.from_json(copy.deepcopy(spec))
-            atomic_json(AUTOMATION / "specs" / f"{name}.json", spec)
+            atomic_json(self.automation / "specs" / f"{name}.json", spec)
             atomic_json(
                 path, {"phase": "submitting", "spec_sha256": digest, "source_commit": self.commit}
             )
@@ -269,40 +279,57 @@ class Controller:
 
     def tick(self):
         """Gate production fan-out on config validation and save/restore smoke success."""
+        gate_suffix = (
+            f"{DEPLOYMENT}-extension-{EXTENSION_LABEL}" if self.reuse_smoke else DEPLOYMENT
+        )
         gate = self.ensure(
-            f"{SWEEP}-config-validation-{DEPLOYMENT}", validation_spec(self.template, self.commit)
+            f"{SWEEP}-config-validation-{gate_suffix}", validation_spec(self.template, self.commit)
         )
         if self.report(gate) != "STATUS_SUCCEEDED":
             return
         parent, child = smoke_runs()
-        smoke = self.ensure(
-            f"{SWEEP}-save-restore-smoke-{DEPLOYMENT}",
-            training_spec(self.template, parent, self.commit, smoke=True),
-        )
-        if self.report(smoke) != "STATUS_SUCCEEDED":
-            return
-        assert checkpoint_complete(child.root / "step6")
-        sessions = [
-            json.loads(p.read_text()) for p in (child.root / "audit").glob("session-*.json")
-        ]
-        assert {2, 4}.issubset({p["resumed_step"] for p in sessions})
+        if not self.smoke_verified:
+            if self.reuse_smoke:
+                smoke = self.beaker.workload.get(QUALIFIED_SMOKE)
+                actual = self.beaker.experiment.get_spec(smoke).to_json()
+                refs = [
+                    v.get("value")
+                    for t in actual["tasks"]
+                    for v in t["envVars"]
+                    if v["name"] == "GIT_REF"
+                ]
+                assert len(refs) == 8 and set(refs) == {QUALIFIED_SMOKE_COMMIT}
+            else:
+                smoke = self.ensure(
+                    f"{SWEEP}-save-restore-smoke-{DEPLOYMENT}",
+                    training_spec(self.template, parent, self.commit, smoke=True),
+                )
+            if self.report(smoke) != "STATUS_SUCCEEDED":
+                return
+            assert checkpoint_complete(child.root / "step6")
+            sessions = [
+                json.loads(p.read_text()) for p in (child.root / "audit").glob("session-*.json")
+            ]
+            assert {2, 4}.issubset({p["resumed_step"] for p in sessions})
+            self.smoke_verified = True
+            log("SAVE_RESTORE_GATE_PASSED", reused=self.reuse_smoke)
         states = {}
-        for r in [r for r in runs() if not r.parent]:
+        for r in [r for r in self.items if not r.parent]:
             w = self.ensure(f"{r.run_id}-train", training_spec(self.template, r, self.commit))
             states[r.run_id] = self.report(w)
-        for r in [r for r in runs() if r.parent]:
+        for r in [r for r in self.items if r.parent]:
             if states[r.parent] != "STATUS_SUCCEEDED":
                 continue
-            trunk = next(p for p in runs() if p.run_id == r.parent)
+            trunk = next(p for p in self.items if p.run_id == r.parent)
             # Validate all four forks before launching any child of this trunk.
             assert (trunk.root / "audit/completed-step6000.json").is_file()
-            for sibling in [c for c in runs() if c.parent == r.parent]:
+            for sibling in [c for c in self.items if c.parent == r.parent]:
                 assert checkpoint_complete(sibling.parent_path), sibling.as_dict()
             w = self.ensure(f"{r.run_id}-train", training_spec(self.template, r, self.commit))
             states[r.run_id] = self.report(w)
-        atomic_json(AUTOMATION / "status.json", {"source_commit": self.commit, "runs": states})
-        if len(states) == 25 and all(s == "STATUS_SUCCEEDED" for s in states.values()):
-            log("SWEEP_COMPLETE", runs=25)
+        atomic_json(self.automation / "status.json", {"source_commit": self.commit, "runs": states})
+        if len(states) == len(self.items) and all(s == "STATUS_SUCCEEDED" for s in states.values()):
+            log("SWEEP_COMPLETE", runs=len(self.items))
             return True
         return False
 
@@ -313,14 +340,29 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--extension", choices=[EXTENSION_LABEL])
     args = parser.parse_args()
     assert MOUNT.is_mount()
-    AUTOMATION.mkdir(parents=True, exist_ok=True)
-    with (AUTOMATION / "controller.lock").open("a") as lock:
+    automation = AUTOMATION / f"extension-{args.extension}" if args.extension else AUTOMATION
+    items = extension_runs() if args.extension else runs()
+    automation.mkdir(parents=True, exist_ok=True)
+    with (automation / "controller.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with Beaker.from_env(default_workspace=WORKSPACE, check_for_upgrades=False) as beaker:
-            preflight_and_register(beaker)
-            controller = Controller(beaker, os.environ["GIT_REF"])
+            preflight_and_register(
+                beaker,
+                items=items if args.extension else items + smoke_runs(),
+                automation=automation,
+                # One extra LR's full no-deletion footprint is <6 TB; allow 7 TB.
+                minimum_free=7_000_000_000_000 if args.extension else 28_000_000_000_000,
+            )
+            controller = Controller(
+                beaker,
+                os.environ["GIT_REF"],
+                automation=automation,
+                items=items,
+                reuse_smoke=bool(args.extension),
+            )
             heartbeat = 0.0
             while True:
                 try:

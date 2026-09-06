@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import olmoe3_lr_sweep_watch as watch
-from olmoe3_lr_sweep_plan import BATCH, runs, smoke_runs, validate_plan
+from olmoe3_lr_sweep_plan import BATCH, extension_runs, runs, smoke_runs, validate_plan
 
 
 class SweepTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(len(template["tasks"]), 8)
 
     def test_grid(self):
-        self.assertEqual(len(validate_plan()), 25)
+        self.assertEqual(len(validate_plan()), 30)
         for parent in (r for r in runs() if not r.parent):
             children = [r for r in runs() if r.parent == parent.run_id]
             self.assertEqual([r.start for r in children], [5700, 5400, 4800, 4200])
@@ -44,6 +44,45 @@ class SweepTests(unittest.TestCase):
         parent, child = smoke_runs()
         self.assertEqual(child.start, 2)
         self.assertEqual(child.parent_path, parent.root / "step2")
+
+    def test_higher_lr_extension_is_isolated(self):
+        selected = extension_runs()
+        self.assertEqual(len(selected), 5)
+        self.assertEqual({r.lr for r in selected}, {0.0104})
+        self.assertEqual(sum(r.parent is None for r in selected), 1)
+        self.assertEqual({r.start for r in selected if r.parent}, {4200, 4800, 5400, 5700})
+        self.assertEqual(len([r for r in runs() if r not in selected]), 25)
+
+    def test_extension_fanout_only_after_trunk_succeeds(self):
+        controller = watch.Controller.__new__(watch.Controller)
+        controller.commit, controller.template = "extension-commit", {}
+        controller.items = extension_runs()
+        controller.reuse_smoke = controller.smoke_verified = True
+        submitted = []
+        parent_status = "STATUS_RUNNING"
+
+        def ensure(name, spec):
+            submitted.append(name)
+            return parent_status if name.endswith("-trunk-train") else "STATUS_SUCCEEDED"
+
+        controller.ensure, controller.report = ensure, lambda value: value
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(watch, "validation_spec", return_value={}),
+            patch.object(watch, "training_spec", return_value={}),
+            patch.object(watch, "checkpoint_complete", return_value=True),
+            patch.object(Path, "is_file", return_value=True),
+        ):
+            controller.automation = Path(directory)
+            self.assertFalse(controller.tick())
+            self.assertEqual(len(submitted), 2)
+            self.assertIn("extension-1p04em2", submitted[0])
+            self.assertIn("lr1p04em2-trunk", submitted[1])
+            parent_status = "STATUS_SUCCEEDED"
+            submitted.clear()
+            self.assertTrue(controller.tick())
+            self.assertEqual(len(submitted), 6)  # Validation plus this LR's five trajectories.
+            self.assertEqual(set(submitted[1:]), {f"{r.run_id}-train" for r in extension_runs()})
 
     def test_failed_create_never_blindly_retried(self):
         controller = watch.Controller.__new__(watch.Controller)
@@ -70,10 +109,8 @@ class SweepTests(unittest.TestCase):
                 }
             ],
         }
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            patch.object(watch, "AUTOMATION", Path(directory)),
-        ):
+        with (tempfile.TemporaryDirectory() as directory,):
+            controller.automation = Path(directory)
             with self.assertRaises(TimeoutError):
                 controller.ensure("unique-name", spec)
             self.assertIsNone(controller.ensure("unique-name", spec))

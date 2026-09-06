@@ -25,8 +25,12 @@ LRS = (
     ("1p3em3", 1.3e-3),
     ("2p6em3", 2.6e-3),
     ("5p2em3", 5.2e-3),
+    ("1p04em2", 1.04e-2),
 )
 DECAYS = (300, 600, 1200, 1800)
+EXTENSION_LABEL = "1p04em2"
+QUALIFIED_SMOKE = "01M1TW62KAPQ7GS5CQJDT2EKQN"
+QUALIFIED_SMOKE_COMMIT = "215df45915c871827cb096d60dd05ddf5a4e11a0"
 
 
 @dataclass(frozen=True)
@@ -68,13 +72,19 @@ class Run:
 
 
 def runs():
-    """Return five trunks and twenty decay children in deterministic launch order."""
+    """Return all trunks and decay children in deterministic launch order."""
     trunks = [Run(f"olmoe3-{SWEEP}-lr{label}-trunk", lr) for label, lr in LRS]
     return trunks + [
         Run(t.run_id.replace("-trunk", f"-decay{d:04d}"), t.lr, d, t.run_id)
         for t in trunks
         for d in DECAYS
     ]
+
+
+def extension_runs():
+    """Select only the higher-LR extension; never re-submit the original five LRs."""
+    lr = dict(LRS)[EXTENSION_LABEL]
+    return [r for r in runs() if r.lr == lr]
 
 
 def smoke_runs():
@@ -107,7 +117,7 @@ def checkpoint_complete(path):
 def validate_plan():
     """Assert schedule, token budget, identity and retention invariants."""
     items = runs()
-    assert len(items) == len({r.run_id for r in items}) == 25
+    assert len(items) == len({r.run_id for r in items}) == len(LRS) * (1 + len(DECAYS))
     assert BATCH * STEPS == 100_663_296_000
     protected = set(range(STEPS - 6 * SAVE, STEPS + 1, SAVE))
     for r in items:

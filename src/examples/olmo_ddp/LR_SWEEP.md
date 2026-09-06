@@ -56,3 +56,29 @@ uv run --no-project --with beaker-py==2.7.2 python \
 The controller source commit is pinned in every child spec. Changing a spec
 after a submission intent fails closed; use a reviewed revision/receipt migration
 instead of editing a live ledger to bypass checks.
+
+## Higher-LR extension
+
+The September 6 extension adds **1.04e-2**, twice the previous upper LR of 5.2e-3.
+The registry now contains six LRs / 30 production trajectories. Nothing in the
+original 25 run definitions, training configuration, or submitted specs changes.
+No lower-LR extension was submitted.
+
+Leave the original controller pinned at `215df45915c871827cb096d60dd05ddf5a4e11a0`.
+Launch the extension from the clean pushed branch with:
+
+```bash
+uv run --no-project --with beaker-py==2.7.2 python \
+  src/examples/olmo_ddp/olmoe3_lr_sweep_launch.py \
+  --extension 1p04em2 --output /absolute/path/to/extension-record --submit
+```
+
+This controller uses a separate `launch2/extension-1p04em2` ledger and lock, a
+uniquely named actual-image config gate, and the already-passed save/restore smoke
+(`01M1TW62KAPQ7GS5CQJDT2EKQN`, verified against its original source pin). It only
+registers and submits the new trunk and its four decays. The new jobs pin the
+extension commit; the original controller, receipts, and jobs remain untouched.
+Its incremental free-space gate is 7 TB (above the new LR's <6 TB footprint even
+without deletion). The existing uploader serves all five new lineages using
+unchanged apply/grace policies: keep seven for the trunk, one for each decay.
+The new run uses the same W&B group and is included in the combined U-plot tracker.

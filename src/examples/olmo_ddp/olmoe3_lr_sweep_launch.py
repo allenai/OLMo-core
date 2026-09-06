@@ -9,6 +9,7 @@ from pathlib import Path
 from beaker import Beaker, BeakerExperimentSpec
 from olmoe3_lr_sweep_plan import (
     DEPLOYMENT,
+    EXTENSION_LABEL,
     SWEEP,
     UPLOADER_COMMIT,
     UPLOADER_EXPERIMENT,
@@ -22,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--submit", action="store_true")
+    parser.add_argument("--extension", choices=[EXTENSION_LABEL])
     args = parser.parse_args()
     assert not subprocess.check_output(["git", "status", "--porcelain"]).strip()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -30,6 +32,8 @@ def main():
     )
     assert remote.split()[0] == commit, "Push the exact clean commit before launch"
     name = f"{SWEEP}-controller-{DEPLOYMENT}"
+    if args.extension:
+        name += f"-extension-{args.extension}"
     with Beaker.from_env(default_workspace=WORKSPACE, check_for_upgrades=False) as b:
         workspace = b.workspace.get(WORKSPACE)
         existing = [
@@ -51,6 +55,7 @@ def main():
                 "--with 'beaker-py==2.7.2' --with 'olmo-checkpoint-uploader @ "
                 f"git+https://github.com/jacob-morrison/olmo-checkpoint-uploader.git@{UPLOADER_COMMIT}' "
                 "python -u src/examples/olmo_ddp/olmoe3_lr_sweep_watch.py"
+                + (f" --extension {args.extension}" if args.extension else "")
             ),
         ]
         replace_env(
@@ -72,6 +77,11 @@ def main():
         t["context"] = {"priority": "urgent", "minRuntime": "0s", "autoResume": True}
         t["timeout"] = "720h"
         spec["description"] = "Small 100B LR sweep controller; gated five trunks and twenty decays"
+        if args.extension:
+            spec["description"] = (
+                f"Small 100B LR sweep extension {args.extension}; one trunk and four decays; "
+                "isolated ledger, original five LR trajectories untouched"
+            )
         spec["retry"] = {"allowedTaskRetries": 3}
         parsed = BeakerExperimentSpec.from_json(copy.deepcopy(spec))
         atomic_json(args.output / "controller-spec.json", spec)
