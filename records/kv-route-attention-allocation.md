@@ -342,3 +342,5 @@ only the key mask (`skip_keep` kwarg), and the mixing runs outside the region in
 across all three routers: anything computed inside a checkpointed block that also feeds the graph
 outside it (a router expectation to the holder; the ST mixing on the block output) pins the block's
 saved tensors under FSDP2 — keep router graphs and mixing outside, pass decisions in.
+Verified: three-router peak 37.2 GB (memsnap18; the two per-block mixing tensors are the
+10.9 + 10.9 GB entries), block-skip GPU smoke OK. `flexs2` arms relaunched 19:05.
