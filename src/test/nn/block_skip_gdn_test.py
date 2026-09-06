@@ -17,8 +17,16 @@ from olmo_core.testing.utils import requires_fla
 
 def _gdn(d_model=256, device="cuda"):
     torch.manual_seed(0)
+    from olmo_core.nn.transformer.init import InitMethod
+
     m = GatedDeltaNetConfig(n_heads=8).build(d_model, layer_idx=0, n_layers=2, init_device=device)
-    m.init_weights(generator=torch.Generator(device=device).manual_seed(0))
+    m.init_weights(
+        init_method=InitMethod.normal,
+        d_model=d_model,
+        block_idx=0,
+        num_blocks=2,
+        generator=torch.Generator(device=device).manual_seed(0),
+    )
     return m
 
 
