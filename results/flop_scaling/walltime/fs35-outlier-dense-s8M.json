@@ -1,0 +1,17 @@
+{
+ "run": "fs35-outlier-dense-s8M",
+ "ex": "01M1HT26HWFCM1SR57E3QF2V3N",
+ "task": "outlier",
+ "arm": "dense",
+ "budget": "8M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 16,
+ "t_first_step": "2026-09-02T19:43:33.483",
+ "t_last_step": "2026-09-02T19:53:48.491",
+ "train_seconds": 615.008,
+ "job_started": "2026-09-02T19:38:51.574086Z",
+ "job_exited": "2026-09-02T19:54:09.007231Z",
+ "job_seconds": 917.433145,
+ "n_jobs": 1
+}

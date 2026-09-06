@@ -1,0 +1,20 @@
+{
+ "run": "fs35s4b-contradiction-ffnmoe-t10p-s14M",
+ "ex": "01M1QC2D25EK2STJQ85FPJMCE1",
+ "times": {
+  "contradiction_2k": 753,
+  "contradiction_8k": 882,
+  "contradiction_16k": 1180,
+  "contradiction_32k": 1663
+ },
+ "n": {
+  "contradiction_2k": 500,
+  "contradiction_8k": 500,
+  "contradiction_16k": 500,
+  "contradiction_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

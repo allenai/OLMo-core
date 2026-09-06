@@ -593,7 +593,8 @@ class Transformer(nn.Module):
         """
         Enable learned per-token block skipping (see :mod:`olmo_core.nn.block_skip`): every block at
         or after ``start_layer`` gets a router deciding per token whether the block runs; skipped
-        tokens pass the residual stream unchanged and are not keys in that block's attention. Adds
+        tokens pass the residual stream unchanged and are not keys in that block's attention (in a
+        GatedDeltaNet block: do not write the recurrent state). Adds
         NEW state-dict keys ``bskip_routers.<i>.w.*`` (on the model root) initialised to run everything.
 
         :raises OLMoConfigurationError: If no block was routed.

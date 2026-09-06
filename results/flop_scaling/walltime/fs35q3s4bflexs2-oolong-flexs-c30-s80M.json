@@ -1,0 +1,17 @@
+{
+ "run": "fs35q3s4bflexs2-oolong-flexs-c30-s80M",
+ "ex": "01M1T1TPV1NFDB5HGHS4Y9QSQY",
+ "task": "oolong",
+ "arm": "flexs-c30",
+ "budget": "80M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 155,
+ "t_first_step": "2026-09-06T00:30:54.135",
+ "t_last_step": "2026-09-06T01:35:58.119",
+ "train_seconds": 3903.984,
+ "job_started": "2026-09-06T00:28:26.384743Z",
+ "job_exited": "2026-09-06T01:36:16.246503Z",
+ "job_seconds": 4069.86176,
+ "n_jobs": 1
+}

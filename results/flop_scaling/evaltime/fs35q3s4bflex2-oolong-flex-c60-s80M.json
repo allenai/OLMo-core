@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bflex2-oolong-flex-c60-s80M",
+ "ex": "01M1SND9MGJA1X480YYC39BNBT",
+ "times": {
+  "oolong_2k": 5109,
+  "oolong_8k": 4311,
+  "oolong_16k": 4293,
+  "oolong_32k": 4502
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": true,
+ "kv": true,
+ "bskip": false,
+ "bs": null
+}

@@ -1,0 +1,17 @@
+{
+ "run": "prior-dense-outlier-32M",
+ "ex": "01M14P3TFQQQQJVCWF4EXM9Q77",
+ "task": "outlier",
+ "arm": "dense",
+ "budget": "32M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 61,
+ "t_first_step": "2026-08-28T18:07:19.412",
+ "t_last_step": "2026-08-28T18:17:56.654",
+ "train_seconds": 637.242,
+ "job_started": "2026-08-28T17:59:19.30472Z",
+ "job_exited": "2026-08-28T18:18:30.046029Z",
+ "job_seconds": 1150.741309,
+ "n_jobs": 1
+}

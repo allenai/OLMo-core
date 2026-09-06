@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bdense2-oolong-dense-s80M",
+ "ex": "01M1SM73RPSAQ1P773SAPHS28W",
+ "times": {
+  "oolong_2k": 1683,
+  "oolong_8k": 1452,
+  "oolong_16k": 1613,
+  "oolong_32k": 2255
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

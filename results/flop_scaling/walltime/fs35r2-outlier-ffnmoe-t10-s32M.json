@@ -1,0 +1,17 @@
+{
+ "run": "fs35r2-outlier-ffnmoe-t10-s32M",
+ "ex": "01M1HA884SYTTY36NP3XHRKBN7",
+ "task": "outlier",
+ "arm": "ffnmoe-t10",
+ "budget": "32M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 61,
+ "t_first_step": "2026-09-02T16:39:53.126",
+ "t_last_step": "2026-09-02T17:18:08.702",
+ "train_seconds": 2295.576,
+ "job_started": "2026-09-02T16:34:43.760314Z",
+ "job_exited": "2026-09-02T17:18:27.572275Z",
+ "job_seconds": 2623.811961,
+ "n_jobs": 1
+}

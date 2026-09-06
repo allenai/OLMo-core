@@ -1,0 +1,17 @@
+{
+ "run": "fs35s27b-contradiction-kv33-s56M",
+ "ex": "01M1Q6YVZMN36EJCW13FNB5ZDE",
+ "task": "contradiction",
+ "arm": "kv33",
+ "budget": "56M",
+ "scale": "27b",
+ "gpus": 16,
+ "steps": 99,
+ "t_first_step": "2026-09-05T00:43:14.878",
+ "t_last_step": "2026-09-05T02:42:13.623",
+ "train_seconds": 7138.745,
+ "job_started": "2026-09-05T00:20:50.757885Z",
+ "job_exited": "2026-09-05T02:43:11.040101Z",
+ "job_seconds": 8540.282216,
+ "n_jobs": 2
+}

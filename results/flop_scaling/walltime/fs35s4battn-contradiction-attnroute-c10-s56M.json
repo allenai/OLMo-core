@@ -1,0 +1,17 @@
+{
+ "run": "fs35s4battn-contradiction-attnroute-c10-s56M",
+ "ex": "01M1QZYCP4NB9W2GAERETEQGPP",
+ "task": "contradiction",
+ "arm": "attnroute-c10",
+ "budget": "56M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 108,
+ "t_first_step": "2026-09-05T05:21:09.796",
+ "t_last_step": "2026-09-05T05:55:35.166",
+ "train_seconds": 2065.37,
+ "job_started": "2026-09-05T05:16:59.384372Z",
+ "job_exited": "2026-09-05T05:55:55.226883Z",
+ "job_seconds": 2335.842511,
+ "n_jobs": 1
+}

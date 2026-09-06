@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bflexs2-contradiction-flexs-c15-s56M",
+ "ex": "01M1T8S174BRGHTVFZPCVS2QPX",
+ "times": {
+  "contradiction_2k": 2895,
+  "contradiction_8k": 2961,
+  "contradiction_16k": 3052,
+  "contradiction_32k": 3199
+ },
+ "n": {
+  "contradiction_2k": 500,
+  "contradiction_8k": 500,
+  "contradiction_16k": 500,
+  "contradiction_32k": 500
+ },
+ "ffn_rungs": true,
+ "kv": true,
+ "bskip": true,
+ "bs": null
+}

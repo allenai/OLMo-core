@@ -1,0 +1,17 @@
+{
+ "run": "fs35q3s4bflexs2-contradiction-flexs-c05-s56M",
+ "ex": "01M1T1ZTWESZJP7C0PFWGDTVDK",
+ "task": "contradiction",
+ "arm": "flexs-c05",
+ "budget": "56M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 105,
+ "t_first_step": "2026-09-06T01:39:15.733",
+ "t_last_step": "2026-09-06T02:31:05.929",
+ "train_seconds": 3110.196,
+ "job_started": "2026-09-06T01:36:46.402378Z",
+ "job_exited": "2026-09-06T02:31:23.838714Z",
+ "job_seconds": 3277.436336,
+ "n_jobs": 1
+}

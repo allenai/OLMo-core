@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bdense2-contradiction-dense-s14M",
+ "ex": "01M1SHKD6VXVFRW16MB67YM6MK",
+ "times": {
+  "contradiction_2k": 1388,
+  "contradiction_8k": 1450,
+  "contradiction_16k": 1598,
+  "contradiction_32k": 2349
+ },
+ "n": {
+  "contradiction_2k": 500,
+  "contradiction_8k": 500,
+  "contradiction_16k": 500,
+  "contradiction_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

@@ -7,8 +7,17 @@ Per routed transformer block, a ``Linear(d_model, 1)`` router reads the block in
 for every token whether it **runs** the block or **skips** it. A skipped token's hidden state
 passes the residual stream unchanged, and it is neither a query nor a key in that block's
 attention (nothing later attends to it there), so the whole block -- Q/K/V/O projections, FFN and
-attention scores -- is saved for that token. This is what reaches the ~50% of per-token FLOPs the
-other two routers cannot touch (projections, and on Qwen3.5 the recurrent layers).
+attention scores -- is saved for that token. This is what reaches the per-token FLOPs the other
+two routers cannot touch (projections, the FFN of un-routed layers, and on Qwen3.5 the recurrent
+layers).
+
+**Recurrent (GatedDeltaNet) blocks are routed too.** There the "not a key" half becomes "does not
+write the recurrent state": the mixer receives the same ``block_keep`` and, for skipped tokens,
+zeroes ``k``/``v`` before the causal short conv and forces ``beta=0``, ``g=0`` so the delta-rule
+update is the identity at that step (:meth:`olmo_core.nn.attention.recurrent.GatedDeltaNet.forward`).
+On a hybrid this is what lets the budget reach the 3/4 of the FFN that sits in GDN blocks -- the
+GDN mixer itself is only ~9% of per-token FLOPs on Qwen3.5-4B, so a router over the mixer alone
+would not be worth its overhead; skipping the whole block is.
 
 Same recipe as the other routers so the three compose under one budget:
 
@@ -248,7 +257,8 @@ def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_keep=N
     orig = self._bskip_orig_forward  # type: ignore[attr-defined]
     if skip_keep is None:
         return orig(x, *args, **kwargs)
-    kvm = getattr(getattr(self, "attention", None), "kv_cache_manager", None)
+    mixer = getattr(self, "attention", None)
+    kvm = getattr(mixer, "kv_cache_manager", None) or getattr(mixer, "state_cache", None)
     if kvm is not None and x.shape[1] == 1:
         # Decode step: the token's K/V is still appended to every layer's cache (a per-row skip
         # would need per-row cache lengths); the query-side skip is applied by the caller.
@@ -278,8 +288,8 @@ def install_block_skip(
         if li < start_layer:
             continue
         attn = getattr(block, "attention", None)
-        ref = getattr(attn, "w_q", None)
-        if ref is None:  # recurrent / other mixers: skipping needs the attention-side key mask
+        ref = getattr(attn, "w_q", None)  # Attention and GatedDeltaNet both expose w_q
+        if ref is None:  # a mixer without a per-token key/state mask cannot be skipped exactly
             continue
         routers[key] = BlockSkipRouter(
             ref.in_features, device=ref.weight.device, dtype=ref.weight.dtype

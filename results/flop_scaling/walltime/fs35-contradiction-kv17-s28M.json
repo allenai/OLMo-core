@@ -1,0 +1,17 @@
+{
+ "run": "fs35-contradiction-kv17-s28M",
+ "ex": "01M1HTQG0HBP45GZFRR6JMPXGD",
+ "task": "contradiction",
+ "arm": "kv17",
+ "budget": "28M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 49,
+ "t_first_step": "2026-09-02T20:08:53.691",
+ "t_last_step": "2026-09-02T21:02:38.130",
+ "train_seconds": 3224.439,
+ "job_started": "2026-09-02T19:50:34.107853Z",
+ "job_exited": "2026-09-02T21:03:04.091828Z",
+ "job_seconds": 4349.983975,
+ "n_jobs": 1
+}

@@ -1,0 +1,17 @@
+{
+ "run": "prior-dense-contradiction-56M",
+ "ex": "01M1DW8K3BYM1QS3Z5TJVJ8KZG",
+ "task": "contradiction",
+ "arm": "dense",
+ "budget": "56M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 108,
+ "t_first_step": "2026-09-01T16:30:37.787",
+ "t_last_step": "2026-09-01T16:47:48.371",
+ "train_seconds": 1030.584,
+ "job_started": "2026-09-01T16:25:34.775795Z",
+ "job_exited": "2026-09-01T16:48:10.188775Z",
+ "job_seconds": 1355.41298,
+ "n_jobs": 1
+}

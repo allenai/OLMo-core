@@ -1,0 +1,17 @@
+{
+ "run": "fs35r2-contradiction-ffnmoe-t10-s28M",
+ "ex": "01M1HAPWTD6VBWDXW331FB6XXM",
+ "task": "contradiction",
+ "arm": "ffnmoe-t10",
+ "budget": "28M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 54,
+ "t_first_step": "2026-09-02T17:15:38.777",
+ "t_last_step": "2026-09-02T17:49:22.160",
+ "train_seconds": 2023.383,
+ "job_started": "2026-09-02T17:10:39.071882Z",
+ "job_exited": "2026-09-02T17:49:39.808174Z",
+ "job_seconds": 2340.736292,
+ "n_jobs": 1
+}

@@ -1,0 +1,20 @@
+{
+ "run": "fs35s4battn-contradiction-attnroute-c25-s56M",
+ "ex": "01M1R2JBPPX693471ZBKP9NQ0V",
+ "times": {
+  "contradiction_2k": 585,
+  "contradiction_8k": 626,
+  "contradiction_16k": 833,
+  "contradiction_32k": 1096
+ },
+ "n": {
+  "contradiction_2k": 500,
+  "contradiction_8k": 500,
+  "contradiction_16k": 500,
+  "contradiction_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

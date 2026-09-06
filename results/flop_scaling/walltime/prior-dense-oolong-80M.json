@@ -1,0 +1,17 @@
+{
+ "run": "prior-dense-oolong-80M",
+ "ex": "01M1ETKS7NRKNMV6CVQH0T3ZA1",
+ "task": "oolong",
+ "arm": "dense",
+ "budget": "80M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 157,
+ "t_first_step": "2026-09-01T15:58:18.779",
+ "t_last_step": "2026-09-01T16:51:14.633",
+ "train_seconds": 3175.854,
+ "job_started": "2026-09-01T15:52:39.690115Z",
+ "job_exited": "2026-09-01T16:51:39.454714Z",
+ "job_seconds": 3539.764599,
+ "n_jobs": 1
+}

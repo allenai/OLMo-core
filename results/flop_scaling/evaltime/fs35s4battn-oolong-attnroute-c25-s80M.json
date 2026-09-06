@@ -1,0 +1,20 @@
+{
+ "run": "fs35s4battn-oolong-attnroute-c25-s80M",
+ "ex": "01M1R383BPWAY5D45KB8KNJRRS",
+ "times": {
+  "oolong_2k": 423,
+  "oolong_8k": 402,
+  "oolong_16k": 529,
+  "oolong_32k": 972
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

@@ -1,0 +1,17 @@
+{
+ "run": "fs35r2-oolong-ffnmoe-t10-s20M",
+ "ex": "01M1HASJCFXEN3VYRZHPKWTMGP",
+ "task": "oolong",
+ "arm": "ffnmoe-t10",
+ "budget": "20M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 39,
+ "t_first_step": "2026-09-02T17:23:53.139",
+ "t_last_step": "2026-09-02T17:48:17.551",
+ "train_seconds": 1464.412,
+ "job_started": "2026-09-02T17:18:59.326063Z",
+ "job_exited": "2026-09-02T17:48:37.198201Z",
+ "job_seconds": 1777.872138,
+ "n_jobs": 1
+}

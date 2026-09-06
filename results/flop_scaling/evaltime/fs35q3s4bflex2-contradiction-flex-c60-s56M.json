@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bflex2-contradiction-flex-c60-s56M",
+ "ex": "01M1SNE7SXGCV07EH49RKG4RJN",
+ "times": {
+  "contradiction_2k": 1957,
+  "contradiction_8k": 2013,
+  "contradiction_16k": 2131,
+  "contradiction_32k": 2495
+ },
+ "n": {
+  "contradiction_2k": 500,
+  "contradiction_8k": 500,
+  "contradiction_16k": 500,
+  "contradiction_32k": 500
+ },
+ "ffn_rungs": true,
+ "kv": true,
+ "bskip": false,
+ "bs": null
+}

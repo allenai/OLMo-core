@@ -1,0 +1,17 @@
+{
+ "run": "fs35s4bflex-contradiction-flex-c60-s56M",
+ "ex": "01M1R9HMN7X6FAT56FK9V5Y24R",
+ "task": "contradiction",
+ "arm": "flex-c60",
+ "budget": "56M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 108,
+ "t_first_step": "2026-09-05T08:08:57.523",
+ "t_last_step": "2026-09-05T08:56:04.513",
+ "train_seconds": 2826.99,
+ "job_started": "2026-09-05T08:04:53.489944Z",
+ "job_exited": "2026-09-05T08:56:23.680386Z",
+ "job_seconds": 3090.190442,
+ "n_jobs": 1
+}

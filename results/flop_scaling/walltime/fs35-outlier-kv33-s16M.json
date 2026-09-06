@@ -1,0 +1,17 @@
+{
+ "run": "fs35-outlier-kv33-s16M",
+ "ex": "01M1GKMGR0W6HWVEEEFT3HX8VV",
+ "task": "outlier",
+ "arm": "kv33",
+ "budget": "16M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 30,
+ "t_first_step": "2026-09-02T09:06:56.844",
+ "t_last_step": "2026-09-02T09:45:28.938",
+ "train_seconds": 2312.094,
+ "job_started": "2026-09-02T08:48:10.579791Z",
+ "job_exited": "2026-09-02T09:45:50.736948Z",
+ "job_seconds": 3460.157157,
+ "n_jobs": 1
+}

@@ -1,0 +1,20 @@
+{
+ "run": "fs35s4bflex-oolong-flex-c70-s80M",
+ "ex": "01M1REKTK4E408ZCTEKBECBVG6",
+ "times": {
+  "oolong_2k": 297,
+  "oolong_8k": 288,
+  "oolong_16k": 393,
+  "oolong_32k": 735
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": true,
+ "kv": true,
+ "bskip": false,
+ "bs": null
+}

@@ -1,0 +1,17 @@
+{
+ "run": "fs35-nq-dense-s8M",
+ "ex": "01M1HSZTT9TDS8D0399CDZ2RSH",
+ "task": "nq",
+ "arm": "dense",
+ "budget": "8M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 16,
+ "t_first_step": "2026-09-02T19:45:41.219",
+ "t_last_step": "2026-09-02T19:55:54.477",
+ "train_seconds": 613.258,
+ "job_started": "2026-09-02T19:37:38.887524Z",
+ "job_exited": "2026-09-02T19:56:25.041919Z",
+ "job_seconds": 1126.154395,
+ "n_jobs": 1
+}

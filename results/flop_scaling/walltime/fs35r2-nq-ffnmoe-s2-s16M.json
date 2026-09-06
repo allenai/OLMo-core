@@ -1,0 +1,17 @@
+{
+ "run": "fs35r2-nq-ffnmoe-s2-s16M",
+ "ex": "01M1HC6THV72PK5CG0F8T8X0JA",
+ "task": "nq",
+ "arm": "ffnmoe-s2",
+ "budget": "16M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 30,
+ "t_first_step": "2026-09-02T17:47:42.620",
+ "t_last_step": "2026-09-02T18:03:23.931",
+ "train_seconds": 941.311,
+ "job_started": "2026-09-02T17:43:16.630744Z",
+ "job_exited": "2026-09-02T18:03:42.494327Z",
+ "job_seconds": 1225.863583,
+ "n_jobs": 1
+}

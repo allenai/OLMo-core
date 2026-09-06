@@ -1,0 +1,139 @@
+{
+ "runs": {
+  "prior-dense-contradiction-14M": {
+   "ex": "01M1DW88ZYQXQX3CAXD513MBXN",
+   "state": "DONE",
+   "task": "contradiction",
+   "arm": "dense",
+   "budget": "14M",
+   "scale": "4b",
+   "name": "tsl-full-contradiction-s14M-4b-20260831T235931-0700-c5c0e2f6"
+  },
+  "prior-dense-contradiction-28M": {
+   "ex": "01M1EWCSCBB95NTG4ZCX47GCBK",
+   "state": "DONE",
+   "task": "contradiction",
+   "arm": "dense",
+   "budget": "28M",
+   "scale": "4b",
+   "name": "tsl-full-contradiction-s28M-4b-20260901T092112-0700-69038ce6"
+  },
+  "prior-dense-contradiction-56M": {
+   "ex": "01M1DW8K3BYM1QS3Z5TJVJ8KZG",
+   "state": "DONE",
+   "task": "contradiction",
+   "arm": "dense",
+   "budget": "56M",
+   "scale": "4b",
+   "name": "tsl-full-contradiction-s56M-4b-20260831T235942-0700-d3e3b13e"
+  },
+  "prior-dense-oolong-160M": {
+   "ex": "01M1JCAH551KASPVYPNBXB6H62",
+   "state": "DONE",
+   "task": "oolong",
+   "arm": "dense",
+   "budget": "160M",
+   "scale": "4b",
+   "name": "tsl-full-oolong-s160M-4b-20260902T175720-0700-d9679a0e"
+  },
+  "prior-dense-oolong-20M": {
+   "ex": "01M1E3478ZAF39TST8SGD7E6XH",
+   "state": "DONE",
+   "task": "oolong",
+   "arm": "dense",
+   "budget": "20M",
+   "scale": "4b",
+   "name": "tsl-full-oolong-s20M-4b-20260901T015937-0700-8573cf29"
+  },
+  "prior-dense-oolong-320M": {
+   "ex": "01M1MJPEHE22S13K55HE0WYDKV",
+   "state": "DONE",
+   "task": "oolong",
+   "arm": "dense",
+   "budget": "320M",
+   "scale": "4b",
+   "name": "tsl-full-oolong-s320M-4b-20260903T142711-0700-e67767b6"
+  },
+  "prior-dense-oolong-40M": {
+   "ex": "01M1ERZ0Q8T9X6WH5SSJFJ99KX",
+   "state": "DONE",
+   "task": "oolong",
+   "arm": "dense",
+   "budget": "40M",
+   "scale": "4b",
+   "name": "tsl-full-oolong-s40M-4b-20260901T082115-0700-fefc4e53"
+  },
+  "prior-dense-oolong-80M": {
+   "ex": "01M1ETKS7NRKNMV6CVQH0T3ZA1",
+   "state": "DONE",
+   "task": "oolong",
+   "arm": "dense",
+   "budget": "80M",
+   "scale": "4b",
+   "name": "tsl-full-oolong-s80M-4b-20260901T085004-0700-9d05bf3d"
+  },
+  "prior-dense-outlier-160M": {
+   "ex": "01M15DH3CR8YADYA4VN3ZN0X74",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "160M",
+   "scale": "4b",
+   "name": "lmx-full-mixs160M-4b-20260828T170816-0700-b586a766"
+  },
+  "prior-dense-outlier-16M": {
+   "ex": "01M14NW8N9FZZWY246J7AVVSA9",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "16M",
+   "scale": "4b",
+   "name": "lmx-full-mixs16M-4b-20260828T101456-0700-8ed56bb7"
+  },
+  "prior-dense-outlier-320M": {
+   "ex": "01M1B1HAD74XQ3XV1QJFTY2W7T",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "320M",
+   "scale": "4b",
+   "name": "lmx-full-mixs320M-4b-20260830T213406-0700-36da29d0-1e0d"
+  },
+  "prior-dense-outlier-32M": {
+   "ex": "01M14P3TFQQQQJVCWF4EXM9Q77",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "32M",
+   "scale": "4b",
+   "name": "lmx-full-mixs32M-4b-20260828T101903-0700-a188a4fa"
+  },
+  "prior-dense-outlier-640M": {
+   "ex": "01M1B1HE6N6DPVR76QXCAHVM7M",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "640M",
+   "scale": "4b",
+   "name": "lmx-full-mixs640M-4b-20260830T213412-0700-8d63a3c4"
+  },
+  "prior-dense-outlier-64M": {
+   "ex": "01M14PAYRQWD6TG3KXP934A6J2",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "64M",
+   "scale": "4b",
+   "name": "lmx-full-mixs64M-4b-20260828T102258-0700-5e974a7b"
+  },
+  "prior-dense-outlier-96M": {
+   "ex": "01M15DH3TZ0T7MCE111VCHERBH",
+   "state": "DONE",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "96M",
+   "scale": "4b",
+   "name": "lmx-full-mixs96M-4b-20260828T170816-0700-f72185f5-394a"
+  }
+ }
+}

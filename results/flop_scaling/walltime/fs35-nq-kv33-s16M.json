@@ -1,0 +1,17 @@
+{
+ "run": "fs35-nq-kv33-s16M",
+ "ex": "01M1GM0DT59Q75BC3VT8DEV7QQ",
+ "task": "nq",
+ "arm": "kv33",
+ "budget": "16M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 35,
+ "t_first_step": "2026-09-02T09:08:11.795",
+ "t_last_step": "2026-09-02T10:01:50.261",
+ "train_seconds": 3218.466,
+ "job_started": "2026-09-02T08:51:06.712864Z",
+ "job_exited": "2026-09-02T10:02:14.315443Z",
+ "job_seconds": 4267.602579,
+ "n_jobs": 1
+}

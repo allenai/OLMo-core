@@ -1,0 +1,17 @@
+{
+ "run": "fs35-outlier-kv17-s64M",
+ "ex": "01M1GKQTTT7GHR3TEJH75QDVJ4",
+ "task": "outlier",
+ "arm": "kv17",
+ "budget": "64M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 122,
+ "t_first_step": "2026-09-02T09:06:19.737",
+ "t_last_step": "2026-09-02T10:38:37.345",
+ "train_seconds": 5537.608,
+ "job_started": "2026-09-02T08:51:06.590162Z",
+ "job_exited": "2026-09-02T10:39:06.087403Z",
+ "job_seconds": 6479.497241,
+ "n_jobs": 1
+}

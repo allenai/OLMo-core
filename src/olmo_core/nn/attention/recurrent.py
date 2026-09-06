@@ -238,6 +238,7 @@ class GatedDeltaNet(SequenceMixer):
         x: torch.Tensor,
         cu_doc_lens: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
+        block_keep: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -259,6 +260,14 @@ class GatedDeltaNet(SequenceMixer):
             is untouched at that step), so the state after processing the row is bit-identical to
             processing only its real tokens from a zero initial state. Ignored during single-token
             cached decode (no padding is ever fed there).
+        :param block_keep: Optional ``(batch_size, seq_len)`` bool from per-token block skipping
+            (:mod:`olmo_core.nn.block_skip`), ``False`` for tokens that skip this block. This is
+            the recurrent analogue of "not a key" in attention: a skipped token neither writes the
+            recurrent state (``beta=0``, ``g=0`` make the delta-rule update the identity at that
+            step) nor leaks into its neighbours through the causal short convolution (its ``k``/``v``
+            are zeroed before the conv). Its own read (``q``) is left intact so the output at that
+            position is well defined; the block-skip mixing discards it. Ignored during single-token
+            cached decode, where generated tokens always write (same convention as the KV router).
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -296,6 +305,15 @@ class GatedDeltaNet(SequenceMixer):
             v = v * not_pad.to(v.dtype)
             beta = beta * not_pad.to(beta.dtype)
             g = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(g), g)
+
+        if block_keep is not None and not use_precomputed:
+            # Per-token block skipping: no state write, no conv leak (see the docstring). Applied
+            # unconditionally (no host sync) -- multiplying by an all-ones mask is a no-op.
+            keep_f = block_keep.to(device=x.device, dtype=torch.bool).unsqueeze(-1)  # (B, T_og, 1)
+            k = k * keep_f.to(k.dtype)
+            v = v * keep_f.to(v.dtype)
+            beta = beta * keep_f.to(beta.dtype)
+            g = torch.where(keep_f, g, torch.zeros_like(g))
 
         if self.cp_enabled and self.uly is not None:
             assert (

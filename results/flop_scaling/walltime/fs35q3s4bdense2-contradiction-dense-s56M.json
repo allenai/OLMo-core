@@ -1,0 +1,17 @@
+{
+ "run": "fs35q3s4bdense2-contradiction-dense-s56M",
+ "ex": "01M1SFSR9BNYPRJJQH3G69Q27V",
+ "task": "contradiction",
+ "arm": "dense",
+ "budget": "56M",
+ "scale": "4b",
+ "gpus": 8,
+ "steps": 105,
+ "t_first_step": "2026-09-05T20:18:51.832",
+ "t_last_step": "2026-09-05T20:57:18.885",
+ "train_seconds": 2307.053,
+ "job_started": "2026-09-05T20:14:37.093245Z",
+ "job_exited": "2026-09-05T20:57:36.084538Z",
+ "job_seconds": 2578.991293,
+ "n_jobs": 1
+}

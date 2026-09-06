@@ -1,0 +1,17 @@
+{
+ "run": "fs35-nq-kv17-s32M",
+ "ex": "01M1GM1EQ7N2615ZG2QJM71NRM",
+ "task": "nq",
+ "arm": "kv17",
+ "budget": "32M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 71,
+ "t_first_step": "2026-09-02T09:02:22.044",
+ "t_last_step": "2026-09-02T10:09:53.287",
+ "train_seconds": 4051.243,
+ "job_started": "2026-09-02T08:51:05.959026Z",
+ "job_exited": "2026-09-02T10:10:16.345976Z",
+ "job_seconds": 4750.38695,
+ "n_jobs": 1
+}

@@ -1,0 +1,17 @@
+{
+ "run": "fs35s4battn-oolong-attnroute-c50-s80M",
+ "ex": "01M1QZNE0G0X5R0WPSMBH8FR18",
+ "task": "oolong",
+ "arm": "attnroute-c50",
+ "budget": "80M",
+ "scale": "4b",
+ "gpus": 4,
+ "steps": 157,
+ "t_first_step": "2026-09-05T05:16:30.613",
+ "t_last_step": "2026-09-05T06:22:03.716",
+ "train_seconds": 3933.103,
+ "job_started": "2026-09-05T05:12:13.460574Z",
+ "job_exited": "2026-09-05T06:22:24.886836Z",
+ "job_seconds": 4211.426262,
+ "n_jobs": 1
+}

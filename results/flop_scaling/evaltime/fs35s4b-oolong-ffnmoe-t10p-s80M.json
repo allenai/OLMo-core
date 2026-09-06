@@ -1,0 +1,20 @@
+{
+ "run": "fs35s4b-oolong-ffnmoe-t10p-s80M",
+ "ex": "01M1QFHM7G86J5P1KRS3X0H8ER",
+ "times": {
+  "oolong_2k": 298,
+  "oolong_8k": 327,
+  "oolong_16k": 466,
+  "oolong_32k": 960
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}

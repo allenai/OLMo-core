@@ -1,0 +1,17 @@
+{
+ "run": "fs35s2b-oolong-dense-s80M",
+ "ex": "01M1JYDJ3XMPT6WWN9W72Z3KSQ",
+ "task": "oolong",
+ "arm": "dense",
+ "budget": "80M",
+ "scale": "2b",
+ "gpus": 4,
+ "steps": 157,
+ "t_first_step": "2026-09-03T06:20:02.074",
+ "t_last_step": "2026-09-03T07:05:33.569",
+ "train_seconds": 2731.495,
+ "job_started": "2026-09-03T06:16:15.996159Z",
+ "job_exited": "2026-09-03T07:05:48.50583Z",
+ "job_seconds": 2972.509671,
+ "n_jobs": 1
+}

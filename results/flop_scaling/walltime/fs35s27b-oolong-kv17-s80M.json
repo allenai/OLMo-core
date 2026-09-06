@@ -1,0 +1,17 @@
+{
+ "run": "fs35s27b-oolong-kv17-s80M",
+ "ex": "01M1PSED0Z88N8A93SC0JBH138",
+ "task": "oolong",
+ "arm": "kv17",
+ "budget": "80M",
+ "scale": "27b",
+ "gpus": 16,
+ "steps": 167,
+ "t_first_step": "2026-09-04T18:18:02.624",
+ "t_last_step": "2026-09-04T20:15:11.959",
+ "train_seconds": 7029.335,
+ "job_started": "2026-09-04T18:05:37.32753Z",
+ "job_exited": "2026-09-04T20:15:53.894071Z",
+ "job_seconds": 7816.566541,
+ "n_jobs": 2
+}

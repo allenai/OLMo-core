@@ -1,0 +1,20 @@
+{
+ "run": "fs35q3s4bdense2-oolong-dense-s20M",
+ "ex": "01M1SGPN9GKT919C2NS1M01KW2",
+ "times": {
+  "oolong_2k": 1847,
+  "oolong_8k": 1582,
+  "oolong_16k": 1697,
+  "oolong_32k": 2421
+ },
+ "n": {
+  "oolong_2k": 600,
+  "oolong_8k": 500,
+  "oolong_16k": 500,
+  "oolong_32k": 500
+ },
+ "ffn_rungs": false,
+ "kv": false,
+ "bskip": false,
+ "bs": null
+}
