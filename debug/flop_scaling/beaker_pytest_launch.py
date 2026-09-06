@@ -20,6 +20,7 @@ cmd = ["python", "-m", "pytest", "-x", "-v", "-p", "no:cacheprovider", *a.tests]
 lc = build_launch_config(name=name, cmd=cmd, cluster=a.cluster, beaker_image=OLMoCoreBeakerImage.stable,
                          workspace="ai2/flex2", budget="ai2/oe-other", num_nodes=1, num_gpus=1)
 lc.priority = a.priority
+lc.allow_dirty = True  # the tree carries unrelated local edits; gantry clones the PUSHED commit
 lc.step_timeout = None
 lc.step_soft_timeout = None
 wl = lc.launch(follow=False)

@@ -420,3 +420,41 @@ skipping at 3x. Total-FLOP ceiling observed: the routers bottom out at ~0.33 of 
 data (four blocks + LM head + answer tokens), i.e. ~3x on TRAINING FLOPs; on the routed share the
 cut is far larger (FFN 25x, cache ~5x on skipped layers, depth 9x for context tokens).
 CSV `results/flop_scaling/results_q3s4bflexs2.csv`.
+
+## Stage D — the hybrid analogue: block skipping on GatedDeltaNet blocks (2026-09-06)
+
+Prasann: "Would there be some sort of equivalent routing thing for hybrid? Maybe just deciding
+whether or not GDN will be applied to a given token?"
+
+**What GDN costs.** Measured with the model's own FLOP formulas (`num_flops_per_token`), Qwen3.5-4B
+per-token shares: at 2k FFN 0.615 / GDN 0.096 / attention projections 0.080 / attention scores
+0.036 / embeddings+LM head 0.173; at 8k FFN 0.554 / GDN 0.087 / proj 0.072 / scores 0.131 /
+fixed 0.156; at 32k FFN 0.398 / GDN 0.062 / proj 0.052 / scores 0.377 / fixed 0.112. The GDN
+mixer is cheap (constant per token, ~9% at short context) and has no cache to shrink (constant-size
+state), so a router over the mixer alone cannot pay for itself. What matters on the hybrid is that
+3/4 of the FFN sits in GDN blocks, and the two-router ceiling (1 − FFN(L12+) 0.347 − scores 0.131
+≈ 0.52 at 8k) is mostly the FFN of layers 0–11 (0.21) and the LM head/embeddings (0.16), NOT the
+GDN mixers — an earlier statement in this record blaming the GDN layers for the unroutable half
+was wrong.
+
+**What was built.** Block skipping now routes GatedDeltaNet blocks. The decision half is
+unchanged (root router on the block input, residual mixing outside the checkpoint region). The
+inside half — "a skipped token is not a key" — becomes "a skipped token does not write the
+recurrent state": `GatedDeltaNet.forward` takes the same `block_keep` and, for skipped tokens,
+zeroes `k`/`v` before the causal short conv (no leak into neighbours) and forces `beta=0`, `g=0`
+so the delta-rule update is the identity at that step (the padding path already used this
+pass-through). `q` is left intact so the position's output is defined; the block-skip mixing
+discards it. Cached decode ignores it (generated tokens always write, as with the KV router).
+`install_block_skip` accepts GDN blocks because they expose `w_q`; the joint budget already prices
+a GDN block as a skippable `proj` term (its FLOPs are length-independent, so `attn_score` is 0).
+Tests `src/test/nn/block_skip_gdn_test.py` (GPU + fla): keep-all is a no-op; prefilling through a
+skipped token leaves the recurrent state exactly where it was and earlier outputs unchanged; a
+2-block GDN model routes both blocks, reproduces its base at init and is the identity when
+everything is skipped; the joint budget prices the whole block as skippable and the router gets a
+budget gradient. Commit 18c1b1ebe.
+
+**Ceiling this opens on Qwen3.5-4B.** With all 32 blocks skippable the floor is embeddings + LM
+head + answer tokens (0.16 at 8k, 0.11 at 32k), i.e. the same ~7x-in-practice regime as Qwen3
+(four surviving blocks), versus 1.9x for the two routers. Not yet run: `flexs-c*` arms on
+Qwen3.5-4B (`launch_grid35.py` already passes `--block-skip-target 0.5 --block-skip-start-layer 0`
+for `flexs`; `FS_FAMILY` defaults to qwen3_5).
