@@ -20,7 +20,7 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _run_reshard(save_root):
+def _run_reshard(save_root, ep_degree):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     for key in (
@@ -75,7 +75,9 @@ def _run_reshard(save_root):
             state.full_tensor().cpu(), expected[name], rtol=0, atol=0, msg=name
         )
 
-    for ep in (2, 4, 8):
+    # NVSHMEM has one bootstrap group per process. Each target EP degree is
+    # parametrized into a fresh distributed process set, as in real launches.
+    for ep in (ep_degree,):
         tm = build(ep)
         tm.load_state_dict_direct(
             Path(save_root) / "ep1",
@@ -119,7 +121,8 @@ def _run_reshard(save_root):
 
 
 @pytest.mark.gpu
-def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path):
+@pytest.mark.parametrize("ep_degree", [2, 4, 8])
+def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path, ep_degree):
     """Use node-local temporary checkpoints; never touch Weka or user checkpoints."""
     if torch.cuda.device_count() < 8:
         pytest.skip("requires8 CUDA GPUs")
@@ -128,5 +131,5 @@ def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path):
         world_size=8,
         backend="nccl",
         start_method="spawn",
-        func_args=(str(tmp_path / "ep-reshard"),),
+        func_args=(str(tmp_path / "ep-reshard"), ep_degree),
     )
