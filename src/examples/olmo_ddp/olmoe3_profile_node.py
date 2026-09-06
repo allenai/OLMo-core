@@ -86,7 +86,8 @@ def main():
     rank = int(os.environ["BEAKER_REPLICA_RANK"])
     nodes = int(os.environ["BEAKER_REPLICA_COUNT"])
     gpus = int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"])
-    if nodes != 8 or gpus != 8:
+    medium = os.environ.get("OLMOE3_PROFILE_MODEL", "small") == "medium"
+    if gpus != 8 or (nodes not in (8, 16) if medium else nodes != 8):
         raise RuntimeError(f"This profile requires 8x8 GPUs, got {nodes}x{gpus}")
     topology_dir = (
         Path("/weka/olmo-3p5-checkpoints/production-profiling/topology") / workload_id / job_id
@@ -103,10 +104,17 @@ def main():
         os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(","),
         os.environ.get("OLMOE3_DEEP_PROFILE_PLAN", ""),
     )
+    if medium:
+        from olmoe3_medium_profile_plan import named_medium_passes
+
+        named_pairs = named_medium_passes(
+            run_name, capture=os.environ.get("OLMOE3_MEDIUM_CAPTURE", "0") == "1"
+        )
+        pairs = [(variant, mode) for _, variant, mode in named_pairs]
     if any(mode == "nsys" for _, mode in pairs):
         from olmoe3_nsys_tools import NsysSettings, install_nsys
 
-        settings = NsysSettings.from_env()
+        settings = NsysSettings.from_env(world_size=nodes * gpus)
         if settings.version != "installed" and any(r // gpus == rank for r in settings.ranks):
             # Install once per selected node, before publishing readiness; never once per GPU.
             os.environ["OLMOE3_NSYS_BINARY"] = str(install_nsys())
@@ -133,12 +141,13 @@ def main():
         f"injected hostname was {os.environ.get('BEAKER_LEADER_REPLICA_HOSTNAME')}",
         flush=True,
     )
-    named_pairs = named_profile_plan(
-        run_name,
-        pairs,
-        int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1")),
-        reverse_even=os.environ.get("OLMOE3_DEEP_PROFILE_REVERSE_EVEN", "0") == "1",
-    )
+    if not medium:
+        named_pairs = named_profile_plan(
+            run_name,
+            pairs,
+            int(os.environ.get("OLMOE3_DEEP_PROFILE_REPEATS", "1")),
+            reverse_even=os.environ.get("OLMOE3_DEEP_PROFILE_REVERSE_EVEN", "0") == "1",
+        )
     for index, (name, variant, mode) in enumerate(named_pairs):
         test_label = variant
         from olmoe3_ep_profile_plan import EPProfileTopology
@@ -188,7 +197,7 @@ def main():
             OLMO_PROFILE_EMO_DOCUMENT_POOL="1" if "-doc-pool" in variant else "0",
             OLMO_PROFILE_EMO_TOP16="1" if "-top16" in variant else "0",
             OLMO_PROFILE_ROUNDED_WGRAD="1" if "-wgrad-fused" in variant else "0",
-            OLMO_PROFILE_ROUNDED_WGRAD_EP="1" if topology.ep > 1 else "0",
+            OLMO_PROFILE_ROUNDED_WGRAD_EP="1" if medium or topology.ep > 1 else "0",
             OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS=(
                 "1" if test_label in ("deferred", "deferred-lb", "deferred-lb-batched") else "0"
             ),

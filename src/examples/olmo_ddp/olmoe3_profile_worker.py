@@ -14,6 +14,7 @@ def main():
     """Run all selected passes; a failed pass fails the whole synchronized allocation."""
     run_name, cluster = sys.argv[1:]
     rank = int(os.environ["RANK"])
+    medium = os.environ.get("OLMOE3_PROFILE_MODEL", "small") == "medium"
     root = Path("/weka/olmo-3p5-checkpoints/production-profiling")
     for mode in os.environ.get("OLMOE3_DEEP_PROFILE_PASSES", "nsys,torch").split(","):
         name = f"{run_name}-{mode}"
@@ -21,12 +22,20 @@ def main():
         output.mkdir(parents=True, exist_ok=True)
         command = [
             sys.executable,
-            "src/examples/olmo_ddp/olmoe3_small_deep_profile.py",
+            (
+                "src/examples/olmo_ddp/olmoe3_medium_deep_profile.py"
+                if medium
+                else "src/examples/olmo_ddp/olmoe3_small_deep_profile.py"
+            ),
             "train",
             name,
             cluster,
         ]
-        settings = NsysSettings.from_env() if mode == "nsys" else None
+        settings = (
+            NsysSettings.from_env(world_size=int(os.environ.get("WORLD_SIZE", "64")))
+            if mode == "nsys"
+            else None
+        )
         if settings is not None and rank in settings.ranks:
             nsys = (
                 os.environ.get("OLMOE3_NSYS_BINARY")

@@ -37,11 +37,14 @@ def main():
             run = ROOT / name
             if not (run / "provenance.json").is_file() or not (run / "metrics.jsonl").is_file():
                 continue
-            if not args.allow_partial and len(list(run.glob("memory-rank-*.json"))) != 64:
-                continue
             provenance = json.loads((run / "provenance.json").read_text())
+            if (
+                not args.allow_partial
+                and len(list(run.glob("memory-rank-*.json"))) != provenance["gpus"]
+            ):
+                continue
             if not args.allow_partial and provenance["pass"] == "nsys":
-                ranks = provenance.get("nsys_profiled_ranks") or list(range(64))
+                ranks = provenance.get("nsys_profiled_ranks") or list(range(provenance["gpus"]))
                 if not all((run / f"nsys-rank-{rank}.nsys-rep").is_file() for rank in ranks):
                     continue
                 if provenance.get("nsys_version") not in (None, "installed"):
@@ -76,6 +79,9 @@ def main():
         )
         for filename in ("analysis.json", "metrics.jsonl", "provenance.json"):
             shutil.copy2(run / filename, destination / filename)
+        for filename in ("initial-weights-sha256.json", "first-batch-sha256.json"):
+            if (run / filename).is_file():
+                shutil.copy2(run / filename, destination / filename)
         summary = json.loads((run / "analysis.json").read_text())
         provenance = summary["provenance"]
         summary["partial_collection"] = args.allow_partial
