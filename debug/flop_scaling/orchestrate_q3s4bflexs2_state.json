@@ -76,37 +76,37 @@
  "evals": {
   "fs35q3s4bflexs2-oolong-flexs-c30-s80M": {
    "ex": "01M1T5S41XC1F839M17EADXG5C",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   },
   "fs35q3s4bflexs2-oolong-flexs-c15-s80M": {
    "ex": "01M1T8DE21R0G1VJAEMMZHVQN2",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   },
   "fs35q3s4bflexs2-contradiction-flexs-c30-s56M": {
    "ex": "01M1T8E6P4ENBQBG5PEB8Q78X2",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   },
   "fs35q3s4bflexs2-oolong-flexs-c05-s80M": {
    "ex": "01M1T8R903B0F89EQJR76A2EMH",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   },
   "fs35q3s4bflexs2-contradiction-flexs-c15-s56M": {
    "ex": "01M1T8S174BRGHTVFZPCVS2QPX",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   },
   "fs35q3s4bflexs2-contradiction-flexs-c05-s56M": {
    "ex": "01M1T93BFFS5F4K77PDBSRTC1T",
-   "state": "S",
+   "state": "DONE",
    "rc": null,
    "retries": 0
   }
@@ -115,8 +115,8 @@
  "kv_launched": {},
  "s1_launched": false,
  "sync_ex": null,
- "last_harvest": 1788660146.2623088,
- "harvest_ex": "01M1T77QQKGNA0AAKEAQX28691",
- "done": false,
+ "last_harvest": 1788674508.7468393,
+ "harvest_ex": "01M1TMY1JVZYH8XVT1KH3GT8NG",
+ "done": true,
  "launched": true
 }

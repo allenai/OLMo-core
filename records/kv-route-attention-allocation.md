@@ -401,3 +401,22 @@ Evals pending.
 
 Token-weighted routing fractions (flops.json): oolong c30 block-run 0.55, KV keep 0.84, FFN cost
 0.41 (anneal included; end-of-run values are much lower). Dense reference: oolong 80M 0.667.
+
+### Three-router held-out results, FINAL (2026-09-05 23:05)
+
+| Qwen3-4B | arm | 2k/8k/16k/32k | mean f1 | train FLOPs ÷ dense | mult vs dense curve |
+|---|---|---|---|---|---|
+| oolong 80M | dense | .844/.643/.623/.557 | 0.667 | 1.00 | — |
+| oolong 80M | flexs-c30 (11 blocks) | .799/.536/.498/.499 | 0.583 | 0.40 | 1.90 |
+| oolong 80M | flexs-c15 (4 blocks) | .746/.471/.485/.485 | 0.547 | 0.33 | 2.09 |
+| oolong 80M | flexs-c05 (4 blocks, floor) | .658/.434/.443/.436 | 0.493 | 0.33 | 1.77 |
+| contradiction 56M | flexs-c30/c15/c05 | 0/0/0/0 | 0.000 | 0.42–0.51 | collapsed |
+
+Oolong at a 3x training-FLOP cut keeps 0.58 of a 0.67 dense score, and at 4 of 36 blocks for
+context tokens still 0.55; the matched-compute multipliers (1.8–2.1x) lean on a steep Qwen3 dense
+curve (20M point underfit) and should be read as "well above parity", not as precise factors.
+Contradiction is zero at every three-router budget: precise retrieval does not survive depth
+skipping at 3x. Total-FLOP ceiling observed: the routers bottom out at ~0.33 of dense on this
+data (four blocks + LM head + answer tokens), i.e. ~3x on TRAINING FLOPs; on the routed share the
+cut is far larger (FFN 25x, cache ~5x on skipped layers, depth 9x for context tokens).
+CSV `results/flop_scaling/results_q3s4bflexs2.csv`.
