@@ -219,49 +219,43 @@ def block_skip_forward(
     keep: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
-    Run ``block`` on ``h`` with per-token skipping. The decision is made on the block input
-    (outside the block's checkpoint region, :func:`block_skip_decide`); the straight-through
-    mixing happens INSIDE the block's own forward (patched by :func:`install_block_skip`), so the
-    activation-checkpoint / FSDP wrappers around the block are used exactly as for a dense block.
+    Run ``block`` on ``h`` with per-token skipping.
+
+    The decision is made on the block input (:func:`block_skip_decide`, outside the block's
+    checkpoint region); inside the block only the key mask is applied (patched forward,
+    :func:`install_block_skip`); the straight-through residual mixing happens HERE, outside the
+    region. Mixing inside the region pinned every layer's saved tensors under FSDP2 + activation
+    checkpointing (72 GB vs 28 GB without it, ablation 2026-09-05); outside it retains one
+    ``out - h`` tensor per block (~0.33 GB at 65k), which is affordable.
     """
     cfg = block._bskip  # type: ignore[attr-defined]
     if not cfg["holder"].enabled:
         return block(h, **kwargs)
     if p is None or keep is None:
         p, keep = block_skip_decide(block, h)
-    return block(h, **kwargs, skip_p=p, skip_keep=keep)
+    out = block(h, **kwargs, skip_keep=keep)
+    # Straight-through on the residual UPDATE of kept tokens (value: out; grad to p_keep through
+    # <dL/dy, out - h>); skipped tokens pass h through untouched. At decode (T == 1) this is
+    # where(keep, out, h) numerically, i.e. the query-side skip.
+    p_sel = torch.where(keep, p, 1.0 - p)
+    coef = (1.0 + p_sel - p_sel.detach()).to(h.dtype)[:, :, None]
+    mixed = h + coef * (out - h)
+    return torch.where(keep[:, :, None], mixed, h)
 
 
-def _skipping_block_forward(
-    self: nn.Module, x: torch.Tensor, *args, skip_p=None, skip_keep=None, **kwargs
-):
-    """``TransformerBlock.forward`` with the skip mixing appended (installed on routed blocks)."""
+def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_keep=None, **kwargs):
+    """``TransformerBlock.forward`` that also removes skipped tokens from the attention key set."""
     orig = self._bskip_orig_forward  # type: ignore[attr-defined]
-    if skip_p is None or skip_keep is None:
+    if skip_keep is None:
         return orig(x, *args, **kwargs)
     kvm = getattr(getattr(self, "attention", None), "kv_cache_manager", None)
     if kvm is not None and x.shape[1] == 1:
-        # Decode step: honour the router on the QUERY side only (the token's K/V is still
-        # appended to every layer's cache -- a per-row skip would need per-row cache lengths).
-        out = orig(x, *args, **kwargs)
-        return torch.where(skip_keep[:, :, None], out, x)
-    import os
-
-    dbg = os.environ.get("BLOCK_SKIP_DEBUG", "")
+        # Decode step: the token's K/V is still appended to every layer's cache (a per-row skip
+        # would need per-row cache lengths); the query-side skip is applied by the caller.
+        return orig(x, *args, **kwargs)
     block_keep = kwargs.get("block_keep")
     keep_attn = skip_keep if block_keep is None else (block_keep & skip_keep)
-    if dbg == "no_block_keep":  # memory-diagnostic ablation: skipped tokens stay keys
-        out = orig(x, *args, **kwargs)
-    else:
-        out = orig(x, *args, **{**kwargs, "block_keep": keep_attn})
-    if dbg == "no_mix":  # memory-diagnostic ablation: no residual mixing (wrong semantics)
-        return out
-    # Straight-through on the residual UPDATE of kept tokens (value: out; grad to p_keep through
-    # <dL/dy, out - h>); skipped tokens pass x through untouched.
-    p_sel = torch.where(skip_keep, skip_p, 1.0 - skip_p)
-    coef = (1.0 + p_sel - p_sel.detach()).to(x.dtype)[:, :, None]
-    mixed = x + coef * (out - x)
-    return torch.where(skip_keep[:, :, None], mixed, x)
+    return orig(x, *args, **{**kwargs, "block_keep": keep_attn})
 
 
 def install_block_skip(

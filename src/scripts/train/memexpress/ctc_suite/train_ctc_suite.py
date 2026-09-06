@@ -1163,9 +1163,6 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # budget gradients through the block outputs (olmo_core.nn.budget_attach): the separate
         # loss term recomputed every checkpointed block at once (68 GB vs 26 GB dense, 2026-09-05)
         model.budget_attach = True
-    if opts.block_skip_debug:
-        os.environ["BLOCK_SKIP_DEBUG"] = opts.block_skip_debug
-        print(f"[ctc-suite] BLOCK_SKIP_DEBUG={opts.block_skip_debug}", flush=True)
     if opts.kv_route_debug:
         os.environ["KV_ROUTE_DEBUG"] = opts.kv_route_debug
         print(f"[ctc-suite] KV_ROUTE_DEBUG={opts.kv_route_debug}", flush=True)
@@ -1500,7 +1497,6 @@ def parse_args() -> argparse.Namespace:
                     help="flexcompute: enable per-token block skipping (olmo_core.nn.block_skip) with this mean RUN "
                          "fraction budget (ignored under --flex-joint-target, which owns the budget)")
     ap.add_argument("--block-skip-start-layer", type=int, default=0)
-    ap.add_argument("--block-skip-debug", default="", help="memory-diagnostic ablations: no_block_keep | no_mix")
     ap.add_argument("--kv-route-debug", default="", help="memory-diagnostic ablations: no_router | no_holder")
     ap.add_argument("--mem-snapshot", action="store_true",
                     help="debug: print the live allocations at the peak of the first step, then exit")
