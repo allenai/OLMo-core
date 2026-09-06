@@ -332,3 +332,13 @@ probabilities did not help; a "stash" variant appeared to fix it (28 GB) but had
 skipping (attribute set on the AC wrapper, never seen by the inner block) — a false positive,
 reverted. Running ablations `no_block_keep` (skipped tokens remain keys) and `no_mix` (no residual
 mixing) to split the two remaining candidates.
+
+**Three-router memory, resolved (18:50):** ablations `no_block_keep` (72 GB, OOM) vs `no_mix`
+(28 GB) pin it on the straight-through residual mixing when it runs INSIDE the checkpointed block;
+the "stash" variant's 28 GB was a false positive (attribute set on the AC wrapper, skipping was
+silently off). Final layout: routers on the root evaluated on the block input, the block applies
+only the key mask (`skip_keep` kwarg), and the mixing runs outside the region in
+`block_skip_forward` (one retained `out − h` per block, ~12 GB at 36 layers). Memory pattern
+across all three routers: anything computed inside a checkpointed block that also feeds the graph
+outside it (a router expectation to the holder; the ST mixing on the block output) pins the block's
+saved tensors under FSDP2 — keep router graphs and mixing outside, pass decisions in.
