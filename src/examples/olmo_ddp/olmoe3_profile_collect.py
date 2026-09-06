@@ -16,14 +16,17 @@ ROOT = Path("/weka/olmo-3p5-checkpoints/production-profiling")
 
 def main():
     """Wait for completed passes and analyze artifacts without consuming any GPUs."""
-    results = Path(os.environ.get("RESULTS_DIR", "/results")) / "profile-summaries"
-    results.mkdir(parents=True, exist_ok=True)
     parser = argparse.ArgumentParser()
     parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument("--wait-seconds", type=int, default=7200)
     parser.add_argument("names", nargs="+")
     args = parser.parse_args()
+    if not 60 <= args.wait_seconds <= 28800:
+        parser.error("--wait-seconds must be between 60 and 28800 (eight hours)")
+    results = Path(os.environ.get("RESULTS_DIR", "/results")) / "profile-summaries"
+    results.mkdir(parents=True, exist_ok=True)
     pending = list(args.names)
-    deadline = time.monotonic() + 7200
+    deadline = time.monotonic() + args.wait_seconds
     standalone_nsys = None
     for name in pending:
         if Path(name).name != name:
@@ -52,7 +55,7 @@ def main():
             ready.append(name)
         if not ready:
             if time.monotonic() > deadline:
-                raise TimeoutError(f"Runs did not finish in two hours: {pending}")
+                raise TimeoutError(f"Runs did not finish in {args.wait_seconds} seconds: {pending}")
             print(f"Waiting for completed passes: {pending}", flush=True)
             time.sleep(30)
             continue
