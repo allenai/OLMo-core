@@ -352,3 +352,22 @@ Trained on target (joint cost 0.289), final train CE ≈0.19 (dense 0.11). Learn
 inside the surviving blocks FFN(L12+) 54% null rung, KV cache kept in full on a few layers and
 emptied on the rest. The joint budget's first move on a dense 36-layer model is DEPTH (skip the
 late blocks for context tokens), not width or cache. Memory 48.5 GB/GPU at 65k on 8 ranks.
+
+### Stage C two-router results, Qwen3-4B (lr 5e-5), priced at real lengths (2026-09-05 19:05)
+
+| task | arm | mean f1 (2k/8k/16k/32k) | train FLOPs ÷ dense | matched-compute mult |
+|---|---|---|---|---|
+| contradiction 56M | dense | 0.872 (.962/.925/.863/.737) | 1.00 | — |
+| contradiction 56M | flex-c60 | 0.153 (.355/.180/.067/.011) | 0.72 | 0.45 |
+| contradiction 56M | flex-c45 | 0.480 (.739/.636/.424/.119) | 0.71 | 0.75 |
+| oolong 80M | dense | 0.667 (.844/.643/.623/.557) | 1.00 | — |
+| oolong 80M | flex-c60 | 0.620 (.817/.610/.548/.504) | 0.68 | 1.27 |
+| oolong 80M | flex-c45 | 0.628 (.834/.598/.569/.511) | 0.64 | 1.39 |
+
+Dense curve for the multipliers: 20M (0.224, underfit at 26/38 steps) → 80M (0.667); it is steep,
+so the oolong multipliers are optimistic. Contradiction: the joint budget at 0.60/0.45 of dense
+FLOPs (a 0.40–0.55 saving out of a routable 0.63) hollows out the late layers' caches and FFNs and
+the task collapses at long context; the c60 run collapsed harder than c45 (early loss spikes to
+~10, router basin), an optimization pathology rather than capacity. Qwen3 dense is itself weaker
+than Qwen3.5 dense on both tasks at matched data (0.872 vs 0.944; 0.667 vs 0.723). CSVs:
+`results/flop_scaling/results_q3s4b{dense2,flex2}.csv`.

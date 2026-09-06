@@ -1,0 +1,86 @@
+{
+ "runs": {
+  "fs35q3s4bdense2-oolong-dense-s20M": {
+   "ex": "01M1SFQ8H93NX5MCXW6B3RD6QX",
+   "task": "oolong",
+   "budget": "20M",
+   "arm": "dense",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1SGPN9GKT919C2NS1M01KW2",
+   "s2": null
+  },
+  "fs35q3s4bdense2-oolong-dense-s80M": {
+   "ex": "01M1SFQZR0JFKR096C3MD1C01M",
+   "task": "oolong",
+   "budget": "80M",
+   "arm": "dense",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1SM73RPSAQ1P773SAPHS28W",
+   "s2": null
+  },
+  "fs35q3s4bdense2-contradiction-dense-s14M": {
+   "ex": "01M1SFRV0TBN8EXQJQBDNP1QZ5",
+   "task": "contradiction",
+   "budget": "14M",
+   "arm": "dense",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1SHKD6VXVFRW16MB67YM6MK",
+   "s2": null
+  },
+  "fs35q3s4bdense2-contradiction-dense-s56M": {
+   "ex": "01M1SFSR9BNYPRJJQH3G69Q27V",
+   "task": "contradiction",
+   "budget": "56M",
+   "arm": "dense",
+   "scale": "4b",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M1SNZFHN9GZDRQWN32E53PXC",
+   "s2": null
+  }
+ },
+ "evals": {
+  "fs35q3s4bdense2-oolong-dense-s20M": {
+   "ex": "01M1SGPN9GKT919C2NS1M01KW2",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35q3s4bdense2-contradiction-dense-s14M": {
+   "ex": "01M1SHKD6VXVFRW16MB67YM6MK",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35q3s4bdense2-oolong-dense-s80M": {
+   "ex": "01M1SM73RPSAQ1P773SAPHS28W",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  },
+  "fs35q3s4bdense2-contradiction-dense-s56M": {
+   "ex": "01M1SNZFHN9GZDRQWN32E53PXC",
+   "state": "DONE",
+   "rc": null,
+   "retries": 0
+  }
+ },
+ "kv_synced": {},
+ "kv_launched": {},
+ "s1_launched": false,
+ "sync_ex": null,
+ "last_harvest": 1788650502.4041703,
+ "harvest_ex": "01M1SY1DY0VT6PE2NPJ9Z05HT5",
+ "done": true,
+ "launched": true
+}
