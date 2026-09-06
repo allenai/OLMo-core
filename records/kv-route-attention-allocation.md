@@ -389,3 +389,15 @@ With depth on the table the joint budget spends it FIRST: at 3.3x total it keeps
 context pass at CE 0.27–0.31 (dense 0.11; the attention-only keep-0.10 run was 0.28); contradiction
 does not fit at any of these budgets (CE 0.86–0.94 vs 0.016) — precise retrieval needs depth.
 Evals pending.
+
+### Three-router held-out results (partial, 22:20)
+
+| run | f1 (2k/8k/16k/32k) | mean | train FLOPs ÷ dense (real lengths) | mult vs Qwen3 dense curve |
+|---|---|---|---|---|
+| oolong flexs-c30 | .799/.536/.498/.499 | 0.583 | 0.40 | 1.90 (steep dense curve) |
+| oolong flexs-c15 | .746/.471/.485/— | (0.567 partial) | ~0.30 | — |
+| oolong flexs-c05 | .658/.434/.443/— | (0.512 partial) | ~0.29 | — |
+| contradiction flexs-c30/c15/c05 | 0 at every rung | 0.000 | 0.42 | collapsed |
+
+Token-weighted routing fractions (flops.json): oolong c30 block-run 0.55, KV keep 0.84, FFN cost
+0.41 (anneal included; end-of-run values are much lower). Dense reference: oolong 80M 0.667.
