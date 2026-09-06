@@ -325,3 +325,10 @@ wrapper ran its own checkpoint around the UNWRAPPED block (bypassing the AC+FSDP
 applied first, FSDP on the wrapper). The skip mixing now lives inside the block's own patched
 forward (`_skipping_block_forward`, installed by `install_block_skip`), so routed blocks pass
 through the standard wrappers exactly like dense blocks.
+
+**Three-router memory (18:15):** KV+FFN with root routers is at dense level (27.6 GB); adding
+block skipping (kwargs path) leaks again (72 GB: all-layer norm tensors). Detaching the skip
+probabilities did not help; a "stash" variant appeared to fix it (28 GB) but had silently disabled
+skipping (attribute set on the AC wrapper, never seen by the inner block) — a false positive,
+reverted. Running ablations `no_block_keep` (skipped tokens remain keys) and `no_mix` (no residual
+mixing) to split the two remaining candidates.
