@@ -305,42 +305,6 @@ def _doc_ids(cu_doc_lens: torch.Tensor, T: int) -> torch.Tensor:
     return torch.searchsorted(cu_doc_lens[1:].contiguous(), pos, right=True)
 
 
-class _FlexIsolated(torch.autograd.Function):
-    """
-    Run the compiled FlexAttention kernel *opaque to activation checkpointing*.
-
-    A ``torch.compile``d function executed inside a non-reentrant checkpoint region defeats the
-    region's saved-tensor dropping for the whole block: with the KV router alone, every layer's
-    RMSNorm intermediates stayed live (61 GB peak vs 26.7 GB for dense or the FFN router, memory
-    attribution 2026-09-05). Here the forward runs the compiled kernel under ``no_grad`` and saves
-    only ``q``/``k``/``v`` (which the checkpoint's hooks handle like any other saved tensor); the
-    backward re-runs the kernel with autograd on its own, outside any hooks context.
-    """
-
-    @staticmethod
-    def forward(ctx, q, k, v, block_mask, scale, enable_gqa):  # type: ignore[override]
-        with torch.no_grad():
-            out = _flex_attention(q, k, v, block_mask=block_mask, scale=scale, enable_gqa=enable_gqa)
-        ctx.save_for_backward(q, k, v)
-        ctx.block_mask = block_mask
-        ctx.scale = scale
-        ctx.enable_gqa = enable_gqa
-        return out
-
-    @staticmethod
-    def backward(ctx, grad_out):  # type: ignore[override]
-        q, k, v = ctx.saved_tensors
-        with torch.enable_grad():
-            q_ = q.detach().requires_grad_(True)
-            k_ = k.detach().requires_grad_(True)
-            v_ = v.detach().requires_grad_(True)
-            out = _flex_attention(
-                q_, k_, v_, block_mask=ctx.block_mask, scale=ctx.scale, enable_gqa=ctx.enable_gqa
-            )
-            gq, gk, gv = torch.autograd.grad(out, (q_, k_, v_), grad_out)
-        return gq, gk, gv, None, None, None
-
-
 def _round_up(n: int, m: int) -> int:
     return -(-n // m) * m
 
@@ -411,7 +375,9 @@ def _masked_attention(
             )
         else:
             block_mask = _compacted_block_mask(mask_mod, pos_k, counts, doc, T, Kp, q.device)
-        out = _FlexIsolated.apply(q_, k_cat, v_cat, block_mask, scale, Hq != Hk)
+        out = _flex_attention(
+            q_, k_cat, v_cat, block_mask=block_mask, scale=scale, enable_gqa=(Hq != Hk)
+        )
         return out.transpose(1, 2).contiguous()
 
     # Reference path (CPU / no flex): materialised boolean mask + SDPA.
