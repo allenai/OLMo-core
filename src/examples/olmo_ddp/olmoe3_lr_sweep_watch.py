@@ -19,6 +19,7 @@ from olmoe3_lr_sweep_plan import (
     AUTOMATION,
     BUCKET,
     CONTROL,
+    DEPLOYMENT,
     MOUNT,
     QUALIFIED_EXPERIMENT,
     STATE,
@@ -83,6 +84,11 @@ def replace_env(task, values):
 def training_spec(template, run, commit, *, smoke=False):
     """Clone the actual qualified 64-GPU spec, changing only run orchestration."""
     spec = copy.deepcopy(template)
+    # The Beaker export expands a replica group into eight independent-looking tasks.
+    # Rebuild its original single synchronized replica group before resubmission.
+    assert len(spec["tasks"]) == 8
+    spec["tasks"] = [spec["tasks"][0]]
+    spec["tasks"][0].update(name="train", replicas=8, leaderSelection=True)
     spec["description"] = json.dumps({"sweep": SWEEP, **run.as_dict()})
     spec["retry"] = {"allowedTaskRetries": 0}
     for task in spec["tasks"]:
@@ -107,8 +113,8 @@ def training_spec(template, run, commit, *, smoke=False):
         task["result"] = {"path": "/noop-results"}
         task["context"]["priority"] = "urgent"
         task["context"]["minRuntime"] = "1h"
-    assert len(spec["tasks"]) == 8
-    assert sum(t["resources"]["gpuCount"] for t in spec["tasks"]) == 64
+    assert len(spec["tasks"]) == 1
+    assert spec["tasks"][0]["replicas"] * spec["tasks"][0]["resources"]["gpuCount"] == 64
     return spec
 
 
@@ -264,13 +270,13 @@ class Controller:
     def tick(self):
         """Gate production fan-out on config validation and save/restore smoke success."""
         gate = self.ensure(
-            f"{SWEEP}-config-validation", validation_spec(self.template, self.commit)
+            f"{SWEEP}-config-validation-{DEPLOYMENT}", validation_spec(self.template, self.commit)
         )
         if self.report(gate) != "STATUS_SUCCEEDED":
             return
         parent, child = smoke_runs()
         smoke = self.ensure(
-            f"{SWEEP}-save-restore-smoke",
+            f"{SWEEP}-save-restore-smoke-{DEPLOYMENT}",
             training_spec(self.template, parent, self.commit, smoke=True),
         )
         if self.report(smoke) != "STATUS_SUCCEEDED":

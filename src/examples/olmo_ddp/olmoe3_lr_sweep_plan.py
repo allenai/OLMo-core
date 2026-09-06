@@ -4,11 +4,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 SWEEP = "small-lr100b-20260906-r1"
+DEPLOYMENT = "launch2"
 MOUNT = Path("/weka/olmo-3p5-checkpoints")
 ROOT = MOUNT / "production-lr-sweeps" / SWEEP
 CONTROL = MOUNT / "uploader/control"
 STATE = MOUNT / "uploader/state"
-AUTOMATION = MOUNT / "uploader/automation" / SWEEP
+AUTOMATION = MOUNT / "uploader/automation" / SWEEP / DEPLOYMENT
 WORKSPACE = "ai2/olmo3p5-training"
 BUCKET = "allenai/olmo-checkpoint-uploader-pilot-20260902-jm01"
 BATCH = 16_777_216

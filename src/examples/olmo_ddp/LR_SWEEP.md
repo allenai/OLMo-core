@@ -38,7 +38,10 @@ pruning stays disabled. The watcher NEVER reduces trunk retention. Do not extend
 trunks past6000 or lower their retention until every child has an independently
 verified uploaded restart checkpoint. No global policies or unrelated runs change.
 
-Controller ledger: `/weka/olmo-3p5-checkpoints/uploader/automation/small-lr100b-20260906-r1`.
+Controller ledger: `/weka/olmo-3p5-checkpoints/uploader/automation/small-lr100b-20260906-r1/launch2`.
+The first controller was stopped after a rejected GPU submission revealed that
+exported Beaker specs must be recombined into one eight-replica task. No GPU
+experiment was created by that rejected request. Its original ledger is preserved.
 Checkpoints: `/weka/olmo-3p5-checkpoints/production-lr-sweeps/small-lr100b-20260906-r1`.
 W&B group: `small-lr100b-20260906-r1`, project `olmoe3-production-profiling`.
 

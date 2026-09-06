@@ -12,6 +12,25 @@ from olmoe3_lr_sweep_plan import BATCH, runs, smoke_runs, validate_plan
 
 
 class SweepTests(unittest.TestCase):
+    def test_exported_replica_group_is_reconstructed(self):
+        template = {
+            "version": "v2",
+            "tasks": [
+                {
+                    "name": f"train-replica-{i}",
+                    "envVars": [],
+                    "context": {},
+                    "resources": {"gpuCount": 8},
+                }
+                for i in range(8)
+            ],
+        }
+        spec = watch.training_spec(template, runs()[0], "commit")
+        self.assertEqual(len(spec["tasks"]), 1)
+        self.assertEqual(spec["tasks"][0]["replicas"], 8)
+        self.assertTrue(spec["tasks"][0]["leaderSelection"])
+        self.assertEqual(len(template["tasks"]), 8)
+
     def test_grid(self):
         self.assertEqual(len(validate_plan()), 25)
         for parent in (r for r in runs() if not r.parent):

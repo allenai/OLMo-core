@@ -7,7 +7,13 @@ import subprocess
 from pathlib import Path
 
 from beaker import Beaker, BeakerExperimentSpec
-from olmoe3_lr_sweep_plan import SWEEP, UPLOADER_COMMIT, UPLOADER_EXPERIMENT, WORKSPACE
+from olmoe3_lr_sweep_plan import (
+    DEPLOYMENT,
+    SWEEP,
+    UPLOADER_COMMIT,
+    UPLOADER_EXPERIMENT,
+    WORKSPACE,
+)
 from olmoe3_lr_sweep_watch import atomic_json, replace_env
 
 
@@ -23,7 +29,7 @@ def main():
         ["git", "ls-remote", "origin", "refs/heads/codex/small-lr100b-sweep"], text=True
     )
     assert remote.split()[0] == commit, "Push the exact clean commit before launch"
-    name = f"{SWEEP}-controller"
+    name = f"{SWEEP}-controller-{DEPLOYMENT}"
     with Beaker.from_env(default_workspace=WORKSPACE, check_for_upgrades=False) as b:
         workspace = b.workspace.get(WORKSPACE)
         existing = [
