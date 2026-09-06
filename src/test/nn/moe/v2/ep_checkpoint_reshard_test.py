@@ -18,7 +18,7 @@ from olmo_core.train.train_module.transformer import (
     TransformerExpertParallelConfig,
 )
 
-from .rounded_wgrad_ep_test import _build_model
+from test.nn.moe.v2.rounded_wgrad_ep_test import _build_model
 
 
 def _run_reshard(save_root):
