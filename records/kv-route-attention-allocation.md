@@ -458,3 +458,28 @@ head + answer tokens (0.16 at 8k, 0.11 at 32k), i.e. the same ~7x-in-practice re
 (four surviving blocks), versus 1.9x for the two routers. Not yet run: `flexs-c*` arms on
 Qwen3.5-4B (`launch_grid35.py` already passes `--block-skip-target 0.5 --block-skip-start-layer 0`
 for `flexs`; `FS_FAMILY` defaults to qwen3_5).
+
+### Stage D runs: Qwen3.5-4B three routers (FFN L12+ / KV on the 8 attention layers / skip on all 32 blocks), end-of-training allocations (2026-09-06 13:10)
+
+Runs `fs35s4bflexs-{contradiction-s56M,oolong-s80M}-flexs-c{30,15}`, 8 GPUs, lr 5e-6, joint budget at 8k
+shares. Attention layers are 3,7,11,15,19,23,27,31; the other 24 blocks are GDN.
+
+| run | joint cost (target) | blocks run for most tokens | KV keep per attention layer | FFN(L12+) |
+|---|---|---|---|---|
+| contradiction c30 | **0.485** (0.30) | 0–13, 15–18, 20 (blocks 19, 21–31 skipped; 14 at 0.23) | 3/7/11 full; 15 .18; 19–31 ≈.065 | ≈0 (null) |
+| contradiction c15 | **0.502** (0.15) | 0–14, 16–18, 20, 25, 31 (15, 19, 21–24, 26–30 skipped) | 3/7/11 full; 15 .29; 19–31 ≈.14 | ≈0 |
+| oolong c15 | 0.299 (0.15) | 0, 1, 2, 5, 13–16, 18, 20, 24, 29 (+ partial 4 .6, 6 .35, 12 .29); 7–11, 17, 19, 21–23, 25–28, 30, 31 skipped | 7/11/19/23 full; 3 .88; 15/27/31 ≈.05 | 177x |
+
+- **Neither task met its budget on the hybrid.** Contradiction settled at ~0.49 of dense at BOTH
+  targets (2x), oolong at 0.30 (3.3x): the CE gradient beat the budget term, the opposite of Qwen3
+  where the targets were met and contradiction collapsed. So on the hybrid the router "refuses"
+  rather than collapses — likely the budget coefficients on GDN blocks (proj-only share, small)
+  are weak relative to CE; a larger `--flex-joint-weight` or a longer anneal would test that.
+- **The two tasks choose different architectures.** Contradiction keeps the first two-thirds of
+  the depth intact (blocks 0–20), drops the tail, keeps the early attention caches (L3/7/11) in
+  full and empties the late ones (L19+ at 6–14%). Oolong drops most of the early GDN blocks
+  (7–11) and the late tail, keeps a scattered set of mid blocks (13–16, 18, 20, 24, 29) and the
+  mid attention caches (L7/11/19/23) in full, and cuts FFN 177x. On Qwen3 the pattern was again
+  different (four blocks {0,4,13,19}). This is the "flexible architecture per task" result.
+- flexs-c30 oolong still training; evals launched for the other three (orchestrator
+  `orchestrate_s4bflexs`). Held-out f1 pending.
