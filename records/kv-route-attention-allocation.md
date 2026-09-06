@@ -451,7 +451,7 @@ Tests `src/test/nn/block_skip_gdn_test.py` (GPU + fla): keep-all is a no-op; pre
 skipped token leaves the recurrent state exactly where it was and earlier outputs unchanged; a
 2-block GDN model routes both blocks, reproduces its base at init and is the identity when
 everything is skipped; the joint budget prices the whole block as skippable and the router gets a
-budget gradient. Commit 18c1b1ebe.
+budget gradient. Commit 18c1b1ebe; verified on a jupiter H100 (Beaker 01M1VZ915JTZK3RMCWHXM66RQ6, 2026-09-06): 4/4 new + 6/6 existing block-skip tests pass.
 
 **Ceiling this opens on Qwen3.5-4B.** With all 32 blocks skippable the floor is embeddings + LM
 head + answer tokens (0.16 at 8k, 0.11 at 32k), i.e. the same ~7x-in-practice regime as Qwen3
