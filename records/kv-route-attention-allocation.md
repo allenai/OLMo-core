@@ -371,3 +371,21 @@ the task collapses at long context; the c60 run collapsed harder than c45 (early
 ~10, router basin), an optimization pathology rather than capacity. Qwen3 dense is itself weaker
 than Qwen3.5 dense on both tasks at matched data (0.872 vs 0.944; 0.667 vs 0.723). CSVs:
 `results/flop_scaling/results_q3s4b{dense2,flex2}.csv`.
+
+### Stage C three-router runs, Qwen3-4B — learned allocations at the end of training (19:40)
+
+| run | joint target (achieved) | blocks run for most tokens | mean run frac | KV keep (mean) | FFN cost (L12+) | train CE (dense) |
+|---|---|---|---|---|---|---|
+| oolong 80M flexs-c30 | 0.30 (0.289) | 11 of 36: {0,1,2,3,4,7,12,19,20,22,35} | 0.31 | 0.70 | 0.004 | 0.19 (0.11) |
+| oolong 80M flexs-c15 | 0.15 (0.149) | 4 of 36: {0,4,13,19} | 0.12 | 0.64 | 0.046 | 0.27 |
+| oolong 80M flexs-c05 | 0.05 (0.136, floor) | 4 of 36: {0,4,13,19} | 0.11 | 0.56 | 0.046 | 0.31 |
+| contradiction 56M flexs-c30 | 0.30 (0.296) | 11 of 36 | 0.33 | 0.55 | — | 0.93 (0.016) |
+| contradiction 56M flexs-c15 | 0.15 (0.211) | 7 of 36 | 0.20 | 0.70 | — | 0.94 |
+| contradiction 56M flexs-c05 | 0.05 (0.270) | 10 of 36 | 0.31 | 0.64 | — | 0.86 |
+
+With depth on the table the joint budget spends it FIRST: at 3.3x total it keeps 11 blocks, at
+6.7x only 4 blocks ({0,4,13,19}) for context tokens, and the 20x target is unreachable (floor
+≈0.13: four blocks + LM head + the un-skippable answer-token compute). Oolong survives a 4-block
+context pass at CE 0.27–0.31 (dense 0.11; the attention-only keep-0.10 run was 0.28); contradiction
+does not fit at any of these budgets (CE 0.86–0.94 vs 0.016) — precise retrieval needs depth.
+Evals pending.
