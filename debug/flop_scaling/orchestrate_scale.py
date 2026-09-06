@@ -40,6 +40,8 @@ if FAMILY == "qwen3":  # dense Qwen3: every layer is attention+FFN; marker-repai
     FFN_H = {"4b": 9728}
 TRAINABLE_W = {s: h // 16 for s, h in FFN_H.items()}                          # "train what you route to": H/16 prefix
 GPUS = {"0.8b": 4, "2b": 4, "4b": 4, "9b": 8, "27b": 8}
+if os.environ.get("FS_GPUS"):  # FS_GPUS=8: per-run GPU override (three-router hybrid arms need the headroom)
+    GPUS = {k: int(os.environ["FS_GPUS"]) for k in GPUS}
 if FAMILY == "qwen3":
     # 36 attention layers on the flex path OOM a 4x80GB node at 65k (flexa-c40 / flex-c45, 2026-09-05);
     # 8 ranks halve the FSDP param/optimizer shard per GPU.
