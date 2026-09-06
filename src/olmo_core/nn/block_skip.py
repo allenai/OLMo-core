@@ -231,12 +231,24 @@ def block_skip_forward(
         return block(h, **kwargs)
     if p is None or keep is None:
         p, keep = block_skip_decide(block, h)
+    import os
+
+    dbg = os.environ.get("BLOCK_SKIP_DEBUG", "")
+    if dbg == "detach_p":  # memory-diagnostic ablation: no gradient path through the kwargs
+        p = p.detach()
+    elif dbg == "stash":  # ablation: hand p/keep to the block via attributes, not kwargs
+        block._bskip_stash = (p, keep)  # type: ignore[attr-defined]
+        return block(h, **kwargs)
     return block(h, **kwargs, skip_p=p, skip_keep=keep)
 
 
 def _skipping_block_forward(self: nn.Module, x: torch.Tensor, *args, skip_p=None, skip_keep=None, **kwargs):
     """``TransformerBlock.forward`` with the skip mixing appended (installed on routed blocks)."""
     orig = self._bskip_orig_forward  # type: ignore[attr-defined]
+    stash = getattr(self, "_bskip_stash", None)
+    if stash is not None:
+        skip_p, skip_keep = stash
+        self._bskip_stash = None
     if skip_p is None or skip_keep is None:
         return orig(x, *args, **kwargs)
     kvm = getattr(getattr(self, "attention", None), "kv_cache_manager", None)
