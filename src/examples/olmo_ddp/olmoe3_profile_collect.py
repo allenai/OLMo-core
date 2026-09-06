@@ -40,6 +40,12 @@ def main():
             provenance = json.loads((run / "provenance.json").read_text())
             if (
                 not args.allow_partial
+                and provenance.get("route_drop_policy") == "record-and-qualify-windows"
+                and not (run / "training-process-complete.json").is_file()
+            ):
+                continue
+            if (
+                not args.allow_partial
                 and len(list(run.glob("memory-rank-*.json"))) != provenance["gpus"]
             ):
                 continue
@@ -79,7 +85,11 @@ def main():
         )
         for filename in ("analysis.json", "metrics.jsonl", "provenance.json"):
             shutil.copy2(run / filename, destination / filename)
-        for filename in ("initial-weights-sha256.json", "first-batch-sha256.json"):
+        for filename in (
+            "initial-weights-sha256.json",
+            "first-batch-sha256.json",
+            "training-process-complete.json",
+        ):
             if (run / filename).is_file():
                 shutil.copy2(run / filename, destination / filename)
         summary = json.loads((run / "analysis.json").read_text())

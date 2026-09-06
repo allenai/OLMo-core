@@ -67,3 +67,33 @@ def test_only_baseline_or_qualified_flags():
         assert settings["flags"]["OLMO_PROFILE_LB_COUNT_BATCHED"] == "0"
         assert settings["flags"]["OLMO_PROFILE_DDP_DEFER_REPLICATED_REDUCTIONS"] == "0"
         assert settings["reduce_scatter"] == (arm == "optimized")
+
+
+def test_observed_startup_drops_do_not_abort_or_count_aggregate_twice():
+    metrics = {f"train/block {block:02d}/token drop rate": 0.0 for block in range(1, 24)}
+    metrics["train/block 08/token drop rate"] = 0.0010761693120002747
+    metrics["train/total token drop rate"] = 1.18  # Aggregate may exceed1; not a block rate.
+    result = _MODULE.inspect_route_metrics(metrics)
+    assert result["blocks"] == 23 and result["blocks_with_drops"] == 1
+    assert result["max_block_drop_fraction"] == metrics["train/block 08/token drop rate"]
+    audit = _MODULE.routing_window_summary([{"step": 1, **metrics}], [1])
+    assert audit["telemetry_complete"]
+    assert not audit["verified_dropless_window"]
+    assert audit["matched_workload_review_required"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.01, 1.01])
+def test_invalid_block_metrics_still_fail(value):
+    with pytest.raises(ValueError, match="Invalid per-block"):
+        _MODULE.inspect_route_metrics({"train/block 01/token drop rate": value})
+
+
+def test_dropless_window_requires_complete_step_and_block_coverage():
+    metrics = {f"train/block {block:02d}/token drop rate": 0.0 for block in range(1, 24)}
+    rows = [{"step": step, **metrics} for step in (31, 32)]
+    assert _MODULE.routing_window_summary(rows, [31, 32])["verified_dropless_window"]
+    assert not _MODULE.routing_window_summary(rows[:1], [31, 32])["verified_dropless_window"]
+    assert not _MODULE.routing_window_summary(rows + rows, [31, 32])["verified_dropless_window"]
+    rows[1].pop("train/block 23/token drop rate")
+    assert not _MODULE.routing_window_summary(rows, [31, 32])["verified_dropless_window"]
+    assert not _MODULE.routing_window_summary([], [])["verified_dropless_window"]

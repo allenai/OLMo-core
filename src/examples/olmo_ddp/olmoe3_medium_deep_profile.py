@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import olmoe3_small_medium_profile as base
 from olmoe3_integration_policy import QUALIFIED_POLICY, integration_policy
-from olmoe3_medium_profile_plan import MediumProfileTopology
+from olmoe3_medium_profile_plan import MediumProfileTopology, inspect_route_metrics
 from olmoe3_nsys_tools import NsysSettings
 
 from olmo_core.distributed.utils import get_rank, get_world_size
@@ -166,6 +166,9 @@ class MediumAudit(Callback):
                 "gradient_accumulation": TOPOLOGY.accumulation,
                 "dense_dp": TOPOLOGY.gpus,
                 "expert_parallel": 8,
+                "ep_capacity_factor": 1.25,
+                "expected_route_metrics": 23,
+                "route_drop_policy": "record-and-qualify-windows",
                 "expert_dp": TOPOLOGY.gpus // 8,
                 "pipeline_parallel": 1,
                 "qk_norm_pr": 855,
@@ -203,13 +206,16 @@ class MediumAudit(Callback):
                 float(value)
             ):
                 raise RuntimeError(f"Nonfinite {name} at step{step}")
-            if name.endswith("token drop rate") and float(value) != 0:
-                raise RuntimeError(
-                    f"Dropped expert routes: {name}={value}; reject dropped-work throughput"
-                )
+        routing = inspect_route_metrics(metrics)
+        if routing["blocks"] != 23:
+            raise RuntimeError(f"Expected all23 medium per-block route metrics, got {routing}")
         if get_rank() == 0:
             with (Path(self.output_dir) / "metrics.jsonl").open("a") as handle:
                 handle.write(json.dumps({"step": step, **metrics}) + "\n")
+            if routing["blocks_with_drops"] and (step <= 10 or step % 10 == 0):
+                print(
+                    "MEDIUM_ROUTE_DROPS_REVIEW", json.dumps({"step": step, **routing}), flush=True
+                )
 
     def post_train(self):
         if self.step != STEPS:

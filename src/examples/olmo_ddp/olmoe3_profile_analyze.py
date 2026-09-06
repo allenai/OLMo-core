@@ -7,6 +7,8 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+from olmoe3_medium_profile_plan import routing_window_summary
+
 
 def union_duration(intervals):
     """Return the duration of merged intervals, in their original time unit."""
@@ -179,7 +181,23 @@ def main():
                 "mean": statistics.mean(latencies),
                 "median": statistics.median(latencies),
             }
-        summary["windows"].append({"relative_steps": [first, last], "metrics": metrics})
+        result = {"relative_steps": [first, last], "metrics": metrics}
+        if provenance.get("expected_route_metrics"):
+            result["routing_qualification"] = routing_window_summary(
+                window,
+                range(provenance["source_step"] + first, provenance["source_step"] + last + 1),
+                expected_blocks=provenance["expected_route_metrics"],
+            )
+        summary["windows"].append(result)
+    if provenance.get("expected_route_metrics"):
+        summary["routing_qualification"] = {
+            "matched_workload_review_required": any(
+                window["routing_qualification"]["matched_workload_review_required"]
+                for window in summary["windows"]
+            ),
+            "ep_capacity_factor": provenance.get("ep_capacity_factor"),
+            "policy": provenance.get("route_drop_policy"),
+        }
     if args.traces:
         summary["traces"] = [
             summarize_trace(path)

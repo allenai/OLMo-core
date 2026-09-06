@@ -64,6 +64,14 @@ def main():
         env = dict(os.environ, OLMOE3_DEEP_PROFILE_PASS=mode)
         print(f"Launching profiling pass {mode}, rank={rank}, artifacts={output}", flush=True)
         subprocess.run(command, env=env, check=True)
+        if medium and rank == 0:
+            # Training shutdown has now drained asynchronous metric callbacks.
+            # Memory markers alone can appear before the last metric row is written.
+            (output / "training-process-complete.json").write_text(
+                json.dumps(
+                    {"run": name, "world_size": int(os.environ["WORLD_SIZE"]), "exit_code": 0}
+                )
+            )
         if settings is not None and rank in settings.ranks:
             validation = validate_report(nsys, output / f"nsys-rank-{rank}.nsys-rep")
             validation.update(rank=rank, version=settings.version, trace=settings.trace)
