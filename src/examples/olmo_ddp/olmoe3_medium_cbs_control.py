@@ -152,7 +152,29 @@ def preflight(beaker, runs):
             min_local_checkpoints=run.keep,
             delete_grace_seconds=3600,
         )
-        created = store.register(registration)
+        path = store.registration_path(run.run_id)
+        if path.is_file():
+            existing = Registration.from_dict(json.loads(path.read_text()))
+            assert all(
+                getattr(existing, key) == getattr(registration, key)
+                for key in (
+                    "run_id",
+                    "lineage_id",
+                    "checkpoint_root",
+                    "bucket_id",
+                    "remote_prefix",
+                    "include_ephemeral",
+                    "enabled",
+                    "deletion_mode",
+                )
+            ), f"Unexpected existing registration for {run.run_id}"
+            # The trainer can legitimately raise retention after an off-cadence
+            # interruption save. A controller restart must not undo or reject it.
+            assert existing.min_local_checkpoints >= registration.min_local_checkpoints
+            assert existing.delete_grace_seconds >= registration.delete_grace_seconds
+            created = False
+        else:
+            created = store.register(registration)
         log("registration", run=run.run_id, created=created, keep=run.keep)
     log("capacity_gate", free_bytes=free, campaign_bytes=occupied, required_free=required_free)
 
