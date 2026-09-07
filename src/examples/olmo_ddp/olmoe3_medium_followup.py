@@ -11,7 +11,7 @@ from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
-from olmoe3_medium_followup_plan import parse_test
+from olmoe3_medium_followup_plan import parse_test, sample_offsets
 
 VARIANT, TEST_MB, TEST_BATCH = parse_test(os.environ.get("OLMOE3_DEEP_PROFILE_TEST", "optimized"))
 os.environ["OLMOE3_DEEP_PROFILE_TEST"] = "baseline" if VARIANT == "baseline" else "optimized"
@@ -195,9 +195,9 @@ class GradientAudit(Callback):
         index = len(self.pre_rows)
         self.pre_rows.append(row)
         if get_rank() < 8 and grad.numel():
-            indices = torch.linspace(
-                0, grad.numel() - 1, min(2048, grad.numel()), device=grad.device
-            ).long()
+            indices = torch.tensor(
+                sample_offsets(grad.numel()), dtype=torch.int64, device=grad.device
+            )
             self.samples[f"{stage}/{name}"] = grad[indices].float().cpu().numpy()
         return index
 
