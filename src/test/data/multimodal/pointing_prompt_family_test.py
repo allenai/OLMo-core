@@ -157,3 +157,42 @@ def test_stage1_sets_caption_message_weight():
     # the value must reach the dataset config through the override-readable name, not a literal
     assert "message_weight=caption_message_weight" in src
     assert "caption_message_weight" in src
+
+
+def test_read_override_accepts_dashed_names():
+    """`_read_override` must normalize hyphens the way `Config.merge` does.
+
+    `_clean_opt` turns `--caption-message-weight=1.0` into `caption_message_weight`, so the merger
+    accepts the dashed spelling. A reader comparing the raw name would miss it and build the dataset
+    config from the default while `merge` set the top-level field to the requested value -- a silent
+    divergence, and it affected the pre-existing `model_size` / `train_vit` / `init_from` readers
+    too.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_s1o", "src/scripts/train/Molmo2-Stage1.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_s1o"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass
+    for spelling in ("--caption_message_weight=1.0", "--caption-message-weight=1.0"):
+        assert mod._read_float_override([spelling], "caption_message_weight", 1.25) == 1.0
+    # unrelated keys still ignored
+    assert mod._read_float_override(["--other=3"], "caption_message_weight", 1.25) == 1.25
+
+
+def test_sft_demo_mode_threads_message_weight():
+    """`message_weight` must reach the sft_demo path, which stage 2 uses.
+
+    `PixMoCapDataset.__getitem__` returns early for `mode="sft_demo"` (built that way in
+    mixtures/image_only_v9.py), so the branched path's scaling never runs and the option would be
+    silently ignored for that mode.
+    """
+    src = open("src/olmo_core/data/multimodal/pixmo_cap.py").read()
+    demo = src.split("def _getitem_sft_demo")[1].split("\ndef ")[0]
+    assert "message_weight=" in demo, "sft_demo path does not pass message_weight"
+    assert "self.config.message_weight" in demo

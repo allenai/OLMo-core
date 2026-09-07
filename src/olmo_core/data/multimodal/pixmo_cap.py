@@ -310,6 +310,8 @@ class PixMoCapDataset:
         return seq
 
     def _getitem_sft_demo(self, index: int) -> Dict[str, np.ndarray]:
+        from olmo_core.data.multimodal.message_weight import MessageWeight
+
         from .message_sequence import encode_sft_example
 
         row = self._get_row(index)
@@ -328,6 +330,16 @@ class PixMoCapDataset:
             turns,
             max_crops=self.config.max_crops,
             loss_token_weighting="root_subsegments_root_tokens",
+            # `message_weight` has to apply on this path too: stage 2 builds this source
+            # with mode="sft_demo" (mixtures/image_only_v9.py), which returns before the
+            # branched path's scaling, so setting the option would otherwise be silent.
+            message_weight=(
+                None
+                if self.config.message_weight is None
+                else MessageWeight.from_string("root_subsegments_root_tokens").with_overrides(
+                    self.config.message_weight
+                )
+            ),
             shuffle_rng=rng,
         )
 

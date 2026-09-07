@@ -357,9 +357,13 @@ def _read_override(overrides: List[str], key: str, default: str) -> str:
     read off the merged config. Later occurrences win, matching ``merge``.
     """
     value = default
+    # `Config.merge` normalizes hyphens to underscores (`_clean_opt`), so `--model-size=8b` and
+    # `--model_size=8b` are the same override to it. Comparing the raw name here would miss the
+    # dashed spelling and silently build the config from the default while `merge` applied the
+    # requested value to the top-level field -- a divergence with no error.
     for override in overrides:
         name, _, raw = override.lstrip("-").partition("=")
-        if name == key and raw:
+        if name.replace("-", "_") == key and raw:
             value = raw
     return value
 
