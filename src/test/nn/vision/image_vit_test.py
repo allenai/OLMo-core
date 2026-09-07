@@ -114,6 +114,37 @@ class TestVisionTransformer:
         out = self.vit(x)
         assert out[-1].shape[0] == batch
 
+    def test_apply_compile_uses_dynamic_batch_shape(self, monkeypatch):
+        """Each block must accept a changing ``batch * crop`` dimension."""
+        calls = []
+
+        def fake_compile(module, **kwargs):
+            calls.append(kwargs)
+            return module
+
+        monkeypatch.setattr(torch, "compile", fake_compile)
+        self.vit.apply_compile()
+
+        assert calls == [{"dynamic": True}] * self.cfg.image_num_layers
+
+    def test_compiled_block_boundaries_are_contiguous(self):
+        """Backend-padded block outputs are normalized before the next block."""
+
+        class PaddedOutputBlock(torch.nn.Module):
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                # Slicing the final column leaves a view with a padded last stride.
+                return torch.nn.functional.pad(x, (0, 1))[..., :-1]
+
+        self.vit.blocks[0] = PaddedOutputBlock()
+        out = self.vit(self._make_input())
+
+        assert out[0].is_contiguous()
+        assert out[0].stride() == (
+            out[0].shape[1] * out[0].shape[2],
+            out[0].shape[2],
+            1,
+        )
+
 
 # ---------------------------------------------------------------------------
 # SiglipVisionTransformer

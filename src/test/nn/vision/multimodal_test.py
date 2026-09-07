@@ -199,6 +199,33 @@ def test_multi_crop():
     assert out.shape == (2, 16, _LM_VOCAB)
 
 
+def test_selected_vision_features_have_canonical_stride():
+    """Feature views from a fused vision backend are dense before crop reshaping."""
+    cfg = _tiny_multimodal_cfg()
+    model = cfg.build(init_device="cpu")
+
+    class PaddedVision(torch.nn.Module):
+        num_prefix_tokens = 0
+
+        def forward(self, images):
+            padded = torch.nn.functional.pad(
+                torch.zeros(
+                    images.shape[0],
+                    images.shape[1],
+                    cfg.vision.image_emb_dim,
+                    device=images.device,
+                ),
+                (0, 1),
+            )
+            return [padded[..., :-1]]
+
+    model.vision = PaddedVision()
+    features = model._vit_forward_features(torch.randn(2, 4, 14 * 14 * 3))
+
+    assert features.is_contiguous()
+    assert features.stride() == (features.shape[1] * features.shape[2], features.shape[2], 1)
+
+
 # ---------------------------------------------------------------------------
 # Meta device
 # ---------------------------------------------------------------------------

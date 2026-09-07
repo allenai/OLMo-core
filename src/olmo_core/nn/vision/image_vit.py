@@ -280,7 +280,10 @@ class VisionTransformer(nn.Module):
             Call after :meth:`apply_activation_checkpointing` and before FSDP wrapping.
         """
         for idx, block in enumerate(self.blocks):
-            self.blocks[idx] = torch.compile(block)  # type: ignore[assignment]
+            # The leading dimension is ``batch * n_crops`` and changes with each
+            # mixture batch.  Keep one shape-polymorphic graph per block instead of
+            # specializing the graph (and its saved strides) to the first crop count.
+            self.blocks[idx] = torch.compile(block, dynamic=True)  # type: ignore[assignment]
 
     def reset_parameters(self):
         """Re-initialise all parameters."""
@@ -332,10 +335,15 @@ class VisionTransformer(nn.Module):
 
         hidden_states: List[torch.Tensor] = []
         for block in self.blocks:
+            # Flash-attention and fused linear kernels may return a padded stride for
+            # dynamic crop batches.  A canonical layout at each compiled-block boundary
+            # keeps the forward and AOT backward metadata identical across crop counts.
+            x = x.contiguous()
             if self._activation_checkpoint_fn is not None:
                 x = self._activation_checkpoint_fn(block, x)
             else:
                 x = block(x)
+            x = x.contiguous()
             hidden_states.append(x)
         return hidden_states
 
