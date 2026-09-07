@@ -60,7 +60,7 @@ def main():
             router._profile_document_pool = optimized
             router._profile_top16 = optimized
             with torch.no_grad():
-                router.weight.copy_(weight)
+                router.weight.copy_(weight.reshape_as(router.weight))
             compiled = torch.compile(router, dynamic=False)
 
             def execute(source):
