@@ -26,6 +26,20 @@ def _run_batched_ep_parity(
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
+    deterministic = os.environ.get("OLMOE3_PARITY_DETERMINISTIC", "0") == "1"
+    if deterministic:
+        # Qualification-only: test whether deterministic kernels remove scatter noise.
+        # This does not enable deterministic algorithms in production training.
+        torch.use_deterministic_algorithms(True)
+    if rank == 0:
+        print(
+            "EP_PARITY_FIXTURE",
+            {
+                "deterministic": deterministic,
+                "manual_aa": os.environ.get("OLMOE3_BALANCED_REFERENCE_ONLY", "0") == "1",
+            },
+            flush=True,
+        )
     for key in (
         "OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE",
         "OLMO_PROFILE_SWIGLU_PAIRWISE",
@@ -133,6 +147,13 @@ def _run_batched_ep_parity(
             assert [p["input_ids"].shape[0] for p in split] == sizes
             assert sum([p["metadata"] for p in split], []) == list(range(sum(sizes)))
             candidate_batches = [p["input_ids"] for p in split]
+            for ref, candidate in zip(batches, candidate_batches):
+                assert ref.data_ptr() == candidate.data_ptr()
+                assert ref.shape == candidate.shape and ref.stride() == candidate.stride()
+                assert torch.equal(ref, candidate)
+            if os.environ.get("OLMOE3_BALANCED_REFERENCE_ONLY", "0") == "1":
+                # A/A diagnostic: use the very same reference tensor objects.
+                candidate_batches = batches
         else:
             sizes = [batch] * micros
             batches = [torch.randint(1, 256, (batch, sequence), device=device) for _ in sizes]
@@ -187,7 +208,13 @@ def _run_batched_ep_parity(
             candidate_grad = getattr(
                 candidate, "_olmo_ddp_reduced_grad_shard", candidate._main_grad_fp32
             )
-            torch.testing.assert_close(candidate_grad, ref_grad, rtol=2e-5, atol=1e-7, msg=name)
+            torch.testing.assert_close(
+                candidate_grad,
+                ref_grad,
+                rtol=2e-5,
+                atol=1e-7,
+                msg=lambda detail: f"{name}: {detail}",
+            )
         for ref, candidate in zip(
             stacks[0].model.module.routed_blocks(), stacks[1].model.module.routed_blocks()
         ):
