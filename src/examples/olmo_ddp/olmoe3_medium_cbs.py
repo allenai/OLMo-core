@@ -88,7 +88,7 @@ def atomic_json(path, value):
 
 
 def state_sample(trainer):
-    """Fingerprint fixed samples of every live optimizer shard and persistent buffer.
+    """Fingerprint live model weights, optimizer shards, and persistent buffers.
 
     This checks exact sampled values, not every element. Never call optimizer
     state_dict here: its checkpoint layout conversion temporarily swaps EP storage.
@@ -96,6 +96,10 @@ def state_sample(trainer):
     tm = trainer.train_module
     tensors = dict(tm.optim.states)
     tensors.update(tm._persistent_model_buffer_state_dict())
+    # Master-state agreement alone would miss a save-time side effect on the
+    # BF16 training weights. Read the live parameters directly, not state_dict
+    # (whose checkpoint-layout conversion is exactly what this guard audits).
+    tensors.update((f"model_param/{name}", value) for name, value in tm.model.named_parameters())
     fingerprints = {}
     for name, value in sorted(tensors.items()):
         value = followup.local(value).detach().reshape(-1)
