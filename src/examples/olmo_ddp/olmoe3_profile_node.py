@@ -157,6 +157,7 @@ def main():
         topology = EPProfileTopology.from_test_label(test_label)
         if test_label.startswith("ep") or variant in (
             "optimized",
+            "metrics5",
             "deferred",
             "simple",
             "lb-overlap",

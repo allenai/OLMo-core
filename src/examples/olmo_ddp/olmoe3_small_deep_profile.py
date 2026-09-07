@@ -46,6 +46,7 @@ GLOBAL_BATCH_SIZE = 16 * 1024 * 1024
 LEARNING_RATE = 1.85e-3
 PASS = os.environ.get("OLMOE3_DEEP_PROFILE_PASS", "nsys")
 VARIANT = os.environ.get("OLMOE3_DEEP_PROFILE_VARIANT", "baseline")
+METRICS_INTERVAL = 5 if os.environ.get("OLMOE3_DEEP_PROFILE_TEST") == "metrics5" else 1
 STEPS = int(os.environ.get("OLMOE3_DEEP_PROFILE_STEPS", "100" if PASS == "nsys" else "60"))
 TOPOLOGY = EPProfileTopology.from_test_label(os.environ.get("OLMOE3_DEEP_PROFILE_TEST", ""))
 SYSTEM = replace(
@@ -102,6 +103,7 @@ class ProfileMetrics(Callback):
                 "expert_dp": TOPOLOGY.expert_dp,
                 "pipeline_parallel": 1,
                 "lr": LEARNING_RATE,
+                "metrics_collect_interval": METRICS_INTERVAL,
                 "pass": PASS,
                 "variant": VARIANT,
                 "test": os.environ.get("OLMOE3_DEEP_PROFILE_TEST", VARIANT),
@@ -302,6 +304,7 @@ def train_module_config(common):
 
 def trainer_config(common):
     config = base.build_trainer_config(common, "small-64g", SYSTEM)
+    config.metrics_collect_interval = METRICS_INTERVAL
     # no_checkpoints also disables automatic loading in Trainer.fit(). Keep loading
     # enabled and disable only the saving callback (including end-of-run saves).
     config.no_checkpoints = False
