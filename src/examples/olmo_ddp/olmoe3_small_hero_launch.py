@@ -42,7 +42,7 @@ def main():
     ]
     replace_env(task, {"GIT_REF": commit, "GIT_BRANCH": BRANCH, "GANTRY_CHECK_FOR_UPGRADES": "0"})
     with_mounts(task)
-    name = f"{CAMPAIGN}-controller"
+    name = f"{CAMPAIGN}-controller-{commit[:8]}"
     # This local launcher is intentionally one-shot. The controller itself has durable
     # intent/reconciliation. Refuse any existing same-name experiment before submitting.
     listing = json.loads(

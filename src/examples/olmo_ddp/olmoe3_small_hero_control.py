@@ -211,13 +211,14 @@ def main():
         with Beaker.from_env(check_for_upgrades=False) as beaker:
             preflight(beaker)
             control = Controller(beaker, os.environ["GIT_REF"], automation=AUTOMATION)
+            revision = control.commit[:8]
             gates = [
                 (
-                    f"{CAMPAIGN}-config-validation",
+                    f"{CAMPAIGN}-config-validation-{revision}",
                     validation_spec(control.template, control.commit),
                 ),
                 (
-                    f"{CAMPAIGN}-save-restore-smoke",
+                    f"{CAMPAIGN}-save-restore-smoke-{revision}",
                     training_spec(control.template, runs(True)[0], control.commit, smoke=True),
                 ),
             ]

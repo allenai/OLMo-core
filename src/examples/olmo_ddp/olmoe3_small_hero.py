@@ -179,19 +179,20 @@ class StorageGuard(Callback):
     run_id: str = ""
 
     def _check(self):
+        if get_rank() != 0:
+            return
         r = find_run(self.run_id)
-        result = [None]
-        if get_rank() == 0:
-            fs = os.statvfs(MOUNT)
-            free = fs.f_bavail * fs.f_frsize
-            result[0] = {"free_bytes": free, "action": disk_action(free), "step": self.step}
-            if result[0]["action"] != "ok" or self.step % 100 == 0:
-                print("HERO_STORAGE", json.dumps(result[0]), flush=True)
-            if result[0]["action"] == "stop":
-                atomic_json(r.root / "STORAGE_PAUSED.json", result[0])
-        dist.broadcast_object_list(result, src=0, group=self.trainer.bookkeeping_pg)
-        if result[0]["action"] == "stop":
-            self.trainer.cancel_run("Dedicated checkpoint mount below 5 TB free", no_sync=True)
+        fs = os.statvfs(MOUNT)
+        free = fs.f_bavail * fs.f_frsize
+        result = {"free_bytes": free, "action": disk_action(free), "step": self.step}
+        if result["action"] != "ok" or self.step % 100 == 0:
+            print("HERO_STORAGE", json.dumps(result), flush=True)
+        if result["action"] == "stop":
+            atomic_json(r.root / "STORAGE_PAUSED.json", result)
+            # Let the trainer's existing cancellation protocol synchronize this.
+            # A new foreground collective on the async bookkeeping group could race
+            # its metric reductions. The reserve covers the <=25-step propagation delay.
+            self.trainer.cancel_run("Dedicated checkpoint mount below 5 TB free")
 
     def pre_train(self):
         self._check()
