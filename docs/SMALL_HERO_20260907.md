@@ -74,3 +74,30 @@ decision. The controller does **not** authorize or launch this continuation itse
 
 Entrypoints: `olmoe3_small_hero.py`, `olmoe3_small_hero_node.py`,
 `olmoe3_small_hero_control.py`, all under `src/examples/olmo_ddp/`.
+
+## Deployment receipt (2026-09-07 22:26 UTC)
+
+- Runtime source: `ed9714c51` (the subsequent documentation commit does not change runtime).
+- New private bucket created and verified empty at22:19UTC:
+  https://huggingface.co/buckets/allenai/olmo-3p5-small
+- Current controller: `01M1YZAJMNMQ5TVYS3PBCC0EYD`, running.
+- Config validation: `01M1YZC0M6KV52Y1RMDWTBA5X9`, succeeded;
+  all four production/smoke configs validated, model diff is only EMO.
+- Save/restore smoke: `01M1YZFS2DFX36XFKVFS4KY425`, queued64GPUs.
+  Scheduler reports insufficient free slots for the eight-node replica group.
+- Both production jobs are **not yet submitted**. The live controller will submit
+  them automatically only after smoke success and fingerprint/state checks.
+- Superseded initial controller `01M1YZ76BZCT0DPRJMWAJXQFN6` was explicitly stopped
+  before it could submit any GPU work. Its CPU-only validation passed too.
+- Preflight verified2,334 objects against the completed Dolma inventory and observed
+  37.47TB free. All four registrations are idempotently installed; production is in
+  the new bucket, smoke is in the pilot bucket.
+- Local tests: four dependency-free plan/spec tests passed, including exhaustive
+  cadence checks through834466; lint/compile checks passed. An isolated mock test
+  also verified rank0-only low-space cancellation and durable pause publication.
+- The full64-GPU save/restore test is still pending; do not describe it as passed.
+
+Do not rerun the one-shot launcher while the current controller is active. It owns
+the durable lock and submission intents. Inspect its logs and the smoke experiment
+first. Controller state is under the campaign's `uploader/automation/` directory;
+`heroes-submitted.json` will contain the two production experiment IDs after gating.
