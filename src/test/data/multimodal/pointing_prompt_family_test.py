@@ -103,3 +103,54 @@ def test_root_subsegments_downweights_multi_label_examples():
             masks, sub, MessageWeight(root_subsegments=True), branch_scaling_already_applied=False
         )
         assert abs(float(out[0]) - expected) < 1e-4, f"{n} labels -> {out[0]}"
+
+
+def test_caption_message_weight_scales_loss_mass():
+    """`message_weight` must scale caption loss mass, and default to released behaviour.
+
+    Stage 1 sets captions to 1.25. The released ``Molmo2-4B-Pretrain`` leaves every source at 1.0
+    (``message_weight: None`` on all six datasets), which puts captions at ~77.5% of the
+    ``sum(CE*w)/sum(w)`` loss mass; 1.25 lifts that to ~81%. Measured over two-seed baselines:
+    dense_caption avg 57.271 -> 57.808 (seed spread 0.085) for pointing costs of ~0.009-0.013 f1
+    (seed spreads 0.008-0.011).
+    """
+    import numpy as np
+
+    from olmo_core.data.multimodal.message_weight import (
+        MessageWeight,
+        apply_message_weight_to_loss_masks,
+    )
+
+    sub = np.repeat([1, 2], 20).astype(np.int64)
+    base = apply_message_weight_to_loss_masks(
+        np.ones(40, dtype=np.float32),
+        sub,
+        MessageWeight.from_string("none").with_overrides(None),
+        branch_scaling_already_applied=True,
+    )
+    w125 = apply_message_weight_to_loss_masks(
+        np.ones(40, dtype=np.float32),
+        sub,
+        MessageWeight.from_string("none").with_overrides(1.25),
+        branch_scaling_already_applied=True,
+    )
+    assert abs(float(base[0]) - 1.0) < 1e-6
+    assert abs(float(w125[0]) - 1.25) < 1e-6
+    assert abs(float(w125.sum() / base.sum()) - 1.25) < 1e-6
+
+
+def test_stage1_sets_caption_message_weight():
+    """The stage-1 script must carry the 1.25 caption weight."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_s1c", "src/scripts/train/Molmo2-Stage1.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_s1c"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass
+    src = open("src/scripts/train/Molmo2-Stage1.py").read()
+    assert "message_weight=1.25" in src

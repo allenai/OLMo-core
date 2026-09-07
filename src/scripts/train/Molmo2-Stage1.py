@@ -397,6 +397,15 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
         # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
         loss_token_weighting="none",
+        # Captions carry 1.25x weight. The released Molmo2-4B-Pretrain leaves every source at
+        # 1.0, which puts captions at ~77.5% of the sum(CE*w)/sum(w) loss mass; 1.25 lifts that
+        # to ~81%. Measured on two-seed baselines (n=2 per arm, seed spread in parentheses):
+        #   dense_caption avg   57.271 -> 57.808  (+0.537, spread 0.085)
+        #   consistency         69.973 -> 70.701  (+0.728, spread 0.024) -- released is 70.745
+        #   pixmo_points f1      0.7938 ->  0.7847 (-0.009, spread 0.008)
+        #   sa_co f1             0.5537 ->  0.5408 (-0.013, spread 0.011)
+        # i.e. a caption gain ~6x the noise floor for pointing costs at ~1x it.
+        message_weight=1.25,
         seed=95818,
     )
 
