@@ -162,7 +162,7 @@ class MediumAudit(Callback):
                 "total_params": EXPECTED_TOTAL,
                 "global_batch_tokens": TOPOLOGY.batch_tokens,
                 "sequence_length": 8192,
-                "microbatch_sequences": 2,
+                "microbatch_sequences": SYSTEM.rank_microbatch_sequences,
                 "gradient_accumulation": TOPOLOGY.accumulation,
                 "dense_dp": TOPOLOGY.gpus,
                 "expert_parallel": 8,

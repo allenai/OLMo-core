@@ -110,6 +110,8 @@ def main():
         named_pairs = named_medium_passes(
             run_name, capture=os.environ.get("OLMOE3_MEDIUM_CAPTURE", "0") == "1"
         )
+        if os.environ.get("OLMOE3_MEDIUM_FOLLOWUP", "0") == "1":
+            named_pairs = [(f"{run_name}-{variant}", variant, mode) for variant, mode in pairs]
         pairs = [(variant, mode) for _, variant, mode in named_pairs]
     if any(mode == "nsys" for _, mode in pairs):
         from olmoe3_nsys_tools import NsysSettings, install_nsys

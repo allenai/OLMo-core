@@ -23,9 +23,13 @@ def main():
         command = [
             sys.executable,
             (
-                "src/examples/olmo_ddp/olmoe3_medium_deep_profile.py"
-                if medium
-                else "src/examples/olmo_ddp/olmoe3_small_deep_profile.py"
+                "src/examples/olmo_ddp/olmoe3_medium_followup.py"
+                if os.environ.get("OLMOE3_MEDIUM_FOLLOWUP", "0") == "1"
+                else (
+                    "src/examples/olmo_ddp/olmoe3_medium_deep_profile.py"
+                    if medium
+                    else "src/examples/olmo_ddp/olmoe3_small_deep_profile.py"
+                )
             ),
             "train",
             name,
