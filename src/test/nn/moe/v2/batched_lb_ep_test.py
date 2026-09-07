@@ -130,7 +130,9 @@ def _run_batched_ep_parity(
             )
 
     compare_states()
-    for step in range(3):
+    updates = int(os.environ.get("OLMOE3_PARITY_UPDATES", "3"))
+    assert 1 <= updates <= 3
+    for step in range(updates):
         torch.manual_seed(913 + step + rank)
         if balanced:
             from olmo_core.data.utils import split_batch_balanced
