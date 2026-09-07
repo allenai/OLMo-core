@@ -10,7 +10,7 @@ from olmo_core._nvtx import nvtx
 from olmo_core.distributed.utils import get_rank
 from olmo_core.ops import moe as ops
 
-from ...moe.utils import async_copy_to_cpu, wait_stream_no_compile
+from ...moe.utils import async_copy_to_cpu, record_stream_no_compile, wait_stream_no_compile
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .routed_experts import requires_host_side_split_sizes
 
@@ -133,6 +133,11 @@ def combined_forward_ep_1d(
         this_stream=self.get_dense_stream(),
         other_stream=torch.cuda.current_stream(),
     )
+    # In no-grad eval autograd does not retain this main-stream input. The shared
+    # expert/router consumers below run on the dense stream, so protect its storage
+    # independently of the producer/consumer ordering supplied by wait_stream.
+    if self.shared_experts is not None or self.shared_experts_router is not None:
+        record_stream_no_compile(moe_inp, self.get_dense_stream())
 
     with nvtx.annotate("Token count all_to_all", color="green"):
         with torch.no_grad():
@@ -337,6 +342,11 @@ def combined_forward_ep_1d(
     local_x = self._restore_routed_moe_output(local_x)
 
     wait_stream_no_compile(torch.cuda.current_stream(), self.get_dense_stream())
+
+    if mixed_shared_out is not None:
+        # This output is allocated on the dense stream but consumed on the main
+        # stream. Without this, the next dense branch can recycle it mid-merge.
+        record_stream_no_compile(mixed_shared_out, torch.cuda.current_stream())
 
     mlp_out = self._merge_routed_and_shared(local_x, mixed_shared_out)
 

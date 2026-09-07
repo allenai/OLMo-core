@@ -12,9 +12,7 @@ except ImportError:
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
 from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
-from olmo_core.kernels.moe_unpermute_bwd import (
-    moe_unpermute_bwd as moe_unpermute_bwd_cuda,
-)
+from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermute_bwd_cuda
 from olmo_core.utils import get_or_init_stream
 
 try:
@@ -72,13 +70,10 @@ def async_copy_to_cpu(
     dtoh_event = dtoh_stream.record_event(event)
     dtoh_event = cast(torch.cuda.Event, dtoh_event)
 
-    # NOTE: gpu_buf.record_stream(dtoh_stream) would tell the caching allocator the source
-    # is still in use on dtoh_stream and keep it alive until the copy finishes, but it does
-    # not work under torch.compile. Without it, a source whose storage is freed on the
-    # default stream before the event is waited on could be recycled mid-copy. Real callers
-    # pass persistent buffers (not temporaries) for gpu_buf, so this does not arise today;
-    # revisit (record the source on dtoh_stream, or keep it alive) if a caller ever passes
-    # a transient source.
+    # The caller can release a temporary count tensor before waiting on the event,
+    # especially across compiler graph breaks. Stream ordering alone does not protect
+    # its allocation from reuse. This helper already runs outside torch.compile.
+    gpu_buf.record_stream(dtoh_stream)
     if return_event:
         return cpu_buf, dtoh_stream, dtoh_event
 
@@ -88,6 +83,12 @@ def async_copy_to_cpu(
 @torch.compiler.disable  # helper runs eagerly
 def wait_stream_no_compile(this_stream: torch.cuda.Stream, other_stream: torch.cuda.Stream):
     this_stream.wait_stream(other_stream)
+
+
+@torch.compiler.disable
+def record_stream_no_compile(tensor: torch.Tensor, stream: torch.cuda.Stream):
+    """Protect a cross-stream tensor's allocation without synchronizing the host."""
+    tensor.record_stream(stream)
 
 
 @torch.compiler.disable
