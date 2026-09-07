@@ -2,7 +2,7 @@
 
 import torch
 
-from olmo_core.kernels.swiglu import swiglu_valid_prefix
+from olmo_core.kernels.swiglu import swiglu_backward_valid_prefix, swiglu_valid_prefix
 
 
 def main():
@@ -21,7 +21,22 @@ def main():
         for chunk in out.split(4096):
             torch.testing.assert_close(chunk, torch.full_like(chunk, value.item()), rtol=0, atol=0)
         print("EVAL_PREFIX_BOUNDARY_PASS", rows, flush=True)
-        del x, out, valid
+        del out
+        grad_h = torch.full((rows, 1536), 0.75, device="cuda", dtype=torch.bfloat16)
+        dx = swiglu_backward_valid_prefix(x, grad_h, valid)
+        torch.cuda.synchronize()
+        sig = torch.sigmoid(torch.tensor(1.5))
+        expected_up = (0.75 * 1.5 * sig).to(torch.bfloat16).item()
+        expected_gate = (0.75 * 0.25 * sig * (1 + 1.5 * (1 - sig))).to(torch.bfloat16).item()
+        for chunk in dx.split(4096):
+            torch.testing.assert_close(
+                chunk[:, :1536], torch.full_like(chunk[:, :1536], expected_up), rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                chunk[:, 1536:], torch.full_like(chunk[:, 1536:], expected_gate), rtol=0, atol=0
+            )
+        print("EVAL_PREFIX_BACKWARD_BOUNDARY_PASS", rows, flush=True)
+        del x, dx, grad_h, valid
         torch.cuda.empty_cache()
 
 

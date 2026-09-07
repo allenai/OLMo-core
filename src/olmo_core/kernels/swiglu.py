@@ -39,6 +39,7 @@ if triton is not None:
         ROW_PROGRAMS: tl.constexpr,
         HAS_START_TENSOR: tl.constexpr,
         START_ROW: tl.constexpr,
+        WIDE_INDEX: tl.constexpr,
     ):
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
@@ -52,6 +53,10 @@ if triton is not None:
 
         while row_start < end_row:
             row_idx = row_start + tl.arange(0, BLOCK_M)[:, None]
+            if WIDE_INDEX:
+                # The row count itself can fit int32 while row * (2 * hidden)
+                # overflows it, e.g. dropless EP eval with >699050 rows at H1536.
+                row_idx = row_idx.to(tl.int64)
             mask = (row_idx < end_row) & (row_idx < rows) & col_mask
 
             up_offsets = row_idx * x_stride_0 + col_idx * x_stride_1
@@ -84,6 +89,7 @@ if triton is not None:
         ROW_PROGRAMS: tl.constexpr,
         HAS_START_TENSOR: tl.constexpr,
         START_ROW: tl.constexpr,
+        WIDE_INDEX: tl.constexpr,
     ):
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
@@ -97,6 +103,8 @@ if triton is not None:
 
         while row_start < end_row:
             row_idx = row_start + tl.arange(0, BLOCK_M)[:, None]
+            if WIDE_INDEX:
+                row_idx = row_idx.to(tl.int64)
             mask = (row_idx < end_row) & (row_idx < rows) & col_mask
 
             up_offsets = row_idx * x_stride_0 + col_idx * x_stride_1
@@ -261,6 +269,7 @@ def swiglu_valid_prefix(
         ROW_PROGRAMS=int(row_grid),
         HAS_START_TENSOR=has_start_tensor,
         START_ROW=start_row,
+        WIDE_INDEX=x.numel() >= 2**31,
         num_warps=int(num_warps),
         num_stages=int(num_stages),
     )
@@ -379,6 +388,7 @@ def swiglu_backward_valid_prefix(
         ROW_PROGRAMS=int(row_grid),
         HAS_START_TENSOR=has_start_tensor,
         START_ROW=start_row,
+        WIDE_INDEX=x.numel() >= 2**31,
         num_warps=int(num_warps),
         num_stages=int(num_stages),
     )

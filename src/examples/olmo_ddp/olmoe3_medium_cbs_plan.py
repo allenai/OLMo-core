@@ -4,9 +4,9 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-# r1 saved valid checkpoints but failed the repeated-evaluation smoke. Preserve
-# its roots, registration, audits and submission intents; qualify r2 independently.
-CAMPAIGN = "olmoe3-medium-cbs-20260907-r2"
+# r1 failed repeated eval; r2 was stopped to test the observed oversized eval
+# prefix buffer. Preserve both attempts' roots/audits/intents; qualify r3 separately.
+CAMPAIGN = "olmoe3-medium-cbs-20260907-r3"
 MOUNT = Path("/weka/olmo-3p5-checkpoints")
 ROOT = MOUNT / "production-cbs-medium"
 CONTROL = MOUNT / "uploader/control"
