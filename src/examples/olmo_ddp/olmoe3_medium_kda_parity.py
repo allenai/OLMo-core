@@ -14,7 +14,9 @@ import torch
 
 def error(left, right):
     """Report full-tensor forward/input-gradient differences, not sampled errors."""
-    x, y = left.float().flatten(), right.float().flatten()
+    # Float32 reductions over tens of millions of elements can report cosine
+    # above one even for A/A. Accumulate the diagnostic in FP64.
+    x, y = left.double().flatten(), right.double().flatten()
     norm = x.norm().clamp_min(1e-30)
     return {
         "relative_l2": float((x - y).norm() / norm),
