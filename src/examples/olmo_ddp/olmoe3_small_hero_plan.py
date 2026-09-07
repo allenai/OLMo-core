@@ -20,6 +20,12 @@ TEST_BUCKET = "allenai/olmo-checkpoint-uploader-pilot-20260902-jm01"
 UPLOADER = "01M1YTRJV16A5YC300SEZAW6D1"
 UPLOADER_COMMIT = "2ca46e2f1354bd1c8b558bbd90d6178c36053810"
 QUALIFIED_EXPERIMENT = "01M1RN3NHFH32P2Z952BCR03YD"
+# Observed failures in this campaign on 2026-09-07. Keep the runtime topology
+# guard enabled; these exclusions affect only our smoke and future hero jobs.
+EXCLUDED_HOSTNAMES = {
+    "holmes-cs-aus-534.reviz.ai2.in",  # GPU6 disconnected from every local NVLink peer.
+    "holmes-cs-aus-550.reviz.ai2.in",  # Beaker interconnect healthcheck ALLREDUCE timeout.
+}
 BATCH = 16_777_216
 LR = 1.1e-3
 WARMUP = 2000

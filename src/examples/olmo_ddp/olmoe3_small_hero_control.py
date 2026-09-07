@@ -24,6 +24,7 @@ from olmoe3_small_hero_plan import (
     CONTROL,
     DATA_ROOT,
     DOLMA_MOUNT,
+    EXCLUDED_HOSTNAMES,
     MIX_SHA256,
     MOUNT,
     START_BYTES,
@@ -45,10 +46,16 @@ def with_mounts(task):
 
 
 def training_spec(template, run, commit, smoke=False):
-    """Retain the measured image/topology/host allowlist, changing orchestration only."""
+    """Retain qualified settings and remove only observed bad nodes from the allowlist."""
     spec = copy.deepcopy(template)
     spec["tasks"] = [spec["tasks"][0]]
     t = spec["tasks"][0]
+    t["constraints"]["hostname"] = [
+        host for host in t["constraints"]["hostname"] if host not in EXCLUDED_HOSTNAMES
+    ]
+    assert (
+        len(t["constraints"]["hostname"]) >= 8
+    ), "Not enough permitted nodes for the replica group"
     t.update(name="train", replicas=8, leaderSelection=True, timeout="720h")
     t["arguments"] = [
         "python",

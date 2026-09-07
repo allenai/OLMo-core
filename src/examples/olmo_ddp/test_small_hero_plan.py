@@ -47,7 +47,9 @@ class HeroPlanTest(unittest.TestCase):
             ],
             "resources": {"gpuCount": 8},
             "context": {"priority": "normal"},
-            "constraints": {"hostname": ["good-node"]},
+            "constraints": {
+                "hostname": [f"good-node-{i}" for i in range(8)] + sorted(p.EXCLUDED_HOSTNAMES)
+            },
             "synchronizedStartTimeout": "90m",
         }
         template = {"version": "v2", "tasks": [copy.deepcopy(task) for _ in range(8)]}
@@ -59,7 +61,8 @@ class HeroPlanTest(unittest.TestCase):
             self.assertEqual(t["replicas"] * t["resources"]["gpuCount"], 64)
             self.assertEqual(t["context"]["minRuntime"], "1h")
             self.assertEqual(t["context"]["priority"], "urgent")
-            self.assertEqual(t["constraints"], task["constraints"])
+            self.assertEqual(t["constraints"], {"hostname": [f"good-node-{i}" for i in range(8)]})
+            self.assertFalse(set(t["constraints"]["hostname"]) & p.EXCLUDED_HOSTNAMES)
             self.assertEqual(t["result"]["path"], "/noop-results")
             self.assertEqual(
                 {d["mountPath"] for d in t["datasets"]},

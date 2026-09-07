@@ -101,3 +101,18 @@ Do not rerun the one-shot launcher while the current controller is active. It ow
 the durable lock and submission intents. Inspect its logs and the smoke experiment
 first. Controller state is under the campaign's `uploader/automation/` directory;
 `heroes-submitted.json` will contain the two production experiment IDs after gating.
+
+## Hardware-gate failure and placement fix (2026-09-07)
+
+The first smoke failed before any training agent or checkpoint save started. On
+`holmes-cs-aus-534.reviz.ai2.in`, GPU6 had `SYS`/`NODE` connections instead of NVLink
+to every peer. The existing runtime topology guard rejected it correctly; seven
+other workers passed topology. Separately, the original leader on
+`holmes-cs-aus-550.reviz.ai2.in` failed Beaker's interconnect ALLREDUCE healthcheck
+and was automatically replaced. Neither is a model, EMO, or uploader failure.
+
+Exclude534 and550 from this campaign's qualified hostname allowlist. No runtime
+model/training settings or safety checks are changed. Both smoke and eventual hero
+specs inherit the exclusions. The failed controller stopped without submitting
+either hero. Its successor uses source-versioned validation/smoke names and the
+same private bucket and registrations; no checkpoints are deleted or overwritten.
