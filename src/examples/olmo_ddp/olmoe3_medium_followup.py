@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -152,6 +153,7 @@ class GradientAudit(Callback):
                 "independent_norm": independent,
                 "reported_norm": float(reported.item()),
                 "no_weight_update": True,
+                "first_step_rng": getattr(self, "first_step_rng", None),
                 "parameters": rows,
             }
             (self.output / f"gradients-rank-{get_rank()}.json").write_text(json.dumps(summary))
@@ -168,6 +170,15 @@ class GradientAudit(Callback):
             return reported
 
         optim._clip_grad = clip
+
+    def pre_step(self, batch):
+        """Fingerprint stochastic-routing RNG after compilation/dry-run consumption."""
+        del batch
+        if self.step == 1:
+            self.first_step_rng = {
+                "cpu": hashlib.sha256(torch.get_rng_state().numpy().tobytes()).hexdigest(),
+                "cuda": hashlib.sha256(torch.cuda.get_rng_state().numpy().tobytes()).hexdigest(),
+            }
 
     def capture(self, stage, name, grad, group, placements):
         """Retain full-shard norms but only 2048 regularly spaced tensor elements."""
