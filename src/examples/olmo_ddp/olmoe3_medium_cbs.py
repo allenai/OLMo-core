@@ -18,7 +18,16 @@ from typing import ClassVar
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from olmoe3_medium_cbs_plan import CAMPAIGN, CONTROL, TARGET_TOKENS, find_run, validate
+from olmoe3_medium_cbs_plan import (
+    BASELINE,
+    CAMPAIGN,
+    CONTROL,
+    FORK_STEP,
+    TARGET_TOKENS,
+    find_run,
+    parent_retention_for_save,
+    validate,
+)
 from olmoe3_medium_followup_plan import sample_offsets
 
 validate()
@@ -37,14 +46,21 @@ os.environ["OLMOE3_DEEP_PROFILE_PASS"] = "timing"
 
 import olmoe3_medium_followup as followup
 import torch
+import torch.distributed as dist
 
 from olmo_core.data import DataMix, NumpyPaddedFSLDatasetConfig
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.experiment import build_config, main
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration
-from olmo_core.train.callbacks import Callback, CheckpointerCallback, LMEvaluatorCallbackConfig
-from olmo_core.train.callbacks.checkpoint_ready_notifier import CheckpointReadyNotifierCallback
+from olmo_core.train.callbacks import (
+    Callback,
+    CheckpointerCallback,
+    LMEvaluatorCallbackConfig,
+)
+from olmo_core.train.callbacks.checkpoint_ready_notifier import (
+    CheckpointReadyNotifierCallback,
+)
 from olmo_core.train.callbacks.checkpointer import CheckpointRemovalStrategy
 from olmo_core.train.common import LoadStrategy
 
@@ -139,6 +155,24 @@ class CBSAudit(Callback):
         original_save = tm.save_state_dict_direct
 
         def guarded_save(*args, **kwargs):
+            if RUN == BASELINE and self.step > FORK_STEP:
+                # Publish a stronger retention policy BEFORE making a new
+                # checkpoint visible. Off-cadence interruption saves must not
+                # push step4000 out of the highest-N protected set.
+                if get_rank() == 0:
+                    path = CONTROL / "registrations" / f"{RUN.run_id}.json"
+                    policy = json.loads(path.read_text())
+                    steps = [
+                        int(p.name[4:])
+                        for p in RUN.root.iterdir()
+                        if p.is_dir() and p.name.startswith("step") and p.name[4:].isdigit()
+                    ]
+                    keep = parent_retention_for_save(steps, self.step)
+                    if policy["min_local_checkpoints"] < keep:
+                        policy["min_local_checkpoints"] = keep
+                        atomic_json(path, policy)
+                        print("MEDIUM_CBS_FORK_RETENTION_INCREASED", keep, flush=True)
+                dist.barrier()
             before = state_sample(self.trainer)
             original_save(*args, **kwargs)
             after = state_sample(self.trainer)
@@ -184,6 +218,13 @@ class CBSAudit(Callback):
             with (RUN.root / "audit" / "metrics.jsonl").open("a") as handle:
                 handle.write(json.dumps({"step": step, **metrics}) + "\n")
 
+
+@dataclass
+class CBSCompletionAudit(Callback):
+    """Check termination only after Checkpointer can save interruption state."""
+
+    priority: ClassVar[int] = -10
+
     def post_train(self):
         if self.step != STOP or self.trainer.global_train_tokens_seen != RUN.tokens_at(STOP):
             raise RuntimeError("CBS pass ended before its approved horizon")
@@ -226,6 +267,7 @@ def trainer_config(common):
     cfg.max_duration = Duration.tokens(TARGET_TOKENS)
     cfg.hard_stop = Duration.steps(STOP) if SMOKE else None
     cfg.add_callback("cbs_audit", CBSAudit())
+    cfg.add_callback("cbs_completion_audit", CBSCompletionAudit())
     cfg.add_callback(
         "checkpointer",
         CheckpointerCallback(

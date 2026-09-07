@@ -59,6 +59,12 @@ SMOKE_BRANCH = Run(f"{CAMPAIGN}-smoke32mi", B32, BRANCH_LR, 2, 4, 1, 2, SMOKE_BA
 RUNS = (BASELINE, BRANCH, SMOKE_BASELINE, SMOKE_BRANCH)
 
 
+def parent_retention_for_save(existing_steps, new_step):
+    """Protect the fork even if interruptions add off-cadence permanent saves."""
+    steps = set(existing_steps) | {new_step}
+    return max(BASELINE.keep, sum(step >= FORK_STEP for step in steps))
+
+
 def find_run(name):
     """Reject arbitrary run names, paths, token budgets, and branches."""
     return next(r for r in RUNS if r.run_id == name)

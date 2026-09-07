@@ -14,6 +14,7 @@ from olmoe3_medium_cbs_plan import (
     BRANCH,
     FORK_TOKENS,
     TARGET_TOKENS,
+    parent_retention_for_save,
     validate,
 )
 from olmoe3_medium_followup_plan import VARIANTS, parse_test, sample_offsets
@@ -76,3 +77,12 @@ def test_spec_preserves_secret_references_and_requires_128_gpus():
     assert template["tasks"][0]["name"] == "old"
     replace_env(task, {"HF_TOKEN": None})
     assert not any(v["name"] == "HF_TOKEN" for v in task["envVars"])
+
+
+def test_off_cadence_saves_cannot_evict_fork():
+    regular = list(range(0, 6000, 500))
+    assert parent_retention_for_save(regular, 6000) == 5
+    interrupted = regular + [4103, 4721, 5832]
+    keep = parent_retention_for_save(interrupted, 6000)
+    assert keep == 8
+    assert 4000 in sorted(set(interrupted + [6000]))[-keep:]
