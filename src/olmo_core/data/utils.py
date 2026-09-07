@@ -71,6 +71,43 @@ def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Di
         ]
 
 
+def split_batch_balanced(
+    batch: Dict[str, Any], max_microbatch_instances: int
+) -> List[Dict[str, Any]]:
+    """Use the fewest microbatches, balancing their sizes without padding or reordering.
+
+    This is an explicit experimental alternative to ``split_batch``. For example,
+    sixteen instances with maximum three become [3, 3, 3, 3, 2, 2], avoiding a
+    singleton tail. Loss normalization must still use the original full batch.
+    """
+    if max_microbatch_instances < 1:
+        raise ValueError("Maximum microbatch size must be positive")
+    count = batch["input_ids"].shape[0]
+    if count < 1:
+        raise ValueError("Cannot split an empty batch")
+    pieces = math.ceil(count / max_microbatch_instances)
+    size, extra = divmod(count, pieces)
+    sizes = [size + int(i < extra) for i in range(pieces)]
+    split = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            if value.ndim == 0 or value.shape[0] != count:
+                raise ValueError(f"Batch tensor {key!r} does not have {count} leading instances")
+            split[key] = value.split(sizes, dim=0)
+        elif isinstance(value, list):
+            if len(value) != count:
+                raise ValueError(f"Batch list {key!r} does not have {count} instances")
+            offset = 0
+            rows = []
+            for length in sizes:
+                rows.append(value[offset : offset + length])
+                offset += length
+            split[key] = rows
+        else:
+            raise RuntimeError(f"Unexpected batch field {key!r}")
+    return [{key: rows[i] for key, rows in split.items()} for i in range(pieces)]
+
+
 def melt_batch(batch: Dict[str, Any], target_sequence_length: int) -> Dict[str, Any]:
     """
     "Melts" a batch by shortening the sequence length and proportionally increasing the number

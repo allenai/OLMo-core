@@ -17,7 +17,12 @@ from olmoe3_medium_cbs_plan import (
     parent_retention_for_save,
     validate,
 )
-from olmoe3_medium_followup_plan import VARIANTS, parse_test, sample_offsets
+from olmoe3_medium_followup_plan import (
+    VARIANTS,
+    microbatch_sequence_sizes,
+    parse_test,
+    sample_offsets,
+)
 
 
 @pytest.mark.parametrize("size", [0, 1, 2, 128, 2048, 2049, 2**24, 2**24 + 1, 37_748_736, 10**12])
@@ -86,3 +91,16 @@ def test_off_cadence_saves_cannot_evict_fork():
     keep = parent_retention_for_save(interrupted, 6000)
     assert keep == 8
     assert 4000 in sorted(set(interrupted + [6000]))[-keep:]
+
+
+def test_balanced_medium_geometry_preserves_exact_batches():
+    assert microbatch_sequence_sizes(16_777_216, 128, 3) == [3, 3, 3, 3, 2, 2]
+    assert microbatch_sequence_sizes(33_554_432, 128, 3) == [3] * 10 + [2]
+    for gpus in (64, 128):
+        for batch in (8_388_608, 16_777_216, 33_554_432):
+            sizes = microbatch_sequence_sizes(batch, gpus, 3)
+            assert sum(sizes) * gpus * 8192 == batch
+            assert min(sizes) >= 2 and max(sizes) <= 3
+    assert parse_test("optimized-mb3-b16mi") == ("optimized", 3, 16_777_216)
+    with pytest.raises(ValueError, match="fallback"):
+        microbatch_sequence_sizes(8192 * 128, 128, 3)

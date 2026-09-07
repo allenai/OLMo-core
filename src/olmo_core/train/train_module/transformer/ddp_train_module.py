@@ -41,7 +41,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from olmo_core._nvtx import nvtx
 from olmo_core.aliases import PathOrStr
-from olmo_core.data.utils import get_labels, split_batch
+from olmo_core.data.utils import get_labels, split_batch, split_batch_balanced
 from olmo_core.distributed.checkpoint import (
     RemoteFileSystemReader,
     RemoteFileSystemWriter,
@@ -1587,7 +1587,14 @@ class OLMoDDPTrainModule(TrainModule):
                 raise RuntimeError(
                     f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
                 )
-            micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
+            # Default-off PP1 experiment. The denominator above still counts all
+            # original labels; no token is padded/dropped and no optimizer step is added.
+            splitter = (
+                split_batch_balanced
+                if os.environ.get("OLMO_PROFILE_BALANCED_MICROBATCH", "0") == "1"
+                else split_batch
+            )
+            micro_batches = splitter(batch, self.rank_microbatch_size // seq_len)
             num_micro_batches = len(micro_batches)
 
             # Train one micro-batch at a time.

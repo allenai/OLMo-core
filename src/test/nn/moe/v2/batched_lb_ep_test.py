@@ -20,7 +20,9 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoint_kda=False):
+def _run_batched_ep_parity(
+    ep_degree, width, hidden, experts, compiled, checkpoint_kda=False, balanced=False
+):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -42,8 +44,12 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoi
         "OLMO_PROFILE_LB_COUNT_BATCHED_EP",
     ):
         os.environ[key] = "0"
-    sequence, batch, micros = (8192, 4, 2) if checkpoint_kda else (256, 1, 8)
-    if checkpoint_kda:
+    assert not (checkpoint_kda and balanced)
+    production_kda = checkpoint_kda or balanced
+    sequence, batch, micros = (8192, 4, 2) if production_kda else (256, 1, 8)
+    if balanced:
+        batch = 3
+    if production_kda:
         from kernel_fun._common import support
 
         support.MIN_CTAS = 128
@@ -70,7 +76,7 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoi
                 compile=compiled,
             ),
         )
-        if checkpoint_kda:
+        if production_kda:
             from examples.olmo_ddp.olmoe3_small_medium_models import build_model_config
 
             model = build_model_config("medium", eos_token_id=0, vocab_size=256)
@@ -79,7 +85,7 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoi
             model.init_seed = 12536
             model.n_layers = 2
             model.block_overrides = {}
-            model.block.checkpoint_attn = bool(enabled)
+            model.block.checkpoint_attn = bool(enabled and checkpoint_kda)
             model.block.ep.capacity_factor = 8.0  # Dropless parity fixture only.
             model.validate()
             model = model.build(init_device="meta")
@@ -112,22 +118,40 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoi
     compare_states()
     for step in range(3):
         torch.manual_seed(913 + step + rank)
-        batches = [torch.randint(1, 256, (batch, sequence), device=device) for _ in range(micros)]
-        for tokens in batches:
-            tokens[:, 31::32] = 0
+        if balanced:
+            from olmo_core.data.utils import split_batch_balanced
+
+            sizes = [3] * 10 + [2] if step == 1 else [3, 3, 3, 3, 2, 2]
+            full = torch.randint(1, 256, (sum(sizes), sequence), device=device)
+            full[:, 31::32] = 0
+            batches = list(full.split(sizes, dim=0))  # Explicit reference partition.
+            split = split_batch_balanced(
+                {"input_ids": full, "metadata": list(range(sum(sizes)))}, 3
+            )
+            assert [p["input_ids"].shape[0] for p in split] == sizes
+            assert sum([p["metadata"] for p in split], []) == list(range(sum(sizes)))
+            candidate_batches = [p["input_ids"] for p in split]
+        else:
+            sizes = [batch] * micros
+            batches = [torch.randint(1, 256, (batch, sequence), device=device) for _ in sizes]
+            for tokens in batches:
+                tokens[:, 31::32] = 0
+            candidate_batches = batches
         losses = []
         for enabled, tm in enumerate(stacks):
-            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED"] = str(enabled if not checkpoint_kda else 0)
-            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = str(enabled if not checkpoint_kda else 0)
+            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED"] = str(enabled if not production_kda else 0)
+            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = str(
+                enabled if not production_kda else 0
+            )
             values = []
             torch.manual_seed(781 + step + rank)
-            for micro, tokens in enumerate(batches):
-                with tm.model.no_sync() if micro < micros - 1 else nullcontext():
+            for micro, tokens in enumerate(candidate_batches if enabled else batches):
+                with tm.model.no_sync() if micro < len(sizes) - 1 else nullcontext():
                     out = tm.model(
                         tokens,
                         labels=tokens.roll(-1, 1),
                         loss_reduction="sum",
-                        loss_div_factor=float(sequence * batch * micros),
+                        loss_div_factor=float(sequence * sum(sizes)),
                         z_loss_multiplier=1e-5,
                     )
                     out.loss.backward()
@@ -167,9 +191,9 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoi
                 block.routed_experts_router.reset_metrics()
         if rank == 0:
             print(
-                f"{'KDA_AC' if checkpoint_kda else 'BATCHED'}_EP_PARITY "
+                f"{'BALANCED' if balanced else 'KDA_AC' if checkpoint_kda else 'BATCHED'}_EP_PARITY "
                 f"ep={ep_degree} width={width} hidden={hidden} "
-                f"experts={experts} compiled={compiled} update={step+1}: "
+                f"experts={experts} compiled={compiled} update={step+1} microbatches={sizes}: "
                 "CE, gradients, parameters, Adam states, counts and auxiliary metrics pass",
                 flush=True,
             )

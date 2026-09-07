@@ -12,7 +12,7 @@ from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
-from olmoe3_medium_followup_plan import parse_test, sample_offsets
+from olmoe3_medium_followup_plan import microbatch_sequence_sizes, parse_test, sample_offsets
 
 VARIANT, TEST_MB, TEST_BATCH = parse_test(os.environ.get("OLMOE3_DEEP_PROFILE_TEST", "optimized"))
 os.environ["OLMOE3_DEEP_PROFILE_TEST"] = "baseline" if VARIANT == "baseline" else "optimized"
@@ -28,15 +28,32 @@ from olmo_core.train.callbacks import Callback
 DIAGNOSTIC = os.environ.get("OLMOE3_MEDIUM_DIAGNOSTIC", "0") == "1"
 MB = TEST_MB or int(os.environ.get("OLMOE3_MEDIUM_MB", "2"))
 BATCH = TEST_BATCH or int(os.environ.get("OLMOE3_MEDIUM_BATCH", "16777216"))
-if MB not in (1, 2, 4) or BATCH not in (8388608, 16777216, 33554432):
+if MB not in (1, 2, 3, 4) or BATCH not in (8388608, 16777216, 33554432):
     raise ValueError((MB, BATCH))
+MICROBATCHES = microbatch_sequence_sizes(BATCH, base.TOPOLOGY.gpus, MB)
+
+
+class BalancedSystemConfig(base.base.SystemConfig):
+    """Experimental PP1 metadata: count actual balanced chunks, never floor division."""
+
+    @property
+    def gradient_accumulation_steps(self):
+        return len(MICROBATCHES)
+
+    def validate(self):
+        assert self.model_size == "medium" and self.pp == 1 and self.ep == 8
+        assert self.rank_microbatch_sequences == 3
+        assert sum(MICROBATCHES) * self.num_gpus * 8192 == BATCH
+
+
 base.TEST = VARIANT
-base.SYSTEM = base.base.SystemConfig("medium", base.TOPOLOGY.nodes, 1, 8, MB)
+system_type = BalancedSystemConfig if MB == 3 else base.base.SystemConfig
+base.SYSTEM = system_type("medium", base.TOPOLOGY.nodes, 1, 8, MB)
 base.TOPOLOGY = SimpleNamespace(
     gpus=base.TOPOLOGY.gpus,
     nodes=base.TOPOLOGY.nodes,
     batch_tokens=BATCH,
-    accumulation=BATCH // (base.TOPOLOGY.gpus * MB * 8192),
+    accumulation=len(MICROBATCHES),
     validate_rank_groups=base.TOPOLOGY.validate_rank_groups,
 )
 base.base.GLOBAL_BATCH_SIZE = BATCH
@@ -55,6 +72,7 @@ if VARIANT == "no-routing":
     base.FLAGS["OLMO_PROFILE_EMO_DOCUMENT_POOL"] = "0"
     base.FLAGS["OLMO_PROFILE_EMO_TOP16"] = "0"
 BATCH_COUNTS = VARIANT in ("optimized-lb-batched", "optimized-lb-batched-metrics5")
+base.FLAGS["OLMO_PROFILE_BALANCED_MICROBATCH"] = "1" if MB == 3 else "0"
 base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = "1" if BATCH_COUNTS else "0"
 if BATCH_COUNTS:
     base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED"] = "1"
@@ -87,6 +105,7 @@ def model_config(common):
 
 base.model_config = model_config
 base.SETTINGS["checkpoint_attention_blocks"] = CHECKPOINT_BLOCKS
+base.SETTINGS["microbatch_sequence_sizes"] = MICROBATCHES
 base.SETTINGS["metrics_collect_interval"] = (
     5 if VARIANT in ("optimized-metrics5", "optimized-lb-batched-metrics5") else 1
 )
@@ -311,7 +330,7 @@ if __name__ == "__main__":
             and tm.float8_config is None
         )
         assert tm.ep_config.degree == 8 and tm.pp_config is None
-        assert BATCH % (base.TOPOLOGY.gpus * MB * 8192) == 0
+        assert sum(MICROBATCHES) * base.TOPOLOGY.gpus * 8192 == BATCH
         print(
             "FOLLOWUP_CONFIG_VALIDATED",
             json.dumps(
@@ -320,6 +339,7 @@ if __name__ == "__main__":
                     "gpus": base.TOPOLOGY.gpus,
                     "mb": MB,
                     "batch": BATCH,
+                    "microbatch_sequence_sizes": MICROBATCHES,
                     "diagnostic": DIAGNOSTIC,
                     "flags": base.FLAGS,
                 }
