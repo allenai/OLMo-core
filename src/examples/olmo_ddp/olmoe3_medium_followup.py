@@ -54,8 +54,9 @@ if VARIANT == "no-routing":
     base.SETTINGS["inverse_scatter"] = False
     base.FLAGS["OLMO_PROFILE_EMO_DOCUMENT_POOL"] = "0"
     base.FLAGS["OLMO_PROFILE_EMO_TOP16"] = "0"
-base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = "1" if VARIANT == "optimized-lb-batched" else "0"
-if VARIANT == "optimized-lb-batched":
+BATCH_COUNTS = VARIANT in ("optimized-lb-batched", "optimized-lb-batched-metrics5")
+base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = "1" if BATCH_COUNTS else "0"
+if BATCH_COUNTS:
     base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED"] = "1"
 os.environ.update(base.FLAGS)
 
@@ -86,7 +87,9 @@ def model_config(common):
 
 base.model_config = model_config
 base.SETTINGS["checkpoint_attention_blocks"] = CHECKPOINT_BLOCKS
-base.SETTINGS["metrics_collect_interval"] = 5 if VARIANT == "optimized-metrics5" else 1
+base.SETTINGS["metrics_collect_interval"] = (
+    5 if VARIANT in ("optimized-metrics5", "optimized-lb-batched-metrics5") else 1
+)
 base.SETTINGS["nccl_protocol"] = "Simple" if VARIANT == "optimized-simple" else "auto"
 
 

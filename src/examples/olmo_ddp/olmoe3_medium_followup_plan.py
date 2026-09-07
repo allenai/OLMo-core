@@ -15,6 +15,7 @@ VARIANTS = (
     "optimized-metrics5",
     "optimized-simple",
     "optimized-lb-batched",
+    "optimized-lb-batched-metrics5",
 )
 
 
