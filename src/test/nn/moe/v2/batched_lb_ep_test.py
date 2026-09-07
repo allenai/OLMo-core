@@ -2,6 +2,7 @@
 
 import os
 from contextlib import nullcontext
+from test.nn.moe.v2.rounded_wgrad_ep_test import _build_model
 
 import pytest
 import torch
@@ -17,8 +18,6 @@ from olmo_core.train.train_module.transformer import (
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
 )
-
-from .rounded_wgrad_ep_test import _build_model
 
 
 def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
