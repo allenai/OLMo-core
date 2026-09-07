@@ -100,7 +100,7 @@ def combined_forward_ep_no_sync_rowwise(
     accumulate_routed_aux_loss_metrics: Optional[bool] = None,
     loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
     **kwargs,
-) -> torch.Tensor:
+) -> Union[torch.Tensor, tuple[torch.Tensor, Optional[tuple]]]:
     """Forward with EP no-sync using row-wise NVSHMEM dispatch/combine."""
     self = block
     assert self.routed_experts is not None
@@ -113,6 +113,14 @@ def combined_forward_ep_no_sync_rowwise(
     ), "EP no-sync implementation does not support host-side split size communication"
     group_name = get_ep_no_sync_group_name(self)
     B, S, D = x.shape
+    return_router_aux = kwargs.pop("_profile_return_router_aux", False)
+    if return_router_aux and (
+        os.environ.get("OLMO_PROFILE_LB_COUNT_BATCHED_EP", "0") != "1"
+        or os.environ.get("OLMO_PROFILE_LB_COUNT_OVERLAP", "0") == "1"
+        or activation_checkpointing
+        or accumulate_routed_aux_loss_metrics is False
+    ):
+        raise RuntimeError("Batched EP aux outputs require an ordinary, non-recomputed forward")
     rowwise_stage_debug_print(
         "rowwise:enter",
         block=self.block_idx,
@@ -845,6 +853,11 @@ def combined_forward_ep_no_sync_rowwise(
 
     final_out = self._res_norm_mlp(attn_res_out, mlp_out)
     rowwise_stage_debug_print("rowwise:exit", block=self.block_idx)
+    if return_router_aux:
+        # Keep the original pre-drop router statistics and differentiable scores.
+        # The explicit model caller consumes each record once in this microbatch;
+        # nothing is stored in a shared EP buffer or retained across forwards.
+        return final_out, routed_expert_router_aux_loss_info
     return self._attach_routed_aux_loss(
         final_out,
         routed_expert_router_aux_loss_info,

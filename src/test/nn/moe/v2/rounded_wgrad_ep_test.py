@@ -28,12 +28,12 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _build_model(width, hidden, num_experts=512):
+def _build_model(width, hidden, num_experts=512, n_layers=1):
     norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=DType.float32)
     return OLMoDDPModelConfig(
         init_seed=12536,
         d_model=width,
-        n_layers=1,
+        n_layers=n_layers,
         vocab_size=256,
         name=TransformerType.moe_fused_v2,
         recompute_each_block=False,

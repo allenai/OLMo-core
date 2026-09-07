@@ -939,9 +939,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 self.embeddings,
                 d_model=self.d_model,
                 embed_scale=self.embed_scale,
-                std=self.embedding_init_std
-                if self.embedding_init_std is not None
-                else self.init_std,
+                std=(
+                    self.embedding_init_std
+                    if self.embedding_init_std is not None
+                    else self.init_std
+                ),
                 generator=generator,
             )
 
@@ -1300,21 +1302,38 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             self.tbo
             or self.pp_enabled
             or self.tp_enabled
-            or self.ep_enabled
+            or (self.ep_enabled and os.environ.get("OLMO_PROFILE_LB_COUNT_BATCHED_EP", "0") != "1")
             or self.recompute_each_block
             or self.recompute_all_blocks_by_chunk
             or self.recompute_block_keys
         ):
-            raise RuntimeError("Batched LB probe requires PP1/EP1/TP1, no TBO or recomputation")
+            raise RuntimeError(
+                "Batched LB probe requires PP1/TP1, no TBO or recomputation; "
+                "EP requires the separate experimental EP opt-in"
+            )
         records = []
         for block_key, block in self.blocks.items():
             if not isinstance(block, OLMoDDPTransformerBlock) or (
-                block.ep_enabled
-                or block.checkpoint_attn
+                block.checkpoint_attn
                 or block.checkpoint_permute_moe_unpermute
                 or block.checkpoint_second_unpermute
             ):
                 raise RuntimeError("Unsupported block in batched LB probe")
+            if block.ep_enabled and (
+                os.environ.get("OLMO_PROFILE_LB_COUNT_BATCHED_EP", "0") != "1"
+                or block.ep.path != ExpertParallelPath.rowwise_nvshmem
+                or block.ep.share_dispatch_out
+                or block.ep.share_combine_out
+                or (block.rowwise_fp8 is not None and block.rowwise_fp8.enabled)
+                or (
+                    block.routed_experts is not None
+                    and block.routed_experts.rowwise_fp8 is not None
+                    and block.routed_experts.rowwise_fp8.enabled
+                )
+            ):
+                raise RuntimeError(
+                    "Batched EP counts require ordinary rowwise EP, private outputs and BF16"
+                )
             kwargs = {**all_block_kwargs, **per_block_kwargs.get(int(block_key), {})}
             router = block.routed_experts_router
             if router is not None:

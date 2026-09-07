@@ -1,4 +1,7 @@
-"""Default-off PP1/EP1 experiment: one global count reduction per microbatch."""
+"""Default-off PP1 experiment: one global count reduction per microbatch.
+
+Rowwise EP additionally requires the separately guarded model/forward opt-in.
+"""
 
 import torch
 import torch.distributed as dist
@@ -30,7 +33,7 @@ def finish_batched_router_aux(activation, records):
             or aux is None
             or len(aux) != 5
         ):
-            raise RuntimeError("Batched count reduction requires matching ordinary no-EP routers")
+            raise RuntimeError("Batched count reduction requires matching ordinary global routers")
     counts = torch.stack([aux[2].float() for _, aux in records])
     dist.all_reduce(counts, op=dist.ReduceOp.SUM, group=group)
     for index, (router, aux) in enumerate(records):

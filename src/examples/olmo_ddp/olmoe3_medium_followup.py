@@ -54,6 +54,9 @@ if VARIANT == "no-routing":
     base.SETTINGS["inverse_scatter"] = False
     base.FLAGS["OLMO_PROFILE_EMO_DOCUMENT_POOL"] = "0"
     base.FLAGS["OLMO_PROFILE_EMO_TOP16"] = "0"
+base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = "1" if VARIANT == "optimized-lb-batched" else "0"
+if VARIANT == "optimized-lb-batched":
+    base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED"] = "1"
 os.environ.update(base.FLAGS)
 
 # Memory candidates use the existing attention-only checkpoint hook. They never

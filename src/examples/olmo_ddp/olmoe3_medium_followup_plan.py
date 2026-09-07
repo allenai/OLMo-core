@@ -14,6 +14,7 @@ VARIANTS = (
     "optimized-ackda-half",
     "optimized-metrics5",
     "optimized-simple",
+    "optimized-lb-batched",
 )
 
 
