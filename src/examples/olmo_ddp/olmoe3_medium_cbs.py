@@ -129,7 +129,9 @@ class CBSAudit(Callback):
             changed = [key for key in actual if saved.get(key) != actual[key]]
             raise RuntimeError(f"Resume state samples changed: {expected}, fields={changed}")
         atomic_json(
-            RUN.root / "audit" / f"restore-{os.environ['BEAKER_JOB_ID']}-rank{get_rank()}.json",
+            RUN.root
+            / "audit"
+            / f"restore-{os.environ['BEAKER_JOB_ID']}-step{self.step}-rank{get_rank()}.json",
             {"source": str(path), "step": self.step, "sampled_state_exact": True},
         )
 
@@ -207,7 +209,12 @@ class CBSAudit(Callback):
                 "checkpoint_interval": RUN.interval,
                 "registration": registration,
             }
-            atomic_json(RUN.root / "audit" / f"session-{os.environ['BEAKER_JOB_ID']}.json", record)
+            atomic_json(
+                RUN.root
+                / "audit"
+                / f"session-{os.environ['BEAKER_JOB_ID']}-start{self.step}-stop{STOP}.json",
+                record,
+            )
             print("MEDIUM_CBS_START", json.dumps(record), flush=True)
 
     def post_checkpoint_saved(self, path):
