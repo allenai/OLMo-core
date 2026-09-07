@@ -23,10 +23,10 @@ def write(path, data):
 
 def family(name):
     """Disentangle recurrent/attention and expert gradients in the report."""
-    if "routed_experts" in name:
-        return "expert-down" if "w_down" in name else "expert-up-gate"
     if "router" in name:
         return "router"
+    if "routed_experts" in name:
+        return "expert-down" if "w_down" in name else "expert-up-gate"
     if "attention" in name or "sequence_mixer" in name:
         for index in (7, 15, 23):
             if f"blocks.{index}." in name:
@@ -41,12 +41,13 @@ def summarize(run):
     gpus = provenance["gpus"]
     squared = defaultdict(float)
     parameters = defaultdict(float)
-    reported, independent = [], []
+    reported, independent, rng = [], [], []
     for rank in range(gpus):
         data = json.loads((run / f"gradients-rank-{rank}.json").read_text())
         assert data["rank"] == rank and data["gpus"] == gpus
         reported.append(data["reported_norm"])
         independent.append(data["independent_norm"])
+        rng.append(data.get("first_step_rng"))
         for row in data["parameters"]:
             if row["stage"] != "optimizer-intake":
                 continue
@@ -69,6 +70,7 @@ def summarize(run):
         "family_norms": {k: math.sqrt(v) for k, v in squared.items()},
         "parameter_norms": {k: math.sqrt(v) for k, v in parameters.items()},
         "provenance": provenance,
+        "first_step_rng_by_rank": rng,
     }
 
 
@@ -115,6 +117,13 @@ def compare(reference, candidate, a, b):
         "reference": reference.name,
         "candidate": candidate.name,
         "full_norm_relative_change": b["independent_norm"] / a["independent_norm"] - 1,
+        "rng_equal_ranks": {
+            device: sum(
+                ra is not None and rb is not None and ra.get(device) == rb.get(device)
+                for ra, rb in zip(a["first_step_rng_by_rank"], b["first_step_rng_by_rank"])
+            )
+            for device in ("cpu", "cuda")
+        },
         "family_full_norm_relative_change": {
             k: b["family_norms"][k] / v - 1 if v else None for k, v in a["family_norms"].items()
         },
@@ -166,7 +175,11 @@ def main():
                 "GRADIENT_COLLECTED",
                 name,
                 json.dumps(
-                    {k: v for k, v in summary.items() if k not in ("parameter_norms", "provenance")}
+                    {
+                        k: v
+                        for k, v in summary.items()
+                        if k not in ("parameter_norms", "provenance", "first_step_rng_by_rank")
+                    }
                 ),
                 flush=True,
             )

@@ -89,10 +89,10 @@ base.SETTINGS["nccl_protocol"] = "Simple" if VARIANT == "optimized-simple" else 
 
 def family(name):
     """Keep gradient comparisons grouped by functional parameter family."""
-    if "routed_experts" in name:
-        return "expert-down" if "w_down" in name else "expert-up-gate"
     if "router" in name:
         return "router"
+    if "routed_experts" in name:
+        return "expert-down" if "w_down" in name else "expert-up-gate"
     if "sequence_mixer" in name or "attention" in name:
         return "sequence-mixer"
     return "dense-other"
