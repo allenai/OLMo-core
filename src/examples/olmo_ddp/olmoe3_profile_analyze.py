@@ -144,13 +144,15 @@ def main():
         json.loads(path.read_text()) for path in sorted(args.run_dir.glob("memory-rank-*.json"))
     ]
     summary["full_run_memory_by_rank"] = [
-        json.loads(path.read_text())
+        {"rank": int(path.stem.rsplit("-", 1)[1]), **json.loads(path.read_text())}
         for path in sorted(args.run_dir.glob("full-run-memory-rank-*.json"))
     ]
     summary["memory_caveat"] = (
         "The regular GPU memory callback resets peak counters every step. End-of-run "
         "memory-rank files are not full-run activation peaks. Use the per-step gpu_memory "
-        "metrics below (rank-reduced by the trainer), or explicit memory snapshots."
+        "metrics below (rank-local in this driver), explicit memory snapshots, or "
+        "the maximum across full_run_memory_by_rank when available. The device_used "
+        "field samples post-update whole-device usage; it is not a continuous peak."
     )
     for first, last in provenance["clean_windows_relative_steps"]:
         window = [row for row in rows if first <= row["step"] - provenance["source_step"] <= last]
