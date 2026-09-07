@@ -13,8 +13,16 @@ from triton.language.extra.cuda import libdevice
 
 
 @triton.jit
-def _swiglu_backward_pair(x, dy, dx, pairs, HIDDEN: tl.constexpr, BLOCK: tl.constexpr):
-    index = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+def _swiglu_backward_pair(
+    x, dy, dx, pairs, HIDDEN: tl.constexpr, BLOCK: tl.constexpr, WIDE_INDEX: tl.constexpr
+):
+    pid = tl.program_id(0)
+    if WIDE_INDEX:
+        # Cast before multiplication: both the pair index and its doubled input
+        # offset can overflow int32 for large padded EP expert buffers. Keep the
+        # existing narrow specialization for ordinary production-sized tensors.
+        pid = pid.to(tl.int64)
+    index = pid * BLOCK + tl.arange(0, BLOCK)
     mask = index < pairs
     base = index // HIDDEN * (2 * HIDDEN) + index % HIDDEN
     up = tl.load(x + base, mask=mask, other=0).to(tl.float32)
@@ -55,6 +63,7 @@ def swiglu_backward_pair(x, dy, *, block=1024, warps=4):
             dy.numel(),
             x.shape[1] // 2,
             block,
+            x.numel() >= 2**31,
             num_warps=warps,
             enable_fp_fusion=True,
         )
