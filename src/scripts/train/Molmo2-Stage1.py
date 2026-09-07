@@ -231,6 +231,14 @@ MAX_STEPS = 32000
 # distribution for pointing evals -- worth ~11 f1 on pixmo_point_eval_v3_mp, most of it
 # abstention, because the "Please say 'There are none.'" instruction only exists in the
 # stage-2 template.
+# Caption loss weight. The released Molmo2-4B-Pretrain leaves every source at 1.0, which puts
+# captions at ~77.5% of the sum(CE*w)/sum(w) loss mass; 1.25 lifts that to ~81%. Measured against
+# two-seed baselines: dense_caption avg 57.271 -> 57.808 (+0.537, seed spread 0.085) and
+# consistency 69.973 -> 70.701 (released is 70.745), for pointing costs of ~0.009-0.013 f1 at
+# seed spreads of 0.008-0.011. Override with `--caption_message_weight=1.0` to reproduce the
+# released weighting exactly.
+CAPTION_MESSAGE_WEIGHT = 1.25
+
 POINTING_DATASET_KWARGS = {
     "prompt_templates": "none",
     "system_prompt": "style_and_length_v2",
@@ -288,6 +296,10 @@ class ExperimentConfig(Config):
     nlp_rate: float = NLP_RATE
     """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
     train_vit: bool = TRAIN_VIT
+    caption_message_weight: float = CAPTION_MESSAGE_WEIGHT
+    """Multiplier on the caption source's loss tokens; 1.0 reproduces the released
+    weighting. Read before ``merge`` runs, so it is declared here only to be accepted as a
+    top-level override."""
     """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
     the encoder is frozen and kept in eval mode."""
 
@@ -345,9 +357,13 @@ def _read_override(overrides: List[str], key: str, default: str) -> str:
     read off the merged config. Later occurrences win, matching ``merge``.
     """
     value = default
+    # `Config.merge` normalizes hyphens to underscores (`_clean_opt`), so `--model-size=8b` and
+    # `--model_size=8b` are the same override to it. Comparing the raw name here would miss the
+    # dashed spelling and silently build the config from the default while `merge` applied the
+    # requested value to the top-level field -- a divergence with no error.
     for override in overrides:
         name, _, raw = override.lstrip("-").partition("=")
-        if name == key and raw:
+        if name.replace("-", "_") == key and raw:
             value = raw
     return value
 
@@ -358,6 +374,15 @@ def _read_bool_override(overrides: List[str], key: str, default: bool) -> bool:
     if raw not in _BOOLS:
         raise OLMoConfigurationError(f"{key}={raw!r} is not a boolean")
     return _BOOLS[raw]
+
+
+def _read_float_override(overrides: List[str], key: str, default: float) -> float:
+    """Read a float top-level scalar out of the raw overrides."""
+    raw = _read_override(overrides, key, str(default)).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        raise OLMoConfigurationError(f"{key}={raw!r} is not a float") from None
 
 
 def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
@@ -382,6 +407,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # Resolved pre-merge because it shapes `freeze_params`, the optimizer groups and the
     # per-group scheduler, all of which are built before `Config.merge` runs.
     train_vit = _read_bool_override(overrides, "train_vit", TRAIN_VIT)
+    caption_message_weight = _read_float_override(
+        overrides, "caption_message_weight", CAPTION_MESSAGE_WEIGHT
+    )
     freeze_base_embeddings = _read_bool_override(
         overrides, "freeze_base_embeddings", FREEZE_BASE_EMBEDDINGS
     )
@@ -397,6 +425,15 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
         # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
         loss_token_weighting="none",
+        # Captions carry 1.25x weight. The released Molmo2-4B-Pretrain leaves every source at
+        # 1.0, which puts captions at ~77.5% of the sum(CE*w)/sum(w) loss mass; 1.25 lifts that
+        # to ~81%. Measured on two-seed baselines (n=2 per arm, seed spread in parentheses):
+        #   dense_caption avg   57.271 -> 57.808  (+0.537, spread 0.085)
+        #   consistency         69.973 -> 70.701  (+0.728, spread 0.024) -- released is 70.745
+        #   pixmo_points f1      0.7938 ->  0.7847 (-0.009, spread 0.008)
+        #   sa_co f1             0.5537 ->  0.5408 (-0.013, spread 0.011)
+        # i.e. a caption gain ~6x the noise floor for pointing costs at ~1x it.
+        message_weight=caption_message_weight,
         seed=95818,
     )
 
