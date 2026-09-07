@@ -263,6 +263,42 @@ all seven rungs is .018.
 This is also why the dense ladders in this campaign are trustworthy at one seed per budget while
 the sparse ones are not. The asymmetry is not a double standard; it is measured.
 
+## Short-heavy vs uniform length mix: a bootstrap, not a better mix (recorded 2026-09-07)
+
+Asked directly whether short-heavy beats uniform. The data is the earlier outlier length-mix wave
+(shapes are token shares over 2k/4k/8k/16k/32k -- U uniform 20% each, S short-heavy 45/27/16/8/4,
+matched total budget). Numbers live in `debug/outlier_lengthmix_scaling/plot_mix_laws.py`;
+f1 per rung at eval_size 600, ONE seed per cell.
+
+  DENSE                3k     8k    16k    32k    mean
+   16M  U             .658   .509   .284   .072   .381
+   16M  S             .748   .505   .243   .035   .383
+   64M  U             .891   .673   .453   .217   .558
+   64M  S             .925   .725   .444   .136   .557
+
+  SPARSE
+   16M  U             .178   .067   .023   .010   .069
+   16M  S             .561   .233   .094   .009   .224
+   32M  U             .281   .073   .030   .011   .099
+   32M  S             .676   .278   .119   .036   .277
+   64M  U             .752   .396   .169   .038   .339
+   64M  S             .832   .467   .201   .038   .385
+
+**Dense: a tie (+.002, -.001 on the mean).** S buys +.03-.09 at 3k and pays -.04 to -.08 at 32k --
+a redistribution across rungs at roughly a 1:1 exchange rate, not a gain.
+
+**Sparse: S wins by +.155 / +.178 / +.046 as budget grows**, and at 16-64M it wins at every rung,
+not just the short end. The shrinking margin is the tell: short-heavy is a BOOTSTRAP. Sparse has a
+takeoff threshold to cross ([[four seeds at each takeoff budget]] above) and short examples are the
+cheapest way across it; once budget alone clears the threshold the advantage expires. Dense is above
+threshold at every length and has nothing to bootstrap.
+
+**Caveats, both load-bearing.** (1) One task -- outlier. No S-vs-U on the other nine. (2) The 16M
+and 32M sparse cells sit exactly in the pre-takeoff regime that is BIMODAL across seeds, so a
+single-seed uniform run that drew a floor would be indistinguishable from a real mix effect. The
+dense tie is solid; the sign of the sparse effect is corroborated by the whole-wave ordering
+short-heavy > uniform > two-point ~ long-heavy, but its MAGNITUDE is not established.
+
 ## A free repeatability check
 
 The reorder-50M eval was preempted and re-ran itself on the same checkpoint against the same rung
