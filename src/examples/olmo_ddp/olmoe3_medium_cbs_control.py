@@ -103,7 +103,31 @@ def preflight(beaker, runs):
     fs = os.statvfs(MOUNT)
     free = fs.f_bavail * fs.f_frsize
     # Full no-deletion baseline+child+smoke footprint is approximately 12 TB.
-    assert free > 12_000_000_000_000, f"Insufficient medium staging capacity: {free}"
+    # On controller restart, already-written campaign checkpoints are part of
+    # that budget, not an additional 12 TB requirement. Count only ordinary
+    # files beneath this campaign's exact roots (never unrelated mount data).
+    from olmoe3_medium_cbs_plan import RUNS
+
+    occupied = 0
+    for candidate in RUNS:
+        if candidate.root.is_symlink():
+            raise RuntimeError(f"Refuse symlink checkpoint root: {candidate.root}")
+        if not candidate.root.is_dir():
+            continue
+        for directory in candidate.root.iterdir():
+            if not directory.name.startswith("step") or not directory.name[4:].isdigit():
+                continue
+            if directory.is_symlink() or not directory.is_dir():
+                continue
+            for current, dirs, files in os.walk(directory, followlinks=False):
+                dirs[:] = [d for d in dirs if not (Path(current) / d).is_symlink()]
+                occupied += sum(
+                    (Path(current) / f).stat().st_size
+                    for f in files
+                    if not (Path(current) / f).is_symlink()
+                )
+    required_free = max(1_000_000_000_000, 12_000_000_000_000 - occupied)
+    assert free > required_free, f"Insufficient medium staging capacity: {free} < {required_free}"
     assert status(beaker.workload.get(UPLOADER)) == "STATUS_RUNNING", "Uploader is not running"
     HuggingFaceBucketBackend().assert_private(BUCKET)
     cache = MOUNT / "production-cbs/work/olmoe3-small-cbs-8mi-100b-lr1p3em3-uploader-r1"
@@ -123,7 +147,7 @@ def preflight(beaker, runs):
         )
         created = store.register(registration)
         log("registration", run=run.run_id, created=created, keep=run.keep)
-    log("capacity_gate", free_bytes=free)
+    log("capacity_gate", free_bytes=free, campaign_bytes=occupied, required_free=required_free)
 
 
 def training_spec(template, run, *, commit, variant, mb, smoke=False):
