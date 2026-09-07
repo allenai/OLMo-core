@@ -143,6 +143,10 @@ def main():
     summary["memory_by_rank"] = [
         json.loads(path.read_text()) for path in sorted(args.run_dir.glob("memory-rank-*.json"))
     ]
+    summary["full_run_memory_by_rank"] = [
+        json.loads(path.read_text())
+        for path in sorted(args.run_dir.glob("full-run-memory-rank-*.json"))
+    ]
     summary["memory_caveat"] = (
         "The regular GPU memory callback resets peak counters every step. End-of-run "
         "memory-rank files are not full-run activation peaks. Use the per-step gpu_memory "
@@ -180,6 +184,15 @@ def main():
             metrics["step_seconds_from_tps"] = {
                 "mean": statistics.mean(latencies),
                 "median": statistics.median(latencies),
+            }
+            metrics["window_effective_tps_per_gpu"] = {
+                "value": len(latencies)
+                * provenance["global_batch_tokens"]
+                / provenance["gpus"]
+                / sum(latencies),
+                "steps": len(latencies),
+                "elapsed_seconds_from_step_counters": sum(latencies),
+                "definition": "Harmonic mean of per-step TPS; counts wait time at periodic metric drains. Do not compare only median instantaneous TPS when synchronization cadence differs.",
             }
         result = {"relative_steps": [first, last], "metrics": metrics}
         if provenance.get("expected_route_metrics"):
