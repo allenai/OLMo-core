@@ -140,7 +140,7 @@ def test_caption_message_weight_scales_loss_mass():
 
 
 def test_stage1_sets_caption_message_weight():
-    """The stage-1 script must carry the 1.25 caption weight."""
+    """The stage-1 default must be 1.25, and it must be overridable rather than hardcoded."""
     import importlib.util
     import sys
 
@@ -152,5 +152,8 @@ def test_stage1_sets_caption_message_weight():
         spec.loader.exec_module(mod)
     except SystemExit:
         pass
+    assert mod.CAPTION_MESSAGE_WEIGHT == 1.25
     src = open("src/scripts/train/Molmo2-Stage1.py").read()
-    assert "message_weight=1.25" in src
+    # the value must reach the dataset config through the override-readable name, not a literal
+    assert "message_weight=caption_message_weight" in src
+    assert "caption_message_weight" in src
