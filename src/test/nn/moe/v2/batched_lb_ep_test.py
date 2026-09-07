@@ -148,6 +148,16 @@ def _run_batched_ep_parity(
             values = []
             torch.manual_seed(781 + step + rank)
             for micro, tokens in enumerate(candidate_batches if enabled else batches):
+                diagnostic_sync = os.environ.get("OLMOE3_PARITY_DIAGNOSTIC_SYNC", "0") == "1"
+                if diagnostic_sync and rank == 0:
+                    print(
+                        "EP_DIAGNOSTIC_FORWARD",
+                        step,
+                        enabled,
+                        micro,
+                        tuple(tokens.shape),
+                        flush=True,
+                    )
                 with tm.model.no_sync() if micro < len(sizes) - 1 else nullcontext():
                     out = tm.model(
                         tokens,
@@ -156,7 +166,13 @@ def _run_batched_ep_parity(
                         loss_div_factor=float(sequence * sum(sizes)),
                         z_loss_multiplier=1e-5,
                     )
+                    if diagnostic_sync:
+                        torch.cuda.synchronize()
+                        if rank == 0:
+                            print("EP_DIAGNOSTIC_BACKWARD", step, enabled, micro, flush=True)
                     out.loss.backward()
+                    if diagnostic_sync:
+                        torch.cuda.synchronize()
                     values.append(out.ce_loss.detach())
             tm.model.finalize_grad_reduce()
             losses.append(torch.stack(values))

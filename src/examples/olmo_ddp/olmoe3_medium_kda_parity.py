@@ -36,7 +36,10 @@ def main():
     root = Path(os.environ.get("RESULTS_DIR", "/results"))
     root.mkdir(parents=True, exist_ok=True)
     results = []
-    for batch, heads, label in [(2, 16, "medium-mb2"), (4, 8, "small-mb4")]:
+    shapes = [(2, 16, "medium-mb2"), (4, 8, "small-mb4")]
+    if os.environ.get("OLMOE3_KDA_MB3_DIAGNOSTIC", "0") == "1":
+        shapes = [(3, 16, "medium-mb3-first"), (2, 16, "medium-mb2"), (3, 16, "medium-mb3-revisit")]
+    for batch, heads, label in shapes:
         for strength in (0.1, 0.8):
             torch.manual_seed(12536)
             shape = (batch, 8192, heads, 128)
@@ -64,6 +67,7 @@ def main():
             )
 
             def execute(floor):
+                print("KDA_DIAGNOSTIC_CALL", label, strength, floor, flush=True)
                 support.MIN_CTAS = floor
                 supported, reason = is_supported(
                     q, v, use_qk_l2norm_in_kernel=True, use_gate_in_kernel=True
