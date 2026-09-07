@@ -1,7 +1,8 @@
 """Medium CBS trajectories with synchronous saves and audited full-state branching.
 
 The production setting is selected only after the systems qualification. This driver
-does not submit jobs, register uploader policies, or prune any checkpoint.
+does not submit jobs, register new uploader policies, or prune any checkpoint.
+It may raise an existing parent retention floor to protect the approved fork.
 """
 
 from __future__ import annotations
@@ -79,6 +80,11 @@ def atomic_json(path, value):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temporary, path)
+    fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def state_sample(trainer):
