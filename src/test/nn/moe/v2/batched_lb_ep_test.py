@@ -20,7 +20,7 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
+def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled, checkpoint_kda=False):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -42,11 +42,16 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
         "OLMO_PROFILE_LB_COUNT_BATCHED_EP",
     ):
         os.environ[key] = "0"
+    sequence, batch, micros = (8192, 4, 2) if checkpoint_kda else (256, 1, 8)
+    if checkpoint_kda:
+        from kernel_fun._common import support
+
+        support.MIN_CTAS = 128
     stacks = []
-    for _ in range(2):
+    for enabled in range(2):
         config = OLMoDDPTrainModuleConfig(
-            rank_microbatch_size=256,
-            max_sequence_length=256,
+            rank_microbatch_size=sequence * batch,
+            max_sequence_length=sequence,
             compile_model=compiled,
             dp_config=TransformerDataParallelConfig(
                 name=DataParallelType.ddp,
@@ -65,7 +70,22 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
                 compile=compiled,
             ),
         )
-        tm = config.build(_build_model(width, hidden, experts, n_layers=2), device=device)
+        if checkpoint_kda:
+            from examples.olmo_ddp.olmoe3_small_medium_models import build_model_config
+
+            model = build_model_config("medium", eos_token_id=0, vocab_size=256)
+            # Two real production-width KDA+latent-MoE blocks, not a full-model
+            # throughput test. Preserve private EP outputs and BF16/FP32 handling.
+            model.init_seed = 12536
+            model.n_layers = 2
+            model.block_overrides = {}
+            model.block.checkpoint_attn = bool(enabled)
+            model.block.ep.capacity_factor = 8.0  # Dropless parity fixture only.
+            model.validate()
+            model = model.build(init_device="meta")
+        else:
+            model = _build_model(width, hidden, experts, n_layers=2)
+        tm = config.build(model, device=device)
         assert dist.get_world_size(tm.ep_mp_group) == ep_degree
         assert dist.get_world_size(tm.ep_dp_group) == 8 // ep_degree
         stacks.append(tm)
@@ -92,22 +112,22 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
     compare_states()
     for step in range(3):
         torch.manual_seed(913 + step + rank)
-        batches = [torch.randint(1, 256, (1, 256), device=device) for _ in range(8)]
-        for batch in batches:
-            batch[:, 31::32] = 0
+        batches = [torch.randint(1, 256, (batch, sequence), device=device) for _ in range(micros)]
+        for tokens in batches:
+            tokens[:, 31::32] = 0
         losses = []
         for enabled, tm in enumerate(stacks):
-            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED"] = str(enabled)
-            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = str(enabled)
+            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED"] = str(enabled if not checkpoint_kda else 0)
+            os.environ["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = str(enabled if not checkpoint_kda else 0)
             values = []
             torch.manual_seed(781 + step + rank)
-            for micro, batch in enumerate(batches):
-                with tm.model.no_sync() if micro < 7 else nullcontext():
+            for micro, tokens in enumerate(batches):
+                with tm.model.no_sync() if micro < micros - 1 else nullcontext():
                     out = tm.model(
-                        batch,
-                        labels=batch.roll(-1, 1),
+                        tokens,
+                        labels=tokens.roll(-1, 1),
                         loss_reduction="sum",
-                        loss_div_factor=256.0 * 8,
+                        loss_div_factor=float(sequence * batch * micros),
                         z_loss_multiplier=1e-5,
                     )
                     out.loss.backward()
@@ -147,7 +167,8 @@ def _run_batched_ep_parity(ep_degree, width, hidden, experts, compiled):
                 block.routed_experts_router.reset_metrics()
         if rank == 0:
             print(
-                f"BATCHED_EP_PARITY ep={ep_degree} width={width} hidden={hidden} "
+                f"{'KDA_AC' if checkpoint_kda else 'BATCHED'}_EP_PARITY "
+                f"ep={ep_degree} width={width} hidden={hidden} "
                 f"experts={experts} compiled={compiled} update={step+1}: "
                 "CE, gradients, parameters, Adam states, counts and auxiliary metrics pass",
                 flush=True,
