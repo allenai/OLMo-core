@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sys
+from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -54,6 +55,36 @@ if VARIANT == "no-routing":
     base.FLAGS["OLMO_PROFILE_EMO_DOCUMENT_POOL"] = "0"
     base.FLAGS["OLMO_PROFILE_EMO_TOP16"] = "0"
 os.environ.update(base.FLAGS)
+
+# Memory candidates use the existing attention-only checkpoint hook. They never
+# recompute MoE routing/EP collectives or enable shared EP output buffers.
+CHECKPOINT_BLOCKS = []
+if VARIANT in ("optimized-ackda", "optimized-ackda-half"):
+    CHECKPOINT_BLOCKS = [i for i in range(24) if i not in (7, 15, 23)]
+    if VARIANT.endswith("-half"):
+        CHECKPOINT_BLOCKS = CHECKPOINT_BLOCKS[::2]
+original_model_config = base.model_config
+
+
+def model_config(common):
+    """Apply only selected existing KDA-sublayer recomputation hooks."""
+    model = original_model_config(common)
+    for index in CHECKPOINT_BLOCKS:
+        block = deepcopy(model.block_overrides.get(index, model.block))
+        block.checkpoint_attn = True
+        model.block_overrides[index] = block
+    if CHECKPOINT_BLOCKS:
+        assert (model.num_active_params, model.num_params) == (
+            base.EXPECTED_ACTIVE,
+            base.EXPECTED_TOTAL,
+        )
+    return model
+
+
+base.model_config = model_config
+base.SETTINGS["checkpoint_attention_blocks"] = CHECKPOINT_BLOCKS
+base.SETTINGS["metrics_collect_interval"] = 5 if VARIANT == "optimized-metrics5" else 1
+base.SETTINGS["nccl_protocol"] = "Simple" if VARIANT == "optimized-simple" else "auto"
 
 
 def family(name):
@@ -228,6 +259,7 @@ class PeakMemoryAudit(Callback):
 def trainer_config(common):
     """Attach diagnostics without changing model or normal optimizer arithmetic."""
     cfg = base.trainer_config(common)
+    cfg.metrics_collect_interval = base.SETTINGS["metrics_collect_interval"]
     # The original audit's geometry guards are still appropriate for EP8/PP1.
     # Override its reporting metadata separately below for non-MB2/batch16Mi tests.
     if DIAGNOSTIC:
@@ -242,6 +274,13 @@ def trainer_config(common):
         f"actual-batch:{BATCH}",
         f"diagnostic:{DIAGNOSTIC}",
     ]
+    cfg.callbacks["wandb"].notes = (
+        f"Locked medium PP1/EP8, variant {VARIANT}, MB{MB}, batch {BATCH}; "
+        f"KDA attention recompute blocks {CHECKPOINT_BLOCKS}; "
+        f"metrics interval {cfg.metrics_collect_interval}; "
+        f"NCCL protocol {base.SETTINGS['nccl_protocol']}. "
+        "BF16/FP32 unchanged, no shared EP outputs, no MoE recomputation, no FP8."
+    )
     return cfg
 
 
@@ -253,6 +292,9 @@ if __name__ == "__main__":
             max_sequence_length=8192,
         )
         model, tm = base.model_config(common), base.train_module_config(common)
+        assert [
+            i for i in range(24) if model.block_overrides.get(i, model.block).checkpoint_attn
+        ] == CHECKPOINT_BLOCKS
         assert (model.num_active_params, model.num_params) == (
             base.EXPECTED_ACTIVE,
             base.EXPECTED_TOTAL,

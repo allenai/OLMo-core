@@ -26,6 +26,7 @@ from olmoe3_medium_cbs_plan import (
     WORKSPACE,
     validate,
 )
+from olmoe3_medium_followup_plan import VARIANTS
 
 BUCKET = "allenai/olmo-checkpoint-uploader-pilot-20260902-jm01"
 UPLOADER = "01M1SDYA8S877VN54CJRN4RJZA"
@@ -160,6 +161,7 @@ def training_spec(template, run, *, commit, variant, mb, smoke=False):
             "OLMOE3_MEDIUM_FOLLOWUP": None,
             "OLMOE3_BEAKER_WORKSPACE": WORKSPACE,
             "OLMOE3_WANDB_PROJECT": "olmoe3-production-cbs",
+            "NCCL_PROTO": "Simple" if variant == "optimized-simple" else None,
         },
     )
     task["context"] = {"priority": "urgent", "minRuntime": "1h", "autoResume": False}
@@ -217,7 +219,7 @@ def main():
     parser.add_argument("--smoke-experiment")
     parser.add_argument(
         "--variant",
-        choices=["optimized", "no-wgrad", "no-rs", "no-kda", "no-routing", "core-only"],
+        choices=[v for v in VARIANTS if v != "baseline"],
         required=True,
     )
     parser.add_argument("--mb", choices=[2, 4], type=int, required=True)
@@ -231,6 +233,13 @@ def main():
     ):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert status(b.workload.get(args.config_gate)) == "STATUS_SUCCEEDED"
+        gate_spec = b.experiment.get_spec(b.workload.get(args.config_gate)).to_json()
+        assert {
+            v.get("value")
+            for t in gate_spec["tasks"]
+            for v in t["envVars"]
+            if v["name"] == "GIT_REF"
+        } == {commit}, "CBS config gate must match the exact source pin"
         assert status(b.workload.get(args.qualified_experiment)) == "STATUS_SUCCEEDED"
         template = b.experiment.get_spec(b.workload.get(args.qualified_experiment)).to_json()
         settings = {"commit": commit, "variant": args.variant, "mb": args.mb}

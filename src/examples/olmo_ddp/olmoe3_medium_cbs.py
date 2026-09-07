@@ -214,6 +214,7 @@ def trainer_config(common):
     """Use synchronous full checkpoints, no trainer pruning, and matched held-out evals."""
     cfg = base.base.build_trainer_config(common, "medium-cbs-128g", base.SYSTEM)
     cfg.no_checkpoints = cfg.no_evals = False
+    cfg.metrics_collect_interval = base.SETTINGS["metrics_collect_interval"]
     cfg.save_folder = str(RUN.root)
     cfg.work_dir = str(RUN.root / "work")
     cfg.save_overwrite = False

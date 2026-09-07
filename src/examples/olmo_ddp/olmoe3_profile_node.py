@@ -221,7 +221,7 @@ def main():
                 env["OLMOE3_MEDIUM_MB"] = str(mb)
                 env["OLMOE3_MEDIUM_BATCH"] = str(batch)
                 env["OLMOE3_MEDIUM_RUN_PREFIX"] = f"{run_name}-b{batch}"
-        if test_label == "simple":
+        if test_label == "simple" or test_label.startswith("optimized-simple"):
             env["NCCL_PROTO"] = "Simple"
         else:
             env.pop("NCCL_PROTO", None)

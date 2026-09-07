@@ -2,7 +2,19 @@
 
 import re
 
-VARIANTS = ("baseline", "optimized", "no-wgrad", "no-rs", "no-kda", "no-routing", "core-only")
+VARIANTS = (
+    "baseline",
+    "optimized",
+    "no-wgrad",
+    "no-rs",
+    "no-kda",
+    "no-routing",
+    "core-only",
+    "optimized-ackda",
+    "optimized-ackda-half",
+    "optimized-metrics5",
+    "optimized-simple",
+)
 
 
 def sample_offsets(size, limit=2048):
