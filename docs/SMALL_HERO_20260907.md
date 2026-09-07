@@ -116,3 +116,9 @@ model/training settings or safety checks are changed. Both smoke and eventual he
 specs inherit the exclusions. The failed controller stopped without submitting
 either hero. Its successor uses source-versioned validation/smoke names and the
 same private bucket and registrations; no checkpoints are deleted or overwritten.
+
+Replacement runtime pin: `171be9bef`. Controller `01M1Z16E1AHQ3QGR0YBXHR4S3F`
+is running; real-image configuration gate `01M1Z17RJYEV0EPF49B2AQN1EM` passed.
+Replacement smoke `01M1Z1AQSAGRZY6F3ZMC3S076Q` queued at22:55UTC, still64GPUs,
+urgent/allocated, both faulty hosts excluded. Hero runs remain unsubmitted pending
+the same save/restore and initialization/input-fingerprint gates.
