@@ -1589,12 +1589,14 @@ class OLMoDDPTrainModule(TrainModule):
                 )
             # Default-off PP1 experiment. The denominator above still counts all
             # original labels; no token is padded/dropped and no optimizer step is added.
-            splitter = (
-                split_batch_balanced
-                if os.environ.get("OLMO_PROFILE_BALANCED_MICROBATCH", "0") == "1"
-                else split_batch
-            )
-            micro_batches = splitter(batch, self.rank_microbatch_size // seq_len)
+            if os.environ.get("OLMO_PROFILE_BALANCED_MICROBATCH", "0") == "1":
+                micro_batches = split_batch_balanced(
+                    batch,
+                    self.rank_microbatch_size // seq_len,
+                    partition_unit_instances=int(os.environ["OLMO_PROFILE_BALANCED_MICROBATCH_UNIT"]),
+                )
+            else:
+                micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
             num_micro_batches = len(micro_batches)
 
             # Train one micro-batch at a time.

@@ -121,12 +121,14 @@ def _run_batched_ep_parity(
         if balanced:
             from olmo_core.data.utils import split_batch_balanced
 
-            sizes = [3] * 10 + [2] if step == 1 else [3, 3, 3, 3, 2, 2]
+            sizes = [3, 3, 3, 3, 2, 2] * (2 if step == 1 else 1)
             full = torch.randint(1, 256, (sum(sizes), sequence), device=device)
             full[:, 31::32] = 0
             batches = list(full.split(sizes, dim=0))  # Explicit reference partition.
             split = split_batch_balanced(
-                {"input_ids": full, "metadata": list(range(sum(sizes)))}, 3
+                {"input_ids": full, "metadata": list(range(sum(sizes)))},
+                3,
+                partition_unit_instances=16,
             )
             assert [p["input_ids"].shape[0] for p in split] == sizes
             assert sum([p["metadata"] for p in split], []) == list(range(sum(sizes)))

@@ -72,9 +72,15 @@ def split_batch(batch: Dict[str, Any], num_microbatch_instances: int) -> List[Di
 
 
 def split_batch_balanced(
-    batch: Dict[str, Any], max_microbatch_instances: int
+    batch: Dict[str, Any],
+    max_microbatch_instances: int,
+    *,
+    partition_unit_instances: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Use the fewest microbatches, balancing their sizes without padding or reordering.
+    """Balance microbatch sizes without padding or reordering.
+
+    If a partition unit is supplied, repeat the same balanced partition within
+    each unit. This preserves the microbatch-size mixture when batch size grows.
 
     This is an explicit experimental alternative to ``split_batch``. For example,
     sixteen instances with maximum three become [3, 3, 3, 3, 2, 2], avoiding a
@@ -85,9 +91,13 @@ def split_batch_balanced(
     count = batch["input_ids"].shape[0]
     if count < 1:
         raise ValueError("Cannot split an empty batch")
-    pieces = math.ceil(count / max_microbatch_instances)
-    size, extra = divmod(count, pieces)
-    sizes = [size + int(i < extra) for i in range(pieces)]
+    unit = count if partition_unit_instances is None else partition_unit_instances
+    if unit < 1 or count % unit:
+        raise ValueError("Batch must contain a positive integer number of partition units")
+    pieces_per_unit = math.ceil(unit / max_microbatch_instances)
+    size, extra = divmod(unit, pieces_per_unit)
+    sizes = [size + int(i < extra) for i in range(pieces_per_unit)] * (count // unit)
+    pieces = len(sizes)
     split = {}
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):

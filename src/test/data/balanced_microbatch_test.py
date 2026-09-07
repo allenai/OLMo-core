@@ -39,3 +39,15 @@ def test_balanced_batch_rejects_misaligned_metadata():
         split_batch_balanced(batch, 3)
     with pytest.raises(ValueError, match="positive"):
         split_batch_balanced(batch, 0)
+
+
+def test_fixed_partition_unit_preserves_cbs_microbatch_mixture():
+    for count in (16, 32, 64):
+        values = torch.arange(count * 7).reshape(count, 7)
+        result = split_batch_balanced({"input_ids": values}, 3, partition_unit_instances=16)
+        assert [p["input_ids"].shape[0] for p in result] == [3, 3, 3, 3, 2, 2] * (count // 16)
+        torch.testing.assert_close(
+            torch.cat([p["input_ids"] for p in result]), values, rtol=0, atol=0
+        )
+    with pytest.raises(ValueError, match="partition units"):
+        split_batch_balanced({"input_ids": torch.ones(17, 7)}, 3, partition_unit_instances=16)

@@ -73,6 +73,7 @@ if VARIANT == "no-routing":
     base.FLAGS["OLMO_PROFILE_EMO_TOP16"] = "0"
 BATCH_COUNTS = VARIANT in ("optimized-lb-batched", "optimized-lb-batched-metrics5")
 base.FLAGS["OLMO_PROFILE_BALANCED_MICROBATCH"] = "1" if MB == 3 else "0"
+base.FLAGS["OLMO_PROFILE_BALANCED_MICROBATCH_UNIT"] = "16" if MB == 3 else "0"
 base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED_EP"] = "1" if BATCH_COUNTS else "0"
 if BATCH_COUNTS:
     base.FLAGS["OLMO_PROFILE_LB_COUNT_BATCHED"] = "1"

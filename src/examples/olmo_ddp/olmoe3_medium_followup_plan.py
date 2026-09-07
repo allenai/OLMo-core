@@ -47,9 +47,8 @@ def microbatch_sequence_sizes(batch, gpus, maximum, sequence=8192):
         if count % maximum:
             raise ValueError("Ordinary probes require uniform microbatches")
         return [maximum] * (count // maximum)
-    pieces = (count + maximum - 1) // maximum
-    size, extra = divmod(count, pieces)
-    sizes = [size + int(i < extra) for i in range(pieces)]
-    if min(sizes) < 2:
-        raise ValueError("Balanced medium probe must not introduce the MB1 KDA fallback")
-    return sizes
+    if count % 16:
+        raise ValueError("Balanced medium probe needs 16-sequence units to avoid MB1 fallback")
+    # Keep exactly the same microbatch-size mixture when doubling the CBS batch;
+    # don't change the auxiliary-loss microbatch granularity as another variable.
+    return [3, 3, 3, 3, 2, 2] * (count // 16)

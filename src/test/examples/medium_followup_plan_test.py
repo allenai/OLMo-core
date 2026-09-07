@@ -95,9 +95,9 @@ def test_off_cadence_saves_cannot_evict_fork():
 
 def test_balanced_medium_geometry_preserves_exact_batches():
     assert microbatch_sequence_sizes(16_777_216, 128, 3) == [3, 3, 3, 3, 2, 2]
-    assert microbatch_sequence_sizes(33_554_432, 128, 3) == [3] * 10 + [2]
+    assert microbatch_sequence_sizes(33_554_432, 128, 3) == [3, 3, 3, 3, 2, 2] * 2
     for gpus in (64, 128):
-        for batch in (8_388_608, 16_777_216, 33_554_432):
+        for batch in (16_777_216, 33_554_432):
             sizes = microbatch_sequence_sizes(batch, gpus, 3)
             assert sum(sizes) * gpus * 8192 == batch
             assert min(sizes) >= 2 and max(sizes) <= 3
