@@ -55,7 +55,8 @@ def test_shared_token_horizon_and_fork_protection():
     assert 4000 in list(range(0, 6001, BASELINE.interval))[-BASELINE.keep :]
 
 
-def test_spec_preserves_secret_references_and_requires_128_gpus():
+@pytest.mark.parametrize("mb", [2, 3, 4])
+def test_spec_preserves_secret_references_and_requires_128_gpus(mb):
     template = {
         "version": "v2",
         "tasks": [
@@ -69,12 +70,14 @@ def test_spec_preserves_secret_references_and_requires_128_gpus():
             }
         ],
     }
-    spec = training_spec(template, BRANCH, commit="a" * 40, variant="optimized", mb=2)
+    spec = training_spec(template, BRANCH, commit="a" * 40, variant="optimized", mb=mb)
     task = spec["tasks"][0]
     env = {v["name"]: v for v in task["envVars"]}
     assert env["HF_TOKEN"] == {"name": "HF_TOKEN", "secret": "private-reference"}
     assert env["OLMOE3_MEDIUM_DIAGNOSTIC"]["value"] == "0"
     assert env["OLMOE3_MEDIUM_BATCH"]["value"] == str(BRANCH.batch)
+    assert env["OLMOE3_MEDIUM_MB"]["value"] == str(mb)
+    assert sum(microbatch_sequence_sizes(BRANCH.batch, 128, mb)) * 128 * 8192 == BRANCH.batch
     assert task["replicas"] * task["resources"]["gpuCount"] == 128
     assert task["context"]["priority"] == "urgent"
     assert task["context"]["minRuntime"] == "1h"

@@ -27,7 +27,7 @@ from olmoe3_medium_cbs_plan import (
     WORKSPACE,
     validate,
 )
-from olmoe3_medium_followup_plan import VARIANTS
+from olmoe3_medium_followup_plan import VARIANTS, microbatch_sequence_sizes
 
 BUCKET = "allenai/olmo-checkpoint-uploader-pilot-20260902-jm01"
 UPLOADER = "01M1SDYA8S877VN54CJRN4RJZA"
@@ -181,6 +181,9 @@ def preflight(beaker, runs):
 
 def training_spec(template, run, *, commit, variant, mb, smoke=False):
     """Keep the qualified sixteen-node hardware/environment and replace orchestration only."""
+    if mb not in (2, 3, 4):
+        raise ValueError(f"Unsupported medium CBS microbatch maximum: {mb}")
+    microbatch_sequence_sizes(run.batch, 128, mb)
     spec = copy.deepcopy(template)
     if len(spec["tasks"]) not in (1, 16):
         raise ValueError("Expected one replica spec or sixteen exported tasks")
@@ -275,7 +278,7 @@ def main():
         choices=[v for v in VARIANTS if v != "baseline"],
         required=True,
     )
-    parser.add_argument("--mb", choices=[2, 4], type=int, required=True)
+    parser.add_argument("--mb", choices=[2, 3, 4], type=int, required=True)
     args = parser.parse_args()
     commit = os.environ["GIT_REF"]
     assert MOUNT.is_mount()
