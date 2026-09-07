@@ -1,0 +1,78 @@
+"""CPU-only invariants for diagnostic samples and the approved medium CBS fork."""
+
+import math
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[2] / "examples/olmo_ddp"))
+
+from olmoe3_medium_cbs_control import replace_env, training_spec
+from olmoe3_medium_cbs_plan import (
+    BASELINE,
+    BRANCH,
+    FORK_TOKENS,
+    TARGET_TOKENS,
+    validate,
+)
+from olmoe3_medium_followup_plan import VARIANTS, parse_test, sample_offsets
+
+
+@pytest.mark.parametrize("size", [0, 1, 2, 128, 2048, 2049, 2**24, 2**24 + 1, 37_748_736, 10**12])
+def test_exact_sample_bounds(size):
+    offsets = sample_offsets(size)
+    assert len(offsets) == min(size, 2048)
+    assert len(set(offsets)) == len(offsets)
+    assert offsets == sorted(offsets)
+    assert all(0 <= i < size for i in offsets)
+    if size:
+        assert offsets[0] == 0 and offsets[-1] == size - 1
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_geometry_names(variant):
+    assert parse_test(f"{variant}-mb4-b16mi") == (variant, 4, 16_777_216)
+    assert parse_test(variant) == (variant, None, None)
+    with pytest.raises(ValueError):
+        parse_test(f"{variant}-mb8-b16mi")
+
+
+def test_shared_token_horizon_and_fork_protection():
+    validate()
+    assert TARGET_TOKENS == 100_663_296_000
+    assert FORK_TOKENS == 67_108_864_000
+    assert BASELINE.tokens_at(4000) == BRANCH.tokens_at(4000)
+    assert BASELINE.tokens_at(6000) == BRANCH.tokens_at(5000) == TARGET_TOKENS
+    assert BRANCH.tokens_at(4250) == BASELINE.tokens_at(4500)
+    assert math.isclose(BRANCH.lr, BASELINE.lr * math.sqrt(2), rel_tol=1e-15)
+    assert 4000 in list(range(0, 6001, BASELINE.interval))[-BASELINE.keep :]
+
+
+def test_spec_preserves_secret_references_and_requires_128_gpus():
+    template = {
+        "version": "v2",
+        "tasks": [
+            {
+                "name": "old",
+                "resources": {"gpuCount": 8},
+                "envVars": [
+                    {"name": "HF_TOKEN", "secret": "private-reference"},
+                    {"name": "OLMOE3_MEDIUM_DIAGNOSTIC", "value": "1"},
+                ],
+            }
+        ],
+    }
+    spec = training_spec(template, BRANCH, commit="a" * 40, variant="optimized", mb=2)
+    task = spec["tasks"][0]
+    env = {v["name"]: v for v in task["envVars"]}
+    assert env["HF_TOKEN"] == {"name": "HF_TOKEN", "secret": "private-reference"}
+    assert env["OLMOE3_MEDIUM_DIAGNOSTIC"]["value"] == "0"
+    assert env["OLMOE3_MEDIUM_BATCH"]["value"] == str(BRANCH.batch)
+    assert task["replicas"] * task["resources"]["gpuCount"] == 128
+    assert task["context"]["priority"] == "urgent"
+    assert task["context"]["minRuntime"] == "1h"
+    assert task["result"]["path"] == "/noop-results"
+    assert template["tasks"][0]["name"] == "old"
+    replace_env(task, {"HF_TOKEN": None})
+    assert not any(v["name"] == "HF_TOKEN" for v in task["envVars"])
