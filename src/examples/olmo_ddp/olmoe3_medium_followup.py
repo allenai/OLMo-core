@@ -10,10 +10,9 @@ from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 
-VARIANT = os.environ.get("OLMOE3_DEEP_PROFILE_TEST", "optimized")
-VARIANTS = ("baseline", "optimized", "no-wgrad", "no-rs", "no-kda", "no-routing", "core-only")
-if VARIANT not in VARIANTS:
-    raise ValueError(VARIANT)
+from olmoe3_medium_followup_plan import parse_test
+
+VARIANT, TEST_MB, TEST_BATCH = parse_test(os.environ.get("OLMOE3_DEEP_PROFILE_TEST", "optimized"))
 os.environ["OLMOE3_DEEP_PROFILE_TEST"] = "baseline" if VARIANT == "baseline" else "optimized"
 
 import olmoe3_medium_deep_profile as base
@@ -25,8 +24,8 @@ from olmo_core.internal.experiment import build_config, main
 from olmo_core.train.callbacks import Callback
 
 DIAGNOSTIC = os.environ.get("OLMOE3_MEDIUM_DIAGNOSTIC", "0") == "1"
-MB = int(os.environ.get("OLMOE3_MEDIUM_MB", "2"))
-BATCH = int(os.environ.get("OLMOE3_MEDIUM_BATCH", "16777216"))
+MB = TEST_MB or int(os.environ.get("OLMOE3_MEDIUM_MB", "2"))
+BATCH = TEST_BATCH or int(os.environ.get("OLMOE3_MEDIUM_BATCH", "16777216"))
 if MB not in (1, 2, 4) or BATCH not in (8388608, 16777216, 33554432):
     raise ValueError((MB, BATCH))
 base.TEST = VARIANT
@@ -223,7 +222,9 @@ def trainer_config(common):
     if DIAGNOSTIC:
         cfg.add_callback("gradient_audit", GradientAudit(output_dir=common.save_folder))
     cfg.add_callback("full_run_memory", PeakMemoryAudit(output_dir=common.save_folder))
-    cfg.callbacks["wandb"].tags += [
+    cfg.callbacks["wandb"].tags = [
+        t for t in cfg.callbacks["wandb"].tags if t not in ("mb2", "16mi")
+    ] + [
         "medium-followup",
         f"variant:{VARIANT}",
         f"actual-mb:{MB}",

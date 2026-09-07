@@ -211,6 +211,16 @@ def main():
             ),
             OLMO_PROFILE_DDP_BUCKET_SUMMARY="1",
         )
+        if medium and os.environ.get("OLMOE3_MEDIUM_FOLLOWUP", "0") == "1":
+            from olmoe3_medium_followup_plan import parse_test
+
+            _, mb, batch = parse_test(test_label)
+            if mb is not None:
+                # Same model fingerprint across geometries; batch fingerprints are
+                # compared only within matching global token batches.
+                env["OLMOE3_MEDIUM_MB"] = str(mb)
+                env["OLMOE3_MEDIUM_BATCH"] = str(batch)
+                env["OLMOE3_MEDIUM_RUN_PREFIX"] = f"{run_name}-b{batch}"
         if test_label == "simple":
             env["NCCL_PROTO"] = "Simple"
         else:
