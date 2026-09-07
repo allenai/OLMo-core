@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -100,8 +101,6 @@ def preflight(beaker, runs):
 
     validate()
     assert MOUNT.is_mount(), "Checkpoint mount missing; refuse container overlay writes"
-    fs = os.statvfs(MOUNT)
-    free = fs.f_bavail * fs.f_frsize
     # Full no-deletion baseline+child+smoke footprint is approximately 12 TB.
     # On controller restart, already-written campaign checkpoints are part of
     # that budget, not an additional 12 TB requirement. Count only ordinary
@@ -121,11 +120,19 @@ def preflight(beaker, runs):
                 continue
             for current, dirs, files in os.walk(directory, followlinks=False):
                 dirs[:] = [d for d in dirs if not (Path(current) / d).is_symlink()]
-                occupied += sum(
-                    (Path(current) / f).stat().st_size
-                    for f in files
-                    if not (Path(current) / f).is_symlink()
-                )
+                for filename in files:
+                    try:
+                        info = (Path(current) / filename).lstat()
+                    except FileNotFoundError:
+                        # The authorized uploader may remove a safe checkpoint
+                        # during this read-only scan. Missing files earn no credit.
+                        continue
+                    if stat.S_ISREG(info.st_mode):
+                        occupied += info.st_size
+    # Read free space AFTER accounting: don't count newly written bytes both as
+    # free space from an earlier snapshot and as already-occupied campaign data.
+    fs = os.statvfs(MOUNT)
+    free = fs.f_bavail * fs.f_frsize
     required_free = max(1_000_000_000_000, 12_000_000_000_000 - occupied)
     assert free > required_free, f"Insufficient medium staging capacity: {free} < {required_free}"
     assert status(beaker.workload.get(UPLOADER)) == "STATUS_RUNNING", "Uploader is not running"
