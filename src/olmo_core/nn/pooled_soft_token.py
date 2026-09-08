@@ -302,7 +302,9 @@ def compact_pooled_rows(
     )
 
 
-def add_soft_len_bias(attn_bias: torch.Tensor, cb: CompactedBatch) -> torch.Tensor:
+def add_soft_len_bias(
+    attn_bias: torch.Tensor, cb: CompactedBatch, scale: float = 1.0, extra: float = 0.0
+) -> torch.Tensor:
     """
     Add ``+log(doc_len)`` to every pooled slot's attention logit (the "log-mass" trick of
     :class:`~olmo_core.nn.attention.pooled_doc_kv.PooledDocKVAttention`, applied to soft tokens):
@@ -313,6 +315,8 @@ def add_soft_len_bias(attn_bias: torch.Tensor, cb: CompactedBatch) -> torch.Tens
 
     :param attn_bias: ``(B, 1, T2, T2)`` additive bias from :func:`build_position_causal_bias`.
     :param cb: The compacted batch (``soft_rows`` / ``soft_cols`` / ``soft_log_len``).
+    :param scale: Multiplier on ``log(doc_len)`` (1 = the log-mass trick, 0 = constant only).
+    :param extra: Constant added to every slot's logit on top (a calibration offset ``c``).
 
     :returns: The bias with the per-column slot term added (broadcast over queries).
     """
@@ -320,9 +324,9 @@ def add_soft_len_bias(attn_bias: torch.Tensor, cb: CompactedBatch) -> torch.Tens
         return attn_bias
     B, _, _, T2 = attn_bias.shape
     col = torch.zeros((B, 1, 1, T2), dtype=attn_bias.dtype, device=attn_bias.device)
-    col[cb.soft_rows.to(attn_bias.device), 0, 0, cb.soft_cols.to(attn_bias.device)] = cb.soft_log_len.to(
-        attn_bias.device, attn_bias.dtype
-    )
+    col[cb.soft_rows.to(attn_bias.device), 0, 0, cb.soft_cols.to(attn_bias.device)] = (
+        scale * cb.soft_log_len + extra
+    ).to(attn_bias.device, attn_bias.dtype)
     return attn_bias + col
 
 
