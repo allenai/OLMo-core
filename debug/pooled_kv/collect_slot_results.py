@@ -49,11 +49,11 @@ SOURCES = [
     ("horton", "contradiction", "32k", "s5 2k-trained 4B (local)", "slot", "/net/horton/data/prasann/slot_probe/contra_s5_32768.log"),
     ("horton", "contradiction", "8k", "s5 2k-trained 4B (local)", "slot", "/net/horton/data/prasann/slot_probe/contra_s5_8192.log"),
     ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "slot", "01M214G6XMJ62A91BA5ZT4H1PR"),
-    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "oracle", "01M214HM4JVG0ZZPVAG31H49PC"),
-    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "ceiling", "01M214JD2WPKVCJE24P70JR840"),
-    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "slot", "01M214K4PVZYN3MMW7B148PF1G"),
-    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "oracle", "01M214KWQ0MRG7KKJ9GMJ8EDWV"),
-    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "ceiling", "01M214MQWFAQFA008E7TWZ69BT"),
+    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "oracle", "01M217TQZECQXZGBTFJZ712QMZ"),
+    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "ceiling", "01M217VR74HJXMAN3TCN0QJS4E"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "slot", "01M217WJGYH236Q6X16JPB1NA8"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "oracle", "01M217XGKD91751NSBNNMN3J84"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "ceiling", "01M217YAYERS22875JPFWY4PMQ"),
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "pooledkv", "01M215860C2NMTS9A7BBVSENZ0"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "pooledkv", "01M2158X5K2VRJZ45MM28R6S6S"),
     ("beaker", "nq", "32k", "dense 48M (ladder)", "pooledkv", "01M21658V40RG6S2DW1B2CGC0W"),
@@ -63,6 +63,10 @@ SOURCES = [
     ("beaker", "nq", "32k", "dense 48M (ladder)", "policy", "01M2185V4XWRQWH27XAQ0ZKSX4"),
     ("beaker", "outlier", "32k", "dense 160M (ladder)", "policy", "01M2187549JW0XYXQAP3P4V46N"),
     ("beaker", "nq", "32k", "dense 48M (ladder)", "policy-hardneg", "01M218SJE5KETF99DAND6GR5EV"),
+    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "gdn-nowrite", "01M218XKAHWSBCBJ34AC07MD7T"),
+    ("beaker", "oolong", "32k", "dense 80M (ladder)", "gdn-nowrite", "01M218YDV9CGGRAHY4VNQC1H7Q"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "gdn-nowrite", "01M218Z99QR0FQVS9RYEYD1PN8"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "gdn-nowrite", "01M21903R27BPJZF2KRPVXPZF3"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
@@ -113,6 +117,8 @@ def classify(name):
     if "oracle meanKV" in n:
         bias = n.split("oracle meanKV")[1].strip() or "no-bias"
         return "oracle mean K/V slot", keep, G, bias, True
+    if "gdn-nowrite" in n:
+        return "soft token, attention-only (no GDN write)", keep, G, "no-bias", False
     if n.startswith("pooledKV"):
         bias = n.split()[-1]
         return "pooled K/V attention (all tokens kept, GDN intact)", keep, G, bias, True
