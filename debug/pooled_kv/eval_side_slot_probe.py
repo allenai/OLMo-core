@@ -115,6 +115,7 @@ def main():
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--keeps", default="0.3333,0.1667,0.0833,0")
     ap.add_argument("--extras", default="-2,-1,1,2", help="constant offsets c tried on top of +log L")
+    ap.add_argument("--consts", default="-4,-2,-1,1", help="pure constant slot biases c (no log L term): is the optimum below zero?")
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
@@ -150,6 +151,8 @@ def main():
         for c in extras:
             configs.append((f"soft k={k:.3f} +logL{c:+.0f}", k, (True, 1.0, c)))
         configs.append((f"soft k={k:.3f} const=mean logL", k, (True, 0.0, float(np.log(45.0)))))
+        for c in [float(c) for c in a.consts.split(",") if c]:
+            configs.append((f"soft k={k:.3f} const{c:+.0f}", k, (True, 0.0, c)))
 
     res = {name: {"ce": [], "top1": [], "kl": [], "correct": [], "compaction": [], "sec": []} for name, _, _ in configs}
     full_cache = {}
