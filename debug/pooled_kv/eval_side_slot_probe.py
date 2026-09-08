@@ -31,6 +31,7 @@ import torch.nn.functional as F
 from olmo_core.data.document_chunk_landmark import RESERVED_IDS
 from olmo_core.distributed.checkpoint import load_model_and_optim_state
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.attention.chunked_mask import build_chunk_ids_from_tokens
 from olmo_core.nn.attention.pooled_doc_kv import PooledDocKeepHolder, make_fingerprint_keep_docs_fn
 from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import TransformerConfig
@@ -109,6 +110,41 @@ def convert(task, jsonl, rows, out_dir):
     subprocess.run(cmd, check=True, env=dict(os.environ, PYTHONPATH="src", TOKENIZERS_PARALLELISM="false"))
 
 
+def policy_keep_mask(x, cid, gold, frac, policy, seed=0):
+    """(1, n_docs) bool: gold docs plus a fraction ``frac`` of the others chosen by ``policy``."""
+    n_docs = int(cid.max()) + 1
+    non_gold = [d for d in range(n_docs) if not bool(gold[d]) and int((cid == d).sum()) > 0]
+    k = int(round(frac * len(non_gold)))
+    if policy == "random":
+        g = torch.Generator().manual_seed(seed)
+        order = torch.randperm(len(non_gold), generator=g).tolist()
+        chosen = [non_gold[i] for i in order[:k]]
+    else:
+        last_doc_end = int((cid >= 0).nonzero(as_tuple=True)[0].max()) if int((cid >= 0).sum()) else -1
+        q_tokens = set(x[0, last_doc_end + 1:].tolist())  # question + answer region (FREE tokens after the docs)
+        scores = []
+        for d in non_gold:
+            toks = x[0, cid == d].tolist()
+            if policy == "overlap":
+                st = set(toks); scores.append(len(st & q_tokens) / max(1, len(st)))
+            elif policy == "length":
+                scores.append(float(len(toks)))
+            elif policy == "short":
+                scores.append(-float(len(toks)))
+            elif policy == "first":
+                scores.append(-float(int((cid == d).nonzero(as_tuple=True)[0][0])))
+            elif policy == "last":
+                scores.append(float(int((cid == d).nonzero(as_tuple=True)[0][0])))
+            else:
+                raise ValueError(policy)
+        order = sorted(range(len(non_gold)), key=lambda i: -scores[i])
+        chosen = [non_gold[i] for i in order[:k]]
+    mask = gold.clone().bool()
+    for d in chosen:
+        mask[d] = True
+    return mask[None]
+
+
 def load_rows(shard, n_rows):
     ids_f = sorted(glob.glob(f"{shard}/token_ids_part_*.npy"))[0]
     mask_f = sorted(glob.glob(f"{shard}/labels_mask_*.npy"))[0]
@@ -137,6 +173,9 @@ def main():
     ap.add_argument("--keeps", default="0.3333,0.1667,0.0833,0")
     ap.add_argument("--extras", default="-2,-1,1,2", help="constant offsets c tried on top of +log L")
     ap.add_argument("--consts", default="-4,-2,-1,1", help="pure constant slot biases c (no log L term): is the optimum below zero?")
+    ap.add_argument("--policies", default="random", help="comma list of keep policies: random | overlap (top-k non-gold docs by token "
+                    "overlap with the question) | length (longest) | short (shortest) | first (earliest) | last (latest)")
+    ap.add_argument("--biases", default="all", help="'all' = the full bias sweep; 'none' = only the unbiased soft token per policy/keep")
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
@@ -165,15 +204,20 @@ def main():
     gold_table = json.load(open(f"{shard}/gold_fingerprints.json")) if a.task in GOLD_TASKS else None
     keeps = [float(k) for k in a.keeps.split(",")]
     extras = [float(c) for c in a.extras.split(",")]
+    policies = a.policies.split(",")
     configs = [("full", None, None)]
-    for k in keeps:
-        configs.append((f"soft k={k:.3f} no-bias", k, (False, 1.0, 0.0)))
-        configs.append((f"soft k={k:.3f} +logL", k, (True, 1.0, 0.0)))
-        for c in extras:
-            configs.append((f"soft k={k:.3f} +logL{c:+.0f}", k, (True, 1.0, c)))
-        configs.append((f"soft k={k:.3f} const=mean logL", k, (True, 0.0, float(np.log(45.0)))))
-        for c in [float(c) for c in a.consts.split(",") if c]:
-            configs.append((f"soft k={k:.3f} const{c:+.0f}", k, (True, 0.0, c)))
+    for pol in policies:
+        tag = "" if pol == "random" else f" policy={pol}"
+        for k in keeps:
+            configs.append((f"soft k={k:.3f}{tag} no-bias", (k, pol), (False, 1.0, 0.0)))
+            if a.biases == "none":
+                continue
+            configs.append((f"soft k={k:.3f}{tag} +logL", (k, pol), (True, 1.0, 0.0)))
+            for c in extras:
+                configs.append((f"soft k={k:.3f}{tag} +logL{c:+.0f}", (k, pol), (True, 1.0, c)))
+            configs.append((f"soft k={k:.3f}{tag} const=mean logL", (k, pol), (True, 0.0, float(np.log(45.0)))))
+            for c in [float(c) for c in a.consts.split(",") if c]:
+                configs.append((f"soft k={k:.3f}{tag} const{c:+.0f}", (k, pol), (True, 0.0, c)))
 
     res = {name: {"ce": [], "top1": [], "kl": [], "correct": [], "compaction": [], "sec": []} for name, _, _ in configs}
     full_cache = {}
@@ -183,8 +227,20 @@ def main():
         pred_pos = ans_pos - 1  # logits predicting them
         targets = x[0, ans_pos]
         keep_cache = {}
+        cid_row = build_chunk_ids_from_tokens(x.cpu(), doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end, eos_id=IDS.eos, mode="chunked")[0]
+        gold_row = None
+        if a.task in GOLD_TASKS:
+            gold_fn = make_fingerprint_keep_docs_fn(gold_table, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end, eos_id=IDS.eos,
+                                                    n_random_frac=0.0, mode="gold_plus_random", seed=a.seed)
+            gold_row = gold_fn(x.cpu())[0].bool()
+        else:
+            gold_row = torch.zeros(int(cid_row.max()) + 1, dtype=torch.bool)
         for name, keep, bias in configs:
             t_cfg = time.time()
+            if keep is not None and isinstance(keep, tuple):
+                keep, pol = keep
+            else:
+                pol = "random"
             if keep is None:
                 model.eval()
                 # logits only at the answer-predicting positions (a full 34k x 248k logit tensor
