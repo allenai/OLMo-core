@@ -517,3 +517,52 @@ reliably reversible -> `validate_attention_math` must run LAST.
 pooledkv random_only (gold-blind control), optionally `--pooled-no-len-bias`. Score all arms with
 the standard FULL-attention eval path (that's the point — no special eval). Compare vs the dense
 baseline at matched tokens; also worth logging achieved step time vs the full arm at 40960.
+
+## Eval-side slot probe (2026-09-08): which slot construction reproduces a DENSE-trained model?
+
+Prasann: hold a model trained to high accuracy with dense attention fixed, run held-out rows with
+soft tokens under different slot constructions, and take whichever is closest to full attention as
+the training-time construction. `debug/pooled_kv/eval_side_slot_probe.py` (mean-embedding soft
+token, identity projector, detached; slot logit bias in {none, +log L, +log L + c, constant c}) and
+`debug/pooled_kv/oracle_meankv_probe.py` (the dense forward's own per-layer mean K/V injected at
+the slot columns of every attention layer, ± log L: the upper bound for a mean slot independent of
+error accumulating through the stack). Qwen3.5-4B ladder checkpoints (dense, largest budget), 24
+held-out 32k rows per task, metric = answer-token CE (also top-1 agreement with full, KL).
+
+**Slot logit calibration is task-dependent, and +log L is wrong for 3 of 4 tasks** (24 rows,
+contradiction / nq; 16 rows outlier / oolong at the time of writing; answer CE):
+
+| task, keep | full | no bias | const −2 | +log L −2 | +log L | +log L +2 |
+|---|---|---|---|---|---|---|
+| contradiction 1/3 | 0.042 | 0.109 | 0.106 | 0.125 | 0.192 | 0.626 |
+| contradiction 1/6 | | 0.160 | 0.161 | 0.202 | 0.388 | 0.978 |
+| contradiction 1/12 | | 0.377 | 0.372 | 0.445 | 0.791 | 1.116 |
+| nq 1/3 | ~0.1 | ~0.92 | 0.918 | — | ~1.0 | 1.192 |
+| nq 1/6 | | 1.139 | 1.139 | 1.153 | 1.149 | 1.224 |
+| outlier 1/6 (16 rows) | ~1.0 | 1.710 | 1.682 | 2.028 | 2.535 | 2.855 |
+| oolong 1/6 (16 rows) | ~0.5 | 0.928 | 0.931 | 0.891 | 0.857 | **0.691** |
+| oolong 1/12 | | 1.124 | 1.125 | 1.021 | 0.851 | **0.760** |
+
+Retrieval-style tasks (contradiction, nq, outlier) want the slot at one token's mass or less (the
+optimum is at 0 to −2 nats; the local 2k-trained checkpoint put it at +1..+2 at keep 1/3); the full
+log L roughly doubles the gap on contradiction and costs ~0.8 nats on outlier; nq is nearly flat.
+Oolong (aggregation over every line) wants MORE than log L: mixing real lines with light slots
+biases the count toward the real subset (keep 1/3 unbiased 2.27 vs everything pooled 0.92 on row 1),
+and +log L +2 recovers most of it. The one-size +log L training arms launched 2026-09-08 morning
+(`fs35s4bkvbias-*kvl*`) are therefore mis-calibrated for contradiction (predicted worse than
+no-bias) and under-corrected for oolong.
+
+**Oracle mean-KV (first 2 rows, contradiction / nq): the dense forward's own per-layer mean K/V is
+NOT better than the mean-embedding token, and log L does not help it either** — contradiction
+k=1/3: oracle+log L 0.143, oracle no-bias 0.123, soft no-bias 0.105; k=1/12: 0.459 / 0.431 / 0.378;
+nq k=1/3: 1.098 / 1.072 / 1.032. So the loss at a given keep is the mean-pooling itself (the
+Jensen gap the mechanical study measured), not error accumulating from the input embedding through
+the stack — on the attention side. Caveat: on the hybrid only the 8 attention layers take slots;
+the 24 GDN layers still see the soft token's hidden state, so this bounds the attention-side error
+only; a pure-attention (Qwen3) dense checkpoint would settle the GDN share (none is local yet).
+
+Speed: the probe scores logits only at answer positions, ~1 s per full forward and 0.1–0.4 s per
+slot configuration per row on an H100/H200; 26–30 configurations x 24 rows ≈ 5–10 min. Local loop:
+model-only bf16 copies of the dense ladder checkpoints staged weka→S3→sneetches `/data/prasann/dense_ckpts/`
+(`debug/pooled_kv/transfer_dense_ckpts_gantry.sh`); held-out rows tokenized under
+`/scratch/users/prasann/slot_probe/`; launcher `run_sneetches.sbatch` there.
