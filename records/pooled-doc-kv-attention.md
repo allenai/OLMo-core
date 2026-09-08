@@ -726,3 +726,28 @@ the probe's construction on real contradiction/oolong rows (5226 / 17074 header 
 The neighbour-run keep policy is not yet in the trainer's keep-set hook
 (`make_fingerprint_keep_docs_fn` modes) — add a `gold_plus_random_runs` mode if the 11x arm is
 wanted.
+
+### Cheaper headers (2026-09-08 ~15:00, Prasann: "use fewer header tokens / headers on fewer docs")
+
+`--prefix-real` specs: `stopK-content` (drop the boilerplate tokens shared by >90% of headers,
+keep digits/names), `stopK-lastN`, `firstN` (boundary only), `@f` (headers on a random fraction
+f of documents). Sneetches rows, 24 each.
+
+**Contradiction (full 0.071):** without the neighbour policy every cheaper header fails —
+content-only `N` 0.165 / 0.299 (keep 0 / 1/36), last-2 `N:` 0.29 / 0.42, boundary `\n\n`
+0.27 / 0.40, `\n\nClaim` 0.24 / 0.28, full headers on 50% of docs 0.15 / 0.11, on 25%
+0.36 / 0.30. The successor's *whole* header `\n\nClaim N+1:` after a gold body is what the
+dense model needs. With the leak-free neighbour runs the header is redundant: runs + any of
+those cheap headers is at parity (0.035–0.067), and runs alone (v4) already were — keep 0:
+0.061 at compaction 0.054 (**18x**), keep 1/36: 0.069 at ~0.09 (**11x**). So the aggressive
+construction for contradiction is the keep-set policy, not the header. Wired in as
+`make_fingerprint_keep_docs_fn(neighbour_runs=K)` / `train_ctc_suite.py --st-neighbour-runs 1`
+(commit bb71f1f46; random budget divided by 2K+1, unit-tested).
+
+**Oolong (full 0.507):** the header is information, not boilerplate. Content-only
+(`Jul 18 2023 82097`, 12 tok/line) 0.757 / 0.718 (keep 1/3 / 1/12) vs full header 0.495 /
+0.604 — dropping labels and separators fuses day, year and user id into one digit run and breaks
+exactly the user-subset and date rows (row 8: 3.08 vs full 1.25; "which date most often" 1.12 vs
+0.22). `Date … User:` without the user digits 0.835; headers on 50% of lines 0.757 / 0.788 (the
+other half's ids are gone). Labels-dropped-separators-kept variants (`-sep` 18 tok, `-sep2`
+15 tok) are in v6 (`v6_oolong_32768.log`).
