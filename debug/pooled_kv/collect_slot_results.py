@@ -48,9 +48,15 @@ SOURCES = [
     ("sneetches", "oolong", "8k", "dense 80M (ladder)", "ceiling", "/net/sneetches/data/prasann/slot_probe/ceiling_oolong_8192.log"),
     ("horton", "contradiction", "32k", "s5 2k-trained 4B (local)", "slot", "/net/horton/data/prasann/slot_probe/contra_s5_32768.log"),
     ("horton", "contradiction", "8k", "s5 2k-trained 4B (local)", "slot", "/net/horton/data/prasann/slot_probe/contra_s5_8192.log"),
+    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "slot", "01M214G6XMJ62A91BA5ZT4H1PR"),
+    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "oracle", "01M214HM4JVG0ZZPVAG31H49PC"),
+    ("beaker", "contradiction", "32k", "Qwen3-4B dense 56M (pure attention)", "ceiling", "01M214JD2WPKVCJE24P70JR840"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "slot", "01M214K4PVZYN3MMW7B148PF1G"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "oracle", "01M214KWQ0MRG7KKJ9GMJ8EDWV"),
+    ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "ceiling", "01M214MQWFAQFA008E7TWZ69BT"),
 ]
 
-ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
+ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
 
 
 def read_text(src):
@@ -98,6 +104,9 @@ def classify(name):
     if "oracle meanKV" in n:
         bias = n.split("oracle meanKV")[1].strip() or "no-bias"
         return "oracle mean K/V slot", keep, G, bias, True
+    if n.startswith("pooledKV"):
+        bias = n.split()[-1]
+        return "pooled K/V attention (all tokens kept, GDN intact)", keep, G, bias, True
     if "meanEmb" in n:
         bias = n.split("meanEmb")[1].strip() or "no-bias"
         return "soft token (mean embedding)", keep, G, bias, False
