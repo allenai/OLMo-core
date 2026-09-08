@@ -3,9 +3,10 @@ import logging
 import math
 import os
 from collections import defaultdict
+from collections.abc import Iterable
 from contextlib import ExitStack
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 import torch
 
