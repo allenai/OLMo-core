@@ -51,14 +51,17 @@ window holds ``262144 / 64 * 63 = 258,048`` tokens of original content against t
    that ``LongDocStrategy.exclude`` drops nothing holds for the dense arms. Against a *content*
    capacity of 258,048 that same example does not fit, so the landmark packer drops it and every
    other example over 258,048, concentrated in the 128-256k band that these long-context arms exist
-   to measure. THE DROP COUNT IS NOT KNOWN YET: it must be read out of each arm's ``launch_prep``
-   log (grep ``LandmarkPackingInstanceSource packed`` and the drop warning, which
-   ``warn_drop_fraction`` below is set to fire on) and recorded in the README before any arm-vs-dense
-   long-rung delta is reported.
+   to measure. MEASURED 2026-09-08 (prep ``01M20FXCTYN403D1ARAS23JX5Q``): **41 of 1,030,564
+   documents, 0.004%** -- the same order as the 112-instance asymmetry the dense pair already
+   tolerates between its own arms. ``warn_drop_fraction`` below is set to 0.0 so this is always
+   re-reported if the data changes; see the README's prep readout.
 
 Both points push the same way -- the landmark arms see marginally less, and marginally shorter,
 data than the dense control -- so an interleaving deficit on the longest rungs is confounded with
 them, while an interleaving *advantage* there is not.
+
+The budget is comfortable against the packed count: the same prep packed 9,195 windows, i.e.
+2,298.8 steps per epoch at DP=4, so MAX_STEPS=2,240 is 0.974 of an epoch and no data repeats.
 """
 
 import os

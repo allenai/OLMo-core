@@ -4,13 +4,12 @@ SFT of each `cpt/interleaved/` Qwen3.5-4B arm on 75% the xlong5 2k→256k 5-task
 build) / 25% `allenai/Dolci-Instruct-SFT`, at a 262,144 landmark window. Beaker only, 2 nodes,
 `urgent`, `minRuntime=1h`.
 
-> [!WARNING]
-> **These configs have not been dry-run.** They were written against the branch but never executed:
-> `torch` publishes no macOS-x86_64 wheels at the pinned version, so `olmo_core` cannot be imported
-> on the machine they were authored on. Everything below is verified by reading and by static
-> checks (imports resolve; shared constants compared field-by-field against `sft_xlong256k/`).
-> Run the `dry_run` and `launch_prep` steps on a Linux box before launching anything — the
-> **Before you launch** checklist at the bottom lists what those runs still have to establish.
+> [!NOTE]
+> Validated on 2026-09-08 against commit `61e956ba`: `dry_run` passed for all three launchable arms
+> (each resolving its own CPT checkpoint, and each producing the correct 32-layer pattern with
+> `reg`/`sparse` in the right slots and every GDN slot left at `default`), and the shared `prep` job
+> completed. Measured numbers are in **Prep readout** below. `reg-last` remains unvalidated because
+> it has no CPT checkpoint.
 
 | Script | Arm | Layer layout over the 8 full-attention layers (3, 7, …, 31) | CPT base |
 |---|---|---|---|
@@ -83,21 +82,36 @@ Unresolved items, in the order they have to be settled:
    its 2026-08-31 relaunch (NCCL IB transport fault, not a config error), so
    `…/q35-4b-il-reglast-256k/step2385` does not exist. Its SFT arm is written and correct but
    **cannot run** until that CPT run completes. The other three arms are unblocked.
-2. **`dry_run` every arm** on Linux and diff the dumps pairwise: they must differ **only** in the
-   run name, the launch description, `trainer.load_path`, and the model's per-layer
-   `attn.sequence_mixer.layer_types`. Any other difference is a bug in this file.
-3. **`launch_prep` every arm** and record, per arm, the `MixingInstanceSource: NNB tokens` line, the
-   `LandmarkPackingInstanceSource packed N windows` line, and the long-document drop count.
-   `warn_drop_fraction` is set to `0.0` precisely so that drop is always logged. Put the numbers in
-   a table here — the drop count is **not** known yet, and no arm-vs-dense long-rung delta should be
-   reported before it is.
-4. **Confirm 2,240 steps is ≤ one epoch on the packed count.** The dense arms land at 8,971 windows
-   → 2,242.8 steps/epoch. The landmark packer will produce a different count; if it comes out under
-   ~8,960, these arms repeat data the dense control does not, and `MAX_STEPS` needs revisiting.
-5. **Memory.** Same untested corner as the dense pair — `shard_degree` is 4, so optimizer state
+2. **Memory.** Same untested corner as the dense pair — `shard_degree` is 4, so optimizer state
    spreads over 4 ranks instead of the legacy runs' 16, at unchanged per-rank activations. If an
    arm OOMs it will do so in the first few steps; the fix that preserves the experiment is 4 nodes
    at CP=8 (DP stays 4, so batch/LR/steps are unchanged).
+
+## Prep readout (measured 2026-09-08, Beaker `01M20FXCTYN403D1ARAS23JX5Q`)
+
+One prep job serves all arms: they share the data root, blend, weights, window and seed, and the
+packing cache is keyed by content under `get_work_dir(root_dir)`, not by run name.
+
+| | this family (landmark) | dense control (`qboth`) |
+|---|---|---|
+| packed windows | **9,195** | 8,971 |
+| steps per epoch at DP=4 | 2,298.8 | 2,242.8 |
+| epochs at the shared `MAX_STEPS` = 2,240 | **0.974** | 0.999 |
+| content tokens packed | 2.341B | — |
+| documents kept | 1,030,523 / 1,030,564 | — |
+| **documents dropped (over 258,048 content)** | **41 (0.004%)** | **0** |
+| non-content tokens per window (landmarks + block padding + tail) | 7,562.3 (2.88%) | — |
+
+Both open questions from the design come out benign:
+
+- **The long-tail drop is 41 documents**, not the larger loss the 262,072-vs-258,048 gap allowed for.
+  That is the same order as the 112-instance asymmetry the dense pair already tolerates between its
+  own arms, so it does not by itself confound an arm-vs-dense long-rung delta. It is still a
+  one-directional asymmetry concentrated in the long band — name it if a long-rung delta is small.
+- **2,240 steps stays inside one epoch** (0.974), so these arms repeat no data. The landmark packer
+  produced *more* windows than the dense one (9,195 vs 8,971) because landmark tokens and
+  block padding inflate each document — the ~1.56% content deficit per window is paid in extra
+  windows, and the budget being matched in window tokens is what leaves it at 0.974 of an epoch.
 
 ## Commands
 
