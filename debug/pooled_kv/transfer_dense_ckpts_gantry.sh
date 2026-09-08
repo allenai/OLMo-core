@@ -19,21 +19,39 @@ for NAME in $NAMES; do
   RUN=$(dirname $CK); OUT=/tmp/transfer/$NAME; mkdir -p $OUT
   echo "--- $NAME: $CK -> $OUT $(date +%T)"
   python - <<PY
-import json, torch, torch.distributed as dist, os
+import json, os, sys, torch, torch.distributed as dist, traceback
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.distributed.checkpoint import load_model_and_optim_state, save_model_and_optim_state
 os.environ["WORLD_SIZE"] = "1"
-dist.init_process_group("gloo", rank=0, world_size=1)
-run, out = "$RUN", "$OUT"
-cfg = json.load(open(run + "/config.json"))
-m = TransformerConfig.from_dict(cfg["model"]).build(init_device="cpu")
-load_model_and_optim_state("$CK", m)
-m = m.to(torch.bfloat16)
-save_model_and_optim_state(out + "/model_and_optim", m, save_overwrite=True)
-json.dump(cfg, open(out + "/config.json", "w"))
-print("resaved", out, sum(p.numel() for p in m.parameters()) / 1e9, "B params")
+try:
+    dist.init_process_group("gloo", rank=0, world_size=1)
+    run, out = "$RUN", "$OUT"
+    # config.json may live in the run dir directly, or one/two levels up when the
+    # checkpoint is nested under a step<N>/ subdir (e.g. <run>/step92/model_and_optim).
+    cfg_path = None
+    d = run
+    for _ in range(3):
+        cand = os.path.join(d, "config.json")
+        if os.path.exists(cand):
+            cfg_path = cand
+            break
+        d = os.path.dirname(d)
+    if cfg_path is None:
+        raise FileNotFoundError(f"no config.json found near {run} (searched up 2 levels)")
+    cfg = json.load(open(cfg_path))
+    m = TransformerConfig.from_dict(cfg["model"]).build(init_device="cpu")
+    load_model_and_optim_state("$CK", m)
+    m = m.to(torch.bfloat16)
+    save_model_and_optim_state(out + "/model_and_optim", m, save_overwrite=True)
+    json.dump(cfg, open(out + "/config.json", "w"))
+    print("resaved", out, sum(p.numel() for p in m.parameters()) / 1e9, "B params")
+except Exception:
+    print("!!! PYFAIL $NAME", flush=True)
+    traceback.print_exc()
+    sys.exit(1)
 PY
-  AWS_PROFILE=S3 aws s3 sync $OUT s3://ai2-llm/checkpoints/prasanns/_transfer/$NAME/ --only-show-errors && echo "SYNCED $NAME $(du -sh $OUT | cut -f1)"
+  if [ $? -ne 0 ]; then echo "!!! FAILED $NAME (python step)"; rm -rf $OUT; continue; fi
+  AWS_PROFILE=S3 aws s3 sync $OUT s3://ai2-llm/checkpoints/prasanns/_transfer/$NAME/ --only-show-errors && echo "SYNCED $NAME $(du -sh $OUT | cut -f1)" || echo "!!! FAILED $NAME (s3 sync)"
   rm -rf $OUT
 done
 echo TRANSFER_DONE
