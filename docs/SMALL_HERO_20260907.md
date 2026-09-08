@@ -99,6 +99,11 @@ budgets or zoom in as needed. Differences in architecture, active parameters,
 batch size and data mixture are called out; matching metric keys do not assert a
 byte-for-byte evaluation-harness match.
 
+The report uses the original wide (`fluid`) page layout with two charts per row.
+The builder reapplies this width on every update and verifies the persisted raw
+report specification: the Reports SDK currently drops width when loading a report
+into its public object, which otherwise silently restores the narrow default.
+
 Builder: `src/examples/olmo_ddp/olmoe3_small_hero_report_20260908.py`.
 Use isolated `wandb-workspaces` dependencies. `--output-dir <directory>` creates an
 inventory and validated specification without publishing; `--publish` creates or

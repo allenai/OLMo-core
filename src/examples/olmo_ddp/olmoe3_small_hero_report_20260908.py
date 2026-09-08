@@ -341,8 +341,12 @@ def main():
             width="fluid",
         )
     )
+    # Reports SDK _from_model currently drops spec.width and defaults to
+    # "readable". Reapply our wide layout on updates as well as initial creation.
+    report.width = "fluid"
     report.blocks = make_blocks(inv)
     model = report._to_model()
+    assert model.spec.width == "fluid"
     (args.output_dir / "report_spec.json").write_text(model.model_dump_json(indent=2) + "\n")
     grids = [b for b in report.blocks if isinstance(b, wr.PanelGrid)]
     assert all(p.max_runs_to_show >= len(inv["dense"]) + 2 for g in grids for p in g.panels)
@@ -368,7 +372,10 @@ def main():
             )
             + "\n"
         )
-        saved = wr.Report.from_url(report.url)
+        # Read the raw model: the public Report conversion loses spec.width.
+        saved_model = wr.Report.from_url(report.url, as_model=True)
+        assert saved_model.spec.width == "fluid"
+        saved = wr.Report._from_model(saved_model)
         assert len(saved.blocks) == len(report.blocks)
         print("REPORT_SAVED", report.url, flush=True)
 
