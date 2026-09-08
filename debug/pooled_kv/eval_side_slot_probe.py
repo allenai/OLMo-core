@@ -62,6 +62,18 @@ def install_gdn_nowrite_hook():
 _PREFIX_REAL = {"spec": "none", "stop_id": 25, "cap": 32}  # keep each pooled doc's header real: "stopK" = tokens after doc_start through the K-th stop_id
 
 
+def _parse_prefix_spec(spec):
+    """'stopK' | 'firstN' with optional '-content' (drop boilerplate tokens shared by >90% of
+    headers, keep ids/names/digits), '-lastN' (only the last N header tokens), '@f' (headers on a
+    random fraction f of documents only)."""
+    frac = 1.0
+    if "@" in spec:
+        spec, f = spec.split("@"); frac = float(f)
+    parts = spec.split("-")
+    base, mods = parts[0], parts[1:]
+    return base, mods, frac
+
+
 def install_prefix_real_patch():
     """Patch the chunk-id builder the compaction uses so the first tokens of every document (its
     header, e.g. ``\n\nClaim 269:`` for contradiction, ``Date: ... || User: ... || Instance:`` for
@@ -75,59 +87,52 @@ def install_prefix_real_patch():
         spec = _PREFIX_REAL["spec"]
         if spec == "none":
             return cid
-        k = int(spec[len("stop"):])
+        base, mods, frac = _parse_prefix_spec(spec)
         stop_id, cap = _PREFIX_REAL["stop_id"], _PREFIX_REAL["cap"]
         ids = input_ids if input_ids.dim() == 2 else input_ids[None]
         cid = cid.clone()
+        ds_id = kw.get("doc_start_id", args[0] if args else None)
         for b in range(ids.shape[0]):
             row = ids[b].tolist(); c = cid[b]
-            starts = (ids[b] == kw.get("doc_start_id", args[0] if args else None)).nonzero(as_tuple=True)[0].tolist()
+            starts = (ids[b] == ds_id).nonzero(as_tuple=True)[0].tolist()
+            spans = []  # (doc index, [positions]) of each header
             for st in starts:
-                seen, j = 0, st + 1
-                while j < len(row) and j < st + 1 + cap and int(c[j]) >= 0:
-                    if row[j] == stop_id:
-                        seen += 1
-                        if seen == k:
-                            break
-                    j += 1
-                c[st + 1:j + 1] = -1  # header FREE (doc_start marker stays with the doc)
+                if base.startswith("first"):
+                    n = int(base[len("first"):])
+                    j = st + n
+                    while j > st and (j >= len(row) or int(c[j]) < 0):
+                        j -= 1
+                else:
+                    k = int(base[len("stop"):])
+                    seen, j = 0, st + 1
+                    while j < len(row) and j < st + 1 + cap and int(c[j]) >= 0:
+                        if row[j] == stop_id:
+                            seen += 1
+                            if seen == k:
+                                break
+                        j += 1
+                    j = min(j, len(row) - 1)
+                spans.append(list(range(st + 1, j + 1)))
+            for m in mods:
+                if m.startswith("last"):
+                    n = int(m[len("last"):]); spans = [sp[-n:] for sp in spans]
+            if "content" in mods:  # drop tokens present in >90% of this row's headers (boilerplate)
+                from collections import Counter
+                cnt = Counter()
+                for sp in spans:
+                    cnt.update({row[p] for p in sp})
+                boiler = {t for t, n in cnt.items() if n > 0.9 * max(1, len(spans)) and not (15 <= t <= 24)}  # never drop digits
+                spans = [[p for p in sp if row[p] not in boiler] for sp in spans]
+            if frac < 1.0:
+                g = torch.Generator().manual_seed(_PREFIX_REAL.get("seed", 0) * 7919 + b)
+                on = torch.rand(len(spans), generator=g) < frac
+                spans = [sp for sp, o in zip(spans, on.tolist()) if o]
+            for sp in spans:
+                for p in sp:
+                    c[p] = -1  # header token FREE (doc_start marker stays with the doc)
         return cid
 
     tm.build_chunk_ids_from_tokens = patched
-    return orig
-
-
-_SLOT_POS = {"mode": "center"}  # RoPE position given to a pooled doc's slot: center (default) | start | end
-
-
-def install_slot_pos_patch():
-    """Patch compact_pooled_rows so each slot takes its doc's FIRST or LAST body position instead of
-    the centre (the compacted order is unchanged: all three lie strictly between the neighbours)."""
-    import olmo_core.nn.pooled_soft_token as ps
-
-    orig = ps.compact_pooled_rows
-
-    def patched(input_ids, labels, chunk_ids, keep_docs, **kw):
-        cb = orig(input_ids, labels, chunk_ids, keep_docs, **kw)
-        mode = _SLOT_POS["mode"]
-        if mode == "center" or cb.soft_rows.numel() == 0:
-            return cb
-        cid = chunk_ids.to(torch.long)
-        T = cid.shape[1]
-        pos = torch.arange(T, device=cid.device)
-        for b in range(cid.shape[0]):
-            sel = cb.soft_rows == b
-            if not sel.any():
-                continue
-            is_ctx = cid[b] >= 0
-            n_docs = keep_docs.shape[1]
-            first = torch.full((n_docs,), T, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amin", include_self=True)
-            last = torch.full((n_docs,), -1, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amax", include_self=True)
-            src = first if mode == "start" else last
-            cb.position_ids[b, cb.soft_cols[sel]] = src[cb.soft_docs[sel]].to(cb.position_ids.dtype)
-        return cb
-
-    ps.compact_pooled_rows = patched
     return orig
 
 
@@ -347,6 +352,7 @@ def main():
     prefixes = a.prefix_real.split(",")
     slot_positions = a.slot_pos.split(",")
     _PREFIX_REAL["stop_id"] = a.prefix_stop_id
+    _PREFIX_REAL["seed"] = a.seed
     if any(p != "none" for p in prefixes):
         install_prefix_real_patch()
     if any(p != "center" for p in slot_positions):
