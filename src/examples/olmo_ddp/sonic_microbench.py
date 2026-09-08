@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-from typing import Callable
+from collections.abc import Callable
 
 import torch
 
@@ -39,7 +39,9 @@ def _random_routing(T: int, E: int, K: int, device: torch.device):
     return indices.to(torch.int32), weights
 
 
-def _grouped_fn(experts: RoutedExperts, x: torch.Tensor, indices: torch.Tensor, weights: torch.Tensor):
+def _grouped_fn(
+    experts: RoutedExperts, x: torch.Tensor, indices: torch.Tensor, weights: torch.Tensor
+):
     T, K = indices.shape
     counts = torch.bincount(indices.reshape(-1).long(), minlength=experts.num_experts)
     if requires_host_side_split_sizes():
@@ -61,7 +63,9 @@ def _grouped_fn(experts: RoutedExperts, x: torch.Tensor, indices: torch.Tensor, 
     return fn
 
 
-def _sonic_fn(experts: RoutedExperts, x: torch.Tensor, indices: torch.Tensor, weights: torch.Tensor):
+def _sonic_fn(
+    experts: RoutedExperts, x: torch.Tensor, indices: torch.Tensor, weights: torch.Tensor
+):
     from olmo_core.nn.moe.v2.sonic import sonic_moe_forward
 
     def fn() -> torch.Tensor:
@@ -106,21 +110,23 @@ def bench(shape: tuple[int, ...], backend: str, warmup: int, iters: int, seed: i
     indices, weights = _random_routing(T, E, K, device)
     weights = weights.to(torch.bfloat16).requires_grad_(True)
 
-    fn = _grouped_fn(experts, x, indices, weights) if backend == "grouped_mm" else _sonic_fn(
-        experts, x, indices, weights
+    fn = (
+        _grouped_fn(experts, x, indices, weights)
+        if backend == "grouped_mm"
+        else _sonic_fn(experts, x, indices, weights)
     )
 
     def fwd():
         with torch.no_grad():
             fn()
 
+    grad_tensors = [x, weights, *experts.parameters()]
+
     def fwd_bwd():
         out = fn()
         out.float().sum().backward()
-        x.grad = None
-        weights.grad = None
-        for p in experts.parameters():
-            p.grad = None
+        for t in grad_tensors:
+            t.grad = None
 
     fwd_ms = _time(fwd, warmup, iters)
     # Warm up fwd+bwd before measuring memory so JIT autotuning workspaces are excluded.
@@ -187,7 +193,9 @@ def main() -> None:
             results.append(r)
 
     print("\n=== summary (fwd+bwd) ===")
-    print(f"{'shape (T,H,I,E,K)':>28s} {'backend':>10s} {'fwd ms':>9s} {'f+b ms':>9s} {'f+b TFLOPS':>11s} {'peak GiB':>9s}")
+    print(
+        f"{'shape (T,H,I,E,K)':>28s} {'backend':>10s} {'fwd ms':>9s} {'f+b ms':>9s} {'f+b TFLOPS':>11s} {'peak GiB':>9s}"
+    )
     for r in results:
         if "error" in r:
             print(f"{r['shape']:>28s} {r['backend']:>10s}  {r['error']}")
