@@ -62,6 +62,7 @@ SOURCES = [
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "policy", "01M2184TV0VNN7133Y93WQC05C"),
     ("beaker", "nq", "32k", "dense 48M (ladder)", "policy", "01M2185V4XWRQWH27XAQ0ZKSX4"),
     ("beaker", "outlier", "32k", "dense 160M (ladder)", "policy", "01M2187549JW0XYXQAP3P4V46N"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "policy-hardneg", "01M218SJE5KETF99DAND6GR5EV"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
@@ -120,7 +121,7 @@ def classify(name):
         return "soft token (mean embedding)", keep, G, bias, False
     if n.startswith("soft "):
         rest = re.sub(r"^soft k=[0-9.]+\s*", "", n)
-        pol = re.search(r"policy=(\w+)", rest)
+        pol = re.search(r"policy=([\w+]+)", rest)
         if pol:
             return f"soft token, keep policy {pol.group(1)}", keep, G, rest.replace(pol.group(0), "").strip() or "no-bias", False
         return "soft token (mean embedding)", keep, G, rest, False

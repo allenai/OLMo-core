@@ -39,6 +39,26 @@ from olmo_core.nn.transformer import TransformerConfig
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 FAMILY = os.environ.get("PROBE_FAMILY", "qwen3_5")  # qwen3_5 (GDN hybrid) | qwen3 (pure attention)
 IDS = RESERVED_IDS[FAMILY]
+
+_GDN_SLOT_KEEP = {"mask": None}  # (B, T2) bool, True = real token; set per config when the GDN no-write variant runs
+
+
+def install_gdn_nowrite_hook():
+    """Make soft-token slots attention-only: GatedDeltaNet layers receive block_keep=~slot so a
+    slot neither writes the recurrent state nor leaks through the causal conv (see
+    GatedDeltaNet.forward). Attention layers are untouched (slots stay keys/values)."""
+    from olmo_core.nn.attention.recurrent import GatedDeltaNet
+
+    orig = GatedDeltaNet.forward
+
+    def fwd(self, x, *args, **kw):
+        m = _GDN_SLOT_KEEP["mask"]
+        if m is not None and m.shape[1] == x.shape[1] and kw.get("block_keep") is None:
+            kw["block_keep"] = m.to(x.device)
+        return orig(self, x, *args, **kw)
+
+    GatedDeltaNet.forward = fwd
+    return orig
 VOCAB = 248320 if FAMILY == "qwen3_5" else 151936
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base" if FAMILY == "qwen3_5" else "Qwen/Qwen3-4B"
 CKPT_Q3 = {  # dense Qwen3-4B ladder runs (lr 5e-5), pure attention: every layer takes K/V slots
@@ -184,6 +204,7 @@ def main():
     ap.add_argument("--policies", default="random", help="comma list of keep policies: random | overlap (top-k non-gold docs by token "
                     "overlap with the question) | length (longest) | short (shortest) | first (earliest) | last (latest)")
     ap.add_argument("--biases", default="all", help="'all' = the full bias sweep; 'none' = only the unbiased soft token per policy/keep")
+    ap.add_argument("--gdn-nowrite", action="store_true", help="also run each keep with slots made attention-only (no GDN state write / conv leak)")
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
@@ -221,6 +242,8 @@ def main():
     model.pooled_projector.reset_parameters()  # identity: soft token == mean input embedding
     model = model.cuda().to(torch.bfloat16)
     pst = model._pooled_soft_tokens
+    if a.gdn_nowrite:
+        install_gdn_nowrite_hook()
 
     gold_table = json.load(open(f"{shard}/gold_fingerprints.json")) if a.task in GOLD_TASKS else None
     keeps = [float(k) for k in a.keeps.split(",")]
@@ -231,6 +254,8 @@ def main():
         tag = "" if pol == "random" else f" policy={pol}"
         for k in keeps:
             configs.append((f"soft k={k:.3f}{tag} no-bias", (k, pol), (False, 1.0, 0.0)))
+            if a.gdn_nowrite:
+                configs.append((f"soft k={k:.3f}{tag} gdn-nowrite", (k, pol), (False, 1.0, 0.0, "gdn-nowrite")))
             if a.biases == "none":
                 continue
             configs.append((f"soft k={k:.3f}{tag} +logL", (k, pol), (True, 1.0, 0.0)))
@@ -287,8 +312,14 @@ def main():
                 model._pooled_keep_holder = keep_cache[ck_]
                 if pol == "random" and a.task not in GOLD_TASKS:
                     pst["keep_prob"] = keep
-                pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias
+                pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias[:3]
                 cb = model._compact_pooled_soft_tokens(x, None, -100)[0]
+                if len(bias) > 3 and bias[3] == "gdn-nowrite":
+                    m_keep = torch.ones_like(cb.input_ids, dtype=torch.bool)
+                    m_keep[cb.soft_rows, cb.soft_cols] = False
+                    _GDN_SLOT_KEEP["mask"] = m_keep
+                else:
+                    _GDN_SLOT_KEEP["mask"] = None
                 posmap = {int(p): c for c, p in enumerate(cb.position_ids[0].tolist())}
                 cols = torch.tensor([posmap[int(p)] for p in pred_pos.tolist()], device="cuda")
                 lg = model(x, logits_to_keep=cols[None])[0].float()
