@@ -250,15 +250,21 @@ def main():
                 comp = 1.0
             else:
                 model.train()
-                if keep not in keep_cache:  # keep set once per (row, keep); reused across bias variants
-                    if a.task in GOLD_TASKS:
+                ck_ = (keep, pol)
+                if ck_ not in keep_cache:  # keep set once per (row, keep, policy); reused across bias variants
+                    if pol == "random" and a.task in GOLD_TASKS:
                         keep_fn = make_fingerprint_keep_docs_fn(gold_table, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end,
                                                                 eos_id=IDS.eos, n_random_frac=keep, mode="gold_plus_random", seed=a.seed)
-                        keep_cache[keep] = PooledDocKeepHolder(keep_docs=keep_fn(x.cpu()))
+                        keep_cache[ck_] = PooledDocKeepHolder(keep_docs=keep_fn(x.cpu()))
+                    elif pol == "random":
+                        keep_cache[ck_] = None
                     else:
-                        keep_cache[keep] = None
-                model._pooled_keep_holder = keep_cache[keep]
-                if a.task not in GOLD_TASKS:
+                        keep_cache[ck_] = PooledDocKeepHolder(keep_docs=policy_keep_mask(x.cpu(), cid_row, gold_row, keep, pol, a.seed))
+                    if ri == 0 and keep_cache[ck_] is not None:
+                        kd = keep_cache[ck_].keep_docs[0]
+                        log(f"keep set ({pol}, {keep:.3f}): {int(kd.sum())}/{kd.numel()} docs real, first kept: {kd.nonzero(as_tuple=True)[0][:8].tolist()}")
+                model._pooled_keep_holder = keep_cache[ck_]
+                if pol == "random" and a.task not in GOLD_TASKS:
                     pst["keep_prob"] = keep
                 pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias
                 cb = model._compact_pooled_soft_tokens(x, None, -100)[0]

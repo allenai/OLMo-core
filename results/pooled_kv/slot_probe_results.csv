@@ -90,95 +90,95 @@ oolong,32k,dense 80M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,c
 oolong,32k,dense 80M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,0.53,0.466,0.064,0.81,0.138,0.38,0.023,43.47826086956522,97.7,soft k=0.000 const-1
 oolong,32k,dense 80M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,0.535,0.466,0.069,0.8,0.136,0.38,0.023,43.47826086956522,97.7,soft k=0.000 const+1
 nq,32k,dense 48M (ladder),beaker,slot,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,no-bias,0,0.923,0.086,0.8370000000000001,0.797,0.844,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 no-bias
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL,0,1.022,0.086,0.936,0.739,0.956,0.21,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-2,0,0.975,0.086,0.889,0.791,0.896,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-1,0,1.013,0.086,0.9269999999999999,0.764,0.938,0.21,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+1,0,1.021,0.086,0.9349999999999999,0.732,0.969,0.17,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+2,0,1.192,0.086,1.1059999999999999,0.681,1.136,0.08,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL+2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const=mean logL,0,0.998,0.086,0.912,0.765,0.921,0.25,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const=mean logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-4,0,0.914,0.086,0.8280000000000001,0.797,0.835,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-4
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-2,0,0.918,0.086,0.8320000000000001,0.797,0.839,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-1,0,0.919,0.086,0.8330000000000001,0.797,0.84,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const+1,0,0.93,0.086,0.8440000000000001,0.803,0.851,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,no-bias,0,1.139,0.086,1.053,0.72,1.064,0.17,0.177,5.649717514124294,82.3,soft k=0.167 no-bias
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL,0,1.149,0.086,1.063,0.707,1.083,0.17,0.177,5.649717514124294,82.3,soft k=0.167 +logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-2,0,1.153,0.086,1.067,0.702,1.074,0.17,0.177,5.649717514124294,82.3,soft k=0.167 +logL-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-1,0,1.15,0.086,1.0639999999999998,0.708,1.072,0.17,0.177,5.649717514124294,82.3,soft k=0.167 +logL-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+1,0,1.087,0.086,1.001,0.669,1.028,0.12,0.177,5.649717514124294,82.3,soft k=0.167 +logL+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+2,0,1.224,0.086,1.138,0.624,1.165,0.08,0.177,5.649717514124294,82.3,soft k=0.167 +logL+2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const=mean logL,0,1.157,0.086,1.071,0.708,1.076,0.17,0.177,5.649717514124294,82.3,soft k=0.167 const=mean logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-4,0,1.142,0.086,1.0559999999999998,0.714,1.069,0.17,0.177,5.649717514124294,82.3,soft k=0.167 const-4
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-2,0,1.139,0.086,1.053,0.708,1.067,0.17,0.177,5.649717514124294,82.3,soft k=0.167 const-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-1,0,1.136,0.086,1.0499999999999998,0.72,1.064,0.17,0.177,5.649717514124294,82.3,soft k=0.167 const-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const+1,0,1.141,0.086,1.055,0.72,1.065,0.17,0.177,5.649717514124294,82.3,soft k=0.167 const+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,no-bias,0,1.205,0.086,1.119,0.701,1.184,0.08,0.097,10.309278350515463,90.3,soft k=0.083 no-bias
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL,0,1.159,0.086,1.073,0.688,1.124,0.04,0.097,10.309278350515463,90.3,soft k=0.083 +logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-2,0,1.215,0.086,1.129,0.713,1.189,0.08,0.097,10.309278350515463,90.3,soft k=0.083 +logL-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-1,0,1.192,0.086,1.1059999999999999,0.707,1.16,0.08,0.097,10.309278350515463,90.3,soft k=0.083 +logL-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+1,0,1.165,0.086,1.079,0.676,1.134,0.08,0.097,10.309278350515463,90.3,soft k=0.083 +logL+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+2,0,1.259,0.086,1.1729999999999998,0.63,1.21,0.08,0.097,10.309278350515463,90.3,soft k=0.083 +logL+2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const=mean logL,0,1.196,0.086,1.1099999999999999,0.713,1.168,0.08,0.097,10.309278350515463,90.3,soft k=0.083 const=mean logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-4,0,1.215,0.086,1.129,0.701,1.192,0.08,0.097,10.309278350515463,90.3,soft k=0.083 const-4
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-2,0,1.217,0.086,1.131,0.701,1.194,0.08,0.097,10.309278350515463,90.3,soft k=0.083 const-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-1,0,1.216,0.086,1.13,0.701,1.194,0.08,0.097,10.309278350515463,90.3,soft k=0.083 const-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const+1,0,1.201,0.086,1.115,0.707,1.179,0.08,0.097,10.309278350515463,90.3,soft k=0.083 const+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,no-bias,0,0.796,0.086,0.7100000000000001,0.768,0.767,0.0,0.018,55.55555555555556,98.2,soft k=0.000 no-bias
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL,0,0.923,0.086,0.8370000000000001,0.748,0.886,0.0,0.018,55.55555555555556,98.2,soft k=0.000 +logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-2,0,0.829,0.086,0.743,0.755,0.809,0.0,0.018,55.55555555555556,98.2,soft k=0.000 +logL-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-1,0,0.847,0.086,0.761,0.755,0.824,0.0,0.018,55.55555555555556,98.2,soft k=0.000 +logL-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+1,0,1.068,0.086,0.9820000000000001,0.679,1.021,0.0,0.018,55.55555555555556,98.2,soft k=0.000 +logL+1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+2,0,1.425,0.086,1.339,0.565,1.356,0.0,0.018,55.55555555555556,98.2,soft k=0.000 +logL+2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const=mean logL,0,0.835,0.086,0.749,0.762,0.816,0.0,0.018,55.55555555555556,98.2,soft k=0.000 const=mean logL
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-4,0,0.801,0.086,0.7150000000000001,0.767,0.773,0.0,0.018,55.55555555555556,98.2,soft k=0.000 const-4
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-2,0,0.793,0.086,0.7070000000000001,0.774,0.764,0.0,0.018,55.55555555555556,98.2,soft k=0.000 const-2
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,0.796,0.086,0.7100000000000001,0.774,0.768,0.0,0.018,55.55555555555556,98.2,soft k=0.000 const-1
-nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,0.801,0.086,0.7150000000000001,0.775,0.774,0.0,0.018,55.55555555555556,98.2,soft k=0.000 const+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,no-bias,0,0.07,0.086,-0.015999999999999986,0.97,0.043,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 no-bias
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL,0,0.324,0.086,0.23800000000000002,0.912,0.265,0.58,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-2,0,0.175,0.086,0.089,0.962,0.136,0.83,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-1,0,0.249,0.086,0.163,0.931,0.198,0.62,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+1,0,0.496,0.086,0.41000000000000003,0.849,0.444,0.38,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+2,0,0.763,0.086,0.677,0.786,0.711,0.33,0.34,2.941176470588235,65.99999999999999,soft k=0.333 +logL+2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const=mean logL,0,0.222,0.086,0.136,0.937,0.176,0.67,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const=mean logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-4,0,0.076,0.086,-0.009999999999999995,0.97,0.051,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-4
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-2,0,0.074,0.086,-0.011999999999999997,0.97,0.048,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-1,0,0.072,0.086,-0.013999999999999999,0.976,0.046,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const+1,0,0.07,0.086,-0.015999999999999986,0.976,0.044,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 const+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,no-bias,0,0.088,0.086,0.0020000000000000018,0.975,0.112,0.92,0.177,5.649717514124294,82.3,soft k=0.167 no-bias
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL,0,0.332,0.086,0.24600000000000002,0.901,0.296,0.54,0.177,5.649717514124294,82.3,soft k=0.167 +logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-2,0,0.141,0.086,0.05499999999999999,0.957,0.127,0.75,0.177,5.649717514124294,82.3,soft k=0.167 +logL-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-1,0,0.225,0.086,0.139,0.938,0.194,0.71,0.177,5.649717514124294,82.3,soft k=0.167 +logL-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+1,0,0.59,0.086,0.504,0.824,0.553,0.33,0.177,5.649717514124294,82.3,soft k=0.167 +logL+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+2,0,0.944,0.086,0.858,0.722,0.899,0.21,0.177,5.649717514124294,82.3,soft k=0.167 +logL+2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const=mean logL,0,0.193,0.086,0.10700000000000001,0.944,0.168,0.75,0.177,5.649717514124294,82.3,soft k=0.167 const=mean logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-4,0,0.1,0.086,0.014000000000000012,0.975,0.13,0.88,0.177,5.649717514124294,82.3,soft k=0.167 const-4
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-2,0,0.098,0.086,0.01200000000000001,0.975,0.129,0.88,0.177,5.649717514124294,82.3,soft k=0.167 const-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-1,0,0.097,0.086,0.01100000000000001,0.969,0.124,0.88,0.177,5.649717514124294,82.3,soft k=0.167 const-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const+1,0,0.092,0.086,0.006000000000000005,0.981,0.116,0.92,0.177,5.649717514124294,82.3,soft k=0.167 const+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,no-bias,0,0.057,0.086,-0.02899999999999999,0.976,0.095,0.88,0.097,10.309278350515463,90.3,soft k=0.083 no-bias
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL,0,0.372,0.086,0.28600000000000003,0.898,0.353,0.54,0.097,10.309278350515463,90.3,soft k=0.083 +logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-2,0,0.165,0.086,0.07900000000000001,0.97,0.158,0.83,0.097,10.309278350515463,90.3,soft k=0.083 +logL-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-1,0,0.246,0.086,0.16,0.958,0.224,0.79,0.097,10.309278350515463,90.3,soft k=0.083 +logL-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+1,0,0.699,0.086,0.613,0.795,0.677,0.33,0.097,10.309278350515463,90.3,soft k=0.083 +logL+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+2,0,0.98,0.086,0.894,0.72,0.939,0.25,0.097,10.309278350515463,90.3,soft k=0.083 +logL+2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const=mean logL,0,0.223,0.086,0.137,0.958,0.201,0.79,0.097,10.309278350515463,90.3,soft k=0.083 const=mean logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-4,0,0.069,0.086,-0.016999999999999987,0.964,0.098,0.79,0.097,10.309278350515463,90.3,soft k=0.083 const-4
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-2,0,0.063,0.086,-0.022999999999999993,0.964,0.095,0.79,0.097,10.309278350515463,90.3,soft k=0.083 const-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-1,0,0.061,0.086,-0.024999999999999994,0.97,0.097,0.83,0.097,10.309278350515463,90.3,soft k=0.083 const-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const+1,0,0.075,0.086,-0.010999999999999996,0.97,0.113,0.83,0.097,10.309278350515463,90.3,soft k=0.083 const+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,no-bias,0,0.034,0.086,-0.05199999999999999,0.982,0.134,0.96,0.018,55.55555555555556,98.2,soft k=0.000 no-bias
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL,0,0.35,0.086,0.264,0.902,0.374,0.54,0.018,55.55555555555556,98.2,soft k=0.000 +logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-2,0,0.085,0.086,-0.000999999999999987,0.969,0.174,0.88,0.018,55.55555555555556,98.2,soft k=0.000 +logL-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-1,0,0.142,0.086,0.055999999999999994,0.956,0.219,0.83,0.018,55.55555555555556,98.2,soft k=0.000 +logL-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+1,0,0.69,0.086,0.604,0.761,0.679,0.17,0.018,55.55555555555556,98.2,soft k=0.000 +logL+1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+2,0,1.234,0.086,1.148,0.64,1.18,0.08,0.018,55.55555555555556,98.2,soft k=0.000 +logL+2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const=mean logL,0,0.108,0.086,0.022000000000000006,0.969,0.194,0.88,0.018,55.55555555555556,98.2,soft k=0.000 const=mean logL
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-4,0,0.018,0.086,-0.06799999999999999,0.988,0.125,1.0,0.018,55.55555555555556,98.2,soft k=0.000 const-4
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-2,0,0.02,0.086,-0.06599999999999999,0.988,0.126,1.0,0.018,55.55555555555556,98.2,soft k=0.000 const-2
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,0.023,0.086,-0.063,0.988,0.127,1.0,0.018,55.55555555555556,98.2,soft k=0.000 const-1
+nq,32k,dense 48M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,0.053,0.086,-0.032999999999999995,0.976,0.147,0.92,0.018,55.55555555555556,98.2,soft k=0.000 const+1
 outlier,32k,dense 160M (ladder),beaker,slot,24,full attention,1.0,1,,0,1.206,1.206,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,no-bias,0,1.686,1.206,0.48,0.74,0.711,0.0,0.348,2.873563218390805,65.2,soft k=0.333 no-bias
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL,0,2.138,1.206,0.9319999999999999,0.615,1.063,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-2,0,1.779,1.206,0.573,0.716,0.793,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-1,0,1.947,1.206,0.7410000000000001,0.677,0.911,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+1,0,2.34,1.206,1.134,0.571,1.243,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+2,0,2.433,1.206,1.2269999999999999,0.542,1.354,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL+2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const=mean logL,0,1.911,1.206,0.7050000000000001,0.677,0.884,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const=mean logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-4,0,1.678,1.206,0.472,0.74,0.71,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-4
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-2,0,1.684,1.206,0.478,0.741,0.71,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-1,0,1.687,1.206,0.4810000000000001,0.745,0.712,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const+1,0,1.697,1.206,0.4910000000000001,0.738,0.718,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,no-bias,0,1.693,1.206,0.4870000000000001,0.703,0.816,0.0,0.186,5.376344086021505,81.4,soft k=0.167 no-bias
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL,0,2.426,1.206,1.2200000000000002,0.563,1.334,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-2,0,1.948,1.206,0.742,0.653,0.947,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-1,0,2.208,1.206,1.0020000000000002,0.61,1.143,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+1,0,2.54,1.206,1.334,0.538,1.461,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+2,0,2.648,1.206,1.4420000000000002,0.489,1.617,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL+2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const=mean logL,0,2.149,1.206,0.9430000000000001,0.62,1.094,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const=mean logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-4,0,1.662,1.206,0.45599999999999996,0.694,0.816,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-4
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-2,0,1.668,1.206,0.46199999999999997,0.696,0.816,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-1,0,1.677,1.206,0.4710000000000001,0.701,0.815,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const+1,0,1.738,1.206,0.532,0.685,0.839,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,no-bias,0,1.681,1.206,0.4750000000000001,0.682,0.899,0.0,0.105,9.523809523809524,89.5,soft k=0.083 no-bias
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL,0,2.503,1.206,1.2970000000000002,0.56,1.414,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-2,0,1.973,1.206,0.7670000000000001,0.652,1.02,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-1,0,2.268,1.206,1.0619999999999998,0.576,1.223,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+1,0,2.606,1.206,1.4,0.531,1.515,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+2,0,2.642,1.206,1.436,0.497,1.633,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL+2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const=mean logL,0,2.216,1.206,1.0100000000000002,0.594,1.183,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const=mean logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-4,0,1.631,1.206,0.42500000000000004,0.68,0.907,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-4
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-2,0,1.644,1.206,0.43799999999999994,0.675,0.905,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-1,0,1.657,1.206,0.45100000000000007,0.675,0.903,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const+1,0,1.742,1.206,0.536,0.669,0.921,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,no-bias,0,1.512,1.206,0.30600000000000005,0.687,0.9,0.0,0.029,34.48275862068965,97.1,soft k=0.000 no-bias
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL,0,2.34,1.206,1.134,0.583,1.359,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-2,0,1.89,1.206,0.6839999999999999,0.664,0.983,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-1,0,2.163,1.206,0.9569999999999999,0.612,1.229,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+1,0,2.442,1.206,1.2360000000000002,0.549,1.452,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL+1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+2,0,2.518,1.206,1.3119999999999998,0.49,1.646,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL+2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const=mean logL,0,2.109,1.206,0.903,0.617,1.177,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const=mean logL
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-4,0,1.458,1.206,0.252,0.68,0.962,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-4
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-2,0,1.482,1.206,0.276,0.676,0.955,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-2
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,1.496,1.206,0.29000000000000004,0.68,0.934,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-1
-outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,1.594,1.206,0.3880000000000001,0.702,0.882,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,no-bias,0,1.398,1.206,0.19199999999999995,0.833,0.45,0.0,0.348,2.873563218390805,65.2,soft k=0.333 no-bias
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL,0,1.879,1.206,0.673,0.698,0.876,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-2,0,1.503,1.206,0.29699999999999993,0.787,0.566,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL-1,0,1.679,1.206,0.4730000000000001,0.744,0.701,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+1,0,2.142,1.206,0.9359999999999999,0.63,1.099,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,+logL+2,0,2.307,1.206,1.101,0.587,1.264,0.0,0.348,2.873563218390805,65.2,soft k=0.333 +logL+2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const=mean logL,0,1.639,1.206,0.43300000000000005,0.744,0.672,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const=mean logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-4,0,1.401,1.206,0.19500000000000006,0.826,0.45,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-4
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-2,0,1.403,1.206,0.19700000000000006,0.831,0.449,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const-1,0,1.412,1.206,0.20599999999999996,0.831,0.452,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.333,1,const+1,0,1.397,1.206,0.19100000000000006,0.822,0.458,0.0,0.348,2.873563218390805,65.2,soft k=0.333 const+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,no-bias,0,1.308,1.206,0.10200000000000009,0.817,0.497,0.0,0.186,5.376344086021505,81.4,soft k=0.167 no-bias
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL,0,2.1,1.206,0.8940000000000001,0.645,1.099,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-2,0,1.509,1.206,0.30299999999999994,0.772,0.638,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL-1,0,1.784,1.206,0.5780000000000001,0.713,0.844,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+1,0,2.357,1.206,1.1510000000000002,0.573,1.33,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,+logL+2,0,2.535,1.206,1.3290000000000002,0.497,1.545,0.0,0.186,5.376344086021505,81.4,soft k=0.167 +logL+2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const=mean logL,0,1.729,1.206,0.5230000000000001,0.724,0.801,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const=mean logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-4,0,1.311,1.206,0.10499999999999998,0.818,0.507,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-4
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-2,0,1.311,1.206,0.10499999999999998,0.818,0.504,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const-1,0,1.313,1.206,0.10699999999999998,0.818,0.503,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.167,1,const+1,0,1.326,1.206,0.1200000000000001,0.808,0.513,0.0,0.186,5.376344086021505,81.4,soft k=0.167 const+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,no-bias,0,1.201,1.206,-0.004999999999999893,0.818,0.496,0.0,0.105,9.523809523809524,89.5,soft k=0.083 no-bias
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL,0,2.102,1.206,0.8959999999999999,0.636,1.143,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-2,0,1.46,1.206,0.254,0.763,0.638,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL-1,0,1.771,1.206,0.565,0.688,0.873,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+1,0,2.365,1.206,1.1590000000000003,0.593,1.338,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,+logL+2,0,2.522,1.206,1.3159999999999998,0.533,1.558,0.0,0.105,9.523809523809524,89.5,soft k=0.083 +logL+2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const=mean logL,0,1.706,1.206,0.5,0.715,0.811,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const=mean logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-4,0,1.183,1.206,-0.02299999999999991,0.816,0.504,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-4
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-2,0,1.193,1.206,-0.0129999999999999,0.814,0.502,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const-1,0,1.192,1.206,-0.014000000000000012,0.82,0.498,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.083,1,const+1,0,1.242,1.206,0.03600000000000003,0.814,0.518,0.0,0.105,9.523809523809524,89.5,soft k=0.083 const+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,no-bias,0,0.948,1.206,-0.258,0.827,0.509,0.0,0.029,34.48275862068965,97.1,soft k=0.000 no-bias
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL,0,1.843,1.206,0.637,0.677,1.052,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-2,0,1.326,1.206,0.1200000000000001,0.805,0.683,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL-1,0,1.568,1.206,0.3620000000000001,0.717,0.896,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+1,0,2.079,1.206,0.8730000000000002,0.602,1.258,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL+1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,+logL+2,0,2.177,1.206,0.9710000000000001,0.537,1.447,0.0,0.029,34.48275862068965,97.1,soft k=0.000 +logL+2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const=mean logL,0,1.513,1.206,0.30699999999999994,0.733,0.847,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const=mean logL
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-4,0,0.901,1.206,-0.30499999999999994,0.817,0.54,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-4
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-2,0,0.909,1.206,-0.29699999999999993,0.818,0.518,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-2
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,0.924,1.206,-0.2819999999999999,0.822,0.509,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const-1
+outlier,32k,dense 160M (ladder),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,1.047,1.206,-0.15900000000000003,0.817,0.543,0.0,0.029,34.48275862068965,97.1,soft k=0.000 const+1
 contradiction,32k,dense 56M (ladder),beaker,oracle,24,full attention,1.0,1,,0,0.042,0.042,0.0,1.0,0.0,0.67,1.0,1.0,0.0,full
 contradiction,32k,dense 56M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL,1,0.088,0.042,0.04599999999999999,0.97,0.079,0.38,0.357,2.801120448179272,64.3,k=0.333 oracle meanKV +logL
 contradiction,32k,dense 56M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,no-bias,1,0.109,0.042,0.067,0.969,0.087,0.33,0.357,2.801120448179272,64.3,k=0.333 oracle meanKV no-bias
@@ -246,71 +246,71 @@ oolong,32k,dense 80M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+
 oolong,32k,dense 80M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,no-bias,0,0.534,0.466,0.068,0.81,0.139,0.38,0.023,43.47826086956522,97.7,k=0.000 soft meanEmb no-bias
 oolong,32k,dense 80M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,+logL,0,0.535,0.466,0.069,0.8,0.12,0.33,0.023,43.47826086956522,97.7,k=0.000 soft meanEmb +logL
 nq,32k,dense 48M (ladder),beaker,oracle,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL,1,0.943,0.086,0.857,0.803,0.859,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,no-bias,1,0.915,0.086,0.8290000000000001,0.797,0.836,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-2,1,0.916,0.086,0.8300000000000001,0.797,0.837,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL-2
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-1,1,0.922,0.086,0.8360000000000001,0.797,0.84,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL-1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+1,1,0.973,0.086,0.887,0.791,0.889,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL+1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+2,1,1.01,0.086,0.924,0.791,0.924,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL+2
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,no-bias,0,0.922,0.086,0.8360000000000001,0.797,0.842,0.33,0.34,2.941176470588235,65.99999999999999,k=0.333 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,+logL,0,1.012,0.086,0.926,0.739,0.944,0.21,0.34,2.941176470588235,65.99999999999999,k=0.333 soft meanEmb +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL,1,1.203,0.086,1.117,0.72,1.115,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,no-bias,1,1.141,0.086,1.055,0.714,1.068,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-2,1,1.147,0.086,1.061,0.72,1.073,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL-2
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-1,1,1.165,0.086,1.079,0.72,1.087,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL-1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+1,1,1.252,0.086,1.166,0.726,1.154,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL+1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+2,1,1.286,0.086,1.2,0.732,1.181,0.17,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL+2
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,no-bias,0,1.137,0.086,1.051,0.72,1.063,0.17,0.177,5.649717514124294,82.3,k=0.167 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,+logL,0,1.155,0.086,1.069,0.707,1.089,0.17,0.177,5.649717514124294,82.3,k=0.167 soft meanEmb +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL,1,1.264,0.086,1.178,0.689,1.231,0.08,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,no-bias,1,1.215,0.086,1.129,0.701,1.19,0.08,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-2,1,1.228,0.086,1.142,0.695,1.202,0.08,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL-2
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-1,1,1.24,0.086,1.154,0.689,1.209,0.08,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL-1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+1,1,1.297,0.086,1.2109999999999999,0.683,1.261,0.04,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL+1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+2,1,1.34,0.086,1.254,0.682,1.3,0.04,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL+2
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,no-bias,0,1.207,0.086,1.121,0.701,1.186,0.08,0.097,10.309278350515463,90.3,k=0.083 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,+logL,0,1.163,0.086,1.077,0.688,1.129,0.04,0.097,10.309278350515463,90.3,k=0.083 soft meanEmb +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL,1,0.863,0.086,0.777,0.774,0.845,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,no-bias,1,0.805,0.086,0.7190000000000001,0.767,0.777,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-2,1,0.825,0.086,0.739,0.767,0.8,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL-2
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-1,1,0.843,0.086,0.757,0.767,0.822,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL-1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+1,1,0.902,0.086,0.8160000000000001,0.768,0.885,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL+1
-nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+2,1,0.949,0.086,0.863,0.768,0.928,0.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL+2
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,no-bias,0,0.798,0.086,0.7120000000000001,0.774,0.77,0.0,0.018,55.55555555555556,98.2,k=0.000 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,+logL,0,0.926,0.086,0.8400000000000001,0.748,0.889,0.0,0.018,55.55555555555556,98.2,k=0.000 soft meanEmb +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL,1,0.075,0.086,-0.010999999999999996,0.97,0.059,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,no-bias,1,0.077,0.086,-0.008999999999999994,0.97,0.052,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-2,1,0.077,0.086,-0.008999999999999994,0.97,0.054,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL-2
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-1,1,0.075,0.086,-0.010999999999999996,0.97,0.054,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL-1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+1,1,0.076,0.086,-0.009999999999999995,0.97,0.059,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL+1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+2,1,0.081,0.086,-0.0049999999999999906,0.97,0.059,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 oracle meanKV +logL+2
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,no-bias,0,0.07,0.086,-0.015999999999999986,0.976,0.043,0.88,0.34,2.941176470588235,65.99999999999999,k=0.333 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,+logL,0,0.322,0.086,0.23600000000000002,0.912,0.263,0.58,0.34,2.941176470588235,65.99999999999999,k=0.333 soft meanEmb +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL,1,0.119,0.086,0.033,0.969,0.141,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,no-bias,1,0.102,0.086,0.016,0.969,0.13,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-2,1,0.106,0.086,0.020000000000000004,0.975,0.134,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL-2
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-1,1,0.112,0.086,0.02600000000000001,0.975,0.138,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL-1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+1,1,0.128,0.086,0.04200000000000001,0.969,0.144,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL+1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+2,1,0.133,0.086,0.047000000000000014,0.975,0.146,0.88,0.177,5.649717514124294,82.3,k=0.167 oracle meanKV +logL+2
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,no-bias,0,0.09,0.086,0.0040000000000000036,0.975,0.113,0.92,0.177,5.649717514124294,82.3,k=0.167 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,+logL,0,0.337,0.086,0.251,0.894,0.301,0.54,0.177,5.649717514124294,82.3,k=0.167 soft meanEmb +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL,1,0.107,0.086,0.021000000000000005,0.963,0.123,0.79,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,no-bias,1,0.07,0.086,-0.015999999999999986,0.964,0.101,0.79,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-2,1,0.082,0.086,-0.00399999999999999,0.958,0.105,0.75,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL-2
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-1,1,0.09,0.086,0.0040000000000000036,0.964,0.108,0.79,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL-1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+1,1,0.144,0.086,0.057999999999999996,0.942,0.163,0.71,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL+1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+2,1,0.215,0.086,0.129,0.931,0.23,0.62,0.097,10.309278350515463,90.3,k=0.083 oracle meanKV +logL+2
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,no-bias,0,0.059,0.086,-0.026999999999999996,0.976,0.098,0.88,0.097,10.309278350515463,90.3,k=0.083 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,+logL,0,0.371,0.086,0.28500000000000003,0.892,0.351,0.54,0.097,10.309278350515463,90.3,k=0.083 soft meanEmb +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL,1,0.012,0.086,-0.074,0.988,0.141,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,no-bias,1,0.018,0.086,-0.06799999999999999,0.988,0.124,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-2,1,0.015,0.086,-0.071,0.988,0.127,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL-2
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-1,1,0.015,0.086,-0.071,0.988,0.133,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL-1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+1,1,0.009,0.086,-0.077,0.988,0.138,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL+1
+nq,32k,dense 48M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+2,1,0.01,0.086,-0.076,0.988,0.138,1.0,0.018,55.55555555555556,98.2,k=0.000 oracle meanKV +logL+2
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,no-bias,0,0.035,0.086,-0.05099999999999999,0.982,0.136,0.96,0.018,55.55555555555556,98.2,k=0.000 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,+logL,0,0.356,0.086,0.27,0.902,0.38,0.54,0.018,55.55555555555556,98.2,k=0.000 soft meanEmb +logL
 outlier,32k,dense 160M (ladder),beaker,oracle,24,full attention,1.0,1,,0,1.206,1.206,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL,1,1.748,1.206,0.542,0.745,0.712,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,no-bias,1,1.678,1.206,0.472,0.74,0.709,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-2,1,1.69,1.206,0.484,0.738,0.706,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL-2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-1,1,1.715,1.206,0.5090000000000001,0.741,0.709,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL-1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+1,1,1.785,1.206,0.579,0.737,0.717,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL+1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+2,1,1.812,1.206,0.6060000000000001,0.728,0.726,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL+2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,no-bias,0,1.685,1.206,0.4790000000000001,0.743,0.71,0.0,0.348,2.873563218390805,65.2,k=0.333 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,+logL,0,2.142,1.206,0.9359999999999999,0.62,1.067,0.0,0.348,2.873563218390805,65.2,k=0.333 soft meanEmb +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL,1,1.769,1.206,0.563,0.712,0.81,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,no-bias,1,1.665,1.206,0.4590000000000001,0.698,0.818,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-2,1,1.698,1.206,0.492,0.701,0.813,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL-2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-1,1,1.734,1.206,0.528,0.71,0.811,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL-1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+1,1,1.797,1.206,0.591,0.716,0.818,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL+1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+2,1,1.831,1.206,0.625,0.712,0.832,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL+2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,no-bias,0,1.691,1.206,0.4850000000000001,0.7,0.814,0.0,0.186,5.376344086021505,81.4,k=0.167 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,+logL,0,2.421,1.206,1.2149999999999999,0.57,1.329,0.0,0.186,5.376344086021505,81.4,k=0.167 soft meanEmb +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL,1,1.775,1.206,0.569,0.696,0.893,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,no-bias,1,1.628,1.206,0.42199999999999993,0.678,0.905,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-2,1,1.675,1.206,0.4690000000000001,0.689,0.888,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL-2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-1,1,1.716,1.206,0.51,0.702,0.885,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL-1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+1,1,1.83,1.206,0.6240000000000001,0.696,0.912,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL+1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+2,1,1.901,1.206,0.6950000000000001,0.694,0.941,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL+2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,no-bias,0,1.683,1.206,0.4770000000000001,0.684,0.899,0.0,0.105,9.523809523809524,89.5,k=0.083 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,+logL,0,2.509,1.206,1.303,0.563,1.419,0.0,0.105,9.523809523809524,89.5,k=0.083 soft meanEmb +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL,1,1.574,1.206,0.3680000000000001,0.696,0.934,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,no-bias,1,1.452,1.206,0.246,0.676,0.956,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-2,1,1.471,1.206,0.2650000000000001,0.676,0.919,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL-2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-1,1,1.502,1.206,0.29600000000000004,0.694,0.907,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL-1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+1,1,1.699,1.206,0.4930000000000001,0.71,1.002,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL+1
-outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+2,1,1.868,1.206,0.6620000000000001,0.705,1.103,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL+2
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,no-bias,0,1.513,1.206,0.30699999999999994,0.689,0.9,0.0,0.029,34.48275862068965,97.1,k=0.000 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,+logL,0,2.338,1.206,1.1320000000000001,0.583,1.36,0.0,0.029,34.48275862068965,97.1,k=0.000 soft meanEmb +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL,1,1.447,1.206,0.2410000000000001,0.829,0.441,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,no-bias,1,1.402,1.206,0.19599999999999995,0.824,0.449,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-2,1,1.407,1.206,0.20100000000000007,0.829,0.446,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL-2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL-1,1,1.424,1.206,0.21799999999999997,0.831,0.442,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL-1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+1,1,1.474,1.206,0.268,0.829,0.447,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL+1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.333,1,+logL+2,1,1.49,1.206,0.28400000000000003,0.819,0.449,0.0,0.348,2.873563218390805,65.2,k=0.333 oracle meanKV +logL+2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,no-bias,0,1.398,1.206,0.19199999999999995,0.833,0.449,0.0,0.348,2.873563218390805,65.2,k=0.333 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.333,1,+logL,0,1.878,1.206,0.6719999999999999,0.694,0.871,0.0,0.348,2.873563218390805,65.2,k=0.333 soft meanEmb +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL,1,1.379,1.206,0.17300000000000004,0.822,0.493,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,no-bias,1,1.312,1.206,0.1060000000000001,0.82,0.51,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-2,1,1.338,1.206,0.13200000000000012,0.82,0.503,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL-2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL-1,1,1.359,1.206,0.15300000000000002,0.823,0.498,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL-1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+1,1,1.381,1.206,0.17500000000000004,0.833,0.491,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL+1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.167,1,+logL+2,1,1.402,1.206,0.19599999999999995,0.833,0.508,0.0,0.186,5.376344086021505,81.4,k=0.167 oracle meanKV +logL+2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,no-bias,0,1.307,1.206,0.10099999999999998,0.817,0.495,0.0,0.186,5.376344086021505,81.4,k=0.167 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.167,1,+logL,0,2.1,1.206,0.8940000000000001,0.639,1.105,0.0,0.186,5.376344086021505,81.4,k=0.167 soft meanEmb +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL,1,1.313,1.206,0.10699999999999998,0.831,0.509,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,no-bias,1,1.185,1.206,-0.020999999999999908,0.816,0.501,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-2,1,1.232,1.206,0.026000000000000023,0.823,0.497,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL-2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL-1,1,1.275,1.206,0.06899999999999995,0.825,0.499,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL-1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+1,1,1.326,1.206,0.1200000000000001,0.825,0.513,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL+1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.083,1,+logL+2,1,1.347,1.206,0.14100000000000001,0.822,0.52,0.0,0.105,9.523809523809524,89.5,k=0.083 oracle meanKV +logL+2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,no-bias,0,1.203,1.206,-0.0029999999999998916,0.818,0.498,0.0,0.105,9.523809523809524,89.5,k=0.083 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.083,1,+logL,0,2.1,1.206,0.8940000000000001,0.638,1.145,0.0,0.105,9.523809523809524,89.5,k=0.083 soft meanEmb +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL,1,0.944,1.206,-0.262,0.842,0.564,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,no-bias,1,0.898,1.206,-0.30799999999999994,0.813,0.54,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-2,1,0.915,1.206,-0.2909999999999999,0.833,0.524,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL-2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL-1,1,0.924,1.206,-0.2819999999999999,0.833,0.531,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL-1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+1,1,0.987,1.206,-0.21899999999999997,0.834,0.615,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL+1
+outlier,32k,dense 160M (ladder),beaker,oracle,24,oracle mean K/V slot,0.0,1,+logL+2,1,1.041,1.206,-0.16500000000000004,0.798,0.699,0.0,0.029,34.48275862068965,97.1,k=0.000 oracle meanKV +logL+2
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,no-bias,0,0.948,1.206,-0.258,0.829,0.51,0.0,0.029,34.48275862068965,97.1,k=0.000 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,oracle,24,soft token (mean embedding),0.0,1,+logL,0,1.84,1.206,0.6340000000000001,0.674,1.053,0.0,0.029,34.48275862068965,97.1,k=0.000 soft meanEmb +logL
 contradiction,32k,dense 56M (ladder),beaker,ceiling,24,full attention,1.0,1,,0,0.042,0.042,0.0,1.0,0.0,0.67,1.0,1.0,0.0,full
 contradiction,32k,dense 56M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,no-bias,0,0.116,0.042,0.07400000000000001,0.965,0.092,0.38,0.351,2.8490028490028494,64.9,G=1 k=0.333 soft meanEmb no-bias
 contradiction,32k,dense 56M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,+logL+0,0,0.21,0.042,0.16799999999999998,0.937,0.167,0.12,0.351,2.8490028490028494,64.9,G=1 k=0.333 soft meanEmb +logL+0
@@ -393,88 +393,88 @@ oolong,32k,dense 80M (ladder),beaker,ceiling,24,soft token (mean embedding),0.08
 oolong,32k,dense 80M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,+logL+2,1,0.715,0.466,0.24899999999999994,0.751,0.298,0.42,0.21,4.761904761904762,79.0,G=8 k=0.083 oracle meanKV +logL+2
 oolong,32k,dense 80M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,no-bias,1,0.801,0.466,0.335,0.762,0.393,0.42,0.21,4.761904761904762,79.0,G=8 k=0.083 oracle meanKV no-bias
 oolong,32k,dense 80M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,8,fitted c,1,0.688,0.466,0.22199999999999992,0.765,0.281,0.46,0.21,4.761904761904762,79.0,"G=8 k=0.083 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,no-bias,0,0.94,0.086,0.854,0.792,0.884,0.29,0.344,2.906976744186047,65.60000000000001,G=1 k=0.333 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,+logL+0,0,1.058,0.086,0.9720000000000001,0.771,0.997,0.17,0.344,2.906976744186047,65.60000000000001,G=1 k=0.333 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,1,+logL+0,1,0.959,0.086,0.873,0.792,0.901,0.29,0.344,2.906976744186047,65.60000000000001,G=1 k=0.333 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,1,no-bias,1,0.941,0.086,0.855,0.792,0.885,0.29,0.344,2.906976744186047,65.60000000000001,G=1 k=0.333 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,1,fitted c,1,0.972,0.086,0.886,0.785,0.923,0.29,0.344,2.906976744186047,65.60000000000001,"G=1 k=0.333 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,1,no-bias,0,1.254,0.086,1.168,0.688,1.184,0.0,0.1,10.0,90.0,G=1 k=0.083 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,1,+logL+0,0,1.259,0.086,1.1729999999999998,0.669,1.172,0.0,0.1,10.0,90.0,G=1 k=0.083 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,1,+logL+0,1,1.318,0.086,1.232,0.682,1.244,0.0,0.1,10.0,90.0,G=1 k=0.083 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,1,no-bias,1,1.271,0.086,1.1849999999999998,0.682,1.204,0.0,0.1,10.0,90.0,G=1 k=0.083 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,1,fitted c,1,1.306,0.086,1.22,0.676,1.228,0.0,0.1,10.0,90.0,"G=1 k=0.083 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,2,no-bias,0,0.945,0.086,0.859,0.792,0.889,0.29,0.348,2.873563218390805,65.2,G=2 k=0.333 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,2,+logL+0,0,1.02,0.086,0.934,0.779,0.959,0.21,0.348,2.873563218390805,65.2,G=2 k=0.333 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,2,+logL+0,1,0.961,0.086,0.875,0.792,0.903,0.29,0.348,2.873563218390805,65.2,G=2 k=0.333 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,2,no-bias,1,0.946,0.086,0.86,0.798,0.89,0.29,0.348,2.873563218390805,65.2,G=2 k=0.333 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,2,fitted c,1,0.971,0.086,0.885,0.785,0.92,0.29,0.348,2.873563218390805,65.2,"G=2 k=0.333 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,2,no-bias,0,1.257,0.086,1.1709999999999998,0.688,1.186,0.0,0.106,9.433962264150944,89.4,G=2 k=0.083 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,2,+logL+0,0,1.245,0.086,1.159,0.692,1.162,0.0,0.106,9.433962264150944,89.4,G=2 k=0.083 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,2,+logL+0,1,1.297,0.086,1.2109999999999999,0.676,1.226,0.0,0.106,9.433962264150944,89.4,G=2 k=0.083 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,2,no-bias,1,1.258,0.086,1.172,0.688,1.185,0.0,0.106,9.433962264150944,89.4,G=2 k=0.083 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,2,fitted c,1,1.275,0.086,1.1889999999999998,0.676,1.203,0.0,0.106,9.433962264150944,89.4,"G=2 k=0.083 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,4,no-bias,0,0.945,0.086,0.859,0.785,0.891,0.29,0.357,2.801120448179272,64.3,G=4 k=0.333 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,4,+logL+0,0,1.066,0.086,0.9800000000000001,0.778,1.003,0.17,0.357,2.801120448179272,64.3,G=4 k=0.333 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,4,+logL+0,1,0.964,0.086,0.878,0.785,0.907,0.29,0.357,2.801120448179272,64.3,G=4 k=0.333 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,4,no-bias,1,0.946,0.086,0.86,0.785,0.892,0.29,0.357,2.801120448179272,64.3,G=4 k=0.333 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,4,fitted c,1,0.978,0.086,0.892,0.778,0.927,0.25,0.357,2.801120448179272,64.3,"G=4 k=0.333 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,4,no-bias,0,1.245,0.086,1.159,0.688,1.162,0.0,0.117,8.547008547008547,88.3,G=4 k=0.083 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,4,+logL+0,0,1.258,0.086,1.172,0.692,1.193,0.0,0.117,8.547008547008547,88.3,G=4 k=0.083 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,4,+logL+0,1,1.256,0.086,1.17,0.682,1.182,0.0,0.117,8.547008547008547,88.3,G=4 k=0.083 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,4,no-bias,1,1.23,0.086,1.144,0.688,1.155,0.0,0.117,8.547008547008547,88.3,G=4 k=0.083 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,4,fitted c,1,1.226,0.086,1.14,0.676,1.153,0.0,0.117,8.547008547008547,88.3,"G=4 k=0.083 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,8,no-bias,0,0.948,0.086,0.862,0.791,0.892,0.29,0.373,2.680965147453083,62.7,G=8 k=0.333 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,8,+logL+0,0,0.944,0.086,0.858,0.798,0.887,0.33,0.373,2.680965147453083,62.7,G=8 k=0.333 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,8,+logL+0,1,0.966,0.086,0.88,0.778,0.909,0.25,0.373,2.680965147453083,62.7,G=8 k=0.333 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,8,no-bias,1,0.953,0.086,0.867,0.784,0.898,0.25,0.373,2.680965147453083,62.7,G=8 k=0.333 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,8,fitted c,1,0.961,0.086,0.875,0.791,0.908,0.25,0.373,2.680965147453083,62.7,"G=8 k=0.333 fitted slot (k*, v*, c)"
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,8,no-bias,0,1.227,0.086,1.141,0.688,1.161,0.0,0.14,7.142857142857142,86.0,G=8 k=0.083 soft meanEmb no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,8,+logL+0,0,1.25,0.086,1.164,0.693,1.196,0.0,0.14,7.142857142857142,86.0,G=8 k=0.083 soft meanEmb +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,+logL+0,1,1.232,0.086,1.146,0.682,1.164,0.0,0.14,7.142857142857142,86.0,G=8 k=0.083 oracle meanKV +logL+0
-nq,32k,dense 48M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,no-bias,1,1.189,0.086,1.103,0.693,1.122,0.0,0.14,7.142857142857142,86.0,G=8 k=0.083 oracle meanKV no-bias
-nq,32k,dense 48M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,8,fitted c,1,1.142,0.086,1.0559999999999998,0.693,1.071,0.0,0.14,7.142857142857142,86.0,"G=8 k=0.083 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,full attention,1.0,1,,0,1.206,1.206,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,no-bias,0,1.691,1.206,0.4850000000000001,0.735,0.741,0.0,0.351,2.8490028490028494,64.9,G=1 k=0.333 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,1,+logL+0,0,2.235,1.206,1.029,0.618,1.142,0.0,0.351,2.8490028490028494,64.9,G=1 k=0.333 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,1,+logL+0,1,1.755,1.206,0.5489999999999999,0.744,0.744,0.0,0.351,2.8490028490028494,64.9,G=1 k=0.333 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,1,no-bias,1,1.681,1.206,0.4750000000000001,0.739,0.743,0.0,0.351,2.8490028490028494,64.9,G=1 k=0.333 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,1,fitted c,1,1.825,1.206,0.619,0.734,0.776,0.0,0.351,2.8490028490028494,64.9,"G=1 k=0.333 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,1,no-bias,0,1.68,1.206,0.474,0.671,0.92,0.0,0.114,8.771929824561402,88.6,G=1 k=0.083 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,1,+logL+0,0,2.457,1.206,1.251,0.538,1.412,0.0,0.114,8.771929824561402,88.6,G=1 k=0.083 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,1,+logL+0,1,1.766,1.206,0.56,0.693,0.899,0.0,0.114,8.771929824561402,88.6,G=1 k=0.083 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,1,no-bias,1,1.643,1.206,0.43700000000000006,0.664,0.918,0.0,0.114,8.771929824561402,88.6,G=1 k=0.083 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,1,fitted c,1,1.892,1.206,0.6859999999999999,0.7,0.938,0.0,0.114,8.771929824561402,88.6,"G=1 k=0.083 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,2,no-bias,0,1.7,1.206,0.494,0.739,0.736,0.0,0.355,2.8169014084507045,64.5,G=2 k=0.333 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,2,+logL+0,0,2.285,1.206,1.0790000000000002,0.627,1.163,0.0,0.355,2.8169014084507045,64.5,G=2 k=0.333 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,2,+logL+0,1,1.747,1.206,0.5410000000000001,0.744,0.746,0.0,0.355,2.8169014084507045,64.5,G=2 k=0.333 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,2,no-bias,1,1.683,1.206,0.4770000000000001,0.744,0.74,0.0,0.355,2.8169014084507045,64.5,G=2 k=0.333 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,2,fitted c,1,1.787,1.206,0.581,0.732,0.768,0.0,0.355,2.8169014084507045,64.5,"G=2 k=0.333 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,2,no-bias,0,1.692,1.206,0.486,0.691,0.904,0.0,0.12,8.333333333333334,88.0,G=2 k=0.083 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,2,+logL+0,0,2.463,1.206,1.2570000000000001,0.549,1.418,0.0,0.12,8.333333333333334,88.0,G=2 k=0.083 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,2,+logL+0,1,1.75,1.206,0.544,0.7,0.898,0.0,0.12,8.333333333333334,88.0,G=2 k=0.083 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,2,no-bias,1,1.631,1.206,0.42500000000000004,0.673,0.91,0.0,0.12,8.333333333333334,88.0,G=2 k=0.083 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,2,fitted c,1,1.837,1.206,0.631,0.695,0.919,0.0,0.12,8.333333333333334,88.0,"G=2 k=0.083 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,4,no-bias,0,1.726,1.206,0.52,0.742,0.741,0.0,0.364,2.7472527472527473,63.6,G=4 k=0.333 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,4,+logL+0,0,2.191,1.206,0.9849999999999999,0.619,1.074,0.0,0.364,2.7472527472527473,63.6,G=4 k=0.333 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,4,+logL+0,1,1.755,1.206,0.5489999999999999,0.747,0.749,0.0,0.364,2.7472527472527473,63.6,G=4 k=0.333 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,4,no-bias,1,1.698,1.206,0.492,0.739,0.741,0.0,0.364,2.7472527472527473,63.6,G=4 k=0.333 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,4,fitted c,1,1.779,1.206,0.573,0.73,0.778,0.0,0.364,2.7472527472527473,63.6,"G=4 k=0.333 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,4,no-bias,0,1.72,1.206,0.514,0.693,0.902,0.0,0.132,7.575757575757575,86.8,G=4 k=0.083 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,4,+logL+0,0,2.327,1.206,1.121,0.574,1.296,0.0,0.132,7.575757575757575,86.8,G=4 k=0.083 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,4,+logL+0,1,1.737,1.206,0.5310000000000001,0.702,0.895,0.0,0.132,7.575757575757575,86.8,G=4 k=0.083 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,4,no-bias,1,1.62,1.206,0.41400000000000015,0.671,0.91,0.0,0.132,7.575757575757575,86.8,G=4 k=0.083 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,4,fitted c,1,1.799,1.206,0.593,0.693,0.903,0.0,0.132,7.575757575757575,86.8,"G=4 k=0.083 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,8,no-bias,0,1.77,1.206,0.5640000000000001,0.733,0.767,0.0,0.382,2.6178010471204187,61.8,G=8 k=0.333 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.333,8,+logL+0,0,2.11,1.206,0.9039999999999999,0.655,0.994,0.0,0.382,2.6178010471204187,61.8,G=8 k=0.333 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,8,+logL+0,1,1.781,1.206,0.575,0.735,0.767,0.0,0.382,2.6178010471204187,61.8,G=8 k=0.333 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.333,8,no-bias,1,1.723,1.206,0.5170000000000001,0.733,0.755,0.0,0.382,2.6178010471204187,61.8,G=8 k=0.333 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.333,8,fitted c,1,1.779,1.206,0.573,0.733,0.774,0.0,0.382,2.6178010471204187,61.8,"G=8 k=0.333 fitted slot (k*, v*, c)"
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,8,no-bias,0,1.73,1.206,0.524,0.691,0.891,0.0,0.156,6.410256410256411,84.39999999999999,G=8 k=0.083 soft meanEmb no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,soft token (mean embedding),0.083,8,+logL+0,0,2.207,1.206,1.001,0.611,1.203,0.0,0.156,6.410256410256411,84.39999999999999,G=8 k=0.083 soft meanEmb +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,+logL+0,1,1.721,1.206,0.5150000000000001,0.698,0.885,0.0,0.156,6.410256410256411,84.39999999999999,G=8 k=0.083 oracle meanKV +logL+0
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,oracle mean K/V slot,0.083,8,no-bias,1,1.61,1.206,0.40400000000000014,0.669,0.907,0.0,0.156,6.410256410256411,84.39999999999999,G=8 k=0.083 oracle meanKV no-bias
-outlier,32k,dense 160M (ladder),beaker,ceiling,24,"fitted log-mass slot (k*, v*, c)",0.083,8,fitted c,1,1.761,1.206,0.5549999999999999,0.696,0.864,0.0,0.156,6.410256410256411,84.39999999999999,"G=8 k=0.083 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,full attention,1.0,1,,0,0.233,0.233,0.0,1.0,0.0,0.88,1.0,1.0,0.0,full
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,1,no-bias,0,0.102,0.233,-0.131,0.946,0.174,0.88,0.355,2.8169014084507045,64.5,G=1 k=0.333 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,1,+logL+0,0,0.268,0.233,0.035,0.943,0.222,0.75,0.355,2.8169014084507045,64.5,G=1 k=0.333 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,1,+logL+0,1,0.102,0.233,-0.131,0.946,0.183,0.88,0.355,2.8169014084507045,64.5,G=1 k=0.333 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,1,no-bias,1,0.097,0.233,-0.136,0.946,0.174,0.88,0.355,2.8169014084507045,64.5,G=1 k=0.333 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.333,1,fitted c,1,0.136,0.233,-0.097,0.946,0.175,0.88,0.355,2.8169014084507045,64.5,"G=1 k=0.333 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,1,no-bias,0,0.125,0.233,-0.10800000000000001,0.982,0.064,0.75,0.105,9.523809523809524,89.5,G=1 k=0.083 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,1,+logL+0,0,0.356,0.233,0.12299999999999997,0.94,0.248,0.5,0.105,9.523809523809524,89.5,G=1 k=0.083 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,1,+logL+0,1,0.181,0.233,-0.05200000000000002,1.0,0.067,0.88,0.105,9.523809523809524,89.5,G=1 k=0.083 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,1,no-bias,1,0.123,0.233,-0.11000000000000001,0.982,0.069,0.75,0.105,9.523809523809524,89.5,G=1 k=0.083 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.083,1,fitted c,1,0.216,0.233,-0.017000000000000015,0.982,0.087,0.88,0.105,9.523809523809524,89.5,"G=1 k=0.083 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,2,no-bias,0,0.097,0.233,-0.136,0.946,0.173,0.88,0.359,2.785515320334262,64.1,G=2 k=0.333 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,2,+logL+0,0,0.156,0.233,-0.07700000000000001,0.946,0.214,0.88,0.359,2.785515320334262,64.1,G=2 k=0.333 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,2,+logL+0,1,0.095,0.233,-0.138,0.946,0.177,0.88,0.359,2.785515320334262,64.1,G=2 k=0.333 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,2,no-bias,1,0.092,0.233,-0.14100000000000001,0.946,0.168,0.88,0.359,2.785515320334262,64.1,G=2 k=0.333 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.333,2,fitted c,1,0.133,0.233,-0.1,0.946,0.165,0.88,0.359,2.785515320334262,64.1,"G=2 k=0.333 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,2,no-bias,0,0.166,0.233,-0.067,0.982,0.074,0.75,0.11,9.090909090909092,89.0,G=2 k=0.083 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,2,+logL+0,0,0.234,0.233,0.0010000000000000009,0.926,0.187,0.62,0.11,9.090909090909092,89.0,G=2 k=0.083 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,2,+logL+0,1,0.199,0.233,-0.034,0.964,0.079,0.75,0.11,9.090909090909092,89.0,G=2 k=0.083 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,2,no-bias,1,0.162,0.233,-0.07100000000000001,0.982,0.073,0.75,0.11,9.090909090909092,89.0,G=2 k=0.083 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.083,2,fitted c,1,0.201,0.233,-0.032,0.982,0.095,0.88,0.11,9.090909090909092,89.0,"G=2 k=0.083 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,4,no-bias,0,0.092,0.233,-0.14100000000000001,0.946,0.168,0.88,0.368,2.717391304347826,63.2,G=4 k=0.333 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,4,+logL+0,0,0.155,0.233,-0.07800000000000001,0.946,0.218,0.88,0.368,2.717391304347826,63.2,G=4 k=0.333 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,4,+logL+0,1,0.093,0.233,-0.14,0.946,0.17,0.88,0.368,2.717391304347826,63.2,G=4 k=0.333 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,4,no-bias,1,0.092,0.233,-0.14100000000000001,0.946,0.161,0.88,0.368,2.717391304347826,63.2,G=4 k=0.333 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.333,4,fitted c,1,0.133,0.233,-0.1,0.946,0.156,0.88,0.368,2.717391304347826,63.2,"G=4 k=0.333 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,4,no-bias,0,0.171,0.233,-0.062,0.982,0.082,0.75,0.122,8.19672131147541,87.8,G=4 k=0.083 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,4,+logL+0,0,0.284,0.233,0.05099999999999996,0.961,0.204,0.62,0.122,8.19672131147541,87.8,G=4 k=0.083 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,4,+logL+0,1,0.202,0.233,-0.031,0.982,0.077,0.75,0.122,8.19672131147541,87.8,G=4 k=0.083 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,4,no-bias,1,0.159,0.233,-0.07400000000000001,0.982,0.085,0.75,0.122,8.19672131147541,87.8,G=4 k=0.083 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.083,4,fitted c,1,0.188,0.233,-0.04500000000000001,0.982,0.079,0.88,0.122,8.19672131147541,87.8,"G=4 k=0.083 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,8,no-bias,0,0.079,0.233,-0.15400000000000003,0.946,0.168,0.88,0.384,2.6041666666666665,61.6,G=8 k=0.333 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.333,8,+logL+0,0,0.103,0.233,-0.13,0.964,0.234,0.88,0.384,2.6041666666666665,61.6,G=8 k=0.333 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,8,+logL+0,1,0.079,0.233,-0.15400000000000003,0.946,0.171,0.88,0.384,2.6041666666666665,61.6,G=8 k=0.333 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.333,8,no-bias,1,0.081,0.233,-0.15200000000000002,0.946,0.166,0.88,0.384,2.6041666666666665,61.6,G=8 k=0.333 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.333,8,fitted c,1,0.123,0.233,-0.11000000000000001,0.946,0.147,0.88,0.384,2.6041666666666665,61.6,"G=8 k=0.333 fitted slot (k*, v*, c)"
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,8,no-bias,0,0.156,0.233,-0.07700000000000001,0.982,0.079,0.75,0.144,6.944444444444445,85.6,G=8 k=0.083 soft meanEmb no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,soft token (mean embedding),0.083,8,+logL+0,0,0.094,0.233,-0.139,0.964,0.196,0.88,0.144,6.944444444444445,85.6,G=8 k=0.083 soft meanEmb +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,8,+logL+0,1,0.169,0.233,-0.064,0.964,0.092,0.88,0.144,6.944444444444445,85.6,G=8 k=0.083 oracle meanKV +logL+0
+nq,32k,dense 48M (ladder),beaker,ceiling,8,oracle mean K/V slot,0.083,8,no-bias,1,0.131,0.233,-0.10200000000000001,0.964,0.078,0.75,0.144,6.944444444444445,85.6,G=8 k=0.083 oracle meanKV no-bias
+nq,32k,dense 48M (ladder),beaker,ceiling,8,"fitted log-mass slot (k*, v*, c)",0.083,8,fitted c,1,0.175,0.233,-0.058000000000000024,0.982,0.092,0.88,0.144,6.944444444444445,85.6,"G=8 k=0.083 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,full attention,1.0,1,,0,1.149,1.149,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,1,no-bias,0,1.36,1.149,0.21100000000000008,0.83,0.421,0.0,0.356,2.808988764044944,64.4,G=1 k=0.333 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,1,+logL+0,0,1.894,1.149,0.7449999999999999,0.701,0.869,0.0,0.356,2.808988764044944,64.4,G=1 k=0.333 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,1,+logL+0,1,1.404,1.149,0.2549999999999999,0.846,0.414,0.0,0.356,2.808988764044944,64.4,G=1 k=0.333 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,1,no-bias,1,1.35,1.149,0.20100000000000007,0.837,0.421,0.0,0.356,2.808988764044944,64.4,G=1 k=0.333 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.333,1,fitted c,1,1.402,1.149,0.2529999999999999,0.855,0.419,0.0,0.356,2.808988764044944,64.4,"G=1 k=0.333 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,1,no-bias,0,1.294,1.149,0.14500000000000002,0.81,0.601,0.0,0.12,8.333333333333334,88.0,G=1 k=0.083 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,1,+logL+0,0,2.086,1.149,0.9369999999999998,0.64,1.139,0.0,0.12,8.333333333333334,88.0,G=1 k=0.083 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,1,+logL+0,1,1.385,1.149,0.236,0.814,0.605,0.0,0.12,8.333333333333334,88.0,G=1 k=0.083 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,1,no-bias,1,1.279,1.149,0.1299999999999999,0.804,0.602,0.0,0.12,8.333333333333334,88.0,G=1 k=0.083 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.083,1,fitted c,1,1.438,1.149,0.2889999999999999,0.807,0.632,0.0,0.12,8.333333333333334,88.0,"G=1 k=0.083 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,2,no-bias,0,1.362,1.149,0.21300000000000008,0.837,0.416,0.0,0.36,2.7777777777777777,64.0,G=2 k=0.333 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,2,+logL+0,0,1.945,1.149,0.796,0.702,0.912,0.0,0.36,2.7777777777777777,64.0,G=2 k=0.333 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,2,+logL+0,1,1.39,1.149,0.24099999999999988,0.843,0.415,0.0,0.36,2.7777777777777777,64.0,G=2 k=0.333 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,2,no-bias,1,1.346,1.149,0.19700000000000006,0.84,0.421,0.0,0.36,2.7777777777777777,64.0,G=2 k=0.333 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.333,2,fitted c,1,1.391,1.149,0.242,0.849,0.432,0.0,0.36,2.7777777777777777,64.0,"G=2 k=0.333 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,2,no-bias,0,1.329,1.149,0.17999999999999994,0.808,0.595,0.0,0.126,7.936507936507937,87.4,G=2 k=0.083 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,2,+logL+0,0,2.021,1.149,0.8719999999999999,0.653,1.107,0.0,0.126,7.936507936507937,87.4,G=2 k=0.083 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,2,+logL+0,1,1.37,1.149,0.22100000000000009,0.807,0.593,0.0,0.126,7.936507936507937,87.4,G=2 k=0.083 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,2,no-bias,1,1.268,1.149,0.119,0.807,0.592,0.0,0.126,7.936507936507937,87.4,G=2 k=0.083 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.083,2,fitted c,1,1.42,1.149,0.2709999999999999,0.801,0.634,0.0,0.126,7.936507936507937,87.4,"G=2 k=0.083 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,4,no-bias,0,1.347,1.149,0.19799999999999995,0.85,0.39,0.0,0.369,2.710027100271003,63.1,G=4 k=0.333 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,4,+logL+0,0,1.842,1.149,0.6930000000000001,0.725,0.805,0.0,0.369,2.710027100271003,63.1,G=4 k=0.333 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,4,+logL+0,1,1.377,1.149,0.22799999999999998,0.847,0.404,0.0,0.369,2.710027100271003,63.1,G=4 k=0.333 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,4,no-bias,1,1.336,1.149,0.18700000000000006,0.85,0.403,0.0,0.369,2.710027100271003,63.1,G=4 k=0.333 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.333,4,fitted c,1,1.393,1.149,0.244,0.843,0.448,0.0,0.369,2.710027100271003,63.1,"G=4 k=0.333 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,4,no-bias,0,1.349,1.149,0.19999999999999996,0.827,0.581,0.0,0.138,7.246376811594202,86.2,G=4 k=0.083 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,4,+logL+0,0,1.885,1.149,0.736,0.678,0.959,0.0,0.138,7.246376811594202,86.2,G=4 k=0.083 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,4,+logL+0,1,1.38,1.149,0.23099999999999987,0.81,0.607,0.0,0.138,7.246376811594202,86.2,G=4 k=0.083 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,4,no-bias,1,1.284,1.149,0.135,0.797,0.618,0.0,0.138,7.246376811594202,86.2,G=4 k=0.083 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.083,4,fitted c,1,1.391,1.149,0.242,0.804,0.618,0.0,0.138,7.246376811594202,86.2,"G=4 k=0.083 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,8,no-bias,0,1.352,1.149,0.20300000000000007,0.846,0.387,0.0,0.387,2.5839793281653747,61.3,G=8 k=0.333 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.333,8,+logL+0,0,1.734,1.149,0.585,0.76,0.674,0.0,0.387,2.5839793281653747,61.3,G=8 k=0.333 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,8,+logL+0,1,1.394,1.149,0.24499999999999988,0.853,0.408,0.0,0.387,2.5839793281653747,61.3,G=8 k=0.333 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.333,8,no-bias,1,1.347,1.149,0.19799999999999995,0.853,0.397,0.0,0.387,2.5839793281653747,61.3,G=8 k=0.333 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.333,8,fitted c,1,1.414,1.149,0.2649999999999999,0.835,0.457,0.0,0.387,2.5839793281653747,61.3,"G=8 k=0.333 fitted slot (k*, v*, c)"
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,8,no-bias,0,1.387,1.149,0.238,0.801,0.618,0.0,0.162,6.172839506172839,83.8,G=8 k=0.083 soft meanEmb no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,soft token (mean embedding),0.083,8,+logL+0,0,1.794,1.149,0.645,0.692,0.881,0.0,0.162,6.172839506172839,83.8,G=8 k=0.083 soft meanEmb +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,8,+logL+0,1,1.387,1.149,0.238,0.797,0.621,0.0,0.162,6.172839506172839,83.8,G=8 k=0.083 oracle meanKV +logL+0
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,oracle mean K/V slot,0.083,8,no-bias,1,1.307,1.149,0.15799999999999992,0.78,0.642,0.0,0.162,6.172839506172839,83.8,G=8 k=0.083 oracle meanKV no-bias
+outlier,32k,dense 160M (ladder),beaker,ceiling,16,"fitted log-mass slot (k*, v*, c)",0.083,8,fitted c,1,1.375,1.149,0.22599999999999998,0.81,0.587,0.0,0.162,6.172839506172839,83.8,"G=8 k=0.083 fitted slot (k*, v*, c)"
 contradiction,32k,dense 56M (ladder),sneetches,slot,24,full attention,1.0,1,,0,0.071,0.071,0.0,1.0,0.0,0.58,1.0,1.0,0.0,full
 contradiction,32k,dense 56M (ladder),sneetches,slot,24,soft token (mean embedding),0.333,1,no-bias,0,0.081,0.071,0.010000000000000009,0.966,0.098,0.46,0.357,2.801120448179272,64.3,soft k=0.333 no-bias
 contradiction,32k,dense 56M (ladder),sneetches,slot,24,soft token (mean embedding),0.333,1,+logL,0,0.168,0.071,0.09700000000000002,0.944,0.166,0.25,0.357,2.801120448179272,64.3,soft k=0.333 +logL
@@ -1105,20 +1105,96 @@ oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all toke
 oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.627,0.466,0.16099999999999998,0.808,0.236,0.42,1.0,1.0,0.0,pooledKV k=0.000 +logL
 oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.53,0.466,0.064,0.838,0.144,0.42,1.0,1.0,0.0,pooledKV k=0.000 no-bias
 nq,32k,dense 48M (ladder),beaker,pooledkv,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,0.745,0.086,0.659,0.841,0.687,0.38,1.0,1.0,0.0,pooledKV k=0.333 +logL
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,0.698,0.086,0.612,0.841,0.641,0.38,1.0,1.0,0.0,pooledKV k=0.333 no-bias
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,0.957,0.086,0.871,0.776,0.905,0.12,1.0,1.0,0.0,pooledKV k=0.167 +logL
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,0.93,0.086,0.8440000000000001,0.777,0.882,0.12,1.0,1.0,0.0,pooledKV k=0.167 no-bias
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,1.047,0.086,0.961,0.743,1.03,0.08,1.0,1.0,0.0,pooledKV k=0.083 +logL
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,1.037,0.086,0.951,0.743,1.017,0.04,1.0,1.0,0.0,pooledKV k=0.083 no-bias
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.893,0.086,0.807,0.741,0.849,0.0,1.0,1.0,0.0,pooledKV k=0.000 +logL
-nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.849,0.086,0.763,0.754,0.807,0.0,1.0,1.0,0.0,pooledKV k=0.000 no-bias
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,full attention,1.0,1,,0,1.2,1.2,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,1.825,1.2,0.625,0.733,0.776,0.0,1.0,1.0,0.0,pooledKV k=0.333 +logL
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,1.745,1.2,0.5450000000000002,0.733,0.754,0.0,1.0,1.0,0.0,pooledKV k=0.333 no-bias
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,1.807,1.2,0.607,0.693,0.802,0.0,1.0,1.0,0.0,pooledKV k=0.167 +logL
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,1.689,1.2,0.4890000000000001,0.679,0.8,0.0,1.0,1.0,0.0,pooledKV k=0.167 no-bias
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,1.796,1.2,0.5960000000000001,0.679,0.834,0.0,1.0,1.0,0.0,pooledKV k=0.083 +logL
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,1.594,1.2,0.39400000000000013,0.643,0.834,0.0,1.0,1.0,0.0,pooledKV k=0.083 no-bias
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,1.56,1.2,0.3600000000000001,0.727,0.794,0.0,1.0,1.0,0.0,pooledKV k=0.000 +logL
-outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,1.456,1.2,0.256,0.672,0.969,0.0,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,0.174,0.086,0.088,0.957,0.128,0.75,1.0,1.0,0.0,pooledKV k=0.333 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,0.175,0.086,0.089,0.957,0.129,0.75,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,0.3,0.086,0.214,0.938,0.271,0.71,1.0,1.0,0.0,pooledKV k=0.167 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,0.312,0.086,0.226,0.926,0.277,0.67,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,0.194,0.086,0.10800000000000001,0.954,0.219,0.79,1.0,1.0,0.0,pooledKV k=0.083 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,0.251,0.086,0.165,0.935,0.256,0.67,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.089,0.086,0.0030000000000000027,0.975,0.142,0.88,1.0,1.0,0.0,pooledKV k=0.000 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.047,0.086,-0.03899999999999999,0.961,0.11,0.88,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,full attention,1.0,1,,0,1.206,1.206,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,1.807,1.206,0.601,0.741,0.718,0.0,1.0,1.0,0.0,pooledKV k=0.333 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,1.747,1.206,0.5410000000000001,0.746,0.707,0.0,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,1.724,1.206,0.518,0.73,0.717,0.0,1.0,1.0,0.0,pooledKV k=0.167 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,1.604,1.206,0.39800000000000013,0.714,0.707,0.0,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,1.605,1.206,0.399,0.768,0.636,0.0,1.0,1.0,0.0,pooledKV k=0.083 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,1.4,1.206,0.19399999999999995,0.743,0.629,0.0,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,1.233,1.206,0.027000000000000135,0.862,0.454,0.0,1.0,1.0,0.0,pooledKV k=0.000 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,1.025,1.206,-0.18100000000000005,0.807,0.595,0.0,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,full attention,1.0,1,,0,0.042,0.042,0.0,1.0,0.0,0.67,1.0,1.0,0.0,full
+contradiction,32k,dense 56M (ladder),beaker,policy,24,soft token (mean embedding),0.333,1,no-bias,0,0.107,0.042,0.065,0.969,0.081,0.33,0.357,2.801120448179272,64.3,soft k=0.333 no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,soft token (mean embedding),0.167,1,no-bias,0,0.16,0.042,0.118,0.95,0.145,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,soft token (mean embedding),0.083,1,no-bias,0,0.378,0.042,0.336,0.896,0.351,0.04,0.116,8.620689655172413,88.4,soft k=0.083 no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.333,1,no-bias,0,0.107,0.042,0.065,0.968,0.081,0.33,0.357,2.801120448179272,64.3,soft k=0.333 policy=overlap no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.167,1,no-bias,0,0.16,0.042,0.118,0.95,0.145,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 policy=overlap no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.083,1,no-bias,0,0.378,0.042,0.336,0.893,0.351,0.04,0.116,8.620689655172413,88.4,soft k=0.083 policy=overlap no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy length",0.333,1,no-bias,0,0.107,0.042,0.065,0.965,0.081,0.33,0.357,2.801120448179272,64.3,soft k=0.333 policy=length no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy length",0.167,1,no-bias,0,0.159,0.042,0.11699999999999999,0.95,0.144,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 policy=length no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy length",0.083,1,no-bias,0,0.376,0.042,0.334,0.894,0.35,0.04,0.116,8.620689655172413,88.4,soft k=0.083 policy=length no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy short",0.333,1,no-bias,0,0.107,0.042,0.065,0.968,0.081,0.33,0.357,2.801120448179272,64.3,soft k=0.333 policy=short no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy short",0.167,1,no-bias,0,0.16,0.042,0.118,0.95,0.145,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 policy=short no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy short",0.083,1,no-bias,0,0.376,0.042,0.334,0.894,0.349,0.04,0.116,8.620689655172413,88.4,soft k=0.083 policy=short no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy first",0.333,1,no-bias,0,0.108,0.042,0.066,0.968,0.082,0.33,0.357,2.801120448179272,64.3,soft k=0.333 policy=first no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy first",0.167,1,no-bias,0,0.159,0.042,0.11699999999999999,0.949,0.144,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 policy=first no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy first",0.083,1,no-bias,0,0.379,0.042,0.337,0.896,0.352,0.04,0.116,8.620689655172413,88.4,soft k=0.083 policy=first no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy last",0.333,1,no-bias,0,0.108,0.042,0.066,0.968,0.081,0.33,0.357,2.801120448179272,64.3,soft k=0.333 policy=last no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy last",0.167,1,no-bias,0,0.16,0.042,0.118,0.949,0.144,0.12,0.196,5.1020408163265305,80.4,soft k=0.167 policy=last no-bias
+contradiction,32k,dense 56M (ladder),beaker,policy,24,"soft token, keep policy last",0.083,1,no-bias,0,0.378,0.042,0.336,0.894,0.351,0.04,0.116,8.620689655172413,88.4,soft k=0.083 policy=last no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,full attention,1.0,1,,0,0.466,0.466,0.0,1.0,0.0,0.42,1.0,1.0,0.0,full
+oolong,32k,dense 80M (ladder),beaker,policy,24,soft token (mean embedding),0.333,1,no-bias,0,0.612,0.466,0.14599999999999996,0.799,0.253,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,soft token (mean embedding),0.167,1,no-bias,0,0.848,0.466,0.38199999999999995,0.742,0.364,0.33,0.188,5.319148936170213,81.2,soft k=0.167 no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,soft token (mean embedding),0.083,1,no-bias,0,0.924,0.466,0.458,0.753,0.438,0.33,0.1,10.0,90.0,soft k=0.083 no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.333,1,no-bias,0,0.611,0.466,0.14499999999999996,0.789,0.253,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 policy=overlap no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.167,1,no-bias,0,0.844,0.466,0.37799999999999995,0.75,0.361,0.33,0.188,5.319148936170213,81.2,soft k=0.167 policy=overlap no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.083,1,no-bias,0,0.925,0.466,0.459,0.762,0.437,0.33,0.1,10.0,90.0,soft k=0.083 policy=overlap no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy length",0.333,1,no-bias,0,0.607,0.466,0.14099999999999996,0.789,0.252,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 policy=length no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy length",0.167,1,no-bias,0,0.847,0.466,0.38099999999999995,0.76,0.364,0.33,0.188,5.319148936170213,81.2,soft k=0.167 policy=length no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy length",0.083,1,no-bias,0,0.924,0.466,0.458,0.753,0.436,0.33,0.1,10.0,90.0,soft k=0.083 policy=length no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy short",0.333,1,no-bias,0,0.611,0.466,0.14499999999999996,0.799,0.252,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 policy=short no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy short",0.167,1,no-bias,0,0.845,0.466,0.37899999999999995,0.767,0.361,0.33,0.188,5.319148936170213,81.2,soft k=0.167 policy=short no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy short",0.083,1,no-bias,0,0.927,0.466,0.461,0.762,0.438,0.33,0.1,10.0,90.0,soft k=0.083 policy=short no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy first",0.333,1,no-bias,0,0.609,0.466,0.14299999999999996,0.797,0.252,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 policy=first no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy first",0.167,1,no-bias,0,0.846,0.466,0.37999999999999995,0.75,0.362,0.33,0.188,5.319148936170213,81.2,soft k=0.167 policy=first no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy first",0.083,1,no-bias,0,0.923,0.466,0.457,0.762,0.436,0.33,0.1,10.0,90.0,soft k=0.083 policy=first no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy last",0.333,1,no-bias,0,0.61,0.466,0.14399999999999996,0.797,0.254,0.38,0.355,2.8169014084507045,64.5,soft k=0.333 policy=last no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy last",0.167,1,no-bias,0,0.847,0.466,0.38099999999999995,0.742,0.362,0.33,0.188,5.319148936170213,81.2,soft k=0.167 policy=last no-bias
+oolong,32k,dense 80M (ladder),beaker,policy,24,"soft token, keep policy last",0.083,1,no-bias,0,0.928,0.466,0.462,0.762,0.44,0.33,0.1,10.0,90.0,soft k=0.083 policy=last no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
+nq,32k,dense 48M (ladder),beaker,policy,24,soft token (mean embedding),0.333,1,no-bias,0,0.069,0.086,-0.016999999999999987,0.976,0.041,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,soft token (mean embedding),0.167,1,no-bias,0,0.089,0.086,0.0030000000000000027,0.975,0.114,0.92,0.177,5.649717514124294,82.3,soft k=0.167 no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,soft token (mean embedding),0.083,1,no-bias,0,0.055,0.086,-0.030999999999999993,0.976,0.094,0.88,0.097,10.309278350515463,90.3,soft k=0.083 no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.333,1,no-bias,0,0.068,0.086,-0.017999999999999988,0.97,0.042,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 policy=overlap no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.167,1,no-bias,0,0.088,0.086,0.0020000000000000018,0.975,0.112,0.92,0.177,5.649717514124294,82.3,soft k=0.167 policy=overlap no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.083,1,no-bias,0,0.057,0.086,-0.02899999999999999,0.976,0.095,0.88,0.097,10.309278350515463,90.3,soft k=0.083 policy=overlap no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy length",0.333,1,no-bias,0,0.069,0.086,-0.016999999999999987,0.976,0.042,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 policy=length no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy length",0.167,1,no-bias,0,0.089,0.086,0.0030000000000000027,0.975,0.114,0.92,0.177,5.649717514124294,82.3,soft k=0.167 policy=length no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy length",0.083,1,no-bias,0,0.058,0.086,-0.02799999999999999,0.976,0.096,0.88,0.097,10.309278350515463,90.3,soft k=0.083 policy=length no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy short",0.333,1,no-bias,0,0.07,0.086,-0.015999999999999986,0.97,0.044,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 policy=short no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy short",0.167,1,no-bias,0,0.089,0.086,0.0030000000000000027,0.975,0.113,0.92,0.177,5.649717514124294,82.3,soft k=0.167 policy=short no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy short",0.083,1,no-bias,0,0.057,0.086,-0.02899999999999999,0.976,0.096,0.88,0.097,10.309278350515463,90.3,soft k=0.083 policy=short no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy first",0.333,1,no-bias,0,0.07,0.086,-0.015999999999999986,0.976,0.043,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 policy=first no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy first",0.167,1,no-bias,0,0.088,0.086,0.0020000000000000018,0.975,0.113,0.92,0.177,5.649717514124294,82.3,soft k=0.167 policy=first no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy first",0.083,1,no-bias,0,0.056,0.086,-0.029999999999999992,0.976,0.096,0.88,0.097,10.309278350515463,90.3,soft k=0.083 policy=first no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy last",0.333,1,no-bias,0,0.07,0.086,-0.015999999999999986,0.976,0.043,0.88,0.34,2.941176470588235,65.99999999999999,soft k=0.333 policy=last no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy last",0.167,1,no-bias,0,0.089,0.086,0.0030000000000000027,0.975,0.113,0.92,0.177,5.649717514124294,82.3,soft k=0.167 policy=last no-bias
+nq,32k,dense 48M (ladder),beaker,policy,24,"soft token, keep policy last",0.083,1,no-bias,0,0.056,0.086,-0.029999999999999992,0.976,0.096,0.88,0.097,10.309278350515463,90.3,soft k=0.083 policy=last no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,full attention,1.0,1,,0,1.206,1.206,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
+outlier,32k,dense 160M (ladder),beaker,policy,24,soft token (mean embedding),0.333,1,no-bias,0,1.399,1.206,0.19300000000000006,0.833,0.449,0.0,0.348,2.873563218390805,65.2,soft k=0.333 no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,soft token (mean embedding),0.167,1,no-bias,0,1.306,1.206,0.10000000000000009,0.815,0.496,0.0,0.186,5.376344086021505,81.4,soft k=0.167 no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,soft token (mean embedding),0.083,1,no-bias,0,1.2,1.206,-0.006000000000000005,0.818,0.497,0.0,0.105,9.523809523809524,89.5,soft k=0.083 no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.333,1,no-bias,0,1.399,1.206,0.19300000000000006,0.826,0.45,0.0,0.348,2.873563218390805,65.2,soft k=0.333 policy=overlap no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.167,1,no-bias,0,1.306,1.206,0.10000000000000009,0.82,0.498,0.0,0.186,5.376344086021505,81.4,soft k=0.167 policy=overlap no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy overlap",0.083,1,no-bias,0,1.201,1.206,-0.004999999999999893,0.816,0.498,0.0,0.105,9.523809523809524,89.5,soft k=0.083 policy=overlap no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy length",0.333,1,no-bias,0,1.398,1.206,0.19199999999999995,0.831,0.447,0.0,0.348,2.873563218390805,65.2,soft k=0.333 policy=length no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy length",0.167,1,no-bias,0,1.31,1.206,0.10400000000000009,0.817,0.499,0.0,0.186,5.376344086021505,81.4,soft k=0.167 policy=length no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy length",0.083,1,no-bias,0,1.201,1.206,-0.004999999999999893,0.82,0.497,0.0,0.105,9.523809523809524,89.5,soft k=0.083 policy=length no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy short",0.333,1,no-bias,0,1.399,1.206,0.19300000000000006,0.833,0.449,0.0,0.348,2.873563218390805,65.2,soft k=0.333 policy=short no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy short",0.167,1,no-bias,0,1.308,1.206,0.10200000000000009,0.817,0.497,0.0,0.186,5.376344086021505,81.4,soft k=0.167 policy=short no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy short",0.083,1,no-bias,0,1.202,1.206,-0.0040000000000000036,0.818,0.497,0.0,0.105,9.523809523809524,89.5,soft k=0.083 policy=short no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy first",0.333,1,no-bias,0,1.399,1.206,0.19300000000000006,0.833,0.45,0.0,0.348,2.873563218390805,65.2,soft k=0.333 policy=first no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy first",0.167,1,no-bias,0,1.307,1.206,0.10099999999999998,0.82,0.497,0.0,0.186,5.376344086021505,81.4,soft k=0.167 policy=first no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy first",0.083,1,no-bias,0,1.201,1.206,-0.004999999999999893,0.818,0.496,0.0,0.105,9.523809523809524,89.5,soft k=0.083 policy=first no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy last",0.333,1,no-bias,0,1.401,1.206,0.19500000000000006,0.833,0.45,0.0,0.348,2.873563218390805,65.2,soft k=0.333 policy=last no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy last",0.167,1,no-bias,0,1.309,1.206,0.10299999999999998,0.817,0.497,0.0,0.186,5.376344086021505,81.4,soft k=0.167 policy=last no-bias
+outlier,32k,dense 160M (ladder),beaker,policy,24,"soft token, keep policy last",0.083,1,no-bias,0,1.204,1.206,-0.0020000000000000018,0.818,0.498,0.0,0.105,9.523809523809524,89.5,soft k=0.083 policy=last no-bias

@@ -24,16 +24,16 @@ ENV = dict(os.environ, PATH="/scratch/users/prasann/conda/envs/corpus-reasoning-
 SOURCES = [
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "slot", "01M20YEJ995B06CSRYSNQS5DDW"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "slot", "01M20YFQZFZ1YBQXCY6JM9X5AE"),
-    ("beaker", "nq", "32k", "dense 48M (ladder)", "slot", "01M20YKKQMJCDMV481AZ48KMQE"),
-    ("beaker", "outlier", "32k", "dense 160M (ladder)", "slot", "01M20YN88JC1Q98BM1X1MZFYKR"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "slot", "01M2162XMKDCWJ3GVCWFJQR96X"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "slot", "01M2166T2QBWZX0QD5VYXTYBNF"),
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "oracle", "01M20Z4DWPGQNP176TZHBBYEHE"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "oracle", "01M20Z5R7MJRKQP0SDJ5SNQDF5"),
-    ("beaker", "nq", "32k", "dense 48M (ladder)", "oracle", "01M20Z715ZP493WSJ262T7XE4Z"),
-    ("beaker", "outlier", "32k", "dense 160M (ladder)", "oracle", "01M20Z8DERN7X8QCR6F3S7HFTG"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "oracle", "01M2163N012NX6J3NS003CWSPT"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "oracle", "01M2167JH8D5WXKB348NCT662M"),
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "ceiling", "01M210R84TYFDSXYF9PZYVMFNV"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "ceiling", "01M210SDGGF8G0G8JQF49SY25G"),
-    ("beaker", "nq", "32k", "dense 48M (ladder)", "ceiling", "01M210TFJ9KAY8S0A6S1N41EF9"),
-    ("beaker", "outlier", "32k", "dense 160M (ladder)", "ceiling", "01M210VAYR1EJJ5895YDYEM44B"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "ceiling", "01M2164GTC9XFSZA1K12R5QVF6"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "ceiling", "01M2168CQP92M2HNG99AAF124D"),
     ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "slot", "/net/sneetches/data/prasann/slot_probe/slot_contradiction_32768.log"),
     ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "oracle", "/net/sneetches/data/prasann/slot_probe/oracle_contradiction_32768.log"),
     ("sneetches", "oolong", "32k", "dense 80M (ladder)", "slot", "/net/sneetches/data/prasann/slot_probe/slot_oolong_32768.log"),
@@ -56,8 +56,12 @@ SOURCES = [
     ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "ceiling", "01M214MQWFAQFA008E7TWZ69BT"),
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "pooledkv", "01M215860C2NMTS9A7BBVSENZ0"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "pooledkv", "01M2158X5K2VRJZ45MM28R6S6S"),
-    ("beaker", "nq", "32k", "dense 48M (ladder)", "pooledkv", "01M2159NQA9PYVA3X1N5R3T7BX"),
-    ("beaker", "outlier", "32k", "dense 160M (ladder)", "pooledkv", "01M215AESCQSTXHWV1H54VM928"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "pooledkv", "01M21658V40RG6S2DW1B2CGC0W"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "pooledkv", "01M2169HPQ4DGM25KEB02FAW4J"),
+    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "policy", "01M215QH9HAQSJ91GYDJH0ZR6X"),
+    ("beaker", "oolong", "32k", "dense 80M (ladder)", "policy", "01M215R9H1298Z9JRP0TTH23QT"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "policy", "01M21626Y4GAWK79C7CP0S1D1B"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "policy", "01M2165ZPWM9RY3KBJ9K5CMPD9"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
@@ -115,8 +119,11 @@ def classify(name):
         bias = n.split("meanEmb")[1].strip() or "no-bias"
         return "soft token (mean embedding)", keep, G, bias, False
     if n.startswith("soft "):
-        bias = re.sub(r"^soft k=[0-9.]+\s*", "", n)
-        return "soft token (mean embedding)", keep, G, bias, False
+        rest = re.sub(r"^soft k=[0-9.]+\s*", "", n)
+        pol = re.search(r"policy=(\w+)", rest)
+        if pol:
+            return f"soft token, keep policy {pol.group(1)}", keep, G, rest.replace(pol.group(0), "").strip() or "no-bias", False
+        return "soft token (mean embedding)", keep, G, rest, False
     return n, keep, G, "", False
 
 
