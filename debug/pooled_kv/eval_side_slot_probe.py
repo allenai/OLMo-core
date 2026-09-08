@@ -36,14 +36,22 @@ from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import TransformerConfig
 
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
-IDS = RESERVED_IDS["qwen3_5"]
-VOCAB = 248320
+FAMILY = os.environ.get("PROBE_FAMILY", "qwen3_5")  # qwen3_5 (GDN hybrid) | qwen3 (pure attention)
+IDS = RESERVED_IDS[FAMILY]
+VOCAB = 248320 if FAMILY == "qwen3_5" else 151936
+TOKENIZER = "Qwen/Qwen3.5-0.8B-Base" if FAMILY == "qwen3_5" else "Qwen/Qwen3-4B"
+CKPT_Q3 = {  # dense Qwen3-4B ladder runs (lr 5e-5), pure attention: every layer takes K/V slots
+    "contradiction": f"{W}/ctc_suite/ckpts/fs35q3s4bdense2-contradiction-dense-s56M",
+    "oolong": f"{W}/ctc_suite/ckpts/fs35q3s4bdense2-oolong-dense-s80M",
+}
 CKPT = {  # dense-trained Qwen3.5-4B ladder runs (largest budget); globbed with * so any save-root suffix matches
     "contradiction": f"{W}/ctc_suite/ckpts/tsl-full-contradiction-s56M-4b-20260831T235942-0700",
     "oolong": f"{W}/ctc_suite/ckpts/tsl-full-oolong-s80M-4b-20260901T085004-0700",
     "nq": f"{W}/*/ckpts/lmx-full-nmixs48M-nq-4b",
     "outlier": f"{W}/*/ckpts/lmx-full-mixs160M-4b-2026",
 }
+if FAMILY == "qwen3":
+    CKPT = CKPT_Q3
 EVAL_JSONL = {
     "contradiction": {"2k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl",
                       "8k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl",
@@ -62,6 +70,14 @@ GOLD_TASKS = ("contradiction", "nq", "outlier")  # tasks with a gold sidecar (ke
 
 def log(m):
     print(f"[probe] {m}", flush=True)
+
+
+def build_cfg():
+    from olmo_core.nn.attention import AttentionBackendName
+    from olmo_core.nn.transformer import TransformerConfig
+
+    fac = TransformerConfig.qwen3_5_4B if FAMILY == "qwen3_5" else TransformerConfig.qwen3_4B
+    return fac(vocab_size=VOCAB, attn_backend=AttentionBackendName.torch)
 
 
 def find_ckpt(root):
@@ -85,7 +101,7 @@ def convert(task, jsonl, rows, out_dir):
             g.write(line)
     conv, chunk = CONV[task]
     cmd = ["python", "src/scripts/data/convert_unified_to_document_landmark.py", "--input-jsonl", head, "--task", conv,
-           "--out-dir", out_dir, "--emit", "dense", "--marker-set", "qwen3_5", "--tokenizer", "Qwen/Qwen3.5-0.8B-Base",
+           "--out-dir", out_dir, "--emit", "dense", "--marker-set", FAMILY, "--tokenizer", TOKENIZER,
            "--seq-len", "65536", "--query-position", "after", "--cot-mode", "none", "--chunk-by", chunk, "--num-proc", "4"]
     if task in GOLD_TASKS:
         cmd.append("--emit-gold-sidecar")
@@ -129,13 +145,13 @@ def main():
     ap.add_argument("--shard", default=None, help="override: already-tokenized shard dir (skips conversion)")
     a = ap.parse_args()
 
-    shard = a.shard or f"{a.work}/{a.task}_{a.rung}"
+    shard = a.shard or f"{a.work}/{FAMILY}_{a.task}_{a.rung}"
     if a.shard is None:
         convert(a.task, a.jsonl or EVAL_JSONL[a.task][a.rung], a.rows, shard)
     rows, masks = load_rows(shard, a.rows)
     log(f"{len(rows)} rows, lengths {[len(r) for r in rows[:6]]}...")
 
-    cfg = TransformerConfig.qwen3_5_4B(vocab_size=VOCAB, attn_backend=AttentionBackendName.torch)
+    cfg = build_cfg()
     cfg.lm_head.loss_implementation = LMLossImplementation.default
     model = cfg.build(init_device="cpu")
     ck = find_ckpt(a.ckpt) if a.ckpt else find_ckpt(CKPT[a.task])

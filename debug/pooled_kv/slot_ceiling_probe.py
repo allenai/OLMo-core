@@ -139,7 +139,7 @@ def main():
     ap.add_argument("--shard", default=None)
     a = ap.parse_args()
 
-    shard = a.shard or f"{a.work}/{a.task}_{a.rung}"
+    shard = a.shard or f"{a.work}/{P.FAMILY}_{a.task}_{a.rung}"
     if a.shard is None:
         P.convert(a.task, a.jsonl or P.EVAL_JSONL[a.task][a.rung], a.rows, shard)
     rows, masks = P.load_rows(shard, a.rows)
@@ -150,7 +150,7 @@ def main():
     from olmo_core.nn.lm_head import LMLossImplementation
     from olmo_core.nn.transformer import TransformerConfig
 
-    cfg = TransformerConfig.qwen3_5_4B(vocab_size=P.VOCAB, attn_backend=AttentionBackendName.torch)
+    cfg = P.build_cfg()
     cfg.lm_head.loss_implementation = LMLossImplementation.default
     model = cfg.build(init_device="cpu")
     ck = P.find_ckpt(a.ckpt) if a.ckpt else P.find_ckpt(P.CKPT[a.task])
