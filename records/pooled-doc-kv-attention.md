@@ -758,3 +758,20 @@ v6 result: labels dropped, separators kept (`Jul 18, 2023 || 82097 ||`) 0.689 / 
 intact**; its parity floor is compaction ~0.6 (header + keep 1/12 + GDN no-write, 0.500), i.e.
 ~1.6x. That is a property of the task (every line's exact metadata is answer-relevant), not of the
 slot.
+
+### Beaker confirmation on the eval-bundle rows (2026-09-08 15:30; different 24 rows, contradiction full 0.042, oolong 0.466)
+
+| construction | keep 1/3 | keep 1/12 | keep 1/36 | keep 0 |
+|---|---|---|---|---|
+| contradiction, `Claim N:` header real | **0.040** (c .46) | 0.055 (c .26) | **0.051** (c .21) | **0.044** (c .19) |
+| contradiction, neighbour runs (leak-free) | 0.059 (c .33) | 0.055 (c .13) | 0.069 (c .079) | 0.069 (c .053) |
+| contradiction, runs + header | 0.048 | 0.040 | 0.047 | 0.044 |
+| oolong, header real | **0.451** (c .62) | 0.561 (c .49) | 0.524 (c .44) | — |
+| oolong, header real + GDN no-write | 0.453 | 0.561 | 0.556 | — |
+
+Header-real replicates exactly (contradiction Δ ≤ +0.013 at every keep; oolong −0.015 at
+keep 1/3). Neighbour runs sit +0.02–0.03 above full on these rows (SE ≈ 0.02) — parity within
+noise but not below it as on the sneetches rows; adding the header closes it fully. Oolong at
+keep 1/12 does NOT replicate here (+0.095 with or without GDN no-write), so oolong's honest
+setting is header + keep 1/3 (c 0.62–0.72). nq/outlier with neighbour runs: at or below full
+(nq 0.085 / 0.079 / 0.008, outlier 1.196 / 1.089 / 1.034 at 1/3 / 1/12 / 0).

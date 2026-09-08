@@ -1,5 +1,13 @@
 # Soft-KV slot-construction study — handoff (state as of 2026-09-08 ~14:30 PDT)
 
+**UPDATE 15:30 — Beaker-confirmed on the eval-bundle rows; cheaper headers tested.** Header-real
+replicates on the canonical rows (contradiction 0.040–0.055 vs full 0.042 at every keep; oolong 0.451 vs
+0.466 at keep 1/3, NOT at 1/12). Headers cannot be trimmed (content-only / boundary-only / fraction of
+docs all fail on both tasks); on contradiction the leak-free neighbour runs make the header redundant
+(11x at keep 1/36, 18x at keep 0; +0.02 on the Beaker rows, at parity on sneetches) — now
+`--st-neighbour-runs 1`. Oolong's floor is ~0.6 compaction (task property). Tables: record sections
+"Cheaper headers" and "Beaker confirmation".
+
 **UPDATE 14:30 — PARITY REACHED ON ALL FOUR TASKS (eval side).** Contradiction and oolong close
 once each document's *header* (the exact-match tokens: `Claim N:`, `Date: … || User: … ||
 Instance:`) stays real and only the body is pooled (`--prefix-real stopK`), or — contradiction
