@@ -182,10 +182,13 @@ class ProfilerCallback(Callback):
         if self.ranks is None:
             return current_rank == 0
         elif isinstance(self.ranks, str):  # Handle string shortcuts for parallel groups
+            if self.ranks == "all":
+                # Needs no mesh. Train modules that build their own meshes (e.g. OLMoDDP) never
+                # register a world mesh, and previously this silently degraded to rank 0 only.
+                return True
             world_mesh = get_world_mesh()
             if world_mesh is None:
-                if self.ranks != "all":
-                    log.warning("No world mesh available, falling back to rank 0 only")
+                log.warning("No world mesh available, falling back to rank 0 only")
                 return current_rank == 0
 
             try:

@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import pytest
+
 from olmo_core.train.callbacks.profiler import _summarize_distributed_events
 
 
@@ -40,3 +42,22 @@ def test_summarize_distributed_events() -> None:
 
 def test_summarize_distributed_events_returns_empty_for_unrelated_ops() -> None:
     assert _summarize_distributed_events([_Event("aten::linear", 10.0, 9.0)]) == []
+
+
+@pytest.mark.parametrize(
+    "ranks, rank, expected",
+    [
+        (None, 0, True),
+        (None, 3, False),
+        ("all", 0, True),
+        ("all", 3, True),
+        ("dp", 3, False),  # no world mesh -> falls back to rank 0 only
+    ],
+)
+def test_should_profile_rank_without_world_mesh(monkeypatch, ranks, rank, expected) -> None:
+    from olmo_core.train.callbacks import profiler as profiler_mod
+
+    monkeypatch.setattr(profiler_mod, "get_world_mesh", lambda: None)
+    monkeypatch.setattr(profiler_mod, "get_rank", lambda: rank)
+    callback = profiler_mod.ProfilerCallback(ranks=ranks)
+    assert callback._should_profile_rank() is expected
