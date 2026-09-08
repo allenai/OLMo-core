@@ -106,6 +106,14 @@ class HeroPlanTest(unittest.TestCase):
         self.assertEqual(env["WANDB_RUN_ID"], "wandb-id")
         self.assertEqual(env["WANDB_RESUME"], "must")
         self.assertEqual(env["GIT_REF"], "new-commit")
+        for task in original["tasks"]:
+            task["context"]["minRuntime"] = 3_600_000_000_000
+        self.assertEqual(
+            resume_spec(original, run, "new-commit", 16500, "wandb-id")["tasks"][0]["context"][
+                "minRuntime"
+            ],
+            3_600_000_000_000,
+        )
         original["tasks"][0]["envVars"][0]["value"] = "unrelated-source"
         with self.assertRaises(AssertionError):
             resume_spec(original, run, "new-commit", 16500, "wandb-id")

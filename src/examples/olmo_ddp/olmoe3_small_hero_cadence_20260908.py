@@ -37,7 +37,8 @@ def resume_spec(original, run, commit, step, wandb_id):
         ]
         assert task["resources"]["gpuCount"] == 8
         assert task["context"]["priority"] == "urgent"
-        assert task["context"]["minRuntime"] in ("1h", "1h0m0s", "3600s")
+        # CLI exports a duration string; beaker-py's JSON uses nanoseconds.
+        assert task["context"]["minRuntime"] in ("1h", "1h0m0s", "3600s", 3_600_000_000_000)
     task = copy.deepcopy(spec["tasks"][0])
     task.update(name="train", replicas=8, leaderSelection=True)
     replace_env(
