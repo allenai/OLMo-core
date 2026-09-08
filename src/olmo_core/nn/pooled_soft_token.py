@@ -28,6 +28,7 @@ Design notes (validated by the probes in ``records/pooled-doc-kv-attention.md``)
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -43,6 +44,7 @@ __all__ = [
     "PooledDocProjector",
     "CompactedBatch",
     "compact_pooled_rows",
+    "add_soft_len_bias",
     "build_position_causal_bias",
     "masked_sdpa",
     "aux_matching_loss",
@@ -67,6 +69,9 @@ class CompactedBatch:
     soft_cols: torch.Tensor
     soft_docs: torch.Tensor
     row_lens: torch.Tensor  # (B,) content length incl. shadows (pad starts here)
+    # log(token count) of each pooled doc, aligned with soft_rows/soft_cols (for the +log(L) slot
+    # logit bias, ``add_soft_len_bias``)
+    soft_log_len: torch.Tensor = field(default_factory=lambda: torch.zeros(0))
     shadow_rows: torch.Tensor = field(default_factory=lambda: torch.zeros(0, dtype=torch.long))
     shadow_cols: torch.Tensor = field(default_factory=lambda: torch.zeros(0, dtype=torch.long))
     shadow_docs: torch.Tensor = field(default_factory=lambda: torch.zeros(0, dtype=torch.long))
@@ -160,6 +165,7 @@ def compact_pooled_rows(
     shadow_cols: List[int] = []
     shadow_docs: List[int] = []
     shadow_log_len: List[float] = []
+    soft_log_len: List[float] = []
     shadow_doc_cols_list: List[torch.Tensor] = []
     for b in range(B):
         c = cid[b]
@@ -208,10 +214,14 @@ def compact_pooled_rows(
         row_cid = entry_cid[order]
         row_lab = lab[order] if lab is not None else None
         soft_mask = is_soft[order]
+        doc_len = torch.bincount(c[is_ctx], minlength=n_docs) if is_ctx.any() else torch.zeros(n_docs, dtype=torch.long, device=device)
+        doc_of_ordered = doc_of[order]
         for col in soft_mask.nonzero(as_tuple=True)[0].tolist():
+            d = int(doc_of_ordered[col])
             soft_rows.append(b)
             soft_cols.append(col)
-            soft_docs.append(int(doc_of[order][col]))
+            soft_docs.append(d)
+            soft_log_len.append(math.log(max(1, int(doc_len[d]))))
 
         # AUX shadows: one soft-token candidate per KEPT context doc, appended after the content.
         if add_shadows:
@@ -282,6 +292,7 @@ def compact_pooled_rows(
         soft_cols=torch.tensor(soft_cols, dtype=torch.long, device=device),
         soft_docs=torch.tensor(soft_docs, dtype=torch.long, device=device),
         row_lens=row_lens,
+        soft_log_len=torch.tensor(soft_log_len, dtype=torch.float32, device=device),
         shadow_rows=torch.tensor(shadow_rows, dtype=torch.long, device=device),
         shadow_cols=torch.tensor(shadow_cols, dtype=torch.long, device=device),
         shadow_docs=torch.tensor(shadow_docs, dtype=torch.long, device=device),
@@ -289,6 +300,30 @@ def compact_pooled_rows(
         shadow_doc_cols=sh_doc_cols,
         is_shadow=is_shadow,
     )
+
+
+def add_soft_len_bias(attn_bias: torch.Tensor, cb: CompactedBatch) -> torch.Tensor:
+    """
+    Add ``+log(doc_len)`` to every pooled slot's attention logit (the "log-mass" trick of
+    :class:`~olmo_core.nn.attention.pooled_doc_kv.PooledDocKVAttention`, applied to soft tokens):
+    a slot with key ``k`` and logit bias ``log L`` contributes ``L * exp(q.k)`` to the softmax
+    denominator, i.e. the mass of ``L`` copies of itself -- what a diffuse document of ``L``
+    tokens would contribute -- instead of one token's worth. The slot's content (its live,
+    detached soft token) is unchanged; only the mass is corrected.
+
+    :param attn_bias: ``(B, 1, T2, T2)`` additive bias from :func:`build_position_causal_bias`.
+    :param cb: The compacted batch (``soft_rows`` / ``soft_cols`` / ``soft_log_len``).
+
+    :returns: The bias with the per-column slot term added (broadcast over queries).
+    """
+    if cb.soft_rows.numel() == 0:
+        return attn_bias
+    B, _, _, T2 = attn_bias.shape
+    col = torch.zeros((B, 1, 1, T2), dtype=attn_bias.dtype, device=attn_bias.device)
+    col[cb.soft_rows.to(attn_bias.device), 0, 0, cb.soft_cols.to(attn_bias.device)] = cb.soft_log_len.to(
+        attn_bias.device, attn_bias.dtype
+    )
+    return attn_bias + col
 
 
 def build_position_causal_bias(

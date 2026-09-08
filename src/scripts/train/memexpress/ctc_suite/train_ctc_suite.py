@@ -1214,11 +1214,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             keep_seed=opts.seed,
             aux_match_weight=opts.st_aux_weight,
             detach_soft_kv=not opts.st_no_detach_soft_kv,
+            len_bias=opts.st_len_bias,
             distill_prob=opts.st_distill_prob,
             distill_weight=opts.st_distill_weight,
         )
         print(
-            f"[ctc-suite] softtoken: detach={not opts.st_no_detach_soft_kv} "
+            f"[ctc-suite] softtoken: detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
             f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob}",
@@ -1410,7 +1411,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                 "softtoken": (
                     {"n_random": opts.st_n_random, "n_random_range": opts.st_n_random_range,
                      "keep_frac": opts.st_keep_frac, "keep_prob": opts.st_keep_prob,
-                     "keep_mode": opts.st_keep_mode, "gold_blind": opts.st_gold_blind}
+                     "keep_mode": opts.st_keep_mode, "gold_blind": opts.st_gold_blind,
+                     "len_bias": opts.st_len_bias}
                     if opts.variant == "softtoken"
                     else None
                 ),
@@ -1523,6 +1525,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-gold-blind", action="store_true", help="ignore the gold sidecar: keep docs by --st-keep-prob only (oolong)")
     ap.add_argument("--st-gold-sidecar", default=None, help="default <data>/gold_fingerprints.json")
     ap.add_argument("--st-no-detach-soft-kv", action="store_true", help="the winning recipe DETACHES; this is the ablation")
+    ap.add_argument("--st-len-bias", action="store_true",
+                    help="softtoken: add +log(doc_len) to every pooled slot's attention logit (log-mass trick; "
+                         "uses the additive-bias SDPA path, so pair with --attn-backend torch)")
     ap.add_argument("--st-distill-prob", type=float, default=0.0)
     ap.add_argument("--st-distill-weight", type=float, default=1.0)
     ap.add_argument("--st-aux-weight", type=float, default=0.0)

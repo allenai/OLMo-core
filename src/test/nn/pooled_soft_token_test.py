@@ -2,11 +2,15 @@
 Transformer.enable_pooled_soft_tokens training path."""
 
 import pytest
+import math
 import torch
 
 from olmo_core.config import DType
 from olmo_core.nn.attention.chunked_mask import build_chunk_ids_from_tokens
-from olmo_core.nn.attention.pooled_doc_kv import PooledDocKeepHolder, install_pooled_doc_keep
+from olmo_core.nn.attention.pooled_doc_kv import (
+    PooledDocKeepHolder,
+    install_pooled_doc_keep,
+)
 from olmo_core.nn.pooled_soft_token import compact_pooled_rows
 from olmo_core.nn.transformer import TransformerConfig
 
@@ -175,7 +179,11 @@ def _aux_model(weight=1.0):
     )
     model = cfg.build(init_device="cpu")
     model.enable_pooled_soft_tokens(
-        DOC_START, DOC_END, EOS, placeholder_id=PLACEHOLDER, aux_match_weight=weight,
+        DOC_START,
+        DOC_END,
+        EOS,
+        placeholder_id=PLACEHOLDER,
+        aux_match_weight=weight,
         aux_queries=4,
     )
     model.train()
@@ -200,7 +208,8 @@ def test_aux_shadows_do_not_perturb_lm_loss():
     torch.manual_seed(1)
     out_plain = m_plain(x, labels=lab)
     assert torch.allclose(out_aux.ce_loss, out_plain.ce_loss, atol=1e-5), (
-        out_aux.ce_loss, out_plain.ce_loss,
+        out_aux.ce_loss,
+        out_plain.ce_loss,
     )
     # ...but the TOTAL loss includes a nonzero aux term.
     assert (out_aux.loss - out_plain.loss).abs() > 0
@@ -209,9 +218,7 @@ def test_aux_shadows_do_not_perturb_lm_loss():
 def test_aux_loss_grad_reaches_projector():
     torch.manual_seed(0)
     model = _aux_model(weight=1.0)
-    model._pooled_keep_holder = PooledDocKeepHolder(
-        keep_docs=torch.tensor([[True, False, True]])
-    )
+    model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=torch.tensor([[True, False, True]]))
     ids = _row(n_docs=3)
     x = torch.tensor([ids])
     lab = torch.tensor([_shifted_labels(ids)])
@@ -223,9 +230,7 @@ def test_aux_loss_grad_reaches_projector():
 def test_aux_zero_weight_skips_shadows():
     torch.manual_seed(0)
     model = _aux_model(weight=0.0)
-    model._pooled_keep_holder = PooledDocKeepHolder(
-        keep_docs=torch.tensor([[True, False, True]])
-    )
+    model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=torch.tensor([[True, False, True]]))
     ids = _row(n_docs=3)
     x = torch.tensor([ids])
     cb, _, _ = model._compact_pooled_soft_tokens(x, None, IGN)
@@ -238,8 +243,13 @@ def _detach_model(aux=0.0):
     )
     model = cfg.build(init_device="cpu")
     model.enable_pooled_soft_tokens(
-        DOC_START, DOC_END, EOS, placeholder_id=PLACEHOLDER, aux_match_weight=aux,
-        aux_queries=4, detach_soft_kv=True,
+        DOC_START,
+        DOC_END,
+        EOS,
+        placeholder_id=PLACEHOLDER,
+        aux_match_weight=aux,
+        aux_queries=4,
+        detach_soft_kv=True,
     )
     model.train()
     return model
@@ -248,9 +258,7 @@ def _detach_model(aux=0.0):
 def test_detach_soft_kv_blocks_lm_gradient_to_projector():
     torch.manual_seed(0)
     model = _detach_model(aux=0.0)
-    model._pooled_keep_holder = PooledDocKeepHolder(
-        keep_docs=torch.tensor([[True, False, False]])
-    )
+    model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=torch.tensor([[True, False, False]]))
     ids = _row(n_docs=3)
     x = torch.tensor([ids])
     lab = torch.tensor([_shifted_labels(ids)])
@@ -281,9 +289,7 @@ def test_detach_soft_kv_forward_identical():
 def test_detach_with_aux_trains_projector_only_via_shadows():
     torch.manual_seed(0)
     model = _detach_model(aux=1.0)
-    model._pooled_keep_holder = PooledDocKeepHolder(
-        keep_docs=torch.tensor([[True, False, True]])
-    )
+    model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=torch.tensor([[True, False, True]]))
     ids = _row(n_docs=3)
     x = torch.tensor([ids])
     lab = torch.tensor([_shifted_labels(ids)])
@@ -299,8 +305,14 @@ def _distill_model(prob=1.0, detach=True):
     )
     model = cfg.build(init_device="cpu")
     model.enable_pooled_soft_tokens(
-        DOC_START, DOC_END, EOS, placeholder_id=PLACEHOLDER,
-        detach_soft_kv=detach, distill_prob=prob, distill_weight=1.0, distill_layer_stride=1,
+        DOC_START,
+        DOC_END,
+        EOS,
+        placeholder_id=PLACEHOLDER,
+        detach_soft_kv=detach,
+        distill_prob=prob,
+        distill_weight=1.0,
+        distill_layer_stride=1,
     )
     model.train()
     return model
@@ -343,6 +355,62 @@ def test_distill_coin_is_deterministic():
     m2 = _distill_model(prob=0.5)
     import random as _r
 
-    seq1 = [_r.Random(f"distill:{m1._pooled_soft_tokens['keep_seed']}:{i}").random() < 0.5 for i in range(20)]
-    seq2 = [_r.Random(f"distill:{m2._pooled_soft_tokens['keep_seed']}:{i}").random() < 0.5 for i in range(20)]
+    seq1 = [
+        _r.Random(f"distill:{m1._pooled_soft_tokens['keep_seed']}:{i}").random() < 0.5
+        for i in range(20)
+    ]
+    seq2 = [
+        _r.Random(f"distill:{m2._pooled_soft_tokens['keep_seed']}:{i}").random() < 0.5
+        for i in range(20)
+    ]
     assert seq1 == seq2  # rank-synchronized branch decisions
+
+
+def test_soft_log_len_and_len_bias_helper():
+    from olmo_core.nn.pooled_soft_token import add_soft_len_bias, build_position_causal_bias
+
+    ids = _row(n_docs=3, pad=4)
+    x = torch.tensor([ids])
+    lab = torch.tensor([_shifted_labels(ids)])
+    cids = _chunk_ids(ids)
+    keep = torch.tensor([[True, False, True]])
+    cb = compact_pooled_rows(
+        x, lab, cids, keep, placeholder_id=PLACEHOLDER, pad_token_id=EOS, ignore_index=IGN
+    )
+    # doc1 has 5 tokens (incl. markers) -> log(5) on its slot
+    n_doc1 = int((cids[0] == 1).sum())
+    assert cb.soft_log_len.shape == (1,)
+    assert abs(float(cb.soft_log_len[0]) - math.log(n_doc1)) < 1e-6
+    bias = build_position_causal_bias(cb, dtype=torch.float32, device=torch.device("cpu"))
+    biased = add_soft_len_bias(bias, cb)
+    col = int(cb.soft_cols[0])
+    delta = biased - bias
+    # the slot column gets +log(L) for every query that can see it (masked entries stay masked:
+    # finfo.min + log L == finfo.min); every other column is untouched
+    visible = bias[0, 0, :, col] > -1e30
+    assert visible[col:].all() and not visible[:col].any()
+    assert torch.allclose(delta[0, 0, visible, col], torch.full((int(visible.sum()),), math.log(n_doc1)))
+    other = torch.ones(bias.shape[3], dtype=torch.bool)
+    other[col] = False
+    assert torch.all(delta[0, 0, :, other] == 0)
+
+
+def test_len_bias_model_forward_runs_and_differs():
+    torch.manual_seed(0)
+    ids = _row(n_docs=3, pad=0)
+    x = torch.tensor([ids])
+    lab = torch.tensor([_shifted_labels(ids)])
+    outs = []
+    for len_bias in (False, True):
+        torch.manual_seed(0)
+        cfg = TransformerConfig.olmo2_190M(vocab_size=1000, n_layers=2, fused_ops=False, dtype=DType.float32)
+        model = cfg.build(init_device="cpu")
+        model.enable_pooled_soft_tokens(
+            DOC_START, DOC_END, EOS, placeholder_id=PLACEHOLDER, keep_prob=0.5, detach_soft_kv=True, len_bias=len_bias
+        )
+        model.train()
+        out = model(x, labels=lab)
+        out.loss.backward()
+        outs.append(float(out.loss))
+        assert model._soft_token_compaction["tokens_out"] < model._soft_token_compaction["tokens_in"]
+    assert outs[0] != outs[1]  # the slot mass changed the answer-region attention

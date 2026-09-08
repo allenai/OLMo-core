@@ -309,6 +309,7 @@ class Transformer(nn.Module):
         aux_queries: int = 16,
         aux_max_shadows: int = 8,
         detach_soft_kv: bool = False,
+        len_bias: bool = False,
         distill_prob: float = 0.0,
         distill_weight: float = 1.0,
         distill_layer_stride: int = 4,
@@ -368,6 +369,9 @@ class Transformer(nn.Module):
             # language" (the co-drift channel). The projector then trains ONLY via the aux
             # shadow objective (frozen if aux_match_weight == 0).
             "detach_soft_kv": bool(detach_soft_kv),
+            # +log(doc_len) on every pooled slot's logit (pooled_soft_token.add_soft_len_bias):
+            # restores a diffuse document's softmax MASS; needs the additive-bias SDPA path.
+            "len_bias": bool(len_bias),
             # Paired consistency distillation: with probability distill_prob a training forward
             # runs BOTH the full pass (LM gradient -> protects the full-attention pathway from
             # co-drift) and the compressed pass, matching the student's hidden states at the
@@ -1437,6 +1441,14 @@ class Transformer(nn.Module):
                             "layers": [],
                         }
                         kwargs["aux_capture"] = aux_ctx
+                if pst.get("len_bias") and cb.soft_rows.numel() > 0:
+                    from ..pooled_soft_token import add_soft_len_bias, build_position_causal_bias
+
+                    if kwargs.get("attn_bias") is None:
+                        kwargs["attn_bias"] = build_position_causal_bias(
+                            cb, dtype=self.embeddings.weight.dtype, device=input_ids.device  # type: ignore[union-attr]
+                        )
+                    kwargs["attn_bias"] = add_soft_len_bias(kwargs["attn_bias"], cb)
         # Role-gated FFN: gate mask from the FINAL token stream (post-compaction when the
         # soft-token path rewrote input_ids), so kept-doc tokens are gated in compacted rows too.
         if self._role_gated_ffn is not None:
