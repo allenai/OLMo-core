@@ -57,7 +57,7 @@ if os.environ.get("FS_BUDGETS"):  # FS_BUDGETS=oolong:80M,contradiction:56M rest
         t, b = kv.split(":"); BUDGETS[t] = b.split("+")
 ARMS = {"oolong": ["dense", "kv17", "ffnmoe-t10"], "contradiction": ["dense", "kv33", "ffnmoe-t10"]}
 if os.environ.get("FS_ARMS"):  # FS_ARMS=ffnmoe-t10p limits every task to these arms
-    ARMS = {t: os.environ["FS_ARMS"].split(",") for t in ARMS}
+    ARMS = {t: os.environ["FS_ARMS"].split(",") for t in TASKS}  # iterate TASKS, not stale ARMS keys (nq/outlier aren't in the default dict)
 if os.environ.get("FS_EXTRA_ARMS"):  # FS_EXTRA_ARMS=ffnmoe-t10p appends to each task's list
     ARMS = {t: a + [x for x in os.environ["FS_EXTRA_ARMS"].split(",") if x not in a] for t, a in ARMS.items()}
 CLUSTER = os.environ.get("FS35_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale")
@@ -88,6 +88,7 @@ def launch_train(st, task, budget, arm):
                      "--base-checkpoint", BASES[SCALE]]
     if FAMILY == "qwen3":
         data = data.replace("arms_tokenized/", "arms_tokenized_qwen3/")
+        data = data.replace("outlier_lengthmix/arms/", "outlier_lengthmix/arms_qwen3/")
     nodes = NUM_NODES.get(SCALE, 1)
     # (ffnmoe-t10p on ONE 80GB node at 27B was tried 2026-09-04 and OOMed at 75 GB: the frozen tail
     # still holds fp32 shards, the forward concatenates full weights per layer, and the 65k row's
