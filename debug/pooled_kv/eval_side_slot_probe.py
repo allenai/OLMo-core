@@ -207,14 +207,25 @@ def policy_keep_mask(x, cid, gold, frac, policy, seed=0, hard_negs=None):
     n_docs = int(cid.max()) + 1
     non_gold = [d for d in range(n_docs) if not bool(gold[d]) and int((cid == d).sum()) > 0]
     k = int(round(frac * len(non_gold)))
-    if policy.startswith("goldnbr"):  # gold docs' +-K neighbours real, plus the random fraction on top
-        K = int(policy[len("goldnbr"):] or 1)
+    if policy.startswith("goldnbr") or policy.startswith("goldleft") or policy.startswith("goldright"):
+        # gold docs' neighbours real (+-K, or only the K before / after), plus the random fraction on
+        # top; "+runs" expands every random pick to the same +-K run so runs no longer mark gold.
+        runs = policy.endswith("+runs")
+        base = policy[: -len("+runs")] if runs else policy
+        kind = "nbr" if base.startswith("goldnbr") else ("left" if base.startswith("goldleft") else "right")
+        K = int(base[len("gold" + kind):] or 1)
+        offs = {"nbr": range(-K, K + 1), "left": range(-K, 1), "right": range(0, K + 1)}[kind]
         gold_docs = [d for d in range(n_docs) if bool(gold[d])]
-        nbrs = {d + o for d in gold_docs for o in range(-K, K + 1) if 0 <= d + o < n_docs}
+        nbrs = {d + o for d in gold_docs for o in offs if 0 <= d + o < n_docs}
         g = torch.Generator().manual_seed(seed)
         rest = [d for d in non_gold if d not in nbrs]
         order = torch.randperm(len(rest), generator=g).tolist()
-        chosen = sorted(nbrs) + [rest[i] for i in order[:k]]
+        if runs:
+            n_anchor = max(0, int(round(k / len(offs))))
+            picks = {d + o for d in [rest[i] for i in order[:n_anchor]] for o in offs if 0 <= d + o < n_docs}
+        else:
+            picks = {rest[i] for i in order[:k]}
+        chosen = sorted(nbrs | picks)
     elif policy in ("hardneg", "hardneg+rand"):
         hn = [d for d in (hard_negs or []) if d in non_gold]
         chosen = list(hn)

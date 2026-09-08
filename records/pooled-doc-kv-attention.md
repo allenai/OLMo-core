@@ -624,3 +624,62 @@ keep-1/12 == keep-0 oddity is understood; treat as unresolved.
 
 **Keep policies:** the first sweep was invalid (a patch missed the renamed keep block; all six
 policies ran the random keep set and agreed to 3 decimals). Relaunched with the fix.
+
+### 2026-09-08 afternoon: keep policies, GDN no-write, and OOLONG PARITY (header real, sentence pooled)
+
+Beaker keep-policy sweep (24 rows, 32k, answer CE; keep = gold + fraction of the rest):
+
+| task | random 1/3 | overlap 1/3 | length 1/3 | short 1/3 | first 1/3 | last 1/3 | full |
+|---|---|---|---|---|---|---|---|
+| contradiction | 0.107 (c .36) | 0.099 (c .29) | 0.105 (c .52) | **0.095 (c .23)** | 0.344 | 0.560 | 0.042 |
+| nq | 0.069 | 0.115 | 0.076 | 0.153 | 0.416 | 0.120 | 0.086 |
+| outlier | 1.401 | 1.341 | 1.254 | 1.325 | 1.223 | 1.208 | 1.206 |
+| oolong (8 rows) | 0.781 | 0.831 | 0.748 | 0.689 | 0.734 | 0.713 | 0.485 |
+
+(c = compaction.) Content-based policies move contradiction by at most 0.01 at a given token
+budget — `short` gets random's loss at 0.23 compaction instead of 0.36. Positional policies
+(`first`/`last` = one contiguous run of slots) are catastrophic on contradiction and nq (+0.3–0.5)
+and *help* outlier (position is the answer there). nq gold + hard negatives only: 0.139 vs 0.057
+gold + random 1/12 — the hard negatives are exactly the documents the dense model over-attends
+when the rest is pooled.
+
+**GDN no-write** (`--gdn-nowrite`: slots attention-only, GDN blocks skip them via `block_keep`):
+contradiction 1/3 0.108 → 0.161 (worse), 1/12 0.378 → 0.299, gold-only 0.427 → 0.331 (better);
+oolong 1/3 0.611 → 0.761, 1/12 0.926 → 1.141 (worse), keep 0 0.530 → 0.516; nq/outlier worse
+at every keep > 0. So the GDN's view of the slot is *useful* whenever real neighbours exist, and
+only hurts when the slots form long runs (gold-only contradiction). Not a general fix.
+
+**Slot RoPE position** (centre vs first vs last body position, `--slot-pos`): identical on oolong
+(0.589 / 0.593 / 0.592 at 1/3). **Slot bias at keep 0** on oolong: flat 0.82–0.92 for every
+bias — the all-pooled loss is not a calibration problem.
+
+**OOLONG PARITY — pool the sentence, keep the structured header real.** Per-row dumps
+(`analyze_slot_rows.py`, local sneetches rows: full 0.507) show the rows that lose under pooling
+are exactly the user-/date-conditioned lookups ("which user has the most True", "only consider
+user 69180", "which date is most common": full 0.3–1.3 → 2.2–3.3 at keep 1/12), while the
+label-aggregate rows ("which label is most common", counts) survive even with every line pooled
+(keep 0: 0.12 / 0.38 / 0.06 vs full 0.08 / 0.41 / 0.03). A mean embedding cannot carry an exact
+user id or date. `--prefix-real stop3` keeps each line's `Date: … || User: … || Instance:` header
+(24 of ~45 tokens) real and pools only the sentence:
+
+| oolong, 24 rows | keep 1/3 | keep 1/12 | keep 0 (every sentence pooled) |
+|---|---|---|---|
+| plain soft token | 0.589 (+0.082 ± 0.048) | 0.952 (+0.445) | 0.818 (+0.311) |
+| header real, sentence pooled | **0.498 (−0.009 ± 0.037)**, c 0.72 | 0.606 (+0.099), c 0.62 | 0.608 (+0.101), c 0.59 |
+| header real + GDN no-write | 0.494 (−0.013 ± 0.039) | **0.500 (−0.007 ± 0.039)**, c 0.62 | 0.663 (+0.156) |
+
+Zero gap (paired SE ±0.04) at keep 1/3, and at keep 1/12 once the GDN skips the slots. The
+cost: the header is over half the line, so the compaction floor is ~0.6 (1.6x), not the 0.03 the
+all-pooled construction promised. Where every sentence is pooled the label-counting rows degrade
+(0.33 / 0.57 / 0.30 vs 0.08 / 0.41 / 0.03): the label of a pooled sentence is only partly
+recoverable from its mean embedding, so some real sentences are still needed for calibration.
+Lesson that transfers: **a slot may stand in for the free text of a document but never for the
+tokens the question matches exactly** (ids, dates, numbers) — those must stay real. The
+contradiction analogue (`Claim N:` header real, `--prefix-real stop1`) and the gold-neighbour
+policies are in the same sweep (below).
+
+Caveat on sources: the sneetches rows are a different 24 held-out rows than the Beaker rows
+(oolong full 0.507 vs 0.466; contradiction 0.071 vs 0.042 — `contra_iid` vs the realistic eval
+bundle); never compare across sources. The Qwen3-4B (pure attention) oolong probe is uninformative:
+that checkpoint's answer logits are context-independent at 32k (KL to full = 0.000 under every
+pooling, ladder f1 0.557 at 32k vs 0.844 at 2k) — it learned a label prior, not the task.
