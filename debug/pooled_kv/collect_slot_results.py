@@ -67,6 +67,13 @@ SOURCES = [
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "gdn-nowrite", "01M218YDV9CGGRAHY4VNQC1H7Q"),
     ("beaker", "nq", "32k", "dense 48M (ladder)", "gdn-nowrite", "01M218Z99QR0FQVS9RYEYD1PN8"),
     ("beaker", "outlier", "32k", "dense 160M (ladder)", "gdn-nowrite", "01M21903R27BPJZF2KRPVXPZF3"),
+    # v2 (2026-09-08 afternoon, sneetches): prefix-real headers, gold-neighbour policies, gdn-nowrite, per-row dumps
+    ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v2", "/net/sneetches/data/prasann/slot_probe/v2_oolong_32768.log"),
+    ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "v2", "/net/sneetches/data/prasann/slot_probe/v2_contradiction_32768.log"),
+    # v3: all-pooled oolong slot-bias sweep, slot RoPE position (start/end vs centre)
+    ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v3-k0bias", "/net/sneetches/data/prasann/slot_probe/v3_oolong_k0bias_32768.log"),
+    ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v3-slotpos", "/net/sneetches/data/prasann/slot_probe/v3_oolong_slotpos_32768.log"),
+    ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "v3-slotpos", "/net/sneetches/data/prasann/slot_probe/v3_contradiction_slotpos_32768.log"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
@@ -117,8 +124,17 @@ def classify(name):
     if "oracle meanKV" in n:
         bias = n.split("oracle meanKV")[1].strip() or "no-bias"
         return "oracle mean K/V slot", keep, G, bias, True
+    pre = re.search(r"prefix=(\w+)", n)
+    pre_tag = f", doc header real ({pre.group(1)})" if pre else ""
+    n = n.replace(pre.group(0), "").replace("  ", " ").strip() if pre else n
+    sp = re.search(r"slotpos=(\w+)", n)
+    if sp:
+        pre_tag += f", slot at doc {sp.group(1)}"
+        n = n.replace(sp.group(0), "").replace("  ", " ").strip()
     if "gdn-nowrite" in n:
-        return "soft token, attention-only (no GDN write)", keep, G, "no-bias", False
+        pol = re.search(r"policy=([\w+]+)", n)
+        pol_tag = f", keep policy {pol.group(1)}" if pol else ""
+        return f"soft token, attention-only (no GDN write){pol_tag}{pre_tag}", keep, G, "no-bias", False
     if n.startswith("pooledKV"):
         bias = n.split()[-1]
         return "pooled K/V attention (all tokens kept, GDN intact)", keep, G, bias, True
@@ -129,8 +145,8 @@ def classify(name):
         rest = re.sub(r"^soft k=[0-9.]+\s*", "", n)
         pol = re.search(r"policy=([\w+]+)", rest)
         if pol:
-            return f"soft token, keep policy {pol.group(1)}", keep, G, rest.replace(pol.group(0), "").strip() or "no-bias", False
-        return "soft token (mean embedding)", keep, G, rest, False
+            return f"soft token, keep policy {pol.group(1)}{pre_tag}", keep, G, rest.replace(pol.group(0), "").strip() or "no-bias", False
+        return f"soft token (mean embedding){pre_tag}", keep, G, rest, False
     return n, keep, G, "", False
 
 

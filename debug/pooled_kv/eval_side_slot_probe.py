@@ -97,6 +97,40 @@ def install_prefix_real_patch():
     return orig
 
 
+_SLOT_POS = {"mode": "center"}  # RoPE position given to a pooled doc's slot: center (default) | start | end
+
+
+def install_slot_pos_patch():
+    """Patch compact_pooled_rows so each slot takes its doc's FIRST or LAST body position instead of
+    the centre (the compacted order is unchanged: all three lie strictly between the neighbours)."""
+    import olmo_core.nn.pooled_soft_token as ps
+
+    orig = ps.compact_pooled_rows
+
+    def patched(input_ids, labels, chunk_ids, keep_docs, **kw):
+        cb = orig(input_ids, labels, chunk_ids, keep_docs, **kw)
+        mode = _SLOT_POS["mode"]
+        if mode == "center" or cb.soft_rows.numel() == 0:
+            return cb
+        cid = chunk_ids.to(torch.long)
+        T = cid.shape[1]
+        pos = torch.arange(T, device=cid.device)
+        for b in range(cid.shape[0]):
+            sel = cb.soft_rows == b
+            if not sel.any():
+                continue
+            is_ctx = cid[b] >= 0
+            n_docs = keep_docs.shape[1]
+            first = torch.full((n_docs,), T, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amin", include_self=True)
+            last = torch.full((n_docs,), -1, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amax", include_self=True)
+            src = first if mode == "start" else last
+            cb.position_ids[b, cb.soft_cols[sel]] = src[cb.soft_docs[sel]].to(cb.position_ids.dtype)
+        return cb
+
+    ps.compact_pooled_rows = patched
+    return orig
+
+
 VOCAB = 248320 if FAMILY == "qwen3_5" else 151936
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base" if FAMILY == "qwen3_5" else "Qwen/Qwen3-4B"
 CKPT_Q3 = {  # dense Qwen3-4B ladder runs (lr 5e-5), pure attention: every layer takes K/V slots
@@ -254,6 +288,7 @@ def main():
     ap.add_argument("--gdn-nowrite-only", action="store_true", help="run ONLY the gdn-nowrite variant of each config (no plain soft token)")
     ap.add_argument("--prefix-real", default="none", help="comma list of pooled-doc header policies: none | stopK (tokens after doc_start through the K-th --prefix-stop-id kept real)")
     ap.add_argument("--prefix-stop-id", type=int, default=25, help="token id that ends a header (':' = 25 for Qwen3.5)")
+    ap.add_argument("--slot-pos", default="center", help="comma list of slot RoPE positions: center | start | end")
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
@@ -299,13 +334,18 @@ def main():
     extras = [float(c) for c in a.extras.split(",")]
     policies = a.policies.split(",")
     prefixes = a.prefix_real.split(",")
+    slot_positions = a.slot_pos.split(",")
     _PREFIX_REAL["stop_id"] = a.prefix_stop_id
     if any(p != "none" for p in prefixes):
         install_prefix_real_patch()
+    if any(p != "center" for p in slot_positions):
+        install_slot_pos_patch()
     configs = [("full", None, None)]
     for pol in policies:
-      for pre in prefixes:
-        tag = ("" if pol == "random" else f" policy={pol}") + ("" if pre == "none" else f" prefix={pre}")
+      for pre0 in prefixes:
+       for spos in slot_positions:
+        pre = f"{pre0}/{spos}"  # (header policy, slot position) travel together in the config key
+        tag = ("" if pol == "random" else f" policy={pol}") + ("" if pre0 == "none" else f" prefix={pre0}") + ("" if spos == "center" else f" slotpos={spos}")
         for k in keeps:
             if not a.gdn_nowrite_only:
                 configs.append((f"soft k={k:.3f}{tag} no-bias", (k, pol, pre), (False, 1.0, 0.0)))
@@ -343,7 +383,7 @@ def main():
                 keep, pol, pre = keep
             else:
                 pol = "random"
-            _PREFIX_REAL["spec"] = pre
+            _PREFIX_REAL["spec"], _SLOT_POS["mode"] = pre.split("/") if "/" in pre else (pre, "center")
             if keep is None:
                 model.eval()
                 # logits only at the answer-predicting positions (a full 34k x 248k logit tensor
