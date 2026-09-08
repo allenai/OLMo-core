@@ -17,12 +17,16 @@ a checkpoint trained with one backend must not be resumed with the other without
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import TYPE_CHECKING
 
 import torch
 
 if TYPE_CHECKING:
     from .routed_experts import RoutedExperts
+
+log = logging.getLogger(__name__)
 
 
 def _prepare_sonic_inputs(
@@ -56,6 +60,60 @@ def _prepare_sonic_inputs(
     return token_indices, flat_expert_indices, router_scores, w1, w2
 
 
+_QUACK_CONFIGS_PATCHED = False
+
+ALLOW_BROKEN_2CTA_ENV_VAR = "OLMO_SONIC_ALLOW_BROKEN_2CTA_CONFIGS"
+"""
+Set to ``1`` to skip :func:`_patch_quack_sm100_configs` (for reproducing the upstream bug only).
+"""
+
+
+def _patch_quack_sm100_configs() -> None:
+    """
+    Remove the Blackwell GEMM configs whose fused-SwiGLU epilogue is silently wrong.
+
+    QuACK releases up to and including 0.6.4 corrupt the post-activation output of the gated GEMM
+    epilogue when the autotuner selects a ``tile_m=128, cluster_m=2`` config on SM100 (sonic-moe
+    issue #63, fixed upstream in QuACK PR #133 on 2026-08-21, unreleased as of QuACK 0.6.4).
+    Whether a given shape is affected depends on which config the autotuner happens to pick, so
+    the failure is shape-dependent and silent. Dropping those configs from the candidate list is
+    the same workaround QuACK PR #131 proposed; it costs only the speed of those configs.
+
+    Sonic's import-time patch already points QuACK's gated autotuners at the module attribute
+    ``quack.gemm_config._get_sm100_configs``, so wrapping that attribute after importing
+    ``sonicmoe.functional`` filters both the forward (SwiGLU) and backward (dSwiGLU) GEMMs.
+    """
+    global _QUACK_CONFIGS_PATCHED
+    if _QUACK_CONFIGS_PATCHED:
+        return
+    _QUACK_CONFIGS_PATCHED = True
+    if os.environ.get(ALLOW_BROKEN_2CTA_ENV_VAR) == "1":
+        log.warning(
+            "%s=1: leaving QuACK's broken SM100 tile_m=128/cluster_m=2 gated configs enabled",
+            ALLOW_BROKEN_2CTA_ENV_VAR,
+        )
+        return
+
+    import quack.gemm_config as gemm_config
+    import sonicmoe.functional  # noqa: F401  # applies Sonic's own config patches first
+
+    original = gemm_config._get_sm100_configs
+
+    def _filtered_sm100_configs(*args, **kwargs):
+        configs = original(*args, **kwargs)
+        kept = [c for c in configs if not (c.tile_m == 128 and c.cluster_m == 2)]
+        if len(kept) != len(configs):
+            log.info(
+                "Filtered %d of %d SM100 GEMM configs (tile_m=128, cluster_m=2) with the broken "
+                "gated epilogue (sonic-moe #63)",
+                len(configs) - len(kept),
+                len(configs),
+            )
+        return kept
+
+    gemm_config._get_sm100_configs = _filtered_sm100_configs
+
+
 def _require_sonic() -> None:
     try:
         import sonicmoe  # noqa: F401
@@ -64,6 +122,7 @@ def _require_sonic() -> None:
             "The Sonic MoE backend requires the optional 'sonic-moe' dependency "
             "(pip install 'ai2-olmo-core[sonic]')."
         ) from exc
+    _patch_quack_sm100_configs()
 
 
 @torch.library.custom_op("olmo_core::sonic_moe_fwd", mutates_args=())
