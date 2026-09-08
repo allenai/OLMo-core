@@ -69,10 +69,10 @@ import torch
 from corpus_reasoning.lib.chunked_attention import FREE_CHUNK_ID, PAD_CHUNK_ID
 from corpus_reasoning.lib.olmo_flex_attention import build_roles
 
-
 # ---------------------------------------------------------------------------
 # Core op
 # ---------------------------------------------------------------------------
+
 
 def detach_kv(
     k: torch.Tensor, v: torch.Tensor, gold_mask: torch.Tensor
@@ -100,6 +100,7 @@ def detach_kv(
 # Gold-mask policy helper
 # ---------------------------------------------------------------------------
 
+
 def _normalize_gold_indices(
     gold_doc_indices: Union[Iterable[int], Sequence[Iterable[int]]], B: int
 ) -> List[Set[int]]:
@@ -109,13 +110,10 @@ def _normalize_gold_indices(
     per-row sequence of iterables (one per batch element).
     """
     items = list(gold_doc_indices)
-    is_per_row = len(items) > 0 and all(
-        isinstance(x, (list, tuple, set)) for x in items
-    )
+    is_per_row = len(items) > 0 and all(isinstance(x, (list, tuple, set)) for x in items)
     if is_per_row:
         if len(items) != B:
-            raise ValueError(
-                f"per-row gold_doc_indices has {len(items)} rows, expected B={B}")
+            raise ValueError(f"per-row gold_doc_indices has {len(items)} rows, expected B={B}")
         return [set(int(i) for i in row) for row in items]
     shared = set(int(i) for i in items)
     return [set(shared) for _ in range(B)]
@@ -166,6 +164,7 @@ def build_gold_key_mask(
 # the forward pre-hook from ``input_ids`` -- which the hook already receives. Robust to
 # the data loader's shuffling, and adds nothing to what the model sees.
 
+
 def content_fingerprint(ids: Sequence[int]) -> str:
     """Stable fingerprint of an example's *content* token ids (everything up to and
     including the single real eos, i.e. excluding the right-pad region).
@@ -187,7 +186,7 @@ def content_fingerprint_from_row(ids: Sequence[int], eos_id: int) -> str:
     return content_fingerprint(ids[:end])
 
 
-def gold_chunks_from_gold_doc_indices(gold_doc_indices) -> Set[int]:
+def gold_chunks_from_gold_doc_indices(gold_doc_indices, base: int = 1) -> Set[int]:
     """Map a row's ``gold_doc_indices`` to a set of 0-based document/chunk indices.
 
     Contradiction rows store pairs of **1-indexed** "Claim N" display ids (possibly
@@ -202,7 +201,7 @@ def gold_chunks_from_gold_doc_indices(gold_doc_indices) -> Set[int]:
             for y in x:
                 _walk(y)
         else:
-            out.add(int(x) - 1)
+            out.add(int(x) - base)
 
     _walk(gold_doc_indices)
     return out
@@ -252,9 +251,12 @@ def make_fingerprint_gold_mask_fn(
         if debug_once and state["calls"] <= 12:
             kept = int(keep.sum().item())
             tag = " (warmup mock)" if state["calls"] == 1 else ""
-            print(f"[gold-grad] call#{state['calls']}{tag}: B={B} S={S} "
-                  f"fp_hits={n_found}/{B} cum_hits={state['hits']}/{state['rows']} "
-                  f"detached={B * S - kept}/{B * S}", flush=True)
+            print(
+                f"[gold-grad] call#{state['calls']}{tag}: B={B} S={S} "
+                f"fp_hits={n_found}/{B} cum_hits={state['hits']}/{state['rows']} "
+                f"detached={B * S - kept}/{B * S}",
+                flush=True,
+            )
         return keep.to(torch.bool)
 
     return fn
@@ -264,10 +266,12 @@ def make_fingerprint_gold_mask_fn(
 # Runtime installer
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class GoldGradMaskHolder:
     """Shared per-step holder: the pre-hook sets ``gold_mask`` each forward; every
     patched ``sdpa`` reads it."""
+
     gold_mask: Optional[torch.Tensor] = None
     n_patched: int = 0
 
@@ -276,9 +280,7 @@ class GoldGradMaskHolder:
 GoldMaskFn = Callable[[torch.Tensor], torch.Tensor]
 
 
-def install_gold_grad_mask(
-    model: torch.nn.Module, gold_mask_fn: GoldMaskFn
-) -> GoldGradMaskHolder:
+def install_gold_grad_mask(model: torch.nn.Module, gold_mask_fn: GoldMaskFn) -> GoldGradMaskHolder:
     """Install gold-document gradient masking on ``model`` in place.
 
     Registers a ``forward_pre_hook`` on the top-level model that computes the gold

@@ -165,7 +165,7 @@ def tokenize_example(
     return np.asarray(out_ids, dtype=TOKEN_DTYPE), np.asarray(out_mask, dtype=MASK_DTYPE)
 
 
-def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict):
+def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict, task: Optional[str] = None):
     """
     Build the ``(content_fingerprint, sorted gold chunk indices)`` sidecar entry for one emitted
     instance, or ``None`` if the example has no ``gold_doc_indices``.
@@ -179,13 +179,14 @@ def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict):
     from olmo_core.nn.attention.gold_grad_mask import (
         content_fingerprint,
         gold_chunks_from_gold_doc_indices,
+        gold_index_base_for_task,
     )
 
     gdi = example.get("gold_doc_indices")
     if not gdi:
         return None
     fp = content_fingerprint(out_ids.tolist())
-    return fp, sorted(gold_chunks_from_gold_doc_indices(gdi))
+    return fp, sorted(gold_chunks_from_gold_doc_indices(gdi, base=gold_index_base_for_task(task)))
 
 
 def iter_examples(patterns: List[str], limit: int) -> List[dict]:
@@ -466,8 +467,9 @@ def main() -> None:
     if n_proc > 1:
         # imap (NOT imap_unordered) so results stay in input order -- shard content, the gold
         # sidecar and the length stats must not depend on scheduling.
-        pool = mp.Pool(n_proc, initializer=_worker_init,
-                       initargs=(args.tokenizer, tok_kwargs, ids_set))
+        pool = mp.Pool(
+            n_proc, initializer=_worker_init, initargs=(args.tokenizer, tok_kwargs, ids_set)
+        )
         results = pool.imap(_worker_tokenize, examples, chunksize=8)
         log.info(f"tokenizing with {n_proc} worker processes")
     else:
@@ -479,7 +481,7 @@ def main() -> None:
             continue
         ids, mask = res
         if args.emit_gold_sidecar:
-            entry = _gold_fingerprint_entry(ids, ex)
+            entry = _gold_fingerprint_entry(ids, ex, args.task)
             if entry is not None:
                 gold_table[entry[0]] = entry[1]
                 n_gold += 1
@@ -507,6 +509,7 @@ def main() -> None:
         "task": args.task,
         "emit": args.emit,
         "cot_mode": args.cot_mode,
+        "query_position": args.query_position,
         "chunk_by": args.chunk_by,
         "wrap_docs": not args.no_doc_markers,
         "doc_markers": not args.no_doc_markers,

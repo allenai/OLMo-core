@@ -134,13 +134,25 @@ def content_fingerprint_from_row(ids: Sequence[int], eos_id: int) -> str:
     return content_fingerprint(ids[:end])
 
 
-def gold_chunks_from_gold_doc_indices(gold_doc_indices) -> Set[int]:
+GOLD_INDEX_BASE = {"contradiction": 1}  # every other task (nq / retrieval, outlier, rerank, ...) stores 0-based ids
+
+
+def gold_index_base_for_task(task: Optional[str]) -> int:
+    """1 for contradiction ("Claim N" display ids), 0 for everything else (nq, outlier, rerank...).
+    Verified 2026-09-08 against the answer text: nq gold_doc_indices are 0-based (37/40 rows have
+    the answer string in doc[g], 0/40 in doc[g-1]); the unconditional ``- 1`` that this function
+    used to apply pooled the TRUE gold document on nq/outlier in every gold-aware keep set."""
+    return GOLD_INDEX_BASE.get((task or "").lower(), 0)
+
+
+def gold_chunks_from_gold_doc_indices(gold_doc_indices, base: int = 1) -> Set[int]:
     """
     Map a row's ``gold_doc_indices`` to a set of 0-based document/chunk indices.
 
     Contradiction rows store pairs of **1-indexed** "Claim N" display ids (possibly nested, e.g.
     ``[[2, 8], [11, 17]]``); document order is preserved through rendering + wrapping, so
-    wrapped-doc / chunk index == ``Claim id - 1``. We flatten any nesting and subtract 1.
+    wrapped-doc / chunk index == ``Claim id - base``. We flatten any nesting and subtract ``base``
+    (1 for contradiction, 0 for the 0-indexed tasks -- see :func:`gold_index_base_for_task`).
     """
     out: Set[int] = set()
 
@@ -149,7 +161,7 @@ def gold_chunks_from_gold_doc_indices(gold_doc_indices) -> Set[int]:
             for y in x:
                 _walk(y)
         else:
-            out.add(int(x) - 1)
+            out.add(int(x) - base)
 
     _walk(gold_doc_indices)
     return out

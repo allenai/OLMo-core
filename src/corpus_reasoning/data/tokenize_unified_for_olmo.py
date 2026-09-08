@@ -68,10 +68,24 @@ def _single_token_id(tok, marker: str) -> int:
     return int(ids[0])
 
 
-def _cache_paths(src: Path, base_model: str, task, query_position, use_titles,
-                 before_dummy, after_dummy, cot_mode, seq_len, train_on_inputs,
-                 wrap_docs, doc_marker_start, doc_marker_end,
-                 standard_mix_prob, mix_seed, emit_gold_mask=False):
+def _cache_paths(
+    src: Path,
+    base_model: str,
+    task,
+    query_position,
+    use_titles,
+    before_dummy,
+    after_dummy,
+    cot_mode,
+    seq_len,
+    train_on_inputs,
+    wrap_docs,
+    doc_marker_start,
+    doc_marker_end,
+    standard_mix_prob,
+    mix_seed,
+    emit_gold_mask=False,
+):
     """Cache key mirrors train.py's alpaca cache, plus base_model and seq_len (both are
     baked into the tokenized artifact here, unlike the axolotl path where the tokenizer
     is applied later). `wrap_docs`/markers/mix/gold are part of the key so wrapped,
@@ -79,17 +93,23 @@ def _cache_paths(src: Path, base_model: str, task, query_position, use_titles,
     st = src.stat()
     tag = "multitask" if _is_multitask(src) else task
     wrap_tag = f"wrap={int(wrap_docs)}:{doc_marker_start}:{doc_marker_end}"
-    mix_tag = f"mix={standard_mix_prob}:{mix_seed}" if (wrap_docs and standard_mix_prob > 0) else "mix=0"
+    mix_tag = (
+        f"mix={standard_mix_prob}:{mix_seed}" if (wrap_docs and standard_mix_prob > 0) else "mix=0"
+    )
     gold_tag = f"gold={int(emit_gold_mask)}"
-    key = (f"{src.resolve()}|{st.st_mtime_ns}|{st.st_size}|{tag}|{query_position}|"
-           f"{use_titles}|{before_dummy}|{after_dummy}|{cot_mode}|{base_model}|{seq_len}|"
-           f"toi={train_on_inputs}|{wrap_tag}|{mix_tag}|{gold_tag}")
+    key = (
+        f"{src.resolve()}|{st.st_mtime_ns}|{st.st_size}|{tag}|{query_position}|"
+        f"{use_titles}|{before_dummy}|{after_dummy}|{cot_mode}|{base_model}|{seq_len}|"
+        f"toi={train_on_inputs}|{wrap_tag}|{mix_tag}|{gold_tag}"
+    )
     h = hashlib.sha1(key.encode()).hexdigest()[:16]
     prefix = f"{src.stem}_{tag}_q{query_position}_{h}"
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return (CACHE_DIR / f"{prefix}_tokens.npy",
-            CACHE_DIR / f"{prefix}_label_mask.npy",
-            CACHE_DIR / f"{prefix}_meta.json"), tag
+    return (
+        CACHE_DIR / f"{prefix}_tokens.npy",
+        CACHE_DIR / f"{prefix}_label_mask.npy",
+        CACHE_DIR / f"{prefix}_meta.json",
+    ), tag
 
 
 def _is_multitask(src: Path) -> bool:
@@ -104,15 +124,25 @@ def _is_multitask(src: Path) -> bool:
         return False
 
 
-def tokenize_unified_for_olmo(src, base_model, task="retrieval",
-                              query_position="after", use_titles=True,
-                              before_dummy=0, after_dummy=0, cot_mode="label",
-                              seq_len=8192, train_on_inputs=False, force=False,
-                              wrap_docs=False,
-                              doc_marker_start=DEFAULT_DOC_MARKER_START,
-                              doc_marker_end=DEFAULT_DOC_MARKER_END,
-                              standard_mix_prob=0.0, mix_seed=42,
-                              emit_gold_mask=False):
+def tokenize_unified_for_olmo(
+    src,
+    base_model,
+    task="retrieval",
+    query_position="after",
+    use_titles=True,
+    before_dummy=0,
+    after_dummy=0,
+    cot_mode="label",
+    seq_len=8192,
+    train_on_inputs=False,
+    force=False,
+    wrap_docs=False,
+    doc_marker_start=DEFAULT_DOC_MARKER_START,
+    doc_marker_end=DEFAULT_DOC_MARKER_END,
+    standard_mix_prob=0.0,
+    mix_seed=42,
+    emit_gold_mask=False,
+):
     """Tokenize `src` (unified JSONL) into olmo-core format, caching under data/.cache/olmo/.
 
     Returns (tokens_path, label_mask_path, meta_path) as strings. If a combined file
@@ -137,14 +167,29 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
     """
     src = Path(src)
     (tok_path, mask_path, meta_path), tag = _cache_paths(
-        src, base_model, task, query_position, use_titles,
-        before_dummy, after_dummy, cot_mode, seq_len, train_on_inputs,
-        wrap_docs, doc_marker_start, doc_marker_end, standard_mix_prob, mix_seed,
-        emit_gold_mask)
+        src,
+        base_model,
+        task,
+        query_position,
+        use_titles,
+        before_dummy,
+        after_dummy,
+        cot_mode,
+        seq_len,
+        train_on_inputs,
+        wrap_docs,
+        doc_marker_start,
+        doc_marker_end,
+        standard_mix_prob,
+        mix_seed,
+        emit_gold_mask,
+    )
     gold_path = Path(str(tok_path).replace("_tokens.npy", "_gold.json"))
     if emit_gold_mask and not wrap_docs:
-        raise ValueError("emit_gold_mask=True requires wrap_docs=True (gold-doc "
-                         "structure is recovered from the doc-boundary markers).")
+        raise ValueError(
+            "emit_gold_mask=True requires wrap_docs=True (gold-doc "
+            "structure is recovered from the doc-boundary markers)."
+        )
     cached = tok_path.exists() and mask_path.exists() and meta_path.exists()
     if emit_gold_mask:
         cached = cached and gold_path.exists()
@@ -155,7 +200,7 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
     tok = AutoTokenizer.from_pretrained(base_model)
     eos_id = tok.eos_token_id
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else eos_id
-    multitask = (tag == "multitask")
+    multitask = tag == "multitask"
 
     doc_start_id = doc_end_id = None
     if wrap_docs:
@@ -168,11 +213,14 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
         _ca.DOC_END = doc_marker_end
 
     do_mix = wrap_docs and standard_mix_prob > 0.0
-    print(f"[cache] tokenizing {src} -> {tok_path.name}  "
-          f"(tag={tag}, qp={query_position}, titles={use_titles}, cot_mode={cot_mode}, "
-          f"seq_len={seq_len}, eos={eos_id}, wrap_docs={wrap_docs}"
-          + (f", doc_ids=({doc_start_id},{doc_end_id})" if wrap_docs else "")
-          + (f", mix_std={standard_mix_prob}@seed{mix_seed}" if do_mix else "") + ")")
+    print(
+        f"[cache] tokenizing {src} -> {tok_path.name}  "
+        f"(tag={tag}, qp={query_position}, titles={use_titles}, cot_mode={cot_mode}, "
+        f"seq_len={seq_len}, eos={eos_id}, wrap_docs={wrap_docs}"
+        + (f", doc_ids=({doc_start_id},{doc_end_id})" if wrap_docs else "")
+        + (f", mix_std={standard_mix_prob}@seed{mix_seed}" if do_mix else "")
+        + ")"
+    )
 
     # Gold-document gradient masking: build {content_fingerprint -> [gold chunk idx]}
     # so the trainer can recover each example's gold docs from input_ids alone (no
@@ -181,7 +229,9 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
     n_gold = 0
     if emit_gold_mask:
         from corpus_reasoning.lib.olmo_gold_grad_mask import (
-            content_fingerprint, gold_chunks_from_gold_doc_indices)
+            content_fingerprint,
+            gold_chunks_from_gold_doc_indices,
+        )
 
     all_ids, all_mask = [], []
     kept = skipped = 0
@@ -196,9 +246,14 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
             ex_task = ex.get("_task", task) if multitask else task
             ex_cot = ex.get("_cot_mode", cot_mode) if multitask else cot_mode
             prompt, output = build_prompt(
-                ex, task=ex_task, query_position=query_position,
-                use_titles=use_titles, before_dummy=before_dummy,
-                after_dummy=after_dummy, use_alpaca=True, cot_mode=ex_cot,
+                ex,
+                task=ex_task,
+                query_position=query_position,
+                use_titles=use_titles,
+                before_dummy=before_dummy,
+                after_dummy=after_dummy,
+                use_alpaca=True,
+                cot_mode=ex_cot,
             )
             # Mask mixing: deterministically present a `standard_mix_prob` fraction of
             # examples WITHOUT doc markers, so they train as plain causal under the mask.
@@ -230,17 +285,23 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
             # Only marker-wrapped examples have recoverable doc structure.
             if emit_gold_mask and not present_as_standard and ex.get("gold_doc_indices"):
                 fp = content_fingerprint(p_ids + o_ids)
-                gold_table[fp] = sorted(gold_chunks_from_gold_doc_indices(ex["gold_doc_indices"]))
+                # contradiction stores 1-indexed "Claim N" ids; nq/retrieval/outlier/rerank store 0-based
+                gold_table[fp] = sorted(gold_chunks_from_gold_doc_indices(ex["gold_doc_indices"], base=1 if task == "contradiction" else 0))
                 n_gold += 1
             kept += 1
 
-    tokens = np.asarray(all_ids, dtype=np.uint32)   # Qwen vocab > 65535
+    tokens = np.asarray(all_ids, dtype=np.uint32)  # Qwen vocab > 65535
     masks = np.asarray(all_mask, dtype=np.bool_)
-    tokens.tofile(tok_path)   # raw bytes (olmo-core memmaps these)
+    tokens.tofile(tok_path)  # raw bytes (olmo-core memmaps these)
     masks.tofile(mask_path)
-    meta = {"eos_token_id": int(eos_id), "pad_token_id": int(pad_id),
-            "n_examples": kept, "seq_len": seq_len, "base_model": base_model,
-            "wrap_docs": bool(wrap_docs)}
+    meta = {
+        "eos_token_id": int(eos_id),
+        "pad_token_id": int(pad_id),
+        "n_examples": kept,
+        "seq_len": seq_len,
+        "base_model": base_model,
+        "wrap_docs": bool(wrap_docs),
+    }
     if wrap_docs:
         meta["doc_start_id"] = doc_start_id
         meta["doc_end_id"] = doc_end_id
@@ -255,16 +316,25 @@ def tokenize_unified_for_olmo(src, base_model, task="retrieval",
         meta["gold_mask"] = True
         meta["gold_path"] = str(gold_path)
         meta["n_gold_examples"] = n_gold
-        print(f"[cache] gold-mask sidecar: {n_gold} examples with gold_doc_indices "
-              f"-> {gold_path.name}")
+        print(
+            f"[cache] gold-mask sidecar: {n_gold} examples with gold_doc_indices "
+            f"-> {gold_path.name}"
+        )
     json.dump(meta, open(meta_path, "w"))
-    print(f"[cache] kept={kept} skipped(>{seq_len})={skipped} "
-          f"loss_tokens={int(masks.sum())} avg_loss_tokens={masks.sum()/max(kept,1):.1f}"
-          + (f" mixed_standard={n_mixed_standard}/{kept + skipped} "
-             f"({100.0 * n_mixed_standard / max(kept + skipped, 1):.1f}%)" if do_mix else ""))
+    print(
+        f"[cache] kept={kept} skipped(>{seq_len})={skipped} "
+        f"loss_tokens={int(masks.sum())} avg_loss_tokens={masks.sum()/max(kept,1):.1f}"
+        + (
+            f" mixed_standard={n_mixed_standard}/{kept + skipped} "
+            f"({100.0 * n_mixed_standard / max(kept + skipped, 1):.1f}%)"
+            if do_mix
+            else ""
+        )
+    )
     if kept == 0:
         raise RuntimeError(
-            f"no examples fit in seq_len={seq_len} for {src} — every doc was truncated.")
+            f"no examples fit in seq_len={seq_len} for {src} — every doc was truncated."
+        )
     return str(tok_path), str(mask_path), str(meta_path)
 
 
@@ -279,34 +349,65 @@ def main():
     ap.add_argument("--after-dummy", type=int, default=0)
     ap.add_argument("--cot-mode", default="label")
     ap.add_argument("--seq-len", type=int, default=8192)
-    ap.add_argument("--train-on-inputs", action="store_true",
-                    help="loss on every token (full-sequence LM); default off = loss only on completion")
-    ap.add_argument("--wrap-docs", action="store_true",
-                    help="wrap each document block with marker tokens for chunked/SWA attention")
-    ap.add_argument("--doc-marker-start", default=DEFAULT_DOC_MARKER_START,
-                    help="reserved special token that opens a document (must be 1 token)")
-    ap.add_argument("--doc-marker-end", default=DEFAULT_DOC_MARKER_END,
-                    help="reserved special token that closes a document (must be 1 token)")
-    ap.add_argument("--standard-mix-prob", type=float, default=0.0,
-                    help="fraction of examples tokenized WITHOUT doc markers (train as "
-                         "plain causal under the mask); requires --wrap-docs")
-    ap.add_argument("--mix-seed", type=int, default=42,
-                    help="seed for the deterministic per-example mask-mix coin flip")
-    ap.add_argument("--emit-gold-mask", action="store_true",
-                    help="write a {content_fingerprint -> gold chunk idx} sidecar for "
-                         "gold-document gradient masking (requires --wrap-docs)")
+    ap.add_argument(
+        "--train-on-inputs",
+        action="store_true",
+        help="loss on every token (full-sequence LM); default off = loss only on completion",
+    )
+    ap.add_argument(
+        "--wrap-docs",
+        action="store_true",
+        help="wrap each document block with marker tokens for chunked/SWA attention",
+    )
+    ap.add_argument(
+        "--doc-marker-start",
+        default=DEFAULT_DOC_MARKER_START,
+        help="reserved special token that opens a document (must be 1 token)",
+    )
+    ap.add_argument(
+        "--doc-marker-end",
+        default=DEFAULT_DOC_MARKER_END,
+        help="reserved special token that closes a document (must be 1 token)",
+    )
+    ap.add_argument(
+        "--standard-mix-prob",
+        type=float,
+        default=0.0,
+        help="fraction of examples tokenized WITHOUT doc markers (train as "
+        "plain causal under the mask); requires --wrap-docs",
+    )
+    ap.add_argument(
+        "--mix-seed",
+        type=int,
+        default=42,
+        help="seed for the deterministic per-example mask-mix coin flip",
+    )
+    ap.add_argument(
+        "--emit-gold-mask",
+        action="store_true",
+        help="write a {content_fingerprint -> gold chunk idx} sidecar for "
+        "gold-document gradient masking (requires --wrap-docs)",
+    )
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
     tok_path, mask_path, meta_path = tokenize_unified_for_olmo(
-        args.input, args.base_model, task=args.task,
-        query_position=args.query_position, use_titles=not args.no_titles,
-        before_dummy=args.before_dummy, after_dummy=args.after_dummy,
-        cot_mode=args.cot_mode, seq_len=args.seq_len,
-        train_on_inputs=args.train_on_inputs, force=args.force,
-        wrap_docs=args.wrap_docs, doc_marker_start=args.doc_marker_start,
+        args.input,
+        args.base_model,
+        task=args.task,
+        query_position=args.query_position,
+        use_titles=not args.no_titles,
+        before_dummy=args.before_dummy,
+        after_dummy=args.after_dummy,
+        cot_mode=args.cot_mode,
+        seq_len=args.seq_len,
+        train_on_inputs=args.train_on_inputs,
+        force=args.force,
+        wrap_docs=args.wrap_docs,
+        doc_marker_start=args.doc_marker_start,
         doc_marker_end=args.doc_marker_end,
-        standard_mix_prob=args.standard_mix_prob, mix_seed=args.mix_seed,
+        standard_mix_prob=args.standard_mix_prob,
+        mix_seed=args.mix_seed,
         emit_gold_mask=args.emit_gold_mask,
     )
     print(f"tokens: {tok_path}\nmask:   {mask_path}\nmeta:   {meta_path}")
