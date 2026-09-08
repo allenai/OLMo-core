@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Qwen3.5 dense model configs (0.8B, 4B, 9B, 27B) with hybrid Gated DeltaNet + full-attention architecture.
 - Added partial RoPE support via ``partial_rotary_factor`` on :class:`~olmo_core.nn.rope.RoPEConfig`.
 - Added HuggingFace weight conversion for ``qwen3_5_text`` hybrid models.
+- Added `min_runtime` to `BeakerLaunchConfig` (and a `--min-runtime` flag to its CLI), forwarded to gantry as Beaker's `context.minRuntime` — the minimum time a job is guaranteed to run before it can be preempted. Setting it suppresses the deprecated `preemptible` field, which Beaker rejects alongside the new spelling.
 
 - Added `max_checkpoints` parameter to `CheckpointerCallback` (default: 3) to limit the number of permanent checkpoints retained. Oldest checkpoints are removed automatically when the limit is exceeded. Set to `None` to keep all (previous behavior).
 - Added `HFConverterCallback`, which can be used to convert models to huggingface format at the end of the training run.

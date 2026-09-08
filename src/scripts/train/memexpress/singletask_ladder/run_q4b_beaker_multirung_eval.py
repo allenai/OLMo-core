@@ -84,6 +84,7 @@ def build_eval_launch_config(
     max_length,
     batch_size,
     priority,
+    min_runtime=None,
     ladder_version,
     xlong,
     xlong_only,
@@ -147,6 +148,9 @@ def build_eval_launch_config(
     launch_config.torchrun = False  # the runner issues its own torchrun(s)
     launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
     launch_config.priority = priority
+    # context.minRuntime: how long the job is guaranteed before preemption. Unset leaves Beaker's
+    # 0s default, i.e. preemptible immediately, which is what every eval before this flag existed got.
+    launch_config.min_runtime = min_runtime
     launch_config.step_soft_timeout = (
         None  # we submit with follow=False (don't block on many evals);
     )
@@ -232,6 +236,11 @@ def main():
         "2 lets ~4x more evals run concurrently than 8 and fits fragmented free slots.",
     )
     ap.add_argument("--priority", default="urgent")  # never below urgent (user directive)
+    ap.add_argument(
+        "--min-runtime",
+        default=None,
+        help="minimum guaranteed runtime before preemption, e.g. '1h'. Default: Beaker's 0s.",
+    )
     ap.add_argument(
         "--ladder-version",
         choices=["v2"],
@@ -411,6 +420,7 @@ def main():
             max_length=args.max_length,
             batch_size=args.batch_size,
             priority=args.priority,
+            min_runtime=args.min_runtime,
             ladder_version=args.ladder_version,
             xlong=args.xlong,
             xlong_only=args.xlong_only,

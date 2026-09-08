@@ -301,6 +301,19 @@ class BeakerLaunchConfig(Config):
     preemptible: bool = True
     """
     If the job should be preemptible.
+
+    .. deprecated::
+        Beaker deprecated this field in favor of ``min_runtime`` and auto-resume. It is ignored
+        when :data:`min_runtime` is set.
+    """
+
+    min_runtime: str | None = None
+    """
+    The minimum time a job is guaranteed to run before it can be preempted, e.g. ``"1h"``.
+
+    This is the replacement for :data:`preemptible`: Beaker's ``context.minRuntime``, which is
+    ``0s`` (preemptible immediately) when unset. Setting it suppresses the deprecated
+    ``preemptible`` field, since the API rejects specs carrying both spellings.
     """
 
     retries: int | None = None
@@ -637,7 +650,9 @@ class BeakerLaunchConfig(Config):
             workspace=self.workspace,
             budget=self.budget,
             priority=self.priority,
-            preemptible=self.preemptible,
+            # Mutually exclusive: gantry rejects the deprecated flag alongside 'min_runtime'.
+            preemptible=None if self.min_runtime is not None else self.preemptible,
+            min_runtime=self.min_runtime,
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
@@ -903,7 +918,14 @@ def _parse_args():
     parser.add_argument(
         "--preemptible",
         action="store_true",
-        help="""If the job should be preemptible.""",
+        help="""If the job should be preemptible. Deprecated; prefer --min-runtime.""",
+    )
+    parser.add_argument(
+        "--min-runtime",
+        type=str,
+        default=None,
+        help="""Minimum time the job is guaranteed to run before it can be preempted, e.g. '1h'.
+        Replaces --preemptible, which is ignored when this is set.""",
     )
     parser.add_argument(
         "--allow-dirty",
@@ -1002,6 +1024,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
         num_nodes=opts.nodes,
         num_gpus=opts.gpus,
         preemptible=opts.preemptible,
+        min_runtime=opts.min_runtime,
         priority=opts.priority,
         beaker_image=opts.beaker_image,
         slack_notifications=opts.slack_notifications,
