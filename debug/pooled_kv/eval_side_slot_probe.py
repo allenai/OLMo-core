@@ -59,6 +59,44 @@ def install_gdn_nowrite_hook():
 
     GatedDeltaNet.forward = fwd
     return orig
+_PREFIX_REAL = {"spec": "none", "stop_id": 25, "cap": 32}  # keep each pooled doc's header real: "stopK" = tokens after doc_start through the K-th stop_id
+
+
+def install_prefix_real_patch():
+    """Patch the chunk-id builder the compaction uses so the first tokens of every document (its
+    header, e.g. ``\n\nClaim 269:`` for contradiction, ``Date: ... || User: ... || Instance:`` for
+    oolong) are FREE -> kept real; the soft token then stands for the remaining body only."""
+    import olmo_core.nn.transformer.model as tm
+
+    orig = tm.build_chunk_ids_from_tokens
+
+    def patched(input_ids, *args, **kw):
+        cid = orig(input_ids, *args, **kw)
+        spec = _PREFIX_REAL["spec"]
+        if spec == "none":
+            return cid
+        k = int(spec[len("stop"):])
+        stop_id, cap = _PREFIX_REAL["stop_id"], _PREFIX_REAL["cap"]
+        ids = input_ids if input_ids.dim() == 2 else input_ids[None]
+        cid = cid.clone()
+        for b in range(ids.shape[0]):
+            row = ids[b].tolist(); c = cid[b]
+            starts = (ids[b] == kw.get("doc_start_id", args[0] if args else None)).nonzero(as_tuple=True)[0].tolist()
+            for st in starts:
+                seen, j = 0, st + 1
+                while j < len(row) and j < st + 1 + cap and int(c[j]) >= 0:
+                    if row[j] == stop_id:
+                        seen += 1
+                        if seen == k:
+                            break
+                    j += 1
+                c[st + 1:j + 1] = -1  # header FREE (doc_start marker stays with the doc)
+        return cid
+
+    tm.build_chunk_ids_from_tokens = patched
+    return orig
+
+
 VOCAB = 248320 if FAMILY == "qwen3_5" else 151936
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base" if FAMILY == "qwen3_5" else "Qwen/Qwen3-4B"
 CKPT_Q3 = {  # dense Qwen3-4B ladder runs (lr 5e-5), pure attention: every layer takes K/V slots
@@ -135,7 +173,15 @@ def policy_keep_mask(x, cid, gold, frac, policy, seed=0, hard_negs=None):
     n_docs = int(cid.max()) + 1
     non_gold = [d for d in range(n_docs) if not bool(gold[d]) and int((cid == d).sum()) > 0]
     k = int(round(frac * len(non_gold)))
-    if policy in ("hardneg", "hardneg+rand"):
+    if policy.startswith("goldnbr"):  # gold docs' +-K neighbours real, plus the random fraction on top
+        K = int(policy[len("goldnbr"):] or 1)
+        gold_docs = [d for d in range(n_docs) if bool(gold[d])]
+        nbrs = {d + o for d in gold_docs for o in range(-K, K + 1) if 0 <= d + o < n_docs}
+        g = torch.Generator().manual_seed(seed)
+        rest = [d for d in non_gold if d not in nbrs]
+        order = torch.randperm(len(rest), generator=g).tolist()
+        chosen = sorted(nbrs) + [rest[i] for i in order[:k]]
+    elif policy in ("hardneg", "hardneg+rand"):
         hn = [d for d in (hard_negs or []) if d in non_gold]
         chosen = list(hn)
         if policy == "hardneg+rand":
@@ -205,6 +251,9 @@ def main():
                     "overlap with the question) | length (longest) | short (shortest) | first (earliest) | last (latest)")
     ap.add_argument("--biases", default="all", help="'all' = the full bias sweep; 'none' = only the unbiased soft token per policy/keep")
     ap.add_argument("--gdn-nowrite", action="store_true", help="also run each keep with slots made attention-only (no GDN state write / conv leak)")
+    ap.add_argument("--gdn-nowrite-only", action="store_true", help="run ONLY the gdn-nowrite variant of each config (no plain soft token)")
+    ap.add_argument("--prefix-real", default="none", help="comma list of pooled-doc header policies: none | stopK (tokens after doc_start through the K-th --prefix-stop-id kept real)")
+    ap.add_argument("--prefix-stop-id", type=int, default=25, help="token id that ends a header (':' = 25 for Qwen3.5)")
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
@@ -249,21 +298,27 @@ def main():
     keeps = [float(k) for k in a.keeps.split(",")]
     extras = [float(c) for c in a.extras.split(",")]
     policies = a.policies.split(",")
+    prefixes = a.prefix_real.split(",")
+    _PREFIX_REAL["stop_id"] = a.prefix_stop_id
+    if any(p != "none" for p in prefixes):
+        install_prefix_real_patch()
     configs = [("full", None, None)]
     for pol in policies:
-        tag = "" if pol == "random" else f" policy={pol}"
+      for pre in prefixes:
+        tag = ("" if pol == "random" else f" policy={pol}") + ("" if pre == "none" else f" prefix={pre}")
         for k in keeps:
-            configs.append((f"soft k={k:.3f}{tag} no-bias", (k, pol), (False, 1.0, 0.0)))
-            if a.gdn_nowrite:
-                configs.append((f"soft k={k:.3f}{tag} gdn-nowrite", (k, pol), (False, 1.0, 0.0, "gdn-nowrite")))
+            if not a.gdn_nowrite_only:
+                configs.append((f"soft k={k:.3f}{tag} no-bias", (k, pol, pre), (False, 1.0, 0.0)))
+            if a.gdn_nowrite or a.gdn_nowrite_only:
+                configs.append((f"soft k={k:.3f}{tag} gdn-nowrite", (k, pol, pre), (False, 1.0, 0.0, "gdn-nowrite")))
             if a.biases == "none":
                 continue
-            configs.append((f"soft k={k:.3f}{tag} +logL", (k, pol), (True, 1.0, 0.0)))
+            configs.append((f"soft k={k:.3f}{tag} +logL", (k, pol, pre), (True, 1.0, 0.0)))
             for c in extras:
-                configs.append((f"soft k={k:.3f}{tag} +logL{c:+.0f}", (k, pol), (True, 1.0, c)))
-            configs.append((f"soft k={k:.3f}{tag} const=mean logL", (k, pol), (True, 0.0, float(np.log(45.0)))))
+                configs.append((f"soft k={k:.3f}{tag} +logL{c:+.0f}", (k, pol, pre), (True, 1.0, c)))
+            configs.append((f"soft k={k:.3f}{tag} const=mean logL", (k, pol, pre), (True, 0.0, float(np.log(45.0)))))
             for c in [float(c) for c in a.consts.split(",") if c]:
-                configs.append((f"soft k={k:.3f}{tag} const{c:+.0f}", (k, pol), (True, 0.0, c)))
+                configs.append((f"soft k={k:.3f}{tag} const{c:+.0f}", (k, pol, pre), (True, 0.0, c)))
 
     res = {name: {"ce": [], "top1": [], "kl": [], "correct": [], "compaction": [], "sec": []} for name, _, _ in configs}
     full_cache = {}
@@ -283,10 +338,12 @@ def main():
             gold_row = torch.zeros(int(cid_row.max()) + 1, dtype=torch.bool)
         for name, keep, bias in configs:
             t_cfg = time.time()
+            pre = "none"
             if keep is not None and isinstance(keep, tuple):
-                keep, pol = keep
+                keep, pol, pre = keep
             else:
                 pol = "random"
+            _PREFIX_REAL["spec"] = pre
             if keep is None:
                 model.eval()
                 # logits only at the answer-predicting positions (a full 34k x 248k logit tensor
@@ -331,13 +388,16 @@ def main():
             kl = float(F.kl_div(F.log_softmax(lg, -1), F.log_softmax(lf, -1), log_target=True, reduction="batchmean"))
             correct = float((lg.argmax(-1) == targets).all())
             r = res[name]; r["ce"].append(ce); r["top1"].append(top1); r["kl"].append(kl); r["correct"].append(correct); r["compaction"].append(comp)
+            r.setdefault("tok_ce", []).append(F.cross_entropy(lg, targets, reduction="none").tolist())
+            r.setdefault("tok_ids", []).append(targets.tolist())
             r.setdefault("sec", []).append(time.time() - t_cfg)
         if ri + 1 in (1, 2, 5) or (ri + 1) % 8 == 0:
             log(f"row {ri + 1}/{len(rows)} done; full CE {res['full']['ce'][-1]:.3f} correct {res['full']['correct'][-1]:.0f}")
             summary(res, configs)
     summary(res, configs)
     out = {"task": a.task, "rung": a.rung, "rows": len(rows), "ckpt": ck,
-           "configs": {n: {k: float(np.mean(v)) for k, v in res[n].items()} for n, _, _ in configs}}
+           "configs": {n: {k: float(np.mean(v)) for k, v in res[n].items() if k not in ("tok_ce", "tok_ids")} for n, _, _ in configs},
+           "per_row": {n: {k: v for k, v in res[n].items()} for n, _, _ in configs}}
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     json.dump(out, open(a.out, "w"), indent=1)
     log(f"wrote {a.out}")
