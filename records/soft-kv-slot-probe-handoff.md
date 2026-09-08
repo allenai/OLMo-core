@@ -1,4 +1,30 @@
-# Soft-KV slot-construction study — handoff (state as of 2026-09-08 ~13:00 PDT)
+# Soft-KV slot-construction study — handoff (state as of 2026-09-08 ~14:30 PDT)
+
+**UPDATE 14:30 — PARITY REACHED ON ALL FOUR TASKS (eval side).** Contradiction and oolong close
+once each document's *header* (the exact-match tokens: `Claim N:`, `Date: … || User: … ||
+Instance:`) stays real and only the body is pooled (`--prefix-real stopK`), or — contradiction
+only — once the document right after each gold claim is real (`goldnbr1`, leak-free `+runs`).
+Cheapest: contradiction header+keep 1/36 ≈ 4.8x, neighbour runs+1/36 ≈ 11x; oolong header+keep 1/3
+≈ 1.4x (its header is over half the line). Wired into training as
+`--st-header-stop-id 25 --st-header-stop-count {1|3}` (commit aa0b7db2a). Full tables in
+`records/pooled-doc-kv-attention.md` (sections dated 2026-09-08 afternoon). Beaker confirmations on
+the eval-bundle rows: 01M21B3PRZGWQNJJTP7SN5SPT4 (contra) 01M21B4F4VAER7E8MJZC1F0G05 (oolong)
+01M21B581CNK4WTQN8EEDM7B06 (nq runs) 01M21B612ZEK7TFXC8ERARDW19 (outlier runs). New probe knobs:
+`--prefix-real`, `--slot-pos`, `--gdn-nowrite-only`, policies `goldnbrK[+runs]`/`goldleftK`/`goldrightK`;
+`analyze_slot_rows.py` for per-row / per-token-role breakdowns (probe JSONs now carry `per_row`).
+Local probe outputs: `/net/sneetches/data/prasann/slot_probe/v{2,3,4}_*.{log,json}`; launchers
+`/scratch/users/prasann/slot_probe/run_sneetches_v{2,3,4}.sbatch`. Sneetches rows ≠ Beaker rows
+(oolong full 0.507 vs 0.466, contradiction 0.071 vs 0.042) — never compare across sources.
+
+Settled by the afternoon runs: keep policies (content-based ≈ random per token; first/last
+catastrophic), GDN no-write (only helps contradiction at low keep, hurts elsewhere), slot RoPE
+position (no effect), slot bias at keep 0 (no effect), Qwen3-4B oolong probe (checkpoint is
+context-blind, uninformative).
+
+**Next (training):** launch `softtoken` arms with header-real — contradiction 56M keep 1/36 and
+1/12, oolong 80M keep 1/3 — against the dense ladder (`fs35s4bkv*` recipe, `--st-keep-frac`), and
+add a `gold_plus_random_runs` keep mode to `make_fingerprint_keep_docs_fn` for the 11x arm.
+
 
 Prasann's framing (2026-09-08): find the cheapest eval-time construction that reproduces a
 dense-trained model's answer loss to **near zero gap** on all four tasks; only then take it to

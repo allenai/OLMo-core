@@ -683,3 +683,46 @@ Caveat on sources: the sneetches rows are a different 24 held-out rows than the 
 bundle); never compare across sources. The Qwen3-4B (pure attention) oolong probe is uninformative:
 that checkpoint's answer logits are context-independent at 32k (KL to full = 0.000 under every
 pooling, ladder f1 0.557 at 32k vs 0.844 at 2k) — it learned a label prior, not the task.
+
+### CONTRADICTION PARITY (2026-09-08 ~14:00): the tokens AFTER each gold claim must be real
+
+Per-token-role breakdown (`analyze_slot_rows.py`; local sneetches rows, full 0.071 = 1st-id
+0.205 / 2nd-id 0.053 / structure 0.004): the pooled model's loss at low keep is on the claim ids
+themselves — keep 0: 1st id 0.80, 2nd id 0.73; keep 1/12: 0.85 / 0.31 — not on structure. Slot
+RoPE position (centre / start / end) changes nothing (0.081 / 0.082 / 0.081 at 1/3).
+
+Three constructions close it (24 rows, answer CE, paired SE ≈ ±0.02–0.03; c = compaction):
+
+| construction | keep 1/3 | keep 1/12 | keep 1/36 | keep 0 (gold-only bodies) |
+|---|---|---|---|---|
+| plain soft token | 0.081 (+0.010) c .36 | 0.316 (+0.245) c .11 | 0.597 (+0.526) | 0.425 (+0.354) c .04 |
+| **`Claim N:` header real, body pooled** (`--prefix-real stop1`) | 0.064 (−0.007) c .46 | 0.052 (−0.019) c .25 | **0.056 (−0.015) c ~.21** | 0.038 (−0.033) c .19 |
+| gold ± 1 neighbour real (`goldnbr1`) | 0.043 (−0.028) c .37 | 0.060 (−0.011) c .13 | — | 0.062 (−0.009) c .054 |
+| **leak-free runs** (`goldnbr1+runs`: random picks expanded ±1 too) | — | 0.057 (−0.014) | **0.069 (−0.002) c ~.09** | 0.061 (−0.010) c .054 |
+| gold + LEFT neighbour only | — | 0.253 (+0.18) | 0.350 | 0.545 (+0.47) |
+| gold + RIGHT neighbour only | — | 0.081 (+0.010) | 0.097 (+0.026) | 0.094 (+0.024) |
+| header real + neighbour runs | — | 0.046 (−0.025) | 0.026 (−0.044) | 0.035 (−0.036) |
+
+`gdn-nowrite` adds nothing once headers/neighbours are real (0.049–0.075). Mechanism: the
+**right** neighbour is what matters (left alone stays broken at 0.55; right alone is at parity
+within noise), i.e. the tokens immediately after a gold claim's body — the next claim's
+`<|doc_start|>\n\nClaim N+1:` — must be real for the dense model to read/retrieve the gold claim's
+id. Header-real gives every claim a real successor header; the neighbour policies give the gold
+claims a real successor document. Both are leak-free variants of the same requirement (header-real
+is fully gold-blind; `+runs` makes random picks indistinguishable from gold runs).
+
+**Cheapest parity constructions found (contradiction):** header real + keep 1/36 → ~4.8x, or
+neighbour runs + keep 1/36 → ~11x; header + runs + keep 1/36 is *below* full attention
+(0.026 vs 0.071, the gold-only-body shortcut). Confirmation on the Beaker eval-bundle rows
+(different 24 rows, full 0.042) is in `collect_slot_results.py` under probe `header` /
+`nbr-runs` (ids 01M21B3PRZGWQNJJTP7SN5SPT4, 01M21B4F4VAER7E8MJZC1F0G05, 01M21B581CNK4WTQN8EEDM7B06,
+01M21B612ZEK7TFXC8ERARDW19).
+
+**Taken to the training path (commit aa0b7db2a):**
+`mark_doc_headers_free` (chunked_mask.py) + `enable_pooled_soft_tokens(header_stop_id=25,
+header_stop_count=K)` + `train_ctc_suite.py --variant softtoken --st-header-stop-id 25
+--st-header-stop-count {1 contradiction | 3 oolong} --st-keep-frac …`. Verified bit-identical to
+the probe's construction on real contradiction/oolong rows (5226 / 17074 header tokens freed).
+The neighbour-run keep policy is not yet in the trainer's keep-set hook
+(`make_fingerprint_keep_docs_fn` modes) — add a `gold_plus_random_runs` mode if the 11x arm is
+wanted.
