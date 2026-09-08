@@ -79,6 +79,7 @@ SOURCES = [
     # v5: cheaper headers (content-only, last-2, boundary-only, fraction of docs)
     ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v5-header", "/net/sneetches/data/prasann/slot_probe/v5_oolong_32768.log"),
     ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "v5-header", "/net/sneetches/data/prasann/slot_probe/v5_contradiction_32768.log"),
+    ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v6-header", "/net/sneetches/data/prasann/slot_probe/v6_oolong_32768.log"),
     # Beaker confirmations on the eval-bundle rows (2026-09-08 13:25): header real, neighbour runs
     ("beaker", "contradiction", "32k", "dense 56M (ladder)", "header", "01M21B3PRZGWQNJJTP7SN5SPT4"),
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "header", "01M21B4F4VAER7E8MJZC1F0G05"),

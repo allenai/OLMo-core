@@ -116,12 +116,17 @@ def install_prefix_real_patch():
             for m in mods:
                 if m.startswith("last"):
                     n = int(m[len("last"):]); spans = [sp[-n:] for sp in spans]
-            if "content" in mods:  # drop tokens present in >90% of this row's headers (boilerplate)
+            if "content" in mods or "sep" in mods or "sep2" in mods:  # drop tokens present in >90% of this row's headers (boilerplate)
                 from collections import Counter
                 cnt = Counter()
                 for sp in spans:
                     cnt.update({row[p] for p in sp})
-                boiler = {t for t, n in cnt.items() if n > 0.9 * max(1, len(spans)) and not (15 <= t <= 24)}  # never drop digits
+                keep_ids = set(range(15, 25))  # never drop digits
+                if "sep" in mods:
+                    keep_ids |= {11, 220, 1321}  # ',', ' ', ' ||' -- keep the separators between numbers, drop only labels
+                if "sep2" in mods:
+                    keep_ids |= {11, 1321}  # ',' and ' ||' only (spaces dropped too)
+                boiler = {t for t, n in cnt.items() if n > 0.9 * max(1, len(spans)) and t not in keep_ids}
                 spans = [[p for p in sp if row[p] not in boiler] for sp in spans]
             if frac < 1.0:
                 g = torch.Generator().manual_seed(_PREFIX_REAL.get("seed", 0) * 7919 + b)
