@@ -110,12 +110,20 @@ def convert(task, jsonl, rows, out_dir):
     subprocess.run(cmd, check=True, env=dict(os.environ, PYTHONPATH="src", TOKENIZERS_PARALLELISM="false"))
 
 
-def policy_keep_mask(x, cid, gold, frac, policy, seed=0):
+def policy_keep_mask(x, cid, gold, frac, policy, seed=0, hard_negs=None):
     """(1, n_docs) bool: gold docs plus a fraction ``frac`` of the others chosen by ``policy``."""
     n_docs = int(cid.max()) + 1
     non_gold = [d for d in range(n_docs) if not bool(gold[d]) and int((cid == d).sum()) > 0]
     k = int(round(frac * len(non_gold)))
-    if policy == "random":
+    if policy in ("hardneg", "hardneg+rand"):
+        hn = [d for d in (hard_negs or []) if d in non_gold]
+        chosen = list(hn)
+        if policy == "hardneg+rand":
+            g = torch.Generator().manual_seed(seed)
+            rest = [d for d in non_gold if d not in hn]
+            order = torch.randperm(len(rest), generator=g).tolist()
+            chosen += [rest[i] for i in order[:k]]
+    elif policy == "random":
         g = torch.Generator().manual_seed(seed)
         order = torch.randperm(len(non_gold), generator=g).tolist()
         chosen = [non_gold[i] for i in order[:k]]
@@ -189,6 +197,19 @@ def main():
         convert(a.task, a.jsonl or EVAL_JSONL[a.task][a.rung], a.rows, shard)
     rows, masks = load_rows(shard, a.rows)
     log(f"{len(rows)} rows, lengths {[len(r) for r in rows[:6]]}...")
+    hard_negs_rows = None
+    head = f"{shard}/head.jsonl"
+    if os.path.exists(head):
+        hard_negs_rows = []
+        for line in open(head):
+            ex = json.loads(line)
+            hn = ex.get("hard_neg_indices") or []
+            hn = hn[0] if hn and isinstance(hn[0], list) else hn
+            hard_negs_rows.append([int(d) for d in hn])
+        n_hn = sum(len(h) for h in hard_negs_rows)
+        log(f"hard negatives from {head}: {n_hn} across {len(hard_negs_rows)} rows")
+        if n_hn == 0:
+            hard_negs_rows = None
 
     cfg = build_cfg()
     cfg.lm_head.loss_implementation = LMLossImplementation.default
@@ -259,7 +280,7 @@ def main():
                     elif pol == "random":
                         keep_cache[ck_] = None
                     else:
-                        keep_cache[ck_] = PooledDocKeepHolder(keep_docs=policy_keep_mask(x.cpu(), cid_row, gold_row, keep, pol, a.seed))
+                        keep_cache[ck_] = PooledDocKeepHolder(keep_docs=policy_keep_mask(x.cpu(), cid_row, gold_row, keep, pol, a.seed, hard_negs=hard_negs_rows[ri] if hard_negs_rows else None))
                     if ri == 0 and keep_cache[ck_] is not None:
                         kd = keep_cache[ck_].keep_docs[0]
                         log(f"keep set ({pol}, {keep:.3f}): {int(kd.sum())}/{kd.numel()} docs real, first kept: {kd.nonzero(as_tuple=True)[0][:8].tolist()}")
