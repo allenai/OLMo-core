@@ -22,7 +22,8 @@ lc = build_launch_config(name=name, cmd=cmd, cluster=a.cluster, beaker_image=OLM
 lc.priority = a.priority
 for kv in a.env:
     k, v = kv.split("=", 1)
-    lc.env_vars.append(BeakerEnvVar(name=k, value=v)); lc.allow_dirty = True
+    lc.env_vars.append(BeakerEnvVar(name=k, value=v))
+lc.allow_dirty = True  # gantry clones the PUSHED commit; local edits never ship
 lc.step_timeout = None; lc.step_soft_timeout = None
 wl = lc.launch(follow=False)
 wl_id = getattr(wl, "id", None) or getattr(getattr(wl, "experiment", None), "id", None)
