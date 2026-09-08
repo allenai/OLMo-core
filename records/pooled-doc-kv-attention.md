@@ -593,3 +593,34 @@ hybrid the 24 GDN layers see the soft token's hidden state regardless of any K/V
 two follow-ups isolate that: the same probes on the pure-attention Qwen3-4B dense checkpoints, and
 `pooledkv_eval_probe.py` (every token kept, only the attention layers' K/V pooled). Tracker:
 `results/pooled_kv/slot_tracker.html` (+ `slot_probe_results.csv`).
+
+### Gold-index bug and the corrected picture (2026-09-08 12:30)
+
+`gold_chunks_from_gold_doc_indices` subtracted 1 for every task; nq/outlier store 0-based gold, so
+every gold-aware keep set on those two tasks pooled the TRUE gold document (memory
+`gold-sidecar-index-base-bug`; fixed with a per-task base, commit on prasann/landmark). Rerun with
+the fix, default soft token (mean embedding, no bias), 24 held-out rows at 32k, answer CE:
+
+| task | full | keep 1/3 | keep 1/6 | keep 1/12 | gold only |
+|---|---|---|---|---|---|
+| nq | 0.086 | 0.070 | 0.088 | 0.057 | 0.057 |
+| outlier | 1.206 | 1.398 | 1.308 | 1.201 | 1.201 |
+| contradiction | 0.042 | 0.109 | 0.160 | 0.377 | 0.426 |
+| oolong (no gold) | 0.466 | 0.613 | 0.85 | 0.92 | 0.92 |
+
+**nq and outlier reach parity with full attention when only the gold documents are real** (gap
+−0.03 and −0.005, i.e. zero within noise) at compaction 0.02–0.04, i.e. >25x fewer tokens; adding
+random real documents on top makes outlier WORSE (1.40 at 1/3), the mixture effect again. The
+earlier nq gap of 0.8 and outlier 0.45 were the bug. Contradiction and oolong are the tasks that
+still lose (0.07 and 0.15 at keep 1/3). The FLOP-scaling grid's nq/outlier `kv17`/`kv33` arms
+trained with the wrong gold and are not valid gold-aware results.
+
+**GDN-intact pooled-KV attention (`pooledkv_eval_probe.py`, every token kept, mean K/V slots on the
+8 attention layers, keep 1/3):** contradiction 0.37, nq 0.17, outlier 1.75, oolong 0.55 — WORSE
+than removing the tokens (0.109 / 0.070 / 1.40 / 0.61) on three of four tasks, and its keep 1/12
+equals keep 0 (suspicious). Keep-all reproduces full attention on a toy model, so the path is not
+simply broken, but this construction is not the diagnostic it was meant to be until the
+keep-1/12 == keep-0 oddity is understood; treat as unresolved.
+
+**Keep policies:** the first sweep was invalid (a patch missed the renamed keep block; all six
+policies ran the random keep set and agreed to 3 decimals). Relaunched with the fix.

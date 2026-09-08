@@ -58,10 +58,10 @@ SOURCES = [
     ("beaker", "oolong", "32k", "dense 80M (ladder)", "pooledkv", "01M2158X5K2VRJZ45MM28R6S6S"),
     ("beaker", "nq", "32k", "dense 48M (ladder)", "pooledkv", "01M21658V40RG6S2DW1B2CGC0W"),
     ("beaker", "outlier", "32k", "dense 160M (ladder)", "pooledkv", "01M2169HPQ4DGM25KEB02FAW4J"),
-    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "policy", "01M215QH9HAQSJ91GYDJH0ZR6X"),
-    ("beaker", "oolong", "32k", "dense 80M (ladder)", "policy", "01M215R9H1298Z9JRP0TTH23QT"),
-    ("beaker", "nq", "32k", "dense 48M (ladder)", "policy", "01M21626Y4GAWK79C7CP0S1D1B"),
-    ("beaker", "outlier", "32k", "dense 160M (ladder)", "policy", "01M2165ZPWM9RY3KBJ9K5CMPD9"),
+    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "policy", "01M2183MZJVTJYV7KBD2J0ZXWE"),
+    ("beaker", "oolong", "32k", "dense 80M (ladder)", "policy", "01M2184TV0VNN7133Y93WQC05C"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "policy", "01M2185V4XWRQWH27XAQ0ZKSX4"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "policy", "01M2187549JW0XYXQAP3P4V46N"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
