@@ -17,6 +17,20 @@ prefixes are unchanged. Original receipts are retained. The current retry
 receipt is `heroes-resubmitted-20260908-exclude503.json` under the automation
 root; the historical `heroes-submitted.json` records the failed first attempts.
 
+At01:44:51UTC preflight passed again: all2,334 Dolma objects checked, uploader
+running,36.56TB free. Both replacements were submitted and queued at01:44UTC:
+
+- EMO: https://beaker.org/ex/01M1ZB12N71WARP833J5M1MX00
+- Non-EMO: https://beaker.org/ex/01M1ZB164S5WB148A8ZNE9YM7Q
+
+At01:45UTC EMO had all eight nodes scheduled (startup pending); non-EMO was
+still queued. Exported specs were checked against each original: the only
+difference is removal of503 from every worker's hostname allowlist.
+
+Both use64GPUs, urgent/allocated in `ai2/olmo3p5-training`. The replacement
+controller completed after writing the durable retry receipt; no automatic retry
+loop or additional smoke was launched.
+
 Separately, the pending medium32Mi CBS watcher was replaced by
 `01M1ZAWK2P39V9DP24Y38JSESJ`, which logged its503 exclusion and successfully
 reconciled the running parent at01:43UTC. Only the future child spec changes;
