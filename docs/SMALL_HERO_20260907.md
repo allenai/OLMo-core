@@ -90,9 +90,12 @@ run averaging, source-run mutation or derived training runs. Display limits are1
 to avoid silently dropping restart segments. Baseline records are separate gray
 segments, including failed/crashed attempts, not an inferred stitched lineage.
 
-Full-range panels update with live histories. The matched-token zoom is explicitly
-fixed to the report-creation overlap (207.937B tokens); remove its x cap in the UI or
-refresh the inventory to expand it. Differences in architecture, active parameters,
+All evaluation panels read live histories and have no fixed token-axis upper limit,
+so new hero evaluations stay visible without rebuilding the report (refresh an open
+report to fetch new history). Only the explicitly labeled **training-loss**
+common-window zoom stays fixed at the report-creation overlap (207.937B tokens).
+The dense reference extends farther in tokens: compare quality at overlapping
+budgets or zoom in as needed. Differences in architecture, active parameters,
 batch size and data mixture are called out; matching metric keys do not assert a
 byte-for-byte evaluation-harness match.
 

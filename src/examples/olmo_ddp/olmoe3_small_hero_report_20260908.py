@@ -213,13 +213,14 @@ def make_blocks(inv):
         wr.H1("Shared held-out LM evaluation"),
         wr.P(
             "These are the 11 shared logged CE-loss metrics (lower is better), shown "
-            "individually. Axes are capped at the common hero-token limit at report creation "
-            "so later dense-model results are not mistaken for matched-budget results. "
-            "Remove the x-axis cap in the UI as the heroes progress, or rerun the report builder."
+            "individually. Token axes have no fixed upper limit: new hero evaluations remain "
+            "visible as they are logged, without rebuilding this report. Refresh an open "
+            "report to fetch the latest histories. The dense reference extends much farther "
+            "in tokens; compare quality only at overlapping token budgets, or zoom in as needed."
         ),
         grid(
             all_sets,
-            [plot(k, k.split("/")[2], upper=overlap) for k in inv["shared_lm"]],
+            [plot(k, k.split("/")[2]) for k in inv["shared_lm"]],
         ),
         wr.H1("Optimization health"),
         grid(
@@ -349,6 +350,13 @@ def main():
         p.x == TOKEN and not p.aggregate and p.groupby is None for g in grids for p in g.panels
     )
     assert not any("/block " in str(p.y) or "/layer " in str(p.y) for g in grids for p in g.panels)
+    # Evaluation history must remain visible as the live hero runs advance.
+    assert all(
+        p.range_x[1] is None
+        for g in grids
+        for p in g.panels
+        if any(k.startswith("eval/") for k in p.y)
+    )
     print("REPORT_VALIDATED", len(grids), "grids", sum(len(g.panels) for g in grids), "panels")
     if args.publish:
         report.save()
