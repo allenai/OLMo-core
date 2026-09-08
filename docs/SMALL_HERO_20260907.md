@@ -1,5 +1,29 @@
 # Small hero EMO comparison
 
+## Current deployment — 2026-09-08, node503 replacement
+
+The replacement smoke `01M1Z1AQSAGRZY6F3ZMC3S076Q` **passed** all64-rank
+save/restore and matched initialization/input gates at00:44UTC. Its controller
+submitted both real heroes; both then failed before training because GPU1 on
+`holmes-cs-aus-503.reviz.ai2.in` had no NVLink connections to its peers.
+
+The user authorized resubmitting both with503 excluded. Controller
+`01M1ZAWMDPV4JRR2S2QX9M3PC7` runs the explicit one-shot retry adapter from
+`6dd5e0fae`, while **training remains pinned to qualified `171be9bef`**.
+It rechecks the successful smoke receipt, terminal failed jobs, mounts, free
+space, bucket and uploader before submitting `-train-r2-exclude503` attempts.
+The existing534/550 exclusions remain; all training settings, roots and HF
+prefixes are unchanged. Original receipts are retained. The current retry
+receipt is `heroes-resubmitted-20260908-exclude503.json` under the automation
+root; the historical `heroes-submitted.json` records the failed first attempts.
+
+Separately, the pending medium32Mi CBS watcher was replaced by
+`01M1ZAWK2P39V9DP24Y38JSESJ`, which logged its503 exclusion and successfully
+reconciled the running parent at01:43UTC. Only the future child spec changes;
+the parent stays untouched and training remains pinned to `85878d12b`.
+
+Earlier deployment receipts below are historical, not current status.
+
 This branch freezes the qualified `optimized100b` small configuration. The two
 production arms differ only in EMO routing, not in other performance flags.
 
