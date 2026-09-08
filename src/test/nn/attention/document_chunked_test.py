@@ -351,3 +351,32 @@ def test_qwen3_5_document_chunked_validation():
         )
     with pytest.raises(OLMoConfigurationError):  # full_attention_layers requires document_chunked
         TransformerConfig.qwen3_5_0_8B(vocab_size=248320, full_attention_layers=[0])
+
+
+def test_mark_doc_headers_free_keeps_header_real():
+    """Header-real pooling: tokens after <|doc_start|> through the K-th stop id become FREE, the
+    body keeps its chunk id, markers stay attached to the document."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+
+    DS, DE, EOS, STOP = 900, 901, 902, 25
+    doc = [DS, 10, 11, STOP, 12, STOP, 20, 21, 22, DE]  # header (K=1) = 10 11 STOP; K=2 -> ... 12 STOP
+    x = torch.tensor([[1, 2] + doc + doc + [3, EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+    one = mark_doc_headers_free(base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1)
+    two = mark_doc_headers_free(base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=2)
+    for d, off in ((0, 2), (1, 12)):
+        assert one[0, off].item() == d  # <|doc_start|> stays with the doc
+        assert one[0, off + 1 : off + 4].tolist() == [-1, -1, -1]  # 10 11 STOP
+        assert one[0, off + 4 : off + 10].tolist() == [d] * 6  # 12 STOP 20 21 22 <|doc_end|>
+        assert two[0, off + 1 : off + 6].tolist() == [-1] * 5  # through the 2nd STOP
+        assert two[0, off + 6 : off + 10].tolist() == [d] * 4
+    # cap: a doc without a stop id frees at most `cap` tokens and never the end marker
+    y = torch.tensor([[DS, 5, 6, 7, 8, DE, EOS]])
+    b = build_chunk_ids_from_tokens(y, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+    capped = mark_doc_headers_free(b, y, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, cap=2)
+    assert capped[0].tolist()[:6] == [0, -1, -1, 0, 0, 0]
+    # free tokens outside documents are untouched
+    assert one[0, :2].tolist() == [-1, -1] and one[0, 22].item() == -1

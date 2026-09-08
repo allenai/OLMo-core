@@ -286,6 +286,58 @@ def build_chunk_ids_from_tokens(
     return chunk_ids.to(torch.int32)
 
 
+def mark_doc_headers_free(
+    chunk_ids: torch.Tensor,
+    input_ids: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    stop_id: int,
+    stop_count: int = 1,
+    cap: int = 32,
+) -> torch.Tensor:
+    """
+    Re-label each document's *header* -- the tokens after ``<|doc_start|>`` up to and including
+    the ``stop_count``-th occurrence of ``stop_id`` (at most ``cap`` tokens) -- as ``FREE``, so a
+    pooled-document construction keeps the header real and pools only the body.
+
+    Motivation (records/pooled-doc-kv-attention.md, 2026-09-08): a soft token may stand in for a
+    document's free text but never for the tokens the question matches exactly (claim ids, user
+    ids, dates). With ``stop_id`` = ``":"`` this keeps ``\n\nClaim 269:`` (contradiction,
+    ``stop_count=1``) or ``Date: … || User: … || Instance:`` (oolong, ``stop_count=3``) real, which
+    restores full-attention answer loss at 4-5x compaction.
+
+    :param chunk_ids: ``(B, S)`` roles from :func:`build_chunk_ids_from_tokens`.
+    :param input_ids: ``(B, S)`` token ids (same shape).
+    :returns: A new ``(B, S)`` chunk-id tensor with header tokens set to ``FREE``.
+    """
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    B, S = input_ids.shape
+    device = input_ids.device
+    pos = torch.arange(S, device=device).expand(B, S)
+    starts = input_ids == doc_start_id
+    # Position of the most recent <|doc_start|> at or before each token (-1 before the first).
+    last_start = torch.where(starts, pos, torch.full_like(pos, -1)).cummax(dim=1).values
+    dist = pos - last_start
+    # Stop ids strictly before each token but after its document's start.
+    sc = torch.cumsum((input_ids == stop_id).to(torch.long), dim=1)
+    sc_prev = torch.cat([torch.zeros_like(sc[:, :1]), sc[:, :-1]], dim=1)
+    sc_at_start = torch.gather(sc, 1, last_start.clamp(min=0))
+    n_before = sc_prev - sc_at_start
+    header = (
+        (chunk_ids >= 0)
+        & (last_start >= 0)
+        & (dist >= 1)
+        & (dist <= cap)
+        & (n_before < stop_count)
+        & (input_ids != doc_end_id)
+    )
+    return torch.where(header, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+
+
 # ---------------------------------------------------------------------------
 # Mask mixing (runtime schedule)
 # ---------------------------------------------------------------------------

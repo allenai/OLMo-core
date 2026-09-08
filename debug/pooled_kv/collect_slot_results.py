@@ -74,6 +74,13 @@ SOURCES = [
     ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v3-k0bias", "/net/sneetches/data/prasann/slot_probe/v3_oolong_k0bias_32768.log"),
     ("sneetches", "oolong", "32k", "dense 80M (ladder)", "v3-slotpos", "/net/sneetches/data/prasann/slot_probe/v3_oolong_slotpos_32768.log"),
     ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "v3-slotpos", "/net/sneetches/data/prasann/slot_probe/v3_contradiction_slotpos_32768.log"),
+    # v4: cheapest parity (header real at keep 1/36, 0), leak-free neighbour runs, left/right neighbour
+    ("sneetches", "contradiction", "32k", "dense 56M (ladder)", "v4", "/net/sneetches/data/prasann/slot_probe/v4_contradiction_32768.log"),
+    # Beaker confirmations on the eval-bundle rows (2026-09-08 13:25): header real, neighbour runs
+    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "header", "01M21B3PRZGWQNJJTP7SN5SPT4"),
+    ("beaker", "oolong", "32k", "dense 80M (ladder)", "header", "01M21B4F4VAER7E8MJZC1F0G05"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "nbr-runs", "01M21B581CNK4WTQN8EEDM7B06"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "nbr-runs", "01M21B612ZEK7TFXC8ERARDW19"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")

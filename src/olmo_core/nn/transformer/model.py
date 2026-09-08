@@ -316,6 +316,9 @@ class Transformer(nn.Module):
         distill_weight: float = 1.0,
         distill_layer_stride: int = 4,
         oracle_cache: Optional[Any] = None,
+        header_stop_id: Optional[int] = None,
+        header_stop_count: int = 1,
+        header_cap: int = 32,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -336,6 +339,12 @@ class Transformer(nn.Module):
 
         :param placeholder_id: Token id emitted at soft slots (embedding is overwritten; use a
             repaired reserved id, e.g. the landmark id).
+        :param header_stop_id: When given, each document's header -- the tokens after
+            ``<|doc_start|>`` through the ``header_stop_count``-th occurrence of this id (at most
+            ``header_cap`` tokens) -- stays REAL and only the body is pooled
+            (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`). The eval-side
+            construction that reproduces full attention on contradiction (``":"``, count 1) and
+            oolong (``":"``, count 3); see records/pooled-doc-kv-attention.md (2026-09-08).
         """
         if self._document_chunk_attention is not None:
             raise OLMoConfigurationError(
@@ -396,6 +405,10 @@ class Transformer(nn.Module):
             # projector path.
             "oracle_cache": oracle_cache,
             "_oracle_stats": {"hits": 0, "misses": 0, "calls": 0},
+            # Header-real pooling: the question's exact-match tokens (ids, dates) stay real.
+            "header_stop_id": None if header_stop_id is None else int(header_stop_id),
+            "header_stop_count": int(header_stop_count),
+            "header_cap": int(header_cap),
         }
 
     def enable_role_gated_ffn(
@@ -733,6 +746,18 @@ class Transformer(nn.Module):
         n_docs = int(chunk_ids.max().item()) + 1
         if n_docs <= 0:
             return None
+        if cfg.get("header_stop_id") is not None:
+            from ..attention.chunked_mask import mark_doc_headers_free
+
+            chunk_ids = mark_doc_headers_free(
+                chunk_ids,
+                input_ids,
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                stop_id=cfg["header_stop_id"],
+                stop_count=cfg["header_stop_count"],
+                cap=cfg["header_cap"],
+            )
         keep = resolve_keep_docs(
             chunk_ids,
             n_docs,

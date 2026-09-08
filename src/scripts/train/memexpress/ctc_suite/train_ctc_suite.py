@@ -494,6 +494,10 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # 40960 the unfused path needs ~38 GiB per rank just for logits.float() and OOMs H200s
     # (same setting as the proven 40k-seq sft_docchunk Beaker scripts).
     model_config.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    # Run the head only where the loss is defined. Our SFT shards supervise 0.2-5% of positions,
+    # so the dense head throws away most of its work; the head is also the largest term no
+    # compute router touches, which is what caps total routed speedup (see debug/flexcompute_40x).
+    model_config.lm_head.sparse_loss_positions = opts.sparse_loss_positions
     if opts.variant in ("chunked", "chunked-mix", "pooledkv"):
         mix_keys: Dict[str, Any] = {}
         if opts.variant == "chunked-mix":
@@ -1217,9 +1221,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             len_bias=opts.st_len_bias,
             distill_prob=opts.st_distill_prob,
             distill_weight=opts.st_distill_weight,
+            header_stop_id=opts.st_header_stop_id,
+            header_stop_count=opts.st_header_stop_count,
         )
         print(
-            f"[ctc-suite] softtoken: detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
+            f"[ctc-suite] softtoken: header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
+            f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
             f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob}",
@@ -1468,6 +1475,11 @@ def parse_args() -> argparse.Namespace:
         "the plain base -- no baked base needed (tolerant load, see build_and_fit).",
     )
     # ---- ffnmoe (records/flop-scaling-ffn-kv-plan.md; recipe = ffnmoe/README.md v10/v12) ----
+    ap.add_argument(
+        "--sparse-loss-positions",
+        action="store_true",
+        help="run the LM head only at supervised positions (exact; SFT masked-label runs only)",
+    )
     ap.add_argument("--ffn-moe-start-layer", type=int, default=12, help="first routed layer (0 = all)")
     ap.add_argument("--ffn-moe-divisors", default="1,16,64,256,1024,9728", help="rung ladder")
     ap.add_argument("--ffn-moe-width-multiple", type=int, default=1, help="1 allows a width-1 rung")
@@ -1528,6 +1540,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-len-bias", action="store_true",
                     help="softtoken: add +log(doc_len) to every pooled slot's attention logit (log-mass trick; "
                          "uses the additive-bias SDPA path, so pair with --attn-backend torch)")
+    ap.add_argument("--st-header-stop-id", type=int, default=None,
+                    help="softtoken: keep each doc's HEADER real (tokens after doc_start through the "
+                         "--st-header-stop-count-th occurrence of this token id; ':' = 25 on Qwen3.5) and pool "
+                         "only the body -- the eval-side parity construction (contradiction: count 1; oolong: count 3)")
+    ap.add_argument("--st-header-stop-count", type=int, default=1)
     ap.add_argument("--st-distill-prob", type=float, default=0.0)
     ap.add_argument("--st-distill-weight", type=float, default=1.0)
     ap.add_argument("--st-aux-weight", type=float, default=0.0)
