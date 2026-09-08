@@ -60,6 +60,8 @@ def log(m):
 
 
 def find_ckpt(root):
+    if root.endswith("model_and_optim") and os.path.isdir(root):
+        return root
     cands = sorted(glob.glob(f"{root}*/model_and_optim") + glob.glob(f"{root}*/step*/model_and_optim"))
     if not cands:
         raise SystemExit(f"no model_and_optim under {root}*")
@@ -116,17 +118,21 @@ def main():
     ap.add_argument("--work", default="/results/probe_work")
     ap.add_argument("--out", default="/results/probe.json")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--ckpt", default=None, help="override: run dir (or model_and_optim) of the dense-trained checkpoint")
+    ap.add_argument("--jsonl", default=None, help="override: held-out eval JSONL to tokenize (local cluster)")
+    ap.add_argument("--shard", default=None, help="override: already-tokenized shard dir (skips conversion)")
     a = ap.parse_args()
 
-    shard = f"{a.work}/{a.task}_{a.rung}"
-    convert(a.task, EVAL_JSONL[a.task][a.rung], a.rows, shard)
+    shard = a.shard or f"{a.work}/{a.task}_{a.rung}"
+    if a.shard is None:
+        convert(a.task, a.jsonl or EVAL_JSONL[a.task][a.rung], a.rows, shard)
     rows, masks = load_rows(shard, a.rows)
     log(f"{len(rows)} rows, lengths {[len(r) for r in rows[:6]]}...")
 
     cfg = TransformerConfig.qwen3_5_4B(vocab_size=VOCAB, attn_backend=AttentionBackendName.torch)
     cfg.lm_head.loss_implementation = LMLossImplementation.default
     model = cfg.build(init_device="cpu")
-    ck = find_ckpt(CKPT[a.task])
+    ck = find_ckpt(a.ckpt) if a.ckpt else find_ckpt(CKPT[a.task])
     t0 = time.time(); load_model_and_optim_state(ck, model); log(f"loaded {ck} in {time.time() - t0:.0f}s")
     model.enable_pooled_soft_tokens(IDS.doc_start, IDS.doc_end, IDS.eos, placeholder_id=IDS.landmark, keep_prob=0.0,
                                     keep_seed=a.seed, detach_soft_kv=True)
@@ -145,7 +151,7 @@ def main():
             configs.append((f"soft k={k:.3f} +logL{c:+.0f}", k, (True, 1.0, c)))
         configs.append((f"soft k={k:.3f} const=mean logL", k, (True, 0.0, float(np.log(45.0)))))
 
-    res = {name: {"ce": [], "top1": [], "kl": [], "correct": [], "compaction": []} for name, _, _ in configs}
+    res = {name: {"ce": [], "top1": [], "kl": [], "correct": [], "compaction": [], "sec": []} for name, _, _ in configs}
     full_cache = {}
     for ri, (row, rmask) in enumerate(zip(rows, masks)):
         x = torch.tensor(row[None], device="cuda")
@@ -153,6 +159,7 @@ def main():
         pred_pos = ans_pos - 1  # logits predicting them
         targets = x[0, ans_pos]
         for name, keep, bias in configs:
+            t_cfg = time.time()
             if keep is None:
                 model.eval()
                 logits = model(x)[0]
@@ -169,7 +176,7 @@ def main():
                     model._pooled_keep_holder = None
                     pst["keep_prob"] = keep
                 pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias
-                cb, _ = model._compact_pooled_soft_tokens(x, None, -100)
+                cb = model._compact_pooled_soft_tokens(x, None, -100)[0]
                 posmap = {int(p): c for c, p in enumerate(cb.position_ids[0].tolist())}
                 cols = torch.tensor([posmap[int(p)] for p in pred_pos.tolist()], device="cuda")
                 logits = model(x)[0]
@@ -182,6 +189,7 @@ def main():
             kl = float(F.kl_div(F.log_softmax(lg, -1), F.log_softmax(lf, -1), log_target=True, reduction="batchmean"))
             correct = float((lg.argmax(-1) == targets).all())
             r = res[name]; r["ce"].append(ce); r["top1"].append(top1); r["kl"].append(kl); r["correct"].append(correct); r["compaction"].append(comp)
+            r.setdefault("sec", []).append(time.time() - t_cfg)
         if ri + 1 in (1, 2, 5) or (ri + 1) % 8 == 0:
             log(f"row {ri + 1}/{len(rows)} done; full CE {res['full']['ce'][-1]:.3f} correct {res['full']['correct'][-1]:.0f}")
             summary(res, configs)
@@ -194,12 +202,12 @@ def main():
 
 
 def summary(res, configs):
-    print(f"{'config':32} {'answer CE':>9} {'top1=full':>9} {'KL':>7} {'correct':>8} {'compact':>8}", flush=True)
+    print(f"{'config':32} {'answer CE':>9} {'top1=full':>9} {'KL':>7} {'correct':>8} {'compact':>8} {'s/row':>6}", flush=True)
     for name, _, _ in configs:
         r = res[name]
         if not r["ce"]:
             continue
-        print(f"{name:32} {np.mean(r['ce']):9.3f} {np.mean(r['top1']):9.3f} {np.mean(r['kl']):7.3f} {np.mean(r['correct']):8.2f} {np.mean(r['compaction']):8.3f}", flush=True)
+        print(f"{name:32} {np.mean(r['ce']):9.3f} {np.mean(r['top1']):9.3f} {np.mean(r['kl']):7.3f} {np.mean(r['correct']):8.2f} {np.mean(r['compaction']):8.3f} {np.mean(r['sec']):6.1f}", flush=True)
 
 
 if __name__ == "__main__":
