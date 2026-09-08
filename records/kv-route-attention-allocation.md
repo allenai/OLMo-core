@@ -483,3 +483,26 @@ shares. Attention layers are 3,7,11,15,19,23,27,31; the other 24 blocks are GDN.
   different (four blocks {0,4,13,19}). This is the "flexible architecture per task" result.
 - flexs-c30 oolong still training; evals launched for the other three (orchestrator
   `orchestrate_s4bflexs`). Held-out f1 pending.
+
+### Stage D held-out results (2026-09-08): hybrid three routers lose to dense on compute
+
+Mean f1 over 2k/8k/16k/32k, eval_size 500 per rung; FLOPs priced at real lengths with token-weighted
+routing fractions (anneal included); mult = dense FLOPs for the same f1 ÷ FLOPs spent.
+
+| Qwen3.5-4B | arm | 2k/8k/16k/32k | mean | train FLOPs ÷ dense | mult |
+|---|---|---|---|---|---|
+| contradiction 56M | dense | .982/.971/.941/.881 | 0.944 | 1.00 | — |
+| contradiction 56M | flexs-c15 (budget not met: joint cost 0.50) | .927/.854/.767/.641 | 0.797 | 0.57 | 0.39 |
+| contradiction 56M | flexs-c30 (joint cost 0.49) | .878/.779/.641/.394 | 0.673 | 0.57 | 0.11 |
+| oolong 80M | dense | .913/.692/.668/.617 | 0.723 | 1.00 | — |
+| oolong 80M | flexs-c15 (joint cost 0.30) | .816/.562/.546/.519 | 0.611 | 0.52 | 0.04 |
+| oolong 80M | flexs-c30 (joint cost 0.29) | .807/.589/.548/.533 | 0.619 | 0.52 | 0.06 |
+
+- On the hybrid the three routers never got below ~0.5 of dense on the training average (the
+  budget was not met, see the allocation table above) and still cost 0.10–0.27 f1 on contradiction
+  and 0.10 on oolong: strictly worse than the Qwen3 three-router points at a similar FLOP ratio
+  (Qwen3 oolong flexs-c30: 0.583 at 0.40 vs dense 0.667). Contradiction's 32k rung collapses first
+  (0.394 at c30), consistent with the late-layer caches being emptied to ~6% keep.
+- Two confounds before reading this as "hybrids route worse": the per-router budget coefficients on
+  GDN blocks are small (projection share only) so the router pressure is weaker than on Qwen3, and
+  lr is 5e-6 here vs 5e-5 on Qwen3. Neither was tuned. CSV `results/flop_scaling/results_scale_s4bflexs.csv`.
