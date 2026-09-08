@@ -29,6 +29,7 @@ import torch
 
 from olmo_core.data.document_chunk_landmark import RESERVED_IDS
 from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
 from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
@@ -61,6 +62,7 @@ def make_rows(B, T, doc_len, device, seed=0):
 
 def build(backend: str, device):
     cfg = TransformerConfig.qwen3_5_4B(vocab_size=VOCAB, attn_backend=AttentionBackendName(backend))
+    cfg.lm_head.loss_implementation = LMLossImplementation.fused_linear  # as the trainer: no 32k x 248k logits
     model = cfg.build(init_device=device)
     model.init_weights()
     model = model.to(torch.bfloat16)
@@ -121,7 +123,6 @@ def main():
     run("dense/flash", "flash_2", 1)
     run("dense/torch", "torch", 1)
     run("soft/torch k=1/3", "torch", 1, keep=1 / 3)
-    run("soft/torch k=1/3 B=2", "torch", 2, keep=1 / 3)
     run("soft/torch k=1/3 +logL", "torch", 1, keep=1 / 3, len_bias=True)
     run("soft/flash k=1/3", "flash_2", 1, keep=1 / 3)
     run("soft/torch k=1/12", "torch", 1, keep=1 / 12)
