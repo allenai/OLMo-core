@@ -4,7 +4,7 @@ gold pair it is closest to?
 
 For every INCORRECT contradiction output (``exact_match == 0``) we take each predicted claim-ID
 pair, find the gold pair it is nearest to, and record the two element-wise ID distances of that
-best alignment, sorted ``(smaller, larger)``. Predicted pairs that exactly hit a gold pair are
+best alignment, sorted ``(smaller, larger)``, along with their sum (the pair's total displacement). Predicted pairs that exactly hit a gold pair are
 dropped -- they are not errors, and including them would put a spike at (0, 0) on top of every
 distribution.
 
@@ -130,8 +130,10 @@ class Accumulator:
     def __init__(self) -> None:
         self.small: List[int] = []
         self.large: List[int] = []
+        self.total: List[int] = []
         self.small_norm: List[float] = []
         self.large_norm: List[float] = []
+        self.total_norm: List[float] = []
         self.n_examples_incorrect = 0
         self.n_examples_contributing = 0
         self.n_parse_failures = 0
@@ -141,9 +143,11 @@ class Accumulator:
     def add_pair(self, lo: int, hi: int, n_claims: Optional[int]) -> None:
         self.small.append(lo)
         self.large.append(hi)
+        self.total.append(lo + hi)
         if n_claims:
             self.small_norm.append(lo / n_claims)
             self.large_norm.append(hi / n_claims)
+            self.total_norm.append((lo + hi) / n_claims)
 
     def summary(self) -> dict:
         def col(vals: List[float], integral: bool) -> dict:
@@ -170,8 +174,12 @@ class Accumulator:
             "n_exact_hits_dropped": self.n_exact_hits_dropped,
             "smaller": col(self.small, True),
             "larger": col(self.large, True),
+            # Total displacement of the pair: the two element distances added together. Not
+            # recoverable from the two columns' summaries, so it is accumulated per observation.
+            "total": col(self.total, True),
             "smaller_normalized": col(self.small_norm, False),
             "larger_normalized": col(self.large_norm, False),
+            "total_normalized": col(self.total_norm, False),
         }
 
 
@@ -348,27 +356,30 @@ def render(out: dict) -> str:
         lines.append(f"\n### {task} (pooled over rungs)\n")
         lines.append(
             "| model | pairs | smaller mean | smaller med | smaller mode | "
-            "larger mean | larger med | larger mode | wrong outputs | unparseable |"
+            "larger mean | larger med | larger mode | total mean | total med | total mode | "
+            "wrong outputs | unparseable |"
         )
-        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
         for k, v in rows:
             model = k.split("|")[0]
-            s, l = v["smaller"], v["larger"]
+            s, l, tt = v["smaller"], v["larger"], v["total"]
             unparse = v["n_parse_failures"] + v["n_empty_predictions"]
             frac = unparse / v["n_examples_incorrect"] if v["n_examples_incorrect"] else 0.0
             lines.append(
                 f"| {model} | {v['n_pairs']} | {_fmt(s['mean'])} | {_fmt(s['median'])} | "
                 f"{_fmt(s['mode'], 0)} | {_fmt(l['mean'])} | {_fmt(l['median'])} | "
-                f"{_fmt(l['mode'], 0)} | {v['n_examples_incorrect']} | "
+                f"{_fmt(l['mode'], 0)} | {_fmt(tt['mean'])} | {_fmt(tt['median'])} | "
+                f"{_fmt(tt['mode'], 0)} | {v['n_examples_incorrect']} | "
                 f"{unparse} ({frac:.0%}) |"
             )
             nb = out.get("null_baseline", {}).get(k)
             if nb and nb["n_pairs"]:
-                ns, nl = nb["smaller"], nb["larger"]
+                ns, nl, nt = nb["smaller"], nb["larger"], nb["total"]
                 lines.append(
                     f"| _{model} (chance)_ | {nb['n_pairs']} | {_fmt(ns['mean'])} | "
                     f"{_fmt(ns['median'])} | {_fmt(ns['mode'], 0)} | {_fmt(nl['mean'])} | "
-                    f"{_fmt(nl['median'])} | {_fmt(nl['mode'], 0)} | - | - |"
+                    f"{_fmt(nl['median'])} | {_fmt(nl['mode'], 0)} | {_fmt(nt['mean'])} | "
+                    f"{_fmt(nt['median'])} | {_fmt(nt['mode'], 0)} | - | - |"
                 )
     return "\n".join(lines)
 
