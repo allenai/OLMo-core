@@ -89,6 +89,31 @@ def latest_complete(run):
     return step, path
 
 
+def set_cancel_tag(wandb_id, enabled):
+    """Update only tags and require read-back; avoid rewriting a live run's summary."""
+    import wandb
+
+    path = f"ai2-llm/olmo3p5-hero/{wandb_id}"
+    query = """
+        mutation SetTags($id: String!, $tags: [String!]) {
+            upsertBucket(input: {id: $id, tags: $tags}) { bucket { name tags } }
+        }
+    """
+    for attempt in range(5):
+        wb = wandb.Api(timeout=30).run(path)
+        tags = [tag for tag in wb.tags if tag != "cancel"]
+        if enabled:
+            tags.append("cancel")
+        result = wb._exec(query, id=wb.storage_id, tags=tags)
+        assert result["upsertBucket"]["bucket"]["name"] == wandb_id
+        observed = wandb.Api(timeout=30).run(path).tags
+        if ("cancel" in observed) == enabled:
+            log("HERO_CANCEL_TAG_VERIFIED", wandb_id=wandb_id, enabled=enabled)
+            return
+        time.sleep(5)
+    raise RuntimeError(f"W&B tag update did not persist for {wandb_id}, enabled={enabled}")
+
+
 def main():
     """Perform one durable, fail-closed handoff of the two already-running heroes."""
     import wandb
@@ -148,10 +173,7 @@ def main():
             if entry["phase"] in ("validated", "cancel_requested"):
                 entry["phase"] = "cancel_requested"
                 atomic_json(receipt_path, receipt)
-                wb = wandb.Api(timeout=30).run(f"ai2-llm/olmo3p5-hero/{entry['wandb_id']}")
-                if "cancel" not in wb.tags:
-                    wb.tags = [*wb.tags, "cancel"]
-                    wb.update()
+                set_cancel_tag(entry["wandb_id"], True)
                 log("HERO_GRACEFUL_STOP_REQUESTED", run=run.run_id, wandb_id=entry["wandb_id"])
         deadline = time.monotonic() + 1800
         while True:
@@ -174,9 +196,7 @@ def main():
             entry.update(phase="checkpoint_verified", resume_step=step, resume_path=str(path))
             atomic_json(receipt_path, receipt)
             log("HERO_FINAL_CHECKPOINT_VERIFIED", run=run.run_id, step=step, path=str(path))
-            wb = wandb.Api(timeout=30).run(f"ai2-llm/olmo3p5-hero/{entry['wandb_id']}")
-            wb.tags = [tag for tag in wb.tags if tag != "cancel"]
-            wb.update()
+            set_cancel_tag(entry["wandb_id"], False)
         preflight(beaker)
         for run in runs():
             entry = receipt["runs"][run.arm]

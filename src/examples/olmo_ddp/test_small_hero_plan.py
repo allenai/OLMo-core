@@ -5,10 +5,16 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import olmoe3_small_hero_plan as p
-from olmoe3_small_hero_cadence_20260908 import PREVIOUS_COMMIT, resume_spec
+from olmoe3_small_hero_cadence_20260908 import (
+    PREVIOUS_COMMIT,
+    resume_spec,
+    set_cancel_tag,
+)
 from olmoe3_small_hero_control import training_spec, validation_spec
 
 
@@ -117,6 +123,31 @@ class HeroPlanTest(unittest.TestCase):
         original["tasks"][0]["envVars"][0]["value"] = "unrelated-source"
         with self.assertRaises(AssertionError):
             resume_spec(original, run, "new-commit", 16500, "wandb-id")
+
+    def test_cancel_tag_updates_only_tags(self):
+        tags = ["keep-user-tag"]
+
+        class FakeRun:
+            storage_id = "storage-id"
+
+            @property
+            def tags(self):
+                return list(tags)
+
+            def _exec(self, query, **kwargs):
+                self.assert_query = query
+                tags[:] = kwargs["tags"]
+                return {"upsertBucket": {"bucket": {"name": "wandb-id", "tags": list(tags)}}}
+
+            def update(self):
+                raise AssertionError("Must not rewrite a live run's config or summary")
+
+        fake = SimpleNamespace(Api=lambda **kwargs: SimpleNamespace(run=lambda path: FakeRun()))
+        with patch.dict(sys.modules, {"wandb": fake}):
+            set_cancel_tag("wandb-id", True)
+            self.assertEqual(tags, ["keep-user-tag", "cancel"])
+            set_cancel_tag("wandb-id", False)
+            self.assertEqual(tags, ["keep-user-tag"])
 
 
 if __name__ == "__main__":

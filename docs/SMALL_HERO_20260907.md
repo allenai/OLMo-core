@@ -7,7 +7,7 @@ The user approved changing both existing heroes to save every100 steps through
 The same rule applies independently by absolute training step, not wall time.
 Model, optimization, precision, seeds, data, LR, warmup, final horizon and uploader
 retention/safety rules are unchanged. Implementation is in this branch; deployment
-is recorded separately below once the one-shot handoff has submitted both resumes.
+uses runtime pin `930f215d44460b624cf91f485c03f18e8454689e`.
 
 `olmoe3_small_hero_cadence_20260908.py` validates the configuration in the actual
 training image before requesting graceful cancellation through the existing W&B
@@ -23,6 +23,26 @@ The same checkpoint roots, HF prefixes and W&B histories continue. A durable
 `heroes-cadence-20260908.json` receipt under the existing automation directory
 records original experiments, final checkpoint steps and replacement IDs.
 No checkpoint files are deleted or overwritten by this handoff.
+
+Deployment at16:34UTC:
+
+- Controller `01M20X815SQC37G33Y2QQB3P05` SUCCEEDED after validation
+  `01M20X9KJTMMCX0WBJ37NW026X` passed in the actual training image.
+- Original EMO and non-EMO experiments both exited successfully after graceful
+  cancellation, saving final full-state checkpoints at16501 and12101 respectively.
+  Both final completion audits and all64 rank samples were checked before submission.
+- EMO resume: https://beaker.org/ex/01M20XWNHVVVRBAX974TNAP7Q2
+- Non-EMO resume: https://beaker.org/ex/01M20XWV16MWGJC1A3X0DR5GWH
+- Both64GPU groups were assigned at16:34UTC, urgent/allocated in the same workspace.
+  Free checkpoint space was17.12TB immediately before submission. Uploader unchanged.
+- The first controller (`01M20WXS96VAF85K61K1Q916T6`) failed a CLI-vs-SDK
+  duration representation assertion BEFORE requesting cancellation. Fixed and tested
+  against actual SDK exports; the SDK represents1h as3600000000000ns.
+- W&B's broad run-update path did not reliably retain the cancellation tag during
+  this handoff. Tags-only mutations with read-back were applied manually. The helper
+  now uses that bounded approach for future operator invocations, without rewriting
+  live run configuration/summary. This controller-only hardening does not change the
+  deployed training pin. Never rerun this completed one-shot controller blindly.
 
 ## Current deployment — 2026-09-08, node503 replacement
 
