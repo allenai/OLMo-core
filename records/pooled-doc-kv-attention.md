@@ -751,3 +751,10 @@ exactly the user-subset and date rows (row 8: 3.08 vs full 1.25; "which date mos
 0.22). `Date … User:` without the user digits 0.835; headers on 50% of lines 0.757 / 0.788 (the
 other half's ids are gone). Labels-dropped-separators-kept variants (`-sep` 18 tok, `-sep2`
 15 tok) are in v6 (`v6_oolong_32768.log`).
+v6 result: labels dropped, separators kept (`Jul 18, 2023 || 82097 ||`) 0.689 / 0.602 (keep 1/3
+/ 1/12, c 0.62 / 0.48); spaces dropped too 0.569 / 0.736 — all worse than the intact header
+(0.495), and the damage is on the date rows (row 14: 0.77 vs 0.22; rows 21–22: 1.7 vs 1.0). The
+`Date:`/`User:` labels are what lets the dense model parse the fields. **Oolong's header must stay
+intact**; its parity floor is compaction ~0.6 (header + keep 1/12 + GDN no-write, 0.500), i.e.
+~1.6x. That is a property of the task (every line's exact metadata is answer-relevant), not of the
+slot.
