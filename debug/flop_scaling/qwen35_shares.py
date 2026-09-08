@@ -97,23 +97,37 @@ def mem_model(model):
 
 def main():
     os.makedirs(VIZ, exist_ok=True)
-    fig, axes = plt.subplots(1, len(SCALES), figsize=(5.2 * len(SCALES), 4.2), squeeze=False)
+    fig, axes = plt.subplots(2, len(SCALES), figsize=(5.2 * len(SCALES), 8.0), squeeze=False)
     fig2, axes2 = plt.subplots(2, len(SCALES), figsize=(5.2 * len(SCALES), 7.6), squeeze=False)
     rows = []
     for j, (name, fac) in enumerate(SCALES):
         model = fac(vocab_size=VOCAB).build(init_device="meta")
         shares = {k: [] for k in COLORS}
+        absol = {k: [] for k in COLORS}
         for L in LENGTHS:
             s, dense = flop_shares(model, L)
             for k in COLORS:
                 shares[k].append(100 * s[k])
+                absol[k].append(s[k] * dense / 1e9)
             rows.append((name, L, s, dense))
-        ax = axes[0][j]
+        ax0 = axes[0][j]
+        ax0.stackplot(LENGTHS, [absol[k] for k in COLORS], colors=[COLORS[k] for k in COLORS], alpha=0.9)
+        ax0.set_xscale("log", base=2)
+        ax0.set_xlim(LENGTHS[0], LENGTHS[-1])
+        ax0.set_xticks([2**k for k in range(10, 21, 2)]); ax0.set_xticklabels(["1k", "4k", "16k", "64k", "256k", "1M"])
+        ax0.set_title(f"Qwen3.5-{name}", fontsize=12)
+        tot = [sum(absol[k][i] for k in COLORS) for i in range(len(LENGTHS))]
+        for L, t in zip(LENGTHS, tot):
+            if L in (2048, 32768, 262144, 1048576):
+                ax0.annotate(f"{t:.0f}", (L, t), textcoords="offset points", xytext=(0, 4), ha="center", fontsize=8)
+        if j == 0:
+            ax0.set_ylabel("training GFLOPs per token")
+        ax0.grid(True, alpha=0.2)
+        ax = axes[1][j]
         ax.stackplot(LENGTHS, [shares[k] for k in COLORS], labels=list(COLORS), colors=[COLORS[k] for k in COLORS], alpha=0.9)
         ax.set_xscale("log", base=2)
         ax.set_xlim(LENGTHS[0], LENGTHS[-1]); ax.set_ylim(0, 100)
         ax.set_xticks([2**k for k in range(10, 21, 2)]); ax.set_xticklabels(["1k", "4k", "16k", "64k", "256k", "1M"])
-        ax.set_title(f"Qwen3.5-{name}", fontsize=12)
         ax.set_xlabel("context length (tokens)")
         if j == 0:
             ax.set_ylabel("% of training FLOPs per token")
@@ -152,10 +166,10 @@ def main():
         if j == 0:
             ax3.set_ylabel("% of peak memory")
         ax3.grid(True, alpha=0.2)
-    handles, labels = axes[0][0].get_legend_handles_labels()
+    handles, labels = axes[1][0].get_legend_handles_labels()
     fig.legend(handles[::-1], labels[::-1], loc="lower center", ncol=5, fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.03))
-    fig.suptitle("Qwen3.5: where a token's training FLOPs go vs context length (exact, model FLOP formulas)", fontsize=12)
-    fig.tight_layout(rect=(0, 0.06, 1, 0.95))
+    fig.suptitle("Qwen3.5: training FLOPs per token vs context length -- absolute (top) and shares (bottom); exact model FLOP formulas", fontsize=12)
+    fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     p = f"{VIZ}/qwen35_flop_shares.png"; fig.savefig(p, dpi=140, bbox_inches="tight"); print("wrote", p)
     h2, l2 = axes2[0][0].get_legend_handles_labels()
     fig2.legend(h2[::-1], l2[::-1], loc="lower center", ncol=4, fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.03))
