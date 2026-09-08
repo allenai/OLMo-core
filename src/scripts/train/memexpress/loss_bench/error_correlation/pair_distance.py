@@ -25,6 +25,12 @@ Raw ID distances are NOT comparable across rungs -- claim IDs run 1..100 at the 
 reported normalised by the example's corpus size (recovered from the highest ``Claim N:`` in the
 prompt tail), and the per-rung breakdown is reported alongside the pooled numbers.
 
+A matched CHANCE BASELINE is computed alongside every real number: for each incorrect example,
+the model's predicted pairs are replaced by the same number of uniformly random ID pairs drawn from
+the same corpus, and scored identically. Without it "the median near-miss is 6% of the corpus away"
+is uninterpretable -- with only ~3 gold pairs to be near, random guesses land closer than intuition
+suggests, and the whole question is whether the models beat that.
+
 Two sources, same core metric:
   - ``--source local``: the browsable export (``artifact_data.json``), capped at 200 examples per
     (task, source_tag) bucket by ``export_for_artifact.py``. Runs anywhere, no weka.
@@ -43,6 +49,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import statistics
 from collections import defaultdict
@@ -237,9 +244,11 @@ def iter_weka() -> Iterable[Record]:
             print(f"[{model}] {task_short}/{source_tag}/{ladder_version}: {n} rows", flush=True)
 
 
-def run(records: Iterable[Record]) -> dict:
+def run(records: Iterable[Record], null_trials: int = 20, seed: int = 0) -> dict:
     pooled: Dict[Tuple[str, str], Accumulator] = defaultdict(Accumulator)
     by_rung: Dict[Tuple[str, str, str], Accumulator] = defaultdict(Accumulator)
+    null: Dict[Tuple[str, str], Accumulator] = defaultdict(Accumulator)
+    rng = random.Random(seed)
     seen: set = set()
 
     for (
@@ -286,6 +295,7 @@ def run(records: Iterable[Record]) -> dict:
         n_claims = corpus_size(prompt_tail, gold)
         gold_sets = {tuple(sorted(g)) for g in gold}
         contributed = False
+        n_real_pairs = 0
         for p in pairs:
             if len(p) != 2:
                 continue
@@ -296,14 +306,31 @@ def run(records: Iterable[Record]) -> dict:
             lo, hi, _ = nearest_gold_distances(p, gold)
             for acc in accs:
                 acc.add_pair(lo, hi, n_claims)
+            n_real_pairs += 1
             contributed = True
         if contributed:
             for acc in accs:
                 acc.n_examples_contributing += 1
 
+        # Matched chance baseline: same example, same corpus, same number of guesses, drawn
+        # uniformly instead of predicted. Averaged over several trials to damp sampling noise.
+        if n_real_pairs and n_claims and n_claims >= 2:
+            nacc = null[(model, task)]
+            nacc.n_examples_incorrect += 1
+            for _ in range(null_trials):
+                for _ in range(n_real_pairs):
+                    a, b = rng.sample(range(1, n_claims + 1), 2)
+                    if tuple(sorted((a, b))) in gold_sets:
+                        nacc.n_exact_hits_dropped += 1
+                        continue
+                    lo, hi, _gi = nearest_gold_distances((a, b), gold)
+                    nacc.add_pair(lo, hi, n_claims)
+
     out = {
         "pooled": {f"{m}|{t}": a.summary() for (m, t), a in sorted(pooled.items())},
         "by_rung": {f"{m}|{t}|{r}": a.summary() for (m, t, r), a in sorted(by_rung.items())},
+        "null_baseline": {f"{m}|{t}": a.summary() for (m, t), a in sorted(null.items())},
+        "null_trials": null_trials,
     }
     return out
 
@@ -335,6 +362,14 @@ def render(out: dict) -> str:
                 f"{_fmt(l['mode'], 0)} | {v['n_examples_incorrect']} | "
                 f"{unparse} ({frac:.0%}) |"
             )
+            nb = out.get("null_baseline", {}).get(k)
+            if nb and nb["n_pairs"]:
+                ns, nl = nb["smaller"], nb["larger"]
+                lines.append(
+                    f"| _{model} (chance)_ | {nb['n_pairs']} | {_fmt(ns['mean'])} | "
+                    f"{_fmt(ns['median'])} | {_fmt(ns['mode'], 0)} | {_fmt(nl['mean'])} | "
+                    f"{_fmt(nl['median'])} | {_fmt(nl['mode'], 0)} | - | - |"
+                )
     return "\n".join(lines)
 
 
@@ -348,10 +383,16 @@ def main() -> None:
     )
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--tag", default=None, help="suffix for the output filenames")
+    ap.add_argument(
+        "--null-trials",
+        type=int,
+        default=20,
+        help="random-guess trials per incorrect example for the matched chance baseline",
+    )
     args = ap.parse_args()
 
     records = iter_local(args.data) if args.source == "local" else iter_weka()
-    out = run(records)
+    out = run(records, null_trials=args.null_trials)
     out["_meta"] = {"source": args.source, "tasks": list(CONTRA_TASKS)}
 
     os.makedirs(args.out_dir, exist_ok=True)
