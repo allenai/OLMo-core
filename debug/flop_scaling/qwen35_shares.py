@@ -100,6 +100,7 @@ def main():
     fig, axes = plt.subplots(2, len(SCALES), figsize=(5.2 * len(SCALES), 8.0), squeeze=False)
     fig2, axes2 = plt.subplots(2, len(SCALES), figsize=(5.2 * len(SCALES), 7.6), squeeze=False)
     rows = []
+    ratios = []
     for j, (name, fac) in enumerate(SCALES):
         model = fac(vocab_size=VOCAB).build(init_device="meta")
         shares = {k: [] for k in COLORS}
@@ -111,24 +112,33 @@ def main():
                 absol[k].append(s[k] * dense / 1e9)
             rows.append((name, L, s, dense))
         ax0 = axes[0][j]
-        # TOTAL training FLOPs for one sequence of length L (= per-token x L), log-log so the growth
-        # rate reads off the slope: 1 for the length-independent parts, 2 for attention scores.
+        # TOTAL training FLOPs for one sequence of length L: the black total against the dashed
+        # "linear scaling" line (everything except attention scores); the shaded gap IS attention.
         tot = [sum(absol[k][i] for k in COLORS) * L / 1e6 for i, L in enumerate(LENGTHS)]  # PFLOPs
-        for k in COLORS:
-            ax0.plot(LENGTHS, [absol[k][i] * L / 1e6 for i, L in enumerate(LENGTHS)], color=COLORS[k], lw=1.6, label=k)
-        ax0.plot(LENGTHS, tot, color="black", lw=2.2, label="total")
+        lin = [(sum(absol[k][i] for k in COLORS) - absol["attention scores"][i]) * L / 1e6 for i, L in enumerate(LENGTHS)]
+        ax0.fill_between(LENGTHS, lin, tot, color=COLORS["attention scores"], alpha=0.25, lw=0, label="attention scores (the gap)")
+        ax0.plot(LENGTHS, lin, "--", color="#555555", lw=1.6, label="linear scaling: FFN + GDN + projections + LM head")
+        ax0.plot(LENGTHS, tot, color="black", lw=2.4, label="total")
         ax0.set_xscale("log", base=2); ax0.set_yscale("log")
         ax0.set_xlim(LENGTHS[0], LENGTHS[-1])
         ax0.set_xticks([2**k for k in range(10, 21, 2)]); ax0.set_xticklabels(["1k", "4k", "16k", "64k", "256k", "1M"])
         ax0.set_title(f"Qwen3.5-{name}", fontsize=12)
-        for L, t in zip(LENGTHS, tot):
+        for L, t, l in zip(LENGTHS, tot, lin):
             if L in (2048, 32768, 262144, 1048576):
-                ax0.annotate(f"{t:.3g} PF", (L, t), textcoords="offset points", xytext=(-4, 6), ha="right", fontsize=8)
+                ax0.annotate(f"{t:.3g} PF", (L, t), textcoords="offset points", xytext=(-3, 7), ha="right", fontsize=9, fontweight="bold")
+                if t / l > 1.15:
+                    ax0.annotate(f"{t / l:.1f}x linear", (L, l), textcoords="offset points", xytext=(3, -12), ha="left", fontsize=8, color="#555555")
+        # the knee: attention scores = half of the total
+        knee = next((L for L, t, l in zip(LENGTHS, tot, lin) if (t - l) >= l), None)
+        if knee:
+            ax0.axvline(knee, color=COLORS["attention scores"], lw=1, ls=":")
+            ax0.text(knee * 1.08, tot[0] * 1.5, f"attention = half\nof the cost at ~{knee // 1024}k", fontsize=8, color=COLORS["attention scores"])
         if j == 0:
             ax0.set_ylabel("training PFLOPs for ONE sequence of this length")
         ax0.grid(True, which="both", alpha=0.2)
-        if j == len(SCALES) - 1:
+        if j == 0:
             ax0.legend(fontsize=7.5, frameon=False, loc="upper left")
+        ratios.append((name, [t / l for t, l in zip(tot, lin)]))
         ax = axes[1][j]
         ax.stackplot(LENGTHS, [shares[k] for k in COLORS], labels=list(COLORS), colors=[COLORS[k] for k in COLORS], alpha=0.9)
         ax.set_xscale("log", base=2)
@@ -177,6 +187,20 @@ def main():
     fig.suptitle("Qwen3.5: training FLOPs vs context length -- total for one sequence, log-log (top) and per-token shares (bottom); exact model FLOP formulas", fontsize=12)
     fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     p = f"{VIZ}/qwen35_flop_shares.png"; fig.savefig(p, dpi=140, bbox_inches="tight"); print("wrote", p)
+    # one panel: how far above linear scaling the total sits, all scales together
+    fr, axr = plt.subplots(figsize=(6.4, 4.0))
+    for (name, r), c in zip(ratios, ["#B9552A", "#0E6B66", "#1F3A93"]):
+        axr.plot(LENGTHS, r, color=c, lw=2.2, marker="o", ms=4, label=f"Qwen3.5-{name}")
+    axr.axhline(2, color="#888888", ls=":", lw=1); axr.text(LENGTHS[0] * 1.1, 2.1, "2x = attention scores equal everything else", fontsize=8, color="#666666")
+    axr.set_xscale("log", base=2); axr.set_yscale("log")
+    axr.set_xlim(LENGTHS[0], LENGTHS[-1])
+    axr.set_xticks([2**k for k in range(10, 21, 2)]); axr.set_xticklabels(["1k", "4k", "16k", "64k", "256k", "1M"])
+    axr.set_yticks([1, 2, 5, 10, 20, 50, 100]); axr.set_yticklabels(["1x", "2x", "5x", "10x", "20x", "50x", "100x"])
+    axr.set_xlabel("context length (tokens)"); axr.set_ylabel("total FLOPs ÷ linear-scaling FLOPs")
+    axr.set_title("How much the quadratic term inflates a sequence's cost", fontsize=11)
+    axr.grid(True, which="both", alpha=0.2); axr.legend(frameon=False, fontsize=9)
+    fr.tight_layout()
+    p = f"{VIZ}/qwen35_flop_multiplier.png"; fr.savefig(p, dpi=140, bbox_inches="tight"); print("wrote", p)
     h2, l2 = axes2[0][0].get_legend_handles_labels()
     fig2.legend(h2[::-1], l2[::-1], loc="lower center", ncol=4, fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.03))
     fig2.suptitle("Qwen3.5: modelled peak training memory per GPU vs tokens per GPU (FSDP2 x8, full AC, flash attention, fused CE)", fontsize=11)
