@@ -108,3 +108,86 @@ def test_sonic_forward_backward_matches_fresh_weight_semantics() -> None:
     assert experts.w_up_gate.grad is not None and torch.isfinite(experts.w_up_gate.grad).all()
     assert experts.w_down.grad is not None and torch.isfinite(experts.w_down.grad).all()
     assert expert_weights.grad is not None and torch.isfinite(expert_weights.grad).all()
+
+
+@requires_gpu
+@requires_compute_capability(min_cc=9)
+def test_sonic_compiles_without_graph_breaks() -> None:
+    pytest.importorskip("sonicmoe")
+    torch.manual_seed(0)
+    experts = _build_experts(device="cuda", dtype=DType.bfloat16)
+    experts.train()
+    x = torch.randn(32, experts.d_model, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    expert_indices = torch.randint(0, experts.num_experts, (32, 2), device="cuda")
+    expert_weights = torch.softmax(
+        torch.randn(32, 2, device="cuda", dtype=torch.float32), dim=-1
+    ).requires_grad_(True)
+
+    def fn(x, indices, weights):
+        out = sonic_moe_forward(x, indices, weights, experts)
+        return (out * 2.0).float().square().mean()
+
+    explanation = torch._dynamo.explain(fn)(x, expert_indices, expert_weights)
+    assert explanation.graph_break_count == 0, explanation.break_reasons
+    assert explanation.graph_count == 1
+
+    eager = fn(x, expert_indices, expert_weights)
+    eager.backward()
+    eager_grads = (x.grad.clone(), experts.w_up_gate.grad.clone(), experts.w_down.grad.clone())
+    x.grad = None
+    experts.w_up_gate.grad = None
+    experts.w_down.grad = None
+
+    compiled = torch.compile(fn, fullgraph=True)(x, expert_indices, expert_weights)
+    compiled.backward()
+    torch.testing.assert_close(compiled, eager)
+    torch.testing.assert_close(x.grad, eager_grads[0])
+    torch.testing.assert_close(experts.w_up_gate.grad, eager_grads[1])
+    torch.testing.assert_close(experts.w_down.grad, eager_grads[2])
+
+
+def test_sonic_cpu_reference_matches_naive_and_compiles_without_graph_breaks() -> None:
+    torch.manual_seed(0)
+    experts = RoutedExperts(
+        d_model=32,
+        hidden_size=48,
+        num_experts=4,
+        bias=False,
+        dtype=DType.float32,
+        backend=RoutedExpertsBackend.sonic,
+        init_device="cpu",
+    )
+    with torch.no_grad():
+        for p in experts.parameters():
+            p.normal_(std=0.1)
+    x = torch.randn(16, experts.d_model, requires_grad=True)
+    expert_indices = torch.randint(0, experts.num_experts, (16, 2))
+    expert_weights = torch.softmax(torch.randn(16, 2), dim=-1).requires_grad_(True)
+    params = (x, expert_weights, experts.w_up_gate, experts.w_down)
+
+    def zero_grads():
+        for p in params:
+            p.grad = None
+
+    expected = _naive_sonic_layout_moe(x, expert_indices, expert_weights, experts)
+    expected.square().mean().backward()
+    expected_grads = [p.grad.clone() for p in params]
+    zero_grads()
+
+    actual = sonic_moe_forward(x, expert_indices, expert_weights, experts)
+    actual.square().mean().backward()
+    torch.testing.assert_close(actual, expected)
+    for p, g in zip(params, expected_grads):
+        torch.testing.assert_close(p.grad, g)
+    zero_grads()
+
+    def fn(x, indices, weights):
+        return sonic_moe_forward(x, indices, weights, experts).square().mean()
+
+    explanation = torch._dynamo.explain(fn)(x, expert_indices, expert_weights)
+    assert explanation.graph_break_count == 0, explanation.break_reasons
+    compiled = torch.compile(fn, fullgraph=True)(x, expert_indices, expert_weights)
+    compiled.backward()
+    torch.testing.assert_close(compiled, expected.square().mean())
+    for p, g in zip(params, expected_grads):
+        torch.testing.assert_close(p.grad, g)
