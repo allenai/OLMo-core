@@ -1,5 +1,29 @@
 # Small hero EMO comparison
 
+## Checkpoint cadence update — 2026-09-08
+
+The user approved changing both existing heroes to save every100 steps through
+18000 (~301.99B tokens), every250 through60000 (~1.00663T), and every500 thereafter.
+The same rule applies independently by absolute training step, not wall time.
+Model, optimization, precision, seeds, data, LR, warmup, final horizon and uploader
+retention/safety rules are unchanged. Implementation is in this branch; deployment
+is recorded separately below once the one-shot handoff has submitted both resumes.
+
+`olmoe3_small_hero_cadence_20260908.py` validates the configuration in the actual
+training image before requesting graceful cancellation through the existing W&B
+callback. It requires both old jobs to finish successfully, a complete final
+checkpoint and resume audit on all64 ranks, and healthy mounts/uploader. It then
+removes only its temporary cancellation tag and submits exactly one replacement
+per arm with mandatory full-state loading and `WANDB_RESUME=must`:
+
+- EMO W&B ID: `lasc1m2x`.
+- Non-EMO W&B ID: `aqb1droj`.
+
+The same checkpoint roots, HF prefixes and W&B histories continue. A durable
+`heroes-cadence-20260908.json` receipt under the existing automation directory
+records original experiments, final checkpoint steps and replacement IDs.
+No checkpoint files are deleted or overwritten by this handoff.
+
 ## Current deployment — 2026-09-08, node503 replacement
 
 The replacement smoke `01M1Z1AQSAGRZY6F3ZMC3S076Q` **passed** all64-rank
@@ -53,7 +77,7 @@ production arms differ only in EMO routing, not in other performance flags.
 | Schedule | Constant-after-warmup WSD trunk; no decay at the initial stopping point |
 | Initial stop | 179,000 steps = 3,003,121,664,000 tokens |
 | Continuable horizon | 834,466 steps = 14,000,016,326,656 tokens |
-| Checkpoints | Step0; every100 through60000, every500 thereafter; final/off-cadence interruption saves |
+| Checkpoints | Step0; every100 through18000, every250 through60000, every500 thereafter; final/off-cadence interruption saves |
 | Data | Complete local Dolma3.5 mirror `/weka/dolma-3p5/ai2-llm`; canonical manifest/order/filter unchanged |
 | Seeds | Initialization12536; data928543231 |
 | Evaluation | Same eleven held-out validation sets, every1000 steps and on finish; GCS credentials retained |

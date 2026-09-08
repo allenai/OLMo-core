@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import olmoe3_small_hero_plan as p
+from olmoe3_small_hero_cadence_20260908 import PREVIOUS_COMMIT, resume_spec
 from olmoe3_small_hero_control import training_spec, validation_spec
 
 
@@ -16,11 +17,17 @@ class HeroPlanTest(unittest.TestCase):
 
     def test_schedule(self):
         p.validate_plan()
-        fixed = set(range(100, p.SWITCH_STEP + 1, 100))
+        fixed = set(p.fixed_checkpoint_steps())
         for step in range(p.FINAL_STEPS + 1):
             native = step == 0 or step in fixed or step % 500 == 0
             self.assertEqual(p.scheduled_save(step), native)
         self.assertTrue(p.scheduled_save(60000))
+        self.assertTrue(p.scheduled_save(17900))
+        self.assertTrue(p.scheduled_save(18000))
+        self.assertFalse(p.scheduled_save(18100))
+        self.assertTrue(p.scheduled_save(18250))
+        self.assertFalse(p.scheduled_save(18300))
+        self.assertTrue(p.scheduled_save(59750))
         self.assertFalse(p.scheduled_save(60100))
         self.assertTrue(p.scheduled_save(60500))
         self.assertEqual(p.INITIAL_STOP * p.BATCH, 3_003_121_664_000)
@@ -73,6 +80,35 @@ class HeroPlanTest(unittest.TestCase):
         self.assertEqual(validation["context"]["minRuntime"], "0s")
         self.assertNotIn("gpuCount", validation["resources"])
         self.assertEqual(json.dumps(template), before)
+
+    def test_resume_spec(self):
+        run = p.runs()[0]
+        task = {
+            "name": "train-replica-0",
+            "arguments": [
+                "python",
+                "src/examples/olmo_ddp/olmoe3_small_hero_node.py",
+                run.run_id,
+                "ai2/holmes",
+            ],
+            "envVars": [{"name": "GIT_REF", "value": PREVIOUS_COMMIT}],
+            "resources": {"gpuCount": 8},
+            "context": {"priority": "urgent", "minRuntime": "1h"},
+        }
+        original = {"tasks": [copy.deepcopy(task) for _ in range(8)]}
+        before = copy.deepcopy(original)
+        resumed = resume_spec(original, run, "new-commit", 16500, "wandb-id")
+        self.assertEqual(original, before)
+        task = resumed["tasks"][0]
+        self.assertEqual(task["replicas"], 8)
+        env = {e["name"]: e.get("value") for e in task["envVars"]}
+        self.assertEqual(env["OLMO35_HERO_EXPECTED_START"], "16500")
+        self.assertEqual(env["WANDB_RUN_ID"], "wandb-id")
+        self.assertEqual(env["WANDB_RESUME"], "must")
+        self.assertEqual(env["GIT_REF"], "new-commit")
+        original["tasks"][0]["envVars"][0]["value"] = "unrelated-source"
+        with self.assertRaises(AssertionError):
+            resume_spec(original, run, "new-commit", 16500, "wandb-id")
 
 
 if __name__ == "__main__":

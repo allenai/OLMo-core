@@ -32,11 +32,11 @@ from olmoe3_small_hero_plan import (
     INITIAL_STOP,
     LR,
     MOUNT,
-    SWITCH_STEP,
     WARMUP,
     WORKSPACE,
     disk_action,
     find_run,
+    fixed_checkpoint_steps,
     runs,
     validate_plan,
 )
@@ -117,6 +117,8 @@ class HeroAudit(qualified.IntegrationAudit):
         assert self.trainer.data_loader.tokens_processed == self.step * BATCH
         if r.smoke:
             assert self.step == int(os.environ["OLMO35_HERO_EXPECTED_START"])
+        else:
+            assert self.step >= int(os.environ.get("OLMO35_HERO_EXPECTED_START", "0"))
         assert self.step <= int(os.environ.get("OLMO35_HERO_STOP", INITIAL_STOP))
         if (r.root / "STORAGE_PAUSED.json").exists():
             raise RuntimeError("Storage pause is latched; operator must explicitly approve resume")
@@ -267,7 +269,7 @@ def train_module_config(common):
 
 
 def trainer_config(common):
-    """Automatic 100->500 cadence; immutable full-state synchronous checkpoints."""
+    """Automatic 100->250->500 cadence; immutable full-state synchronous checkpoints."""
     r = find_run(common.run_name)
     config = qualified.trainer_config(common)
     config.callbacks.pop("integration_audit")
@@ -284,7 +286,7 @@ def trainer_config(common):
     )
     cp = config.callbacks["checkpointer"]
     cp.save_interval = 2 if r.smoke else 500
-    cp.fixed_steps = [] if r.smoke else list(range(100, SWITCH_STEP + 1, 100))
+    cp.fixed_steps = [] if r.smoke else fixed_checkpoint_steps()
     config.add_callback("hero_audit", HeroAudit(output_dir=str(r.root / "audit"), run_id=r.run_id))
     config.add_callback("hero_storage", StorageGuard(run_id=r.run_id))
     config.add_callback("hero_complete", CompletionAudit(run_id=r.run_id))
@@ -354,6 +356,8 @@ def validate():
         assert tr.load_optim_state and tr.load_trainer_state and not tr.save_overwrite
         cp = tr.callbacks["checkpointer"]
         assert not cp.save_async and cp.max_checkpoints is None and cp.pre_train_checkpoint is None
+        assert cp.fixed_steps == ([] if r.smoke else fixed_checkpoint_steps())
+        assert cp.save_interval == (2 if r.smoke else 500)
         assert tm.scheduler.get_lr(LR, WARMUP, FINAL_STEPS) == LR
         assert tm.scheduler.get_lr(LR, INITIAL_STOP, FINAL_STEPS) == LR
         assert tm.scheduler.get_lr(LR, FINAL_STEPS, FINAL_STEPS) == LR

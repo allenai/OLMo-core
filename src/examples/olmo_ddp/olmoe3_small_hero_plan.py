@@ -30,6 +30,7 @@ EXCLUDED_HOSTNAMES = {
 BATCH = 16_777_216
 LR = 1.1e-3
 WARMUP = 2000
+EARLY_SWITCH_STEP = 18_000
 SWITCH_STEP = 60_000
 INITIAL_STOP = 179_000
 FINAL_STEPS = (14_000_000_000_000 + BATCH - 1) // BATCH
@@ -77,6 +78,11 @@ class Run:
             "warmup": WARMUP,
             "initial_stop": INITIAL_STOP,
             "full_horizon": FINAL_STEPS,
+            "checkpoint_cadence": [
+                {"through_step": EARLY_SWITCH_STEP, "interval": 100},
+                {"through_step": SWITCH_STEP, "interval": 250},
+                {"through_step": FINAL_STEPS, "interval": 500},
+            ],
         }
 
 
@@ -90,9 +96,21 @@ def find_run(name):
     return next(r for r in runs() + runs(True) if r.run_id == name)
 
 
+def fixed_checkpoint_steps():
+    """Save every100 through~302B, then every250 through~1.007T tokens."""
+    return list(range(100, EARLY_SWITCH_STEP + 1, 100)) + list(
+        range(EARLY_SWITCH_STEP + 250, SWITCH_STEP + 1, 250)
+    )
+
+
 def scheduled_save(step):
     """Describe native fixed-step plus periodic checkpoint scheduling."""
-    return step == 0 or (0 < step <= SWITCH_STEP and step % 100 == 0) or step % 500 == 0
+    return (
+        step == 0
+        or (0 < step <= EARLY_SWITCH_STEP and step % 100 == 0)
+        or (EARLY_SWITCH_STEP < step <= SWITCH_STEP and step % 250 == 0)
+        or step % 500 == 0
+    )
 
 
 def disk_action(free_bytes):
@@ -104,6 +122,7 @@ def validate_plan():
     """Check the approved token budgets and independent remote/local namespaces."""
     assert INITIAL_STOP * BATCH == 3_003_121_664_000
     assert SWITCH_STEP * BATCH == 1_006_632_960_000
+    assert EARLY_SWITCH_STEP * BATCH == 301_989_888_000
     assert FINAL_STEPS == 834_466
     assert FINAL_STEPS * BATCH >= 14_000_000_000_000 > (FINAL_STEPS - 1) * BATCH
     assert scheduled_save(INITIAL_STOP)
