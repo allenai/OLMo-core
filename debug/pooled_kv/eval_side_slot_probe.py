@@ -161,29 +161,33 @@ def main():
         ans_pos = torch.tensor(np.nonzero(rmask)[0], device="cuda")  # positions of answer tokens
         pred_pos = ans_pos - 1  # logits predicting them
         targets = x[0, ans_pos]
+        keep_cache = {}
         for name, keep, bias in configs:
             t_cfg = time.time()
             if keep is None:
                 model.eval()
-                logits = model(x)[0]
-                lg = logits[pred_pos].float(); del logits
+                # logits only at the answer-predicting positions (a full 34k x 248k logit tensor
+                # was 34 GB and ~40 s per forward)
+                lg = model(x, logits_to_keep=pred_pos[None])[0].float()
                 full_cache[ri] = lg
                 comp = 1.0
             else:
                 model.train()
-                if a.task == "contradiction":
-                    keep_fn = make_fingerprint_keep_docs_fn(gold_table, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end,
-                                                            eos_id=IDS.eos, n_random_frac=keep, mode="gold_plus_random", seed=a.seed)
-                    model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=keep_fn(x.cpu()))
-                else:
-                    model._pooled_keep_holder = None
+                if keep not in keep_cache:  # keep set once per (row, keep); reused across bias variants
+                    if a.task == "contradiction":
+                        keep_fn = make_fingerprint_keep_docs_fn(gold_table, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end,
+                                                                eos_id=IDS.eos, n_random_frac=keep, mode="gold_plus_random", seed=a.seed)
+                        keep_cache[keep] = PooledDocKeepHolder(keep_docs=keep_fn(x.cpu()))
+                    else:
+                        keep_cache[keep] = None
+                model._pooled_keep_holder = keep_cache[keep]
+                if a.task != "contradiction":
                     pst["keep_prob"] = keep
                 pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias
                 cb = model._compact_pooled_soft_tokens(x, None, -100)[0]
                 posmap = {int(p): c for c, p in enumerate(cb.position_ids[0].tolist())}
                 cols = torch.tensor([posmap[int(p)] for p in pred_pos.tolist()], device="cuda")
-                logits = model(x)[0]
-                lg = logits[cols].float(); del logits
+                lg = model(x, logits_to_keep=cols[None])[0].float()
                 comp = cb.input_ids.shape[1] / x.shape[1]
                 model.eval()
             lf = full_cache[ri]
