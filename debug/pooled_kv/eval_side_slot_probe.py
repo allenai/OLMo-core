@@ -136,6 +136,40 @@ def install_prefix_real_patch():
     return orig
 
 
+_SLOT_POS = {"mode": "center"}  # RoPE position given to a pooled doc's slot: center (default) | start | end
+
+
+def install_slot_pos_patch():
+    """Patch compact_pooled_rows so each slot takes its doc's FIRST or LAST body position instead of
+    the centre (the compacted order is unchanged: all three lie strictly between the neighbours)."""
+    import olmo_core.nn.pooled_soft_token as ps
+
+    orig = ps.compact_pooled_rows
+
+    def patched(input_ids, labels, chunk_ids, keep_docs, **kw):
+        cb = orig(input_ids, labels, chunk_ids, keep_docs, **kw)
+        mode = _SLOT_POS["mode"]
+        if mode == "center" or cb.soft_rows.numel() == 0:
+            return cb
+        cid = chunk_ids.to(torch.long)
+        T = cid.shape[1]
+        pos = torch.arange(T, device=cid.device)
+        for b in range(cid.shape[0]):
+            sel = cb.soft_rows == b
+            if not sel.any():
+                continue
+            is_ctx = cid[b] >= 0
+            n_docs = keep_docs.shape[1]
+            first = torch.full((n_docs,), T, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amin", include_self=True)
+            last = torch.full((n_docs,), -1, dtype=torch.long, device=cid.device).scatter_reduce(0, cid[b][is_ctx], pos[is_ctx], reduce="amax", include_self=True)
+            src = first if mode == "start" else last
+            cb.position_ids[b, cb.soft_cols[sel]] = src[cb.soft_docs[sel]].to(cb.position_ids.dtype)
+        return cb
+
+    ps.compact_pooled_rows = patched
+    return orig
+
+
 VOCAB = 248320 if FAMILY == "qwen3_5" else 151936
 TOKENIZER = "Qwen/Qwen3.5-0.8B-Base" if FAMILY == "qwen3_5" else "Qwen/Qwen3-4B"
 CKPT_Q3 = {  # dense Qwen3-4B ladder runs (lr 5e-5), pure attention: every layer takes K/V slots
