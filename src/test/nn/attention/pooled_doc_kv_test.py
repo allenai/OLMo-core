@@ -345,3 +345,25 @@ def test_fingerprint_keep_docs_fn_fixed_fraction(n_docs, frac):
     assert int(keep.sum().item()) == expected
     # deterministic per (seed, fingerprint)
     assert torch.equal(keep, fn(torch.tensor([row])))
+
+
+def test_fingerprint_keep_docs_fn_neighbour_runs():
+    """neighbour_runs=1: gold and random picks are kept as runs of 3; the random budget is divided
+    by 3 so the kept share stays ~the same; runs never leave the row's documents."""
+    from olmo_core.nn.attention.gold_grad_mask import content_fingerprint_from_row
+
+    START, END, EOS = 900, 901, 999
+    row = []
+    for d in range(36):
+        row += [START, 10 + 2 * d, 11 + 2 * d, END]
+    row += [7, 8, EOS]
+    fp = content_fingerprint_from_row(row, EOS)
+    kw = dict(doc_start_id=START, doc_end_id=END, eos_id=EOS, n_random_frac=1.0 / 6, mode="gold_plus_random", seed=0)
+    plain = make_fingerprint_keep_docs_fn({fp: [10]}, **kw)(torch.tensor([row]))[0]
+    runs = make_fingerprint_keep_docs_fn({fp: [10]}, neighbour_runs=1, **kw)(torch.tensor([row]))[0]
+    assert runs[9] and runs[10] and runs[11]  # gold run
+    kept = runs.nonzero().flatten().tolist()
+    for d in kept:  # every kept doc sits in a run of >= 3 (leak-free: random picks look like gold)
+        assert (d - 1 in kept and d + 1 in kept) or (d - 2 in kept and d - 1 in kept) or (d + 1 in kept and d + 2 in kept)
+    assert int(plain.sum()) == 7  # gold + round(35/6) = 6 randoms
+    assert 6 <= int(runs.sum()) <= 9  # gold run + 2 anchor runs (overlaps allowed)

@@ -1260,6 +1260,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             mix_start_p=opts.st_mix_start_p,
             mix_end_p=opts.st_mix_end_p,
             mix_total_calls=int(total_calls * opts.st_mix_anneal_frac),
+            neighbour_runs=opts.st_neighbour_runs,
         )
         holder = install_pooled_doc_keep(train_module.model, keep_fn)
         if holder.n_attached == 0:
@@ -1545,6 +1546,10 @@ def parse_args() -> argparse.Namespace:
                          "--st-header-stop-count-th occurrence of this token id; ':' = 25 on Qwen3.5) and pool "
                          "only the body -- the eval-side parity construction (contradiction: count 1; oolong: count 3)")
     ap.add_argument("--st-header-stop-count", type=int, default=1)
+    ap.add_argument("--st-neighbour-runs", type=int, default=0,
+                    help="softtoken: keep every selected doc (gold AND random) with its K neighbours on each side "
+                         "(leak-free runs; random budget divided by 2K+1). K=1 reaches full-attention parity on "
+                         "contradiction at --st-keep-frac 0.0278 (~11x) without any header")
     ap.add_argument("--st-distill-prob", type=float, default=0.0)
     ap.add_argument("--st-distill-weight", type=float, default=1.0)
     ap.add_argument("--st-aux-weight", type=float, default=0.0)

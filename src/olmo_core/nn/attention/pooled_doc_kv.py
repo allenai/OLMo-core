@@ -475,6 +475,7 @@ def make_fingerprint_keep_docs_fn(
     mix_start_p: float = 0.0,
     mix_end_p: float = 0.0,
     mix_total_calls: int = 0,
+    neighbour_runs: int = 0,
 ) -> KeepDocsFn:
     """
     Build a ``keep_docs_fn(input_ids) -> (B, n_docs) bool`` for :func:`install_pooled_doc_keep`:
@@ -507,6 +508,13 @@ def make_fingerprint_keep_docs_fn(
         the model anchored to the full-attention task while the compressed examples make it cheap.
         The draw is seeded per (fingerprint, call index): deterministic given the data order, and a
         given example flips between compressed/full across epochs.
+    :param neighbour_runs: ``K > 0`` keeps every selected document together with its ``K``
+        neighbours on each side (a run of ``2K + 1`` real documents), for gold AND random picks
+        alike, and divides the random budget by ``2K + 1`` so the kept share is unchanged. The
+        eval-side probe (records/pooled-doc-kv-attention.md, 2026-09-08) found the dense model
+        reads a gold claim's id from the real tokens right AFTER its body; with ``K = 1`` the
+        contradiction answer loss matches full attention at 1/36 keep (~11x compaction), and
+        because random picks form the same runs, a run does not mark gold (leak-free).
     """
     import random as _random
 
@@ -564,6 +572,8 @@ def make_fingerprint_keep_docs_fn(
             if n_random_frac is not None:
                 n_non_gold = max(0, len(present) - len(set(int(g) for g in _flatten_gold(gold))))
                 n_rand_row = max(1, int(round(n_random_frac * n_non_gold)))
+            if neighbour_runs > 0:
+                n_rand_row = max(1, int(round(n_rand_row / (2 * neighbour_runs + 1))))
             elif n_random_range is not None:
                 lo, hi = n_random_range
                 u = _random.Random(f"nr:{seed}:{fp}:{state['calls']}").uniform(
@@ -581,6 +591,14 @@ def make_fingerprint_keep_docs_fn(
                 n_pairs=n_pairs,
             )
             keep[b] = False
+            if neighbour_runs > 0:
+                present_set = set(present)
+                keep_docs = {
+                    d + o
+                    for d in keep_docs
+                    for o in range(-neighbour_runs, neighbour_runs + 1)
+                    if d + o in present_set
+                }
             for d in keep_docs:
                 if 0 <= d < n_docs:
                     keep[b, d] = True
@@ -591,7 +609,7 @@ def make_fingerprint_keep_docs_fn(
             n_pool = int((~keep).sum().item())
             tag = " (warmup mock)" if n_found == 0 and state["calls"] == 1 else ""
             print(
-                f"[pooled-kv] call#{state['calls']}{tag}: B={B} n_docs<={n_docs} mode={mode} "
+                f"[pooled-kv] call#{state['calls']}{tag}: B={B} n_docs<={n_docs} mode={mode} runs={neighbour_runs} "
                 f"n_random={n_random} fp_hits={n_found}/{B} cum_hits={state['hits']}/{state['rows']} "
                 f"pooled_docs={n_pool} p_full={p_full:.2f} mixed={n_mixed}",
                 flush=True,
