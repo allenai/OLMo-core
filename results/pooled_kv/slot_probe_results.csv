@@ -1086,3 +1086,39 @@ contradiction,32k,Qwen3-4B dense 56M (pure attention),beaker,slot,24,soft token 
 contradiction,32k,Qwen3-4B dense 56M (pure attention),beaker,slot,24,soft token (mean embedding),0.0,1,const-2,0,0.172,0.097,0.07499999999999998,0.941,0.16,0.08,0.036,27.77777777777778,96.39999999999999,soft k=0.000 const-2
 contradiction,32k,Qwen3-4B dense 56M (pure attention),beaker,slot,24,soft token (mean embedding),0.0,1,const-1,0,0.16,0.097,0.063,0.95,0.15,0.08,0.036,27.77777777777778,96.39999999999999,soft k=0.000 const-1
 contradiction,32k,Qwen3-4B dense 56M (pure attention),beaker,slot,24,soft token (mean embedding),0.0,1,const+1,0,0.153,0.097,0.055999999999999994,0.949,0.142,0.12,0.036,27.77777777777778,96.39999999999999,soft k=0.000 const+1
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,full attention,1.0,1,,0,0.042,0.042,0.0,1.0,0.0,0.67,1.0,1.0,0.0,full
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,0.381,0.042,0.339,0.884,0.348,0.04,1.0,1.0,0.0,pooledKV k=0.333 +logL
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,0.368,0.042,0.326,0.896,0.331,0.04,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,0.353,0.042,0.311,0.899,0.328,0.0,1.0,1.0,0.0,pooledKV k=0.167 +logL
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,0.337,0.042,0.29500000000000004,0.907,0.308,0.0,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,0.325,0.042,0.28300000000000003,0.906,0.309,0.0,1.0,1.0,0.0,pooledKV k=0.083 +logL
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,0.275,0.042,0.233,0.923,0.255,0.08,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.198,0.042,0.156,0.929,0.195,0.17,1.0,1.0,0.0,pooledKV k=0.000 +logL
+contradiction,32k,dense 56M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.198,0.042,0.156,0.941,0.17,0.08,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,full attention,1.0,1,,0,0.466,0.466,0.0,1.0,0.0,0.42,1.0,1.0,0.0,full
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,0.555,0.466,0.08900000000000002,0.816,0.244,0.42,1.0,1.0,0.0,pooledKV k=0.333 +logL
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,0.553,0.466,0.08700000000000002,0.816,0.243,0.42,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,0.699,0.466,0.23299999999999993,0.785,0.328,0.42,1.0,1.0,0.0,pooledKV k=0.167 +logL
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,0.695,0.466,0.22899999999999993,0.791,0.313,0.46,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,0.706,0.466,0.23999999999999994,0.791,0.327,0.5,1.0,1.0,0.0,pooledKV k=0.083 +logL
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,0.691,0.466,0.22499999999999992,0.808,0.287,0.42,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.627,0.466,0.16099999999999998,0.808,0.236,0.42,1.0,1.0,0.0,pooledKV k=0.000 +logL
+oolong,32k,dense 80M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.53,0.466,0.064,0.838,0.144,0.42,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,full attention,1.0,1,,0,0.086,0.086,0.0,1.0,0.0,0.96,1.0,1.0,0.0,full
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,0.745,0.086,0.659,0.841,0.687,0.38,1.0,1.0,0.0,pooledKV k=0.333 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,0.698,0.086,0.612,0.841,0.641,0.38,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,0.957,0.086,0.871,0.776,0.905,0.12,1.0,1.0,0.0,pooledKV k=0.167 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,0.93,0.086,0.8440000000000001,0.777,0.882,0.12,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,1.047,0.086,0.961,0.743,1.03,0.08,1.0,1.0,0.0,pooledKV k=0.083 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,1.037,0.086,0.951,0.743,1.017,0.04,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,0.893,0.086,0.807,0.741,0.849,0.0,1.0,1.0,0.0,pooledKV k=0.000 +logL
+nq,32k,dense 48M (ladder),beaker,pooledkv,24,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,0.849,0.086,0.763,0.754,0.807,0.0,1.0,1.0,0.0,pooledKV k=0.000 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,full attention,1.0,1,,0,1.2,1.2,0.0,1.0,0.0,0.0,1.0,1.0,0.0,full
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,+logL,1,1.825,1.2,0.625,0.733,0.776,0.0,1.0,1.0,0.0,pooledKV k=0.333 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.333,1,no-bias,1,1.745,1.2,0.5450000000000002,0.733,0.754,0.0,1.0,1.0,0.0,pooledKV k=0.333 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,+logL,1,1.807,1.2,0.607,0.693,0.802,0.0,1.0,1.0,0.0,pooledKV k=0.167 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.167,1,no-bias,1,1.689,1.2,0.4890000000000001,0.679,0.8,0.0,1.0,1.0,0.0,pooledKV k=0.167 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,+logL,1,1.796,1.2,0.5960000000000001,0.679,0.834,0.0,1.0,1.0,0.0,pooledKV k=0.083 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.083,1,no-bias,1,1.594,1.2,0.39400000000000013,0.643,0.834,0.0,1.0,1.0,0.0,pooledKV k=0.083 no-bias
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,+logL,1,1.56,1.2,0.3600000000000001,0.727,0.794,0.0,1.0,1.0,0.0,pooledKV k=0.000 +logL
+outlier,32k,dense 160M (ladder),beaker,pooledkv,8,"pooled K/V attention (all tokens kept, GDN intact)",0.0,1,no-bias,1,1.456,1.2,0.256,0.672,0.969,0.0,1.0,1.0,0.0,pooledKV k=0.000 no-bias

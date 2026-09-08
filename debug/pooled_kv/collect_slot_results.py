@@ -54,6 +54,10 @@ SOURCES = [
     ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "slot", "01M214K4PVZYN3MMW7B148PF1G"),
     ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "oracle", "01M214KWQ0MRG7KKJ9GMJ8EDWV"),
     ("beaker", "oolong", "32k", "Qwen3-4B dense 80M (pure attention)", "ceiling", "01M214MQWFAQFA008E7TWZ69BT"),
+    ("beaker", "contradiction", "32k", "dense 56M (ladder)", "pooledkv", "01M215860C2NMTS9A7BBVSENZ0"),
+    ("beaker", "oolong", "32k", "dense 80M (ladder)", "pooledkv", "01M2158X5K2VRJZ45MM28R6S6S"),
+    ("beaker", "nq", "32k", "dense 48M (ladder)", "pooledkv", "01M2159NQA9PYVA3X1N5R3T7BX"),
+    ("beaker", "outlier", "32k", "dense 160M (ladder)", "pooledkv", "01M215AESCQSTXHWV1H54VM928"),
 ]
 
 ROW = re.compile(r"^(?P<name>full|soft .*?|k=.*?|G=.*?|pooledKV .*?)\s{2,}(?P<ce>[0-9.]+)\s+(?P<top1>[0-9.]+)\s+(?P<kl>[0-9.]+)\s+(?P<correct>[0-9.]+)\s+(?P<comp>[0-9.]+)")
