@@ -34,9 +34,10 @@ suggests, and the whole question is whether the models beat that.
 Two sources, same core metric:
   - ``--source local``: the browsable export (``artifact_data.json``), capped at 200 examples per
     (task, source_tag) bucket by ``export_for_artifact.py``. Runs anywhere, no weka.
-  - ``--source weka``: every generation dump in ``registry.GENERATION_FILES``. Needs weka mounted
-    (run on a CPU gantry job). Uses the scorer's own ``predicted_pairs`` field rather than
-    re-parsing the (500-char-truncated) prediction string.
+  - ``--source weka``: every generation dump in ``registry.GENERATION_FILES``, plus any checkpoint
+    passed as ``--extra-model NAME=ROOT`` (its dumps are found by glob). Needs weka mounted (run on
+    a CPU gantry job). Uses the scorer's own ``predicted_pairs`` field rather than re-parsing the
+    (500-char-truncated) prediction string.
 
 Usage::
 
@@ -47,6 +48,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import random
@@ -214,11 +216,87 @@ def iter_local(path: str) -> Iterable[Record]:
                 )
 
 
-def iter_weka() -> Iterable[Record]:
+# Filenames the eval harness writes, e.g. "contra_multirung.generations.jsonl" (v2) or
+# "contra_multirung_v3.generations.jsonl" (v3); the containing directory carries the source tag.
+_GEN_RE = re.compile(r"^(?P<task>.+?)_multirung(?P<v3>_v3)?\.generations\.jsonl$")
+_CENTRAL_RE = re.compile(
+    r"^.*_v3c-(?P<tag>base|xlong-native|xlong-yarn2)_(?P<task>.+?)_multirung_v3"
+    r"\.generations\.jsonl$"
+)
+_DIR_TO_TAG = {
+    "eval": "base",
+    "eval_xlong": "xlong-native",
+    "eval_xlong-native": "xlong-native",
+    "eval_xlong-yarn2": "xlong-yarn2",
+}
+
+
+def _dir_tag(parent: str) -> Optional[str]:
+    """Source tag for an ``eval*/`` directory.
+
+    Known directories keep the registry's own tag names so an extra model lines up with the
+    registry models. Anything else of the form ``eval_<x>`` becomes ``<x>``: checkpoints evaluated
+    under several RoPE-scaling conditions (``eval_yarn2-256k``, ``eval_yarn4-1M``, ...) hold the
+    SAME eval examples rescored under different settings, so each must stay a distinct source tag
+    or one example gets counted once per condition.
+    """
+    if parent in _DIR_TO_TAG:
+        return _DIR_TO_TAG[parent]
+    if parent.startswith("eval_") and len(parent) > 5:
+        return parent[5:]
+    return None
+
+
+def discover_entries(
+    root: str, keep_tags: Optional[Sequence[str]] = None
+) -> List[Tuple[str, str, str, str]]:
+    """Find a checkpoint directory's generation dumps by glob rather than by hardcoded path.
+
+    Lets a model that is not in ``registry.GENERATION_FILES`` be analysed without first having to
+    confirm its exact filenames -- the naming convention (``eval*/`` directory for the source tag,
+    ``_v3`` suffix for the ladder version) is stable, the specific set of tasks present is not.
+    """
+    entries: List[Tuple[str, str, str, str]] = []
+    for path in sorted(glob.glob(os.path.join(root, "**", "*generations.jsonl"), recursive=True)):
+        base = os.path.basename(path)
+        parent = os.path.basename(os.path.dirname(path))
+        m = _CENTRAL_RE.match(base)
+        if m:
+            entries.append((m.group("task"), "v3", m.group("tag"), path))
+            continue
+        m = _GEN_RE.match(base)
+        if not m:
+            print(f"  [discover] SKIP (unrecognised name) {path}", flush=True)
+            continue
+        tag = _dir_tag(parent)
+        if tag is None:
+            print(f"  [discover] SKIP (unrecognised dir '{parent}') {path}", flush=True)
+            continue
+        if keep_tags is not None and tag not in keep_tags:
+            print(f"  [discover] skip tag '{tag}' (not in --extra-source-tags): {path}", flush=True)
+            continue
+        entries.append((m.group("task"), "v3" if m.group("v3") else "v2", tag, path))
+    return entries
+
+
+def iter_weka(
+    extra_models: Optional[Dict[str, str]] = None,
+    extra_source_tags: Optional[Sequence[str]] = None,
+) -> Iterable[Record]:
     """Records straight from the generation dumps, using the scorer's own parsed pairs."""
     from registry import GENERATION_FILES
 
-    for model, entries in GENERATION_FILES.items():
+    files = dict(GENERATION_FILES)
+    for name, root in (extra_models or {}).items():
+        print(f"[{name}] discovering generations under {root}", flush=True)
+        found = discover_entries(root, keep_tags=extra_source_tags)
+        for task_short, lv, tag, path in found:
+            print(f"  [discover] {task_short}/{tag}/{lv}: {path}", flush=True)
+        if not found:
+            print(f"[{name}] NO generation dumps found under {root}", flush=True)
+        files[name] = found
+
+    for model, entries in files.items():
         for task_short, ladder_version, source_tag, path in entries:
             if task_short not in CONTRA_TASKS:
                 continue
@@ -393,6 +471,21 @@ def main() -> None:
         help="artifact_data.json path (--source local only)",
     )
     ap.add_argument("--out-dir", default=".")
+    ap.add_argument(
+        "--extra-model",
+        action="append",
+        default=[],
+        metavar="NAME=CHECKPOINT_ROOT",
+        help="analyse a model outside registry.GENERATION_FILES by globbing its eval dirs "
+        "(repeatable; --source weka only)",
+    )
+    ap.add_argument(
+        "--extra-source-tags",
+        default="base,xlong-native",
+        help="comma list of source tags to keep for --extra-model, or 'all'. Defaults to the "
+        "conditions the registry models are analysed under; the same examples rescored under "
+        "another RoPE-scaling condition would otherwise be counted again",
+    )
     ap.add_argument("--tag", default=None, help="suffix for the output filenames")
     ap.add_argument(
         "--null-trials",
@@ -402,7 +495,11 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    records = iter_local(args.data) if args.source == "local" else iter_weka()
+    extra = dict(kv.split("=", 1) for kv in args.extra_model)
+    if extra and args.source != "weka":
+        ap.error("--extra-model requires --source weka")
+    tags = None if args.extra_source_tags == "all" else args.extra_source_tags.split(",")
+    records = iter_local(args.data) if args.source == "local" else iter_weka(extra, tags)
     out = run(records, null_trials=args.null_trials)
     out["_meta"] = {"source": args.source, "tasks": list(CONTRA_TASKS)}
 
