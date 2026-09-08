@@ -111,18 +111,24 @@ def main():
                 absol[k].append(s[k] * dense / 1e9)
             rows.append((name, L, s, dense))
         ax0 = axes[0][j]
-        ax0.stackplot(LENGTHS, [absol[k] for k in COLORS], colors=[COLORS[k] for k in COLORS], alpha=0.9)
-        ax0.set_xscale("log", base=2)
+        # TOTAL training FLOPs for one sequence of length L (= per-token x L), log-log so the growth
+        # rate reads off the slope: 1 for the length-independent parts, 2 for attention scores.
+        tot = [sum(absol[k][i] for k in COLORS) * L / 1e6 for i, L in enumerate(LENGTHS)]  # PFLOPs
+        for k in COLORS:
+            ax0.plot(LENGTHS, [absol[k][i] * L / 1e6 for i, L in enumerate(LENGTHS)], color=COLORS[k], lw=1.6, label=k)
+        ax0.plot(LENGTHS, tot, color="black", lw=2.2, label="total")
+        ax0.set_xscale("log", base=2); ax0.set_yscale("log")
         ax0.set_xlim(LENGTHS[0], LENGTHS[-1])
         ax0.set_xticks([2**k for k in range(10, 21, 2)]); ax0.set_xticklabels(["1k", "4k", "16k", "64k", "256k", "1M"])
         ax0.set_title(f"Qwen3.5-{name}", fontsize=12)
-        tot = [sum(absol[k][i] for k in COLORS) for i in range(len(LENGTHS))]
         for L, t in zip(LENGTHS, tot):
             if L in (2048, 32768, 262144, 1048576):
-                ax0.annotate(f"{t:.0f}", (L, t), textcoords="offset points", xytext=(0, 4), ha="center", fontsize=8)
+                ax0.annotate(f"{t:.3g} PF", (L, t), textcoords="offset points", xytext=(-4, 6), ha="right", fontsize=8)
         if j == 0:
-            ax0.set_ylabel("training GFLOPs per token")
-        ax0.grid(True, alpha=0.2)
+            ax0.set_ylabel("training PFLOPs for ONE sequence of this length")
+        ax0.grid(True, which="both", alpha=0.2)
+        if j == len(SCALES) - 1:
+            ax0.legend(fontsize=7.5, frameon=False, loc="upper left")
         ax = axes[1][j]
         ax.stackplot(LENGTHS, [shares[k] for k in COLORS], labels=list(COLORS), colors=[COLORS[k] for k in COLORS], alpha=0.9)
         ax.set_xscale("log", base=2)
@@ -168,7 +174,7 @@ def main():
         ax3.grid(True, alpha=0.2)
     handles, labels = axes[1][0].get_legend_handles_labels()
     fig.legend(handles[::-1], labels[::-1], loc="lower center", ncol=5, fontsize=9, frameon=False, bbox_to_anchor=(0.5, -0.03))
-    fig.suptitle("Qwen3.5: training FLOPs per token vs context length -- absolute (top) and shares (bottom); exact model FLOP formulas", fontsize=12)
+    fig.suptitle("Qwen3.5: training FLOPs vs context length -- total for one sequence, log-log (top) and per-token shares (bottom); exact model FLOP formulas", fontsize=12)
     fig.tight_layout(rect=(0, 0.04, 1, 0.95))
     p = f"{VIZ}/qwen35_flop_shares.png"; fig.savefig(p, dpi=140, bbox_inches="tight"); print("wrote", p)
     h2, l2 = axes2[0][0].get_legend_handles_labels()
