@@ -94,8 +94,8 @@ def _patch_quack_sm100_configs() -> None:
         )
         return
 
-    import quack.gemm_config as gemm_config
     import sonicmoe.functional  # noqa: F401  # applies Sonic's own config patches first
+    from quack import gemm_config
 
     original = gemm_config._get_sm100_configs
 
