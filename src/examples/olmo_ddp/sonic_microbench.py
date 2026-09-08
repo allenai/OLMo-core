@@ -122,11 +122,17 @@ def bench(shape: tuple[int, ...], backend: str, warmup: int, iters: int, seed: i
         for p in experts.parameters():
             p.grad = None
 
+    fwd_ms = _time(fwd, warmup, iters)
+    # Warm up fwd+bwd before measuring memory so JIT autotuning workspaces are excluded.
+    for _ in range(warmup):
+        fwd_bwd()
+    torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     base_mem = torch.cuda.memory_allocated()
-    fwd_ms = _time(fwd, warmup, iters)
-    fwd_bwd_ms = _time(fwd_bwd, warmup, iters)
+    fwd_bwd()
+    torch.cuda.synchronize()
     peak_mem_gib = (torch.cuda.max_memory_allocated() - base_mem) / 2**30
+    fwd_bwd_ms = _time(fwd_bwd, 0, iters)
 
     flops_fwd = 6 * T * I * H * K
     flops_fwd_bwd = 18 * T * I * H * K
