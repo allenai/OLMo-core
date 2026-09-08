@@ -38,21 +38,26 @@ from olmo_core.nn.transformer import TransformerConfig
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 IDS = RESERVED_IDS["qwen3_5"]
 VOCAB = 248320
-CKPT = {
+CKPT = {  # dense-trained Qwen3.5-4B ladder runs (largest budget); globbed with * so any save-root suffix matches
     "contradiction": f"{W}/ctc_suite/ckpts/tsl-full-contradiction-s56M-4b-20260831T235942-0700",
     "oolong": f"{W}/ctc_suite/ckpts/tsl-full-oolong-s80M-4b-20260901T085004-0700",
+    "nq": f"{W}/*/ckpts/lmx-full-nmixs48M-nq-4b",
+    "outlier": f"{W}/*/ckpts/lmx-full-mixs160M-4b-2026",
 }
 EVAL_JSONL = {
     "contradiction": {"2k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl",
                       "8k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl",
                       "16k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n385_k3.jsonl",
                       "32k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n765_k3.jsonl"},
+    "nq": {r: f"{W}/outlier_lengthmix/eval_rungs/nq/rung_{n}.jsonl" for r, n in (("2k", 2048), ("8k", 8192), ("16k", 16384), ("32k", 32768))},
+    "outlier": {r: f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_{n}.jsonl" for r, n in (("8k", 8192), ("16k", 16384), ("32k", 32768))},
     "oolong": {"2k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx2048_spliteval.jsonl",
                "8k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx8192_spliteval.jsonl",
                "16k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx16384_spliteval.jsonl",
                "32k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx32768_spliteval.jsonl"},
 }
-CONV = {"contradiction": ("contradiction", "document"), "oolong": ("oolong", "line")}
+CONV = {"contradiction": ("contradiction", "document"), "oolong": ("oolong", "line"), "nq": ("retrieval", "document"), "outlier": ("outlier", "document")}
+GOLD_TASKS = ("contradiction", "nq", "outlier")  # tasks with a gold sidecar (keep = gold + random fraction); oolong is gold-blind
 
 
 def log(m):
@@ -82,7 +87,7 @@ def convert(task, jsonl, rows, out_dir):
     cmd = ["python", "src/scripts/data/convert_unified_to_document_landmark.py", "--input-jsonl", head, "--task", conv,
            "--out-dir", out_dir, "--emit", "dense", "--marker-set", "qwen3_5", "--tokenizer", "Qwen/Qwen3.5-0.8B-Base",
            "--seq-len", "65536", "--query-position", "after", "--cot-mode", "none", "--chunk-by", chunk, "--num-proc", "4"]
-    if task == "contradiction":
+    if task in GOLD_TASKS:
         cmd.append("--emit-gold-sidecar")
     log("convert: " + " ".join(cmd))
     subprocess.run(cmd, check=True, env=dict(os.environ, PYTHONPATH="src", TOKENIZERS_PARALLELISM="false"))
@@ -110,7 +115,7 @@ def load_rows(shard, n_rows):
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--task", default="contradiction", choices=["contradiction", "oolong"])
+    ap.add_argument("--task", default="contradiction", choices=["contradiction", "oolong", "nq", "outlier"])
     ap.add_argument("--rung", default="32k")
     ap.add_argument("--rows", type=int, default=24)
     ap.add_argument("--keeps", default="0.3333,0.1667,0.0833,0")
@@ -141,7 +146,7 @@ def main():
     model = model.cuda().to(torch.bfloat16)
     pst = model._pooled_soft_tokens
 
-    gold_table = json.load(open(f"{shard}/gold_fingerprints.json")) if a.task == "contradiction" else None
+    gold_table = json.load(open(f"{shard}/gold_fingerprints.json")) if a.task in GOLD_TASKS else None
     keeps = [float(k) for k in a.keeps.split(",")]
     extras = [float(c) for c in a.extras.split(",")]
     configs = [("full", None, None)]
@@ -174,14 +179,14 @@ def main():
             else:
                 model.train()
                 if keep not in keep_cache:  # keep set once per (row, keep); reused across bias variants
-                    if a.task == "contradiction":
+                    if a.task in GOLD_TASKS:
                         keep_fn = make_fingerprint_keep_docs_fn(gold_table, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end,
                                                                 eos_id=IDS.eos, n_random_frac=keep, mode="gold_plus_random", seed=a.seed)
                         keep_cache[keep] = PooledDocKeepHolder(keep_docs=keep_fn(x.cpu()))
                     else:
                         keep_cache[keep] = None
                 model._pooled_keep_holder = keep_cache[keep]
-                if a.task != "contradiction":
+                if a.task not in GOLD_TASKS:
                     pst["keep_prob"] = keep
                 pst["len_bias"], pst["len_bias_scale"], pst["len_bias_extra"] = bias
                 cb = model._compact_pooled_soft_tokens(x, None, -100)[0]
