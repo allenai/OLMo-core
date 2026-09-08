@@ -7,7 +7,40 @@ The user approved changing both existing heroes to save every100 steps through
 The same rule applies independently by absolute training step, not wall time.
 Model, optimization, precision, seeds, data, LR, warmup, final horizon and uploader
 retention/safety rules are unchanged. Implementation is in this branch; deployment
-uses runtime pin `930f215d44460b624cf91f485c03f18e8454689e`.
+uses runtime pin `89bf37a87d955b8ff8a76ac11df6dd3bec976d30`.
+
+**Current attempts (verified17:14UTC):** Retry controller
+`01M20YJGQEH913XBP7GKXV76HX` completed successfully. Both64GPU groups have
+started and restored their full checkpoints with exact sampled-state checks.
+Both `HERO_START` records confirm the new cadence and correct EMO arm, and both
+resumed the same W&B histories with successfully updated Beaker metadata.
+Both are actively training with finite CE/gradient norms: EMO passed16550 and
+non-EMO passed12256. W&B reports both running. Recent per-GPU TPS samples were
+94–100k (short post-restart samples, not a new steady-state benchmark).
+
+- EMO, from16501: https://beaker.org/ex/01M20YQDPJD82K0Y05RH67NNYK
+- Non-EMO, from12101: https://beaker.org/ex/01M20YQHDJNMWG7B6V6382RDBN
+- Real-mount preflight:17.424TB free at16:48UTC; uploader healthy. Live storage
+  guard observed17.876TB free at17:10:50UTC (non-EMO step12200), action `ok`.
+- All16 exported r4 worker specs match r3 exactly except the source pin. The
+  changing experiment description is the normal live progress callback.
+- Post-resume full-state checkpoint saves passed for both arms (including EMO16800
+  at17:26UTC). Its live storage guard observed17.273TB free, action `ok`.
+
+**16:45UTC correction:** Both r3 attempts restored the full checkpoint and passed
+their sampled state audits, but failed BEFORE training because `BeakerCallback`
+updated immutable W&B execution-metadata keys on the resumed run. Runtime fix
+`89bf37a87` permits changes only to `beaker_experiment_url` and
+`beaker_experiment_id` in that metadata update. The actual callback expression was
+tested against a real W&B Config containing the old values; unrelated model config
+was unchanged. Existing unrelated lint findings in the legacy callback were not rewritten.
+
+One-shot retry controller `01M20YJGQEH913XBP7GKXV76HX` rechecks both terminal
+failed attempts and the unchanged final checkpoints, clears cancellation tags with
+read-back, and submits only `-train-r4-cadence250-wandb` attempts. These retain the
+same W&B IDs, optimizer/data state, HF lineages and approved schedule. Its receipt
+is `heroes-cadence-metadata-retry-20260908.json` in the same automation root.
+No checkpoint data was deleted and neither r3 attempt performed a training update.
 
 `olmoe3_small_hero_cadence_20260908.py` validates the configuration in the actual
 training image before requesting graceful cancellation through the existing W&B
@@ -24,7 +57,7 @@ The same checkpoint roots, HF prefixes and W&B histories continue. A durable
 records original experiments, final checkpoint steps and replacement IDs.
 No checkpoint files are deleted or overwritten by this handoff.
 
-Deployment at16:34UTC:
+Historical first cadence attempts at16:34UTC (both superseded by r4 above):
 
 - Controller `01M20X815SQC37G33Y2QQB3P05` SUCCEEDED after validation
   `01M20X9KJTMMCX0WBJ37NW026X` passed in the actual training image.
@@ -44,7 +77,33 @@ Deployment at16:34UTC:
   live run configuration/summary. This controller-only hardening does not change the
   deployed training pin. Never rerun this completed one-shot controller blindly.
 
-## Current deployment — 2026-09-08, node503 replacement
+## Live W&B comparison report — 2026-09-08
+
+[Small EMO / non-EMO vs OLMo 3 7B](https://wandb.ai/ai2-llm/olmo3p5-hero/reports/OLMo-3.5-Small:-EMO-vs-non-EMO,-with-OLMo-3-7B-pretraining-reference--VmlldzoxNzg5NDE3MA==)
+
+The report reads the two original hero histories and all35 `ai2-llm/olmo3`
+`OLMo25` records directly (31 with paired token/loss history; four empty attempts).
+It contains33 panels: training CE, eleven shared held-out LM CE metrics, optimization
+health, four aggregate MoE metrics, small-model performance, and clearly separated
+dense-only downstream accuracy context. No per-layer/block panels, invented metrics,
+run averaging, source-run mutation or derived training runs. Display limits are100
+to avoid silently dropping restart segments. Baseline records are separate gray
+segments, including failed/crashed attempts, not an inferred stitched lineage.
+
+Full-range panels update with live histories. The matched-token zoom is explicitly
+fixed to the report-creation overlap (207.937B tokens); remove its x cap in the UI or
+refresh the inventory to expand it. Differences in architecture, active parameters,
+batch size and data mixture are called out; matching metric keys do not assert a
+byte-for-byte evaluation-harness match.
+
+Builder: `src/examples/olmo_ddp/olmoe3_small_hero_report_20260908.py`.
+Use isolated `wandb-workspaces` dependencies. `--output-dir <directory>` creates an
+inventory and validated specification without publishing; `--publish` creates or
+updates the exact report recorded in that directory's `report_receipt.json`.
+`--reuse-inventory` avoids refetching historical boundaries but keeps the old zoom
+limit. No training jobs or source W&B runs are modified by this builder.
+
+## Historical deployment — 2026-09-08, node503 replacement
 
 The replacement smoke `01M1Z1AQSAGRZY6F3ZMC3S076Q` **passed** all64-rank
 save/restore and matched initialization/input gates at00:44UTC. Its controller
