@@ -73,7 +73,10 @@ class BeakerCallback(Callback):
                             {
                                 "beaker_experiment_url": beaker_url,
                                 "beaker_experiment_id": self.experiment_id,
-                            }
+                            },
+                            # A resumed W&B run may now live in a new Beaker experiment.
+                            # Only these execution metadata keys are being updated here.
+                            allow_val_change=True,
                         )
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
                         log.info(f"Added beaker_experiment_id to W&B config: {self.experiment_id}")
