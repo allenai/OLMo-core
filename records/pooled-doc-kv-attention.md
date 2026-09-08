@@ -566,3 +566,30 @@ slot configuration per row on an H100/H200; 26–30 configurations x 24 rows ≈
 model-only bf16 copies of the dense ladder checkpoints staged weka→S3→sneetches `/data/prasann/dense_ckpts/`
 (`debug/pooled_kv/transfer_dense_ckpts_gantry.sh`); held-out rows tokenized under
 `/scratch/users/prasann/slot_probe/`; launcher `run_sneetches.sbatch` there.
+
+### Training-side check of the +log L bias (2026-09-08, `fs35s4bkvbias-*`, Qwen3.5-4B, mean f1 over 2k/8k/16k/32k)
+
+| task | keep | no bias | +log L | dense |
+|---|---|---|---|---|
+| contradiction 56M | 1/3 | 0.861 (kv33) | **0.729** (kvl33) | 0.944 |
+| contradiction 56M | 1/6 | 0.764 (kv17) | **0.426** (kvl17) | |
+| contradiction 56M | 1/12 | 0.378 (kv08) | **0.245** (kvl08) | |
+| oolong 80M | 1/3 | 0.674 (kv33) | pending (kvl33) | 0.723 |
+| oolong 80M | 1/6 | 0.665 (kv17) | 0.666 (kvl17) | |
+| oolong 80M | 1/12 | 0.665 (kv08) | 0.669 (kvl08) | |
+
+Exactly what the eval-side probe predicted: the fixed +log L bias hurts contradiction at every keep
+(−0.13 to −0.34 f1) and does nothing on oolong (the probe wanted +log L +2 there, and only at low
+keep). Two other things the training arms show: **oolong is flat in keep fraction** (0.665 at
+1/12 = 0.665 at 1/6 = 0.674 at 1/3, dense 0.723) — the 1/12 arm trains on 0.19x the tokens for the
+same f1 — while contradiction pays steeply below 1/3 (0.861 → 0.764 → 0.378).
+
+**Ceiling sweeps, 24 rows x 4 tasks (`slot_ceiling_probe.py`), keep 1/3, answer CE:** G slots
+per document (1/2/4/8) and the fitted log-mass slot move nothing on any task (contradiction
+0.106–0.120 vs default 0.116; nq 0.94–0.98; outlier 1.69–1.83; oolong 0.53–0.55; full attention
+0.042 / 0.086 / 1.206 / 0.466). The fitted slot fixes the slot's mass (held-out log-mass error 3x
+lower than mean+log L on a toy model) but not its value, and the answer loss needs both. On the
+hybrid the 24 GDN layers see the soft token's hidden state regardless of any K/V construction —
+two follow-ups isolate that: the same probes on the pure-attention Qwen3-4B dense checkpoints, and
+`pooledkv_eval_probe.py` (every token kept, only the attention layers' K/V pooled). Tracker:
+`results/pooled_kv/slot_tracker.html` (+ `slot_probe_results.csv`).
