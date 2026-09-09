@@ -29,7 +29,8 @@ RUNGS = ["2k", "8k", "16k", "32k", "64k"]
 TASK_KEY = {"contradiction": "contra", "nq": "nq", "outlier": "outlier", "oolong": "oolong"}
 
 
-def beaker_log(ex, kind):
+def beaker_log(ex, kind, final=False):
+    """Fetch (and cache only when ``final``: a log cached mid-run would freeze partial results)."""
     os.makedirs(CACHE, exist_ok=True)
     p = f"{CACHE}/{kind}_{ex}.log"
     if os.path.exists(p) and os.path.getsize(p) > 0:
@@ -38,12 +39,13 @@ def beaker_log(ex, kind):
         out = subprocess.run(["beaker", "experiment", "logs", ex], env=ENV, capture_output=True, text=True, timeout=600).stdout
     except Exception:  # noqa: BLE001
         return ""
-    open(p, "w").write(out)
+    if final and out:
+        open(p, "w").write(out)
     return out
 
 
-def f1_from_eval(ex):
-    out = beaker_log(ex, "eval")
+def f1_from_eval(ex, final=False):
+    out = beaker_log(ex, "eval", final=final)
     res = {}
     for task, rung, val in re.findall(r"\[ladder:(\w+)@(\d+k)\] (?:f1|score)=([0-9.]+)", out):
         res[rung] = float(val)
@@ -52,7 +54,7 @@ def f1_from_eval(ex):
 
 def walltime(ex):
     """(gpus, steps, train_seconds) from the training log: world size + first/last step timestamps."""
-    out = beaker_log(ex, "train")
+    out = beaker_log(ex, "train", final=True)
     lines = [re.sub(r"^(\S+Z) ", r"\1 ", ln) for ln in out.splitlines()]
     gpus = None
     m = re.search(r"world[_ ]size[=: ]+(\d+)", out, re.I)
@@ -74,7 +76,7 @@ def main():
     rows = []
     for run, r in st["runs"].items():
         e = st["evals"].get(run, {})
-        f1 = f1_from_eval(e["ex"]) if e.get("ex") else {}
+        f1 = f1_from_eval(e["ex"], final=(e.get("state") == "DONE")) if e.get("ex") else {}
         vals = [f1[k] for k in RUNGS if k in f1]
         fl = {}
         p = f"{HARVEST}/runs/{run}/flops.json"
