@@ -114,3 +114,16 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   32M 0.87/0.64/0.59/0.58/0.55; outlier 16M 0.91/0.48/0.15/0.05/0.01, 32M 0.97/0.75/0.38/0.16/–,
   64M 0.97/0.92/0.72/0.40/–. gb16 keep-1/36 soft arms on the full ladder: hdr03 0.24/0.15/0.07/0.04/0.01,
   runs03 0.68/0.45/0.20/0.06/0.03 (collapse confirmed at every rung).
+- 2026-09-09 01:55 **keep ablation, contradiction 16M (partial rungs 2k/8k/16k; dense 0.93/0.88/0.82):**
+  hdr03 0.28/0.15/0.06, hdr08 0.57/0.41/0.20, hdr17 0.77/0.65/0.44, **hdr33 0.92/0.85** (only keep
+  1/3 tracks dense); runs03 0.54/0.34/0.15, runs08 0.60/0.43. Eval-side parity at 1/36 does NOT
+  transfer to training — the "real docs = gold" shortcut dominates below ~1/3 keep, so
+  contradiction's honest compaction is ~0.5 (headers + 1/3) → ≤2x, not 5-11x.
+- **wall-clock diagnosed** (Beaker, 16M, 128 rows/step, steps 2-28): hdr03 8 rows/micro 55 s/step;
+  gold-blind (no fingerprint hook) 64 s/step → hook innocent; ONE row per micro-step 24 s/step
+  (2.3x faster than 8/micro). Cause: a micro-batch pads every compacted row to its longest member
+  (a 56k example beside seven ~2k ones ≈ 6x wasted tokens) plus ~1.5 s fixed FSDP cost per
+  micro-step. Fix: length-sort each rank's batch before the micro-batch split (homogeneous
+  micro-batches); the real fix is compact-then-pack with cu_seqlens (not done). The loader itself
+  is fast (0.06–0.13 s per 8-row batch measured in isolation); the local "75% data loading" was
+  the 24-row smoke shard cycling epochs and respawning workers.
