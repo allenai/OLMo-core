@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from ...eval.stopping import OOLONG_ANSWER_MARKERS
 from ...format import assemble
 from ...format.prompts import OOLONG_INSTRUCTION
 from ...format.registry import TaskSpec
@@ -87,18 +88,31 @@ def build_target(example: Dict) -> str:
 
 def parse(text: str, n_docs: Optional[int] = None) -> Optional[str]:
     """
+    Strip the templated answer marker, keeping what the model actually answered.
+
+    The marker is whichever of :data:`~ctc.eval.stopping.OOLONG_ANSWER_MARKERS` the question
+    templated -- oolong questions say "Give your final answer in the form 'Label: answer'" as often
+    as "'Answer: number'", and a model that complies with the first emits ``Label: True``. Matching
+    only ``answer:`` left that prefix on, so ``normalize`` compared "label: true" against "true"
+    and scored a correct answer 0. The **last** marker wins, so a model that reasons aloud and
+    revises itself is graded on its final answer rather than its first.
+
     :param text: Raw model generation.
     :param n_docs: Unused.
 
-    :returns: The text after the templated ``answer:`` marker when present, else the whole
-        generation; ``None`` when empty.
+    :returns: The text after the templated marker when present, else the whole generation;
+        ``None`` when empty.
     """
     if not text.strip():
         return None
     lowered = text.lower()
-    if "answer:" in lowered:
-        at = lowered.rindex("answer:") + len("answer:")
-        return text[at:].strip()
+    ends = [
+        lowered.rindex(marker) + len(marker)
+        for marker in OOLONG_ANSWER_MARKERS
+        if marker in lowered
+    ]
+    if ends:
+        return text[max(ends):].strip()
     return text.strip()
 
 

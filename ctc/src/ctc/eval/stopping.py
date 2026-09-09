@@ -31,10 +31,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-__all__ = ["StopCondition", "STOP_PRESETS", "strip_think", "apply"]
+__all__ = [
+    "StopCondition",
+    "STOP_PRESETS",
+    "OOLONG_ANSWER_MARKERS",
+    "strip_think",
+    "apply",
+]
 
 THINK_OPEN = "<think>"
 THINK_CLOSE = "</think>"
+FENCE = "```"
+
+#: Every marker an oolong question templates its answer line with. The question text says e.g.
+#: "Give your final answer in the form 'Label: answer'", so a model that complies emits
+#: ``Label: True`` -- which is neither stopped nor parsed by an ``answer:``-only rule. Over the
+#: r2k split, 184/500 questions template ``Label:`` and 12/500 ``User:``; scoring those against
+#: an ``answer:``-only marker records a correct answer as a miss.
+OOLONG_ANSWER_MARKERS = ("answer:", "label:", "user:")
 
 
 @dataclass(frozen=True)
@@ -51,9 +65,17 @@ class StopCondition:
     :param require_content: Suppress text stops until some non-whitespace content exists. Defends
         against the leading formatting newline described in the module docstring, which otherwise
         returns an empty generation for every example.
-    :param require_before: Suppress text stops until this substring appears (case-insensitive).
-        Used by oolong, whose answer follows a templated ``answer:`` line, so an earlier newline is
-        part of the preamble rather than the end of the answer.
+    :param require_before: Suppress text stops until one of these substrings appears
+        (case-insensitive); the earliest match also becomes the point the stop search starts from.
+        Used where the answer follows a templated marker line, so an earlier newline is part of the
+        preamble rather than the end of the answer: oolong's questions template three different
+        markers (:data:`OOLONG_ANSWER_MARKERS`), and outlier's instruction mandates a sentence
+        *before* the ``Outliers:`` line.
+    :param bracketed_answer: The answer is a bracketed JSON literal. Suppresses text stops
+        while a ``[`` is still unclosed, and while a markdown code fence is still open -- models
+        routinely pretty-print the literal across lines or wrap it in ```` ```json ````, and a
+        newline stop then ends the generation on the fence line. Both conditions are computed from
+        the prefix alone, so the incremental and whole-string paths still agree.
     :param max_new_tokens: Decode budget. Sized too small, a correct answer is truncated into a
         parse failure -- which reads as a capability limit rather than a config mistake.
     """
@@ -63,7 +85,8 @@ class StopCondition:
     keep_stop: bool = True
     strip_think: bool = True
     require_content: bool = True
-    require_before: Optional[str] = None
+    require_before: Tuple[str, ...] = ()
+    bracketed_answer: bool = False
     max_new_tokens: int = 512
 
     def __post_init__(self) -> None:
@@ -89,15 +112,29 @@ STOP_PRESETS = {
     #         "there are no pairs" answer would be recorded as a parse failure.
     #
     # The trailing newline is harmless to the parsers, which tolerate surrounding whitespace.
-    "pairs": StopCondition(text_stops=("]]", "\n"), keep_stop=True, max_new_tokens=512),
+    "pairs": StopCondition(
+        text_stops=("]]", "\n"), keep_stop=True, bracketed_answer=True, max_new_tokens=512
+    ),
     # Short free-text answers. The answer is one line; the newline is not part of it.
     "newline": StopCondition(text_stops=("\n",), keep_stop=False, max_new_tokens=64),
     # Long structured answers (grouping, reorder) where EOS is genuinely emitted and any text stop
     # would cut a valid multi-line answer short.
     "eos": StopCondition(text_stops=(), max_new_tokens=2048),
-    # oolong: the answer follows a templated "answer:" line, so a newline before that is preamble.
+    # oolong: the answer follows a templated marker line, so a newline before that is preamble.
     "oolong": StopCondition(
-        text_stops=("\n",), keep_stop=False, require_before="answer:", max_new_tokens=256
+        text_stops=("\n",),
+        keep_stop=False,
+        require_before=OOLONG_ANSWER_MARKERS,
+        max_new_tokens=256,
+    ),
+    # outlier: the instruction MANDATES a sentence naming the majority and outlier attributes
+    # before the "Outliers:" line, so the first newline is the end of that sentence and not the
+    # end of the answer. Under a plain newline stop the ids never reach the parser at all.
+    "outliers": StopCondition(
+        text_stops=("\n",),
+        keep_stop=False,
+        require_before=("outliers:",),
+        max_new_tokens=256,
     ),
 }
 
@@ -114,6 +151,31 @@ def _in_unclosed_think(text: str) -> bool:
     if open_at == -1:
         return False
     return THINK_CLOSE not in text[open_at:]
+
+
+def _in_open_fence(text: str) -> bool:
+    """
+    Whether ``text`` currently sits inside an unclosed markdown code fence.
+
+    :param text: Text generated so far.
+
+    :returns: True when an odd number of ``````` markers have been emitted.
+    """
+    return text.count(FENCE) % 2 == 1
+
+
+def _in_open_bracket(text: str) -> bool:
+    """
+    Whether ``text`` currently sits inside an unclosed ``[``.
+
+    Brackets inside a JSON string would miscount, but a pair/cycle answer contains only integers,
+    so counting is enough and stays O(n) on the prefix.
+
+    :param text: Text generated so far.
+
+    :returns: True when more ``[`` than ``]`` have been emitted.
+    """
+    return text.count("[") > text.count("]")
 
 
 def strip_think(text: str) -> str:
@@ -147,13 +209,19 @@ def should_stop(text: str, cond: StopCondition) -> Optional[int]:
         return None
     # When a marker gates stopping, the search must also START after it. Gating alone is not
     # enough: the first newline in an oolong generation is in the preamble, so searching from
-    # position 0 would end the answer before it began.
+    # position 0 would end the answer before it began. With several markers the EARLIEST one wins,
+    # so a question templated 'Label: answer' is not held hostage to an 'answer:' that never comes.
     search_from = 0
-    if cond.require_before is not None:
-        marker_at = text.lower().find(cond.require_before.lower())
-        if marker_at == -1:
+    if cond.require_before:
+        hits = []
+        for marker in cond.require_before:
+            at = text.lower().find(marker.lower())
+            if at != -1:
+                hits.append((at, marker))
+        if not hits:
             return None
-        search_from = marker_at + len(cond.require_before)
+        marker_at, marker = min(hits)
+        search_from = marker_at + len(marker)
 
     best: Optional[int] = None
     for stop in cond.text_stops:
@@ -163,6 +231,17 @@ def should_stop(text: str, cond: StopCondition) -> Optional[int]:
             # newline that models emit before answering ends generation immediately and every
             # example scores on an empty string.
             if cond.require_content and not text[:at].strip():
+                at = text.find(stop, at + 1)
+                continue
+            through = text[: at + len(stop)]
+            if cond.bracketed_answer and (
+                _in_open_fence(through) or _in_open_bracket(through)
+            ):
+                # Same idea as the <think> rule, judged on the prefix so the incremental and
+                # whole-string paths agree: a newline in the middle of a pretty-printed literal,
+                # or on the ```json line that opens it, is formatting and not the end of the
+                # answer. The span INCLUDES the stop itself, because "]]" is precisely the token
+                # that closes the literal it ends. Skip it and keep looking.
                 at = text.find(stop, at + 1)
                 continue
             end = at + len(stop) if cond.keep_stop else at

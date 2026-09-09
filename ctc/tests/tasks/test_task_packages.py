@@ -106,14 +106,16 @@ def test_stop_rule_terminates_on_this_task_s_own_target(spec):
     target = build_target(PROMPT_EXAMPLES[key])
     cond = STOP_PRESETS[spec.stop]
     generation = f"{target}\nand now some rambling"
-    if cond.require_before is not None:
-        # oolong's rule keys on the templated "answer:" line, which the bare target does not
-        # contain -- the model emits it, the target does not. Prefix it so the generation looks
-        # like what the model actually produces, rather than skipping the check.
-        generation = f"{cond.require_before} {generation}"
+    marker = cond.require_before[0] if cond.require_before else None
+    if marker is not None:
+        # oolong and outlier key on a templated marker line ("answer:", "Outliers:") which the
+        # bare target does not contain -- the model emits it, the target does not. Prefix it so
+        # the generation looks like what the model actually produces, rather than skipping the
+        # check. Any one of the markers exercises the rule, so the first is enough.
+        generation = f"{marker} {generation}"
     out = apply(generation, cond)
-    if cond.require_before is not None:
-        out = out.split(cond.require_before, 1)[1].strip()
+    if marker is not None:
+        out = out.split(marker, 1)[1].strip()
     assert (
         out.strip() == target.strip()
     ), f"{spec.name} (stop={spec.stop!r}) did not truncate back to its own target"

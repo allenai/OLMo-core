@@ -108,7 +108,7 @@ SPEC = TaskSpec(
     score=score,
     primary_metric="f1",
     max_new_tokens=256,
-    stop="newline",
+    stop="outliers",
     answer_is_set=False,
     sources=("amazon", "wiki"),
 )

@@ -185,3 +185,60 @@ def test_eos_preset_has_no_text_stop():
     """grouping/reorder answers are legitimately multi-line; any text stop would cut them."""
     assert STOP_PRESETS["eos"].text_stops == ()
     assert STOP_PRESETS["eos"].eos
+
+
+# ── the outlier two-line answer ─────────────────────────────────────────────────────────────────
+
+
+def test_outlier_stop_keeps_the_ids_line():
+    """outlier's instruction MANDATES a sentence before the ids, so the first newline is the end
+    of that sentence, not of the answer.
+
+    Under the old ``newline`` preset the ids never reached the parser: ctc_outlier_amzn reported
+    f1 0.000 on Qwen3.5-4B-Base with 0/10 generations parsing, while the model was naming correct
+    outliers ~41% of the time.
+    """
+    text = "The majority are 5-star, the outlier is 1-star.\nOutliers: [17], [18]\nrambling"
+    assert apply(text, STOP_PRESETS["outliers"]).endswith("Outliers: [17], [18]")
+
+
+def test_outlier_stop_does_not_fire_before_the_ids_line():
+    assert should_stop("The majority are 5-star.\n", STOP_PRESETS["outliers"]) is None
+
+
+# ── the fenced / pretty-printed pair list ───────────────────────────────────────────────────────
+
+
+def test_pairs_stop_survives_a_markdown_fence():
+    """Base models wrap JSON in ```json. The newline on the fence line ended the generation, so
+    ctc_strmatch scored 0 on answers whose pairs were partly correct (parse rate 4/10 -> 8/10)."""
+    text = '```json\n[\n  [12, 27],\n  [14, 16]\n]\n```'
+    assert "[12, 27]" in apply(text, STOP_PRESETS["pairs"])
+
+
+def test_pairs_stop_survives_a_pretty_printed_literal():
+    assert "[14, 16]" in apply("[\n  [12, 27],\n  [14, 16]\n]\n", STOP_PRESETS["pairs"])
+
+
+def test_pairs_stop_still_terminates_an_empty_answer():
+    """The documented reason the '\\n' stop exists: '[]' contains no ']]'."""
+    assert apply("[]\nand now rambling", STOP_PRESETS["pairs"]).strip() == "[]"
+
+
+def test_pairs_stop_still_terminates_a_single_line_ramble():
+    text = "[[1, 4], [3, 7]] and here are some further thoughts"
+    assert apply(text, STOP_PRESETS["pairs"]) == "[[1, 4], [3, 7]]"
+
+
+# ── oolong's other templated markers ────────────────────────────────────────────────────────────
+
+
+def test_oolong_stops_on_a_label_template():
+    """184 of 500 r2k questions template 'Label: answer'. An answer:-only rule never fired on
+    them, so the generation was never truncated and never parsed to the bare label."""
+    assert apply("thinking\nLabel: True\nrambling", STOP_PRESETS["oolong"]).endswith("Label: True")
+
+
+def test_oolong_earliest_marker_wins():
+    """A question templated 'Label:' must not wait for an 'answer:' that never comes."""
+    assert apply("Label: True\nmore", STOP_PRESETS["oolong"]).endswith("Label: True")
