@@ -85,3 +85,11 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   examples → its 128M budget is skipped), oolong tokenization with the conda interpreter
   (bare `python` in the job lacks numpy); nq/outlier pools still building (their first tokenize
   step will fail the same way; relaunch reuses the pools).
+- 22:25 **batching fix.** First soft launch used 16 rows/step (sized for a 40k mean length); the
+  short-heavy mix averages ~4.5k tokens/example, so hdr03-u16M ran 227 optimizer steps of ~72k
+  tokens: FLOP meter 0.18x dense, wall-clock 1337 s vs dense 301 s (4.4x SLOWER — per-step
+  overhead on tiny unpacked micro-batches), and 7x dense's optimizer steps (unfair the other way).
+  Relaunched every soft arm at 128 rows/step (~576k tokens/step ≈ dense's 524k), micro-batch per
+  arm by compaction (8 / 6 / 4 / 2 rows for keep 1/36 / 1/12 / 1/6 / 1/3), run names carry `-b128`;
+  the gb16 runs were cancelled (the finished hdr03/runs03 16M ones stay in the state as a labelled
+  reference). All four data builds are done (contradiction 16M/32M/64M; others 16M–128M).

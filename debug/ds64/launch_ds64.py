@@ -10,8 +10,8 @@ Arms (all soft arms: detached slots -- attention K/V AND GDN writes -- no bias, 
   ohdr33/17/08     oolong: Date/User/Instance headers real, 1/3 .. 1/12 of lines real (gold-blind)
   kv08/17/33       nq / outlier: gold + 1/12 .. 1/3 random docs real
 Phase 1 = contradiction's full set + every task's dense; other soft arms via debug/ds64/soft_arms.json.
-Soft arms train UNPACKED at seq 65536, global batch 16 x micro 2 (~ the dense 524k tokens/step at
-a ~40k mean length), torch attention backend unless DS64_SOFT_BACKEND says otherwise.
+Soft arms train UNPACKED at seq 65536, 128 rows/step (~ the dense 524k tokens/step at the mix's
+~4.5k mean length), micro-batch sized per arm (ARM_MICRO), torch backend unless DS64_SOFT_BACKEND.
 
     python debug/ds64/launch_ds64.py --tasks contradiction --budgets 32M --arms dense,hdr36 dry_run
 """
@@ -45,7 +45,14 @@ SOFT_BACKEND = os.environ.get("DS64_SOFT_BACKEND", "torch")
 # per scale: nodes, GPUs/node, soft micro-batch, cluster
 NODES = {"4b": 1, "27b": int(os.environ.get("DS64_NUM_NODES", "2"))}[SCALE]
 GPUS = 8
-SOFT_MICRO = {"4b": 2, "27b": 1}[SCALE]
+# Soft arms train UNPACKED rows; the short-heavy mix averages ~4.5k tokens/example, so the rows
+# per step must match dense's ~524k tokens/step (8 packed 65536 rows) or the per-step overhead
+# dominates wall-clock (first launch at 16 rows/step: 4.4x SLOWER than dense at 0.18x the FLOPs)
+# and the soft arm gets 7x more optimizer steps than dense. 128 rows/step ~= 576k tokens/step.
+SOFT_GB = int(os.environ.get("DS64_SOFT_GB", "128"))
+# rows per micro-batch, sized to the arm's compaction so a micro-batch of 56k rows fits an 80GB GPU
+ARM_MICRO = {"hdr03": 8, "runs03": 8, "kv08": 8, "hdr08": 6, "runs08": 6, "ohdr08": 6,
+             "hdr17": 4, "kv17": 4, "ohdr17": 4, "hdr33": 2, "kv33": 2, "ohdr33": 2}
 CLUSTER = os.environ.get("DS64_CLUSTER", {"4b": "ai2/jupiter-cirrascale-2", "27b": "ai2/titan-cirrascale"}[SCALE])
 
 # keep-ratio suffix as in the old grid: 03 = 1/36, 08 = 1/12, 17 = 1/6, 33 = 1/3
@@ -73,7 +80,8 @@ TASK_ARMS = {"contradiction": ["dense", "hdr03", "hdr08", "hdr17", "hdr33", "run
 
 
 def run_name(task, arm, budget):
-    return f"ds64{'' if SCALE == '4b' else '-' + SCALE}-{task}-{arm}-u{budget}"
+    tag = "" if arm == "dense" else f"-b{SOFT_GB}"  # soft arms carry their rows/step (the gb16 first launch stays distinct)
+    return f"ds64{'' if SCALE == '4b' else '-' + SCALE}-{task}-{arm}{tag}-u{budget}"
 
 
 def arm_args(task, arm, budget):
@@ -81,8 +89,8 @@ def arm_args(task, arm, budget):
     if arm == "dense":
         return "full", data, ["--pack", "--seq-len", "65536", "--global-batch", "8", "--micro-batch-instances", "1", "--base-checkpoint", BASE], ""
     if arm in ARM_EXTRA:
-        gb = 8 * NODES * SOFT_MICRO
-        return "softtoken", data, ["--seq-len", "65536", "--global-batch", str(gb), "--micro-batch-instances", str(SOFT_MICRO), "--base-checkpoint", BASE], \
+        micro = max(1, ARM_MICRO[arm] // (2 if SCALE == "27b" else 1))
+        return "softtoken", data, ["--seq-len", "65536", "--global-batch", str(SOFT_GB), "--micro-batch-instances", str(micro), "--base-checkpoint", BASE], \
             f"{ARM_EXTRA[arm]} --attn-backend {SOFT_BACKEND}"
     raise SystemExit(f"unknown arm {arm}")
 

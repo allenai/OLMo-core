@@ -1,11 +1,362 @@
 {
- "runs": {},
- "evals": {},
- "data_ok": {
-  "contradiction": true
+ "runs": {
+  "ds64-contradiction-dense-u16M": {
+   "ex": "01M227SWE3DH9W66T54XT4HT7S",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M228QFMFGPVA858VQDP92VTT"
+  },
+  "ds64-contradiction-hdr03-u16M": {
+   "ex": "01M227V5ZCS5TAMBGEPPGC1GJ5",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M229P5A0ENDZ9GY20K8FMJQV",
+   "note": "gb16 (16 rows/step) first-launch recipe: 7x the optimizer steps of dense, 4.4x its wall-clock"
+  },
+  "ds64-contradiction-hdr08-u16M": {
+   "ex": "01M227W7NCA2J52V6N71480Q2X",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr17-u16M": {
+   "ex": "01M227XDAV5415NXCQ818SZJVS",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr33-u16M": {
+   "ex": "01M227YDHKWKJ51HQ2VD9GPFEG",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-runs03-u16M": {
+   "ex": "01M227ZBN51SJBNYH26XD308RZ",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M229Q06ZVYY0TBCCYDQ2F33T",
+   "note": "gb16 (16 rows/step) first-launch recipe: 7x the optimizer steps of dense, 4.4x its wall-clock"
+  },
+  "ds64-contradiction-runs08-u16M": {
+   "ex": "01M2281W5E0664C9SQYJ35X2BE",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-dense-u32M": {
+   "ex": "01M2283SC8ZKTT2ADNH6303FSV",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M229N5MK4M3W0Z5TREK0YJVK"
+  },
+  "ds64-contradiction-hdr03-u32M": {
+   "ex": "01M2284WAND82330VDNST4PEH4",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr08-u32M": {
+   "ex": "01M228604379S4ZTQK84KGVGX1",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr17-u32M": {
+   "ex": "01M228786NRE2B1B0X7SP8ZPAP",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr33-u32M": {
+   "ex": "01M2288BHG40C1CT6ZZS78XA9X",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-runs03-u32M": {
+   "ex": "01M22898TT9N6GDNYTJDXAH5QX",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-runs08-u32M": {
+   "ex": "01M228A40ESP19509KT7X88761",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-dense-u64M": {
+   "ex": "01M228B6H95B1EGDW4SR7TWGPZ",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "dense",
+   "state": "R",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-contradiction-hdr03-u64M": {
+   "ex": "01M228C7BJKJR7HM9N7512NGM7",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr08-u64M": {
+   "ex": "01M228DAA9NVRTSFS2VW3AJ9CS",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr17-u64M": {
+   "ex": "01M228E5WW6H3JP2SBCHDGC8Z2",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-hdr33-u64M": {
+   "ex": "01M228F698VFZYH1WBEPAF825Z",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-runs03-u64M": {
+   "ex": "01M228GQB5ENTAA9PC7P45F276",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-contradiction-runs08-u64M": {
+   "ex": "01M228J1REE1YAZXPV4Q5D4KMF",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "gb16 recipe cancelled 2026-09-08 22:25; relaunched as -b128"
+  },
+  "ds64-oolong-dense-u16M": {
+   "ex": "01M228K6DSXBCJKYTSA3E0B8DS",
+   "task": "oolong",
+   "budget": "16M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-oolong-dense-u32M": {
+   "ex": "01M228M2GG4RN38KWJZKH6RREP",
+   "task": "oolong",
+   "budget": "32M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-oolong-dense-u64M": {
+   "ex": "01M228N45SF7R2MM1HV6VS7H2S",
+   "task": "oolong",
+   "budget": "64M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-oolong-dense-u128M": {
+   "ex": "01M228PCFGHA3P5ZNVY216ED21",
+   "task": "oolong",
+   "budget": "128M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-nq-dense-u16M": {
+   "ex": "01M2292BZZ7EAX0VQVBEF6ER5T",
+   "task": "nq",
+   "budget": "16M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-nq-dense-u32M": {
+   "ex": "01M22935VYZGAXV5AF0PWKN39T",
+   "task": "nq",
+   "budget": "32M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-nq-dense-u64M": {
+   "ex": "01M22940YHMHESY898E1HYATQ8",
+   "task": "nq",
+   "budget": "64M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-nq-dense-u128M": {
+   "ex": "01M2294W541461C8CNTZQZEM6W",
+   "task": "nq",
+   "budget": "128M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  },
+  "ds64-outlier-dense-u16M": {
+   "ex": "01M22A1CGM4HB6F3XGEG55A1QC",
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "dense",
+   "state": "S",
+   "rc": null,
+   "retries": 0,
+   "eval": null
+  }
  },
- "launched": {},
- "last_harvest": 0,
+ "evals": {
+  "ds64-contradiction-dense-u16M": {
+   "ex": "01M228QFMFGPVA858VQDP92VTT",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-dense-u32M": {
+   "ex": "01M229N5MK4M3W0Z5TREK0YJVK",
+   "state": "S",
+   "rc": null,
+   "retries": 1
+  },
+  "ds64-contradiction-hdr03-u16M": {
+   "ex": "01M229P5A0ENDZ9GY20K8FMJQV",
+   "state": "S",
+   "rc": null,
+   "retries": 1
+  },
+  "ds64-contradiction-runs03-u16M": {
+   "ex": "01M229Q06ZVYY0TBCCYDQ2F33T",
+   "state": "S",
+   "rc": null,
+   "retries": 1
+  }
+ },
+ "data_ok": {
+  "contradiction": true,
+  "oolong": true,
+  "nq": true,
+  "outlier": true
+ },
+ "launched": {
+  "contradiction": false,
+  "oolong": true,
+  "nq": true
+ },
+ "last_harvest": 1788930160.126299,
  "harvest_ex": null,
  "done": false
 }

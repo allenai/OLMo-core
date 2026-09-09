@@ -7,3 +7,72 @@
 09-08 21:41:33 status: data_ok [] | runs 0/0 done, 0 pending | evals 0/0 done, 0 pending
 09-08 21:45:43 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
 09-08 21:45:44 data for contradiction built (01M227N3EMAXS5RMT3JBGEW29C)
+09-08 21:46:18 launch ds64-contradiction-dense-u16M -> 01M227SWE3DH9W66T54XT4HT7S
+09-08 21:47:00 launch ds64-contradiction-hdr03-u16M -> 01M227V5ZCS5TAMBGEPPGC1GJ5
+09-08 21:47:35 launch ds64-contradiction-hdr08-u16M -> 01M227W7NCA2J52V6N71480Q2X
+09-08 21:48:14 launch ds64-contradiction-hdr17-u16M -> 01M227XDAV5415NXCQ818SZJVS
+09-08 21:48:46 launch ds64-contradiction-hdr33-u16M -> 01M227YDHKWKJ51HQ2VD9GPFEG
+09-08 21:49:17 launch ds64-contradiction-runs03-u16M -> 01M227ZBN51SJBNYH26XD308RZ
+09-08 21:50:40 launch ds64-contradiction-runs08-u16M -> 01M2281W5E0664C9SQYJ35X2BE
+09-08 21:51:42 launch ds64-contradiction-dense-u32M -> 01M2283SC8ZKTT2ADNH6303FSV
+09-08 21:52:18 launch ds64-contradiction-hdr03-u32M -> 01M2284WAND82330VDNST4PEH4
+09-08 21:52:55 launch ds64-contradiction-hdr08-u32M -> 01M228604379S4ZTQK84KGVGX1
+09-08 21:53:36 launch ds64-contradiction-hdr17-u32M -> 01M228786NRE2B1B0X7SP8ZPAP
+09-08 21:54:12 launch ds64-contradiction-hdr33-u32M -> 01M2288BHG40C1CT6ZZS78XA9X
+09-08 21:54:42 launch ds64-contradiction-runs03-u32M -> 01M22898TT9N6GDNYTJDXAH5QX
+09-08 21:55:10 launch ds64-contradiction-runs08-u32M -> 01M228A40ESP19509KT7X88761
+09-08 21:55:45 launch ds64-contradiction-dense-u64M -> 01M228B6H95B1EGDW4SR7TWGPZ
+09-08 21:56:19 launch ds64-contradiction-hdr03-u64M -> 01M228C7BJKJR7HM9N7512NGM7
+09-08 21:56:55 launch ds64-contradiction-hdr08-u64M -> 01M228DAA9NVRTSFS2VW3AJ9CS
+09-08 21:57:23 launch ds64-contradiction-hdr17-u64M -> 01M228E5WW6H3JP2SBCHDGC8Z2
+09-08 21:57:56 launch ds64-contradiction-hdr33-u64M -> 01M228F698VFZYH1WBEPAF825Z
+09-08 21:58:46 launch ds64-contradiction-runs03-u64M -> 01M228GQB5ENTAA9PC7P45F276
+09-08 21:59:30 launch ds64-contradiction-runs08-u64M -> 01M228J1REE1YAZXPV4Q5D4KMF
+09-08 21:59:30 data for oolong built (01M227N7PVXGNFVTN78KM63FKX)
+09-08 22:00:08 launch ds64-oolong-dense-u16M -> 01M228K6DSXBCJKYTSA3E0B8DS
+09-08 22:00:36 launch ds64-oolong-dense-u32M -> 01M228M2GG4RN38KWJZKH6RREP
+09-08 22:01:11 launch ds64-oolong-dense-u64M -> 01M228N45SF7R2MM1HV6VS7H2S
+09-08 22:01:52 launch ds64-oolong-dense-u128M -> 01M228PCFGHA3P5ZNVY216ED21
+09-08 22:01:52 data build for nq FAILED rc=1 (01M226T98853EG96138A5BT5XP) -- relaunch by hand: TASK=nq bash debug/ds64/build_ds64_data_beaker.sh
+09-08 22:01:53 ds64-contradiction-dense-u16M DONE
+09-08 22:02:28 eval ds64-contradiction-dense-u16M -> 01M228QFMFGPVA858VQDP92VTT
+09-08 22:02:28 ds64-contradiction-hdr03-u16M running
+09-08 22:02:28 ds64-contradiction-hdr08-u16M running
+09-08 22:02:29 ds64-contradiction-hdr17-u16M running
+09-08 22:02:29 ds64-contradiction-hdr33-u16M running
+09-08 22:02:30 ds64-contradiction-runs03-u16M running
+09-08 22:02:30 ds64-contradiction-runs08-u16M running
+09-08 22:02:30 ds64-contradiction-dense-u32M running
+09-08 22:02:31 ds64-contradiction-hdr03-u32M running
+09-08 22:02:31 ds64-contradiction-hdr08-u32M running
+09-08 22:02:31 ds64-contradiction-hdr17-u32M running
+09-08 22:02:32 ds64-contradiction-hdr33-u32M running
+09-08 22:02:32 ds64-contradiction-runs03-u32M running
+09-08 22:02:32 ds64-contradiction-runs08-u32M running
+09-08 22:02:36 status: data_ok ['contradiction', 'oolong'] | runs 1/25 done, 24 pending | evals 0/1 done, 1 pending
+09-08 22:02:40 harvest job -> None
+09-08 22:07:40 data for nq built (01M228E02KCTAQFK4ZZFEP6DJS)
+09-08 22:08:25 launch ds64-nq-dense-u16M -> 01M2292BZZ7EAX0VQVBEF6ER5T
+09-08 22:08:51 launch ds64-nq-dense-u32M -> 01M22935VYZGAXV5AF0PWKN39T
+09-08 22:09:19 launch ds64-nq-dense-u64M -> 01M22940YHMHESY898E1HYATQ8
+09-08 22:09:47 launch ds64-nq-dense-u128M -> 01M2294W541461C8CNTZQZEM6W
+09-08 22:09:50 ds64-contradiction-dense-u32M DONE
+09-08 22:10:16 eval ds64-contradiction-dense-u32M -> 01M2295RV3XGVP510FXJM1FASA
+09-08 22:10:18 ds64-contradiction-dense-u64M running
+09-08 22:10:45 status: data_ok ['contradiction', 'nq', 'oolong'] | runs 2/29 done, 27 pending | evals 0/2 done, 2 pending
+09-08 22:15:45 data build for outlier FAILED rc=1 (01M226TCBVWFPB6WSGN4NCKY4A) -- relaunch by hand: TASK=outlier bash debug/ds64/build_ds64_data_beaker.sh
+09-08 22:15:45 ds64-contradiction-hdr03-u16M DONE
+09-08 22:16:41 eval ds64-contradiction-hdr03-u16M -> 01M229HHJQXF8BWB7VRPQTEF97
+09-08 22:16:43 ds64-contradiction-runs03-u16M DONE
+09-08 22:17:10 eval ds64-contradiction-runs03-u16M -> 01M229JDBD1ARM0WZS2Z65P9YJ
+09-08 22:17:42 ds64-contradiction-hdr03-u64M running
+09-08 22:17:43 ds64-contradiction-hdr08-u64M running
+09-08 22:18:04 eval ds64-contradiction-dense-u32M failed rc=1; relaunching
+09-08 22:18:41 eval ds64-contradiction-dense-u32M -> 01M229N5MK4M3W0Z5TREK0YJVK
+09-08 22:18:46 eval ds64-contradiction-hdr03-u16M failed rc=1; relaunching
+09-08 22:19:13 eval ds64-contradiction-hdr03-u16M -> 01M229P5A0ENDZ9GY20K8FMJQV
+09-08 22:19:13 eval ds64-contradiction-runs03-u16M failed rc=1; relaunching
+09-08 22:19:41 eval ds64-contradiction-runs03-u16M -> 01M229Q06ZVYY0TBCCYDQ2F33T
+09-08 22:19:41 status: data_ok ['contradiction', 'nq', 'oolong'] | runs 4/29 done, 25 pending | evals 0/4 done, 4 pending
+09-08 22:24:41 data for outlier built (01M229PZ8SQF799EBWNG54ZDFH)
+09-08 22:25:21 launch ds64-outlier-dense-u16M -> 01M22A1CGM4HB6F3XGEG55A1QC
