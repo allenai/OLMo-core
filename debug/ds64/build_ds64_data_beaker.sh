@@ -25,9 +25,10 @@ export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false HF_HUB_DISABLE_PROGRES
 # ctc package go into THAT interpreter (the image's /opt/conda python lacks olmo_core's deps)
 PYB=\$(command -v python); echo "python: \$PYB"
 git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc || { echo "!!! ctc checkout FAILED"; exit 1; }
-(\$PYB -m pip --version >/dev/null 2>&1 || \$PYB -m ensurepip -q) ; \$PYB -m pip install -q numpy transformers ./ctc 2>&1 | tail -2
-CTC=\$(dirname \$PYB)/ctc-data; [ -x \$CTC ] || { echo "!!! ctc-data install FAILED"; exit 1; }
-\$PYB -c "import numpy, transformers, olmo_core, ctc" || { echo "!!! deps missing"; exit 1; }
+UV=\$(command -v uv || ls /gantry-runtime/uv \$HOME/.local/bin/uv /root/.local/bin/uv 2>/dev/null | head -1)
+if [ -n "\$UV" ]; then \$UV pip install --python "\$PYB" -q numpy transformers ./ctc 2>&1 | tail -2; else \$PYB -m ensurepip && \$PYB -m pip install -q numpy transformers ./ctc 2>&1 | tail -2; fi
+\$PYB -c "import numpy, transformers, olmo_core, ctc.data.cli" || { echo "!!! deps missing"; exit 1; }
+CTC="\$PYB -m ctc.data.cli"
 W=$WEKA/build/$TASK; mkdir -p \$W/pools \$W/arms $WEKA/shards
 i=0
 for R in 2k 4k 8k 16k 32k 56k; do
