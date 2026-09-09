@@ -21,13 +21,12 @@ case "$TASK" in nq) CONV_TASK=retrieval; CHUNK_BY=document ;; oolong) CONV_TASK=
 read -r -d '' WORK <<EOF
 set -uo pipefail
 export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false HF_HUB_DISABLE_PROGRESS_BARS=1
-# gantry --install puts the repo (olmo_core) in a uv venv = \`python\`; numpy/transformers and the
-# ctc package go into THAT interpreter (the image's /opt/conda python lacks olmo_core's deps)
-PYB=\$(command -v python); echo "python: \$PYB"
+# The image's /opt/conda python has torch + numpy; the repo's own deps and the ctc package are
+# pip-installed into it here (gantry's --install venv never gets torch, so it is skipped).
+PYB=/opt/conda/bin/python; echo "python: \$PYB"
 git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc || { echo "!!! ctc checkout FAILED"; exit 1; }
-UV=\$(command -v uv || ls /gantry-runtime/uv \$HOME/.local/bin/uv /root/.local/bin/uv 2>/dev/null | head -1)
-if [ -n "\$UV" ]; then \$UV pip install --python "\$PYB" -q numpy transformers ./ctc 2>&1 | tail -2; else \$PYB -m ensurepip && \$PYB -m pip install -q numpy transformers ./ctc 2>&1 | tail -2; fi
-\$PYB -c "import numpy, transformers, olmo_core, ctc.data.cli" || { echo "!!! deps missing"; exit 1; }
+\$PYB -m pip install -q -e . ./ctc 2>&1 | tail -2
+\$PYB -c "import numpy, transformers, torch, olmo_core, ctc.data.cli" || { echo "!!! deps missing"; exit 1; }
 CTC="\$PYB -m ctc.data.cli"
 W=$WEKA/build/$TASK; mkdir -p \$W/pools \$W/arms $WEKA/shards
 i=0
@@ -52,7 +51,7 @@ EOF
 
 gantry run --name "ds64-data-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
   --cluster 'ai2/jupiter*' --cluster 'ai2/neptune*' --cluster 'ai2/ceres*' --cluster 'ai2/saturn*' --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
-  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
+  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false \
   --weka oe-training-default:/weka/oe-training-default \
   --allow-dirty \
   --timeout 0 --yes -- bash -c "$WORK" 2>&1 | grep -oE "ex/[A-Z0-9]{26}" | head -1 | cut -d/ -f2
