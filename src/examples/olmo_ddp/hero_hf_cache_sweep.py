@@ -27,9 +27,13 @@ def main():
     os.environ.pop("OLMO_HF_MOE_CORE_REFERENCE", None)
     os.environ["OLMO_HF_MOE_REFERENCE_LOOP"] = "1"
     torch.set_float32_matmul_precision("highest")
-    model = AutoModelForCausalLM.from_pretrained(
-        root / "hf.partial", dtype=getattr(torch, args.dtype), attn_implementation="sdpa"
-    ).cuda().eval()
+    model = (
+        AutoModelForCausalLM.from_pretrained(
+            root / "hf.partial", dtype=getattr(torch, args.dtype), attn_implementation="sdpa"
+        )
+        .cuda()
+        .eval()
+    )
     tokenizer = AutoTokenizer.from_pretrained(root / "hf.partial")
     rows = []
     with torch.inference_mode(), sdpa_kernel(SDPBackend.MATH):
@@ -44,7 +48,7 @@ def main():
             cache = prefix.past_key_values
             pieces = []
             for index in range(split, ids.shape[1]):
-                part = model(ids[:, index:index+1], past_key_values=cache, use_cache=True)
+                part = model(ids[:, index : index + 1], past_key_values=cache, use_cache=True)
                 cache = part.past_key_values
                 pieces.append(part.logits.cpu())
             actual = torch.cat(pieces, dim=1)
@@ -52,11 +56,16 @@ def main():
             actual_lp = actual.float().log_softmax(-1)
             error = actual_lp - expected_lp
             row = dict(case=name, **statistics(actual, complete))
-            row.update(logprob_mean=error.abs().mean().item(), logprob_max=error.abs().max().item(),
-                       mean_kl=(expected_lp.exp() * -error).sum(-1).mean().item())
+            row.update(
+                logprob_mean=error.abs().mean().item(),
+                logprob_max=error.abs().max().item(),
+                mean_kl=(expected_lp.exp() * -error).sum(-1).mean().item(),
+            )
             row["meets_original_cache_limits"] = bool(
-                row["finite"] and row["relative_l2"] <= .005
-                and row["logprob_mean"] <= .01 and row["logprob_max"] <= .25
+                row["finite"]
+                and row["relative_l2"] <= 0.005
+                and row["logprob_mean"] <= 0.01
+                and row["logprob_max"] <= 0.25
             )
             rows.append(row)
             print("CACHE_SWEEP_RESULT", json.dumps(row), flush=True)

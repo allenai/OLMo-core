@@ -123,9 +123,13 @@ def main():
         fp32_model=args.fp32_model,
     )
     suffix = (
-        "-fp32model" if args.fp32_model else "-fp32linear"
-        if args.fp32_linears
-        else "-fp32reduce" if args.full_precision_reduction else ""
+        "-fp32model"
+        if args.fp32_model
+        else (
+            "-fp32linear"
+            if args.fp32_linears
+            else "-fp32reduce" if args.full_precision_reduction else ""
+        )
     )
     write_json(root / f"cache-debug-{'packed' if args.packed else 'loop'}{suffix}.json", result)
     print(
