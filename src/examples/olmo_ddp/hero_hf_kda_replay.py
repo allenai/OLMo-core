@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--layer", type=int, default=2)
     parser.add_argument("--captured-parameters-only", action="store_true")
     parser.add_argument("--solve-bk", type=int, choices=(32, 64))
+    parser.add_argument("--capture-tag", choices=("r13",))
     args = parser.parse_args()
     kernel = importlib.import_module(
         "fla.ops.kda.chunk_intra"
@@ -48,11 +49,12 @@ def main():
     fixed_convention = args.captured_parameters_only or args.solve_bk is not None
     root = SCRATCH / "emo" / "step6000"
     debug = root / "layer-debug-random257-flash3"
-    hf = torch.load(debug / "hf-layer-debug.pt", map_location="cpu", weights_only=True, mmap=True)[
-        "captures"
-    ]
+    tag = f"-{args.capture_tag}" if args.capture_tag else ""
+    hf = torch.load(
+        debug / f"hf-layer-debug{tag}.pt", map_location="cpu", weights_only=True, mmap=True
+    )["captures"]
     native = torch.load(
-        debug / "vllm-layer-debug.pt", map_location="cpu", weights_only=True, mmap=True
+        debug / f"vllm-layer-debug{tag}.pt", map_location="cpu", weights_only=True, mmap=True
     )
     config = json.loads((root / "hf.partial/config.json").read_text())
     prefix = f"model.layers.{args.layer}.self_attn"
@@ -141,9 +143,10 @@ def main():
             print("KDA_REPLAY", json.dumps(row), flush=True)
     suffix = "-loaded" if args.captured_parameters_only else ""
     suffix += f"-bk{args.solve_bk}" if args.solve_bk else ""
+    suffix += tag
     write_json(
         debug / f"kda-replay-layer{args.layer}{suffix}.json",
-        dict(layer=args.layer, cases=rows, diagnostic_only=True),
+        dict(layer=args.layer, cases=rows, capture_tag=args.capture_tag, diagnostic_only=True),
     )
 
 
