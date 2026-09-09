@@ -9,6 +9,8 @@ set -uo pipefail
 TASK="${TASK:?set TASK=outlier|contradiction|nq|oolong}"
 BUDGETS="${BUDGETS:-16M,32M,64M,128M}"
 # pool sizes = 128M x share / rung tokens, +15% (shares 30/20/15/13/12/10 over 2k..56k)
+# contradiction's pair pool caps near 18k distinct 2k examples (ctc-data refuses near-duplicates):
+# POOL_2K=15000 for it -> its 128M budget is skipped by compose (needs 18750)
 POOL_2K="${POOL_2K:-21600}"; POOL_4K="${POOL_4K:-7200}"; POOL_8K="${POOL_8K:-2700}"
 POOL_16K="${POOL_16K:-1170}"; POOL_32K="${POOL_32K:-540}"; POOL_56K="${POOL_56K:-260}"
 WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64
@@ -19,7 +21,9 @@ case "$TASK" in nq) CONV_TASK=retrieval; CHUNK_BY=document ;; oolong) CONV_TASK=
 read -r -d '' WORK <<EOF
 set -uo pipefail
 export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false HF_HUB_DISABLE_PROGRESS_BARS=1
-git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc && pip install -q ./ctc 2>&1 | tail -1; command -v ctc-data || { echo "!!! ctc-data install FAILED"; exit 1; }
+git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc && PYB=/opt/conda/bin/python; [ -x \$PYB ] || PYB=\$(command -v python)
+\$PYB -m pip install -q ./ctc 2>&1 | tail -1; command -v ctc-data || { echo "!!! ctc-data install FAILED"; exit 1; }
+\$PYB -c "import numpy, transformers" || \$PYB -m pip install -q numpy transformers
 W=$WEKA/build/$TASK; mkdir -p \$W/pools \$W/arms $WEKA/shards
 i=0
 for R in 2k 4k 8k 16k 32k 56k; do
@@ -30,13 +34,13 @@ for R in 2k 4k 8k 16k 32k 56k; do
   ctc-data build --task $TASK --out \$OUT --split train --rungs \$R --train \$N --seed \$((4200+i)) --pool auto --force || { echo "!!! pool FAILED \$R"; exit 1; }
   echo "    -> \$(wc -l < \$OUT/$TASK/train.jsonl) rows"
 done
-python debug/ds64/compose_uniform_arms.py --task $TASK --pools-dir \$W/pools --out-dir \$W/arms --budgets $BUDGETS || exit 1
+\$PYB debug/ds64/compose_uniform_arms.py --task $TASK --pools-dir \$W/pools --out-dir \$W/arms --budgets $BUDGETS || exit 1
 for f in \$W/arms/${TASK}_u*.jsonl; do
   ARM=\$(basename \$f .jsonl); OUT=$WEKA/shards/\$ARM
   if [ -s \$OUT/metadata.json ]; then echo "[skip] shard \$ARM"; continue; fi
   echo "--- tokenizing \$ARM \$(date +%T) ---"; mkdir -p \$OUT
-  PYTHONPATH=src python src/scripts/data/convert_unified_to_document_landmark.py --input-jsonl \$f --task $CONV_TASK --out-dir \$OUT --emit dense --marker-set qwen3_5 --tokenizer $TOKENIZER --seq-len 65536 --query-position after --cot-mode none --chunk-by $CHUNK_BY --emit-gold-sidecar --num-proc 16 || { echo "!!! tokenize FAILED \$ARM"; exit 1; }
-  python -c "import json;m=json.load(open('\$OUT/metadata.json'));print('    metadata:',{k:m.get(k) for k in ('num_instances','num_dropped','num_tokens','max_example_len','min_example_len','marker_set','query_position')})"
+  PYTHONPATH=src \$PYB src/scripts/data/convert_unified_to_document_landmark.py --input-jsonl \$f --task $CONV_TASK --out-dir \$OUT --emit dense --marker-set qwen3_5 --tokenizer $TOKENIZER --seq-len 65536 --query-position after --cot-mode none --chunk-by $CHUNK_BY --emit-gold-sidecar --num-proc 16 || { echo "!!! tokenize FAILED \$ARM"; exit 1; }
+  \$PYB -c "import json;m=json.load(open('\$OUT/metadata.json'));print('    metadata:',{k:m.get(k) for k in ('num_instances','num_dropped','num_tokens','max_example_len','min_example_len','marker_set','query_position')})"
 done
 ls -la $WEKA/shards | grep $TASK; echo "=== DONE $TASK ==="
 EOF
