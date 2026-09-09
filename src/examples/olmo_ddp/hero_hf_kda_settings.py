@@ -1,5 +1,6 @@
 """Isolate existing FLA launch settings on immutable real KDA inputs; no new kernels."""
 
+import argparse
 import importlib
 import json
 
@@ -25,6 +26,9 @@ KERNELS = (
 
 def main():
     """Replay one setting at a time, retaining normal autotuning for other stages."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--combined-only", action="store_true")
+    args = parser.parse_args()
     root = SCRATCH / "emo/step6000"
     debug = root / "layer-debug-random257-flash3"
     captures = torch.load(debug / "hf-layer-debug-r13.pt", weights_only=True, map_location="cpu")[
@@ -110,7 +114,7 @@ def main():
                 active_operators.append((name, operator))
             else:
                 print("KDA_SETTINGS_SKIP_UNUSED", name, flush=True)
-        for name, operator in active_operators:
+        for name, operator in ([] if args.combined_only else active_operators):
             original_configs, original_cache = operator.configs, dict(operator.cache)
             for candidate in original_configs:
                 operator.configs = [candidate]
@@ -133,7 +137,35 @@ def main():
                 print("KDA_SETTINGS_RESULT", json.dumps(row), flush=True)
             operator.configs = original_configs
             operator.cache = original_cache
-    write_json(debug / "kda-settings-r13.json", dict(diagnostic_only=True, cases=rows))
+        if args.combined_only:
+            by_name = dict(operators)
+            for name, key, value, warps in (
+                ("l2norm_fwd_kernel", "BT", 8, 8),
+                ("kda_gate_chunk_cumsum_vector_kernel", "BS", 32, 4),
+            ):
+                operator = by_name[name]
+                operator.configs = [
+                    c for c in operator.configs if c.kwargs[key] == value and c.num_warps == warps
+                ]
+                if len(operator.configs) != 1:
+                    raise RuntimeError(f"Expected one existing launch configuration: {name}")
+                operator.cache.clear()
+            operator = by_name["chunk_kda_fwd_kernel_intra_token_parallel"]
+            for candidate in tuple(operator.configs):
+                operator.configs = [candidate]
+                operator.cache.clear()
+                actual, _ = run()
+                row = dict(
+                    l2norm="BT8/warps8",
+                    gate_cumsum="BS32/warps4",
+                    intra=str(candidate),
+                    versus_hf=stats(actual, expected),
+                    versus_native=stats(actual, native_expected),
+                )
+                rows.append(row)
+                print("KDA_COMBINED_RESULT", json.dumps(row), flush=True)
+    suffix = "-combined" if args.combined_only else ""
+    write_json(debug / f"kda-settings-r13{suffix}.json", dict(diagnostic_only=True, cases=rows))
 
 
 if __name__ == "__main__":
