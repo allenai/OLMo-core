@@ -73,3 +73,15 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
 
 - 2026-09-08 21:20 first data builds launched (uniform 16k–56k) → all four died on the ctc-data
   install; 21:45 relaunched as short-heavy 2k–56k with the branch install.
+- 2026-09-08 21:40 local smokes on sneetches (1 GPU, 24 rows, seq 65536, unpacked, torch backend):
+  contradiction `hdr03`+runs and oolong `ohdr33` both train (4 steps, CE 0.02–0.06 / 0.2–0.65 from
+  the trained dense bases, checkpoint saved). 65536 throughput bench (1xH100, Beaker
+  01M226J7RBPPE8WS418AHER54H): dense/flash 9.70 s/step (6.8k tok/s); soft k=1/3 2.79 s (torch) /
+  2.76 s (flash) = dense on a 22.7k row (2.70 s); soft k=1/12 0.85 s (torch = flash) = dense on a
+  6.3k row (0.86 s). **Per-step speedup = the compaction factor (3.5x at 1/3, 11.4x at 1/12);
+  backend irrelevant; the +log L bias path is 2.7x slower and is not used.** Peak memory 22.5 /
+  20.6 GB vs 35.3 GB dense.
+- 21:35 data relaunch #2: contradiction with POOL_2K=15000 (ctc-data refuses >~18k distinct 2k
+  examples → its 128M budget is skipped), oolong tokenization with the conda interpreter
+  (bare `python` in the job lacks numpy); nq/outlier pools still building (their first tokenize
+  step will fail the same way; relaunch reuses the pools).
