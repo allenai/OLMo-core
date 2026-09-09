@@ -127,3 +127,8 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   micro-batches); the real fix is compact-then-pack with cu_seqlens (not done). The loader itself
   is fast (0.06–0.13 s per 8-row batch measured in isolation); the local "75% data loading" was
   the 24-row smoke shard cycling epochs and respawning workers.
+- 02:45 **keep ablation, contradiction 16M, full ladder (2k/8k/16k/32k/64k; dense 0.93/0.88/0.82/0.70/0.49, mean 0.76):**
+  hdr33 0.92/0.85/0.72/0.53/0.28 (0.66); hdr17 0.77/0.65/0.44/0.25/0.09 (0.44); hdr08
+  0.57/0.41/0.20/0.08/0.03 (0.26); hdr03 0.28/0.15/0.06/0.02/0.01 (0.11); runs08 0.60/0.43/0.19/0.08;
+  runs03 0.54/0.34/0.15/0.06/0.02. Monotone in keep; the gap to dense grows with context length
+  even at 1/3 (64k: 0.28 vs 0.49). Pareto verdict needs hdr33-32M/64M vs dense-16M/32M (in eval).
