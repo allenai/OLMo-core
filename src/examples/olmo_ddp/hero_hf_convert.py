@@ -86,6 +86,9 @@ def qualify(root: Path, *, full: bool) -> dict:
     raw, hf = root / "olmo-core", root / "hf.partial"
     experiment = load_config(raw)
     tokenizer = AutoTokenizer.from_pretrained(hf)
+    exported_vocab = json.loads((hf / "config.json").read_text())["vocab_size"]
+    if exported_vocab != experiment["dataset"]["tokenizer"]["vocab_size"]:
+        raise RuntimeError("HF vocabulary does not match the training tokenizer")
     cfg = reference_config(experiment["model"])
     model = TransformerConfig.from_dict(cfg).build(init_device="meta")
     model.to_empty(device="cpu")
@@ -98,7 +101,9 @@ def qualify(root: Path, *, full: bool) -> dict:
     with torch.inference_mode(), sdpa_kernel(SDPBackend.MATH):
         for name, ids in inputs:
             log.info("HERO_CORE_REFERENCE case=%s shape=%s", name, tuple(ids.shape))
-            references[name] = model(input_ids=ids.cuda()).cpu()
+            # The trainer pads the embedding/LM-head matrices to a multiple of 128.
+            # HF intentionally removes those non-token rows, as the stock verifier does.
+            references[name] = model(input_ids=ids.cuda())[..., :exported_vocab].cpu()
     del model
     gc.collect()
     torch.cuda.empty_cache()
@@ -161,6 +166,7 @@ def qualify(root: Path, *, full: bool) -> dict:
         "passed": True,
         "full": full,
         "checks": rows,
+        "compared_vocabulary": exported_vocab,
         "reference_logit_rtol": 1e-4,
         "reference_logit_atol": 1e-4,
         "cache_relative_l2_limit": 0.005,
