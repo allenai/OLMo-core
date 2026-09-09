@@ -176,6 +176,7 @@ def main() -> None:
     parser.add_argument("--step", type=int, choices=tuple(TARGETS.values()), required=True)
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--qualify-only", action="store_true")
+    parser.add_argument("--portable-reference", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     prepare_scratch()
@@ -191,6 +192,15 @@ def main() -> None:
         raise RuntimeError("Strict conversion requires a GPU")
     from olmo_core.config import DType
     from olmo_core.nn.hf.convert_checkpoint import convert_checkpoint_to_hf, load_config
+
+    if args.portable_reference:
+        from hero_hf_reference_ops import install, self_test
+
+        self_test()
+        install()
+        log.info(
+            "Using offline-only portable expert reference; independent HF/vLLM gates remain separate"
+        )
 
     if not args.qualify_only:
         if output.exists():
@@ -224,6 +234,9 @@ def main() -> None:
             "source_revision": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], text=True
             ).strip(),
+            "reference_experts": (
+                "portable_pytorch" if args.portable_reference else "training_extension"
+            ),
             "completed_at_unix": time.time(),
             "output": str(root / "hf"),
         }
