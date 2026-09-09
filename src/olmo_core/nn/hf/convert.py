@@ -689,12 +689,9 @@ def convert_qwen3_5_state_from_hf(
 # (:func:`convert_qwen3_5_state_from_hf`), olmo3moe uses dedicated functions.
 #
 # These mirror ``convert_checkpoint.py`` from the standalone MoE-v2 HF converter.
-# Norm handling only covers the default reordered-norm scheme (``use_peri_ln`` is
-# False): ``attention_norm`` -> ``post_attention_layernorm`` and
-# ``feed_forward_norm`` -> ``post_feedforward_layernorm``, uniformly across dense
-# and MoE layers. The peri-LN scheme is not supported here because it maps the
-# same OLMo-core norm key (``attention_norm``) to different HF keys depending on
-# whether the layer is dense or MoE, which cannot be expressed uniformly.
+# Norm handling covers both reordered norm and peri-LN. The latter additionally maps the
+# OLMo-core input-norm weights to HF's ``pre_*_layernorm`` weights; the shared branch norms map to
+# HF's ``post_*_layernorm`` weights in both dense and MoE layers.
 # ---------------------------------------------------------------------------
 
 
@@ -837,6 +834,8 @@ def convert_olmo3moe_state_from_hf(
             }
             if getattr(config, "attention_gate_type", None) is not None:
                 attention_map["g_proj.weight"] = "w_g.weight"
+            if getattr(config, "scalable_softmax", False):
+                attention_map["ssmax_scale"] = "ssmax_scale"
             for hf_suffix, olmo_suffix in attention_map.items():
                 olmo_state[f"{olmo_prefix}attention.{olmo_suffix}"] = _take(
                     hf_state, used, f"{prefix}self_attn.{hf_suffix}"
@@ -986,6 +985,8 @@ def convert_olmo3moe_state_to_hf(
             }
             if getattr(config, "attention_gate_type", None) is not None:
                 attention_map["w_g.weight"] = "g_proj.weight"
+            if getattr(config, "scalable_softmax", False):
+                attention_map["ssmax_scale"] = "ssmax_scale"
             for olmo_suffix, hf_suffix in attention_map.items():
                 hf_state[f"{prefix}self_attn.{hf_suffix}"] = _take(
                     olmo_core_state,

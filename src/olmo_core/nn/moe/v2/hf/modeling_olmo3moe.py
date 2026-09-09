@@ -1,6 +1,7 @@
+import os
 from collections.abc import Callable
 from inspect import signature
-from typing import Optional, Union, cast
+from typing import Dict, Optional, Union, cast
 
 import torch
 import torch.nn as nn
@@ -172,7 +173,42 @@ class Olmo3MoeExpert(nn.Module):
         self.down_proj = nn.Linear(self.moe_intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[hidden_act]
 
+    def _forward_olmo_core_shared_reference(self, x: torch.Tensor) -> torch.Tensor:
+        """Match the packed single-shared-expert OLMo-core BF16 forward exactly.
+
+        OLMo-core stores the shared up/gate projections in one contiguous ``[D, 2H]``
+        tensor and evaluates them with one GEMM, followed by a one-group batched down
+        projection.  The ordinary HF implementation below is mathematically equivalent,
+        but its two independent up/gate GEMMs can round differently in BF16.  Peri-norm
+        can amplify those otherwise harmless differences enough to obscure strict
+        end-to-end conversion validation.
+
+        This path is only selected by the same opt-in verifier environment variable used
+        for the routed experts; normal HF and vLLM inference keep their optimized paths.
+        """
+        input_shape = x.shape
+        x_flat = x.reshape(-1, self.hidden_size)
+        # Reconstruct the exact contiguous OLMo-core SharedExperts parameter layouts.
+        w_up_gate = (
+            torch.cat((self.up_proj.weight, self.gate_proj.weight), dim=0)
+            .transpose(0, 1)
+            .contiguous()
+        )
+        up_gate = x_flat @ w_up_gate
+        up, gate = up_gate.chunk(2, dim=-1)
+        hidden = up * F.silu(gate)
+        w_down = self.down_proj.weight.transpose(0, 1).contiguous().unsqueeze(0)
+        out = torch.bmm(hidden.unsqueeze(0), w_down).squeeze(0)
+        return out.view(*input_shape[:-1], self.hidden_size)
+
     def forward(self, x):
+        if os.environ.get("OLMO_HF_MOE_CORE_REFERENCE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_olmo_core_shared_reference(x)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 
@@ -300,12 +336,107 @@ class Olmo3MoeExperts(nn.ModuleList):
         weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
         return weighted_y.reshape(N, K, H).sum(dim=1)
 
+    def _forward_olmo_core_reference(
+        self,
+        hidden_states: torch.Tensor,
+        topk_ids: torch.Tensor,
+        topk_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run the exact OLMo-core no-EP expert layout for conversion validation.
+
+        The ordinary HF eager loop is semantically equivalent, but it launches one GEMM per
+        expert and accumulates routed rows in a different order.  In bf16 those differences can
+        compound enough to obscure a strict checkpoint-conversion check.  This opt-in path uses
+        the same permutation, grouped GEMM, SwiGLU layout, and unpermutation as OLMo-core while
+        retaining the converted HF parameters as the source of truth.
+        """
+        # This is an opt-in conversion-validation path, so keep OLMo-core an optional
+        # dependency of the otherwise standalone exported HF module. Transformers'
+        # remote-code loader deliberately ignores imports guarded by ``try`` while
+        # checking dependencies; without the guard, vLLM's generic Transformers
+        # backend refuses to load an export even though this path is disabled.
+        try:
+            from olmo_core.nn.moe.utils import (
+                moe_permute_no_compile,
+                moe_unpermute_no_compile,
+            )
+            from olmo_core.nn.moe.v2.routed_experts import (
+                gmm,
+                requires_host_side_split_sizes,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "OLMO_HF_MOE_CORE_REFERENCE requires the ai2-olmo-core package"
+            ) from exc
+
+        N, H = hidden_states.shape
+        K = topk_ids.shape[-1]
+        num_experts = len(self)
+        routing_map = topk_ids.reshape(N, K).int()
+        permuted, reverse_mapping = moe_permute_no_compile(
+            inp=hidden_states,
+            routing_map=routing_map,
+            num_out_tokens=N * K,
+            map_type="index",
+        )
+
+        batch_size_per_expert = torch.bincount(routing_map.reshape(-1), minlength=num_experts)
+        if requires_host_side_split_sizes():
+            batch_size_per_expert = batch_size_per_expert.to(device="cpu", dtype=torch.int64)
+        else:
+            batch_size_per_expert = batch_size_per_expert.to(dtype=torch.int32)
+
+        w_up_gate = torch.stack(
+            [torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0) for expert in self]
+        )
+        up_gate = gmm(
+            permuted,
+            w_up_gate,
+            batch_size_per_expert,
+            trans_b=True,
+        )
+        up, gate = up_gate.chunk(2, dim=-1)
+        activated = up * F.silu(gate)
+        w_down = torch.stack([expert.down_proj.weight.transpose(0, 1) for expert in self])
+        expert_out = gmm(
+            activated,
+            w_down,
+            batch_size_per_expert,
+            trans_b=False,
+        )
+        return moe_unpermute_no_compile(
+            inp=expert_out,
+            row_id_map=reverse_mapping,
+            restore_shape=hidden_states.shape,
+            map_type="index",
+            merging_probs=topk_weights.reshape(N, K),
+        )
+
     def forward(
         self,
         hidden_states: torch.Tensor,  # (N, H)
         topk_ids: torch.Tensor,  # (N, K)
         topk_weights: torch.Tensor,  # (N, K)
     ) -> torch.Tensor:
+        if os.environ.get("OLMO_HF_MOE_CORE_REFERENCE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_olmo_core_reference(hidden_states, topk_ids, topk_weights)
+
+        # Conversion validation needs a deterministic reference path. In particular, a failed
+        # CUDA grouped_mm launch may poison the CUDA context before the RuntimeError below can be
+        # caught, making the eager fallback fail at an unrelated later operation.
+        if os.environ.get("OLMO_HF_MOE_REFERENCE_LOOP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return self._forward_loop(hidden_states, topk_ids, topk_weights)
+
         # Use a compile-safe fallback if TorchDynamo is tracing this module.
         # NOTE: This is extremely slow because it runs every expert on every token.
         try:
@@ -419,12 +550,55 @@ class Olmo3MoeRouter(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts_per_tok = config.num_experts_per_tok
         self.original_num_experts_per_tok = config.original_num_experts_per_tok
+        self.n_routed_experts = config.n_routed_experts
         self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
         self.restore_weight_scale = config.restore_weight_scale
+        # Evaluation-time expert restriction. This is inference state rather than model
+        # configuration, so it is non-persistent and absent from the state dict.
+        self.register_buffer("allowed_experts", None, persistent=False)
+
+    def set_allowed_experts(self, allowed_experts: torch.Tensor) -> None:
+        """
+        Restrict routing to a fixed subset of the routed experts.
+
+        The mask is applied to the router scores immediately before the ordinary
+        token-level top-k selection, so masked experts can never be routed to. Token
+        top-k, expert weighting, and the shared expert are otherwise unchanged.
+
+        :param allowed_experts: A boolean tensor of shape ``(n_routed_experts,)`` that is
+            ``True`` for every expert the router may select.
+
+        :raises ValueError: If the mask has the wrong shape or dtype, or allows fewer
+            experts than ``num_experts_per_tok``.
+        """
+        if allowed_experts.dtype != torch.bool:
+            raise ValueError(f"allowed_experts must be a bool tensor, got {allowed_experts.dtype}")
+        if allowed_experts.shape != (self.n_routed_experts,):
+            raise ValueError(
+                f"allowed_experts must have shape ({self.n_routed_experts},), "
+                f"got {tuple(allowed_experts.shape)}"
+            )
+        num_allowed = int(allowed_experts.sum().item())
+        if num_allowed < self.num_experts_per_tok:
+            raise ValueError(
+                f"allowed_experts must allow at least num_experts_per_tok="
+                f"{self.num_experts_per_tok} experts, got {num_allowed}"
+            )
+        self.allowed_experts = allowed_experts.detach().to(device=self.gate.weight.device)
+
+    def clear_allowed_experts(self) -> None:
+        """
+        Remove any expert restriction, restoring ordinary full-expert routing.
+        """
+        self.allowed_experts = None
 
     def forward(self, x):
-        logits = self.gate(x)
+        # OLMo-core intentionally evaluates the router projection in float32 even when the
+        # transformer and router weights are stored in bf16.  Keeping the HF path in bf16 can
+        # perturb both the selected experts and their combine weights, which then compounds over
+        # layers.  Match ``MoERouterV2.get_expert_logits()`` exactly here.
+        logits = F.linear(x.float(), self.gate.weight.float())
 
         if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)
@@ -435,6 +609,12 @@ class Olmo3MoeRouter(nn.Module):
             scores = scores + 1e-7
         else:
             raise NotImplementedError(self.gating_function)
+
+        if self.allowed_experts is not None:
+            # Masking the scores (rather than the logits) matches the training-time EMO
+            # document-pool operator, which selects on masked scores but weights with the
+            # unmasked ones. An all-allowed mask is an exact no-op.
+            scores = scores.masked_fill(~self.allowed_experts, float("-inf"))
 
         expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
 
@@ -463,6 +643,32 @@ class Olmo3MoeRouter(nn.Module):
         return expert_weights, expert_indices
 
 
+def get_moe_routers(model: nn.Module) -> Dict[int, Olmo3MoeRouter]:
+    """
+    Collect the routers of every MoE layer in an Olmo3Moe model, keyed by layer index.
+
+    Dense layers have no router and are omitted, so the returned keys are the complement
+    of :attr:`Olmo3MoeConfig.dense_layers_indices`.
+
+    :param model: An :class:`Olmo3MoeModel` or :class:`Olmo3MoeForCausalLM`.
+
+    :returns: A mapping from layer index to that layer's router.
+
+    :raises ValueError: If the model does not expose decoder layers.
+    """
+    base = getattr(model, "model", model)
+    layers = getattr(base, "layers", None)
+    if layers is None:
+        raise ValueError(f"{type(model).__name__} does not expose decoder layers")
+
+    routers: Dict[int, Olmo3MoeRouter] = {}
+    for layer_idx, layer in enumerate(layers):
+        router = getattr(getattr(layer, "mlp", None), "router", None)
+        if isinstance(router, Olmo3MoeRouter):
+            routers[layer_idx] = router
+    return routers
+
+
 class Olmo3MoeCausalConv1d(nn.Conv1d):
     """Depthwise causal convolution with the same FLA path as OLMo-core KDA."""
 
@@ -476,7 +682,12 @@ class Olmo3MoeCausalConv1d(nn.Conv1d):
             padding=kernel_size - 1,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        initial_state: Optional[torch.Tensor] = None,
+        output_final_state: bool = False,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         try:
             from fla.modules.convolution import causal_conv1d
         except ImportError as exc:  # pragma: no cover - environment failure
@@ -484,15 +695,17 @@ class Olmo3MoeCausalConv1d(nn.Conv1d):
                 "KDA inference requires flash-linear-attention with "
                 "fla.modules.convolution.causal_conv1d"
             ) from exc
-        output, _ = causal_conv1d(
+        output, final_state = causal_conv1d(
             x=x,
             weight=self.weight.squeeze(1),
             bias=None,
+            initial_state=initial_state,
+            output_final_state=output_final_state,
             activation="silu",
             backend="triton",
             cu_seqlens=None,
         )
-        return output
+        return output, final_state
 
 
 class Olmo3MoeKimiDeltaAttention(nn.Module):
@@ -551,22 +764,41 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         **kwargs,
     ) -> tuple[torch.Tensor, None]:
         del kwargs
-        if past_key_values is not None:
-            raise NotImplementedError(
-                "The exported KDA model does not yet implement recurrent-state caching; "
-                "run with use_cache=False."
-            )
         try:
-            from fla.ops.kda import chunk_kda
+            from fla.ops.kda import chunk_kda, fused_recurrent_kda
         except ImportError as exc:  # pragma: no cover - environment failure
             raise RuntimeError(
                 "KDA inference requires flash-linear-attention with fla.ops.kda.chunk_kda"
             ) from exc
 
         batch_size, seq_len, _ = hidden_states.shape
-        q = self.q_conv1d(self.q_proj(hidden_states))
-        k = self.k_conv1d(self.k_proj(hidden_states))
-        v = self.v_conv1d(self.v_proj(hidden_states))
+        cache_layer = (
+            past_key_values.layers[self.layer_idx] if past_key_values is not None else None
+        )
+        has_indexed_states = cache_layer is not None and hasattr(cache_layer, "number_of_states")
+        if cache_layer is None:
+            has_previous_state = False
+        elif has_indexed_states:
+            has_previous_state = all(cache_layer.has_previous_state.values())
+        else:
+            has_previous_state = bool(cache_layer.has_previous_state)
+        if has_previous_state and has_indexed_states:
+            initial_conv_states = [cache_layer.conv_states[i] for i in range(3)]
+        elif has_previous_state:
+            initial_conv_states = list(
+                cache_layer.conv_states.split((self.key_dim, self.key_dim, self.value_dim), dim=1)
+            )
+        else:
+            initial_conv_states = [None, None, None]
+        q, q_state = self.q_conv1d(
+            self.q_proj(hidden_states), initial_conv_states[0], cache_layer is not None
+        )
+        k, k_state = self.k_conv1d(
+            self.k_proj(hidden_states), initial_conv_states[1], cache_layer is not None
+        )
+        v, v_state = self.v_conv1d(
+            self.v_proj(hidden_states), initial_conv_states[2], cache_layer is not None
+        )
         raw_decay = self.f_proj_2(self.f_proj_1(hidden_states))
         beta = self.beta_proj(hidden_states).float().sigmoid()
         if self.allow_neg_eigval:
@@ -576,17 +808,60 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         k = k.view(batch_size, seq_len, self.n_heads, self.head_k_dim)
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
-        output, _ = chunk_kda(
-            q=q,
-            k=k,
-            v=v,
-            g=raw_decay,
-            beta=beta,
-            A_log=self.A_log,
-            dt_bias=self.dt_bias,
-            use_qk_l2norm_in_kernel=True,
-            use_gate_in_kernel=True,
-        )
+        if has_previous_state and has_indexed_states:
+            initial_recurrent_state = cache_layer.recurrent_states[0].float()
+        elif has_previous_state:
+            initial_recurrent_state = cache_layer.recurrent_states.float()
+        else:
+            initial_recurrent_state = None
+        if has_previous_state and seq_len == 1:
+            # The chunk kernel can fuse this transform, while the recurrent
+            # inference kernel expects the log-space decay directly.
+            decay = -self.A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
+                raw_decay.float() + self.dt_bias.float().view(1, 1, self.n_heads, self.head_k_dim)
+            )
+            output, recurrent_state = fused_recurrent_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=decay,
+                beta=beta,
+                initial_state=initial_recurrent_state,
+                output_final_state=cache_layer is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            output, recurrent_state = chunk_kda(
+                q=q,
+                k=k,
+                v=v,
+                g=raw_decay,
+                beta=beta,
+                A_log=self.A_log,
+                dt_bias=self.dt_bias,
+                initial_state=initial_recurrent_state,
+                output_final_state=cache_layer is not None,
+                use_qk_l2norm_in_kernel=True,
+                use_gate_in_kernel=True,
+            )
+        if cache_layer is not None:
+            assert past_key_values is not None
+            assert q_state is not None and k_state is not None and v_state is not None
+            assert recurrent_state is not None
+            if has_indexed_states:
+                for state_idx, conv_state in enumerate((q_state, k_state, v_state)):
+                    past_key_values.update_conv_state(
+                        conv_state,
+                        self.layer_idx,
+                        state_idx=state_idx,
+                        conv_kernel_size=self.q_conv1d.kernel_size[0],
+                    )
+                past_key_values.update_recurrent_state(recurrent_state, self.layer_idx, state_idx=0)
+            else:
+                past_key_values.update_conv_state(
+                    torch.cat((q_state, k_state, v_state), dim=1), self.layer_idx
+                )
+                past_key_values.update_recurrent_state(recurrent_state, self.layer_idx)
         output_gate = self.g_proj_2(self.g_proj_1(hidden_states)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
         )
@@ -697,6 +972,7 @@ class Olmo3MoeAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
         self.use_head_qk_norm = config.use_head_qk_norm
+        self.scalable_softmax = config.scalable_softmax
         self.gate_type = config.attention_gate_type
         self.gate_full_precision = config.attention_gate_full_precision
 
@@ -747,11 +1023,39 @@ class Olmo3MoeAttention(nn.Module):
             self.k_norm = Olmo3MoeRMSNorm(
                 config.num_key_value_heads * self.head_dim, config.rms_norm_eps
             )
+        self.ssmax_scale: Optional[nn.Parameter]
+        if self.scalable_softmax:
+            self.ssmax_scale = nn.Parameter(torch.ones(config.num_attention_heads))
+        else:
+            self.register_parameter("ssmax_scale", None)
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = (
             config.sliding_window if self.attention_type == "sliding_attention" else None
         )
+
+    def _apply_scalable_softmax(
+        self,
+        query_states: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
+        cache_position: Optional[torch.LongTensor],
+    ) -> torch.Tensor:
+        if not self.scalable_softmax:
+            return query_states
+        if position_ids is None:
+            if cache_position is None:
+                raise ValueError("Scalable-Softmax requires position_ids or cache_position")
+            position_ids = cache_position.unsqueeze(0)
+        assert self.ssmax_scale is not None
+
+        # Preserve OLMo-core's bf16 operation order exactly: first form the combined
+        # per-token/per-head scale, then multiply Q once. Applying the two factors to Q
+        # sequentially is algebraically equivalent in real arithmetic but introduces a
+        # different bf16 rounding point and breaks strict conversion parity.
+        visible_scale = (position_ids + 1).log().to(query_states.dtype)
+        scale = visible_scale[:, None, :, None]
+        scale = scale * self.ssmax_scale.to(query_states.dtype)[None, :, None, None]
+        return query_states * scale
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -761,6 +1065,7 @@ class Olmo3MoeAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
@@ -792,6 +1097,8 @@ class Olmo3MoeAttention(nn.Module):
         if position_embeddings is not None:
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        query_states = self._apply_scalable_softmax(query_states, position_ids, cache_position)
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}
@@ -960,11 +1267,6 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
                 inputs_embeds = self.embed_norm(inputs_embeds)
 
         has_linear_attention = "linear_attention" in self.config.layer_types
-        if use_cache and has_linear_attention:
-            raise NotImplementedError(
-                "KDA recurrent-state caching is not implemented in the exported HF model; "
-                "run with use_cache=False."
-            )
         if has_linear_attention:
             _validate_linear_attention_mask(attention_mask)
         if use_cache and past_key_values is None:
