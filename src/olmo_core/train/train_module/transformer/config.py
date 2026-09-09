@@ -323,6 +323,15 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
     autocast_precision: Optional[DType] = None
     label_ignore_index: int = -100
 
+    microbatch_sort_pad_id: Optional[int] = None
+    """
+    When set (the pad token id of right-padded, one-example-per-row batches), each rank's batch is
+    sorted by real length (descending) before it is split into micro-batches, so every micro-batch
+    holds rows of similar length. Matters for the soft-token path, whose compacted rows are padded
+    to the longest row in the micro-batch: with a short-heavy mix one 56k row beside seven 2k rows
+    inflated the compacted micro-batch ~6x (2026-09-09 ds64 campaign). No effect on packed data.
+    """
+
     def build(
         self,
         model: Transformer,
@@ -346,6 +355,7 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**state_dict_load_opts)
 
         if self.pp_config is not None:
+            kwargs.pop("microbatch_sort_pad_id", None)  # the pipeline module splits its own micro-batches
             return TransformerPipelineTrainModule(
                 model=model,
                 device=device,

@@ -603,6 +603,7 @@ def build_train_module_config(
     )
     return TransformerTrainModuleConfig(
         rank_microbatch_size=opts.micro_batch_instances * opts.seq_len,
+        microbatch_sort_pad_id=(RESERVED_IDS[opts.model_family].eos if opts.variant == "softtoken" else None),  # length-homogeneous micro-batches
         max_sequence_length=opts.seq_len,
         optim=SkipStepAdamWConfig(
             lr=opts.lr,

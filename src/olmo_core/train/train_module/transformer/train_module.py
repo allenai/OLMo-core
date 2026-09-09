@@ -121,6 +121,7 @@ class TransformerTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        microbatch_sort_pad_id: Optional[int] = None,
     ):
         super().__init__()
 
@@ -180,6 +181,7 @@ class TransformerTrainModule(TrainModule):
         self._tp_config = tp_config
         self._ep_config = ep_config
         self.label_ignore_index = label_ignore_index
+        self.microbatch_sort_pad_id = microbatch_sort_pad_id
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -390,6 +392,15 @@ class TransformerTrainModule(TrainModule):
             raise RuntimeError(
                 f"Microbatch size ({self.rank_microbatch_size}) is too small relative to sequence length ({seq_len})"
             )
+        if self.microbatch_sort_pad_id is not None and batch["input_ids"].shape[0] > 1:
+            # Length-homogeneous micro-batches (see TransformerTrainModuleConfig.microbatch_sort_pad_id).
+            n_rows = batch["input_ids"].shape[0]
+            lengths = (batch["input_ids"] != self.microbatch_sort_pad_id).sum(dim=1)
+            order = torch.argsort(lengths, descending=True)
+            batch = {
+                k: (v[order.to(v.device)] if torch.is_tensor(v) and v.dim() >= 1 and v.shape[0] == n_rows else v)
+                for k, v in batch.items()
+            }
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
