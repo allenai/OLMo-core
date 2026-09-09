@@ -140,8 +140,12 @@ RUN if [ -n "${FLASH_ATTN_4_VERSION}" ]; then \
     fi
 
 # Install transformer-engine.
+# NVTE_WITH_NCCL_EP=0 disables TE's own NCCL expert-parallel extension (csrc/extensions/ep.cpp).
+# We don't use it (olmo-core has its own EP: symm_mem_vdev2d / nccl_rma_p2p), and on a devel/RMA
+# base it otherwise compiles against the system NCCL headers — TE >= 2.18 needs a newer NCCL
+# (ncclWindow_vidmem) than the image ships, breaking the build. Only TE's MXFP8 path is needed.
 ARG TE_VERSION=2.9
-RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
+RUN NVTE_WITH_NCCL_EP=0 TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" pip install --no-build-isolation --no-cache-dir transformer-engine[pytorch]==${TE_VERSION}
 
 # Install ring-flash-attn.
 ARG RING_FLASH_ATTN_VERSION=0.1.8
