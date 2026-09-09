@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--case", default="text0")
     parser.add_argument("--decode-tokens", type=int, choices=(1, 4), default=1)
     parser.add_argument("--recurrent-prefill", action="store_true")
+    parser.add_argument("--freeze-reference-routes", action="store_true")
     args = parser.parse_args()
     if args.pad_biased_single_row:
         original_linear = torch.nn.Linear.forward
@@ -94,6 +95,38 @@ def main():
     split = ids.shape[1] - args.decode_tokens
     captures = {}
     phase = "full"
+    route_reference = {}
+    forced_changes = {}
+    token_offset = 0
+
+    def route_hook(name, module, inputs, outputs):
+        """Diagnostic intervention: keep reference expert IDs, not reference weights."""
+        if phase == "full":
+            route_reference[name] = outputs[1].detach().clone()
+            return
+        length = inputs[0].shape[1]
+        indices = route_reference[name][:, token_offset : token_offset + length]
+        changed = (outputs[1].sort(-1).values != indices.sort(-1).values).any(-1)
+        forced_changes[name] = forced_changes.get(name, 0) + int(changed.sum())
+        logits = torch.nn.functional.linear(inputs[0].float(), module.gate.weight.float())
+        scores = (
+            logits.sigmoid() + 1e-7 if module.gating_function == "sigmoid" else logits.softmax(-1)
+        )
+        weights = scores.gather(-1, indices)
+        if module.normalize_expert_weights is not None:
+            weights = weights / torch.norm(
+                weights, p=module.normalize_expert_weights, dim=-1, keepdim=True
+            )
+        if module.restore_weight_scale:
+            weights = weights * module.num_experts_per_tok
+        if (
+            module.original_num_experts_per_tok is not None
+            and module.num_experts_per_tok != module.original_num_experts_per_tok
+        ):
+            weights = (
+                weights * (module.original_num_experts_per_tok / module.num_experts_per_tok) ** 0.5
+            )
+        return weights, indices
 
     def hook(name, module, inputs, outputs):
         if phase == "prefix":
@@ -122,6 +155,8 @@ def main():
                     )
 
     for name, module in model.named_modules():
+        if args.freeze_reference_routes and name.endswith(".mlp.router"):
+            module.register_forward_hook(partial(route_hook, name))
         if (
             name.startswith("model.layers.")
             and ".experts." not in name
@@ -136,6 +171,7 @@ def main():
         cache = prefix.past_key_values
         pieces = []
         for index in range(split, ids.shape[1]):
+            token_offset = index
             result = model(ids[:, index : index + 1], past_key_values=cache, use_cache=True)
             cache = result.past_key_values
             pieces.append(result.logits.cpu())
@@ -181,6 +217,9 @@ def main():
         case=args.case,
         decode_tokens=args.decode_tokens,
         recurrent_prefill=args.recurrent_prefill,
+        frozen_reference_routes=args.freeze_reference_routes,
+        forced_expert_set_changes=forced_changes,
+        diagnostic_only=True,
     )
     suffix = (
         "-padbias"
@@ -198,6 +237,8 @@ def main():
     suffix += f"-{args.case}-n{args.decode_tokens}" + (
         "-recurrent" if args.recurrent_prefill else ""
     )
+    if args.freeze_reference_routes:
+        suffix += "-fixed-routes"
     write_json(root / f"cache-debug-{'packed' if args.packed else 'loop'}{suffix}.json", result)
     print(
         "CACHE_DEBUG_RESULT",
