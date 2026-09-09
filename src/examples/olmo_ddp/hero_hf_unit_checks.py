@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -14,6 +15,7 @@ from olmo_core.nn.hf.convert import convert_olmo3moe_state_from_hf, convert_olmo
 from olmo_core.nn.layer_norm import RMSNorm
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+    Olmo3MoeDenseMLP,
     Olmo3MoeExperts,
     Olmo3MoeForCausalLM,
     Olmo3MoeRMSNorm,
@@ -23,6 +25,23 @@ from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
 
 class HeroHFChecks(unittest.TestCase):
     """Exercise nontrivial per-head gains, GQA, legacy export, and cached attention."""
+
+    def test_dense_shared_packed_reference(self):
+        from olmo_core.config import DType
+        from olmo_core.nn.moe.v2.shared_experts import SharedExperts
+
+        cfg = Olmo3MoeConfig(
+            hidden_size=32, dense_mlp_intermediate_size=48, dense_layers_use_shared_expert=True
+        )
+        hf = Olmo3MoeDenseMLP(cfg).to(torch.bfloat16)
+        core = SharedExperts(32, 48, 1, False, DType.bfloat16)
+        with torch.no_grad():
+            hf.up_proj.weight.copy_(core.w_up_gate[:, :48].T)
+            hf.gate_proj.weight.copy_(core.w_up_gate[:, 48:].T)
+            hf.down_proj.weight.copy_(core.w_down[0].T)
+        x = torch.randn(1, 63, 32, dtype=torch.bfloat16)
+        with patch.dict("os.environ", OLMO_HF_MOE_CORE_REFERENCE="1"), torch.no_grad():
+            torch.testing.assert_close(hf(x), core(x).squeeze(0), rtol=0, atol=0)
 
     def test_fp32_expert_combine_weights(self):
         cfg = Olmo3MoeConfig(
