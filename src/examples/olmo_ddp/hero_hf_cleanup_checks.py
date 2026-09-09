@@ -43,12 +43,26 @@ class CleanupChecks(unittest.TestCase):
         }
         self.record("conversion-success.json", conversion)
         self.record("hf/_HERO_CONVERSION_SUCCESS.json", conversion)
-        self.record("vllm-parity-success.json", {"passed": True, "model": str(self.hf)})
+        conversion_hash = hashlib.sha256(
+            (self.hf / "_HERO_CONVERSION_SUCCESS.json").read_bytes()
+        ).hexdigest()
+        self.record(
+            "vllm-parity-success.json",
+            {
+                "passed": True,
+                "model": str(self.hf),
+                "conversion_sha256": conversion_hash,
+            },
+        )
         self.record("metrics.json", {"tasks": ["toy"]})
         self.record(
             "eval-smoke-success.json",
             {
                 "passed": True,
+                "conversion_sha256": conversion_hash,
+                "parity_sha256": hashlib.sha256(
+                    (self.root / "vllm-parity-success.json").read_bytes()
+                ).hexdigest(),
                 "model": str(self.hf),
                 "metrics": str(self.root / "metrics.json"),
                 "metrics_sha256": hashlib.sha256(
@@ -69,6 +83,23 @@ class CleanupChecks(unittest.TestCase):
 
     def test_missing_eval_refuses(self):
         (self.root / "eval-smoke-success.json").unlink()
+        with self.assertRaises(RuntimeError):
+            subject.cleanup("emo", 6000)
+        self.assertTrue(self.raw.exists())
+
+    def test_stale_receipt_refuses(self):
+        conversion = json.loads((self.root / "conversion-success.json").read_text())
+        conversion["revision"] = "new revision not yet evaluated"
+        self.record("conversion-success.json", conversion)
+        self.record("hf/_HERO_CONVERSION_SUCCESS.json", conversion)
+        with self.assertRaises(RuntimeError):
+            subject.cleanup("emo", 6000)
+        self.assertTrue(self.raw.exists())
+
+    def test_diagnostic_receipt_refuses(self):
+        smoke = json.loads((self.root / "eval-smoke-success.json").read_text())
+        smoke["diagnostic_only"] = True
+        self.record("eval-smoke-success.json", smoke)
         with self.assertRaises(RuntimeError):
             subject.cleanup("emo", 6000)
         self.assertTrue(self.raw.exists())

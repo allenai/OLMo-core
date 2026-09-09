@@ -38,6 +38,8 @@ def cleanup(arm: str, step: int) -> dict:
         conversion.get("passed") is not True
         or parity.get("passed") is not True
         or smoke.get("passed") is not True
+        or parity.get("diagnostic_only")
+        or smoke.get("diagnostic_only")
         or conversion.get("arm") != arm
         or conversion.get("step") != step
         or conversion.get("output") != str(hf)
@@ -49,6 +51,18 @@ def cleanup(arm: str, step: int) -> dict:
         raise RuntimeError("Conversion/parity/eval provenance is incomplete or inconsistent")
     if json.loads(checked_file(hf, "_HERO_CONVERSION_SUCCESS.json").read_text()) != conversion:
         raise RuntimeError("HF output's conversion receipt disagrees with external receipt")
+    conversion_hash = hashlib.sha256(
+        checked_file(hf, "_HERO_CONVERSION_SUCCESS.json").read_bytes()
+    ).hexdigest()
+    parity_hash = hashlib.sha256(
+        checked_file(root, "vllm-parity-success.json").read_bytes()
+    ).hexdigest()
+    if (
+        parity.get("conversion_sha256") != conversion_hash
+        or smoke.get("conversion_sha256") != conversion_hash
+        or smoke.get("parity_sha256") != parity_hash
+    ):
+        raise RuntimeError("Stale or mismatched conversion/parity/eval receipt chain")
     hashes = conversion.get("output_sha256", {})
     if not hashes or not any(name.endswith(".safetensors") for name in hashes):
         raise RuntimeError("No verified HF model weights")
