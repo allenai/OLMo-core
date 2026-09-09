@@ -159,6 +159,29 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
+def _qk_norm_per_head_gains(attentions: list) -> bool:
+    """Infer gain layout from actual parameters and reject heterogeneous/lossy exports."""
+    modes = set()
+    for attention in attentions:
+        if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
+            raise NotImplementedError("olmo3moe export requires head-wise QK normalization")
+        q, k = attention.q_norm, attention.k_norm
+        if q.weight is None or k.weight is None or q.bias is not None or k.bias is not None:
+            raise NotImplementedError("olmo3moe QK norms require weights without biases")
+        shapes = (tuple(q.weight.shape), tuple(k.weight.shape))
+        shared = ((attention.head_dim,), (attention.head_dim,))
+        per_head = (
+            (attention.n_heads, attention.head_dim),
+            (attention.n_kv_heads, attention.head_dim),
+        )
+        if shapes not in (shared, per_head):
+            raise NotImplementedError(f"Unsupported QK gain shapes: {shapes}")
+        modes.add(shapes == per_head)
+    if len(modes) != 1:
+        raise NotImplementedError("Heterogeneous QK gain layouts are unsupported")
+    return modes.pop()
+
+
 def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
@@ -373,6 +396,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         rope_scaling=None,
         rms_norm_eps=moe_block.feed_forward_norm.eps,
         use_head_qk_norm=attention.use_head_qk_norm,
+        qk_norm_per_head_gains=_qk_norm_per_head_gains([b.attention for b in blocks]),
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -459,13 +483,15 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             block_router.restore_weight_scale,
             block_router.global_load_balancing,
             (
-                block_emo.min_document_expert_pool,
-                block_emo.max_document_expert_pool,
-                block_emo.eval_pool_size(),
-                block_emo.eos_token_id,
-            )
-            if block_emo is not None
-            else None,
+                (
+                    block_emo.min_document_expert_pool,
+                    block_emo.max_document_expert_pool,
+                    block_emo.eval_pool_size(),
+                    block_emo.eos_token_id,
+                )
+                if block_emo is not None
+                else None
+            ),
             block.latent_down_proj.out_features if has_latent_moe else None,
             block.latent_down_proj.bias is not None if has_latent_moe else False,
             block.latent_up_proj_input_norm is not None if has_latent_moe else False,
@@ -615,6 +641,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         restore_weight_scale=router.restore_weight_scale,
         max_position_embeddings=-1,
         use_head_qk_norm=True,
+        qk_norm_per_head_gains=_qk_norm_per_head_gains([b.attention for b in attention_blocks]),
         use_rope=attention.rope is not None,
         scalable_softmax=scalable_softmax,
         rope_theta=rope_theta,
@@ -741,9 +768,11 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
         olmo3_specific_args = {
             "sliding_window": common_window_size_value + 1,
             "layer_types": [
-                "sliding_attention"
-                if block.attention.backend.window_size != (-1, -1)
-                else "full_attention"
+                (
+                    "sliding_attention"
+                    if block.attention.backend.window_size != (-1, -1)
+                    else "full_attention"
+                )
                 for block in blocks
             ],
         }

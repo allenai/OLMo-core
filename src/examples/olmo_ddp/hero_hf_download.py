@@ -61,13 +61,20 @@ def catalog(api) -> dict:
     for arm in ("emo", "non-emo"):
         prefix = f"{arm}/receipts/"
         receipts = {
-            item.path for item in api.list_bucket_tree(BUCKET, prefix=prefix, recursive=True)
+            item.path
+            for item in api.list_bucket_tree(BUCKET, prefix=prefix, recursive=True)
             if isinstance(item, BucketFile) and item.path.startswith(prefix)
         }
         for target, step in TARGETS.items():
-            rows.append({"arm": arm, "target_billions": target, "step": step,
-                         "tokens": step * BATCH,
-                         "remote_verified": f"{prefix}step{step}.verified.json" in receipts})
+            rows.append(
+                {
+                    "arm": arm,
+                    "target_billions": target,
+                    "step": step,
+                    "tokens": step * BATCH,
+                    "remote_verified": f"{prefix}step{step}.verified.json" in receipts,
+                }
+            )
     result = {"bucket": BUCKET, "checkpoints": rows, "checked_at_unix": time.time()}
     write_json(SCRATCH / "catalog.json", result)
     print("HERO_HF_CATALOG " + json.dumps(result), flush=True)
@@ -78,7 +85,7 @@ def relative_path(prefix: str, remote: str) -> str:
     """Reject prefix collisions and traversal before creating any local paths."""
     if not remote.startswith(prefix + "/"):
         raise ValueError(f"Remote object is outside exact checkpoint prefix: {remote}")
-    suffix = remote[len(prefix) + 1:]
+    suffix = remote[len(prefix) + 1 :]
     path = PurePosixPath(suffix)
     if not suffix or path.is_absolute() or any(p in ("..", ".") for p in suffix.split("/")):
         raise ValueError(f"Unsafe remote object path: {remote}")
@@ -97,15 +104,24 @@ def download(api, arm: str, step: int) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     prefix = f"{arm}/checkpoints/step{step}"
     receipt = read_remote_json(api, f"{arm}/receipts/step{step}.verified.json")
-    expected_identity = {"bucket_id": BUCKET, "step": step, "remote_checkpoint_prefix": prefix,
-                         "lineage_id": f"olmo35-small-hero-20260907-{arm}",
-                         "verification": "exact-path-size-xet-inventory-plus-critical-readback"}
+    expected_identity = {
+        "bucket_id": BUCKET,
+        "step": step,
+        "remote_checkpoint_prefix": prefix,
+        "lineage_id": f"olmo35-small-hero-20260907-{arm}",
+        "verification": "exact-path-size-xet-inventory-plus-critical-readback",
+    }
     if any(receipt.get(k) != v for k, v in expected_identity.items()):
         raise RuntimeError("Unexpected checkpoint verification receipt identity")
-    objects = [item for item in api.list_bucket_tree(BUCKET, prefix=prefix + "/", recursive=True)
-               if isinstance(item, BucketFile) and item.path.startswith(prefix + "/")]
-    actual_remote = sorted([{"path": item.path, "size": item.size, "xet_hash": item.xet_hash}
-                            for item in objects], key=lambda x: x["path"])
+    objects = [
+        item
+        for item in api.list_bucket_tree(BUCKET, prefix=prefix + "/", recursive=True)
+        if isinstance(item, BucketFile) and item.path.startswith(prefix + "/")
+    ]
+    actual_remote = sorted(
+        [{"path": item.path, "size": item.size, "xet_hash": item.xet_hash} for item in objects],
+        key=lambda x: x["path"],
+    )
     if actual_remote != sorted(receipt["remote_files"], key=lambda x: x["path"]):
         raise RuntimeError("Remote checkpoint no longer matches verified inventory")
     total = sum(item.size for item in objects)
@@ -133,7 +149,13 @@ def download(api, arm: str, step: int) -> Path:
                 raise RuntimeError(f"Symlink in downloaded checkpoint: {path}")
             path.parent.mkdir(parents=True, exist_ok=True)
             transfers.append((item, path))
-        log.info("HERO_HF_DOWNLOAD_START arm=%s step=%d files=%d bytes=%d", arm, step, len(objects), total)
+        log.info(
+            "HERO_HF_DOWNLOAD_START arm=%s step=%d files=%d bytes=%d",
+            arm,
+            step,
+            len(objects),
+            total,
+        )
         api.download_bucket_files(BUCKET, transfers, raise_on_missing_files=True)
     local = {}
     for path in target.rglob("*"):
@@ -150,17 +172,33 @@ def download(api, arm: str, step: int) -> Path:
         if actual != digest:
             raise RuntimeError(f"Downloaded critical file checksum mismatch: {safe}")
     # Buckets are mutable: verify remote metadata and the receipt did not change mid-download.
-    after = sorted([{"path": x.path, "size": x.size, "xet_hash": x.xet_hash}
-                    for x in api.list_bucket_tree(BUCKET, prefix=prefix + "/", recursive=True)
-                    if isinstance(x, BucketFile) and x.path.startswith(prefix + "/")], key=lambda x: x["path"])
-    if after != actual_remote or read_remote_json(api, f"{arm}/receipts/step{step}.verified.json") != receipt:
+    after = sorted(
+        [
+            {"path": x.path, "size": x.size, "xet_hash": x.xet_hash}
+            for x in api.list_bucket_tree(BUCKET, prefix=prefix + "/", recursive=True)
+            if isinstance(x, BucketFile) and x.path.startswith(prefix + "/")
+        ],
+        key=lambda x: x["path"],
+    )
+    if (
+        after != actual_remote
+        or read_remote_json(api, f"{arm}/receipts/step{step}.verified.json") != receipt
+    ):
         raise RuntimeError("Remote checkpoint changed during download")
     if not final.exists():
         os.rename(staging, final)
     write_json(root / "source-receipt.json", receipt)
-    record = {"bucket": BUCKET, "prefix": prefix, "step": step, "tokens": step * BATCH,
-              "raw_path": str(final), "files": len(objects), "bytes": total,
-              "critical_hashes_verified": True, "completed_at_unix": time.time()}
+    record = {
+        "bucket": BUCKET,
+        "prefix": prefix,
+        "step": step,
+        "tokens": step * BATCH,
+        "raw_path": str(final),
+        "files": len(objects),
+        "bytes": total,
+        "critical_hashes_verified": True,
+        "completed_at_unix": time.time(),
+    }
     write_json(root / "download-success.json", record)
     print("HERO_HF_DOWNLOAD_SUCCESS " + json.dumps(record), flush=True)
     return final

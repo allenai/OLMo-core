@@ -1014,8 +1014,24 @@ class Olmo3MoeAttention(nn.Module):
         else:
             raise ValueError(f"Unsupported attention_gate_type={self.gate_type!r}")
         if config.use_head_qk_norm:
-            self.q_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
-            self.k_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
+            self.q_norm = Olmo3MoeRMSNorm(
+                self.head_dim,
+                config.rms_norm_eps,
+                weight_shape=(
+                    (config.num_attention_heads, self.head_dim)
+                    if config.qk_norm_per_head_gains
+                    else None
+                ),
+            )
+            self.k_norm = Olmo3MoeRMSNorm(
+                self.head_dim,
+                config.rms_norm_eps,
+                weight_shape=(
+                    (config.num_key_value_heads, self.head_dim)
+                    if config.qk_norm_per_head_gains
+                    else None
+                ),
+            )
         else:
             self.q_norm = Olmo3MoeRMSNorm(
                 config.num_attention_heads * self.head_dim, config.rms_norm_eps
@@ -1082,8 +1098,10 @@ class Olmo3MoeAttention(nn.Module):
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
 
-        query_states = query_states.view(hidden_shape).transpose(1, 2)  # (B, n_heads, T, head_dim)
-        key_states = key_states.view(hidden_shape).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
+        # Normalize only D, with independent [H,D] gains when configured. Apply
+        # before the transpose so the gain's head axis cannot broadcast onto T.
+        query_states = query_states.view(hidden_shape)
+        key_states = key_states.view(hidden_shape)
         value_states = value_states.view(hidden_shape).transpose(
             1, 2
         )  # (B, n_kv_heads, T, head_dim)
@@ -1091,6 +1109,8 @@ class Olmo3MoeAttention(nn.Module):
         if self.use_head_qk_norm:
             query_states = self.q_norm(query_states.contiguous())
             key_states = self.k_norm(key_states.contiguous())
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
 
         cos: Optional[torch.Tensor] = None
         sin: Optional[torch.Tensor] = None
@@ -1162,9 +1182,9 @@ class Olmo3MoePreTrainedModel(PreTrainedModel):
 
 
 class Olmo3MoeRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
+    def __init__(self, hidden_size, eps=1e-6, weight_shape=None):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = nn.Parameter(torch.ones(weight_shape or (hidden_size,)))
         self.variance_epsilon = eps
 
     def forward(self, hidden_states):

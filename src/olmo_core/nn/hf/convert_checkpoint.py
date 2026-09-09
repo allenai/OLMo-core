@@ -487,9 +487,14 @@ def _use_reference_kda_kernels(model: torch.nn.Module) -> int:
             type(module).__module__ == "olmo_core.nn.attention.kda"
             and type(module).__name__ == "KimiDeltaAttention"
         )
-        if is_olmo_kda and module.use_cute_kernel:
+        if is_olmo_kda:
+            changed = module.use_cute_kernel
             module.use_cute_kernel = False
-            count += 1
+            for name in ("q_conv1d", "k_conv1d", "v_conv1d"):
+                conv = getattr(module, name)
+                changed = changed or conv.use_cute_kernel
+                conv.use_cute_kernel = False
+            count += int(changed)
     return count
 
 
