@@ -194,3 +194,119 @@ ds64	4b	contradiction	hdr03prof	16M	ds64-contradiction-hdr03prof-b128f2-u16M	ai2
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 ds64	4b	contradiction	hdr33	16M	ds64-contradiction-hdr33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 01:54	LAUNCHED	"01M22P15JH3NMHTCDTHZBP69A7   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	16M	ds64-contradiction-hdr17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 03:51	LAUNCHED	"01M22WP448VVYXKJQS28PZBWHK   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr33	32M	ds64-contradiction-hdr33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:51	LAUNCHED	"01M22WQ2NF3VQCWNGXJ6B2RCCM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	32M	ds64-contradiction-hdr17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:52	LAUNCHED	"01M22WQWD1NAER33RW532ZKVK0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr33	64M	ds64-contradiction-hdr33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:52	LAUNCHED	"01M22WRMBYYETAJJ6N6BZ4T288   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	64M	ds64-contradiction-hdr17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:53	LAUNCHED	"01M22WSBZQ8NAMW8S24SH4H9AW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	16M	ds64-oolong-ohdr33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 03:53	LAUNCHED	"01M22WT54M69Q1BQA8Y1AVV4D5   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	16M	ds64-oolong-ohdr17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 03:53	LAUNCHED	"01M22WTX4FYF6EJJ4WKHXV1RWT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	32M	ds64-oolong-ohdr33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:54	LAUNCHED	"01M22WVM8A0186480F6K5V17BC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	32M	ds64-oolong-ohdr17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:54	LAUNCHED	"01M22WWE520AS9QWV06A1JWMNB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	64M	ds64-oolong-ohdr33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:55	LAUNCHED	"01M22WX7AGT22DW9DF1KKK1GAS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	64M	ds64-oolong-ohdr17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:55	LAUNCHED	"01M22WXYQ8JCN49H0XCEVY87YK   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	128M	ds64-oolong-ohdr33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 03:55	LAUNCHED	"01M22WYRQA7TEWED8DXEDPT8R9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	128M	ds64-oolong-ohdr17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 03:56	LAUNCHED	"01M22WZHB5ABK88MC83ASSS1R8   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	16M	ds64-nq-kv33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 03:56	LAUNCHED	"01M22X09FD7DEHG73GY2QGJQ68   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	16M	ds64-nq-kv17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 03:57	LAUNCHED	"01M22X16TVQJPA87H1CCSFKW87   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	32M	ds64-nq-kv33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:57	LAUNCHED	"01M22X1Z5VZKQSBKE5JD485B6V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	32M	ds64-nq-kv17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 03:58	LAUNCHED	"01M22X33G0E3P1NA85206JTH43   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	64M	ds64-nq-kv33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:58	LAUNCHED	"01M22X3Y2W15420GDPW15T97S0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	64M	ds64-nq-kv17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 03:59	LAUNCHED	"01M22X4P5DEQS2CM88R5A7920S   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	128M	ds64-nq-kv33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 03:59	LAUNCHED	"01M22X5FYDYFFD57RBMA7Z91HS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	128M	ds64-nq-kv17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 04:00	LAUNCHED	"01M22X699XM44T8PG1S7EXY7MA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	16M	ds64-outlier-kv33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 04:00	LAUNCHED	"01M22X75BHRZ9KMNPDTPWX8QG2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	16M	ds64-outlier-kv17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 04:00	LAUNCHED	"01M22X7X3BHPQRXG8XJYK12X8V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	32M	ds64-outlier-kv33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 04:01	LAUNCHED	"01M22X9352XEM1C8GRKG4MNY89   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	32M	ds64-outlier-kv17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 04:02	LAUNCHED	"01M22XA8553Q7XQFWGN8EGKXE9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	64M	ds64-outlier-kv33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 04:02	LAUNCHED	"01M22XBDG831WYSG2R44QK835R   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	64M	ds64-outlier-kv17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 04:03	LAUNCHED	"01M22XC6XKY2FB08EAJNQ05795   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	128M	ds64-outlier-kv33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 04:03	LAUNCHED	"01M22XDD354PA5QAAGYQMCTEZV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	128M	ds64-outlier-kv17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 04:04	LAUNCHED	"01M22XEPYE6FKCNYWABDEE9RRT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	16M	ds64-contradiction-hdr17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 05:44	LAUNCHED	"01M2335MNWPWS152YRBV7TKXC1   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr33	32M	ds64-contradiction-hdr33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 05:44	LAUNCHED	"01M2336BSHBPSP9SQ5W2E8EKYJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	32M	ds64-contradiction-hdr17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 05:45	LAUNCHED	"01M23373H0CE069DFBEKN1DSE5   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr33	64M	ds64-contradiction-hdr33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:25	LAUNCHED	"01M235G6AZ74QZRKJZMT724NB6   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	contradiction	hdr17	64M	ds64-contradiction-hdr17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:25	LAUNCHED	"01M235GY7TQW1VCFVJ6SC7HQJA   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	16M	ds64-oolong-ohdr33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:26	LAUNCHED	"01M235HQQYDGZ1S4Y26DBTNKK1   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	16M	ds64-oolong-ohdr17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:26	LAUNCHED	"01M235JHRTSGWDS23SKFZQ8M0R   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	32M	ds64-oolong-ohdr33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:26	LAUNCHED	"01M235K9V16QJ843NNA8XWMEM7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	32M	ds64-oolong-ohdr17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:27	LAUNCHED	"01M235M246FP2KVX8WKFEPQ0ZG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	64M	ds64-oolong-ohdr33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:27	LAUNCHED	"01M235MT12ZVD0PFVS3BY6JCTM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	64M	ds64-oolong-ohdr17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:28	LAUNCHED	"01M235NJ37ZVPMEY0RE18JJ7DZ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr33	128M	ds64-oolong-ohdr33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:28	LAUNCHED	"01M235PAWG55VH0E1RED0XJWWT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	oolong	ohdr17	128M	ds64-oolong-ohdr17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:29	LAUNCHED	"01M235Q42TG79J987A2CYPRE29   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	16M	ds64-nq-kv33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:29	LAUNCHED	"01M235QVVBG1WA17RYVZXY4NCF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	16M	ds64-nq-kv17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:29	LAUNCHED	"01M235RNPYBE27ZKRYRMDG3HMY   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	32M	ds64-nq-kv33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:30	LAUNCHED	"01M235SE86ZDWJ89213SRMJX5B   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	32M	ds64-nq-kv17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:30	LAUNCHED	"01M235T5D33T18SPGK7JS51SY5   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	64M	ds64-nq-kv33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:31	LAUNCHED	"01M235TYCDCYDSYC3H37PRJZAM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	64M	ds64-nq-kv17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:31	LAUNCHED	"01M235VQV9MFP3BMBB6B2FG02V   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv33	128M	ds64-nq-kv33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:32	LAUNCHED	"01M235WF94GK8TMPBZRE5RQM4M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	nq	kv17	128M	ds64-nq-kv17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:32	LAUNCHED	"01M235X89RANHVYAGR3BMPZDKW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	16M	ds64-outlier-kv33-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:32	LAUNCHED	"01M235Y10Y8HNF7MKT72G42TJ3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	16M	ds64-outlier-kv17-b128f3-u16M	ai2/jupiter-cirrascale-2	2026-09-09 06:33	LAUNCHED	"01M235YSXX60M5FWS7XM62MFT3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	32M	ds64-outlier-kv33-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:33	LAUNCHED	"01M235ZKQVCV2GXK479Y65FH3D   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	32M	ds64-outlier-kv17-b128f3-u32M	ai2/jupiter-cirrascale-2	2026-09-09 06:34	LAUNCHED	"01M2360DDZZET1AFSED20HKV8Z   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	64M	ds64-outlier-kv33-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:34	LAUNCHED	"01M23614ZFFFDFH13P1DCTFA56   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	64M	ds64-outlier-kv17-b128f3-u64M	ai2/jupiter-cirrascale-2	2026-09-09 06:34	LAUNCHED	"01M2361Y1G1XJ3FNMCG9C2PZKP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv33	128M	ds64-outlier-kv33-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:35	LAUNCHED	"01M2362Q6G95TD1WXSBXGH7EQ0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+ds64	4b	outlier	kv17	128M	ds64-outlier-kv17-b128f3-u128M	ai2/jupiter-cirrascale-2	2026-09-09 06:35	LAUNCHED	"01M2363G1NFDG5RMSA581KZ73W   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

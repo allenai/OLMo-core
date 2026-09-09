@@ -924,6 +924,336 @@
    "rc": 0,
    "retries": 0,
    "eval": "01M22N1Y0JERD066R0AG9KPSYV"
+  },
+  "ds64-contradiction-hdr33-b128f3-u16M": {
+   "ex": "01M22P15JH3NMHTCDTHZBP69A7",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M23DZ47BHZ2WZ00WAQMCVE4Z",
+   "note": "gen-3 timing test (length-sorted micro-batches), launched by hand 01:55"
+  },
+  "ds64-contradiction-hdr17-b128f3-u16M": {
+   "ex": null,
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-contradiction-hdr33-b128f3-u32M": {
+   "ex": null,
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-contradiction-hdr17-b128f3-u32M": {
+   "ex": null,
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-contradiction-hdr33-b128f3-u64M": {
+   "ex": null,
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-contradiction-hdr17-b128f3-u64M": {
+   "ex": null,
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr33-b128f3-u16M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "16M",
+   "arm": "ohdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr17-b128f3-u16M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "16M",
+   "arm": "ohdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr33-b128f3-u32M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "32M",
+   "arm": "ohdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr17-b128f3-u32M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "32M",
+   "arm": "ohdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr33-b128f3-u64M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "64M",
+   "arm": "ohdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr17-b128f3-u64M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "64M",
+   "arm": "ohdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr33-b128f3-u128M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "128M",
+   "arm": "ohdr33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-oolong-ohdr17-b128f3-u128M": {
+   "ex": null,
+   "task": "oolong",
+   "budget": "128M",
+   "arm": "ohdr17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv33-b128f3-u16M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv17-b128f3-u16M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv33-b128f3-u32M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv17-b128f3-u32M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv33-b128f3-u64M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "64M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv17-b128f3-u64M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "64M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv33-b128f3-u128M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "128M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-nq-kv17-b128f3-u128M": {
+   "ex": null,
+   "task": "nq",
+   "budget": "128M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv33-b128f3-u16M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv17-b128f3-u16M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "16M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv33-b128f3-u32M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv17-b128f3-u32M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv33-b128f3-u64M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv17-b128f3-u64M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv33-b128f3-u128M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "128M",
+   "arm": "kv33",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
+  },
+  "ds64-outlier-kv17-b128f3-u128M": {
+   "ex": null,
+   "task": "outlier",
+   "budget": "128M",
+   "arm": "kv17",
+   "state": "LAUNCH-FAILED",
+   "rc": 1,
+   "retries": 0,
+   "eval": null,
+   "note": "gen-3 launch failed on an unpushed commit (gantry clone); commit c8def08be pushed 07:20, reset"
   }
  },
  "evals": {
@@ -1043,8 +1373,8 @@
   },
   "ds64-contradiction-runs08-b128f2-u16M": {
    "ex": "01M22EXZY7E9R3VRWC09TMFB29",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr08-b128f2-u16M": {
@@ -1067,72 +1397,78 @@
   },
   "ds64-contradiction-hdr03-b128f2-u32M": {
    "ex": "01M22G8K1BA0GPDET4DAQMZNWY",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-runs03-b128f2-u32M": {
    "ex": "01M22GK4ZZVY2JNEV2J8MWC9HW",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr08-b128f2-u32M": {
    "ex": "01M22H787DSVE2HGKMN193GBD1",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-runs08-b128f2-u32M": {
    "ex": "01M22HHTQTV545TEXAYMB8NS18",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr17-b128f2-u32M": {
    "ex": "01M22HWMX967VA3BB2GN3ZERKW",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr33-b128f2-u32M": {
    "ex": "01M22JTHTW74ESXWBF8F0BY2CE",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr03-b128f2-u64M": {
    "ex": "01M22KRKP71DT4439APSMB99C7",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr08-b128f2-u64M": {
    "ex": "01M22M34Y923QWBPPV4GGYFRPD",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-runs03-b128f2-u64M": {
    "ex": "01M22M3YGRZCDTS7ZEC3MATP3H",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-runs08-b128f2-u64M": {
    "ex": "01M22N1Y0JERD066R0AG9KPSYV",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr17-b128f2-u64M": {
    "ex": "01M22NC9M5HS01ZJ23HVQ2KPJ7",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-hdr33-b128f2-u64M": {
    "ex": "01M22P15K8MB74JM4SZJ9NSWKC",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr33-b128f3-u16M": {
+   "ex": "01M23DZ47BHZ2WZ00WAQMCVE4Z",
    "state": "S",
    "rc": null,
    "retries": 0
@@ -1150,7 +1486,7 @@
   "nq": true,
   "outlier": true
  },
- "last_harvest": 1788946895.9790602,
+ "last_harvest": 1788963184.255461,
  "harvest_ex": null,
  "done": false
 }
