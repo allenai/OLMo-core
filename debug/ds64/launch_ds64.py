@@ -56,7 +56,8 @@ SOFT_GB = int(os.environ.get("DS64_SOFT_GB", "128"))
 # rows per micro-batch, sized to the arm's compaction so a micro-batch of 56k rows fits an 80GB GPU
 # (rows/step must be divisible by micro x 8 GPUs -> micro in {1, 2, 4, 8, 16})
 ARM_MICRO = {"hdr03": 8, "runs03": 8, "kv08": 8, "hdr08": 4, "runs08": 4, "ohdr08": 4,
-             "hdr17": 4, "kv17": 4, "ohdr17": 4, "hdr33": 2, "kv33": 2, "ohdr33": 2}
+             "hdr17": 4, "kv17": 4, "ohdr17": 4, "hdr33": 2, "kv33": 2, "ohdr33": 2,
+             "hdr03gb": 8, "hdr03m1": 1}
 CLUSTER = os.environ.get("DS64_CLUSTER", {"4b": "ai2/jupiter-cirrascale-2", "27b": "ai2/titan-cirrascale"}[SCALE])
 
 # keep-ratio suffix as in the old grid: 03 = 1/36, 08 = 1/12, 17 = 1/6, 33 = 1/3
@@ -76,6 +77,10 @@ ARM_EXTRA = {
     "kv08": "--st-keep-frac 0.0833 --st-keep-mode gold_plus_random",
     "kv17": "--st-keep-frac 0.1667 --st-keep-mode gold_plus_random",
     "kv33": "--st-keep-frac 0.3333 --st-keep-mode gold_plus_random",
+    # diagnostics (2026-09-08 23:30, why is a soft step ~65 s?): same as hdr03 but gold-blind (no
+    # fingerprint keep hook) / one row per micro-step
+    "hdr03gb": "--st-gold-blind --st-keep-prob 0.0278 --st-header-stop-id 25 --st-header-stop-count 1",
+    "hdr03m1": f"--st-keep-frac 0.0278 {_HDR1}",
 }
 # Phase 1 (contradiction first): dense + the keep ablation. Other tasks: dense only until
 # debug/ds64/soft_arms.json (read by the orchestrator every cycle) names their soft arms.
