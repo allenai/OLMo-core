@@ -166,11 +166,13 @@ def qualify(root: Path, *, full: bool, precise: bool = False) -> dict:
         )
         hf_model = (
             AutoModelForCausalLM.from_pretrained(
-                hf, dtype=torch.float32, attn_implementation="sdpa"
+                hf, dtype=torch.float32, attn_implementation="sdpa", trust_remote_code=True
             )
             .cuda()
             .eval()
         )
+        if not hf_model.__class__.__module__.startswith("transformers_modules."):
+            raise RuntimeError("Portable HF gate must load the exported remote-code files")
     with torch.inference_mode(), sdpa_kernel(SDPBackend.MATH):
         for name, ids in inputs:
             if ids.shape[1] > 1024:
@@ -211,6 +213,7 @@ def qualify(root: Path, *, full: bool, precise: bool = False) -> dict:
         "cache_logprob_mean_abs_limit": 0.01,
         "cache_logprob_max_abs_limit": 0.25,
         "inference_profile": (inference_settings.PRECISE_PROFILE if precise else "bf16"),
+        "exported_remote_code_tested": precise,
     }
 
 
