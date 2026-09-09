@@ -775,3 +775,21 @@ noise but not below it as on the sneetches rows; adding the header closes it ful
 keep 1/12 does NOT replicate here (+0.095 with or without GDN no-write), so oolong's honest
 setting is header + keep 1/3 (c 0.62–0.72). nq/outlier with neighbour runs: at or below full
 (nq 0.085 / 0.079 / 0.008, outlier 1.196 / 1.089 / 1.034 at 1/3 / 1/12 / 0).
+
+### Soft tokens play NO role in training: the GDN write detach (2026-09-08 evening, Prasann)
+
+`detach_soft_kv` only cut the slots' attention K/V (and their injected input); on the hybrid the
+24 GatedDeltaNet layers still let a slot write the recurrent state and leak through the causal
+conv WITH gradient, so every KV arm so far could co-adapt a summary language through the GDN
+path (the co-drift channel the attention detach was built to close). Now `GatedDeltaNet.forward`
+honours the same `kv_grad_mask`: at masked positions ``q``, ``k``, ``v`` (pre-conv -- the conv
+mixes a slot's projections into the next 3 positions, q included: with q attached the slot kept
+~40% of its gradient), ``beta`` and ``g`` are detached (`torch.where(mask, t, t.detach())`,
+forward bit-identical). `enable_pooled_soft_tokens(detach_soft_gdn=True)` (default;
+`--st-no-detach-soft-gdn` is the ablation) sets it on every GDN module. GPU test
+`src/test/nn/pooled_soft_token_gdn_test.py` (3-block GDN/attention/GDN hybrid): the loss
+gradient at EVERY block input is exactly 0 at slot columns and > 0 at real columns; without the
+GDN detach the slots carry gradient; forward losses identical. With attention K/V and GDN writes
+severed, a slot's own query/FFN path is a dead end, so no parameter receives gradient through a
+slot. Note the eval-side probes were unaffected (no training), and their finding stands: the
+dense model wants the GDN to SEE the slot in the forward (no-write hurt); only the backward is cut.

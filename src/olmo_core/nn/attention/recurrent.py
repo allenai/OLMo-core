@@ -146,6 +146,7 @@ class GatedDeltaNet(SequenceMixer):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
+        fuse_qkv: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ):
@@ -160,6 +161,9 @@ class GatedDeltaNet(SequenceMixer):
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
+        # Whether a ``kv_grad_mask`` passed to :meth:`forward` detaches the masked tokens' write
+        # channels (soft-token slots). Cleared by ``enable_pooled_soft_tokens(detach_soft_gdn=False)``.
+        self.detach_masked_writes = True
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * self.expand_v)
@@ -171,44 +175,55 @@ class GatedDeltaNet(SequenceMixer):
         assert math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5)
         assert self.n_v_heads >= self.n_heads and self.n_v_heads % self.n_heads == 0
 
-        self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
-        self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
-        self.w_v = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
+        # q/k/v are three GEMMs off the same x, followed by three depthwise convs. Fusing each
+        # trio into one op is numerically exact (concatenating independent linear maps, and
+        # concatenating depthwise convs along the channel axis) and measured 1.19x on the
+        # projections and 3.66x on the convs at 4B geometry. The two must be fused TOGETHER: the
+        # fused conv needs q|k|v contiguous, which is exactly what the fused projection emits, so
+        # doing only the conv would pay a large concat copy that eats the win.
+        self.fuse_qkv = fuse_qkv
+        self.qkv_dim = 2 * self.key_dim + self.value_dim
+        if fuse_qkv:
+            self.w_qkv = nn.Linear(
+                d_model, self.qkv_dim, bias=False, dtype=dtype, device=init_device
+            )
+        else:
+            self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
+            self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
+            self.w_v = nn.Linear(
+                d_model, self.value_dim, bias=False, dtype=dtype, device=init_device
+            )
         self.w_a = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
         self.w_b = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
 
         self.A_log = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
         self.dt_bias = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
 
-        self.q_conv1d = CausalConv1d(
-            hidden_size=self.key_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
-        self.k_conv1d = CausalConv1d(
-            hidden_size=self.key_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
-        self.v_conv1d = CausalConv1d(
-            hidden_size=self.value_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
+        def _conv(hidden: int) -> CausalConv1d:
+            return CausalConv1d(
+                hidden_size=hidden,
+                kernel_size=conv_size,
+                bias=conv_bias,
+                activation=ActivationFunction.silu.value,
+                dtype=dtype,
+                init_device=init_device,
+            )
+
+        if fuse_qkv:
+            # Depthwise, so one conv over the concatenated channels is exactly the three convs.
+            self.qkv_conv1d = _conv(self.qkv_dim)
+        else:
+            self.q_conv1d = _conv(self.key_dim)
+            self.k_conv1d = _conv(self.key_dim)
+            self.v_conv1d = _conv(self.value_dim)
         self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
         self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps, device=init_device)  # type: ignore
         self.w_out = nn.Linear(self.value_dim, d_model, bias=False, dtype=dtype, device=init_device)
 
         self.cp_enabled = False
+
+        if fuse_qkv:
+            self._register_load_state_dict_pre_hook(self._fuse_qkv_load_hook, with_module=False)
 
         # Inference state cache (conv windows + recurrent state), set by :meth:`init_state_cache`
         # during cached generation. ``None`` during training and non-cached forward passes.
@@ -220,7 +235,7 @@ class GatedDeltaNet(SequenceMixer):
         the attention KV-cache interface but is unused: the recurrent state is constant-size.
         """
         del max_seq_len
-        param = self.w_q.weight
+        param = (self.w_qkv if self.fuse_qkv else self.w_q).weight
         if self.state_cache is None:
             self.state_cache = GatedDeltaNetStateCache(
                 batch_size=batch_size,
@@ -239,6 +254,7 @@ class GatedDeltaNet(SequenceMixer):
         cu_doc_lens: Optional[torch.Tensor] = None,
         cache_leftpad: Optional[torch.Tensor] = None,
         block_keep: Optional[torch.Tensor] = None,
+        kv_grad_mask: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -268,6 +284,14 @@ class GatedDeltaNet(SequenceMixer):
             are zeroed before the conv). Its own read (``q``) is left intact so the output at that
             position is well defined; the block-skip mixing discards it. Ignored during single-token
             cached decode, where generated tokens always write (same convention as the KV router).
+        :param kv_grad_mask: Optional ``(batch_size, seq_len)`` bool, the same mask the attention
+            layers receive: ``False`` tokens have every channel through which they influence OTHER
+            positions -- ``q``, ``k``, ``v`` (before the causal conv, so the conv leak is covered
+            too), ``beta`` and ``g`` (the state write) -- DETACHED. Forward values are unchanged; only
+            the backward graph is cut, so no parameter receives gradient through such a token's
+            contribution to the recurrent state (soft-token slots must play no role in training:
+            records/pooled-doc-kv-attention.md, 2026-09-08). Honoured only while
+            ``self.detach_masked_writes`` is True (the default).
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -283,7 +307,15 @@ class GatedDeltaNet(SequenceMixer):
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_v_heads * head_v_dim)
-        q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
+        if self.fuse_qkv:
+            # Deliberately NOT split here: q/k/v stay in one tensor through the masks and the
+            # conv, and are split only afterwards. Splitting early and re-concatenating before the
+            # conv costs a full qkv-sized copy, which measured 0.91x -- slower than not fusing.
+            qkv = self.w_qkv(x)
+            q = k = v = None
+        else:
+            qkv = None
+            q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
         beta = self.w_b(x).sigmoid()
         if self.allow_neg_eigval:
@@ -300,9 +332,12 @@ class GatedDeltaNet(SequenceMixer):
             pos = torch.arange(T_og, device=x.device).unsqueeze(0)  # (1, T_og)
             pad_mask = pos < cache_leftpad.to(x.device).unsqueeze(1)  # (B, T_og)
             not_pad = (~pad_mask).unsqueeze(-1)  # (B, T_og, 1)
-            q = q * not_pad.to(q.dtype)
-            k = k * not_pad.to(k.dtype)
-            v = v * not_pad.to(v.dtype)
+            if self.fuse_qkv:
+                qkv = qkv * not_pad.to(qkv.dtype)
+            else:
+                q = q * not_pad.to(q.dtype)
+                k = k * not_pad.to(k.dtype)
+                v = v * not_pad.to(v.dtype)
             beta = beta * not_pad.to(beta.dtype)
             g = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(g), g)
 
@@ -310,16 +345,42 @@ class GatedDeltaNet(SequenceMixer):
             # Per-token block skipping: no state write, no conv leak (see the docstring). Applied
             # unconditionally (no host sync) -- multiplying by an all-ones mask is a no-op.
             keep_f = block_keep.to(device=x.device, dtype=torch.bool).unsqueeze(-1)  # (B, T_og, 1)
-            k = k * keep_f.to(k.dtype)
-            v = v * keep_f.to(v.dtype)
+            if self.fuse_qkv:
+                # k and v are the contiguous tail of [q | k | v], so masking them is one slice
+                # multiply; q (the read) is left intact, as in the unfused path.
+                kv = qkv[..., self.key_dim :] * keep_f.to(qkv.dtype)
+                qkv = torch.cat([qkv[..., : self.key_dim], kv], dim=-1)
+            else:
+                k = k * keep_f.to(k.dtype)
+                v = v * keep_f.to(v.dtype)
             beta = beta * keep_f.to(beta.dtype)
             g = torch.where(keep_f, g, torch.zeros_like(g))
+
+        if kv_grad_mask is not None and not use_precomputed and self.detach_masked_writes:
+            # Sever the backward through the masked tokens' write channels (see the docstring).
+            # torch.where(mask, t, t.detach()) keeps the forward value bit-identical.
+            # q is detached too: the causal short conv mixes a position's q projection into the
+            # next conv_size-1 positions' queries, so an attached slot q would still leak gradient
+            # into the slot from its neighbours' reads (measured: the slot kept ~40% of its
+            # gradient with k/v/beta/g alone). The slot's own read is a dead end regardless.
+            m = kv_grad_mask.to(device=x.device, dtype=torch.bool).unsqueeze(-1)  # (B, T_og, 1)
+            if self.fuse_qkv:
+                qkv = torch.where(m, qkv, qkv.detach())
+            else:
+                q = torch.where(m, q, q.detach())
+                k = torch.where(m, k, k.detach())
+                v = torch.where(m, v, v.detach())
+            beta = torch.where(m, beta, beta.detach())
+            g = torch.where(m, g, g.detach())
 
         if self.cp_enabled and self.uly is not None:
             assert (
                 cache is None
             ), "context parallelism is not supported with inference state caching"
             assert self._cp_group is not None
+            if self.fuse_qkv:
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                qkv = None
             # [B, T_local, C] -> [B, T_total, C/CP]
             q, k = all_to_all_cp2hp([q, k], self._cp_group)
             v = all_to_all_single_cp2hp(v, self._cp_group)
@@ -327,18 +388,49 @@ class GatedDeltaNet(SequenceMixer):
 
         if use_precomputed:
             assert cache is not None
-            q = self.q_conv1d.step(q, cache.conv_state_q)
-            k = self.k_conv1d.step(k, cache.conv_state_k)
-            v = self.v_conv1d.step(v, cache.conv_state_v)
+            if self.fuse_qkv:
+                # The cache keeps three separate conv windows (its layout is shared with the
+                # unfused module). Concatenate them along the channel axis for the fused step,
+                # then write the advanced windows back.
+                st = torch.cat([cache.conv_state_q, cache.conv_state_k, cache.conv_state_v], dim=1)
+                if qkv is None:  # CP split it back apart
+                    qkv = torch.cat([q, k, v], dim=-1)
+                qkv = self.qkv_conv1d.step(qkv, st)
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                kd, vd = self.key_dim, self.value_dim
+                cache.conv_state_q.copy_(st[:, :kd])
+                cache.conv_state_k.copy_(st[:, kd : 2 * kd])
+                cache.conv_state_v.copy_(st[:, 2 * kd : 2 * kd + vd])
+            else:
+                q = self.q_conv1d.step(q, cache.conv_state_q)
+                k = self.k_conv1d.step(k, cache.conv_state_k)
+                v = self.v_conv1d.step(v, cache.conv_state_v)
         else:
             if cache is not None:
                 # Seed the conv windows from the prefill inputs (pre-convolution).
-                cache.conv_state_q.copy_(self.q_conv1d.prefill_state(q))
-                cache.conv_state_k.copy_(self.k_conv1d.prefill_state(k))
-                cache.conv_state_v.copy_(self.v_conv1d.prefill_state(v))
-            q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
-            k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
-            v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+                if self.fuse_qkv:
+                    st = self.qkv_conv1d.prefill_state(
+                        qkv if qkv is not None else torch.cat([q, k, v], dim=-1)
+                    )
+                    kd, vd = self.key_dim, self.value_dim
+                    cache.conv_state_q.copy_(st[:, :kd])
+                    cache.conv_state_k.copy_(st[:, kd : 2 * kd])
+                    cache.conv_state_v.copy_(st[:, 2 * kd : 2 * kd + vd])
+                else:
+                    cache.conv_state_q.copy_(self.q_conv1d.prefill_state(q))
+                    cache.conv_state_k.copy_(self.k_conv1d.prefill_state(k))
+                    cache.conv_state_v.copy_(self.v_conv1d.prefill_state(v))
+            if self.fuse_qkv:
+                # One depthwise conv over q|k|v, straight from the fused projection -- no copy.
+                # Only CP (above) ever breaks the tensor apart, so the cat is the rare path.
+                if qkv is None:
+                    qkv = torch.cat([q, k, v], dim=-1)
+                qkv = self.qkv_conv1d(x=qkv, cu_seqlens=cu_doc_lens)
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+            else:
+                q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
+                k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
+                v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
         T = q.size(1)
         q = q.view(B, T, -1, self.head_k_dim)
@@ -425,9 +517,8 @@ class GatedDeltaNet(SequenceMixer):
         self._cp_group = cp_mesh.get_group()
         self.cp_enabled = True
 
-        self.q_conv1d.apply_cp(cp_mesh)
-        self.k_conv1d.apply_cp(cp_mesh)
-        self.v_conv1d.apply_cp(cp_mesh)
+        for c in self._convs():
+            c.apply_cp(cp_mesh)
 
     @torch.no_grad()
     def init_weights(
@@ -450,9 +541,9 @@ class GatedDeltaNet(SequenceMixer):
         if init_method == InitMethod.normalized:
             std = d_model**-0.5
 
-        for w in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g):
+        for w in (*self._qkv_projs(), self.w_a, self.w_b, self.w_g):
             init_linear(w, std=std, generator=generator)
-        for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
+        for w in self._convs():
             init_linear(w, std=std, generator=generator)
 
         self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
@@ -475,6 +566,37 @@ class GatedDeltaNet(SequenceMixer):
 
         init_linear(self.w_out, std=std, generator=generator)
 
+    def _qkv_projs(self) -> tuple:
+        """The q/k/v projection modules, fused or split."""
+        return (self.w_qkv,) if self.fuse_qkv else (self.w_q, self.w_k, self.w_v)
+
+    def _convs(self) -> tuple:
+        """The short-convolution modules, fused or split."""
+        return (
+            (self.qkv_conv1d,) if self.fuse_qkv else (self.q_conv1d, self.k_conv1d, self.v_conv1d)
+        )
+
+    def _fuse_qkv_load_hook(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        """Load a SPLIT (``w_q``/``w_k``/``w_v``, ``q_conv1d``/...) checkpoint into the fused layout.
+
+        Every checkpoint trained before the fusion stores the three projections and the three convs
+        separately. Concatenating them along the output-channel axis reproduces the fused weights
+        exactly -- the projections are independent linear maps off the same input, and the convs are
+        depthwise -- so old checkpoints keep loading with no rebuild.
+        """
+        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+
+        def _merge(dst: str, srcs: list, dim: int = 0):
+            keys = [prefix + s for s in srcs]
+            if all(k in state_dict for k in keys) and (prefix + dst) not in state_dict:
+                state_dict[prefix + dst] = torch.cat([state_dict.pop(k) for k in keys], dim=dim)
+
+        _merge("w_qkv.weight", ["w_q.weight", "w_k.weight", "w_v.weight"])
+        _merge("qkv_conv1d.weight", ["q_conv1d.weight", "k_conv1d.weight", "v_conv1d.weight"])
+        _merge("qkv_conv1d.bias", ["q_conv1d.bias", "k_conv1d.bias", "v_conv1d.bias"])
+
     def num_flops_per_token(self, seq_len: int) -> int:
         """
         Compute FLOPs per token for Gated Delta Net.
@@ -488,8 +610,7 @@ class GatedDeltaNet(SequenceMixer):
         del seq_len
         # Linear projection FLOPs (2 ops per multiply-add)
         linear_flops = 2 * sum(
-            m.weight.numel()
-            for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+            m.weight.numel() for m in (*self._qkv_projs(), self.w_a, self.w_b, self.w_g, self.w_out)
         )
 
         # Short convolution FLOPs (2 ops per multiply-add, kernel_size taps per output)
@@ -520,6 +641,11 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     See :class:`GatedDeltaNet` for a description of the configuration options.
     """
 
+    fuse_qkv: bool = False
+    """
+    Fuse the q/k/v projections into one GEMM and the three short convolutions into one depthwise
+    conv. Numerically exact; split checkpoints load unchanged via a state-dict hook.
+    """
     n_heads: int = 16
     """
     The number of attention heads.

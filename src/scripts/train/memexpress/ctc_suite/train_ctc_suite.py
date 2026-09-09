@@ -928,7 +928,16 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     state_dict = _prepare_state_dict(model, None)
     model_sd = state_dict["model"]
     missing = sorted(k for k in model_sd if f"model.{k}" not in ckpt_keys)
-    allowed = ("._nffn_router.", "._nffn_gain", "._nffnp_", "._kvr_router.", "kvr_routers.", "bskip_routers.", "pooled_projector.", "._pooled_projector")
+    allowed = (
+        "._nffn_router.",
+        "._nffn_gain",
+        "._nffnp_",
+        "._kvr_router.",
+        "kvr_routers.",
+        "bskip_routers.",
+        "pooled_projector.",
+        "._pooled_projector",
+    )
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
         raise SystemExit(
@@ -959,7 +968,9 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
         elif k.startswith("kvr_routers."):
             reset_owners.setdefault(k.rsplit(".w.", 1)[0], set()).add("kv_router")
         elif "pooled_projector" in k:
-            reset_owners.setdefault(k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set())
+            reset_owners.setdefault(
+                k.rsplit(".", 2)[0] if k.count(".") >= 2 else "pooled_projector", set()
+            )
     stats = []
     for owner in sorted(reset_owners):
         mod = model.get_submodule(owner)
@@ -987,7 +998,9 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
             g = g.full_tensor() if hasattr(g, "full_tensor") else g
             b = b.full_tensor() if hasattr(b, "full_tensor") else b
             g, b = g.float(), b.float()
-            stats.append(f"{owner}: gain={g.min().item():.2f}..{g.max().item():.2f} bias0={b[0].item():.1f}")
+            stats.append(
+                f"{owner}: gain={g.min().item():.2f}..{g.max().item():.2f} bias0={b[0].item():.1f}"
+            )
         elif hasattr(mod, "reset_parameters"):
             mod.reset_parameters()
             stats.append(f"{owner}: reset_parameters()")
@@ -1045,7 +1058,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             # base does not have; the trainer's own load is strict, so those arms load the base
             # themselves below with strict=False (new keys keep their init: router -> full rung,
             # projector -> identity). load_path stays None for them so fit() does not re-load.
-            load_path=None if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute") else base_checkpoint,
+            load_path=(
+                None
+                if opts.variant in ("ffnmoe", "softtoken", "kvroute", "flexcompute")
+                else base_checkpoint
+            ),
             # ...and "always" would then demand a checkpoint that no longer exists: those arms
             # resume from the save folder only if a step checkpoint is there.
             load_strategy=(
@@ -1060,7 +1077,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             # --max-tokens: a SHORTER budget on the same arm with a complete LR schedule (warmup
             # fraction + linear decay are relative to max_duration), i.e. a clean data-scaling
             # point below the arm's size. --max-steps only hard-stops mid-schedule.
-            max_duration=Duration.tokens(opts.max_tokens) if opts.max_tokens else Duration.epochs(opts.epochs),
+            max_duration=(
+                Duration.tokens(opts.max_tokens)
+                if opts.max_tokens
+                else Duration.epochs(opts.epochs)
+            ),
             hard_stop=Duration.steps(opts.max_steps) if opts.max_steps else None,
             # no_checkpoints=True would ALSO skip the base-checkpoint LOAD block (trainer.fit
             # gates loading on `not no_checkpoints`) -> silent train-from-scratch. Keep False;
@@ -1132,7 +1153,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         n_tok = int(plan["meta"].get("num_tokens") or plan["meta"].get("total_tokens") or 0)
         if opts.max_tokens:
             n_tok = min(n_tok, opts.max_tokens) if n_tok else opts.max_tokens
-        steps_total = max(1, -(-n_tok * opts.epochs // (gbs_examples * opts.seq_len))) if n_tok else -(-plan["n_examples"] * opts.epochs // gbs_examples)
+        steps_total = (
+            max(1, -(-n_tok * opts.epochs // (gbs_examples * opts.seq_len)))
+            if n_tok
+            else -(-plan["n_examples"] * opts.epochs // gbs_examples)
+        )
     else:
         steps_total = -(-plan["n_examples"] * opts.epochs // gbs_examples)
     accum = max(1, opts.global_batch // (world_size * opts.micro_batch_instances))
@@ -1205,9 +1230,16 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         # model decides per task how to split its saving between FFN width and KV keeping.
         from olmo_core.nn.joint_budget import install_joint_budget
 
-        install_joint_budget(model, target=opts.flex_joint_target, seq_len=opts.flex_share_seq_len or opts.seq_len,
-                             anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac))
-        print(f"[ctc-suite] flexcompute: JOINT FFN+attention budget target {opts.flex_joint_target}", flush=True)
+        install_joint_budget(
+            model,
+            target=opts.flex_joint_target,
+            seq_len=opts.flex_share_seq_len or opts.seq_len,
+            anneal_calls=int(total_calls * opts.ffn_moe_target_anneal_frac),
+        )
+        print(
+            f"[ctc-suite] flexcompute: JOINT FFN+attention budget target {opts.flex_joint_target}",
+            flush=True,
+        )
     if opts.variant == "softtoken":
         model.enable_pooled_soft_tokens(
             ids.doc_start,
@@ -1223,9 +1255,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             distill_weight=opts.st_distill_weight,
             header_stop_id=opts.st_header_stop_id,
             header_stop_count=opts.st_header_stop_count,
+            detach_soft_gdn=not opts.st_no_detach_soft_gdn,
         )
         print(
             f"[ctc-suite] softtoken: header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
+            f"detach_gdn={not opts.st_no_detach_soft_gdn} "
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
@@ -1284,7 +1318,10 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         )
     # Method-aware training FLOPs for every arm (records/flop-scaling-ffn-kv-plan.md §5).
     trainer_config = trainer_config.with_callback(
-        "flop_meter", FlopMeterCallback(seq_len=opts.seq_len, pad_id=ids.eos)  # rows are padded with EOS (see pad_token_id above)
+        "flop_meter",
+        FlopMeterCallback(
+            seq_len=opts.seq_len, pad_id=ids.eos
+        ),  # rows are padded with EOS (see pad_token_id above)
     )
     if opts.variant == "pooledkv" and opts.pooled_gold_sidecar:
         # Gold-aware keep set: a forward pre-hook resolves each row's gold docs by content
@@ -1358,7 +1395,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             # the attribution is most useful exactly when the step OOMs: print it, then re-raise
             from olmo_core.nn.mem_attribution import summarize_peak
 
-            print("[mem-snapshot] OOM during the step; attribution of the trace so far:", flush=True)
+            print(
+                "[mem-snapshot] OOM during the step; attribution of the trace so far:", flush=True
+            )
             summarize_peak(torch.cuda.memory._snapshot(), top=16)
             raise
     else:
@@ -1388,6 +1427,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     elif isinstance(o, list):
                         for v in o:
                             _swap(v)
+
                 _swap(model_dict)
             experiment = {
                 "model": model_dict,
@@ -1406,8 +1446,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     else None
                 ),
                 "kv_route": (
-                    {"start_layer": opts.kv_route_start_layer, "target": opts.kv_route_target,
-                     "router_location": "root"}
+                    {
+                        "start_layer": opts.kv_route_start_layer,
+                        "target": opts.kv_route_target,
+                        "router_location": "root",
+                    }
                     if opts.variant in ("kvroute", "flexcompute")
                     else None
                 ),
@@ -1417,10 +1460,15 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     else None
                 ),
                 "softtoken": (
-                    {"n_random": opts.st_n_random, "n_random_range": opts.st_n_random_range,
-                     "keep_frac": opts.st_keep_frac, "keep_prob": opts.st_keep_prob,
-                     "keep_mode": opts.st_keep_mode, "gold_blind": opts.st_gold_blind,
-                     "len_bias": opts.st_len_bias}
+                    {
+                        "n_random": opts.st_n_random,
+                        "n_random_range": opts.st_n_random_range,
+                        "keep_frac": opts.st_keep_frac,
+                        "keep_prob": opts.st_keep_prob,
+                        "keep_mode": opts.st_keep_mode,
+                        "gold_blind": opts.st_gold_blind,
+                        "len_bias": opts.st_len_bias,
+                    }
                     if opts.variant == "softtoken"
                     else None
                 ),
@@ -1460,7 +1508,17 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--variant",
-        choices=["full", "chunked", "chunked-mix", "sparselandmark", "pooledkv", "ffnmoe", "softtoken", "kvroute", "flexcompute"],
+        choices=[
+            "full",
+            "chunked",
+            "chunked-mix",
+            "sparselandmark",
+            "pooledkv",
+            "ffnmoe",
+            "softtoken",
+            "kvroute",
+            "flexcompute",
+        ],
         required=True,
         help="full = plain causal (no document_chunk_attention); chunked = pure document-chunked "
         "mask; chunked-mix = chunked + curriculum mask mixing (mix_start_p -> mix_end_p); "
@@ -1481,50 +1539,113 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run the LM head only at supervised positions (exact; SFT masked-label runs only)",
     )
-    ap.add_argument("--ffn-moe-start-layer", type=int, default=12, help="first routed layer (0 = all)")
-    ap.add_argument("--ffn-moe-divisors", default="1,16,64,256,1024,9728", help="rung ladder")
-    ap.add_argument("--ffn-moe-width-multiple", type=int, default=1, help="1 allows a width-1 rung")
+    ap.add_argument(
+        "--ffn-moe-start-layer", type=int, default=12, help="first routed layer (0 = all)"
+    )
+    # Rung ladder. Default chosen from the MEASURED speed knee (debug/flexcompute_40x): below
+    # width ~300 at 4B, narrowing a rung buys FLOPs but no time -- a narrow token still reads x,
+    # writes a full-width output and launches its own kernels. The old default
+    # (1,16,64,256,1024,9728 -> widths 9728/608/152/38/9/1) put FOUR of six rungs below that knee,
+    # and the trained routers put 52-65% of their working tokens there: full fixed cost for ~1e-4
+    # of the budget. These divisors keep every working rung at or above the knee.
+    ap.add_argument(
+        "--ffn-moe-divisors", default="1,2.4,4.9,10,32", help="rung ladder (see note above)"
+    )
+    ap.add_argument(
+        "--ffn-moe-width-multiple",
+        type=int,
+        default=8,
+        help="8 keeps rungs GEMM-friendly; 1 allows a width-1 rung (measured to be pure overhead)",
+    )
     ap.add_argument("--ffn-moe-no-null", action="store_true")
-    ap.add_argument("--ffn-moe-target", type=float, default=0.01, help="budget: mean FFN cost on routed layers")
+    ap.add_argument(
+        "--ffn-moe-target", type=float, default=0.01, help="budget: mean FFN cost on routed layers"
+    )
     ap.add_argument("--ffn-moe-budget-weight", type=float, default=1.0)
     ap.add_argument("--ffn-moe-hinge-power", type=int, default=1)
-    ap.add_argument("--ffn-moe-trainable-width", type=int, default=0,
-                    help="'train what you route to': freeze the routed FFNs beyond this many hidden units "
-                    "(only the prefix + router + gains train; 0 = whole FFN trains)")
-    ap.add_argument("--ffn-moe-two-sided", action="store_true",
-                    help="budget = |mean_cost - target| (pulls an undershooting router back up to the target)")
-    ap.add_argument("--ffn-moe-target-anneal-frac", type=float, default=0.3, help="0 = hinge active from step 0 (stage 2 of the two-stage recipe)")
+    ap.add_argument(
+        "--ffn-moe-trainable-width",
+        type=int,
+        default=0,
+        help="'train what you route to': freeze the routed FFNs beyond this many hidden units "
+        "(only the prefix + router + gains train; 0 = whole FFN trains)",
+    )
+    ap.add_argument(
+        "--ffn-moe-two-sided",
+        action="store_true",
+        help="budget = |mean_cost - target| (pulls an undershooting router back up to the target)",
+    )
+    ap.add_argument(
+        "--ffn-moe-target-anneal-frac",
+        type=float,
+        default=0.3,
+        help="0 = hinge active from step 0 (stage 2 of the two-stage recipe)",
+    )
     ap.add_argument("--ffn-moe-explore", type=float, default=0.1)
     ap.add_argument("--ffn-moe-explore-anneal-frac", type=float, default=0.3)
     ap.add_argument("--ffn-moe-recon-frac", type=float, default=0.02)
     ap.add_argument("--ffn-moe-recon-weight", type=float, default=0.0)
     ap.add_argument("--ffn-moe-entropy-weight", type=float, default=0.0)
     ap.add_argument("--ffn-moe-layer-curriculum-frac", type=float, default=0.0)
-    ap.add_argument("--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)")
-    ap.add_argument("--kv-route-start-layer", type=int, default=0, help="kvroute: first routed attention layer")
-    ap.add_argument("--kv-route-target", type=float, default=0.5, help="kvroute: mean KEEP fraction budget (1 = keep all)")
+    ap.add_argument(
+        "--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)"
+    )
+    ap.add_argument(
+        "--kv-route-start-layer", type=int, default=0, help="kvroute: first routed attention layer"
+    )
+    ap.add_argument(
+        "--kv-route-target",
+        type=float,
+        default=0.5,
+        help="kvroute: mean KEEP fraction budget (1 = keep all)",
+    )
     ap.add_argument("--kv-route-budget-weight", type=float, default=1.0)
-    ap.add_argument("--kv-route-one-sided", action="store_true", help="hinge instead of |mean-target|")
+    ap.add_argument(
+        "--kv-route-one-sided", action="store_true", help="hinge instead of |mean-target|"
+    )
     ap.add_argument("--kv-route-target-anneal-frac", type=float, default=0.3)
     ap.add_argument("--kv-route-explore", type=float, default=0.0)
     ap.add_argument("--kv-route-explore-anneal-frac", type=float, default=0.3)
-    ap.add_argument("--block-skip-target", type=float, default=None,
-                    help="flexcompute: enable per-token block skipping (olmo_core.nn.block_skip) with this mean RUN "
-                         "fraction budget (ignored under --flex-joint-target, which owns the budget)")
+    ap.add_argument(
+        "--block-skip-target",
+        type=float,
+        default=None,
+        help="flexcompute: enable per-token block skipping (olmo_core.nn.block_skip) with this mean RUN "
+        "fraction budget (ignored under --flex-joint-target, which owns the budget)",
+    )
     ap.add_argument("--block-skip-start-layer", type=int, default=0)
-    ap.add_argument("--kv-route-debug", default="", help="memory-diagnostic ablations: no_router | no_holder")
-    ap.add_argument("--mem-snapshot", action="store_true",
-                    help="debug: print the live allocations at the peak of the first step, then exit")
-    ap.add_argument("--flex-share-seq-len", type=int, default=8192,
-                    help="flexcompute: sequence length the FFN/attention FLOP shares of the joint budget are evaluated "
-                         "at (real example length, NOT the padded window: at 65k attention-score FLOPs are ~50%% of "
-                         "dense vs ~12%% at real 2k-32k lengths, which would steer every saving into eviction)")
-    ap.add_argument("--flex-joint-target", type=float, default=None,
-                    help="flexcompute: ONE budget on total (FFN + attention-score) FLOPs as a fraction of dense; "
-                         "replaces the two per-router budgets")
+    ap.add_argument(
+        "--kv-route-debug", default="", help="memory-diagnostic ablations: no_router | no_holder"
+    )
+    ap.add_argument(
+        "--mem-snapshot",
+        action="store_true",
+        help="debug: print the live allocations at the peak of the first step, then exit",
+    )
+    ap.add_argument(
+        "--flex-share-seq-len",
+        type=int,
+        default=8192,
+        help="flexcompute: sequence length the FFN/attention FLOP shares of the joint budget are evaluated "
+        "at (real example length, NOT the padded window: at 65k attention-score FLOPs are ~50%% of "
+        "dense vs ~12%% at real 2k-32k lengths, which would steer every saving into eviction)",
+    )
+    ap.add_argument(
+        "--flex-joint-target",
+        type=float,
+        default=None,
+        help="flexcompute: ONE budget on total (FFN + attention-score) FLOPs as a fraction of dense; "
+        "replaces the two per-router budgets",
+    )
     # ---- softtoken (records/pooled-doc-kv-handoff.md; v20 = --st-n-random 128, v22 = 256) ----
-    ap.add_argument("--st-n-random", type=int, default=128, help="random non-gold docs kept real per example")
-    ap.add_argument("--st-n-random-range", default="", help="lo,hi log-uniform breadth per call (overrides --st-n-random)")
+    ap.add_argument(
+        "--st-n-random", type=int, default=128, help="random non-gold docs kept real per example"
+    )
+    ap.add_argument(
+        "--st-n-random-range",
+        default="",
+        help="lo,hi log-uniform breadth per call (overrides --st-n-random)",
+    )
     ap.add_argument(
         "--st-keep-frac",
         type=float,
@@ -1534,22 +1655,52 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--st-keep-mode", default="gold_plus_random")
     ap.add_argument("--st-n-gold", type=int, default=0)
-    ap.add_argument("--st-keep-prob", type=float, default=0.1, help="gold-blind fallback keep prob (no sidecar / --st-gold-blind)")
-    ap.add_argument("--st-gold-blind", action="store_true", help="ignore the gold sidecar: keep docs by --st-keep-prob only (oolong)")
+    ap.add_argument(
+        "--st-keep-prob",
+        type=float,
+        default=0.1,
+        help="gold-blind fallback keep prob (no sidecar / --st-gold-blind)",
+    )
+    ap.add_argument(
+        "--st-gold-blind",
+        action="store_true",
+        help="ignore the gold sidecar: keep docs by --st-keep-prob only (oolong)",
+    )
     ap.add_argument("--st-gold-sidecar", default=None, help="default <data>/gold_fingerprints.json")
-    ap.add_argument("--st-no-detach-soft-kv", action="store_true", help="the winning recipe DETACHES; this is the ablation")
-    ap.add_argument("--st-len-bias", action="store_true",
-                    help="softtoken: add +log(doc_len) to every pooled slot's attention logit (log-mass trick; "
-                         "uses the additive-bias SDPA path, so pair with --attn-backend torch)")
-    ap.add_argument("--st-header-stop-id", type=int, default=None,
-                    help="softtoken: keep each doc's HEADER real (tokens after doc_start through the "
-                         "--st-header-stop-count-th occurrence of this token id; ':' = 25 on Qwen3.5) and pool "
-                         "only the body -- the eval-side parity construction (contradiction: count 1; oolong: count 3)")
+    ap.add_argument(
+        "--st-no-detach-soft-kv",
+        action="store_true",
+        help="the winning recipe DETACHES; this is the ablation",
+    )
+    ap.add_argument(
+        "--st-no-detach-soft-gdn",
+        action="store_true",
+        help="ablation: let the slots' GDN state writes carry gradient (pre-2026-09-08 behaviour). Default: "
+        "slots are fully detached -- attention K/V AND GDN writes -- so they play no role in training",
+    )
+    ap.add_argument(
+        "--st-len-bias",
+        action="store_true",
+        help="softtoken: add +log(doc_len) to every pooled slot's attention logit (log-mass trick; "
+        "uses the additive-bias SDPA path, so pair with --attn-backend torch)",
+    )
+    ap.add_argument(
+        "--st-header-stop-id",
+        type=int,
+        default=None,
+        help="softtoken: keep each doc's HEADER real (tokens after doc_start through the "
+        "--st-header-stop-count-th occurrence of this token id; ':' = 25 on Qwen3.5) and pool "
+        "only the body -- the eval-side parity construction (contradiction: count 1; oolong: count 3)",
+    )
     ap.add_argument("--st-header-stop-count", type=int, default=1)
-    ap.add_argument("--st-neighbour-runs", type=int, default=0,
-                    help="softtoken: keep every selected doc (gold AND random) with its K neighbours on each side "
-                         "(leak-free runs; random budget divided by 2K+1). K=1 reaches full-attention parity on "
-                         "contradiction at --st-keep-frac 0.0278 (~11x) without any header")
+    ap.add_argument(
+        "--st-neighbour-runs",
+        type=int,
+        default=0,
+        help="softtoken: keep every selected doc (gold AND random) with its K neighbours on each side "
+        "(leak-free runs; random budget divided by 2K+1). K=1 reaches full-attention parity on "
+        "contradiction at --st-keep-frac 0.0278 (~11x) without any header",
+    )
     ap.add_argument("--st-distill-prob", type=float, default=0.0)
     ap.add_argument("--st-distill-weight", type=float, default=1.0)
     ap.add_argument("--st-aux-weight", type=float, default=0.0)
@@ -1634,8 +1785,12 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--num-workers", type=int, default=2, help="dataloader workers per rank")
     ap.add_argument("--max-steps", type=int, default=0, help="hard-stop after N steps (0 = full)")
-    ap.add_argument("--max-tokens", type=int, default=0,
-                    help="train on the first N tokens of the arm with a full schedule (0 = whole arm); a sub-budget point")
+    ap.add_argument(
+        "--max-tokens",
+        type=int,
+        default=0,
+        help="train on the first N tokens of the arm with a full schedule (0 = whole arm); a sub-budget point",
+    )
     ap.add_argument(
         "--vocab-size",
         type=int,
@@ -1797,7 +1952,9 @@ def parse_args() -> argparse.Namespace:
         ap.error("--pooled-* options are only valid with --variant pooledkv")
     if opts.variant == "softtoken":
         if opts.pack:
-            ap.error("--variant softtoken requires the padded (no --pack) data path (per-row fingerprints)")
+            ap.error(
+                "--variant softtoken requires the padded (no --pack) data path (per-row fingerprints)"
+            )
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False

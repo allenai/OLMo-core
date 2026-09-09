@@ -319,6 +319,7 @@ class Transformer(nn.Module):
         header_stop_id: Optional[int] = None,
         header_stop_count: int = 1,
         header_cap: int = 32,
+        detach_soft_gdn: bool = True,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -345,6 +346,11 @@ class Transformer(nn.Module):
             (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`). The eval-side
             construction that reproduces full attention on contradiction (``":"``, count 1) and
             oolong (``":"``, count 3); see records/pooled-doc-kv-attention.md (2026-09-08).
+        :param detach_soft_gdn: With ``detach_soft_kv``, ALSO sever the backward through the
+            slots' recurrent-mixer write channels (``k``/``v`` before the conv, ``beta``, ``g``)
+            on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
+            attention K/V and GDN writes are detached, and its own query/FFN path is then a dead
+            end. ``False`` = the pre-2026-09-08 behaviour (GDN co-adaptation through slots).
         """
         if self._document_chunk_attention is not None:
             raise OLMoConfigurationError(
@@ -409,7 +415,11 @@ class Transformer(nn.Module):
             "header_stop_id": None if header_stop_id is None else int(header_stop_id),
             "header_stop_count": int(header_stop_count),
             "header_cap": int(header_cap),
+            "detach_soft_gdn": bool(detach_soft_gdn),
         }
+        for mod in self.modules():
+            if hasattr(mod, "detach_masked_writes"):
+                mod.detach_masked_writes = bool(detach_soft_kv and detach_soft_gdn)
 
     def enable_role_gated_ffn(
         self,
