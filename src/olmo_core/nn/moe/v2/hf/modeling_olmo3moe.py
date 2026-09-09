@@ -825,20 +825,25 @@ class Olmo3MoeKimiDeltaAttention(nn.Module):
         else:
             initial_recurrent_state = None
         if has_previous_state and seq_len == 1:
-            # The chunk kernel can fuse this transform, while the recurrent
-            # inference kernel expects the log-space decay directly.
-            decay = -self.A_log.float().exp().view(1, 1, -1, 1) * F.softplus(
-                raw_decay.float() + self.dt_bias.float().view(1, 1, self.n_heads, self.head_k_dim)
-            )
+            # Match chunk_kda's normalization rounding: its separate l2norm
+            # materializes BF16 Q/K. Recurrent in-kernel normalization retains
+            # FP32 Q/K and otherwise represents a different numerical recurrence.
+            from fla.modules.l2norm import l2norm_fwd
+
+            q, _ = l2norm_fwd(q)
+            k, _ = l2norm_fwd(k)
             output, recurrent_state = fused_recurrent_kda(
                 q=q,
                 k=k,
                 v=v,
-                g=decay,
+                g=raw_decay,
                 beta=beta,
+                A_log=self.A_log,
+                dt_bias=self.dt_bias,
                 initial_state=initial_recurrent_state,
                 output_final_state=cache_layer is not None,
-                use_qk_l2norm_in_kernel=True,
+                use_qk_l2norm_in_kernel=False,
+                use_gate_in_kernel=True,
             )
         else:
             output, recurrent_state = chunk_kda(
