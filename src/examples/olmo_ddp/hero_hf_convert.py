@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -84,6 +85,13 @@ def qualify(root: Path, *, full: bool) -> dict:
 
     _register_olmo3moe_auto_classes()
     raw, hf = root / "olmo-core", root / "hf.partial"
+    # Qualification-only retries may reuse serialized weights, but never publish
+    # stale remote-code files from a prior exporter revision.
+    from olmo_core.nn.moe.v2.hf import configuration_olmo3moe, modeling_olmo3moe
+
+    for module in (configuration_olmo3moe, modeling_olmo3moe):
+        source_file = Path(module.__file__)
+        shutil.copy2(source_file, hf / source_file.name)
     experiment = load_config(raw)
     tokenizer = AutoTokenizer.from_pretrained(hf)
     exported_vocab = json.loads((hf / "config.json").read_text())["vocab_size"]

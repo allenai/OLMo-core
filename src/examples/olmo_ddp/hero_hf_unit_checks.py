@@ -13,11 +13,42 @@ from olmo_core.nn.hf.config import _qk_norm_per_head_gains, _register_olmo3moe_a
 from olmo_core.nn.hf.convert import convert_olmo3moe_state_from_hf, convert_olmo3moe_state_to_hf
 from olmo_core.nn.layer_norm import RMSNorm
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM, Olmo3MoeRMSNorm
+from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+    Olmo3MoeExperts,
+    Olmo3MoeForCausalLM,
+    Olmo3MoeRMSNorm,
+    Olmo3MoeSparseMLP,
+)
 
 
 class HeroHFChecks(unittest.TestCase):
     """Exercise nontrivial per-head gains, GQA, legacy export, and cached attention."""
+
+    def test_fp32_expert_combine_weights(self):
+        cfg = Olmo3MoeConfig(
+            hidden_size=8,
+            moe_intermediate_size=8,
+            n_routed_experts=2,
+            num_experts_per_tok=2,
+            shared_expert_intermediate_size=None,
+        )
+        mlp = Olmo3MoeSparseMLP(cfg).to(torch.bfloat16)
+        weights = torch.tensor([[[0.1234567, 0.7654321]]])
+        indices = torch.tensor([[[0, 1]]])
+        mlp.router.forward = lambda x: (weights, indices)
+
+        class Capture(torch.nn.Module):
+            def forward(self, x, topk_ids, topk_weights):
+                torch.testing.assert_close(topk_weights, weights.reshape(1, 2), rtol=0, atol=0)
+                return x
+
+        mlp.experts = Capture()
+        mlp(torch.ones(1, 1, 8, dtype=torch.bfloat16))
+        experts = Olmo3MoeExperts([torch.nn.Identity(), torch.nn.Identity()])
+        x = torch.tensor([[1.5, -3.25]], dtype=torch.bfloat16)
+        expected = (x.float() * weights.sum(-1)).to(x.dtype)
+        actual = experts._forward_loop(x, indices.reshape(1, 2), weights.reshape(1, 2))
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
     def test_norm_matches_core(self):
         for dtype in (torch.float32, torch.bfloat16):

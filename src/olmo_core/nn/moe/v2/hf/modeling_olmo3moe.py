@@ -262,14 +262,14 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_ids: torch.Tensor,
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
-        out = hidden_states.new_zeros(hidden_states.shape)
+        out = torch.zeros_like(hidden_states, dtype=torch.float32)
         for expert_id, expert in enumerate(self):
             # Aggregate the routing weights for this expert across the K slots.
             w = (topk_weights * (topk_ids == expert_id).to(topk_weights.dtype)).sum(
                 dim=1, keepdim=True
             )  # (N, 1)
-            out = out + expert(hidden_states) * w
-        return out
+            out = out + expert(hidden_states).float() * w.float()
+        return out.to(hidden_states.dtype)
 
     def _forward_loop(
         self,
@@ -278,7 +278,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         N, H = hidden_states.shape
-        out = hidden_states.new_zeros((N, H))
+        out = torch.zeros((N, H), dtype=torch.float32, device=hidden_states.device)
         for expert_id, expert in enumerate(self):
             mask = topk_ids == expert_id  # (N, K) bool
             if not mask.any():
@@ -286,9 +286,9 @@ class Olmo3MoeExperts(nn.ModuleList):
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
-            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
-            out.index_add_(0, token_ids, y_sel * w_sel)
-        return out
+            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).float()
+            out.index_add_(0, token_ids, y_sel.float() * w_sel)
+        return out.to(hidden_states.dtype)
 
     def _forward_grouped_mm(
         self,
@@ -303,7 +303,7 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         route_token_ids = torch.arange(N, device=hidden_states.device).repeat_interleave(K)
         route_expert_ids = topk_ids.reshape(-1)
-        route_weights = topk_weights.reshape(-1).to(dtype=hidden_states.dtype)
+        route_weights = topk_weights.reshape(-1).float()
 
         sorted_route_ids = torch.argsort(route_expert_ids)
         sorted_expert_ids = route_expert_ids.index_select(0, sorted_route_ids)
@@ -331,10 +331,10 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         # Reduce in the same expert-order as the reference loop. This avoids
         # duplicate-index CUDA atomics and keeps close greedy decisions stable.
-        weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
+        weighted_y_grouped = y_grouped.float() * sorted_weights.unsqueeze(-1)
         token_expert_order = torch.argsort(sorted_token_ids * num_experts + sorted_expert_ids)
         weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
-        return weighted_y.reshape(N, K, H).sum(dim=1)
+        return weighted_y.reshape(N, K, H).sum(dim=1).to(hidden_states.dtype)
 
     def _forward_olmo_core_reference(
         self,
@@ -523,7 +523,10 @@ class Olmo3MoeSparseMLP(nn.Module):
         routed_h = routed_x.shape[-1]
         x_flat = routed_x.reshape(B * S, routed_h)
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
-        w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
+        # The core router and TE unpermutation preserve FP32 combine weights and
+        # accumulate the weighted expert outputs in FP32 before casting once.
+        # Premature BF16 rounding here changes the represented model's forward.
+        w_flat = expert_weights.reshape(B * S, K)  # (N, K), FP32
 
         out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)
         routed_expert_out = out_flat.view(B, S, routed_h)
