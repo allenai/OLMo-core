@@ -276,6 +276,16 @@ beaker-image-cu129 :
 beaker-image-cu129-rma :
 	$(MAKE) beaker-image $(CUDA129_ARGS) $(RMA_CU129_ARGS)
 
+# olmo-core-tch2130cu129-sm80-<date>  (adds sm_80 / A100 for the general, non-MoE test coverage)
+# Non-RMA: A100 (sm_80) can't run the symm-mem / NVSHMEM EP kernels (sm_90+), so the RMA stack would
+# be dead weight here. Used for the CI jobs that fall back to A100.
+.PHONY : beaker-image-cu129-sm80
+beaker-image-cu129-sm80 :
+	$(MAKE) beaker-image $(CUDA129_ARGS) \
+		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
+		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
+		IMAGE_VARIANT=-sm80
+
 # ---- CUDA 13.0 family (H100, B200, B300) — torch 2.11 ------------------------------------------
 # olmo-core-tch2110cu130-<date>
 .PHONY : beaker-image-cu130
