@@ -28,6 +28,7 @@ def main():
     """Run a diagnostic-only replay; never write acceptance or cleanup receipts."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--layer", type=int, default=2)
+    parser.add_argument("--captured-parameters-only", action="store_true")
     args = parser.parse_args()
     root = SCRATCH / "emo" / "step6000"
     debug = root / "layer-debug-random257-flash3"
@@ -64,12 +65,29 @@ def main():
     with safe_open(root / "hf.partial/model.safetensors", framework="pt", device="cpu") as handle:
         alog = handle.get_tensor(prefix + ".A_log")
         bias = handle.get_tensor(prefix + ".dt_bias")
+    parameters = {
+        dtype: (alog.to(getattr(torch, dtype)), bias.to(getattr(torch, dtype)))
+        for dtype in ("bfloat16", "float32")
+    }
+    if args.captured_parameters_only:
+        parameters = {}
+        for label, captures in (("loaded_hf", hf), ("loaded_native", native)):
+            parameters[label] = (
+                captures[prefix + ".A_log/parameter"],
+                captures[prefix + ".dt_bias/parameter"],
+            )
+            print(
+                "KDA_PARAMETER_DTYPES", label, [str(p.dtype) for p in parameters[label]], flush=True
+            )
     rows = []
     with torch.inference_mode():
         for value_first, variable, zero_state, dtype_name in itertools.product(
-            (False, True), (False, True), (False, True), ("bfloat16", "float32")
+            (False,) if args.captured_parameters_only else (False, True),
+            (False,) if args.captured_parameters_only else (False, True),
+            (False,) if args.captured_parameters_only else (False, True),
+            parameters,
         ):
-            dtype = getattr(torch, dtype_name)
+            gate_alog, gate_bias = parameters[dtype_name]
             initial = None
             if zero_state:
                 dims = (v, k) if value_first else (k, v)
@@ -80,8 +98,8 @@ def main():
                 v=values,
                 g=gate,
                 beta=beta,
-                A_log=alog.to(device="cuda", dtype=dtype),
-                dt_bias=bias.to(device="cuda", dtype=dtype),
+                A_log=gate_alog.cuda(),
+                dt_bias=gate_bias.cuda(),
                 initial_state=initial,
                 output_final_state=True,
                 use_qk_l2norm_in_kernel=True,
@@ -104,7 +122,8 @@ def main():
             rows.append(row)
             print("KDA_REPLAY", json.dumps(row), flush=True)
     write_json(
-        debug / f"kda-replay-layer{args.layer}.json",
+        debug
+        / f"kda-replay-layer{args.layer}{'-loaded' if args.captured_parameters_only else ''}.json",
         dict(layer=args.layer, cases=rows, diagnostic_only=True),
     )
 
