@@ -33,6 +33,12 @@ def cleanup(arm: str, step: int) -> dict:
     conversion = json.loads(checked_file(root, "conversion-success.json").read_text())
     parity = json.loads(checked_file(root, "vllm-parity-success.json").read_text())
     smoke = json.loads(checked_file(root, "eval-smoke-success.json").read_text())
+    profile = conversion.get("inference_profile", "bf16")
+    if profile not in ("bf16", "fp32-linear64-recurrent-v1"):
+        raise RuntimeError("Unknown inference precision qualification")
+    precise = profile == "fp32-linear64-recurrent-v1"
+    if bool(parity.get("precise")) != precise or bool(smoke.get("precise")) != precise:
+        raise RuntimeError("Conversion, native parity, and eval precision profiles disagree")
     hf, raw = root / "hf", root / "olmo-core"
     if (
         conversion.get("passed") is not True

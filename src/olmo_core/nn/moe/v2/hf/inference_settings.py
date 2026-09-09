@@ -1,9 +1,10 @@
-"""Explicit inference precision diagnostics using existing PyTorch/FLA operations only."""
+"""Explicit offline-inference precision using existing PyTorch/FLA operations only."""
 
 import torch
 from torch.nn import functional as F
 
 _INSTALLED = None
+PRECISE_PROFILE = "fp32-linear64-recurrent-v1"
 
 
 def install(*, linear: str = "native", sdpa: str = "native", recurrent: bool = False) -> dict:

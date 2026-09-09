@@ -73,7 +73,7 @@ def statistics(actual, expected) -> dict:
     }
 
 
-def qualify(root: Path, *, full: bool) -> dict:
+def qualify(root: Path, *, full: bool, precise: bool = False) -> dict:
     """Run an exact semantic-reference comparison plus independent HF cache checks."""
     import torch
     from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -140,6 +140,37 @@ def qualify(root: Path, *, full: bool) -> dict:
     # for the cached/uncached check or the later production vLLM evaluation.
     os.environ.pop("OLMO_HF_MOE_CORE_REFERENCE", None)
     os.environ["OLMO_HF_MOE_REFERENCE_LOOP"] = "1"
+    if precise:
+        # Keep the exact BF16 mapping oracle above independent of the numerical
+        # precision recipe. Reload only AFTER that gate has passed.
+        del hf_model
+        gc.collect()
+        torch.cuda.empty_cache()
+        from olmo_core.nn.moe.v2.hf import inference_settings
+
+        inference_settings.install(linear="float64", sdpa="float64", recurrent=True)
+        shutil.copy2(inference_settings.__file__, hf / "inference_settings.py")
+        write_json(
+            hf / "inference-settings.json",
+            dict(
+                profile=inference_settings.PRECISE_PROFILE,
+                model_load_dtype="float32",
+                linear_compute="float64_then_float32",
+                hf_attention="math_sdpa_float64_then_float32",
+                kda="existing_fla_recurrent_prefill_and_decode",
+                vllm_attention="existing_flex_attention_float32",
+                vllm_env={"OLMO_HERO_PRECISE_INFERENCE": "1", "OLMO_VLLM_FLA_KDA": "1"},
+                vllm_pool_blocks=128,
+                note="Opt-in offline recipe, not a claim that default BF16 cache gates pass.",
+            ),
+        )
+        hf_model = (
+            AutoModelForCausalLM.from_pretrained(
+                hf, dtype=torch.float32, attn_implementation="sdpa"
+            )
+            .cuda()
+            .eval()
+        )
     with torch.inference_mode(), sdpa_kernel(SDPBackend.MATH):
         for name, ids in inputs:
             if ids.shape[1] > 1024:
@@ -158,8 +189,7 @@ def qualify(root: Path, *, full: bool) -> dict:
             stats = statistics(decoded, complete)
             rows.append({"case": name, "gate": "hf_cached_vs_uncached", **stats})
             log.info("HERO_PARITY %s", json.dumps(rows[-1]))
-            # Recurrent KDA vs chunk KDA and one-token GEMMs are different BF16
-            # implementations. Keep explicit numerical and distribution gates.
+            # Keep the same numerical gates for either explicitly recorded profile.
             if not stats["finite"] or stats["relative_l2"] > 0.005:
                 raise AssertionError(f"Cached HF relative-L2 gate failed: {stats}")
             logprob_error = (
@@ -180,6 +210,7 @@ def qualify(root: Path, *, full: bool) -> dict:
         "cache_relative_l2_limit": 0.005,
         "cache_logprob_mean_abs_limit": 0.01,
         "cache_logprob_max_abs_limit": 0.25,
+        "inference_profile": (inference_settings.PRECISE_PROFILE if precise else "bf16"),
     }
 
 
@@ -191,6 +222,7 @@ def main() -> None:
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--qualify-only", action="store_true")
     parser.add_argument("--portable-reference", action="store_true")
+    parser.add_argument("--precise", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     prepare_scratch()
@@ -239,7 +271,7 @@ def main() -> None:
         )
         gc.collect()
         torch.cuda.empty_cache()
-    result = qualify(root, full=args.full)
+    result = qualify(root, full=args.full, precise=args.precise)
     result.update(
         {
             "arm": args.arm,

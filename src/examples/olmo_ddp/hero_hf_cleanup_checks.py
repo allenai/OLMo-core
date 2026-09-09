@@ -110,6 +110,22 @@ class CleanupChecks(unittest.TestCase):
             subject.cleanup("emo", 6000)
         self.assertTrue(self.raw.exists())
 
+    def test_mismatched_precision_refuses(self):
+        smoke = json.loads((self.root / "eval-smoke-success.json").read_text())
+        smoke["precise"] = True
+        self.record("eval-smoke-success.json", smoke)
+        with self.assertRaisesRegex(RuntimeError, "precision profiles disagree"):
+            subject.cleanup("emo", 6000)
+        self.assertTrue(self.raw.exists())
+
+    def test_unknown_precision_refuses(self):
+        conversion = json.loads((self.root / "conversion-success.json").read_text())
+        conversion["inference_profile"] = "unqualified_recipe"
+        self.record("conversion-success.json", conversion)
+        with self.assertRaisesRegex(RuntimeError, "Unknown inference precision"):
+            subject.cleanup("emo", 6000)
+        self.assertTrue(self.raw.exists())
+
     def test_link_to_original_refuses(self):
         (self.raw / "payload").unlink()
         (self.raw / "payload").symlink_to(self.original)
