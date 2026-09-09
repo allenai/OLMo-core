@@ -159,6 +159,13 @@ class Olmo3MoeDenseMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
+        if self.config.dense_layers_use_shared_expert and os.environ.get(
+            "OLMO_HF_MOE_CORE_REFERENCE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}:
+            # DDP's dense-only block is also a packed SharedExperts GEMM.
+            # Match that layout in the tensor-conversion oracle, just as we do
+            # for the shared expert inside sparse blocks.
+            return Olmo3MoeExpert._forward_olmo_core_shared_reference(self, x)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 

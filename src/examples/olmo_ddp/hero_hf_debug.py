@@ -35,7 +35,9 @@ def capture(model, modules):
     from functools import partial
 
     for key, path in modules.items():
-        model.get_submodule(path).register_forward_hook(partial(hook, key))
+        module = dict(model.named_modules()).get(path)
+        if module is not None:
+            module.register_forward_hook(partial(hook, key))
     return results
 
 
@@ -55,6 +57,8 @@ def mappings():
         "attention.g_proj_1": "self_attn.g_proj_1",
         "attention.g_proj_2": "self_attn.g_proj_2",
         "attention.o_norm": "self_attn.o_norm",
+        "attention.q_norm": "self_attn.q_norm",
+        "attention.k_norm": "self_attn.k_norm",
         "attention.w_out": "self_attn.o_proj",
         "attention_norm": "post_attention_layernorm",
         "feed_forward_input_norm": "pre_feedforward_layernorm",
@@ -64,11 +68,12 @@ def mappings():
         "latent_up_proj": "mlp.latent_up_proj",
         "feed_forward_norm": "post_feedforward_layernorm",
     }
-    for i in range(3):
+    for i in range(16):
         for left, right in aliases.items():
             key = f"{i}.{left}"
             core[key] = f"blocks.{i}.{left}"
             hf[key] = f"model.layers.{i}.{right}"
+    hf["0.shared_experts"] = "model.layers.0.mlp"
     return core, hf
 
 
