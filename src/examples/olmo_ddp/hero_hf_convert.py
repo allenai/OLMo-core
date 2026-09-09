@@ -164,10 +164,18 @@ def qualify(root: Path, *, full: bool, precise: bool = False) -> dict:
                 note="Opt-in offline recipe, not a claim that default BF16 cache gates pass.",
             ),
         )
+        # Transformers 5.16 deliberately prefers an explicit local AutoModel
+        # registration, even with trust_remote_code=True. The mapping oracle
+        # registered that class above, so load the bundled class directly here.
+        from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+        exported_config = json.loads((hf / "config.json").read_text())
+        class_ref = exported_config.get("auto_map", {}).get("AutoModelForCausalLM")
+        if class_ref != "modeling_olmo3moe.Olmo3MoeForCausalLM":
+            raise RuntimeError("Export does not register the expected standalone HF model")
+        exported_class = get_class_from_dynamic_module(class_ref, hf, local_files_only=True)
         hf_model = (
-            AutoModelForCausalLM.from_pretrained(
-                hf, dtype=torch.float32, attn_implementation="sdpa", trust_remote_code=True
-            )
+            exported_class.from_pretrained(hf, dtype=torch.float32, attn_implementation="sdpa")
             .cuda()
             .eval()
         )

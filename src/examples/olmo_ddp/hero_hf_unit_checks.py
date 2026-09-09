@@ -156,9 +156,13 @@ class HeroHFChecks(unittest.TestCase):
             torch.testing.assert_close(full[:, 7:], second.logits, rtol=1e-5, atol=1e-6)
             with tempfile.TemporaryDirectory(prefix="hero-hf-unit-") as folder:
                 model.save_pretrained(folder)
-                reloaded = AutoModelForCausalLM.from_pretrained(
-                    folder, trust_remote_code=True
-                ).eval()
+                from transformers.dynamic_module_utils import get_class_from_dynamic_module
+
+                exported_class = get_class_from_dynamic_module(
+                    "modeling_olmo3moe.Olmo3MoeForCausalLM", folder, local_files_only=True
+                )
+                reloaded = exported_class.from_pretrained(folder).eval()
+                self.assertTrue(reloaded.__class__.__module__.startswith("transformers_modules."))
                 self.assertEqual(reloaded.config.qk_norm_per_head_gains, per_head)
                 with torch.no_grad():
                     torch.testing.assert_close(
