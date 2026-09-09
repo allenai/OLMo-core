@@ -286,10 +286,14 @@ class Olmo3MoeExperts(nn.ModuleList):
     ) -> torch.Tensor:
         N, H = hidden_states.shape
         out = torch.zeros((N, H), dtype=torch.float32, device=hidden_states.device)
-        for expert_id, expert in enumerate(self):
+        # Preserve expert-ascending accumulation without synchronizing once per
+        # unused expert during single-token decoding (512 experts, native K=16).
+        selected_experts = topk_ids.unique(sorted=True).tolist()
+        if selected_experts and not (0 <= selected_experts[0] <= selected_experts[-1] < len(self)):
+            raise ValueError("Router selected an out-of-range expert")
+        for expert_id in selected_experts:
+            expert = self[expert_id]
             mask = topk_ids == expert_id  # (N, K) bool
-            if not mask.any():
-                continue
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
