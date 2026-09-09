@@ -60,7 +60,7 @@ def walltime(ex):
         gpus = int(m.group(1))
     stamps = []
     for ln in lines:
-        m2 = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z .*\[step (\d+)/", ln)
+        m2 = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z .*\[step=(\d+)/", ln)  # console_logger: [step=1/31,epoch=1]
         if m2:
             stamps.append((datetime.fromisoformat(m2.group(1)), int(m2.group(2))))
     if len(stamps) < 2:
