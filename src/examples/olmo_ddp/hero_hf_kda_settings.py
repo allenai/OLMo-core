@@ -15,8 +15,9 @@ from hero_hf_kda_replay import stats
 KERNELS = (
     ("fla.modules.l2norm", "l2norm_fwd_kernel"),
     ("fla.ops.kda.gate", "kda_gate_chunk_cumsum_vector_kernel"),
-    ("fla.ops.kda.chunk_intra", "chunk_kda_fwd_kernel_intra_sub_chunk"),
+    ("fla.ops.kda.chunk_intra_token_parallel", "chunk_kda_fwd_kernel_intra_token_parallel"),
     ("fla.ops.kda.chunk_intra", "chunk_kda_fwd_kernel_inter_solve_fused"),
+    ("fla.ops.kda.wy_fast", "recompute_w_u_fwd_kda_kernel"),
     ("fla.ops.common.chunk_delta_h", "chunk_gated_delta_rule_fwd_kernel_h_blockdim64"),
     ("fla.ops.gla.chunk", "chunk_gla_fwd_kernel_o"),
 )
@@ -101,9 +102,15 @@ def main():
         baseline, baseline_stages = run()
         repeat, _ = run()
         print("KDA_SETTINGS_REPEAT", json.dumps(stats(repeat, baseline)), flush=True)
+        active_operators = []
         for name, operator in operators:
-            print("KDA_SETTINGS_BASELINE_CONFIG", name, str(operator.best_config), flush=True)
-        for name, operator in operators:
+            selected = getattr(operator, "best_config", None)
+            print("KDA_SETTINGS_BASELINE_CONFIG", name, str(selected), flush=True)
+            if selected is not None:
+                active_operators.append((name, operator))
+            else:
+                print("KDA_SETTINGS_SKIP_UNUSED", name, flush=True)
+        for name, operator in active_operators:
             original_configs, original_cache = operator.configs, dict(operator.cache)
             for candidate in original_configs:
                 operator.configs = [candidate]
