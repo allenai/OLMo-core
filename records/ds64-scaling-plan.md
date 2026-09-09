@@ -93,3 +93,10 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   arm by compaction (8 / 6 / 4 / 2 rows for keep 1/36 / 1/12 / 1/6 / 1/3), run names carry `-b128`;
   the gb16 runs were cancelled (the finished hdr03/runs03 16M ones stay in the state as a labelled
   reference). All four data builds are done (contradiction 16M/32M/64M; others 16M–128M).
+- 22:52 **backend fix.** The `-b128` torch-backend arms ran ~70 s/step (dense 10 s) at 0.18x the
+  FLOPs. Local test (sneetches, 1 GPU, 16 rows/step, one step): torch vs flash equal at micro 2
+  (2 min each incl. load), but at micro 8 torch 234 s vs flash 71 s — PyTorch SDPA falls off the
+  fused kernel on multi-row right-padded batches; the 65536 bench (B=1, no padding) could not see
+  it. Soft arms relaunched on `flash_2` (exact for right-padded causal rows) as `-b128f`; the
+  torch `-b128` runs cancelled (finished ones kept as accuracy-only reference). The keep-1/12 arms
+  also needed micro 4 (128 rows/step must divide by micro x 8 GPUs).

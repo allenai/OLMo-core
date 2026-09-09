@@ -41,7 +41,10 @@ TASK_BUDGETS = {"contradiction": ["16M", "32M", "64M"]}
 def budgets_for(task):
     return TASK_BUDGETS.get(task, BUDGETS)
 TASKS = ["contradiction", "oolong", "nq", "outlier"]
-SOFT_BACKEND = os.environ.get("DS64_SOFT_BACKEND", "torch")
+# flash_2: on multi-row right-padded micro-batches the torch SDPA path is ~4x slower (local test
+# 2026-09-08 22:50: micro 8, one step, torch 234 s vs flash 71 s incl. model load; equal at micro 2).
+# Flash is exact for right-padded causal rows (real tokens never attend to the trailing PAD).
+SOFT_BACKEND = os.environ.get("DS64_SOFT_BACKEND", "flash_2")
 # per scale: nodes, GPUs/node, soft micro-batch, cluster
 NODES = {"4b": 1, "27b": int(os.environ.get("DS64_NUM_NODES", "2"))}[SCALE]
 GPUS = 8
@@ -81,7 +84,8 @@ TASK_ARMS = {"contradiction": ["dense", "hdr03", "hdr08", "hdr17", "hdr33", "run
 
 
 def run_name(task, arm, budget):
-    tag = "" if arm == "dense" else f"-b{SOFT_GB}"  # soft arms carry their rows/step (the gb16 first launch stays distinct)
+    # soft arms carry rows/step + backend (gb16 first launch and the torch -b128 launch stay distinct)
+    tag = "" if arm == "dense" else f"-b{SOFT_GB}{'f' if SOFT_BACKEND.startswith('flash') else ''}"
     return f"ds64{'' if SCALE == '4b' else '-' + SCALE}-{task}-{arm}{tag}-u{budget}"
 
 
