@@ -4,7 +4,8 @@ Runs detached on the LOGIN node; state in orchestrator_ds64[_27b]_state.json; re
 
 Each 5-min cycle:
   A. per task: when its Beaker data build (debug/ds64/data_build_jobs.tsv) has finalized rc=0,
-     launch every (arm, budget) of that task (launch_ds64.py);
+     launch every (arm, budget) of that task (launch_ds64.py TASK_ARMS: contradiction's keep
+     ablation + every task's dense), plus any soft arms named in debug/ds64/soft_arms.json;
   B. poll training runs: finalized ok -> eval on the 16k/32k/64k rungs with the marker-aware
      docchunk evaluator (2k/8k/16k/32k/64k); failed -> one relaunch;
   C. poll evals; failed -> up to 3 relaunches;
@@ -180,6 +181,21 @@ def cycle(st):
                     launch_train(st, task, b, arm)
         st["launched"][task] = True
         save(st)
+    # A2. extra soft arms named in debug/ds64/soft_arms.json ({task: [arm, ...]}; edited by hand
+    #     after the contradiction keep-ratio ablation reads out), for tasks whose data is in place
+    extra_path = f"{D}/soft_arms.json"
+    if os.path.exists(extra_path):
+        try:
+            extra = json.load(open(extra_path))
+        except Exception as e:  # noqa: BLE001
+            extra = {}; log(f"soft_arms.json unreadable: {e!r}")
+        for task, arms in extra.items():
+            if not st["data_ok"].get(task):
+                continue
+            for b in BUDGETS:
+                for arm in arms:
+                    if run_name(task, arm, b) not in st["runs"]:
+                        launch_train(st, task, b, arm)
     # B. training runs
     for name, r in list(st["runs"].items()):
         if r["state"] == "DONE" and not r.get("eval"):

@@ -21,6 +21,13 @@ bias, GDN sees the slot in the forward). Three things are new, all from 2026-09-
 
 ## Arms (per task × budget), `debug/ds64/launch_ds64.py`
 
+**Phase 1 (Prasann: "be careful about keep ratio, ablate with contradiction first"):** contradiction
+trains dense + `hdr03/08/17/33` (headers, gold + 1/36 … 1/3) + `runs03/08` at every budget; the
+other tasks train dense only. Their soft arms (`ohdr33/17/08`, `kv08/17/33`) are launched by
+listing them in `debug/ds64/soft_arms.json` once the contradiction ablation says which keep
+ratio survives training (the eval-side parity was at 1/36, but a tiny real set is also the
+"real doc = gold" shortcut at training).
+
 | task | dense | soft (best, eval-side parity) | aggressive |
 |---|---|---|---|
 | contradiction | packed 65536, 8 rows/step | `hdr36`: headers real, gold + 1/36 (~4.8x) | `runs36`: neighbour runs, 1/36 (~11x) |
