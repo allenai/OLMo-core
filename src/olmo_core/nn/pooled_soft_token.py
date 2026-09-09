@@ -216,12 +216,18 @@ def compact_pooled_rows(
         soft_mask = is_soft[order]
         doc_len = torch.bincount(c[is_ctx], minlength=n_docs) if is_ctx.any() else torch.zeros(n_docs, dtype=torch.long, device=device)
         doc_of_ordered = doc_of[order]
-        for col in soft_mask.nonzero(as_tuple=True)[0].tolist():
-            d = int(doc_of_ordered[col])
-            soft_rows.append(b)
-            soft_cols.append(col)
-            soft_docs.append(d)
-            soft_log_len.append(math.log(max(1, int(doc_len[d]))))
+        # One host sync per row (not two per pooled document): with FSDP on 8 GPUs every .item()
+        # drains the CUDA queue and stalls the overlapped all-gathers -- the per-doc version cost
+        # ~50 s/step on 128-row steps (2026-09-08 ds64 campaign) while the model work was ~5 s.
+        soft_cols_b = soft_mask.nonzero(as_tuple=True)[0]
+        if soft_cols_b.numel():
+            docs_b = doc_of_ordered[soft_cols_b]
+            lens_b = doc_len[docs_b].clamp(min=1).to(torch.float32).log()
+            cols_l = soft_cols_b.tolist()
+            soft_rows += [b] * len(cols_l)
+            soft_cols += cols_l
+            soft_docs += docs_b.tolist()
+            soft_log_len += lens_b.tolist()
 
         # AUX shadows: one soft-token candidate per KEPT context doc, appended after the content.
         if add_shadows:

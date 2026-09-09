@@ -85,7 +85,7 @@ TASK_ARMS = {"contradiction": ["dense", "hdr03", "hdr08", "hdr17", "hdr33", "run
 
 def run_name(task, arm, budget):
     # soft arms carry rows/step + backend (gb16 first launch and the torch -b128 launch stay distinct)
-    tag = "" if arm == "dense" else f"-b{SOFT_GB}{'f' if SOFT_BACKEND.startswith('flash') else ''}"
+    tag = "" if arm == "dense" else f"-b{SOFT_GB}{'f' if SOFT_BACKEND.startswith('flash') else ''}{os.environ.get('DS64_GEN', '')}"
     return f"ds64{'' if SCALE == '4b' else '-' + SCALE}-{task}-{arm}{tag}-u{budget}"
 
 
