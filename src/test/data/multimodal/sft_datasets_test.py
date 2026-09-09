@@ -5,8 +5,8 @@ example construction from a synthetic parquet shard.
 These sources assemble through the shared stage-2 encode path
 (:func:`~olmo_core.data.multimodal.message_sequence.encode_sft_example`), so the
 sequence layout matches the rest of the mixture: no BOS, the image token block inside
-the first user turn, and multi-turn rows as ONE sequential branch with no loss at
-intermediate turn ends (mm_olmo semantics).
+the first user turn. FineVision multi-turn rows use one branch per message_list entry
+(mm_olmo DataFormatter semantics), with shared image prefix tokens.
 """
 
 import io
@@ -380,18 +380,17 @@ def test_finevision_dataset_end_to_end(tmp_path):
     ex = ds[0]
     n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
     assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
-    # "A triangle ABC." -> 3 word tokens + EOS
-    assert float(ex["loss_masks"].sum()) == 4.0
+    # "A triangle ABC." -> 3 word tokens + EOS; root_subsegments_root_tokens gives 1.0 each.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(4.0)
 
     two = ds[1]
     # both images spliced in, invariant still holds, and both replies are supervised
     assert two["images"].shape[0] == 2 * ex["images"].shape[0]
     n_patch2 = int((two["input_ids"] == IM_PATCH_ID).sum())
     assert n_patch2 == int((two["pooled_patches_idx"] >= 0).any(axis=-1).sum()) == 2 * n_patch
-    # One sequential conversation branch, mm_olmo turn semantics: "They differ." (2)
-    # + "Because of colour." (3) + final EOS (1); the intermediate turn end carries no
-    # loss (its <|im_end|> belongs to the next turn's user context).
-    assert float(two["loss_masks"].sum()) == 6.0
+    # mm_olmo message_list -> one branch per turn (shared image prefix): branch weights
+    # 1/sqrt(2) plus root_subsegments_root_tokens on each reply.
+    assert float(two["loss_masks"].sum()) == pytest.approx(6.265986, rel=1e-5)
     # multi-image rows get "Image 1"/"Image 2" text prefixes before each block
     image_1_ids = _FakeTokenizer().encode("Image 1")
     assert two["input_ids"].tolist()[1 : 1 + len(image_1_ids)] == image_1_ids
@@ -559,7 +558,7 @@ def test_finevision_without_image_placeholder(tmp_path):
     for ex in (no_marker, with_marker):
         n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
         assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
-        assert float(ex["loss_masks"].sum()) == 3.0  # "Yes, A." -> 2 word tokens + EOS
+        assert float(ex["loss_masks"].sum()) == pytest.approx(2 * (3**0.5))  # "Yes, A." + EOS
     # stripping the marker makes the two rows byte-identical
     for key in ("input_ids", "labels", "loss_masks", "position_ids", "token_type_ids"):
         np.testing.assert_array_equal(no_marker[key], with_marker[key], err_msg=key)
@@ -603,3 +602,224 @@ def test_finevision_image_correspondence_filter_is_opt_in(tmp_path):
         len(FineVisionDatasetConfig(dataset_path=str(d), min_image_correspondence=4).build(tok))
         == 0
     )
+
+
+def test_finevision_require_single_image_filter(tmp_path):
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+
+    d = tmp_path / "multi"
+    d.mkdir()
+    cols = [
+        "images",
+        "texts",
+        "relevance_min",
+        "visual_dependency_min",
+        "formatting_min",
+        "image_correspondence_min",
+    ]
+    rows = [
+        {
+            "images": [{"bytes": _png_bytes(0), "path": None}],
+            "texts": [{"user": "one", "assistant": "a"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        },
+        {
+            "images": [
+                {"bytes": _png_bytes(1), "path": None},
+                {"bytes": _png_bytes(2), "path": None},
+            ],
+            "texts": [{"user": "two", "assistant": "b"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        },
+    ]
+    _write_parquet(str(d / "train-00000.parquet"), rows, cols)
+    tok = _FakeTokenizer()
+
+    assert len(FineVisionDatasetConfig(dataset_path=str(d)).build(tok)) == 2
+    assert (
+        len(FineVisionDatasetConfig(dataset_path=str(d), require_single_image=True).build(tok)) == 1
+    )
+
+
+def test_finevision_max_rows_subsample_is_deterministic(tmp_path):
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+
+    d = tmp_path / "cap"
+    d.mkdir()
+    cols = [
+        "images",
+        "texts",
+        "relevance_min",
+        "visual_dependency_min",
+        "formatting_min",
+        "image_correspondence_min",
+    ]
+    rows = [
+        {
+            "images": [{"bytes": _png_bytes(i), "path": None}],
+            "texts": [{"user": f"q{i}", "assistant": f"a{i}"}],
+            "relevance_min": 4,
+            "visual_dependency_min": 4,
+            "formatting_min": 4,
+            "image_correspondence_min": 4,
+        }
+        for i in range(8)
+    ]
+    _write_parquet(str(d / "train-00000.parquet"), rows, cols)
+    tok = _FakeTokenizer()
+    kw = dict(dataset_path=str(d), max_rows=3, shuffle_seed=6198)
+
+    ds_a = FineVisionDatasetConfig(**kw).build(tok)
+    ds_b = FineVisionDatasetConfig(**kw).build(tok)
+    assert len(ds_a) == 3
+    assert [ds_a[i]["input_ids"].tolist() for i in range(3)] == [
+        ds_b[i]["input_ids"].tolist() for i in range(3)
+    ]
+
+
+def test_finevision_hub_load(monkeypatch, tmp_path):
+    from datasets import Dataset
+
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+    from olmo_core.data.multimodal.finevision import FINEVISION_HUB_REPO
+
+    fixture = Dataset.from_dict(
+        {
+            "images": [[{"bytes": _png_bytes(0), "path": None}]],
+            "texts": [[{"user": "hub q", "assistant": "hub a"}]],
+            "relevance_min": [4],
+            "visual_dependency_min": [4],
+            "formatting_min": [4],
+            "image_correspondence_min": [4],
+        }
+    )
+
+    def fake_load_dataset(repo, name, split, **kwargs):
+        assert repo == FINEVISION_HUB_REPO
+        assert name == "densefusion_1m"
+        assert split == "train"
+        assert kwargs.get("cache_dir") == "/tmp/hf-cache"
+        return fixture
+
+    monkeypatch.setattr(
+        "datasets.load_dataset",
+        fake_load_dataset,
+    )
+
+    ds = FineVisionDatasetConfig(
+        hub_repo=FINEVISION_HUB_REPO,
+        config_name="densefusion_1m",
+        cache_dir="/tmp/hf-cache",
+    ).build(_FakeTokenizer())
+    assert len(ds) == 1
+    assert float(ds[0]["loss_masks"].sum()) == pytest.approx(2 * (3**0.5))  # "hub a" + EOS
+
+
+def test_build_finevision_v10_config():
+    from olmo_core.data.multimodal import build_finevision_v10_config
+    from olmo_core.data.multimodal.finevision import (
+        FINEVISION_ROOT,
+        FINEVISION_V10_CONFIGS,
+        FINEVISION_V10_SHUFFLE_SEED,
+    )
+
+    cfg = build_finevision_v10_config("arxivqa", max_crops=4)
+    assert cfg.hub_repo is None
+    assert cfg.root == FINEVISION_ROOT
+    assert cfg.config_name == "arxivqa"
+    assert cfg.max_rows == FINEVISION_V10_CONFIGS["arxivqa"]
+    assert cfg.require_single_image is True
+    assert cfg.shuffle_seed == FINEVISION_V10_SHUFFLE_SEED
+    assert cfg.max_crops == 4
+    assert cfg.uses_hub() is False
+    assert cfg.resolved_path() == f"{FINEVISION_ROOT}/arxivqa"
+
+    with pytest.raises(KeyError, match="unknown_config"):
+        build_finevision_v10_config("unknown_config")
+
+
+def test_finevision_uses_hub_requires_no_dataset_path():
+    from olmo_core.data.multimodal import FineVisionDatasetConfig
+    from olmo_core.data.multimodal.finevision import FINEVISION_HUB_REPO
+
+    assert (
+        FineVisionDatasetConfig(hub_repo=FINEVISION_HUB_REPO, config_name="arxivqa").uses_hub()
+        is True
+    )
+    assert FineVisionDatasetConfig(dataset_path="/local", hub_repo=FINEVISION_HUB_REPO).uses_hub() is False
+    assert FineVisionDatasetConfig(config_name="arxivqa").uses_hub() is False
+
+
+# ---------------------------------------------------------------------------
+# DynaMath
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dynamath_data(tmp_path, monkeypatch):
+    import datasets
+    from PIL import Image as PILImage
+
+    image = PILImage.new("RGB", (4, 3), color=(10, 20, 30))
+    image_bytes = io.BytesIO()
+    image.save(image_bytes, format="PNG")
+
+    features = datasets.Features(
+        {
+            "image": datasets.Image(decode=False),
+            "question": datasets.Value("string"),
+            "answer": datasets.Value("string"),
+            "answer_type": datasets.Value("string"),
+            "subject": datasets.Value("string"),
+            "level": datasets.Value("string"),
+            "question_id": datasets.Value("string"),
+        }
+    )
+    fixture = datasets.Dataset.from_dict(
+        {
+            "image": [{"bytes": image_bytes.getvalue(), "path": None}],
+            "question": ["What is 2 + 2?"],
+            "answer": ["4"],
+            "answer_type": ["float"],
+            "subject": ["arithmetic"],
+            "level": ["elementary school"],
+            "question_id": ["1"],
+        },
+        features=features,
+    )
+
+    data_root = tmp_path / "experiment-data"
+    variant_path = data_root / "dynamath" / "seed_42_999"
+    fixture.save_to_disk(str(variant_path))
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(data_root))
+    return variant_path
+
+
+def test_dynamath_loads_local_data_and_formats_examples(dynamath_data):
+    from olmo_core.data.multimodal import DynaMathDatasetConfig
+
+    ds = DynaMathDatasetConfig(variant="seed_42_999").build(_FakeTokenizer())
+    assert len(ds) == 1
+    ex = ds[0]
+    n_patch = int((ex["input_ids"] == IM_PATCH_ID).sum())
+    assert n_patch == int((ex["pooled_patches_idx"] >= 0).any(axis=-1).sum()) > 0
+    # "4" -> 1 word token + EOS; root_subsegments_root_tokens -> sqrt(2) each.
+    assert float(ex["loss_masks"].sum()) == pytest.approx(2 * (2**0.5))
+
+
+def test_dynamath_variant_from_name_and_missing_path(tmp_path, monkeypatch):
+    from olmo_core.data.multimodal import DynaMathDatasetConfig, dynamath_variant_from_name
+
+    assert dynamath_variant_from_name("dynamath_seed_42_999") == "seed_42_999"
+    with pytest.raises(ValueError, match="Not a DynaMath"):
+        dynamath_variant_from_name("pixmo_cap")
+
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="DynaMath variant not found"):
+        DynaMathDatasetConfig(variant="seed_42_999").build(_FakeTokenizer())

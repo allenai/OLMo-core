@@ -20,7 +20,7 @@ def _patch_list_feature_type() -> None:
     global _LIST_PATCHED
     if _LIST_PATCHED:
         return
-    from datasets.features.features import Sequence, _FEATURE_TYPES
+    from datasets.features.features import _FEATURE_TYPES, Sequence
 
     if "List" in _FEATURE_TYPES:
         # datasets >= 5 has a native ``List`` feature — aliasing it to ``Sequence``
@@ -62,7 +62,11 @@ def _load_arrow_split(split_dir: Path):
 
 
 def load_from_disk_compat(path: Union[str, os.PathLike], **kwargs: Any):
-    """Load a HuggingFace dataset from disk, handling legacy ``List`` feature schemas."""
+    """Load a HuggingFace dataset from disk, handling legacy ``List`` feature schemas.
+
+    Returns either a ``DatasetDict`` (if dataset_dict.json exists) or a single
+    ``Dataset`` (for single splits). Caller can distinguish with ``hasattr(result, 'keys')``.
+    """
     path = Path(path)
     dict_json = path / "dataset_dict.json"
     if dict_json.exists():

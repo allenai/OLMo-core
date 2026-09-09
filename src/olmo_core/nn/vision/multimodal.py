@@ -18,9 +18,22 @@ from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import (
     ImagePoolingType,
     ImageProjectorType,
+    VisionConnector,
     VisionConnectorConfig,
 )
+from olmo_core.nn.vision.image_vit import VisionTransformer
 from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
+from olmo_core.nn.vision.vision_backbone import VisionBackbone
+
+
+def _mm_emb_full_tensor() -> bool:
+    return os.environ.get("MM_EMB_FULL_TENSOR", "1").lower() not in ("0", "false", "no")
+
+
+def _mm_emb_step_cache() -> bool:
+    """Reuse one vocab ``full_tensor()`` gather across microbatches in a training step."""
+    return os.environ.get("MM_EMB_STEP_CACHE", "1").lower() in ("1", "true", "yes")
+
 
 __all__ = [
     "MOLMO2_BASE_VOCAB_SIZE",
@@ -286,8 +299,73 @@ class MultimodalLM(nn.Module):
         self.lm = cfg.lm.build(init_device=init_device)
         # Cached so `forward` only builds a drop mask when some block will consume it.
         self._masked_residual_dropout = float(getattr(cfg.lm.block, "masked_dropout", 0.0) or 0.0)
-        self.vision = cfg.vision.build(init_device=init_device)
-        self.connector = cfg.connector.build(init_device=init_device)
+        self.vision_backbone = VisionBackbone(
+            cfg.vision, cfg.connector, init_device=init_device
+        )
+        self._emb_weight_step_cache: Optional[torch.Tensor] = None
+
+    @property
+    def vision(self) -> VisionTransformer:
+        return self.vision_backbone.vision
+
+    @property
+    def connector(self) -> VisionConnector:
+        return self.vision_backbone.connector
+
+    def _remap_legacy_state_dict_keys(
+        self, state_dict: dict[str, torch.Tensor], *, to_internal: bool
+    ) -> dict[str, torch.Tensor]:
+        """Map ``vision.*`` / ``connector.*`` ↔ ``vision_backbone.vision.*`` / ``...connector.*``."""
+        prefix = "vision_backbone."
+        remapped: dict[str, torch.Tensor] = {}
+        for key, value in state_dict.items():
+            if to_internal:
+                if key.startswith("vision.") or key.startswith("connector."):
+                    remapped[prefix + key] = value
+                else:
+                    remapped[key] = value
+            elif key.startswith(prefix):
+                remapped[key[len(prefix) :]] = value
+            else:
+                remapped[key] = value
+        return remapped
+
+    def load_state_dict(self, state_dict, strict=True, assign=False):  # type: ignore[override]
+        return super().load_state_dict(
+            self._remap_legacy_state_dict_keys(state_dict, to_internal=True),
+            strict=strict,
+            assign=assign,
+        )
+
+    def state_dict(self, *args, destination=None, prefix="", keep_vars=False):  # type: ignore[override]
+        sd = super().state_dict(*args, destination=destination, prefix=prefix, keep_vars=keep_vars)
+        return self._remap_legacy_state_dict_keys(sd, to_internal=False)
+
+    def clear_embedding_step_cache(self) -> None:
+        """Drop the per-step gathered embedding table (call once per optimizer step)."""
+        self._emb_weight_step_cache = None
+
+    def _gathered_embedding_weight(self, emb_weight: torch.Tensor) -> torch.Tensor:
+        if not isinstance(emb_weight, DTensor):
+            return emb_weight
+        return emb_weight.full_tensor()
+
+    def _lookup_embedding_weight(self, emb: nn.Module) -> torch.Tensor:
+        if _mm_emb_step_cache() and self._emb_weight_step_cache is not None:
+            return self._emb_weight_step_cache
+        if isinstance(emb, SplitVocabEmbedding):
+            gathered = torch.cat(
+                [
+                    self._gathered_embedding_weight(emb.weight),
+                    self._gathered_embedding_weight(emb.extra_weight),
+                ],
+                dim=0,
+            )
+        else:
+            gathered = self._gathered_embedding_weight(emb.weight)
+        if _mm_emb_step_cache() and _mm_emb_full_tensor():
+            self._emb_weight_step_cache = gathered
+        return gathered
 
     # -- model introspection (mirrors the Transformer API used by the trainer / callbacks) --
 
@@ -355,7 +433,7 @@ class MultimodalLM(nn.Module):
 
     def _vit_crop_microbatch(self) -> int:
         """Max crops per ViT forward (0 = no chunking). Env: ``VIT_CROP_MICROBATCH``."""
-        raw = os.environ.get("VIT_CROP_MICROBATCH", "16")
+        raw = os.environ.get("VIT_CROP_MICROBATCH", "0")
         return int(raw)
 
     def _vit_forward_features(self, images: torch.Tensor) -> torch.Tensor:
@@ -522,21 +600,10 @@ class MultimodalLM(nn.Module):
 
         # Compute LM token embeddings with any configured scale / norm. We embed here
         # (rather than inside ``self.lm``) so image features can be spliced in below.
-        # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
-        # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
-        # DDP / single-GPU where the weight is already a plain tensor).
+        # Under FSDP the embedding weight is a sharded ``DTensor``; gather to a full tensor
+        # for the lookup (``MM_EMB_STEP_CACHE=1`` reuses one gather across microbatches).
         emb = self.lm.embeddings
-
-        def _full(weight: torch.Tensor) -> torch.Tensor:
-            return weight.full_tensor() if isinstance(weight, DTensor) else weight
-
-        if isinstance(emb, SplitVocabEmbedding):
-            # The image-special token IDs live in the *extra* block, so the lookup must span
-            # both parameters — `emb.weight` alone covers only the base vocab. Gradients still
-            # reach both blocks through the concatenation.
-            emb_weight = torch.cat([_full(emb.weight), _full(emb.extra_weight)], dim=0)
-        else:
-            emb_weight = _full(emb.weight)
+        emb_weight = self._lookup_embedding_weight(emb)
         h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
         if self.lm.embed_scale is not None:
             h = h * self.lm.embed_scale
@@ -558,11 +625,20 @@ class MultimodalLM(nn.Module):
             # the activations but keeps the connector's FSDP reduce-scatter — and the vision
             # all-gather — firing on every rank each step, so collectives stay in lockstep
             # across ranks regardless of how text-only vs image examples are distributed.
-            h = h + 0.0 * image_features.sum().to(h.dtype)
+            # Disable for throughput A/B with ``MM_FSDP_IMAGE_ALIGN_HACK=0``.
+            if os.environ.get("MM_FSDP_IMAGE_ALIGN_HACK", "1").lower() not in (
+                "0",
+                "false",
+                "no",
+            ):
+                h = h + 0.0 * image_features.sum().to(h.dtype)
 
-            # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
-            # sync before the LM FSDP forward so all-gather collectives stay aligned.
-            if is_distributed():
+            # Optional barrier before LM FSDP forward (disable with ``MM_PRE_LM_BARRIER=0``).
+            if is_distributed() and os.environ.get("MM_PRE_LM_BARRIER", "1").lower() not in (
+                "0",
+                "false",
+                "no",
+            ):
                 barrier()
 
             # Keep only valid pooled rows (a row is padding iff *all* its patch

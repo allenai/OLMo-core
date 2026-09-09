@@ -5,6 +5,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributed.device_mesh import DeviceMesh
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 from torch.utils.checkpoint import checkpoint
 
 from olmo_core.nn.vision.config import VisionEncoderConfig
@@ -169,6 +172,9 @@ class ViTBlock(nn.Module):
         self.attn.reset_parameters()
         self.ffn.reset_parameters()
 
+    def apply_compile(self) -> None:
+        self.compile(fullgraph=False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.attn_norm(x))
         x = x + self.ffn(self.ffn_norm(x))
@@ -269,18 +275,37 @@ class VisionTransformer(nn.Module):
     def apply_activation_checkpointing(self) -> None:
         """Per-block activation checkpointing (mm_olmo ``VitConfig.activation_checkpointing``)."""
         self._activation_checkpoint_fn = _vit_activation_checkpoint_function(self.cfg)
+        self.blocks = nn.ModuleList(
+            [
+                checkpoint_wrapper(block, checkpoint_fn=self._activation_checkpoint_fn)
+                for block in self.blocks
+            ]
+        )
 
     def apply_compile(self) -> None:
-        """``torch.compile`` each ViT block (mm_olmo ``compile_vit: blocks``).
+        """Compile each ViT block (mm_olmo ``compile_vit='blocks'``)."""
+        for block in self.blocks:
+            block.compile(fullgraph=False)
 
-        Per-block compilation keeps compile times low thanks to the repeated structure, the
-        same strategy :meth:`olmo_core.nn.transformer.Transformer.apply_compile` uses.
+    def apply_fsdp(
+        self,
+        *,
+        dp_mesh: Optional[DeviceMesh] = None,
+        mp_policy: Optional[MixedPrecisionPolicy] = None,
+        reshard_after_forward: bool = True,
+    ) -> None:
+        """Shard each ViT block before sharding remaining encoder parameters.
 
-        .. warning::
-            Call after :meth:`apply_activation_checkpointing` and before FSDP wrapping.
+        This mirrors mm_olmo's FSDP2 topology. In particular, compiled block
+        backward graphs must execute inside their own FSDP units at B=2; root-only
+        vision wrapping produces an incompatible padded-stride fake tensor.
         """
-        for idx, block in enumerate(self.blocks):
-            self.blocks[idx] = torch.compile(block)  # type: ignore[assignment]
+        fsdp_kwargs = {"mesh": dp_mesh, "reshard_after_forward": reshard_after_forward}
+        if mp_policy is not None:
+            fsdp_kwargs["mp_policy"] = mp_policy
+        for block in self.blocks:
+            fully_shard(block, **fsdp_kwargs)
+        fully_shard(self, **fsdp_kwargs)
 
     def reset_parameters(self):
         """Re-initialise all parameters."""
@@ -332,10 +357,7 @@ class VisionTransformer(nn.Module):
 
         hidden_states: List[torch.Tensor] = []
         for block in self.blocks:
-            if self._activation_checkpoint_fn is not None:
-                x = self._activation_checkpoint_fn(block, x)
-            else:
-                x = block(x)
+            x = block(x)
             hidden_states.append(x)
         return hidden_states
 

@@ -1021,9 +1021,9 @@ class Transformer(nn.Module):
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
-        # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
-        # which can be expensive and non-overlapped
-        reshard_after_forward = False if pp_enabled else True
+        from olmo_core.distributed.utils import fsdp_reshard_after_forward
+
+        reshard_after_forward = fsdp_reshard_after_forward(pp_enabled=pp_enabled)
 
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
