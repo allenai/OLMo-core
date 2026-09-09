@@ -114,7 +114,7 @@ def main():
                 active_operators.append((name, operator))
             else:
                 print("KDA_SETTINGS_SKIP_UNUSED", name, flush=True)
-        for name, operator in ([] if args.combined_only else active_operators):
+        for name, operator in [] if args.combined_only else active_operators:
             original_configs, original_cache = operator.configs, dict(operator.cache)
             for candidate in original_configs:
                 operator.configs = [candidate]
