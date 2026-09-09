@@ -29,5 +29,5 @@ exec gantry run --name "ds64-harvest-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-o
   --cluster ai2/jupiter-cirrascale-2 --cluster ai2/neptune-cirrascale --gpus 0 --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
   --weka oe-training-default:/weka/oe-training-default \
-  --env-secret AWS_CREDS=AWS_CREDENTIALS --env-secret AWS_CFG=AWS_CONFIG \
+  --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
   --allow-dirty --install false --timeout 0 --yes -- bash -c "$CMD" 2>&1 | grep -oE "ex/[A-Z0-9]{26}" | head -1 | sed 's#ex/#SUBMITTED id=#'
