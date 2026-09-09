@@ -1,6 +1,6 @@
 """Bounded, resumable batch orchestration for the explicitly requested hero checkpoints.
 
-Starts only after the EMO100B pilot passed conversion, native-vLLM parity and real eval smoke.
+Starts only after both pilots passed conversion, native-vLLM parity and real eval smoke.
 At most two GPU tasks are live/queued at once. Failed tasks stop orchestration for inspection;
 they are never retried in an uncontrolled loop. All experiment names and revisions are recorded.
 """
@@ -56,8 +56,8 @@ def build_spec(stage, arm, step, core_ref, plugins_ref):
     ):
         raise ValueError("Job is outside the explicit campaign allowlist")
     for ref in (core_ref, plugins_ref):
-        if not re.fullmatch(r"[0-9a-f]{7,40}", ref):
-            raise ValueError("Use an immutable Git commit, not a branch")
+        if not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise ValueError("Use a full immutable Git commit for shallow fetch, not a branch")
     contents = (TEMPLATES / f"{stage}.yaml").read_text()
     for old, new in (
         ("__ARM__", arm),
@@ -90,17 +90,16 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     prepare_scratch()
-    pilot = SCRATCH / "emo" / "step6000"
-    for marker in (
-        "conversion-success.json",
-        "vllm-parity-success.json",
-        "eval-smoke-success.json",
-    ):
-        if (
-            not (pilot / marker).is_file()
-            or json.loads((pilot / marker).read_text()).get("passed") is not True
+    for arm, step in (("emo", 6000), ("non-emo", 11900)):
+        pilot = SCRATCH / arm / f"step{step}"
+        for marker in (
+            "conversion-success.json",
+            "vllm-parity-success.json",
+            "eval-smoke-success.json",
         ):
-            raise RuntimeError(f"Pilot has not passed {marker}; no batch jobs launched")
+            record = json.loads((pilot / marker).read_text()) if (pilot / marker).is_file() else {}
+            if record.get("passed") is not True or record.get("diagnostic_only"):
+                raise RuntimeError(f"{arm} pilot has not passed {marker}; no batch jobs launched")
     api = HfApi()
     with (
         (SCRATCH / "batch-controller.lock").open("a") as lock,

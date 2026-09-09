@@ -1,5 +1,5 @@
 version: v2
-description: Independent HF-vLLM parity and actual eval smoke; delete only the verified raw scratch copy after all gates pass.
+description: Explicit FP32 profile, independent batched/chunked HF-vLLM parity and actual eval smoke; delete only the verified raw scratch copy after all gates pass.
 budget: ai2/oe-other
 tasks:
   - name: vllm-eval-qualify
@@ -14,12 +14,18 @@ tasks:
         env=dict(os.environ)
         header=base64.b64encode(('x-access-token:'+env['GITHUB_TOKEN']).encode()).decode()
         env.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',GIT_CONFIG_VALUE_0='AUTHORIZATION: basic '+header)
-        subprocess.run(['git','clone','--quiet','https://github.com/allenai/scaling-ladders.git','/tmp/hero-ladder'],env=env,check=True)
+        subprocess.run(['git','init','--quiet','/tmp/hero-ladder'],check=True)
+        subprocess.run(['git','-C','/tmp/hero-ladder','remote','add','origin','https://github.com/allenai/scaling-ladders.git'],check=True)
+        subprocess.run(['git','-C','/tmp/hero-ladder','fetch','--quiet','--depth=1','origin','__PLUGINS_REF__'],env=env,check=True)
         PY
         git -C /tmp/hero-ladder checkout --quiet __PLUGINS_REF__
-        git clone --quiet https://github.com/allenai/OLMo-core.git /tmp/hero-core
+        git init --quiet /tmp/hero-core
+        git -C /tmp/hero-core remote add origin https://github.com/allenai/OLMo-core.git
+        git -C /tmp/hero-core fetch --quiet --depth=1 origin __CORE_REF__
         git -C /tmp/hero-core checkout --quiet __CORE_REF__
-        git clone --quiet https://github.com/allenai/olmo-eval.git /tmp/hero-olmo-eval
+        git init --quiet /tmp/hero-olmo-eval
+        git -C /tmp/hero-olmo-eval remote add origin https://github.com/allenai/olmo-eval.git
+        git -C /tmp/hero-olmo-eval fetch --quiet --depth=1 origin 2ce111d32704b9ca454c73286e9ac46dcf0b04ee
         git -C /tmp/hero-olmo-eval checkout --quiet 2ce111d32704b9ca454c73286e9ac46dcf0b04ee
         uv venv --python /opt/conda/bin/python /tmp/hero-eval-env
         export PATH=/tmp/hero-eval-env/bin:$PATH
@@ -28,9 +34,9 @@ tasks:
         export TRITON_PTXAS_PATH=/tmp/hero-eval-env/lib/python3.12/site-packages/triton/backends/nvidia/bin/ptxas
         python -c 'import torch; assert torch.cuda.is_available(); print(torch.__version__, torch.cuda.get_device_name())'
         cd /tmp/hero-ladder
-        python ladders/olmoe3/workloads/hero_hf_vllm_parity.py hf /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf
-        python ladders/olmoe3/workloads/hero_hf_vllm_parity.py vllm /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf
-        python ladders/olmoe3/workloads/hero_eval_smoke.py /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf
+        python ladders/olmoe3/workloads/hero_hf_vllm_parity.py hf /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf --precise
+        python ladders/olmoe3/workloads/hero_hf_vllm_parity.py vllm /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf --precise --prefill-tokens 64 --max-num-seqs 2
+        python ladders/olmoe3/workloads/hero_eval_smoke.py /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/__ARM__/step__STEP__/hf --precise
 
         python /tmp/hero-core/src/examples/olmo_ddp/hero_hf_cleanup.py --arm __ARM__ --step __STEP__
     envVars:
@@ -48,6 +54,10 @@ tasks:
         value: "1"
       - name: OMP_NUM_THREADS
         value: "12"
+      - name: UV_CACHE_DIR
+        value: /weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909/runtime/uv-cache
+      - name: UV_LINK_MODE
+        value: copy
     datasets:
       - mountPath: /weka/olmo-3p5-checkpoints
         source:
