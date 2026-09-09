@@ -47,8 +47,10 @@ def beaker_log(ex, kind, final=False):
 def f1_from_eval(ex, final=False):
     out = beaker_log(ex, "eval", final=final)
     res = {}
-    for task, rung, val in re.findall(r"\[ladder:(\w+)@(\d+k)\] (?:f1|score)=([0-9.]+)", out):
+    for task, rung, val, skipped in re.findall(r"\[ladder:(\w+)@(\d+k)\] (?:f1|score)=([0-9.]+) \(n=\d+, skipped_too_long=(\d+)\)", out):
         res[rung] = float(val)
+        if int(skipped):
+            res[f"skipped_{rung}"] = int(skipped)
     return res
 
 
@@ -86,6 +88,7 @@ def main():
         rows.append({"run": run, "scale": SCALE, "task": r["task"], "arm": r["arm"], "budget": r["budget"], "train_state": r["state"],
                      "eval_state": e.get("state"), "mean_f1": (sum(vals) / len(vals)) if vals else None, "n_rungs": len(vals),
                      **{f"f1_{k}": f1.get(k) for k in RUNGS},
+                     "skipped_too_long": ";".join(f"{k}:{f1[f'skipped_{k}']}" for k in RUNGS if f"skipped_{k}" in f1),
                      "tokens_in": fl.get("tokens_in") or fl.get("soft_token_compaction", {}).get("tokens_in"),
                      "tokens_out": fl.get("tokens_out") or fl.get("soft_token_compaction", {}).get("tokens_out"),
                      "flops_meter": fl.get("total_flops") or fl.get("flops"),
