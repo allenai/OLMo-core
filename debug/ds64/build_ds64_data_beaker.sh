@@ -1,28 +1,29 @@
 #!/bin/bash
-# Beaker-NATIVE data build for the uniform 16k-64k data-scaling campaign (records/ds64-scaling-plan.md):
-# per-rung train pools via ctc-data (seed pools from the HF Hub), uniform-share nested arms at
-# 32M/64M/128M, Qwen3.5 MARKER tokenization (both the dense and the soft-token arms train on the
+# Beaker-NATIVE data build for the short-heavy 2k-64k data-scaling campaign (records/ds64-scaling-plan.md):
+# per-rung train pools via ctc-data (seed pools from the HF Hub), short-heavy nested arms at
+# 16M/32M/64M/128M, Qwen3.5 MARKER tokenization (both the dense and the soft-token arms train on the
 # same marker-wrapped shards) at seq 65536 with gold sidecars. Writes straight to weka.
 #
 #   TASK=outlier bash debug/ds64/build_ds64_data_beaker.sh
 set -uo pipefail
 TASK="${TASK:?set TASK=outlier|contradiction|nq|oolong}"
-BUDGETS="${BUDGETS:-32M,64M,128M}"
-# pool sizes = 128M / 4 rungs / rung tokens, +15%
-POOL_16K="${POOL_16K:-2300}"; POOL_32K="${POOL_32K:-1150}"; POOL_48K="${POOL_48K:-770}"; POOL_56K="${POOL_56K:-660}"
+BUDGETS="${BUDGETS:-16M,32M,64M,128M}"
+# pool sizes = 128M x share / rung tokens, +15% (shares 30/20/15/13/12/10 over 2k..56k)
+POOL_2K="${POOL_2K:-21600}"; POOL_4K="${POOL_4K:-7200}"; POOL_8K="${POOL_8K:-2700}"
+POOL_16K="${POOL_16K:-1170}"; POOL_32K="${POOL_32K:-540}"; POOL_56K="${POOL_56K:-260}"
 WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64
 TOKENIZER=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base
-CTC_REPO="${CTC_REPO:-https://github.com/PrasannS/ctc.git}"
+CTC_BRANCH="${CTC_BRANCH:-prasann/ctc_public}"   # the ctc-data package = ctc/ on this repo's public branch (github.com/PrasannS/ctc is private to pip)
 case "$TASK" in nq) CONV_TASK=retrieval; CHUNK_BY=document ;; oolong) CONV_TASK=oolong; CHUNK_BY=line ;; *) CONV_TASK=$TASK; CHUNK_BY=document ;; esac
 
 read -r -d '' WORK <<EOF
 set -uo pipefail
 export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false HF_HUB_DISABLE_PROGRESS_BARS=1
-pip install -q "git+$CTC_REPO" 2>&1 | tail -1 || true
+git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc && pip install -q ./ctc 2>&1 | tail -1; command -v ctc-data || { echo "!!! ctc-data install FAILED"; exit 1; }
 W=$WEKA/build/$TASK; mkdir -p \$W/pools \$W/arms $WEKA/shards
 i=0
-for R in 16k 32k 48k 56k; do
-  case \$R in 16k) N=$POOL_16K;; 32k) N=$POOL_32K;; 48k) N=$POOL_48K;; 56k) N=$POOL_56K;; esac
+for R in 2k 4k 8k 16k 32k 56k; do
+  case \$R in 2k) N=$POOL_2K;; 4k) N=$POOL_4K;; 8k) N=$POOL_8K;; 16k) N=$POOL_16K;; 32k) N=$POOL_32K;; 56k) N=$POOL_56K;; esac
   OUT=\$W/pools/${TASK}_\$R
   if [ -s \$OUT/$TASK/train.jsonl ] && [ \$(wc -l < \$OUT/$TASK/train.jsonl) -ge \$N ]; then echo "[skip] pool \$R"; continue; fi
   i=\$((i+1)); echo "--- pool $TASK \$R: \$N \$(date +%T) ---"
