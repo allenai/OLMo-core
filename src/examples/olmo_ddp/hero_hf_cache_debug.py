@@ -21,7 +21,21 @@ def main():
     parser.add_argument("--full-precision-reduction", action="store_true")
     parser.add_argument("--fp32-linears", action="store_true")
     parser.add_argument("--fp32-model", action="store_true")
+    parser.add_argument("--pad-biased-single-row", action="store_true")
     args = parser.parse_args()
+    if args.pad_biased_single_row:
+        original_linear = torch.nn.Linear.forward
+
+        def padded_linear(module, x):
+            if module.bias is not None and x.numel() == module.in_features:
+                flat = x.reshape(1, module.in_features)
+                padded = torch.cat((flat, torch.zeros_like(flat)), dim=0)
+                return torch.nn.functional.linear(padded, module.weight, module.bias)[:1].reshape(
+                    *x.shape[:-1], module.out_features
+                )
+            return original_linear(module, x)
+
+        torch.nn.Linear.forward = padded_linear
     if args.fp32_model:
         torch.set_float32_matmul_precision("highest")
     if args.full_precision_reduction:
@@ -121,14 +135,19 @@ def main():
         full_precision_reduction=args.full_precision_reduction,
         fp32_linears=args.fp32_linears,
         fp32_model=args.fp32_model,
+        pad_biased_single_row=args.pad_biased_single_row,
     )
     suffix = (
-        "-fp32model"
-        if args.fp32_model
+        "-padbias"
+        if args.pad_biased_single_row
         else (
-            "-fp32linear"
-            if args.fp32_linears
-            else "-fp32reduce" if args.full_precision_reduction else ""
+            "-fp32model"
+            if args.fp32_model
+            else (
+                "-fp32linear"
+                if args.fp32_linears
+                else "-fp32reduce" if args.full_precision_reduction else ""
+            )
         )
     )
     write_json(root / f"cache-debug-{'packed' if args.packed else 'loop'}{suffix}.json", result)
