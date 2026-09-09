@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 
 import yaml
-
 from hero_hf_cleanup import cleanup
 from hero_hf_download import BUCKET, SCRATCH, TARGETS, prepare_scratch, write_json
 from olmoe3_small_hero_plan import Run
@@ -70,8 +69,8 @@ def build_spec(stage, arm, step, core_ref, plugins_ref):
         raise RuntimeError("Unresolved job placeholder")
     spec = yaml.safe_load(contents)
     for task in spec["tasks"]:
-        if task["context"]["minRuntime"] != 0 or task["context"]["priority"] != "urgent":
-            raise RuntimeError("Conversion/evaluation tasks must be urgent and unallocated")
+        if task["context"]["minRuntime"] != "1h" or task["context"]["priority"] != "urgent":
+            raise RuntimeError("Conversion/evaluation tasks must be urgent and allocated")
         if task.get("result", {}).get("path"):
             raise RuntimeError("This pipeline may not put checkpoints in Beaker results")
     return spec

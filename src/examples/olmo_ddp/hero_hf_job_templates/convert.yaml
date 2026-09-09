@@ -51,7 +51,7 @@ tasks:
       sharedMemory: 16 GiB
     context:
       priority: urgent
-      minRuntime: 0
+      minRuntime: 1h
       autoResume: true
     constraints:
       cluster: [ai2/jupiter, ai2/ceres]
