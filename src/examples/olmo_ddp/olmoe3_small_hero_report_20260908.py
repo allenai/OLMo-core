@@ -20,6 +20,45 @@ TOKEN = "throughput/total tokens"
 LOSS = "train/CE loss"
 HERO_IDS = ("lasc1m2x", "aqb1droj")
 COLORS = {"lasc1m2x": "#2563eb", "aqb1droj": "#ea580c"}
+# Display-only caps chosen from post100B hero histories and the dense reference.
+# Lower bounds remain automatic; startup points above these caps remain in W&B.
+CE_UPPER_BOUNDS = {
+    LOSS: 2.5,
+    "eval/lm/c4_en-validation/CE loss": 3.1,
+    "eval/lm/dolma_books-validation/CE loss": 2.9,
+    "eval/lm/dolma_common-crawl-validation/CE loss": 3.2,
+    "eval/lm/dolma_pes2o-validation/CE loss": 2.3,
+    "eval/lm/dolma_reddit-validation/CE loss": 3.6,
+    "eval/lm/dolma_stack-validation/CE loss": 1.3,
+    "eval/lm/dolma_wiki-validation/CE loss": 2.7,
+    "eval/lm/ice-validation/CE loss": 3.1,
+    "eval/lm/m2d2_s2orc-validation/CE loss": 3.5,
+    "eval/lm/pile-validation/CE loss": 2.3,
+    "eval/lm/wikitext_103-validation/CE loss": 2.6,
+}
+
+
+def metric_names(panel):
+    """Report reloads represent metric names with SDK Metric objects."""
+    return [metric if isinstance(metric, str) else metric.name for metric in panel.y]
+
+
+def apply_loss_axis_limits(report):
+    """Change only CE display bounds, preserving live sources, layout and smoothing."""
+    changed = []
+    for block in report.blocks:
+        if not isinstance(block, wr.PanelGrid):
+            continue
+        for panel in block.panels:
+            if not isinstance(panel, wr.LinePlot):
+                continue
+            names = metric_names(panel)
+            if len(names) == 1 and names[0] in CE_UPPER_BOUNDS:
+                panel.range_y = (None, CE_UPPER_BOUNDS[names[0]])
+                changed.append((panel.title, names[0], panel.range_y))
+    if len(changed) != 14:
+        raise RuntimeError(f"Expected14 CE panels, found{len(changed)}; inspect before publishing")
+    return changed
 
 
 def inventory_run(run, *, min_step=0):
@@ -122,8 +161,9 @@ def plot(metric, title, *, upper=None, smooth=False, expression=None):
         y=[metric],
         title_x="Tokens seen (absolute, not optimizer steps)",
         title_y=metric,
-        # Compress startup CE spikes without clipping data or freezing live axes.
+        # Log scale plus display-only caps emphasize later loss differences.
         log_y=metric.endswith("/CE loss"),
+        range_y=(None, CE_UPPER_BOUNDS.get(metric)),
         range_x=(0, upper),
         xaxis_format=".3s",
         aggregate=False,
@@ -195,7 +235,8 @@ def make_blocks(inv):
             "has moderate time-weighted smoothing with original data visible; held-out evals "
             "are unsmoothed. No per-layer/per-block charts, cross-domain averages, RULER+, "
             "or invented missing metrics. Hero in-loop LM evals occur every 1,000 steps; "
-            "baseline LM evals typically every 10,000 steps."
+            "baseline LM evals typically every 10,000 steps. CE Y axes have display-only "
+            "upper caps to emphasize later training; high startup points remain in the source histories."
         ),
         wr.H1("Training loss"),
         grid(
@@ -313,6 +354,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--reuse-inventory", action="store_true")
+    parser.add_argument("--loss-axes-only", action="store_true")
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -332,6 +374,8 @@ def main():
             r["first_loss_row"] = repaired["first_loss_row"]
     inventory_path.write_text(json.dumps(inv, indent=2) + "\n")
     receipt = args.output_dir / "report_receipt.json"
+    if args.loss_axes_only and not receipt.exists():
+        raise RuntimeError("Loss-axis-only update requires the existing report receipt")
     report = (
         wr.Report.from_url(json.loads(receipt.read_text())["url"])
         if receipt.exists()
@@ -346,14 +390,45 @@ def main():
     # Reports SDK _from_model currently drops spec.width and defaults to
     # "readable". Reapply our wide layout on updates as well as initial creation.
     report.width = "fluid"
-    report.blocks = make_blocks(inv)
+    if args.loss_axes_only:
+        # Compare normalized public-model snapshots: exactly14 panel Y ranges may
+        # change. Source runsets, other fields and all non-CE panels must match.
+        before = json.loads(report._to_model().model_dump_json())
+        (args.output_dir / "report_before_loss_caps.json").write_text(
+            json.dumps(before, indent=2) + "\n"
+        )
+        print("LOSS_AXIS_LIMITS", json.dumps(apply_loss_axis_limits(report)))
+        after = json.loads(report._to_model().model_dump_json())
+
+        def changes(left, right, path=()):
+            if isinstance(left, dict) and isinstance(right, dict):
+                return [
+                    d
+                    for k in left.keys() | right.keys()
+                    for d in changes(left.get(k), right.get(k), path + (k,))
+                ]
+            if isinstance(left, list) and isinstance(right, list) and len(left) == len(right):
+                return [
+                    d
+                    for i, (a, b) in enumerate(zip(left, right))
+                    for d in changes(a, b, path + (str(i),))
+                ]
+            return [path] if left != right else []
+
+        diffs = changes(before, after)
+        if len(diffs) not in (0, 14) or any(d[-2:] != ("config", "y_axis_max") for d in diffs):
+            raise RuntimeError(f"Unexpected report changes: {diffs}")
+    else:
+        report.blocks = make_blocks(inv)
     model = report._to_model()
     assert model.spec.width == "fluid"
     (args.output_dir / "report_spec.json").write_text(model.model_dump_json(indent=2) + "\n")
     grids = [b for b in report.blocks if isinstance(b, wr.PanelGrid)]
     assert all(p.max_runs_to_show >= len(inv["dense"]) + 2 for g in grids for p in g.panels)
     assert all(
-        p.x == TOKEN and not p.aggregate and p.groupby is None for g in grids for p in g.panels
+        getattr(p.x, "name", p.x) == TOKEN and not p.aggregate and p.groupby is None
+        for g in grids
+        for p in g.panels
     )
     assert not any("/block " in str(p.y) or "/layer " in str(p.y) for g in grids for p in g.panels)
     # Evaluation history must remain visible as the live hero runs advance.
@@ -361,7 +436,7 @@ def main():
         p.range_x[1] is None
         for g in grids
         for p in g.panels
-        if any(k.startswith("eval/") for k in p.y)
+        if any(k.startswith("eval/") for k in metric_names(p))
     )
     print("REPORT_VALIDATED", len(grids), "grids", sum(len(g.panels) for g in grids), "panels")
     if args.publish:
@@ -379,6 +454,19 @@ def main():
         assert saved_model.spec.width == "fluid"
         saved = wr.Report._from_model(saved_model)
         assert len(saved.blocks) == len(report.blocks)
+        actual_caps = [
+            (p.title, metric_names(p)[0], p.range_y, p.log_y)
+            for b in saved.blocks
+            if isinstance(b, wr.PanelGrid)
+            for p in b.panels
+            if isinstance(p, wr.LinePlot)
+            if len(metric_names(p)) == 1 and metric_names(p)[0] in CE_UPPER_BOUNDS
+        ]
+        assert len(actual_caps) == 14
+        assert all(
+            bounds == (None, CE_UPPER_BOUNDS[key]) and log_y
+            for _, key, bounds, log_y in actual_caps
+        )
         print("REPORT_SAVED", report.url, flush=True)
 
 
