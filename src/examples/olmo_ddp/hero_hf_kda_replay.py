@@ -1,6 +1,7 @@
 """Replay captured KDA inputs across kernel calling conventions, without a model load."""
 
 import argparse
+import importlib
 import itertools
 import json
 
@@ -29,7 +30,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--layer", type=int, default=2)
     parser.add_argument("--captured-parameters-only", action="store_true")
+    parser.add_argument("--solve-bk", type=int, choices=(32, 64))
     args = parser.parse_args()
+    kernel = importlib.import_module(
+        "fla.ops.kda.chunk_intra"
+    ).chunk_kda_fwd_kernel_inter_solve_fused
+    from triton.runtime.autotuner import Autotuner
+
+    while not isinstance(kernel, Autotuner):
+        kernel = kernel.fn
+    if args.solve_bk:
+        kernel.configs = [
+            config for config in kernel.configs if config.kwargs["BK"] == args.solve_bk
+        ]
+        assert kernel.configs
+        kernel.cache.clear()
+    fixed_convention = args.captured_parameters_only or args.solve_bk is not None
     root = SCRATCH / "emo" / "step6000"
     debug = root / "layer-debug-random257-flash3"
     hf = torch.load(debug / "hf-layer-debug.pt", map_location="cpu", weights_only=True, mmap=True)[
@@ -82,9 +98,9 @@ def main():
     rows = []
     with torch.inference_mode():
         for value_first, variable, zero_state, dtype_name in itertools.product(
-            (False,) if args.captured_parameters_only else (False, True),
-            (False,) if args.captured_parameters_only else (False, True),
-            (False,) if args.captured_parameters_only else (False, True),
+            (False,) if fixed_convention else (False, True),
+            (False,) if fixed_convention else (False, True),
+            (False,) if fixed_convention else (False, True),
             parameters,
         ):
             gate_alog, gate_bias = parameters[dtype_name]
@@ -116,14 +132,17 @@ def main():
                 variable_length=variable,
                 zero_state=zero_state,
                 parameter_dtype=dtype_name,
+                solve_bk=args.solve_bk,
+                solve_config=str(kernel.best_config),
                 versus_hf=stats(output, expected),
                 versus_native=stats(output, native_expected),
             )
             rows.append(row)
             print("KDA_REPLAY", json.dumps(row), flush=True)
+    suffix = "-loaded" if args.captured_parameters_only else ""
+    suffix += f"-bk{args.solve_bk}" if args.solve_bk else ""
     write_json(
-        debug
-        / f"kda-replay-layer{args.layer}{'-loaded' if args.captured_parameters_only else ''}.json",
+        debug / f"kda-replay-layer{args.layer}{suffix}.json",
         dict(layer=args.layer, cases=rows, diagnostic_only=True),
     )
 
