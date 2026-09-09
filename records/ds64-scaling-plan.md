@@ -108,3 +108,9 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   hdr17 / hdr33, runs08) decides what survives training. Soft-arm wall-clock still ~65 s/step
   after the flash and vectorized-compaction fixes (per-row cost ~4 s under FSDP vs ~0.9 s on one
   GPU); diagnostics `hdr03gb` (no fingerprint hook) and `hdr03m1` (one row per micro-step) launched.
+- 2026-09-09 00:05 dense ladders (f1 2k/8k/16k/32k/64k): contradiction 16M 0.93/0.88/0.82/0.70/0.49
+  (64k: 19/500 over the 70k generation limit, same for every arm), 32M 0.97/0.95/0.92/0.83/–;
+  nq 16M 0.97/0.93/0.87/0.81/0.65, 32M 0.98/0.93/0.88/0.81/0.73; oolong 16M 0.85/0.58/0.53/0.53/0.53,
+  32M 0.87/0.64/0.59/0.58/0.55; outlier 16M 0.91/0.48/0.15/0.05/0.01, 32M 0.97/0.75/0.38/0.16/–,
+  64M 0.97/0.92/0.72/0.40/–. gb16 keep-1/36 soft arms on the full ladder: hdr03 0.24/0.15/0.07/0.04/0.01,
+  runs03 0.68/0.45/0.20/0.06/0.03 (collapse confirmed at every rung).
