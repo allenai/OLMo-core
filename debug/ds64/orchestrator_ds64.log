@@ -1,2 +1,9 @@
 09-08 21:29:40 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
 09-08 21:29:42 status: data_ok [] | runs 0/0 done, 0 pending | evals 0/0 done, 0 pending
+09-08 21:36:29 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 21:36:31 status: data_ok [] | runs 0/0 done, 0 pending | evals 0/0 done, 0 pending
+09-08 21:41:32 data build for contradiction FAILED rc=1 (01M227FQ23FGGGAT13PFC5ACHP) -- relaunch by hand: TASK=contradiction bash debug/ds64/build_ds64_data_beaker.sh
+09-08 21:41:32 data build for oolong FAILED rc=1 (01M227FX77HN7BR0B2K9DRZ5Y5) -- relaunch by hand: TASK=oolong bash debug/ds64/build_ds64_data_beaker.sh
+09-08 21:41:33 status: data_ok [] | runs 0/0 done, 0 pending | evals 0/0 done, 0 pending
+09-08 21:45:43 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 21:45:44 data for contradiction built (01M227N3EMAXS5RMT3JBGEW29C)

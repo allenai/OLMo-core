@@ -34,6 +34,12 @@ BASE = {"4b": f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim",
 SHARDS = f"{WEKA}/ds64/shards"
 LEDGER = f"{REPO}/debug/ds64/LAUNCH_LEDGER.tsv"
 BUDGETS = ["16M", "32M", "64M", "128M"]
+# contradiction's pair pool cannot build the 128M arm (compose skipped it): its grid stops at 64M
+TASK_BUDGETS = {"contradiction": ["16M", "32M", "64M"]}
+
+
+def budgets_for(task):
+    return TASK_BUDGETS.get(task, BUDGETS)
 TASKS = ["contradiction", "oolong", "nq", "outlier"]
 SOFT_BACKEND = os.environ.get("DS64_SOFT_BACKEND", "torch")
 # per scale: nodes, GPUs/node, soft micro-batch, cluster
@@ -94,7 +100,7 @@ def main():
     skip = set(x for x in args.skip.split(",") if x)
     rows = []
     for task in args.tasks.split(","):
-        for budget in args.budgets.split(","):
+        for budget in (args.budgets.split(",") if args.budgets != ",".join(BUDGETS) else budgets_for(task)):
             for arm in (args.arms.split(",") if args.arms else TASK_ARMS[task]):
                 variant, data, largs, extra = arm_args(task, arm, budget)
                 name = run_name(task, arm, budget)

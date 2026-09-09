@@ -34,7 +34,7 @@ ENV = dict(os.environ, PYTHONPATH=f"{REPO}/src",
            PATH="/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:" + os.environ.get("PATH", ""),
            AWS_PROFILE="S3", DS64_SCALE=SCALE)
 sys.path.insert(0, D)
-from launch_ds64 import BUDGETS, TASK_ARMS, TASKS, run_name  # noqa: E402
+from launch_ds64 import BUDGETS, TASK_ARMS, TASKS, budgets_for, run_name  # noqa: E402
 
 CYCLE = 300
 HARVEST_EVERY = 90 * 60
@@ -175,7 +175,7 @@ def cycle(st):
                 continue
             else:
                 continue
-        for b in BUDGETS:
+        for b in budgets_for(task):
             for arm in TASK_ARMS[task]:
                 if run_name(task, arm, b) not in st["runs"]:
                     launch_train(st, task, b, arm)
@@ -192,7 +192,7 @@ def cycle(st):
         for task, arms in extra.items():
             if not st["data_ok"].get(task):
                 continue
-            for b in BUDGETS:
+            for b in budgets_for(task):
                 for arm in arms:
                     if run_name(task, arm, b) not in st["runs"]:
                         launch_train(st, task, b, arm)
