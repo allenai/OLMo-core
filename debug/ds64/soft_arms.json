@@ -1,5 +1,14 @@
 {
- "oolong": [],
- "nq": [],
- "outlier": []
+ "oolong": [
+  "ohdr33",
+  "ohdr17"
+ ],
+ "nq": [
+  "kv33",
+  "kv17"
+ ],
+ "outlier": [
+  "kv33",
+  "kv17"
+ ]
 }

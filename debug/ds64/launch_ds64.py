@@ -85,7 +85,9 @@ ARM_EXTRA = {
 }
 # Phase 1 (contradiction first): dense + the keep ablation. Other tasks: dense only until
 # debug/ds64/soft_arms.json (read by the orchestrator every cycle) names their soft arms.
-TASK_ARMS = {"contradiction": ["dense", "hdr03", "hdr08", "hdr17", "hdr33", "runs03", "runs08"],
+# Phase 2 (gen 3, after the 16M keep ablation: only keep >= 1/3 transfers; 1/6 for the trade-off
+# curve): the wall-clock-faithful recipe (flash, 128 rows/step, length-sorted micro-batches).
+TASK_ARMS = {"contradiction": ["dense", "hdr33", "hdr17"],
              "oolong": ["dense"], "nq": ["dense"], "outlier": ["dense"]}
 
 

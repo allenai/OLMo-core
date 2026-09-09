@@ -84,7 +84,7 @@
    "state": "DONE",
    "rc": 0,
    "retries": 0,
-   "eval": "01M229N5MK4M3W0Z5TREK0YJVK"
+   "eval": "01M22BAKB2RSCD9VWPA2DRNN4V"
   },
   "ds64-contradiction-hdr03-u32M": {
    "ex": "01M2284WAND82330VDNST4PEH4",
@@ -157,10 +157,10 @@
    "task": "contradiction",
    "budget": "64M",
    "arm": "dense",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22ATZGXTR5TAZWG9QZE9H7J"
   },
   "ds64-contradiction-hdr03-u64M": {
    "ex": "01M228C7BJKJR7HM9N7512NGM7",
@@ -233,116 +233,909 @@
    "task": "oolong",
    "budget": "16M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22AVV6YM03CW8EVQYWS0C9W"
   },
   "ds64-oolong-dense-u32M": {
    "ex": "01M228M2GG4RN38KWJZKH6RREP",
    "task": "oolong",
    "budget": "32M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22AWSBFP1YVJMBEKCD4XMWT"
   },
   "ds64-oolong-dense-u64M": {
    "ex": "01M228N45SF7R2MM1HV6VS7H2S",
    "task": "oolong",
    "budget": "64M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22B2VB40NGZ3H5FYZMZVQYD"
   },
   "ds64-oolong-dense-u128M": {
    "ex": "01M228PCFGHA3P5ZNVY216ED21",
    "task": "oolong",
    "budget": "128M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22C7JQ1YW3X464606CN3E82"
   },
   "ds64-nq-dense-u16M": {
    "ex": "01M2292BZZ7EAX0VQVBEF6ER5T",
    "task": "nq",
    "budget": "16M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22AY0KZBAK9YK29E5Y7MPY3"
   },
   "ds64-nq-dense-u32M": {
    "ex": "01M22935VYZGAXV5AF0PWKN39T",
    "task": "nq",
    "budget": "32M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22AYWZJN0T4AEZ6GW3D7BYJ"
   },
   "ds64-nq-dense-u64M": {
    "ex": "01M22940YHMHESY898E1HYATQ8",
    "task": "nq",
    "budget": "64M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22C8DE6352R0E82SBPEZJG6"
   },
   "ds64-nq-dense-u128M": {
    "ex": "01M2294W541461C8CNTZQZEM6W",
    "task": "nq",
    "budget": "128M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22CK7DYX4D3KYM9V0164WBT"
   },
   "ds64-outlier-dense-u16M": {
    "ex": "01M22A1CGM4HB6F3XGEG55A1QC",
    "task": "outlier",
    "budget": "16M",
    "arm": "dense",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0,
-   "eval": null
+   "eval": "01M22B02Y64RZFZH71RNK4H4T0"
+  },
+  "ds64-contradiction-hdr03-b128-u16M": {
+   "ex": "01M22A44RJWF2ZH8E6G1WM0PB9",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr08-b128-u16M": {
+   "ex": "01M22B3TFFP8PDK7HJAZCT209F",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr17-b128-u16M": {
+   "ex": "01M22A6007HXR34ZXJB9NW2YAY",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr33-b128-u16M": {
+   "ex": "01M22A70M79A7C40G7S82AJR5X",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs03-b128-u16M": {
+   "ex": "01M22A81S22GQWYEQ6J6R22PPZ",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs08-b128-u16M": {
+   "ex": "01M22B4SN9SMZ4JAC7G4NCVWS8",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr03-b128-u32M": {
+   "ex": "01M22AA2BG66JVXNYJ1DMC3GVR",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr08-b128-u32M": {
+   "ex": "01M22B5P3R3J91PJGEVGEWHF1J",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr17-b128-u32M": {
+   "ex": "01M22AD5VE8QKX7JC59CJSK1PS",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr33-b128-u32M": {
+   "ex": "01M22AE7NNM67P8ZZT6D2F4H9E",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs03-b128-u32M": {
+   "ex": "01M22AFMB4YX3PQWSCMEDVXW11",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs08-b128-u32M": {
+   "ex": "01M22B6NVKQC67TGBACH0HZ8YZ",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr03-b128-u64M": {
+   "ex": "01M22AHP5AQ0MCW3AVB9Z0M1W9",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr08-b128-u64M": {
+   "ex": "01M22B7HQT13YQCC6FDT2WDN15",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr17-b128-u64M": {
+   "ex": "01M22AKVYRF8XEYF058J1W3YCW",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-hdr33-b128-u64M": {
+   "ex": "01M22AMSB86MZRS8HABSJFJPRS",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs03-b128-u64M": {
+   "ex": "01M22ANX7S0E998JFPHK0TYZ52",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-contradiction-runs08-b128-u64M": {
+   "ex": "01M22B8G4FR0GNWJVETE3TN2P6",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "torch-backend b128 launch cancelled 2026-09-08 22:52; relaunched as -b128f (flash_2)"
+  },
+  "ds64-outlier-dense-u32M": {
+   "ex": "01M22AQRH01BEB6WX2T1ZAXFBN",
+   "task": "outlier",
+   "budget": "32M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22D5XS7WXCDGW6KYH58GFSN"
+  },
+  "ds64-outlier-dense-u64M": {
+   "ex": "01M22ARRJ1XKMP9PEXW3PTZNHJ",
+   "task": "outlier",
+   "budget": "64M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22D6TEGQKMFJHMMV0TZKH60"
+  },
+  "ds64-outlier-dense-u128M": {
+   "ex": "01M22ASZP8K3KARFQBCY52CR39",
+   "task": "outlier",
+   "budget": "128M",
+   "arm": "dense",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22EH8DKNVBPSV1R5QB2KDC7"
+  },
+  "ds64-contradiction-hdr03-b128f-u16M": {
+   "ex": "01M22BKF19XKP1EAQGMKP0KDXG",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr08-b128f-u16M": {
+   "ex": "01M22BN0Q2MPPT3AGQPXXT1DXE",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr17-b128f-u16M": {
+   "ex": "01M22BNZXZ5DM23AWKJT47CAV6",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr33-b128f-u16M": {
+   "ex": "01M22BPWZG4E2SHRW3HR2TK4K2",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs03-b128f-u16M": {
+   "ex": "01M22BQRY5WBHH65MC4S5DW5QA",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs08-b128f-u16M": {
+   "ex": "01M22BRN3N8P0V8Y16N308Q7NG",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr03-b128f-u32M": {
+   "ex": "01M22BT7S4R8GCM5Y5AED1N7VF",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr08-b128f-u32M": {
+   "ex": "01M22BVA9PT1ZED7KYS7CA7J0H",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr17-b128f-u32M": {
+   "ex": "01M22BWCJH2SJCEPRBYWSSQAHV",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr33-b128f-u32M": {
+   "ex": "01M22BXETRWPDQKF0RD7EVWGNW",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs03-b128f-u32M": {
+   "ex": "01M22BY7F0YACCEQXE2AV42J5F",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs08-b128f-u32M": {
+   "ex": "01M22BZMX5NHCBEMRN1HDFFBZ0",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr03-b128f-u64M": {
+   "ex": "01M22C0GGF136HK1GGW0FFBDT0",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr08-b128f-u64M": {
+   "ex": "01M22C1TG045AF4733W7NTAY1V",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr17-b128f-u64M": {
+   "ex": "01M22C33G73MCF94G842F95ARP",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr17",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr33-b128f-u64M": {
+   "ex": "01M22C4D114SXJCKFMYA6TZKDV",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr33",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs03-b128f-u64M": {
+   "ex": "01M22C58WXY7ZHH7YH32HX5DVP",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs03",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-runs08-b128f-u64M": {
+   "ex": "01M22C6HSF3NY5K8WX01BF0MJ3",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs08",
+   "state": "FAILED",
+   "rc": null,
+   "retries": 1,
+   "eval": null,
+   "note": "b128f (per-doc .item() compaction, ~65 s/step) cancelled 2026-09-08 23:12; relaunched as -b128f2"
+  },
+  "ds64-contradiction-hdr03-b128f2-u16M": {
+   "ex": "01M22CGCTEBY0YDMXN5WDGGXMC",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22EJ2NSSHXAAY7HF4MT71K6",
+   "note": "vectorized-compaction test run, launched by hand 23:04"
+  },
+  "ds64-contradiction-hdr08-b128f2-u16M": {
+   "ex": "01M22CN2E7E4G242GQQQ4KCCJQ",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22F99K6ASFV5MZ7GAMA236C"
+  },
+  "ds64-contradiction-hdr17-b128f2-u16M": {
+   "ex": "01M22CNYMCPE0RSXQ6QGY9Q0VP",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22FKMXBGE8H5FB3HK360YGF"
+  },
+  "ds64-contradiction-hdr33-b128f2-u16M": {
+   "ex": "01M22CPXNCDDT6WRPRNKBHTV66",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "hdr33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22FMJHEQSXJ8M7VQ8PGSN5F"
+  },
+  "ds64-contradiction-runs03-b128f2-u16M": {
+   "ex": "01M22CQYBMGW9YJZJ2K4A5GCCV",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22EK8KSMXZHNS6MRXE9YZSY"
+  },
+  "ds64-contradiction-runs08-b128f2-u16M": {
+   "ex": "01M22CRVBXKY7NQGJ2F52SXBNV",
+   "task": "contradiction",
+   "budget": "16M",
+   "arm": "runs08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22EXZY7E9R3VRWC09TMFB29"
+  },
+  "ds64-contradiction-hdr03-b128f2-u32M": {
+   "ex": "01M22CSNNKFKNN8ZD1E97ZYSS8",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22G8K1BA0GPDET4DAQMZNWY"
+  },
+  "ds64-contradiction-hdr08-b128f2-u32M": {
+   "ex": "01M22CTGMQGKBC9B554H9359ZB",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22H787DSVE2HGKMN193GBD1"
+  },
+  "ds64-contradiction-hdr17-b128f2-u32M": {
+   "ex": "01M22CVKJJ6H5KKY5Q8HNT9RTA",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22HWMX967VA3BB2GN3ZERKW"
+  },
+  "ds64-contradiction-hdr33-b128f2-u32M": {
+   "ex": "01M22CWQYBS0R4XFP9AKNQNVQ1",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "hdr33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22JTHTW74ESXWBF8F0BY2CE"
+  },
+  "ds64-contradiction-runs03-b128f2-u32M": {
+   "ex": "01M22CY472SMV9K42NNMCX4F91",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22GK4ZZVY2JNEV2J8MWC9HW"
+  },
+  "ds64-contradiction-runs08-b128f2-u32M": {
+   "ex": "01M22CZFK6F720HFBGR6N36ZSE",
+   "task": "contradiction",
+   "budget": "32M",
+   "arm": "runs08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22HHTQTV545TEXAYMB8NS18"
+  },
+  "ds64-contradiction-hdr03-b128f2-u64M": {
+   "ex": "01M22D0ESB3HKX275QKQXTHW1M",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22KRKP71DT4439APSMB99C7"
+  },
+  "ds64-contradiction-hdr08-b128f2-u64M": {
+   "ex": "01M22D17G63NSWAJ7T9VJG3ZJT",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22M34Y923QWBPPV4GGYFRPD"
+  },
+  "ds64-contradiction-hdr17-b128f2-u64M": {
+   "ex": "01M22D20Z69KZ4BSMAWPJ2ERT9",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr17",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22NC9M5HS01ZJ23HVQ2KPJ7"
+  },
+  "ds64-contradiction-hdr33-b128f2-u64M": {
+   "ex": "01M22D2VGN8WPXB6Z8HX38VX5X",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "hdr33",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22P15K8MB74JM4SZJ9NSWKC"
+  },
+  "ds64-contradiction-runs03-b128f2-u64M": {
+   "ex": "01M22D3N5MRFC5GD61SXEE018M",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs03",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22M3YGRZCDTS7ZEC3MATP3H"
+  },
+  "ds64-contradiction-runs08-b128f2-u64M": {
+   "ex": "01M22D4SN0ZXND83EYP6PH9NCF",
+   "task": "contradiction",
+   "budget": "64M",
+   "arm": "runs08",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0,
+   "eval": "01M22N1Y0JERD066R0AG9KPSYV"
   }
  },
  "evals": {
   "ds64-contradiction-dense-u16M": {
    "ex": "01M228QFMFGPVA858VQDP92VTT",
-   "state": "R",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 0
   },
   "ds64-contradiction-dense-u32M": {
-   "ex": "01M229N5MK4M3W0Z5TREK0YJVK",
-   "state": "S",
-   "rc": null,
-   "retries": 1
+   "ex": "01M22BAKB2RSCD9VWPA2DRNN4V",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 2
   },
   "ds64-contradiction-hdr03-u16M": {
    "ex": "01M229P5A0ENDZ9GY20K8FMJQV",
-   "state": "S",
-   "rc": null,
+   "state": "DONE",
+   "rc": 0,
    "retries": 1
   },
   "ds64-contradiction-runs03-u16M": {
    "ex": "01M229Q06ZVYY0TBCCYDQ2F33T",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 1
+  },
+  "ds64-contradiction-dense-u64M": {
+   "ex": "01M22ATZGXTR5TAZWG9QZE9H7J",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-oolong-dense-u16M": {
+   "ex": "01M22AVV6YM03CW8EVQYWS0C9W",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-oolong-dense-u32M": {
+   "ex": "01M22AWSBFP1YVJMBEKCD4XMWT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-nq-dense-u16M": {
+   "ex": "01M22AY0KZBAK9YK29E5Y7MPY3",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-nq-dense-u32M": {
+   "ex": "01M22AYWZJN0T4AEZ6GW3D7BYJ",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-outlier-dense-u16M": {
+   "ex": "01M22B02Y64RZFZH71RNK4H4T0",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-oolong-dense-u64M": {
+   "ex": "01M22B2VB40NGZ3H5FYZMZVQYD",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-oolong-dense-u128M": {
+   "ex": "01M22C7JQ1YW3X464606CN3E82",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-nq-dense-u64M": {
+   "ex": "01M22C8DE6352R0E82SBPEZJG6",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-nq-dense-u128M": {
+   "ex": "01M22CK7DYX4D3KYM9V0164WBT",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-outlier-dense-u32M": {
+   "ex": "01M22D5XS7WXCDGW6KYH58GFSN",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-outlier-dense-u64M": {
+   "ex": "01M22D6TEGQKMFJHMMV0TZKH60",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-outlier-dense-u128M": {
+   "ex": "01M22EH8DKNVBPSV1R5QB2KDC7",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr03-b128f2-u16M": {
+   "ex": "01M22EJ2NSSHXAAY7HF4MT71K6",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-runs03-b128f2-u16M": {
+   "ex": "01M22EK8KSMXZHNS6MRXE9YZSY",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-runs08-b128f2-u16M": {
+   "ex": "01M22EXZY7E9R3VRWC09TMFB29",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr08-b128f2-u16M": {
+   "ex": "01M22F99K6ASFV5MZ7GAMA236C",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr17-b128f2-u16M": {
+   "ex": "01M22FKMXBGE8H5FB3HK360YGF",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr33-b128f2-u16M": {
+   "ex": "01M22FMJHEQSXJ8M7VQ8PGSN5F",
+   "state": "DONE",
+   "rc": 0,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr03-b128f2-u32M": {
+   "ex": "01M22G8K1BA0GPDET4DAQMZNWY",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-runs03-b128f2-u32M": {
+   "ex": "01M22GK4ZZVY2JNEV2J8MWC9HW",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr08-b128f2-u32M": {
+   "ex": "01M22H787DSVE2HGKMN193GBD1",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-runs08-b128f2-u32M": {
+   "ex": "01M22HHTQTV545TEXAYMB8NS18",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr17-b128f2-u32M": {
+   "ex": "01M22HWMX967VA3BB2GN3ZERKW",
+   "state": "R",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr33-b128f2-u32M": {
+   "ex": "01M22JTHTW74ESXWBF8F0BY2CE",
    "state": "S",
    "rc": null,
-   "retries": 1
+   "retries": 0
+  },
+  "ds64-contradiction-hdr03-b128f2-u64M": {
+   "ex": "01M22KRKP71DT4439APSMB99C7",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr08-b128f2-u64M": {
+   "ex": "01M22M34Y923QWBPPV4GGYFRPD",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-runs03-b128f2-u64M": {
+   "ex": "01M22M3YGRZCDTS7ZEC3MATP3H",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-runs08-b128f2-u64M": {
+   "ex": "01M22N1Y0JERD066R0AG9KPSYV",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr17-b128f2-u64M": {
+   "ex": "01M22NC9M5HS01ZJ23HVQ2KPJ7",
+   "state": "S",
+   "rc": null,
+   "retries": 0
+  },
+  "ds64-contradiction-hdr33-b128f2-u64M": {
+   "ex": "01M22P15K8MB74JM4SZJ9NSWKC",
+   "state": "S",
+   "rc": null,
+   "retries": 0
   }
  },
  "data_ok": {
@@ -352,11 +1145,12 @@
   "outlier": true
  },
  "launched": {
-  "contradiction": false,
+  "contradiction": true,
   "oolong": true,
-  "nq": true
+  "nq": true,
+  "outlier": true
  },
- "last_harvest": 1788930160.126299,
+ "last_harvest": 1788946895.9790602,
  "harvest_ex": null,
  "done": false
 }

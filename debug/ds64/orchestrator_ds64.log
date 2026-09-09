@@ -76,3 +76,243 @@
 09-08 22:19:41 status: data_ok ['contradiction', 'nq', 'oolong'] | runs 4/29 done, 25 pending | evals 0/4 done, 4 pending
 09-08 22:24:41 data for outlier built (01M229PZ8SQF799EBWNG54ZDFH)
 09-08 22:25:21 launch ds64-outlier-dense-u16M -> 01M22A1CGM4HB6F3XGEG55A1QC
+09-08 22:26:06 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 22:26:51 launch ds64-contradiction-hdr03-b128-u16M -> 01M22A44RJWF2ZH8E6G1WM0PB9
+09-08 22:27:20 launch ds64-contradiction-hdr08-b128-u16M -> 01M22A50P9CEZH1Z8WGW3A18CE
+09-08 22:27:52 launch ds64-contradiction-hdr17-b128-u16M -> 01M22A6007HXR34ZXJB9NW2YAY
+09-08 22:28:26 launch ds64-contradiction-hdr33-b128-u16M -> 01M22A70M79A7C40G7S82AJR5X
+09-08 22:28:59 launch ds64-contradiction-runs03-b128-u16M -> 01M22A81S22GQWYEQ6J6R22PPZ
+09-08 22:29:30 launch ds64-contradiction-runs08-b128-u16M -> 01M22A8ZX0QPEDFD5CKMN35PZS
+09-08 22:30:05 launch ds64-contradiction-hdr03-b128-u32M -> 01M22AA2BG66JVXNYJ1DMC3GVR
+09-08 22:30:49 launch ds64-contradiction-hdr08-b128-u32M -> 01M22ABDCEDZB139MR4TKJA7EJ
+09-08 22:31:47 launch ds64-contradiction-hdr17-b128-u32M -> 01M22AD5VE8QKX7JC59CJSK1PS
+09-08 22:32:22 launch ds64-contradiction-hdr33-b128-u32M -> 01M22AE7NNM67P8ZZT6D2F4H9E
+09-08 22:33:08 launch ds64-contradiction-runs03-b128-u32M -> 01M22AFMB4YX3PQWSCMEDVXW11
+09-08 22:33:43 launch ds64-contradiction-runs08-b128-u32M -> 01M22AGPKCCM6SCD3YH7RKNY1Z
+09-08 22:34:15 launch ds64-contradiction-hdr03-b128-u64M -> 01M22AHP5AQ0MCW3AVB9Z0M1W9
+09-08 22:34:47 launch ds64-contradiction-hdr08-b128-u64M -> 01M22AJNQV8GKF239CJC005W2T
+09-08 22:35:27 launch ds64-contradiction-hdr17-b128-u64M -> 01M22AKVYRF8XEYF058J1W3YCW
+09-08 22:35:57 launch ds64-contradiction-hdr33-b128-u64M -> 01M22AMSB86MZRS8HABSJFJPRS
+09-08 22:36:33 launch ds64-contradiction-runs03-b128-u64M -> 01M22ANX7S0E998JFPHK0TYZ52
+09-08 22:37:00 launch ds64-contradiction-runs08-b128-u64M -> 01M22APQH7X7X00107AMJM2BXM
+09-08 22:37:34 launch ds64-outlier-dense-u32M -> 01M22AQRH01BEB6WX2T1ZAXFBN
+09-08 22:38:07 launch ds64-outlier-dense-u64M -> 01M22ARRJ1XKMP9PEXW3PTZNHJ
+09-08 22:38:47 launch ds64-outlier-dense-u128M -> 01M22ASZP8K3KARFQBCY52CR39
+09-08 22:38:48 ds64-contradiction-dense-u64M DONE
+09-08 22:39:20 eval ds64-contradiction-dense-u64M -> 01M22ATZGXTR5TAZWG9QZE9H7J
+09-08 22:39:20 ds64-oolong-dense-u16M DONE
+09-08 22:39:48 eval ds64-oolong-dense-u16M -> 01M22AVV6YM03CW8EVQYWS0C9W
+09-08 22:39:48 ds64-oolong-dense-u32M DONE
+09-08 22:40:19 eval ds64-oolong-dense-u32M -> 01M22AWSBFP1YVJMBEKCD4XMWT
+09-08 22:40:24 ds64-oolong-dense-u64M running
+09-08 22:40:25 ds64-oolong-dense-u128M running
+09-08 22:40:25 ds64-nq-dense-u16M DONE
+09-08 22:40:59 eval ds64-nq-dense-u16M -> 01M22AY0KZBAK9YK29E5Y7MPY3
+09-08 22:40:59 ds64-nq-dense-u32M DONE
+09-08 22:41:28 eval ds64-nq-dense-u32M -> 01M22AYWZJN0T4AEZ6GW3D7BYJ
+09-08 22:41:28 ds64-nq-dense-u64M running
+09-08 22:41:29 ds64-nq-dense-u128M running
+09-08 22:41:29 ds64-outlier-dense-u16M DONE
+09-08 22:42:07 eval ds64-outlier-dense-u16M -> 01M22B02Y64RZFZH71RNK4H4T0
+09-08 22:42:07 ds64-contradiction-hdr03-b128-u16M running
+09-08 22:42:07 ds64-contradiction-hdr08-b128-u16M failed rc=1; relaunching
+09-08 22:42:41 launch ds64-contradiction-hdr08-b128-u16M -> 01M22B14CRN8GAFX9DMYW4XN72
+09-08 22:42:41 ds64-contradiction-hdr17-b128-u16M running
+09-08 22:42:42 ds64-contradiction-hdr33-b128-u16M running
+09-08 22:42:42 ds64-contradiction-runs03-b128-u16M running
+09-08 22:42:42 ds64-contradiction-runs08-b128-u16M failed rc=1; relaunching
+09-08 22:43:04 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 22:43:04 ds64-oolong-dense-u64M DONE
+09-08 22:43:37 eval ds64-oolong-dense-u64M -> 01M22B2VB40NGZ3H5FYZMZVQYD
+09-08 22:44:09 launch ds64-contradiction-hdr08-b128-u16M -> 01M22B3TFFP8PDK7HJAZCT209F
+09-08 22:44:41 launch ds64-contradiction-runs08-b128-u16M -> 01M22B4SN9SMZ4JAC7G4NCVWS8
+09-08 22:44:41 ds64-contradiction-hdr03-b128-u32M running
+09-08 22:45:10 launch ds64-contradiction-hdr08-b128-u32M -> 01M22B5P3R3J91PJGEVGEWHF1J
+09-08 22:45:11 ds64-contradiction-hdr17-b128-u32M running
+09-08 22:45:11 ds64-contradiction-hdr33-b128-u32M running
+09-08 22:45:11 ds64-contradiction-runs03-b128-u32M running
+09-08 22:45:43 launch ds64-contradiction-runs08-b128-u32M -> 01M22B6NVKQC67TGBACH0HZ8YZ
+09-08 22:45:43 ds64-contradiction-hdr03-b128-u64M running
+09-08 22:46:11 launch ds64-contradiction-hdr08-b128-u64M -> 01M22B7HQT13YQCC6FDT2WDN15
+09-08 22:46:12 ds64-contradiction-hdr17-b128-u64M running
+09-08 22:46:43 launch ds64-contradiction-runs08-b128-u64M -> 01M22B8G4FR0GNWJVETE3TN2P6
+09-08 22:47:09 eval ds64-contradiction-dense-u32M failed rc=1; relaunching
+09-08 22:47:51 eval ds64-contradiction-dense-u32M -> 01M22BAKB2RSCD9VWPA2DRNN4V
+09-08 22:48:04 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 11/51 done, 24 pending | evals 0/11 done, 11 pending
+09-08 22:51:54 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 22:52:42 launch ds64-contradiction-hdr03-b128f-u16M -> 01M22BKF19XKP1EAQGMKP0KDXG
+09-08 22:53:33 launch ds64-contradiction-hdr08-b128f-u16M -> 01M22BN0Q2MPPT3AGQPXXT1DXE
+09-08 22:54:05 launch ds64-contradiction-hdr17-b128f-u16M -> 01M22BNZXZ5DM23AWKJT47CAV6
+09-08 22:54:34 launch ds64-contradiction-hdr33-b128f-u16M -> 01M22BPWZG4E2SHRW3HR2TK4K2
+09-08 22:55:03 launch ds64-contradiction-runs03-b128f-u16M -> 01M22BQRY5WBHH65MC4S5DW5QA
+09-08 22:55:32 launch ds64-contradiction-runs08-b128f-u16M -> 01M22BRN3N8P0V8Y16N308Q7NG
+09-08 22:56:24 launch ds64-contradiction-hdr03-b128f-u32M -> 01M22BT7S4R8GCM5Y5AED1N7VF
+09-08 22:56:59 launch ds64-contradiction-hdr08-b128f-u32M -> 01M22BVA9PT1ZED7KYS7CA7J0H
+09-08 22:57:34 launch ds64-contradiction-hdr17-b128f-u32M -> 01M22BWCJH2SJCEPRBYWSSQAHV
+09-08 22:58:09 launch ds64-contradiction-hdr33-b128f-u32M -> 01M22BXETRWPDQKF0RD7EVWGNW
+09-08 22:58:34 launch ds64-contradiction-runs03-b128f-u32M -> 01M22BY7F0YACCEQXE2AV42J5F
+09-08 22:59:21 launch ds64-contradiction-runs08-b128f-u32M -> 01M22BZMX5NHCBEMRN1HDFFBZ0
+09-08 22:59:49 launch ds64-contradiction-hdr03-b128f-u64M -> 01M22C0GGF136HK1GGW0FFBDT0
+09-08 23:00:32 launch ds64-contradiction-hdr08-b128f-u64M -> 01M22C1TG045AF4733W7NTAY1V
+09-08 23:01:14 launch ds64-contradiction-hdr17-b128f-u64M -> 01M22C33G73MCF94G842F95ARP
+09-08 23:01:57 launch ds64-contradiction-hdr33-b128f-u64M -> 01M22C4D114SXJCKFMYA6TZKDV
+09-08 23:02:25 launch ds64-contradiction-runs03-b128f-u64M -> 01M22C58WXY7ZHH7YH32HX5DVP
+09-08 23:03:07 launch ds64-contradiction-runs08-b128f-u64M -> 01M22C6HSF3NY5K8WX01BF0MJ3
+09-08 23:03:13 ds64-oolong-dense-u128M DONE
+09-08 23:03:41 eval ds64-oolong-dense-u128M -> 01M22C7JQ1YW3X464606CN3E82
+09-08 23:03:41 ds64-nq-dense-u64M DONE
+09-08 23:04:08 eval ds64-nq-dense-u64M -> 01M22C8DE6352R0E82SBPEZJG6
+09-08 23:04:09 ds64-outlier-dense-u32M running
+09-08 23:04:09 ds64-outlier-dense-u64M running
+09-08 23:04:10 ds64-outlier-dense-u128M running
+09-08 23:04:10 ds64-contradiction-hdr03-b128f-u16M running
+09-08 23:04:11 ds64-contradiction-hdr08-b128f-u16M running
+09-08 23:04:12 ds64-contradiction-hdr17-b128f-u16M running
+09-08 23:04:12 ds64-contradiction-hdr33-b128f-u16M running
+09-08 23:04:12 ds64-contradiction-runs03-b128f-u16M running
+09-08 23:04:13 ds64-contradiction-runs08-b128f-u16M running
+09-08 23:04:13 ds64-contradiction-hdr03-b128f-u32M running
+09-08 23:04:29 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 13/69 done, 22 pending | evals 0/13 done, 13 pending
+09-08 23:09:29 ds64-nq-dense-u128M DONE
+09-08 23:10:03 eval ds64-nq-dense-u128M -> 01M22CK7DYX4D3KYM9V0164WBT
+09-08 23:10:03 ds64-outlier-dense-u32M DONE
+09-08 23:10:30 orchestrator start (scale 4b, state /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64/orchestrator_ds64_state.json)
+09-08 23:11:03 launch ds64-contradiction-hdr08-b128f2-u16M -> 01M22CN2E7E4G242GQQQ4KCCJQ
+09-08 23:11:32 launch ds64-contradiction-hdr17-b128f2-u16M -> 01M22CNYMCPE0RSXQ6QGY9Q0VP
+09-08 23:12:04 launch ds64-contradiction-hdr33-b128f2-u16M -> 01M22CPXNCDDT6WRPRNKBHTV66
+09-08 23:12:37 launch ds64-contradiction-runs03-b128f2-u16M -> 01M22CQYBMGW9YJZJ2K4A5GCCV
+09-08 23:13:07 launch ds64-contradiction-runs08-b128f2-u16M -> 01M22CRVBXKY7NQGJ2F52SXBNV
+09-08 23:13:34 launch ds64-contradiction-hdr03-b128f2-u32M -> 01M22CSNNKFKNN8ZD1E97ZYSS8
+09-08 23:14:02 launch ds64-contradiction-hdr08-b128f2-u32M -> 01M22CTGMQGKBC9B554H9359ZB
+09-08 23:14:37 launch ds64-contradiction-hdr17-b128f2-u32M -> 01M22CVKJJ6H5KKY5Q8HNT9RTA
+09-08 23:15:14 launch ds64-contradiction-hdr33-b128f2-u32M -> 01M22CWQYBS0R4XFP9AKNQNVQ1
+09-08 23:16:00 launch ds64-contradiction-runs03-b128f2-u32M -> 01M22CY472SMV9K42NNMCX4F91
+09-08 23:16:44 launch ds64-contradiction-runs08-b128f2-u32M -> 01M22CZFK6F720HFBGR6N36ZSE
+09-08 23:17:16 launch ds64-contradiction-hdr03-b128f2-u64M -> 01M22D0ESB3HKX275QKQXTHW1M
+09-08 23:17:41 launch ds64-contradiction-hdr08-b128f2-u64M -> 01M22D17G63NSWAJ7T9VJG3ZJT
+09-08 23:18:07 launch ds64-contradiction-hdr17-b128f2-u64M -> 01M22D20Z69KZ4BSMAWPJ2ERT9
+09-08 23:18:35 launch ds64-contradiction-hdr33-b128f2-u64M -> 01M22D2VGN8WPXB6Z8HX38VX5X
+09-08 23:19:02 launch ds64-contradiction-runs03-b128f2-u64M -> 01M22D3N5MRFC5GD61SXEE018M
+09-08 23:19:39 launch ds64-contradiction-runs08-b128f2-u64M -> 01M22D4SN0ZXND83EYP6PH9NCF
+09-08 23:19:39 ds64-outlier-dense-u32M DONE
+09-08 23:20:15 eval ds64-outlier-dense-u32M -> 01M22D5XS7WXCDGW6KYH58GFSN
+09-08 23:20:16 ds64-outlier-dense-u64M DONE
+09-08 23:20:45 eval ds64-outlier-dense-u64M -> 01M22D6TEGQKMFJHMMV0TZKH60
+09-08 23:20:46 ds64-contradiction-hdr03-b128f2-u16M running
+09-08 23:20:46 ds64-contradiction-hdr08-b128f2-u16M running
+09-08 23:20:47 ds64-contradiction-hdr17-b128f2-u16M running
+09-08 23:20:47 ds64-contradiction-hdr33-b128f2-u16M running
+09-08 23:20:47 ds64-contradiction-runs03-b128f2-u16M running
+09-08 23:20:48 ds64-contradiction-runs08-b128f2-u16M running
+09-08 23:20:48 ds64-contradiction-hdr03-b128f2-u32M running
+09-08 23:20:49 ds64-contradiction-hdr08-b128f2-u32M running
+09-08 23:20:54 eval ds64-contradiction-dense-u16M DONE
+09-08 23:21:05 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 16/87 done, 19 pending | evals 1/16 done, 15 pending
+09-08 23:26:17 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 16/87 done, 19 pending | evals 1/16 done, 15 pending
+09-08 23:31:22 ds64-contradiction-hdr17-b128f2-u32M running
+09-08 23:31:31 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 16/87 done, 19 pending | evals 1/16 done, 15 pending
+09-08 23:37:59 eval ds64-contradiction-hdr03-u16M DONE
+09-08 23:37:59 eval ds64-contradiction-runs03-u16M DONE
+09-08 23:38:17 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 16/87 done, 19 pending | evals 3/16 done, 13 pending
+09-08 23:38:22 harvest job -> None
+09-08 23:43:23 ds64-outlier-dense-u128M DONE
+09-08 23:43:55 eval ds64-outlier-dense-u128M -> 01M22EH8DKNVBPSV1R5QB2KDC7
+09-08 23:43:56 ds64-contradiction-hdr03-b128f2-u16M DONE
+09-08 23:44:22 eval ds64-contradiction-hdr03-b128f2-u16M -> 01M22EJ2NSSHXAAY7HF4MT71K6
+09-08 23:44:24 ds64-contradiction-runs03-b128f2-u16M DONE
+09-08 23:45:01 eval ds64-contradiction-runs03-b128f2-u16M -> 01M22EK8KSMXZHNS6MRXE9YZSY
+09-08 23:45:03 ds64-contradiction-hdr33-b128f2-u32M running
+09-08 23:45:03 ds64-contradiction-runs03-b128f2-u32M running
+09-08 23:45:04 ds64-contradiction-runs08-b128f2-u32M running
+09-08 23:45:13 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 19/87 done, 16 pending | evals 3/19 done, 16 pending
+09-08 23:50:15 ds64-contradiction-runs08-b128f2-u16M DONE
+09-08 23:50:52 eval ds64-contradiction-runs08-b128f2-u16M -> 01M22EXZY7E9R3VRWC09TMFB29
+09-08 23:50:59 eval ds64-outlier-dense-u16M DONE
+09-08 23:51:02 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 20/87 done, 15 pending | evals 4/20 done, 16 pending
+09-08 23:56:02 ds64-contradiction-hdr08-b128f2-u16M DONE
+09-08 23:57:03 eval ds64-contradiction-hdr08-b128f2-u16M -> 01M22F99K6ASFV5MZ7GAMA236C
+09-08 23:57:06 ds64-contradiction-hdr03-b128f2-u64M running
+09-08 23:57:09 eval ds64-oolong-dense-u16M DONE
+09-08 23:57:09 eval ds64-oolong-dense-u32M DONE
+09-08 23:57:09 eval ds64-nq-dense-u16M DONE
+09-08 23:57:10 eval ds64-nq-dense-u32M DONE
+09-08 23:57:13 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 21/87 done, 14 pending | evals 8/21 done, 13 pending
+09-09 00:02:13 ds64-contradiction-hdr17-b128f2-u16M DONE
+09-09 00:02:42 eval ds64-contradiction-hdr17-b128f2-u16M -> 01M22FKMXBGE8H5FB3HK360YGF
+09-09 00:02:42 ds64-contradiction-hdr33-b128f2-u16M DONE
+09-09 00:03:12 eval ds64-contradiction-hdr33-b128f2-u16M -> 01M22FMJHEQSXJ8M7VQ8PGSN5F
+09-09 00:03:15 ds64-contradiction-hdr08-b128f2-u64M running
+09-09 00:03:16 ds64-contradiction-hdr17-b128f2-u64M running
+09-09 00:03:27 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 23/87 done, 12 pending | evals 8/23 done, 15 pending
+09-09 00:08:33 eval ds64-contradiction-dense-u32M DONE
+09-09 00:08:35 eval ds64-nq-dense-u64M DONE
+09-09 00:08:40 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 23/87 done, 12 pending | evals 10/23 done, 13 pending
+09-09 00:13:40 ds64-contradiction-hdr03-b128f2-u32M DONE
+09-09 00:14:08 eval ds64-contradiction-hdr03-b128f2-u32M -> 01M22G8K1BA0GPDET4DAQMZNWY
+09-09 00:14:13 ds64-contradiction-hdr33-b128f2-u64M running
+09-09 00:14:15 eval ds64-oolong-dense-u64M DONE
+09-09 00:14:15 eval ds64-oolong-dense-u128M DONE
+09-09 00:14:21 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 24/87 done, 11 pending | evals 12/24 done, 12 pending
+09-09 00:19:23 ds64-contradiction-runs03-b128f2-u32M DONE
+09-09 00:19:55 eval ds64-contradiction-runs03-b128f2-u32M -> 01M22GK4ZZVY2JNEV2J8MWC9HW
+09-09 00:19:58 ds64-contradiction-runs03-b128f2-u64M running
+09-09 00:19:59 eval ds64-outlier-dense-u32M DONE
+09-09 00:20:00 eval ds64-outlier-dense-u64M DONE
+09-09 00:20:04 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 25/87 done, 10 pending | evals 14/25 done, 11 pending
+09-09 00:25:08 ds64-contradiction-runs08-b128f2-u64M running
+09-09 00:25:16 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 25/87 done, 10 pending | evals 14/25 done, 11 pending
+09-09 00:30:17 ds64-contradiction-hdr08-b128f2-u32M DONE
+09-09 00:30:53 eval ds64-contradiction-hdr08-b128f2-u32M -> 01M22H787DSVE2HGKMN193GBD1
+09-09 00:31:07 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 26/87 done, 9 pending | evals 14/26 done, 12 pending
+09-09 00:36:09 ds64-contradiction-runs08-b128f2-u32M DONE
+09-09 00:36:40 eval ds64-contradiction-runs08-b128f2-u32M -> 01M22HHTQTV545TEXAYMB8NS18
+09-09 00:36:58 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 27/87 done, 8 pending | evals 14/27 done, 13 pending
+09-09 00:41:59 ds64-contradiction-hdr17-b128f2-u32M DONE
+09-09 00:42:34 eval ds64-contradiction-hdr17-b128f2-u32M -> 01M22HWMX967VA3BB2GN3ZERKW
+09-09 00:42:44 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 28/87 done, 7 pending | evals 14/28 done, 14 pending
+09-09 00:47:58 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 28/87 done, 7 pending | evals 14/28 done, 14 pending
+09-09 00:53:03 eval ds64-contradiction-dense-u64M DONE
+09-09 00:53:13 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 28/87 done, 7 pending | evals 15/28 done, 13 pending
+09-09 00:58:18 ds64-contradiction-hdr33-b128f2-u32M DONE
+09-09 00:58:54 eval ds64-contradiction-hdr33-b128f2-u32M -> 01M22JTHTW74ESXWBF8F0BY2CE
+09-09 00:59:15 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 29/87 done, 6 pending | evals 15/29 done, 14 pending
+09-09 01:04:21 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 29/87 done, 6 pending | evals 15/29 done, 14 pending
+09-09 01:09:35 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 29/87 done, 6 pending | evals 15/29 done, 14 pending
+09-09 01:09:39 harvest job -> None
+09-09 01:14:40 ds64-contradiction-hdr03-b128f2-u64M DONE
+09-09 01:15:19 eval ds64-contradiction-hdr03-b128f2-u64M -> 01M22KRKP71DT4439APSMB99C7
+09-09 01:15:33 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 30/87 done, 5 pending | evals 15/30 done, 15 pending
+09-09 01:20:35 ds64-contradiction-hdr08-b128f2-u64M DONE
+09-09 01:21:04 eval ds64-contradiction-hdr08-b128f2-u64M -> 01M22M34Y923QWBPPV4GGYFRPD
+09-09 01:21:05 ds64-contradiction-runs03-b128f2-u64M DONE
+09-09 01:21:30 eval ds64-contradiction-runs03-b128f2-u64M -> 01M22M3YGRZCDTS7ZEC3MATP3H
+09-09 01:21:44 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 32/87 done, 3 pending | evals 15/32 done, 17 pending
+09-09 01:26:51 eval ds64-nq-dense-u128M DONE
+09-09 01:26:59 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 32/87 done, 3 pending | evals 16/32 done, 16 pending
+09-09 01:32:16 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 32/87 done, 3 pending | evals 16/32 done, 16 pending
+09-09 01:37:23 ds64-contradiction-runs08-b128f2-u64M DONE
+09-09 01:37:53 eval ds64-contradiction-runs08-b128f2-u64M -> 01M22N1Y0JERD066R0AG9KPSYV
+09-09 01:38:02 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 33/87 done, 2 pending | evals 16/33 done, 17 pending
+09-09 01:43:03 ds64-contradiction-hdr17-b128f2-u64M DONE
+09-09 01:43:33 eval ds64-contradiction-hdr17-b128f2-u64M -> 01M22NC9M5HS01ZJ23HVQ2KPJ7
+09-09 01:43:52 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 34/87 done, 1 pending | evals 16/34 done, 18 pending
+09-09 01:49:02 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 34/87 done, 1 pending | evals 16/34 done, 18 pending
+09-09 01:54:03 ds64-contradiction-hdr33-b128f2-u64M DONE
+09-09 01:54:57 eval ds64-contradiction-hdr33-b128f2-u64M -> 01M22P15K8MB74JM4SZJ9NSWKC
+09-09 01:55:06 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 16/35 done, 19 pending
+09-09 02:00:17 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 16/35 done, 19 pending
+09-09 02:05:18 eval ds64-outlier-dense-u128M DONE
+09-09 02:05:27 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 17/35 done, 18 pending
+09-09 02:10:37 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 17/35 done, 18 pending
+09-09 02:15:46 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 17/35 done, 18 pending
+09-09 02:20:55 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 17/35 done, 18 pending
+09-09 02:25:56 eval ds64-contradiction-runs03-b128f2-u16M DONE
+09-09 02:25:58 eval ds64-contradiction-hdr08-b128f2-u16M DONE
+09-09 02:25:58 eval ds64-contradiction-hdr17-b128f2-u16M DONE
+09-09 02:26:05 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 20/35 done, 15 pending
+09-09 02:31:13 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 20/35 done, 15 pending
+09-09 02:36:21 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 20/35 done, 15 pending
+09-09 02:41:21 eval ds64-contradiction-hdr03-b128f2-u16M DONE
+09-09 02:41:23 eval ds64-contradiction-hdr33-b128f2-u16M DONE
+09-09 02:41:29 status: data_ok ['contradiction', 'nq', 'oolong', 'outlier'] | runs 35/87 done, 0 pending | evals 22/35 done, 13 pending
+09-09 02:41:35 harvest job -> None
