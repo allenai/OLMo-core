@@ -21,9 +21,13 @@ case "$TASK" in nq) CONV_TASK=retrieval; CHUNK_BY=document ;; oolong) CONV_TASK=
 read -r -d '' WORK <<EOF
 set -uo pipefail
 export PYTHONWARNINGS=ignore TOKENIZERS_PARALLELISM=false HF_HUB_DISABLE_PROGRESS_BARS=1
-git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc && PYB=/opt/conda/bin/python; [ -x \$PYB ] || PYB=\$(command -v python)
-\$PYB -m pip install -q ./ctc 2>&1 | tail -1; command -v ctc-data || { echo "!!! ctc-data install FAILED"; exit 1; }
-\$PYB -c "import numpy, transformers" || \$PYB -m pip install -q numpy transformers
+# gantry --install puts the repo (olmo_core) in a uv venv = \`python\`; numpy/transformers and the
+# ctc package go into THAT interpreter (the image's /opt/conda python lacks olmo_core's deps)
+PYB=\$(command -v python); echo "python: \$PYB"
+git fetch -q origin $CTC_BRANCH && git checkout -q origin/$CTC_BRANCH -- ctc || { echo "!!! ctc checkout FAILED"; exit 1; }
+(\$PYB -m pip --version >/dev/null 2>&1 || \$PYB -m ensurepip -q) ; \$PYB -m pip install -q numpy transformers ./ctc 2>&1 | tail -2
+CTC=\$(dirname \$PYB)/ctc-data; [ -x \$CTC ] || { echo "!!! ctc-data install FAILED"; exit 1; }
+\$PYB -c "import numpy, transformers, olmo_core, ctc" || { echo "!!! deps missing"; exit 1; }
 W=$WEKA/build/$TASK; mkdir -p \$W/pools \$W/arms $WEKA/shards
 i=0
 for R in 2k 4k 8k 16k 32k 56k; do
@@ -31,7 +35,7 @@ for R in 2k 4k 8k 16k 32k 56k; do
   OUT=\$W/pools/${TASK}_\$R
   if [ -s \$OUT/$TASK/train.jsonl ] && [ \$(wc -l < \$OUT/$TASK/train.jsonl) -ge \$N ]; then echo "[skip] pool \$R"; continue; fi
   i=\$((i+1)); echo "--- pool $TASK \$R: \$N \$(date +%T) ---"
-  ctc-data build --task $TASK --out \$OUT --split train --rungs \$R --train \$N --seed \$((4200+i)) --pool auto --force || { echo "!!! pool FAILED \$R"; exit 1; }
+  \$CTC build --task $TASK --out \$OUT --split train --rungs \$R --train \$N --seed \$((4200+i)) --pool auto --force || { echo "!!! pool FAILED \$R"; exit 1; }
   echo "    -> \$(wc -l < \$OUT/$TASK/train.jsonl) rows"
 done
 \$PYB debug/ds64/compose_uniform_arms.py --task $TASK --pools-dir \$W/pools --out-dir \$W/arms --budgets $BUDGETS || exit 1
