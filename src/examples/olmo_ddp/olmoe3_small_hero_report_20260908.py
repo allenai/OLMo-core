@@ -122,6 +122,8 @@ def plot(metric, title, *, upper=None, smooth=False, expression=None):
         y=[metric],
         title_x="Tokens seen (absolute, not optimizer steps)",
         title_y=metric,
+        # Compress startup CE spikes without clipping data or freezing live axes.
+        log_y=metric.endswith("/CE loss"),
         range_x=(0, upper),
         xaxis_format=".3s",
         aggregate=False,
