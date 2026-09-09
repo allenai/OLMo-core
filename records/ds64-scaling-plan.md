@@ -100,3 +100,11 @@ seconds/token at the same budget. Orchestrator `debug/ds64/orchestrate_ds64.py` 
   it. Soft arms relaunched on `flash_2` (exact for right-padded causal rows) as `-b128f`; the
   torch `-b128` runs cancelled (finished ones kept as accuracy-only reference). The keep-1/12 arms
   also needed micro 4 (128 rows/step must divide by micro x 8 GPUs).
+- 23:35 **first accuracies.** Dense ladders healthy (contradiction 16M mean f1 0.93; nq 16M
+  2k/8k/16k/32k 0.97/0.93/0.87/0.81; oolong 16M 0.85/0.58/0.53/0.53). The two gb16 soft runs at
+  keep 1/36 COLLAPSE at full-attention eval: `hdr03` 0.24/0.15/0.07/0.04, `runs03`
+  0.68/0.45/0.20/0.06 — the gold-forced shortcut ("real docs = answer") that the eval-side
+  parity cannot see. Keep ratio is the load-bearing knob, as Prasann said; the ablation (hdr08 /
+  hdr17 / hdr33, runs08) decides what survives training. Soft-arm wall-clock still ~65 s/step
+  after the flash and vectorized-compaction fixes (per-row cost ~4 s under FSDP vs ~0.9 s on one
+  GPU); diagnostics `hdr03gb` (no fingerprint hook) and `hdr03m1` (one row per micro-step) launched.
