@@ -151,7 +151,9 @@ docker-image :
 		--build-arg TRITON_PTXAS_PATH="$(TRITON_PTXAS_PATH)" \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	@docker run --rm olmo-core:$(IMAGE_TAG) python -c '$(DOCKER_VALIDATE_IMPORTS)'
+	@# --gpus all: transformer-engine (>= 2.18) dlopens libcuda at import, so the validation
+	@# container needs the driver exposed. Requires a GPU host + nvidia-container-toolkit.
+	@docker run --rm --gpus all olmo-core:$(IMAGE_TAG) python -c '$(DOCKER_VALIDATE_IMPORTS)'
 	@echo "✓ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
