@@ -1219,10 +1219,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             two_sided=not opts.kv_route_one_sided,
             target_anneal_calls=int(total_calls * opts.kv_route_target_anneal_frac),
             seed=opts.seed,
+            compact=opts.block_skip_compact,
+            capacity_frac=opts.block_skip_capacity,
         )
         print(
             f"[ctc-suite] block-skip: routed blocks {model._block_skip['routed']}, run target "
-            f"{opts.block_skip_target}",
+            f"{opts.block_skip_target} compact={opts.block_skip_compact}",
             flush=True,
         )
     if opts.variant == "flexcompute" and opts.flex_joint_target is not None:
@@ -1400,6 +1402,45 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             )
             summarize_peak(torch.cuda.memory._snapshot(), top=16)
             raise
+    elif opts.torch_profile:
+        # Where does a step go? torch.profiler over steps 3-4 (2 warm-up), rank 0 prints the top
+        # ops by CUDA and by CPU time (2026-09-08: soft-token steps were ~7x slower than dense at
+        # 0.18x the FLOPs on Beaker/FSDP while a single local GPU was fine).
+        import torch
+        from torch.profiler import ProfilerActivity, profile, schedule
+
+        from olmo_core.train.callbacks import Callback
+
+        def _report(prof):
+            if int(os.environ.get("RANK", "0")) == 0:
+                ka = prof.key_averages()
+                print(
+                    "[torch-profile] top ops by CUDA time:\n"
+                    + ka.table(sort_by="cuda_time_total", row_limit=40),
+                    flush=True,
+                )
+                print(
+                    "[torch-profile] top ops by CPU time:\n"
+                    + ka.table(sort_by="cpu_time_total", row_limit=30),
+                    flush=True,
+                )
+
+        prof = profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            schedule=schedule(wait=1, warmup=1, active=2, repeat=1),
+            on_trace_ready=_report,
+        )
+
+        class _ProfStep(Callback):
+            def post_step(self):
+                prof.step()
+
+        trainer.add_callback("torch_profile", _ProfStep())
+        prof.start()
+        try:
+            trainer.fit()
+        finally:
+            prof.stop()
     else:
         trainer.fit()
 
@@ -1455,7 +1496,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     else None
                 ),
                 "block_skip": (
-                    {"start_layer": opts.block_skip_start_layer, "target": opts.block_skip_target}
+                    {
+                        "start_layer": opts.block_skip_start_layer,
+                        "target": opts.block_skip_target,
+                        "compact": opts.block_skip_compact,
+                    }
                     if opts.variant == "flexcompute" and opts.block_skip_target is not None
                     else None
                 ),
@@ -1615,6 +1660,23 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--block-skip-start-layer", type=int, default=0)
     ap.add_argument(
+        "--block-skip-capacity",
+        type=float,
+        default=None,
+        help="flexcompute: FIXED per-block capacity (mixture-of-depths top-k) instead of a "
+        "threshold, e.g. 0.25. Only useful with --block-skip-compact, where it makes the "
+        "compacted shape static and removes one host sync per block",
+    )
+    ap.add_argument(
+        "--block-skip-compact",
+        action="store_true",
+        help="flexcompute: GATHER the kept tokens instead of masking them, so a skipped token's "
+        "work is really not done. Measured on a 4B step at 8k (debug/flexcompute_40x/"
+        "router_matrix_4B_8192_compact.json): keep=0.5 goes from 0.90x (masked, i.e. SLOWER than "
+        "dense) to 1.34x, keep=0.25 to 1.64x. Changes what 'skipped' means for the GatedDeltaNet "
+        "short convolution -- see the caveat in olmo_core.nn.block_skip",
+    )
+    ap.add_argument(
         "--kv-route-debug", default="", help="memory-diagnostic ablations: no_router | no_holder"
     )
     ap.add_argument(
@@ -1693,6 +1755,11 @@ def parse_args() -> argparse.Namespace:
         "only the body -- the eval-side parity construction (contradiction: count 1; oolong: count 3)",
     )
     ap.add_argument("--st-header-stop-count", type=int, default=1)
+    ap.add_argument(
+        "--torch-profile",
+        action="store_true",
+        help="profile steps 3-4 with torch.profiler and print the top ops (rank 0)",
+    )
     ap.add_argument(
         "--st-neighbour-runs",
         type=int,
