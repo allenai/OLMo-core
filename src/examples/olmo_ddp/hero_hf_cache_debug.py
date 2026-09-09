@@ -20,7 +20,10 @@ def main():
     parser.add_argument("--packed", action="store_true")
     parser.add_argument("--full-precision-reduction", action="store_true")
     parser.add_argument("--fp32-linears", action="store_true")
+    parser.add_argument("--fp32-model", action="store_true")
     args = parser.parse_args()
+    if args.fp32_model:
+        torch.set_float32_matmul_precision("highest")
     if args.full_precision_reduction:
         torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
     if args.fp32_linears:
@@ -50,7 +53,11 @@ def main():
         return_tensors="pt",
     ).input_ids.cuda()
     model = (
-        AutoModelForCausalLM.from_pretrained(hf, dtype=torch.bfloat16, attn_implementation="sdpa")
+        AutoModelForCausalLM.from_pretrained(
+            hf,
+            dtype=torch.float32 if args.fp32_model else torch.bfloat16,
+            attn_implementation="sdpa",
+        )
         .cuda()
         .eval()
     )
@@ -113,9 +120,10 @@ def main():
         mean_kl=(full.float().softmax(-1) * error).sum(-1).mean().item(),
         full_precision_reduction=args.full_precision_reduction,
         fp32_linears=args.fp32_linears,
+        fp32_model=args.fp32_model,
     )
     suffix = (
-        "-fp32linear"
+        "-fp32model" if args.fp32_model else "-fp32linear"
         if args.fp32_linears
         else "-fp32reduce" if args.full_precision_reduction else ""
     )
