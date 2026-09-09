@@ -31,6 +31,11 @@ def main():
     _register_olmo3moe_auto_classes()
     os.environ.pop("OLMO_HF_MOE_CORE_REFERENCE", None)
     os.environ["OLMO_HF_MOE_REFERENCE_LOOP"] = "1"
+    fixed_fla = os.environ.get("OLMO_HERO_FIXED_FLA_CONFIGS") == "1"
+    if fixed_fla:
+        from olmo_core.nn.moe.v2.hf.launch_settings import install as install_launches
+
+        install_launches()
     torch.set_float32_matmul_precision("highest")
     from hero_hf_precision import install
 
@@ -99,9 +104,12 @@ def main():
         recurrent_prefill=args.recurrent_prefill,
         precision=precision,
         diagnostic_only=True,
+        fixed_fla=fixed_fla,
     )
     suffix = "-recurrent" if args.recurrent_prefill else ""
     suffix += f"-linear{args.linear_precision}-sdpa{args.sdpa_precision}"
+    if fixed_fla:
+        suffix += "-fixed-fla"
     write_json(root / f"cache-sweep-{args.dtype}{suffix}.json", result)
 
 
