@@ -19,6 +19,10 @@ def main():
     parser.add_argument("--step", type=int, choices=tuple(TARGETS.values()), required=True)
     parser.add_argument("--dtype", choices=("float32", "bfloat16"), required=True)
     parser.add_argument("--recurrent-prefill", action="store_true")
+    parser.add_argument(
+        "--linear-precision", choices=("native", "float32", "float64"), default="native"
+    )
+    parser.add_argument("--sdpa-precision", choices=("native", "float64"), default="native")
     args = parser.parse_args()
     prepare_scratch()
     root = SCRATCH / args.arm / f"step{args.step}"
@@ -28,6 +32,10 @@ def main():
     os.environ.pop("OLMO_HF_MOE_CORE_REFERENCE", None)
     os.environ["OLMO_HF_MOE_REFERENCE_LOOP"] = "1"
     torch.set_float32_matmul_precision("highest")
+    from hero_hf_precision import install
+
+    precision = install(linear=args.linear_precision, sdpa=args.sdpa_precision)
+    print("CACHE_SWEEP_PRECISION", precision, flush=True)
     if args.recurrent_prefill:
         # Diagnostic only: remove the chunk-vs-recurrent algorithm change while
         # leaving HF's independent cache lifecycle and full/cached input paths intact.
@@ -89,9 +97,11 @@ def main():
         dtype=args.dtype,
         checks=rows,
         recurrent_prefill=args.recurrent_prefill,
+        precision=precision,
         diagnostic_only=True,
     )
     suffix = "-recurrent" if args.recurrent_prefill else ""
+    suffix += f"-linear{args.linear_precision}-sdpa{args.sdpa_precision}"
     write_json(root / f"cache-sweep-{args.dtype}{suffix}.json", result)
 
 
