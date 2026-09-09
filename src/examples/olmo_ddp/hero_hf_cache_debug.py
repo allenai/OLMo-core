@@ -18,7 +18,22 @@ def main():
     parser.add_argument("--arm", choices=("emo", "non-emo"), required=True)
     parser.add_argument("--step", type=int, choices=tuple(TARGETS.values()), required=True)
     parser.add_argument("--packed", action="store_true")
+    parser.add_argument("--full-precision-reduction", action="store_true")
+    parser.add_argument("--fp32-linears", action="store_true")
     args = parser.parse_args()
+    if args.full_precision_reduction:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+    if args.fp32_linears:
+        torch.set_float32_matmul_precision("highest")
+
+        def precise_linear(module, x):
+            return torch.nn.functional.linear(
+                x.float(),
+                module.weight.float(),
+                None if module.bias is None else module.bias.float(),
+            ).to(x.dtype)
+
+        torch.nn.Linear.forward = precise_linear
     root = SCRATCH / args.arm / f"step{args.step}"
     _register_olmo3moe_auto_classes()
     os.environ.pop("OLMO_HF_MOE_CORE_REFERENCE", None)
@@ -95,8 +110,16 @@ def main():
         checks=rows,
         logprob_max=error.abs().max().item(),
         logprob_mean=error.abs().mean().item(),
+        mean_kl=(full.float().softmax(-1) * error).sum(-1).mean().item(),
+        full_precision_reduction=args.full_precision_reduction,
+        fp32_linears=args.fp32_linears,
     )
-    write_json(root / f"cache-debug-{'packed' if args.packed else 'loop'}.json", result)
+    suffix = (
+        "-fp32linear"
+        if args.fp32_linears
+        else "-fp32reduce" if args.full_precision_reduction else ""
+    )
+    write_json(root / f"cache-debug-{'packed' if args.packed else 'loop'}{suffix}.json", result)
     print(
         "CACHE_DEBUG_RESULT",
         json.dumps({k: v for k, v in result.items() if k != "checks"}),
