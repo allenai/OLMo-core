@@ -51,7 +51,8 @@ GPUS = 8
 # and the soft arm gets 7x more optimizer steps than dense. 128 rows/step ~= 576k tokens/step.
 SOFT_GB = int(os.environ.get("DS64_SOFT_GB", "128"))
 # rows per micro-batch, sized to the arm's compaction so a micro-batch of 56k rows fits an 80GB GPU
-ARM_MICRO = {"hdr03": 8, "runs03": 8, "kv08": 8, "hdr08": 6, "runs08": 6, "ohdr08": 6,
+# (rows/step must be divisible by micro x 8 GPUs -> micro in {1, 2, 4, 8, 16})
+ARM_MICRO = {"hdr03": 8, "runs03": 8, "kv08": 8, "hdr08": 4, "runs08": 4, "ohdr08": 4,
              "hdr17": 4, "kv17": 4, "ohdr17": 4, "hdr33": 2, "kv33": 2, "ohdr33": 2}
 CLUSTER = os.environ.get("DS64_CLUSTER", {"4b": "ai2/jupiter-cirrascale-2", "27b": "ai2/titan-cirrascale"}[SCALE])
 
