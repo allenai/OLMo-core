@@ -1,22 +1,55 @@
-"""Default stage-2 packing settings per mixture tier."""
+"""Default stage-2 packing settings per mixture tier.
+
+Derived, not tabulated. A tier's crop budget follows from whether the sources it
+actually trains on include any multi-image source: those rows cost several images' worth
+of crops each, so they need the larger ceiling.
+
+This used to be a hand-maintained ``name -> profile`` dict, and it had already drifted —
+``demo``, ``demo-pointing``, ``pointing``, ``nlp-demo`` and ``academic`` were all labelled
+single-image while containing sources from :data:`MULTI_IMAGE_MIXTURE_DATASETS`. That
+matters because :class:`~olmo_core.data.multimodal.packing.DynamicPacker` emits an example
+that alone exceeds a capacity as its own pack rather than enforcing the cap (a documented
+deviation from mm_olmo), so an over-budget row passes straight through and the collator
+sizes the batch to it. Deriving the profile makes that class of mistake impossible.
+
+Deriving also moves four tiers the *other* way. The single-source pointing bisect tiers
+(``pixmo_points_train``, ``pixmo_points_high_freq_train``, ``pixmo_count_train``,
+``cosyn_point``) were absent from the old table and fell through to its conservative
+default, so they packed at 125 crops with ``shortcut_max_len_images=False`` despite being
+single-image. They now get the single-image profile, which is both cheaper and correct —
+but it does change how those bisect runs pack, so a before/after comparison of a bisect
+result is not apples-to-apples across this change. ``pixmo_multi_points`` stays on the
+multi-image profile.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+
+from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+    MULTI_IMAGE_MIXTURE_DATASETS,
+)
+from olmo_core.data.multimodal.mixtures.tiers import mixture_source_names
 
 __all__ = [
     "MixturePackProfile",
     "MULTI_IMAGE_PACK_MAX_CROPS",
     "SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS",
-    "MIXTURE_PACK_PROFILES",
+    "SINGLE_IMAGE_PACK_PROFILE",
+    "MULTI_IMAGE_PACK_PROFILE",
     "get_mixture_pack_profile",
+    "mixture_is_multi_image",
 ]
 
 # One high-res image: 1 global + up to 24 local crops (mm_olmo pointing/high-res budget).
 SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS = 1 + 24
 
 # Worst case for multi-image sources in image-only-v9: 5 images × 25 crops each.
+#
+# NOTE: this is the mm_olmo high-res budget, which is more generous than the per-image
+# budget stage 2 actually runs (``MAX_CROPS = 8`` in ``Molmo2-Stage2.py``); a 5-image row
+# there costs ~40 crops, not 125. Kept as a conservative ceiling — the packer only needs
+# it to be an upper bound — but do not read 125 as a measured figure.
 MULTI_IMAGE_PACK_MAX_CROPS = 5 * (1 + 24)
 
 
@@ -27,75 +60,34 @@ class MixturePackProfile:
     description: str = ""
 
 
-MIXTURE_PACK_PROFILES: Dict[str, MixturePackProfile] = {
-    # Full mixtures include multi-image sources — keep a generous crop ceiling.
-    "image-only-v9": MixturePackProfile(
-        pack_max_crops=MULTI_IMAGE_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=False,
-        description="Full image-only-v9 (includes multi-image sources).",
-    ),
-    "image-only-v10": MixturePackProfile(
-        pack_max_crops=MULTI_IMAGE_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=False,
-        description="Full image-only-v10 (v9 + FineVision + DynaMath).",
-    ),
-    # Single-image tiers match mm_olmo's effective SFT packing (≈25 crops + shortcut).
-    "single-image-only-v9": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-        description="image-only-v9 with multi-image sources removed.",
-    ),
-    "single-image-only-v10": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-        description="image-only-v10 with multi-image v9 sources removed.",
-    ),
-    # Small debug/demo slices are single-image — use the throughput-friendly profile.
-    "debug": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "demo": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "demo-pointing": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "pointing": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "nlp-demo": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "academic": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "finevision": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "dynamath": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-    "finevision-dynamath": MixturePackProfile(
-        pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
-        pack_shortcut_max_len_images=True,
-    ),
-}
+SINGLE_IMAGE_PACK_PROFILE = MixturePackProfile(
+    pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+    pack_shortcut_max_len_images=True,
+    description="single-image sources only (mm_olmo effective SFT packing)",
+)
 
-_DEFAULT_PROFILE = MixturePackProfile(
+MULTI_IMAGE_PACK_PROFILE = MixturePackProfile(
     pack_max_crops=MULTI_IMAGE_PACK_MAX_CROPS,
     pack_shortcut_max_len_images=False,
-    description="Unknown mixture — use conservative multi-image crop ceiling.",
+    description="includes multi-image sources — conservative crop ceiling",
 )
+
+
+def mixture_is_multi_image(mixture: str) -> bool:
+    """Whether any source the tier trains on is a multi-image source.
+
+    Unknown tiers are treated as multi-image: the conservative ceiling costs throughput,
+    the permissive one risks an OOM, so an unrecognized name should fail safe.
+    """
+    try:
+        sources = mixture_source_names(mixture)
+    except ValueError:
+        return True
+    return bool(set(sources) & set(MULTI_IMAGE_MIXTURE_DATASETS))
 
 
 def get_mixture_pack_profile(mixture: str) -> MixturePackProfile:
     """Return the recommended pack settings for a mixture tier."""
-    return MIXTURE_PACK_PROFILES.get(mixture, _DEFAULT_PROFILE)
+    return (
+        MULTI_IMAGE_PACK_PROFILE if mixture_is_multi_image(mixture) else SINGLE_IMAGE_PACK_PROFILE
+    )

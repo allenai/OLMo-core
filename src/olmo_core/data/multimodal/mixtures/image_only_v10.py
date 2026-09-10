@@ -19,15 +19,17 @@ from olmo_core.data.multimodal.finevision import (
     build_finevision_v10_config,
     finevision_v10_hub_name,
 )
-from olmo_core.data.multimodal.mixture_weights import (
-    DatasetSource,
-    SubMixture,
-    compute_flat_mixture_weights,
-)
+from olmo_core.data.multimodal.mixture_weights import DatasetSource, SubMixture
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
     IMAGE_ONLY_V9_SUBMIXTURES,
     build_image_only_v9_dataset,
     filter_submixtures_single_image,
+)
+from olmo_core.data.multimodal.mixtures.registry import (
+    LazyDatasetMap,
+    build_mixture,
+    mixture_dataset_names,
+    source_lookup,
 )
 
 __all__ = [
@@ -82,16 +84,12 @@ VALIDATION_MIXTURES_V10: Dict[str, Optional[Tuple[str, ...]]] = {
 
 
 def _source_lookup() -> Dict[str, DatasetSource]:
-    out: Dict[str, DatasetSource] = {}
-    for group in IMAGE_ONLY_V10_SUBMIXTURES:
-        for src in group.datasets:
-            out[src.name] = src
-    return out
+    return source_lookup(IMAGE_ONLY_V10_SUBMIXTURES)
 
 
 def image_only_v10_dataset_names() -> List[str]:
     """All dataset names in the image-only-v10 mixture."""
-    return [src.name for group in IMAGE_ONLY_V10_SUBMIXTURES for src in group.datasets]
+    return mixture_dataset_names(IMAGE_ONLY_V10_SUBMIXTURES)
 
 
 def build_image_only_v10_dataset(
@@ -125,40 +123,24 @@ def build_image_only_v10_dataset(
     )
 
 
-class _LazyDatasetMap:
-    """Lazy dataset registry: builds each dataset on first access."""
+def _v10_dataset_builder(
+    tokenizer,
+    seed: int,
+    max_sequence_length: Optional[int],
+    finevision_cache_dir: Optional[str],
+):
+    """Bind ``build_image_only_v10_dataset`` to everything but the source name."""
 
-    def __init__(
-        self,
-        tokenizer,
-        seed: int,
-        *,
-        max_sequence_length: Optional[int] = None,
-        finevision_cache_dir: Optional[str] = None,
-    ):
-        self._tokenizer = tokenizer
-        self._seed = seed
-        self._max_sequence_length = max_sequence_length
-        self._finevision_cache_dir = finevision_cache_dir
-        self._cache: Dict[str, object] = {}
-        self._source_map = _source_lookup()
+    def build(name: str):
+        return build_image_only_v10_dataset(
+            name,
+            tokenizer,
+            seed,
+            max_sequence_length=max_sequence_length,
+            finevision_cache_dir=finevision_cache_dir,
+        )
 
-    def keys(self):
-        return self._source_map.keys()
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._source_map
-
-    def __getitem__(self, name: str):
-        if name not in self._cache:
-            self._cache[name] = build_image_only_v10_dataset(
-                name,
-                self._tokenizer,
-                self._seed,
-                max_sequence_length=self._max_sequence_length,
-                finevision_cache_dir=self._finevision_cache_dir,
-            )
-        return self._cache[name]
+    return build
 
 
 def build_image_only_v10_datasets(
@@ -167,13 +149,11 @@ def build_image_only_v10_datasets(
     *,
     max_sequence_length: Optional[int] = None,
     finevision_cache_dir: Optional[str] = None,
-) -> _LazyDatasetMap:
+) -> LazyDatasetMap:
     """Lazy registry of all image-only-v10 datasets keyed by mixture source name."""
-    return _LazyDatasetMap(
-        tokenizer,
-        seed,
-        max_sequence_length=max_sequence_length,
-        finevision_cache_dir=finevision_cache_dir,
+    return LazyDatasetMap(
+        IMAGE_ONLY_V10_SUBMIXTURES,
+        _v10_dataset_builder(tokenizer, seed, max_sequence_length, finevision_cache_dir),
     )
 
 
@@ -186,30 +166,18 @@ def build_image_only_v10_mixture(
     finevision_cache_dir: Optional[str] = None,
     submixtures: Optional[Sequence[SubMixture]] = None,
 ) -> Tuple[List, List[float], List[str]]:
-    """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`."""
-    groups = list(IMAGE_ONLY_V10_SUBMIXTURES if submixtures is None else submixtures)
-    datasets_map = build_image_only_v10_datasets(
-        tokenizer,
-        seed,
-        max_sequence_length=max_sequence_length,
-        finevision_cache_dir=finevision_cache_dir,
+    """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`.
+
+    ``dataset_names`` restricts the submixtures *before* any dataset is built, so a tier
+    such as ``--mixture=finevision`` constructs 5 sources rather than all 54. See
+    :func:`~olmo_core.data.multimodal.mixtures.registry.build_mixture`.
+    """
+    return build_mixture(
+        IMAGE_ONLY_V10_SUBMIXTURES,
+        _v10_dataset_builder(tokenizer, seed, max_sequence_length, finevision_cache_dir),
+        submixtures=submixtures,
+        dataset_names=dataset_names,
     )
-    needed = {src.name for group in groups for src in group.datasets}
-    lengths = {name: len(datasets_map[name]) for name in needed}
-    flat = compute_flat_mixture_weights(groups, lengths)
-
-    if dataset_names is not None:
-        allowed = set(dataset_names)
-        flat = [(name, w) for name, w in flat if name in allowed]
-        if not flat:
-            raise ValueError(f"No mixture sources matched dataset_names={dataset_names!r}")
-        norm = sum(w for _, w in flat)
-        flat = [(name, w / norm) for name, w in flat]
-
-    out_names = [name for name, _ in flat]
-    out_datasets = [datasets_map[name] for name in out_names]
-    out_weights = [w for _, w in flat]
-    return out_datasets, out_weights, out_names
 
 
 def build_single_image_only_v10_mixture(

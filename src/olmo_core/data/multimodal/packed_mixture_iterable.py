@@ -38,7 +38,16 @@ __all__ = [
 
 
 def _slow_load_threshold_s() -> float:
-    """Log example loads slower than this (seconds). Set ``MM_DL_SLOW_LOAD_S=0`` to disable."""
+    """Log example loads slower than this (seconds). Set ``MM_DL_SLOW_LOAD_S=0`` to disable.
+
+    Deliberately left as an environment variable while the other ``MM_*`` knobs moved onto
+    ``Config`` fields: it only controls a diagnostic log line and cannot change what the
+    model trains on, so the reasons for migrating the others — recording the value in the
+    saved config, making it ``--override``-able, type-checking it — don't apply. Revisit
+    if it ever gains a behavioural effect.
+
+    Read once per dataset instance (see ``__init__``), not per example.
+    """
     return float(os.environ.get("MM_DL_SLOW_LOAD_S", str(DEFAULT_SLOW_LOAD_THRESHOLD_S)))
 
 
@@ -199,10 +208,14 @@ class PackedMixtureIterableDataset(torch.utils.data.IterableDataset):
         # Per-worker error counters (no threading.Lock — must be picklable for DataLoader workers).
         self._consecutive_data_errors = 0
         self._total_data_errors = 0
+        # Resolved once here rather than per example: `_try_load_example` runs for every
+        # example, and this instance is pickled into each DataLoader worker, so the value
+        # crosses the process boundary with it.
+        self._slow_load_threshold_s = _slow_load_threshold_s()
 
     def _try_load_example(self, ref: Tuple[int, int]) -> Dict[str, Any]:
         src_idx, example_idx = ref
-        slow_threshold = _slow_load_threshold_s()
+        slow_threshold = self._slow_load_threshold_s
         t0 = time.perf_counter() if slow_threshold > 0 else 0.0
         ex = self.datasets[src_idx][example_idx]
         out = dict(ex)

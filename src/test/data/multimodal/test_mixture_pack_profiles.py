@@ -20,6 +20,11 @@ from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
     MULTI_IMAGE_PACK_MAX_CROPS,
     SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
     get_mixture_pack_profile,
+    mixture_is_multi_image,
+)
+from olmo_core.data.multimodal.mixtures.tiers import (
+    all_validation_mixtures,
+    mixture_source_names,
 )
 
 
@@ -58,9 +63,48 @@ def test_validation_mixtures_include_single_image_tiers():
         ("image-only-v10", MULTI_IMAGE_PACK_MAX_CROPS, False),
         ("single-image-only-v10", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
         ("debug", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        # Tiers the old hand-maintained table got wrong: each contains at least one
+        # source from MULTI_IMAGE_MIXTURE_DATASETS but was labelled single-image.
+        ("demo", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("demo-pointing", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("pointing", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("nlp-demo", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("academic", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        # Single-source bisect tiers: previously fell through to the conservative
+        # default, now correctly identified.
+        ("pixmo_multi_points", MULTI_IMAGE_PACK_MAX_CROPS, False),
+        ("pixmo_points_train", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
+        ("cosyn_point", SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS, True),
     ],
 )
 def test_mixture_pack_profiles(mixture, pack_max_crops, shortcut):
     profile = get_mixture_pack_profile(mixture)
     assert profile.pack_max_crops == pack_max_crops
     assert profile.pack_shortcut_max_len_images is shortcut
+
+
+def test_every_tier_profile_matches_its_actual_sources():
+    """The property the old table violated, checked across every tier at once.
+
+    A tier gets the multi-image crop ceiling if and only if the sources it actually
+    trains on include a multi-image source. Deriving this is the point of J-15: a new
+    tier, or a source moved between groups, cannot silently get the wrong budget.
+    """
+    multi_image = set(MULTI_IMAGE_MIXTURE_DATASETS)
+    for tier in all_validation_mixtures():
+        sources = set(mixture_source_names(tier))
+        assert sources, tier
+        expected_multi = bool(sources & multi_image)
+        profile = get_mixture_pack_profile(tier)
+        assert profile.pack_max_crops == (
+            MULTI_IMAGE_PACK_MAX_CROPS if expected_multi else SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS
+        ), f"{tier}: multi-image sources present={sorted(sources & multi_image)}"
+        # The shortcut is only safe when every row fits the single-image budget.
+        assert profile.pack_shortcut_max_len_images is not expected_multi, tier
+
+
+def test_unknown_mixture_fails_safe_to_the_conservative_profile():
+    """An unrecognized tier must not get the permissive budget: the conservative one
+    costs throughput, the permissive one risks an OOM."""
+    assert get_mixture_pack_profile("not-a-real-tier").pack_max_crops == MULTI_IMAGE_PACK_MAX_CROPS
+    assert mixture_is_multi_image("not-a-real-tier") is True
