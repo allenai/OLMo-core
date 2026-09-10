@@ -281,11 +281,14 @@ beaker-image-cu129-rma :
 	$(MAKE) beaker-image $(CUDA129_ARGS) $(RMA_CU129_ARGS)
 
 # olmo-core-tch2130cu129-sm80-<date>  (adds sm_80 / A100 for the general, non-MoE test coverage)
-# Non-RMA: A100 (sm_80) can't run the symm-mem / NVSHMEM EP kernels (sm_90+), so the RMA stack would
-# be dead weight here. Used for the CI jobs that fall back to A100.
+# No NVSHMEM (A100 / sm_80 can't run the symm-mem EP kernels, which need sm_90+), but it still uses a
+# CUDA 'devel' release base: transformer-engine >= 2.18 loads a system libcudart at import, which the
+# plain-ubuntu base lacks ("cudart shared object not found"). The devel base provides it (as on the
+# RMA images).
 .PHONY : beaker-image-cu129-sm80
 beaker-image-cu129-sm80 :
 	$(MAKE) beaker-image $(CUDA129_ARGS) \
+		BASE_IMAGE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
 		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
 		IMAGE_VARIANT=-sm80
