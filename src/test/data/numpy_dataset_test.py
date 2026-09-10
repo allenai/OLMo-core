@@ -470,9 +470,9 @@ def test_numpy_fsl_mixture_dataset(tmp_path: Path):
     # Note that changing the seed here could result in the inclusion of the first sequence from the mock data.
     # assert not np.array_equal(first_src_sequence, first_ds_item)
     expected = "aff421"
-    assert ds.fingerprint.endswith(
-        expected
-    ), f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected), (
+        f"Fingerprint mismatch, expected {expected}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
     assert first_ds_item == [56423, 24546, 15796, 52203]  # stable because we pass a seed
     assert ds.num_tokens == 10_112  # oversamples to handle rounding error
     assert len(ds) == 2528
@@ -555,9 +555,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(
     ).build()
     ds.prepare()
 
-    assert ds.fingerprint.endswith(
-        expected_fingerprint
-    ), f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    assert ds.fingerprint.endswith(expected_fingerprint), (
+        f"Fingerprint mismatch, expected {expected_fingerprint}, got {ds.fingerprint[-6:]}...Do you need to update expected fingerprint?"
+    )
 
     first_ds_item = ds[0]["input_ids"].tolist()
     # NOTE: This is commented out until we fix behavior of the source mixture dataset
@@ -576,9 +576,9 @@ def test_numpy_fsl_mixture_dataset_with_repetition(
     # Iterate through dataset to verify all instances have correct length
     for idx in range(len(ds)):
         instance = ds[idx]
-        assert (
-            len(instance["input_ids"]) == sequence_length
-        ), f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
+        assert len(instance["input_ids"]) == sequence_length, (
+            f"Instance {idx} has incorrect length: {len(instance['input_ids'])} != {sequence_length}"
+        )
 
 
 def write_data_file(data: List[int], path: Path, dtype, eos_token_id: int):
@@ -979,3 +979,38 @@ def test_numpy_packed_fsl_dataset_use_array_if_local_not_served_from_stale_cache
     # Same work_dir, so the caches from the run above are present. The metadata boundaries must
     # still be honored rather than the stale packing cache being reused.
     assert prepare(False) == len(data)
+
+
+def test_numpy_packed_fsl_dataset_doc_lens_follow_metadata_boundaries(tmp_path: Path):
+    """`doc_lens` drives the block-diagonal attention mask, so with the metadata boundaries it
+    must not be re-derived by scanning for EOS: the document that lost its terminator would merge
+    with the next one and attention would cross a real boundary."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 7, 0].
+    data = [1, 2, 3, 4, 5, 6, 7, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,8\n")
+
+    def doc_lens(use_array_if_local, sequence_length):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=sequence_length,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            generate_doc_lengths=True,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = tmp_path / f"work-{use_array_if_local}-{sequence_length}"
+        ds.prepare()
+        return [ds[i]["doc_lens"].tolist() for i in range(len(ds))]
+
+    # Both documents fill one instance exactly. The metadata boundaries keep them apart; the EOS
+    # scan sees one 8-token span, so attention would cross the boundary.
+    assert doc_lens(False, 8) == [[4, 4]]
+    assert doc_lens(None, 8) == [[8]]
+    # Trailing padding stays a final segment, matching `get_document_lengths`.
+    assert doc_lens(False, 16) == [[4, 4, 8]]

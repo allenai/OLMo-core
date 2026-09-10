@@ -1245,9 +1245,21 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata = self._metadata_groups[source_group_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(
-                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
-            )
+            if self._use_array_if_local is False:
+                # Packing took its boundaries from the metadata file, so rescanning for EOS here
+                # would merge a document that lacks a terminator into the one after it -- exactly
+                # the documents this setting exists to support. `doc_lens` drives the
+                # block-diagonal attention mask, so that would let tokens attend across a real
+                # document boundary. The loaded documents give the lengths exactly.
+                doc_lens = [document.numel() for document in document_token_ids]
+                if (padding := input_ids.numel() - sum(doc_lens)) > 0:
+                    # `get_document_lengths` reports trailing padding as a final segment.
+                    doc_lens.append(padding)
+                out["doc_lens"] = torch.tensor(doc_lens, dtype=torch.int32)
+            else:
+                out["doc_lens"] = get_document_lengths(
+                    input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+                )
         return out
 
     @property
