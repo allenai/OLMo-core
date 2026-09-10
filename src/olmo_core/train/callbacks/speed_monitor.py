@@ -44,6 +44,9 @@ class SpeedMonitorCallback(Callback):
     _step_flops: int = 0
     _step_examples: int = 0
     _total_examples: int = 0
+    _step_useful_tokens: int = 0
+    _total_useful_tokens: int = 0
+    _step_crop_occupancy: Optional[float] = None
     _parallel_degree: int = 1
     _bps_avg: Optional[float] = None
     _tps_avg: Optional[float] = None
@@ -149,6 +152,28 @@ class SpeedMonitorCallback(Callback):
             self._step_examples = examples_in_batch // self._parallel_degree
             self._total_examples += self._step_examples
 
+            # Useful (non-pad) tokens. ``tokens_in_batch`` above counts the padded
+            # sequence, because the multimodal collator pads every pack to a fixed
+            # ``pad_sequence_length`` regardless of how much real content it holds. TPS
+            # built on that figure *rises* when packs get emptier, so it cannot tell
+            # "went faster" from "did less work". Pad positions carry ``example_ids ==
+            # -1``, which is what makes the real count recoverable here.
+            if "example_ids" in batch:
+                self._step_useful_tokens = (
+                    int((batch["example_ids"] >= 0).sum()) // self._parallel_degree
+                )
+            else:
+                self._step_useful_tokens = self._step_tokens
+            self._total_useful_tokens += self._step_useful_tokens
+
+            # Fraction of the padded crop tensor that is real. The ViT runs on every
+            # crop in ``images``, pads included, so this bounds the vision-side waste.
+            self._step_crop_occupancy = None
+            if "n_real_crops" in batch and "images" in batch:
+                padded_crops = batch["images"].shape[0] * batch["images"].shape[1]
+                if padded_crops:
+                    self._step_crop_occupancy = int(batch["n_real_crops"].sum()) / padded_crops
+
             self._step_flops = 0
             if (
                 num_flops_per_token := self._get_num_flops_per_token(self._step_seq_len)
@@ -174,6 +199,7 @@ class SpeedMonitorCallback(Callback):
             self._total_tokens = 0
             self._total_flops = 0
             self._total_examples = 0
+            self._total_useful_tokens = 0
             self._start_time = counter
             self._first_step = False
             self._step_last_logged = counter
@@ -198,6 +224,24 @@ class SpeedMonitorCallback(Callback):
             self._tps_avg = tps_avg
             self.trainer.record_metric("throughput/device/TPS", tps)
             self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
+
+            # Padding-aware companions to TPS. ``useful TPS`` is the rate of non-pad
+            # tokens, so unlike TPS it cannot be improved by emitting emptier packs;
+            # prefer it (or examples per second) when comparing pack geometries.
+            if self._total_useful_tokens:
+                self.trainer.record_metric(
+                    "throughput/device/useful TPS", self._step_useful_tokens / step_time
+                )
+                self.trainer.record_metric(
+                    "throughput/device/useful TPS (actual avg)",
+                    self._total_useful_tokens / total_time,
+                )
+                self.trainer.record_metric(
+                    "data/token occupancy", self._step_useful_tokens / self._step_tokens
+                )
+
+        if self._step_crop_occupancy is not None:
+            self.trainer.record_metric("data/crop occupancy", self._step_crop_occupancy)
 
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(
