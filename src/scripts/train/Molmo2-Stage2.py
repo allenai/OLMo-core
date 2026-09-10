@@ -25,12 +25,18 @@ Set ``--trainer.load_path=null`` to initialise from HF ``allenai/Molmo2-4B`` ins
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Dict, List, Optional, Sequence, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfig
+from olmo_core.data.multimodal.chartverse import CHARTVERSE_DEFAULT_SUBSET
+from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+    VALIDATION_MIXTURES,
+    build_image_only_v9_mixture,
+    build_single_image_only_v9_mixture,
+)
 from olmo_core.data.multimodal.mixtures.image_only_v10 import (
     VALIDATION_MIXTURES_V10,
     build_image_only_v10_mixture,
@@ -40,11 +46,6 @@ from olmo_core.data.multimodal.mixtures.image_only_v11 import (
     VALIDATION_MIXTURES_V11,
     build_image_only_v11_mixture,
     build_single_image_only_v11_mixture,
-)
-from olmo_core.data.multimodal.mixtures.image_only_v9 import (
-    VALIDATION_MIXTURES,
-    build_image_only_v9_mixture,
-    build_single_image_only_v9_mixture,
 )
 from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
     MULTI_IMAGE_PACK_MAX_CROPS,
@@ -58,8 +59,14 @@ from olmo_core.internal.common import (
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, PerGroupScheduler
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    OptimGroupOverride,
+    PerGroupScheduler,
+)
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -75,7 +82,6 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     WandBCallback,
 )
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.train.train_module import (
     MultimodalTransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
@@ -216,6 +222,19 @@ class ExperimentConfig(Config):
     finevision_rate: float = 0.0
     """Total mixture fraction for the five verified FineVision configs, split evenly
     across them via ``FINEVISION_RATES`` keys (0 disables)."""
+    caption_subsets: List[str] = field(default_factory=list)
+    """Caption sources to append, by ``CaptionDatasetConfig`` subset directory name --
+    e.g. ``[omniscience]`` or ``[omniscience-full]``. ``caption_rate`` is split evenly
+    across them. The subset is a directory under ``$MOLMO_EXPERIMENT_DATA_DIR/captions/``,
+    so staging a bigger corpus needs no code change, only a new directory."""
+    caption_rate: float = 0.0
+    """Total mixture fraction for ``caption_subsets`` (0 disables)."""
+    chartverse_rate: float = 0.0
+    """Mixture fraction for ChartVerse (0 disables)."""
+    chartverse_subset: str = CHARTVERSE_DEFAULT_SUBSET
+    """ChartVerse subset directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartverse/``.
+    The loader default pins the 250k copy, so the larger staged copies
+    (``sft_600k-full``, ``sft_1800k``) are unreachable without this knob."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -294,9 +313,14 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
             dataset_names=names_filter,
             max_sequence_length=SEQUENCE_LENGTH,
         )
-        datasets, weights, names = _append_extra_sft_sources(
-            config, tokenizer, datasets, weights, names
-        )
+
+    # Extra sources apply to whatever base mixture was built above. This call used to sit
+    # inside the `else`, i.e. only on the plain `image-only-v9` path, so `--mmfinereason_rate`
+    # (and now `--caption_rate` / `--chartverse_rate`) silently did nothing on every named
+    # tier -- `single-image-only-v9`, all the v10/v11 tiers, and all 16 ablation tiers.
+    datasets, weights, names = _append_extra_sft_sources(
+        config, tokenizer, datasets, weights, names
+    )
     log.info(
         "Mixture %s sources / weights: %s",
         config.mixture,
@@ -439,11 +463,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     return _apply_mixture_pack_profile(
         ExperimentConfig(
-        model=model_config,
-        collator=collator_config,
-        train_module=train_module_config,
-        trainer=trainer_config,
-        launch=launch_config,
+            model=model_config,
+            collator=collator_config,
+            train_module=train_module_config,
+            trainer=trainer_config,
+            launch=launch_config,
         ).merge(overrides),
         overrides,
     )
@@ -480,33 +504,82 @@ def _init_weights_from_hf(model: MultimodalLM, model_cfg: MultimodalLMConfig) ->
 
 
 def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, weights, names):
-    """Append MMFineReason / FineVision at their configured rates (no-op when all 0).
+    """Append MMFineReason / FineVision / caption / ChartVerse sources at their rates.
+
+    No-op when every rate is 0, which is the default, so an unmodified launch of any
+    mixture tier is unchanged.
 
     ``config.finevision_rate`` is split evenly across the configs named in
     ``FINEVISION_RATES``; a per-config rate in that dict adds on top (module-level
-    fine-tuning knob for uneven splits).
+    fine-tuning knob for uneven splits). ``config.caption_rate`` is likewise split evenly
+    across ``config.caption_subsets``.
+
+    The base mixture's weights are rescaled by ``1 - extra_total``, so the appended rates
+    are absolute fractions of the final mixture and the remainder is the base tier -- i.e.
+    ``--mixture=single-image-only-v9 --caption_rate=0.65`` is "65% captions, 35% v9 replay".
     """
     from olmo_core.data.multimodal import (
+        CaptionDatasetConfig,
+        ChartVerseDatasetConfig,
         FineVisionDatasetConfig,
         MMFineReasonDatasetConfig,
     )
 
     per_config = config.finevision_rate / max(len(FINEVISION_RATES), 1)
     fv = {
-        name: rate + per_config
-        for name, rate in FINEVISION_RATES.items()
-        if rate + per_config > 0
+        name: rate + per_config for name, rate in FINEVISION_RATES.items() if rate + per_config > 0
     }
+    caption_subsets = list(config.caption_subsets or [])
+    per_caption = config.caption_rate / len(caption_subsets) if caption_subsets else 0.0
+    captions = {name: per_caption for name in caption_subsets if per_caption > 0}
     mmfr_rate = config.mmfinereason_rate
-    extra_total = mmfr_rate + sum(fv.values())
+    cv_rate = config.chartverse_rate
+    extra_total = mmfr_rate + cv_rate + sum(fv.values()) + sum(captions.values())
     if extra_total <= 0:
         return datasets, weights, names
     if extra_total >= 1:
         raise ValueError(f"Extra SFT rates sum to {extra_total}; must be < 1")
 
+    # Appending a source the base tier already contains would silently double-count it at
+    # two different weights (v11 already holds chartverse, mmfinereason and the caption
+    # sources), which reads as a mixture-weight bug much later. Fail at build time instead.
+    appended = (
+        (["mmfinereason"] if mmfr_rate > 0 else [])
+        + (["chartverse"] if cv_rate > 0 else [])
+        + list(captions)
+        + [f"finevision[{name}]" for name in fv]
+    )
+    clashes = sorted(set(appended) & set(names))
+    if clashes:
+        raise ValueError(
+            f"Sources {clashes} are already in mixture {config.mixture!r}; appending them "
+            "again would double-count them. Use a base tier that excludes them "
+            "(e.g. single-image-only-v9) or drop the corresponding rate flag."
+        )
+
     datasets = list(datasets)
     weights = [w * (1.0 - extra_total) for w in weights]
     names = list(names)
+    if cv_rate > 0:
+        datasets.append(
+            ChartVerseDatasetConfig(
+                subset=config.chartverse_subset,
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+            ).build(tokenizer)
+        )
+        weights.append(cv_rate)
+        names.append("chartverse")
+    for subset, rate in captions.items():
+        datasets.append(
+            CaptionDatasetConfig(
+                subset=subset,
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+            ).build(tokenizer)
+        )
+        weights.append(rate)
+        names.append(subset)
     if mmfr_rate > 0:
         datasets.append(
             MMFineReasonDatasetConfig(
