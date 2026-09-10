@@ -19,6 +19,7 @@ from olmoe3_medium_cbs64_plan import (
     BUCKET,
     CAMPAIGN,
     CONTROL,
+    CPU_CLUSTER,
     FORK_TOKENS,
     MOUNT,
     PARENT,
@@ -96,6 +97,8 @@ def config_spec(template, commit):
     spec = copy.deepcopy(template)
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
+    assert not task["resources"].get("gpuCount"), "Config gate must not request GPUs"
+    task["constraints"] = {"cluster": [CPU_CLUSTER]}
     # The upstream repository was renamed; preserve the exact qualified source hash.
     for item in task["envVars"]:
         if item["name"] == "GANTRY_POST_SETUP_CMD":

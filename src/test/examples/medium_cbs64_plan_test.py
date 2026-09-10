@@ -82,8 +82,18 @@ def test_specs_preserve_secrets_and_resources(wave):
 
 
 def test_config_gate_compiles():
-    spec = config_spec(template(), "a" * 40)
+    cpu = template()
+    cpu["tasks"][0]["resources"] = {"cpuCount": 4, "memory": "16 GiB"}
+    spec = config_spec(cpu, "a" * 40)
+    assert spec["tasks"][0]["constraints"] == {"cluster": ["ai2/triton"]}
+    assert not spec["tasks"][0]["resources"].get("gpuCount")
+    assert spec["tasks"][0]["context"]["minRuntime"] == "0s"
     compile(spec["tasks"][0]["arguments"][-1], "config-gate", "exec")
+
+
+def test_config_gate_rejects_gpu_template():
+    with pytest.raises(AssertionError, match="must not request GPUs"):
+        config_spec(template(), "a" * 40)
 
 
 @pytest.mark.parametrize("gpus", [64, 128])

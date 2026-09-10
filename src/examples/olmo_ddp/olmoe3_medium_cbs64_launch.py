@@ -10,7 +10,7 @@ from pathlib import Path
 
 from beaker import Beaker, BeakerExperimentSpec
 
-from olmoe3_medium_cbs64_plan import BRANCH_NAME, CAMPAIGN, WORKSPACE
+from olmoe3_medium_cbs64_plan import BRANCH_NAME, CAMPAIGN, CPU_CLUSTER, WORKSPACE
 from olmoe3_medium_cbs_control import atomic_json, replace_env
 
 
@@ -19,6 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--revision", type=int, choices=range(1, 10), default=1)
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
     core = Path(__file__).resolve().parents[3]
@@ -33,7 +34,8 @@ def main():
     spec = json.loads(args.template.read_text())
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
-    assert task["constraints"]["cluster"] == ["ai2/rhea"]
+    assert task["constraints"]["cluster"] in (["ai2/rhea"], [CPU_CLUSTER])
+    task["constraints"] = {"cluster": [CPU_CLUSTER]}
     assert not task["resources"].get("gpuCount")
     task["context"] = {"priority": "urgent", "minRuntime": "0s", "autoResume": True}
     task["timeout"] = "168h"
@@ -54,6 +56,8 @@ def main():
         f"{CAMPAIGN}: gated64GPU resume/speed,128GPU comparison,64GPU CBS32/64 to100B"
     )
     name = f"{CAMPAIGN}-controller"
+    if args.revision != 1:
+        name += f"-r{args.revision}"
     args.output.mkdir(parents=True, exist_ok=True)
     with Beaker.from_env(check_for_upgrades=False) as beaker:
         workspace = beaker.workspace.get(WORKSPACE)
