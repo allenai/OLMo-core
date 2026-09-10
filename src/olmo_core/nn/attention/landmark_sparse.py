@@ -42,6 +42,7 @@ from .kv_cache import KVCacheManager
 from .landmark import build_block_doc_id, build_local_packed_position_ids, repeat_kv
 from .landmark_sparse_kernel import (
     has_sparse_kernel,
+    sparse_landmark_attention_triton,
     sparse_landmark_attention_triton_train,
 )
 from .ring import RingContextParallelStyle, UlyssesContextParallelStyle
@@ -459,31 +460,64 @@ class SparseLandmarkAttention(Attention):
             vh = repeat_kv(kvm.v_cache[:, :total].transpose(1, 2), n_rep)
             att = self._decode_one(qh, kh, vh, start_pos)
         else:
-            if start_pos != 0:
-                raise NotImplementedError(
-                    "Sparse landmark multi-token forward with a non-empty cache is not supported "
-                    "(only single-shot prefill from position 0)."
+            if start_pos % self.block_size:
+                raise OLMoConfigurationError(
+                    "Sparse landmark chunked prefill must start on a block boundary "
+                    f"(start_pos={start_pos}, block_size={self.block_size})."
                 )
-            kh = repeat_kv(k.transpose(1, 2), n_rep)
-            vh = repeat_kv(v.transpose(1, 2), n_rep)
-            att = self._prefill(qh, kh, vh)
+            att = self._prefill(
+                qh,
+                kvm.k_cache[:, :total].transpose(1, 2),
+                kvm.v_cache[:, :total].transpose(1, 2),
+            )
 
         att = att.transpose(1, 2).contiguous().view(B, T, -1)
         att = self._apply_gate(att, x)
         return self.w_out(att)
 
     def _prefill(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        """Prefill attention over an arbitrary-length prompt by right-padding to a multiple of
-        block_size and reusing the self-attention core. Padding tokens are appended after the prompt,
-        so causal/own-chunk masking never lets a real query attend to them; their outputs are sliced off.
+        """Prefill a block-aligned suffix against cached KV, preserving sparse visibility.
+
+        KV keeps its original GQA head count. Right-padding the suffix and KV equally
+        preserves absolute block positions; causal masking excludes padding from real queries.
         """
         T = q.shape[2]
+        history = k.shape[2] - T
+        if history < 0 or history % self.block_size:
+            raise OLMoConfigurationError("Sparse prefill history must contain whole blocks")
         pad = (-T) % self.block_size
         if pad:
             q = F.pad(q, (0, 0, 0, pad))
             k = F.pad(k, (0, 0, 0, pad))
             v = F.pad(v, (0, 0, 0, pad))
-        att = self._attn_core(q, k, v)
+        if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
+            att = sparse_landmark_attention_triton(
+                q,
+                k,
+                v,
+                self.block_size,
+                num_landmarks=self.num_landmarks,
+                scale=self.softmax_scale,
+            )
+        else:
+            # CPU/reference path: independent query blocks against their local keys
+            # and preceding landmarks, without a full prompt-by-prompt score matrix.
+            n_rep = q.shape[1] // k.shape[1]
+            k, v = repeat_kv(k, n_rep), repeat_kv(v, n_rep)
+            L, G = self.block_size, self.num_landmarks
+            outputs = []
+            for offset in range(0, q.shape[2], L):
+                absolute = history + offset
+                lm = (
+                    torch.arange(absolute // L, device=q.device)[:, None] * L
+                    + torch.arange(L - G, L, device=q.device)[None, :]
+                ).flatten()
+                indices = torch.cat([lm, torch.arange(absolute, absolute + L, device=q.device)])
+                keys, values = k[:, :, indices], v[:, :, indices]
+                scores = q[:, :, offset : offset + L] @ keys.transpose(-1, -2) * self.softmax_scale
+                mask = indices[None, :] <= absolute + torch.arange(L, device=q.device)[:, None]
+                outputs.append(scores.masked_fill(~mask, float("-inf")).softmax(-1) @ values)
+            att = torch.cat(outputs, dim=2)
         return att[:, :, :T]
 
     def _decode_one(
