@@ -60,6 +60,12 @@ def main():
         name += f"-r{args.revision}"
     args.output.mkdir(parents=True, exist_ok=True)
     with Beaker.from_env(check_for_upgrades=False) as beaker:
+        cluster = beaker.cluster.get(CPU_CLUSTER)
+        if (
+            cluster.HasField("max_task_timeout")
+            and cluster.max_task_timeout.ToTimedelta().total_seconds() == 0
+        ):
+            raise RuntimeError(f"{CPU_CLUSTER} does not allow batch tasks")
         workspace = beaker.workspace.get(WORKSPACE)
         matches = [
             w
