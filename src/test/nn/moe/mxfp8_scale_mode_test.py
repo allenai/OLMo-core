@@ -158,7 +158,9 @@ def test_mxfp8_te_backend_request_raises_for_cpu_input(
 
 
 @requires_gpu
-@requires_compute_capability(min_cc=9)
+# TransformerEngine MXFP8 requires compute capability >= 10.0 (Blackwell); on Hopper (sm_90) TE's
+# quantizer produces invalid output, so this olmo-vs-TE comparison is only meaningful on B200/B300.
+@requires_compute_capability(min_cc=10)
 def test_mxfp8_te_preallocated_rceil_matches_olmo(monkeypatch: pytest.MonkeyPatch) -> None:
     if mxfp8_utils._get_te_mxfp8_state() is None:  # type: ignore[attr-defined]
         pytest.skip("TransformerEngine MXFP8 is unavailable")
