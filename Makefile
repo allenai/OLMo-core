@@ -55,7 +55,11 @@ PYTHON_VERSION = 3.12
 TORCH_VERSION = 2.10.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
-DION_SHA = "7452a5823cf9655b93c3f1d8020b4ebb2535239b"
+# Bumped from 7452a58 (2026-01, ~98 commits stale) to pick up dion's torch-2.13 + distributed
+# fixes: the megabatch_orthogonalize_async hang fix (#74), allreduce-sync change (#75), FSDP2
+# padding fix (#97), and the PyTorch-2.13/Triton-3.7.1 inductor-miscompile fix (#117). The old pin's
+# HSDP path deadlocks on an ALLREDUCE on torch 2.13 (works on 2.10).
+DION_SHA = "e64832041d8e01989abf609c9550f6307efbff2a"
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 # Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine, ...) are
 # built for. The CUDA-13 targets (beaker-image-cu130*) extend these with sm_103 (B300 / Blackwell Ultra).

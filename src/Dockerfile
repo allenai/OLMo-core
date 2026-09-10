@@ -164,7 +164,7 @@ RUN if [ -n "${QUACK_VERSION}" ]; then \
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-ARG DION_SHA="7452a5823cf9655b93c3f1d8020b4ebb2535239b"
+ARG DION_SHA="e64832041d8e01989abf609c9550f6307efbff2a"
 RUN pip install --no-cache-dir "dion @ git+https://github.com/microsoft/dion.git@${DION_SHA}" && \
     pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
