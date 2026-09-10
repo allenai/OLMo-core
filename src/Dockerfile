@@ -252,6 +252,19 @@ RUN if [ -n "${B300}" ]; then \
         if [ -n "$PTXAS" ]; then ln -sf "$PTXAS" /usr/local/bin/triton-ptxas; fi; \
     fi
 
+# transformer-engine (>= 2.18) eager-loads CUDA runtime libs (cudart, nvrtc) at import and finds
+# them via `ldconfig -p`. On a non-devel base (plain ubuntu, e.g. the -sm80 / non-RMA images) these
+# ship only as torch pip wheels under site-packages and aren't in the linker cache, so
+# `import transformer_engine` fails ("cudart shared object not found"). Register the wheel dirs, but
+# only when the system doesn't already provide the lib — on a CUDA 'devel' base /usr/local/cuda has
+# them, and NCCL is excluded so the RMA images' pinned system NCCL isn't shadowed.
+RUN for lib in libcudart libnvrtc; do \
+        if ! ldconfig -p | grep -q "${lib}\.so"; then \
+            d=$(find /opt/conda -name "${lib}.so*" 2>/dev/null | grep -v nccl | head -n1 | xargs -r dirname || true); \
+            if [ -n "$d" ]; then echo "$d" >> /etc/ld.so.conf.d/zz-te-cuda.conf; fi; \
+        fi; \
+    done && ldconfig || true
+
 # Set to /usr/local/bin/triton-ptxas (the symlink created above) by the B300 targets. Empty for the
 # default image — Triton ignores a nonexistent/empty path and keeps its own bundled ptxas.
 ARG TRITON_PTXAS_PATH=
