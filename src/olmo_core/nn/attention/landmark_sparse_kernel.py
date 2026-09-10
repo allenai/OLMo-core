@@ -49,6 +49,10 @@ if triton is not None:
         sqh,
         sqm,
         sqd,
+        skz,
+        skh,
+        skm,
+        skd,
         slz,
         slh,
         sln,
@@ -58,6 +62,8 @@ if triton is not None:
         N_CTX,
         N_LM,
         N_CHUNK,
+        H_KV: tl.constexpr,
+        HISTORY,
         L: tl.constexpr,
         BLOCK_DMODEL: tl.constexpr,
         G: tl.constexpr,
@@ -72,7 +78,7 @@ if triton is not None:
         # Per-chunk document id (sequence packing): a query-chunk attends a past chunk's landmarks
         # only if they belong to the same document. Own-chunk keys are always same-document.
         if DOC_MASK:
-            q_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + qb)
+            q_doc = tl.load(DocId + (off_hz // H) * N_CHUNK + qb + HISTORY)
 
         q_base = off_hz * sqh + (qb * L + offs_l)[:, None] * sqm + offs_d[None, :] * sqd
         q = tl.load(Q + q_base)
@@ -81,8 +87,15 @@ if triton is not None:
         l_i = tl.zeros([L], dtype=tl.float32)
         acc = tl.zeros([L, BLOCK_DMODEL], dtype=tl.float32)
 
-        k_own = tl.load(K + q_base)
-        v_own = tl.load(V + q_base)
+        kv_head = (off_hz % H) // (H // H_KV)
+        k_base = (
+            (off_hz // H) * skz
+            + kv_head * skh
+            + ((qb + HISTORY) * L + offs_l)[:, None] * skm
+            + offs_d[None, :] * skd
+        )
+        k_own = tl.load(K + k_base)
+        v_own = tl.load(V + k_base)
         qk = tl.dot(q, tl.trans(k_own), allow_tf32=False) * sm_scale
         qk = tl.where(offs_l[:, None] >= offs_l[None, :], qk, float("-inf"))
         m_new = tl.maximum(m_i, tl.max(qk, 1))
@@ -92,7 +105,7 @@ if triton is not None:
         acc = acc * alpha[:, None] + tl.dot(p.to(v_own.dtype), v_own, allow_tf32=False)
         m_i = m_new
 
-        n_lm = qb * G
+        n_lm = (qb + HISTORY) * G
         for start in range(0, n_lm, BLOCK_N):
             offs_n = start + tl.arange(0, BLOCK_N)
             mask = offs_n < n_lm
@@ -101,7 +114,9 @@ if triton is not None:
                     DocId + (off_hz // H) * N_CHUNK + (offs_n // G), mask=mask, other=-1
                 )
                 mask = mask & (lm_doc == q_doc)
-            lm_base = off_hz * slh + offs_n[:, None] * sln + offs_d[None, :] * sld
+            lm_base = (
+                (off_hz // H) * slz + kv_head * slh + offs_n[:, None] * sln + offs_d[None, :] * sld
+            )
             k_lm = tl.load(KLM + lm_base, mask=mask[:, None], other=0.0)
             v_lm = tl.load(VLM + lm_base, mask=mask[:, None], other=0.0)
             qk = tl.dot(q, tl.trans(k_lm), allow_tf32=False) * sm_scale
@@ -293,11 +308,21 @@ def _doc_id_arg(doc_id, B, C, device):
 def _fwd(q, k, v, L, G, scale, doc_id=None):
     B, H, T, D = q.shape
     C = T // L
-    q, k, v = q.contiguous(), k.contiguous(), v.contiguous()
-    k_lm, v_lm = _gather_landmarks(k, v, B, H, C, L, G, D)
+    H_KV, T_KV = k.shape[1:3]
+    history = T_KV - T
+    assert history >= 0 and history % L == 0
+    assert H % H_KV == 0 and k.shape == v.shape
+    assert k.shape[0] == B and k.shape[-1] == D
+    # Keep cached KV in its original GQA layout; copying/repeating the whole prefix
+    # defeats the memory bound provided by chunked prefill.
+    q = q.contiguous()
+    if k.stride() != v.stride():
+        k, v = k.contiguous(), v.contiguous()
+    C_KV = T_KV // L
+    k_lm, v_lm = _gather_landmarks(k, v, B, H_KV, C_KV, L, G, D)
     o = torch.empty_like(q)
     lse = torch.empty((B * H, T), device=q.device, dtype=torch.float32)
-    doc_id_arg, doc_mask = _doc_id_arg(doc_id, B, C, q.device)
+    doc_id_arg, doc_mask = _doc_id_arg(doc_id, B, C_KV, q.device)
     grid = (C, B * H)
     _sparse_fwd_kernel[grid](
         q,
@@ -312,6 +337,10 @@ def _fwd(q, k, v, L, G, scale, doc_id=None):
         q.stride(1),
         q.stride(2),
         q.stride(3),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        k.stride(3),
         k_lm.stride(0),
         k_lm.stride(1),
         k_lm.stride(2),
@@ -319,8 +348,10 @@ def _fwd(q, k, v, L, G, scale, doc_id=None):
         doc_id_arg,
         H,
         T,
-        C * G,
-        C,
+        C_KV * G,
+        C_KV,
+        H_KV=H_KV,
+        HISTORY=history // L,
         L=L,
         BLOCK_DMODEL=D,
         G=G,
@@ -333,7 +364,11 @@ def _fwd(q, k, v, L, G, scale, doc_id=None):
 
 
 def sparse_landmark_attention_triton(q, k, v, block_size, num_landmarks=1, scale=None, doc_id=None):
-    """Forward-only (inference) fused sparse-landmark attention. ``q,k,v``: (B,H,T,D)."""
+    """Forward-only sparse attention, including block-aligned cached prefill and GQA.
+
+    Queries cover the suffix of KV. KV may retain its unexpanded group heads; only
+    landmark keys/values are gathered, and the kernel maps each query head to its group.
+    """
     assert has_sparse_kernel()
     L, G = block_size, num_landmarks
     assert q.shape[2] % L == 0 and 1 <= G < L
