@@ -15,8 +15,8 @@ from pathlib import Path, PurePosixPath
 BUCKET = "allenai/olmo-3p5-small"
 SCRATCH = Path("/weka/olmo-3p5-checkpoints/scratch/hero-hf-20260909")
 BATCH = 16_777_216
-# 637.534208B is exactly token-matched to dense PT step76000.
-TARGETS = {100: 6000, 200: 11900, 300: 17900, 400: 23750, 637: 38000}
+# 637.534208B / 1266.679808B exactly match dense PT steps 76000 / 151000.
+TARGETS = {100: 6000, 200: 11900, 300: 17900, 400: 23750, 637: 38000, 1267: 75500}
 log = logging.getLogger(__name__)
 
 
