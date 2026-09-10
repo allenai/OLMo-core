@@ -36,7 +36,10 @@ def main():
     task = spec["tasks"][0]
     assert task["constraints"]["cluster"] in (["ai2/rhea"], [CPU_CLUSTER])
     task["constraints"] = {"cluster": [CPU_CLUSTER]}
-    assert not task["resources"].get("gpuCount")
+    assert not task.get("resources", {}).get("gpuCount")
+    # CPU-only jobs must omit the whole block: explicit CPU/RAM requests are
+    # accounted against GPU-backed slots and cannot schedule on Phobos.
+    task.pop("resources", None)
     task["context"] = {"priority": "urgent", "minRuntime": "0s", "autoResume": True}
     task["timeout"] = "168h"
     task["result"] = {"path": "/noop-results"}

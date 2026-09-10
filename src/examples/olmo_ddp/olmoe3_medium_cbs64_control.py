@@ -97,7 +97,9 @@ def config_spec(template, commit):
     spec = copy.deepcopy(template)
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
-    assert not task["resources"].get("gpuCount"), "Config gate must not request GPUs"
+    assert not task.get("resources", {}).get("gpuCount"), "Config gate must not request GPUs"
+    # Includes inherited sharedMemory, CPU and RAM: Phobos has no GPU-backed slots.
+    task.pop("resources", None)
     task["constraints"] = {"cluster": [CPU_CLUSTER]}
     # The upstream repository was renamed; preserve the exact qualified source hash.
     for item in task["envVars"]:
