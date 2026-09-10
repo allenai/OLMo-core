@@ -1014,6 +1014,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         label_mask_paths: Optional[List[PathOrStr]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
+        use_array_if_local: Optional[bool] = None,
     ):
         super().__init__(
             *paths,
@@ -1034,6 +1035,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         self._long_doc_strategy = long_doc_strategy
         self._source_group_size = source_group_size
+        self._use_array_if_local = use_array_if_local
 
         self._source_path_groups = list(chunked(self.paths, self.source_group_size))
         self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
@@ -1063,6 +1065,11 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # For backwards compat, only add this when it's not the default.
         if self._source_group_size > 1:
             fields = fields + ("source_group_size",)
+        # Likewise: this changes which document boundaries are used, and therefore the resulting
+        # instances, so it has to participate in the fingerprint or a cached index built with the
+        # other boundary source would be reused.
+        if self._use_array_if_local is not None:
+            fields = fields + ("use_array_if_local",)
         return fields
 
     @property
@@ -1072,6 +1079,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     @property
     def source_group_size(self) -> int:
         return self._source_group_size
+
+    @property
+    def use_array_if_local(self) -> Optional[bool]:
+        return self._use_array_if_local
 
     @property
     def indices_dtype(
@@ -1234,30 +1245,54 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata = self._metadata_groups[source_group_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(
-                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
-            )
+            if self._use_array_if_local is False:
+                # Packing took its boundaries from the metadata file, so rescanning for EOS here
+                # would merge a document that lacks a terminator into the one after it -- exactly
+                # the documents this setting exists to support. `doc_lens` drives the
+                # block-diagonal attention mask, so that would let tokens attend across a real
+                # document boundary. The loaded documents give the lengths exactly.
+                doc_lens = [document.numel() for document in document_token_ids]
+                if (padding := input_ids.numel() - sum(doc_lens)) > 0:
+                    # `get_document_lengths` reports trailing padding as a final segment.
+                    doc_lens.append(padding)
+                out["doc_lens"] = torch.tensor(doc_lens, dtype=torch.int32)
+            else:
+                out["doc_lens"] = get_document_lengths(
+                    input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+                )
         return out
+
+    @property
+    def _packing_cache_extra_ids(self) -> Tuple[str, ...]:
+        # These key the on-disk packing caches, which are looked up by path and never compared
+        # against `fingerprint`. Anything that changes the packing result therefore has to appear
+        # here as well, or a stale cache from a previous run would be reused.
+        extra_ids: Tuple[str, ...] = (self._long_doc_strategy, self.indices_dtype.__name__)
+        # For backwards compat, only add this when it's not the default, so existing caches
+        # built before the option existed are still found.
+        if self._use_array_if_local is not None:
+            extra_ids = extra_ids + (f"use_array_if_local={self._use_array_if_local}",)
+        return extra_ids
 
     def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "document-indices",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _get_instance_offsets_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "instance-offsets",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _get_docs_by_instance_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "documents-by-instance",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids,
         )
 
     def _pack_documents_from_source_into_instances(
@@ -1275,6 +1310,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             dtype=self.dtype,
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
+            use_array_if_local=self._use_array_if_local,
         )
         document_indices = document_indices.reshape(-1)
 
@@ -2679,6 +2715,14 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The number of source npy files to process together when packing.
     """
+    use_array_if_local: Optional[bool] = None
+    """
+    Where to get document boundaries from. Leave as ``None`` to infer them by scanning the token
+    array for the EOS token (the historical default). Set to ``False`` to read them from the source
+    metadata file instead, which is authoritative and required for correctness when the producer may
+    emit documents that are not EOS-terminated -- see the warning on
+    :func:`~olmo_core.data.utils.iter_document_indices`.
+    """
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2708,6 +2752,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
             long_doc_strategy=self.long_doc_strategy,
             label_mask_paths=label_masks,
             source_group_size=self.source_group_size,
+            use_array_if_local=self.use_array_if_local,
         )
         return self._finalize(dataset)
 
