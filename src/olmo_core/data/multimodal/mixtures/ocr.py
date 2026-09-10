@@ -1,6 +1,6 @@
 """The OCR source group for Molmo2 stage-1 (``Molmo2-Stage1.py --ocr_rate``).
 
-Twenty-one image -> free-text sources of three kinds (19 of them in
+Twenty-two image -> free-text sources of four kinds (19 of them in
 :data:`DEFAULT_OCR_SOURCES`), each a separate dataset sharing the group's rate (split by
 sqrt(size), mm_olmo's default ``root_size_factor``):
 
@@ -12,11 +12,21 @@ sqrt(size), mm_olmo's default ``root_size_factor``):
   and TextCaps -- one dense natural-language caption per image.
 * **scene text** (style ``scene_text``): TextOCR, HierText, COCO-Text and UberText, whose target
   is the text visible in the photo.
+* **synthetic document transcription** (style ``synthdog``): ``naver-clova-ix/synthdog-en``, the
+  500k-page SynthDoG corpus Donut was pretrained on
+  (:class:`~olmo_core.data.multimodal.synthdog.SynthDogDatasetConfig`).
 
 ``s2pdf`` and ``iabooks`` are the SAME pages as olmOCR-mix ``documents`` / ``books`` train
 (97.4% / 99.4% of their page ids, and every one of their documents; none of the eval pages), only
 rendered and transcribed by a different pipeline. They are registered so either rendering can be
 chosen, but :data:`DEFAULT_OCR_SOURCES` leaves them out so a page is not counted twice.
+
+``synthdog_en`` is likewise registered but opt-in (:data:`OPT_IN_OCR_SOURCES`): its targets carry
+SynthDoG's line-wrap artefacts -- the generator breaks a word at the line end without a hyphen and
+the ground truth rejoins the pieces with a space, so ``"Closing"`` transcribes as ``"Closin g"`` in
+99.8% of sampled rows. That is a different output convention from the other transcription sources,
+which is also why it has its own style tag; see
+:mod:`~olmo_core.data.multimodal.synthdog`. Add it with ``--ocr_sources``.
 
 TextCaps' ``caption`` is its five reference captions concatenated into one string (``n_refs``),
 which is what the tars ship; it stays in the default group as a caption source but is the one to
@@ -42,11 +52,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
 from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
+from olmo_core.data.multimodal.synthdog import SYNTHDOG_STYLE, SynthDogDatasetConfig
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = [
@@ -59,6 +70,8 @@ __all__ = [
     "OLMOCR_STYLE",
     "OCR_CAPTION_STYLE",
     "SCENE_TEXT_STYLE",
+    "SYNTHDOG_STYLE",
+    "SYNTHDOG_SOURCES",
     "build_ocr_source",
 ]
 
@@ -108,6 +121,9 @@ OCR_TAR_SOURCES: Dict[str, OcrTarSource] = {
     "ubertext": OcrTarSource("scene_text_tars/ubertext_v6_tars", SCENE_TEXT_STYLE, True),
 }
 
+#: SynthDoG sources: group name -> ``SynthDogDatasetConfig.split``.
+SYNTHDOG_SOURCES: Dict[str, str] = {"synthdog_en": "train"}
+
 #: olmOCR-mix sources: group name -> ``OlmOcrMixDatasetConfig.subset``.
 OLMOCR_MIX_SOURCES: Dict[str, str] = {
     "olmocr_documents": "documents",
@@ -116,13 +132,22 @@ OLMOCR_MIX_SOURCES: Dict[str, str] = {
     "olmocr_national_archives": "national_archives",
 }
 
-OCR_SOURCE_NAMES: Tuple[str, ...] = tuple(OLMOCR_MIX_SOURCES) + tuple(OCR_TAR_SOURCES)
+OCR_SOURCE_NAMES: Tuple[str, ...] = (
+    tuple(OLMOCR_MIX_SOURCES) + tuple(OCR_TAR_SOURCES) + tuple(SYNTHDOG_SOURCES)
+)
 
 #: Tar sources whose pages are already in an olmOCR-mix train subset (see module doc).
 DUPLICATE_OLMOCR_SOURCES: Dict[str, str] = {"s2pdf": "olmocr_documents", "iabooks": "olmocr_books"}
 
+#: Registered but not in :data:`DEFAULT_OCR_SOURCES`, with the reason.
+OPT_IN_OCR_SOURCES: Dict[str, str] = {
+    "s2pdf": "same pages as olmocr_documents, rendered by a second pipeline",
+    "iabooks": "same pages as olmocr_books, rendered by a second pipeline",
+    "synthdog_en": "targets carry SynthDoG's line-wrap artefacts (see synthdog.py)",
+}
+
 DEFAULT_OCR_SOURCES: Tuple[str, ...] = tuple(
-    n for n in OCR_SOURCE_NAMES if n not in DUPLICATE_OLMOCR_SOURCES
+    n for n in OCR_SOURCE_NAMES if n not in OPT_IN_OCR_SOURCES
 )
 
 
@@ -132,13 +157,16 @@ def build_ocr_source(
     *,
     olmocr: OlmOcrMixDatasetConfig,
     tars: OcrCaptionTarsDatasetConfig,
+    synthdog: Optional[SynthDogDatasetConfig] = None,
     data_root: str = OE_ENCODER_DATA,
 ):
-    """Build one OCR source by name from the two template configs.
+    """Build one OCR source by name from the per-kind template configs.
 
     :param olmocr: template for the olmOCR-mix sources; its ``subset`` is overridden.
     :param tars: template for the caption-tars sources; ``dataset_path``, ``style`` and
         ``strip_text_tags`` are overridden from :data:`OCR_TAR_SOURCES`.
+    :param synthdog: template for the SynthDoG sources; its ``split`` is overridden. Defaults
+        to :class:`~olmo_core.data.multimodal.synthdog.SynthDogDatasetConfig`'s own defaults.
     :param data_root: where the oe-encoder tar directories live.
     """
     if name in OLMOCR_MIX_SOURCES:
@@ -150,4 +178,7 @@ def build_ocr_source(
             style=src.style,
             strip_text_tags=src.strip_text_tags,
         ).build(tokenizer)
+    if name in SYNTHDOG_SOURCES:
+        template = synthdog if synthdog is not None else SynthDogDatasetConfig()
+        return template.replace(split=SYNTHDOG_SOURCES[name]).build(tokenizer)
     raise OLMoConfigurationError(f"Unknown OCR source {name!r}; expected one of {OCR_SOURCE_NAMES}")

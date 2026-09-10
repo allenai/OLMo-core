@@ -19,6 +19,11 @@ OLMOCR_MIX = os.path.join(TORCH_DATASETS, "olmocr_mix_1025")
 # sample), used for the OCR sources in :mod:`.mixtures.ocr`. Another project's directory, so
 # it is overridable with the OE_ENCODER_DATA_DIR env var.
 OE_ENCODER_DATA = os.environ.get("OE_ENCODER_DATA_DIR", "/weka/oe-training-default/oe-encoder")
+# HuggingFace dataset repos downloaded verbatim (``hf download <repo> --local-dir ...``), as
+# opposed to the ``datasets``-built Arrow trees under :data:`TORCH_DATASETS`.
+HF_DATASETS = os.path.join(MOLMO_DATA_DIR, "hf_datasets")
+# naver-clova-ix/synthdog-en: ``data/<split>-*.parquet`` (84 train shards, 1 validation).
+SYNTHDOG_EN = os.path.join(HF_DATASETS, "synthdog-en")
 
 # HARDCODED personal dataset (chrisc's audited, image-grouped PixMo-Points build on weka).
 # mm_olmo's ``PixMoPointV2.PATH`` reads this same directory, so it is the canonical location
@@ -37,4 +42,6 @@ __all__ = [
     "ACADEMIC_DATASETS",
     "OLMOCR_MIX",
     "OE_ENCODER_DATA",
+    "HF_DATASETS",
+    "SYNTHDOG_EN",
 ]

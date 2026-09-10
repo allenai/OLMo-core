@@ -25,9 +25,10 @@ knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2
 ``--ocr_rate`` (default 0) adds the OCR group: olmOCR-mix page transcription (rendered from PDFs,
 needs ``pypdfium2``) plus the oe-encoder caption tars (text-rich captions, Cambrian OCR subsets,
 TextCaps, scene text), paid for by the caption group. ``--ocr_sources=[...]`` picks the sources
-(see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` config fields
-are the two source templates, e.g. ``--olmocr.languages=null``, and ``--ocr_data_root`` relocates
-the tar tree.
+(see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` / ``synthdog``
+config fields are the source templates, e.g. ``--olmocr.languages=null``, and ``--ocr_data_root``
+relocates the tar tree. A few registered sources are opt-in rather than in the default group
+(``OPT_IN_OCR_SOURCES``); add them by name with ``--ocr_sources``.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -60,6 +61,7 @@ from olmo_core.data.multimodal import (
     PixMoCountV2DatasetConfig,
     PixMoPointsDatasetConfig,
     PixMoPointsV2DatasetConfig,
+    SynthDogDatasetConfig,
     Tulu4DatasetConfig,
 )
 from olmo_core.data.multimodal.mixtures.ocr import (
@@ -356,6 +358,9 @@ class ExperimentConfig(Config):
     olmocr: OlmOcrMixDatasetConfig
     """Template for the olmOCR-mix OCR sources (``subset`` is set per source); used when
     ``ocr_rate > 0``."""
+    synthdog: SynthDogDatasetConfig
+    """Template for the SynthDoG OCR sources (``split`` is set per source); used when
+    ``ocr_rate > 0`` and a SynthDoG source is selected."""
     ocr_tars: OcrCaptionTarsDatasetConfig
     """Template for the caption-tars OCR sources; used when ``ocr_rate > 0``. One template
     serves every tar source, so ``dataset_path`` / ``style`` / ``strip_text_tags`` are set per
@@ -557,6 +562,12 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         loss_token_weighting="none",
         system_prompt=OCR_SYSTEM_PROMPT,
     )
+    synthdog_config = SynthDogDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+        system_prompt=OCR_SYSTEM_PROMPT,
+    )
 
     # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a
     # constant token count for the token-based Trainer.
@@ -705,6 +716,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         count_v2=count_v2_config,
         olmocr=olmocr_config,
         ocr_tars=ocr_tars_config,
+        synthdog=synthdog_config,
     ).merge(overrides)
 
     if config.pointing_data not in POINTING_DATA_CHOICES:
@@ -732,6 +744,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             raise OLMoConfigurationError(
                 f"--ocr_tars.{field} is set per OCR source and would be ignored here; {hint}"
             )
+    if config.synthdog.split != SynthDogDatasetConfig().split:
+        raise OLMoConfigurationError(
+            "--synthdog.split is set per OCR source (mixtures.ocr.SYNTHDOG_SOURCES) and would "
+            "be ignored here; select the source through --ocr_sources instead"
+        )
     for tar_name, mix_name in DUPLICATE_OLMOCR_SOURCES.items():
         if tar_name in config.ocr_sources and mix_name in config.ocr_sources:
             log.warning(
@@ -1011,6 +1028,7 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                 tokenizer,
                 olmocr=config.olmocr,
                 tars=config.ocr_tars,
+                synthdog=config.synthdog,
                 data_root=config.ocr_data_root,
             )
             for name in config.ocr_sources

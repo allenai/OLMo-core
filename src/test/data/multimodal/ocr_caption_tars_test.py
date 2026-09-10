@@ -336,10 +336,13 @@ def test_message_weight_and_truncation(tmp_path):
 
 def test_ocr_registry_shape():
     names = ocr_mix.OCR_SOURCE_NAMES
-    assert len(names) == len(set(names)) == 4 + 17
+    assert len(names) == len(set(names)) == 4 + 17 + 1  # olmOCR-mix + caption tars + SynthDoG
     assert set(ocr_mix.OLMOCR_MIX_SOURCES) <= set(names)
+    assert set(ocr_mix.SYNTHDOG_SOURCES) <= set(names)
     assert set(ocr_mix.DUPLICATE_OLMOCR_SOURCES) == {"s2pdf", "iabooks"}
-    assert set(ocr_mix.DEFAULT_OCR_SOURCES) == set(names) - {"s2pdf", "iabooks"}
+    # The duplicate renderings are opt-in, and so is SynthDoG (different target convention).
+    assert set(ocr_mix.OPT_IN_OCR_SOURCES) == {"s2pdf", "iabooks", "synthdog_en"}
+    assert set(ocr_mix.DEFAULT_OCR_SOURCES) == set(names) - set(ocr_mix.OPT_IN_OCR_SOURCES)
     styles = {src.style for src in ocr_mix.OCR_TAR_SOURCES.values()}
     assert styles == {ocr_mix.OLMOCR_STYLE, ocr_mix.OCR_CAPTION_STYLE, ocr_mix.SCENE_TEXT_STYLE}
     for name, src in ocr_mix.OCR_TAR_SOURCES.items():

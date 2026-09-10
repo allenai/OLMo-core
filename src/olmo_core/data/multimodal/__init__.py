@@ -15,6 +15,7 @@ Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
 """
 
+from .academic_dataset import AcademicDataset, AcademicDatasetConfig
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
 from .finevision import (
@@ -24,7 +25,9 @@ from .finevision import (
     VisualWebInstructDataset,
     VisualWebInstructDatasetConfig,
 )
+from .message_weight import MessageWeight, apply_message_weight_to_loss_masks
 from .mixture_data_loader import MixtureDataLoader
+from .mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
 from .mmfinereason import (
     MMFineReasonDataset,
     MMFineReasonDatasetConfig,
@@ -37,7 +40,21 @@ from .ocr_caption_tars import (
 )
 from .olmocr import OlmOcrMixDataset, OlmOcrMixDatasetConfig
 from .packing import pack_examples
+from .paths import (
+    ACADEMIC_DATASETS,
+    HF_DATASETS,
+    MOLMO_DATA_DIR,
+    OE_ENCODER_DATA,
+    OLMOCR_MIX,
+    PIXMO_DATASETS,
+    PIXMO_POINTS_V2,
+    SYNTHDOG_EN,
+    TORCH_DATASETS,
+    TULU4_DATA,
+)
+from .pixmo_ama import PixMoAmaDataset, PixMoAmaDatasetConfig
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
+from .pixmo_cap_qa import PixMoCapQaDataset, PixMoCapQaDatasetConfig
 from .pixmo_points import (
     CoSynPointDataset,
     CoSynPointDatasetConfig,
@@ -57,22 +74,8 @@ from .sequence_builder import (
     build_branched_sequence,
     build_packed_sequence,
 )
-from .paths import (
-    ACADEMIC_DATASETS,
-    MOLMO_DATA_DIR,
-    OE_ENCODER_DATA,
-    OLMOCR_MIX,
-    PIXMO_DATASETS,
-    PIXMO_POINTS_V2,
-    TORCH_DATASETS,
-    TULU4_DATA,
-)
-from .academic_dataset import AcademicDataset, AcademicDatasetConfig
-from .pixmo_ama import PixMoAmaDataset, PixMoAmaDatasetConfig
-from .pixmo_cap_qa import PixMoCapQaDataset, PixMoCapQaDatasetConfig
-from .message_weight import MessageWeight, apply_message_weight_to_loss_masks
-from .mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
 from .sft_formatter import SftFormatter
+from .synthdog import SynthDogDataset, SynthDogDatasetConfig
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
@@ -98,6 +101,8 @@ __all__ = [
     "PixMoCountV2DatasetConfig",
     "OlmOcrMixDataset",
     "OlmOcrMixDatasetConfig",
+    "SynthDogDataset",
+    "SynthDogDatasetConfig",
     "OcrCaptionTarsDataset",
     "OcrCaptionTarsDatasetConfig",
     "TarShardIndex",
@@ -121,6 +126,8 @@ __all__ = [
     "ACADEMIC_DATASETS",
     "OLMOCR_MIX",
     "OE_ENCODER_DATA",
+    "HF_DATASETS",
+    "SYNTHDOG_EN",
     "MOLMO_DATA_DIR",
     "TORCH_DATASETS",
     "MultimodalCollator",
