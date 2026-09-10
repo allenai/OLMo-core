@@ -1,7 +1,8 @@
 """The OCR source group for Molmo2 stage-1 (``Molmo2-Stage1.py --ocr_rate``).
 
-Twenty image -> free-text sources of three kinds, each a separate dataset sharing the group's
-rate (split by sqrt(size), mm_olmo's default ``root_size_factor``):
+Twenty-one image -> free-text sources of three kinds (19 of them in
+:data:`DEFAULT_OCR_SOURCES`), each a separate dataset sharing the group's rate (split by
+sqrt(size), mm_olmo's default ``root_size_factor``):
 
 * **page transcription** (style ``olmocr``): the four olmOCR-mix-1025 subsets
   (:class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`, rendered from PDFs), plus
