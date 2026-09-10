@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import torch
 
@@ -66,6 +68,14 @@ def test_dion(device: torch.device, tmp_path):
 
 
 def _run_hsdp_dion(shard_degree: int, num_replicas: int):
+    # TODO(dion torch-2.13): remove once dion fixes its compiled kernels for torch 2.13.
+    # On torch 2.13, dion's compiled optimizer kernel trips PyTorch's new static Triton launcher
+    # ("CUDA driver error: invalid argument" in static_triton_launcher._launch_kernel). Disabling
+    # the static launcher falls back to the dynamic one and sidesteps it. Set here (in the spawned
+    # worker, before dion compiles) rather than image-wide to avoid the launch-overhead cost on
+    # non-dion compiled paths. dion applied an analogous fix for NorDion2 upstream (PR #117).
+    os.environ["TORCHINDUCTOR_STATIC_CUDA_LAUNCHER"] = "0"
+
     device = get_default_device()
 
     # HSDP Transformer
