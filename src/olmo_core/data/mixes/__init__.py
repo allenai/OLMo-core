@@ -44,7 +44,7 @@ class DataMix(DataMixBase):
     OLMo_mix_0625_official = "OLMo-mix-0625-official"
     OLMo_mix_0925 = "OLMo-mix-0925"
     OLMo_mix_0925_official = "OLMo-mix-0925-official"
-    Dolma3p5_14t = "Dolma3p5-14t"
+    Dolma3p5_14t = "Dolma3p5-14t"  # uses Dolma2 tokenizer
 
     # Midtraining mixes
     OLMo_midtraining_mix_0625_100B = "OLMo-midtraining-mix-0625-100B"
@@ -113,7 +113,6 @@ class DataMix(DataMixBase):
         already_interpolated = self in [
             # these mixes have the tokenizer hard-coded in the path
             # as opposed to using {TOKENIZER} interpolation
-            DataMix.Dolma3p5_14t
         ]
 
         paths = []
