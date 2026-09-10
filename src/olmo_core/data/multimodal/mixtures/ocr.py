@@ -20,6 +20,21 @@ chosen, but :data:`DEFAULT_OCR_SOURCES` leaves them out so a page is not counted
 TextCaps' ``caption`` is its five reference captions concatenated into one string (``n_refs``),
 which is what the tars ship; it stays in the default group as a caption source but is the one to
 drop first if that target form is unwanted.
+
+**The ``text_rich_*`` sources are one third of mm_olmo's ``figure_ocr`` group, by design of the
+tar build, not of this port.** They are the same images as mm_olmo's ``TextRichCaptionConfig``
+(``molmo3_datasets/text_rich_caption``), which captions each image at three granularities and
+emits all three as branches (``text_rich_caption_datasets.py:173-183``). The ``*_v6_tars`` build
+carries a single ``caption`` field, and it is byte-identical to that build's ``mid_level``:
+verified on ``chart/HTMLChartPipeline_area_0-0``, where high / mid / low are 145 / 645 / 2262
+chars. The missing ``low_level`` -- consistently 2-4k chars, the dense read-out of everything on
+the page -- is the most OCR-relevant part of the group, so this group's caption mass is roughly a
+fifth of mm_olmo's. Reading all three levels needs the HF build rather than these tars; that is a
+separate loader and is left to a follow-on.
+
+So ``--ocr_rate`` with :data:`DEFAULT_OCR_SOURCES` is NOT mm_olmo's OCR mixture. It is olmOCR-mix,
+plus the mid-level slice of ``figure_ocr``, plus the Cambrian / TextCaps / scene-text sources that
+mm_olmo's stage 1 does not carry at all.
 """
 
 from __future__ import annotations

@@ -26,7 +26,8 @@ knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2
 needs ``pypdfium2``) plus the oe-encoder caption tars (text-rich captions, Cambrian OCR subsets,
 TextCaps, scene text), paid for by the caption group. ``--ocr_sources=[...]`` picks the sources
 (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` config fields
-are the two source templates, e.g. ``--olmocr.languages=null``.
+are the two source templates, e.g. ``--olmocr.languages=null``, and ``--ocr_data_root`` relocates
+the tar tree.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -67,7 +68,7 @@ from olmo_core.data.multimodal.mixtures.ocr import (
     OCR_SOURCE_NAMES,
     build_ocr_source,
 )
-from olmo_core.data.multimodal.paths import PIXMO_DATASETS
+from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
@@ -295,8 +296,11 @@ OCR_SYSTEM_PROMPT = "style_and_length_v3"
 #         `_base_mixture`): the audited, image-grouped PixMo-Points build with absence queries
 #         (`PixMoPointsV2DatasetConfig`), the audited PixMo-Count build
 #         (`PixMoCountV2DatasetConfig`) and cosyn_point, split *linearly* by size (mm_olmo
-#         `size_weighted=1`). That group also carries a COCO detection-as-pointing source
-#         (`CocoTrain`) which has no olmo-core port yet.
+#         `size_weighted=1`). The one member of that group with no port is `CocoTrain`, which
+#         is a SEGMENTATION source, not detection-as-pointing: under `style="pixmo"` it emits
+#         `pixmo_seg` and its messages carry `bboxes` + RLE `segmentations` with no points
+#         (mm_olmo academic_datasets.py:2175-2189, data_formatter.py:965-968). olmo-core has no
+#         segmentation path, so it stays unported -- as do PixMoPointV2's own mask branches.
 # The v2 knobs are the `pointing_v2` / `count_v2` config fields (`--pointing_v2.<field>=...`).
 POINTING_DATA = "v1"
 POINTING_DATA_CHOICES = ("v1", "v2")
@@ -345,8 +349,10 @@ class ExperimentConfig(Config):
     """Template for the olmOCR-mix OCR sources (``subset`` is set per source); used when
     ``ocr_rate > 0``."""
     ocr_tars: OcrCaptionTarsDatasetConfig
-    """Template for the caption-tars OCR sources (``dataset_path`` / ``style`` /
-    ``strip_text_tags`` are set per source); used when ``ocr_rate > 0``."""
+    """Template for the caption-tars OCR sources; used when ``ocr_rate > 0``. One template
+    serves every tar source, so ``dataset_path`` / ``style`` / ``strip_text_tags`` are set per
+    source from the registry and setting them here is refused -- relocate the whole tree with
+    ``--ocr_data_root`` instead."""
     model_size: str = MODEL_SIZE
     """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
     the released checkpoint used by ``--init_from=molmo2``."""
@@ -367,6 +373,9 @@ class ExperimentConfig(Config):
     ocr_sources: Tuple[str, ...] = OCR_SOURCES
     """OCR sources in the group, each a separate dataset (names from
     :data:`olmo_core.data.multimodal.mixtures.ocr.OCR_SOURCE_NAMES`)."""
+    ocr_data_root: str = OE_ENCODER_DATA
+    """Root of the oe-encoder tar tree; each caption-tars source appends its own subdirectory
+    (:data:`olmo_core.data.multimodal.mixtures.ocr.OCR_TAR_SOURCES`)."""
     train_vit: bool = TRAIN_VIT
     """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
     the encoder is frozen and kept in eval mode."""
@@ -674,6 +683,18 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         )
     if len(set(config.ocr_sources)) != len(config.ocr_sources):
         raise OLMoConfigurationError(f"ocr_sources has duplicates: {config.ocr_sources}")
+    # `build_ocr_source` sets these per source, so a value here would be accepted, saved into the
+    # run config and then ignored. Fail instead of pretending it took effect.
+    per_source = OcrCaptionTarsDatasetConfig()
+    for field, hint in (
+        ("dataset_path", "use --ocr_data_root to relocate the whole tar tree"),
+        ("style", "the style is fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
+        ("strip_text_tags", "set per source by mixtures.ocr.OCR_TAR_SOURCES"),
+    ):
+        if getattr(config.ocr_tars, field) != getattr(per_source, field):
+            raise OLMoConfigurationError(
+                f"--ocr_tars.{field} is set per OCR source and would be ignored here; {hint}"
+            )
     for tar_name, mix_name in DUPLICATE_OLMOCR_SOURCES.items():
         if tar_name in config.ocr_sources and mix_name in config.ocr_sources:
             log.warning(
@@ -834,11 +855,27 @@ def _init_weights_from_scratch(
     model.connector.reset_parameters()
 
 
-def _size_fractions(sizes: Sequence[int], rule: str):
+def _size_fractions(sizes: Sequence[int], rule: str, names: Optional[Sequence[str]] = None):
     """Split one group's rate among its sources from their sizes (mm_olmo SubMixture math):
-    ``"sqrt"`` is ``root_size_factor=None``, ``"linear"`` is ``size_weighted=1``."""
+    ``"sqrt"`` is ``root_size_factor=None``, ``"linear"`` is ``size_weighted=1``.
+
+    An empty source is rejected rather than weighted. Size-proportional weights give it 0, and
+    :class:`~olmo_core.data.multimodal.MixtureDataLoader` then skips it silently, so a mistyped
+    path or an over-strict filter would train the remaining sources at quietly renormalized
+    rates with nothing in the log; all-empty additionally divides by zero into NaN weights.
+
+    :raises OLMoConfigurationError: If any size is <= 0, or ``rule`` is unknown.
+    """
     import numpy as np
 
+    empty = [
+        (names[i] if names is not None else str(i)) for i, s in enumerate(sizes) if int(s) <= 0
+    ]
+    if empty:
+        raise OLMoConfigurationError(
+            f"mixture source(s) {empty} have no examples: check their data paths and filters "
+            "(a size-0 source is never sampled, so it would silently drop out of the mixture)"
+        )
     sizes_arr = np.asarray(sizes, dtype=np.float64)
     if rule == "sqrt":
         frac = np.sqrt(sizes_arr)
@@ -849,16 +886,24 @@ def _size_fractions(sizes: Sequence[int], rule: str):
     return frac / frac.sum()
 
 
-def _pointing_group_fractions(sizes: Sequence[int], pointing_data: str):
+def _pointing_group_fractions(
+    sizes: Sequence[int], pointing_data: str, names: Optional[Sequence[str]] = None
+):
     """How the pointing group's rate is split among its sources, from their sizes.
 
     ``"v1"`` follows mm_olmo's captioner (``root_size_factor=None``: sqrt of the size);
     ``"v2"`` follows mm_olmo's molmo3 stage 1 (``size_weighted=1``: linear in the size).
+
+    Under ``"v2"`` the split is linear, so each source's *row count* sets its share directly.
+    Ours counts rows with a trainable POINTING annotation; mm_olmo's ``_base_mixture`` leaves
+    ``include_masks=True``, so its filter also admits mask-only annotations and its count is
+    larger. We do not port masks, so the pointing-only count is the right denominator here --
+    but it does mean this group's internal split is not numerically mm_olmo's.
     """
     if pointing_data == "v1":
-        return _size_fractions(sizes, "sqrt")
+        return _size_fractions(sizes, "sqrt", names)
     if pointing_data == "v2":
-        return _size_fractions(sizes, "linear")
+        return _size_fractions(sizes, "linear", names)
     raise OLMoConfigurationError(
         f"pointing_data={pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
     )
@@ -910,7 +955,9 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
             raise OLMoConfigurationError(
                 f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
             )
-        frac = _pointing_group_fractions([len(d) for d in pointing], config.pointing_data)
+        frac = _pointing_group_fractions(
+            [len(d) for d in pointing], config.pointing_data, pointing_names
+        )
         datasets += pointing
         weights += [p * float(f) for f in frac]
         names += pointing_names
@@ -922,10 +969,16 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 
     if o > 0:
         ocr = [
-            build_ocr_source(name, tokenizer, olmocr=config.olmocr, tars=config.ocr_tars)
+            build_ocr_source(
+                name,
+                tokenizer,
+                olmocr=config.olmocr,
+                tars=config.ocr_tars,
+                data_root=config.ocr_data_root,
+            )
             for name in config.ocr_sources
         ]
-        frac = _size_fractions([len(d) for d in ocr], "sqrt")
+        frac = _size_fractions([len(d) for d in ocr], "sqrt", list(config.ocr_sources))
         datasets += ocr
         weights += [o * float(f) for f in frac]
         names += list(config.ocr_sources)

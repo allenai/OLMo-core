@@ -38,8 +38,12 @@ from olmo_core.exceptions import OLMoConfigurationError
 from .message_sequence import encode_sft_example
 from .paths import OLMOCR_MIX
 from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
-from .sequence_builder import example_rng
-from .sft_common import load_hf_dataset, truncate_example
+from .sft_common import (
+    EpochSeededExamples,
+    get_example_with_skip,
+    load_hf_dataset,
+    truncate_example,
+)
 
 __all__ = [
     "OLMOCR_STYLE",
@@ -227,7 +231,7 @@ class OlmOcrMixDatasetConfig(Config):
         return OlmOcrMixDataset(self, tokenizer)
 
 
-class OlmOcrMixDataset:
+class OlmOcrMixDataset(EpochSeededExamples):
     """Map-style dataset over the (language-filtered) pages of one olmOCR-mix subset."""
 
     def __init__(self, config: OlmOcrMixDatasetConfig, tokenizer):
@@ -245,6 +249,7 @@ class OlmOcrMixDataset:
         # The parquet is one file, so `split="train"` here is just `load_dataset`'s name for it.
         self._data = load_hf_dataset(self.parquet_path, split="train", keep_columns=_COLUMNS)
         self._index = self._build_index()
+        self._warned = 0
         log.info(
             "olmOCR-mix %s/%s: %d of %d pages kept (languages=%s)",
             self.subset,
@@ -298,10 +303,21 @@ class OlmOcrMixDataset:
 
     # -- example ---------------------------------------------------------------------------
 
-    def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
+    def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
+        """Build page ``index``, deterministically skipping unusable rows.
+
+        A page whose PDF fails to render, or whose transcription leaves no loss tokens after
+        truncation, must not raise out of here: it would spend the mixture loader's error budget
+        and a run of them would abort training. Same policy as the other SFT sources; see
+        :func:`~olmo_core.data.multimodal.sft_common.get_example_with_skip`.
+        """
+        return get_example_with_skip(self, index, len(self))
+
+    def _build(self, i: int) -> Dict[str, np.ndarray]:
         cfg = self.config
         row = self._data[int(self._index[i])]
-        rng = example_rng(cfg.seed, i)
+        # Per (row, epoch): `target_dim_for` samples a render size, which should vary by epoch.
+        rng = self.epoch_rng(i)
         # mm_olmo draw order: the render size in `format_example`, then the formatter's prefix.
         target_dim = self.target_dim_for(rng)
         text = self.transcription(row)

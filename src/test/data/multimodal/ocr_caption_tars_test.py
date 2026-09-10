@@ -57,7 +57,7 @@ def _png_bytes(seed, ext):
     return buf.getvalue()
 
 
-def _write_tars(tmp_path):
+def _write_tars(tmp_path, extra_key: str = ""):
     root = tmp_path / "toy_v6_tars"
     root.mkdir()
     shards = [tarfile.open(str(root / f"toy-w0{i}-00000.tar"), "w") for i in range(2)]
@@ -67,7 +67,10 @@ def _write_tars(tmp_path):
         info.size = len(data)
         tf.addfile(info, io.BytesIO(data))
 
-    for i, (shard, key, ext, caption) in enumerate(SAMPLES):
+    samples = list(SAMPLES)
+    if extra_key:
+        samples.append((0, extra_key, "png", "<text>unicode key</text>"))
+    for i, (shard, key, ext, caption) in enumerate(samples):
         add(shards[shard], f"{key}.{ext}", _png_bytes(i, ext))
         meta = {"caption": caption, "dense_caption": caption, "n_words": str(i)}
         add(shards[shard], f"{key}.json", json.dumps(meta).encode())
@@ -94,13 +97,63 @@ def test_index_pairs_members_and_skips_orphans(tmp_path):
     root = _write_tars(tmp_path)
     idx = TarShardIndex.build(TarShardIndex.list_shards(root))
     assert len(idx) == 5
-    assert [k.decode() for k in idx.keys] == [s[1] for s in SAMPLES]
+    assert [str(k) for k in idx.keys] == [s[1] for s in SAMPLES]
     assert idx.shard_idx.tolist() == [s[0] for s in SAMPLES]
     img, meta = idx.read_sample(2)
     assert json.loads(meta)["caption"] == SAMPLES[2][3]
     from PIL import Image
 
     assert Image.open(io.BytesIO(img)).size == (48 + 4 * 2, 40)
+
+
+def test_index_handles_non_ascii_keys(tmp_path):
+    """Keys come from tar member names, which nothing constrains to ASCII. ``np.bytes_`` encodes
+    str through the ASCII codec, so one non-ASCII name would raise ``UnicodeEncodeError`` from
+    ``__init__`` -- at mixture-build time, where the loader's per-example error tolerance does not
+    apply, after paying the whole shard scan."""
+    root = _write_tars(tmp_path, extra_key="café_señor_日本語")
+    idx = TarShardIndex.build(TarShardIndex.list_shards(root))
+    assert "café_señor_日本語" in [str(k) for k in idx.keys]
+    cache = str(tmp_path / "cache_unicode")
+    TarShardIndex.load_or_build(root, cache_dir=cache)  # survives the npz round trip
+    reloaded = TarShardIndex.load_or_build(root, cache_dir=cache)
+    assert "café_señor_日本語" in [str(k) for k in reloaded.keys]
+    ds = _cfg(root, tmp_path).build(_FakeTok())
+    assert "café_señor_日本語" in [ds.key(i) for i in range(len(ds))]
+
+
+def test_index_cache_name_carries_the_format_version(tmp_path):
+    """The v1 cache stored ASCII bytes for ``keys``; a stale one must be ignored, not mis-read."""
+    root = _write_tars(tmp_path)
+    cache = str(tmp_path / "cache_ver")
+    TarShardIndex.load_or_build(root, cache_dir=cache)
+    (name,) = os.listdir(cache)
+    assert f"-v{ct.INDEX_FORMAT_VERSION}-" in name
+
+
+def test_index_save_is_atomic_and_uniquely_named(tmp_path, monkeypatch):
+    """Two writers must not share a temp path: ranks on different hosts can collide on pid."""
+    root = _write_tars(tmp_path)
+    idx = TarShardIndex.build(TarShardIndex.list_shards(root))
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append(src)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(ct.os, "replace", spy)
+    target = str(tmp_path / "c" / "idx.npz")
+    idx.save(target)
+    idx.save(target)
+    assert len(set(seen)) == 2 and all(s != target for s in seen)
+    assert os.listdir(tmp_path / "c") == ["idx.npz"]  # no temp left behind
+
+    # A failed write leaves no temp file either.
+    monkeypatch.setattr(ct.np, "savez", lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        idx.save(target)
+    assert os.listdir(tmp_path / "c") == ["idx.npz"]
 
 
 def test_index_cache_roundtrip_and_reuse(tmp_path, monkeypatch):
@@ -133,6 +186,25 @@ def test_index_cache_invalidates_when_shards_change(tmp_path):
         tf.addfile(info, io.BytesIO(meta))
     idx = TarShardIndex.load_or_build(root, cache_dir=cache)
     assert len(idx) == 6 and len(os.listdir(cache)) == 2
+
+
+def test_index_pairs_each_key_once(tmp_path):
+    """The scan de-duplicates member stems through a set now (list membership made it O(n^2));
+    a repeated stem must still yield exactly one sample, at its last offsets."""
+    root = tmp_path / "dup_tars"
+    root.mkdir()
+    with tarfile.open(str(root / "dup-00000.tar"), "w") as tf:
+
+        def add(name, data):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        for _ in range(2):
+            add("k.png", _png_bytes(1, "png"))
+            add("k.json", json.dumps({"caption": "x"}).encode())
+    idx = TarShardIndex.build(TarShardIndex.list_shards(str(root)))
+    assert [str(k) for k in idx.keys] == ["k"]
 
 
 def test_missing_shards_raise(tmp_path):
@@ -215,8 +287,31 @@ def test_example_layout(tmp_path):
     assert ex["loss_masks"].sum() == pytest.approx(len(resp) + 1)
     assert ex["labels"][ex["loss_masks"] > 0][-1] == tok.eos_token_id
     np.testing.assert_array_equal(ex["input_ids"], ds[0]["input_ids"])  # deterministic
-    with pytest.raises(ValueError):
-        ds[3]  # empty transcription -> the loader's skip policy handles it
+
+
+def test_blank_target_is_skipped_not_raised(tmp_path):
+    """An unusable row must not raise out of ``__getitem__``: that spends the mixture loader's
+    error budget and a run of them inside one shard aborts training. The next usable row is
+    substituted instead."""
+    root = _write_tars(tmp_path)
+    tok = _FakeTok()
+    ds = _cfg(root, tmp_path, loss_token_weighting="none").build(tok)
+    assert ds.text({"caption": "<text>x</text>"}) == "x"
+    with pytest.raises(ValueError):  # the underlying row is still unusable
+        ds._build(3)
+    np.testing.assert_array_equal(ds[3]["input_ids"], ds[4]["input_ids"])  # skipped to row 4
+
+
+def test_unusable_rows_eventually_raise(tmp_path, monkeypatch):
+    """Skipping is bounded: an all-broken source must still fail loudly rather than spin."""
+    from olmo_core.data.multimodal import sft_common
+
+    root = _write_tars(tmp_path)
+    ds = _cfg(root, tmp_path).build(_FakeTok())
+    monkeypatch.setattr(ds, "_build", lambda i: (_ for _ in ()).throw(ValueError("nope")))
+    with pytest.raises(RuntimeError, match="consecutive rows"):
+        ds[0]
+    assert sft_common.MAX_ROW_SKIP > 1
 
 
 def test_message_weight_and_truncation(tmp_path):
@@ -295,4 +390,22 @@ def test_stage1_ocr_group_wiring():
     assert mod.OCR_SOURCES == ocr_mix.DEFAULT_OCR_SOURCES
     assert mod.OCR_SYSTEM_PROMPT == "style_and_length_v3"
     fields = {f.name for f in mod.ExperimentConfig.__dataclass_fields__.values()}
-    assert {"ocr_rate", "ocr_sources", "olmocr", "ocr_tars"} <= fields
+    assert {"ocr_rate", "ocr_sources", "olmocr", "ocr_tars", "ocr_data_root"} <= fields
+
+
+def test_stage1_refuses_per_source_ocr_tar_overrides():
+    """One template serves every tar source, so ``build_ocr_source`` overwrites these three.
+    Accepting them would record the value in the saved run config and then ignore it."""
+    mod = _load_stage1_module()
+    for override in (
+        "--ocr_tars.dataset_path=/somewhere/else",
+        "--ocr_tars.style=long_caption",
+        "--ocr_tars.strip_text_tags=false",
+    ):
+        with pytest.raises(OLMoConfigurationError, match="per OCR source"):
+            mod.build_config("x.py", "run", ["--ocr_rate=0.1", override])
+    # The supported way to relocate the tree is a top-level field, and it reaches the sources.
+    cfg = mod.build_config("x.py", "run", ["--ocr_rate=0.1", "--ocr_data_root=/my/tars"])
+    assert cfg.ocr_data_root == "/my/tars"
+    tars = ocr_mix.OCR_TAR_SOURCES["cocotext"]
+    assert ocr_mix.os.path.join("/my/tars", tars.relpath).startswith("/my/tars")

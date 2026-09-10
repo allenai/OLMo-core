@@ -16,13 +16,31 @@ place of ``pixmo_points_train`` / ``pixmo_points_high_freq_train`` / ``pixmo_cou
   ``"There are none."`` refusal: ``easy_negatives`` (unrelated labels) and
   ``paired_negatives`` / ``paired_negatives_v2`` (hard, near-miss labels for the image's own
   objects). These are meant to be *sub-sampled* per epoch (``n_easy_samples``,
-  ``p_paired_negatives``); training on all of them makes the model over-refuse.
+  ``p_paired_negatives``); training on all of them makes the model over-refuse. The draw is
+  seeded per (row, epoch) via :class:`~.sft_common.EpochSeededExamples`, so successive epochs
+  work through different negatives instead of re-showing one fixed subset.
 
 Both datasets format through :class:`~.sft_formatter.SftFormatter` and the html-v2 grounding
 format like their v1 siblings, and assemble with the shared ``_build_example`` (image
 preprocessing + branched sequence). Not ported from ``PixMoPointV2``: the segmentation-mask
 branches (``include_masks`` / ``pixmo_seg``) and the 3D / surface-normal renderings, none of
 which Molmo2 can emit.
+
+Two consequences of dropping the mask branches, both measured against mm_olmo's ``_base_mixture``
+(which leaves ``include_masks=True``):
+
+* **Row count is all but unchanged.** mm_olmo's ``_keep`` also admits an annotation through the
+  mask path, so its filter is the looser one, but on the v17 build that is 220,314 rows against
+  our 220,291 (+23, +0.010%) -- the mask path only rescues annotations with more than
+  ``max_points`` points. Under ``pointing_data="v2"`` the group splits *linearly* by row count,
+  so this shifts the split within the group by a hundredth of a percent.
+* **Every refusal here is a pointing refusal.** mm_olmo sends a negative to the segmentation
+  head with probability ``1 - zero_points_as_segmentation`` (0.5 by default), and that applies to
+  all of them -- annotated absences, easy and paired negatives alike. With no segmentation path
+  to send them to, this port renders all of them as ``"There are none."`` pointing answers, so at
+  equal ``n_easy_samples`` / ``p_paired_negatives`` the model sees roughly **twice** mm_olmo's
+  density of pointing refusals. Halve those knobs to match mm_olmo's, and read the mm_olmo team's
+  over-refusal warning above with that factor in mind.
 """
 
 from __future__ import annotations
@@ -38,7 +56,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .paths import PIXMO_DATASETS, PIXMO_POINTS_V2
 from .pixmo_points import _build_example, _load_split, _open_image
-from .sequence_builder import example_rng
+from .sft_common import EpochSeededExamples
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -186,7 +204,7 @@ class PixMoPointsV2DatasetConfig(Config):
         return PixMoPointsV2Dataset(self, tokenizer)
 
 
-class PixMoPointsV2Dataset:
+class PixMoPointsV2Dataset(EpochSeededExamples):
     """Map-style dataset over the images of :class:`PixMoPointsV2DatasetConfig` that have at
     least one trainable annotation."""
 
@@ -205,14 +223,24 @@ class PixMoPointsV2Dataset:
     # -- selection -------------------------------------------------------------------------
 
     def keep(self, anno: Dict[str, Any]) -> bool:
-        """Whether to train on this annotation (mm_olmo ``PixMoPointV2._keep``, pointing leg)."""
+        """Whether to train on this annotation (mm_olmo ``PixMoPointV2._keep``, pointing leg).
+
+        Must agree with :meth:`_build_index`\'s vectorized copy: a row is admitted when *any* of
+        its annotations passes here, and every annotation the row carries is then re-tested
+        during formatting. A null ``points`` is rejected on both paths (the index maps it to
+        ``-1``, which fails the ``>= min_points`` bound), so it cannot reach ``format_row`` and
+        raise there.
+        """
         cfg = self.config
         label = anno.get("label")
         if not label or not label.strip():
             return False
         if cfg.filter_audit and _failed_audit(anno.get("audit_result")):
             return False
-        return cfg.min_points <= len(anno["points"]) <= cfg.max_points
+        points = anno.get("points")
+        if points is None:
+            return False
+        return cfg.min_points <= len(points) <= cfg.max_points
 
     def _build_index(self) -> np.ndarray:
         """Row indices with ``kind``'s source and at least one annotation passing :meth:`keep`
@@ -327,7 +355,8 @@ class PixMoPointsV2Dataset:
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         cfg = self.config
         row = self._data[int(self._index[i])]
-        rng = example_rng(cfg.seed, i)
+        # Per (row, epoch): the negative sub-sampling in `format_row` has to rotate across epochs.
+        rng = self.epoch_rng(i)
         messages, weights = self.format_row(row, rng)
         fmt = SftFormatter(
             seed=cfg.seed, prompt_templates=cfg.prompt_templates, system_prompt=cfg.system_prompt
@@ -395,7 +424,7 @@ class PixMoCountV2DatasetConfig(Config):
         return PixMoCountV2Dataset(self, tokenizer)
 
 
-class PixMoCountV2Dataset:
+class PixMoCountV2Dataset(EpochSeededExamples):
     """Map-style dataset over the images of :class:`PixMoCountV2DatasetConfig` that keep at
     least one point set."""
 
@@ -413,8 +442,20 @@ class PixMoCountV2Dataset:
         )
 
     def keep(self, anno: Dict[str, Any]) -> bool:
-        """Whether to train on this point set (mm_olmo ``PixMoCountConfigV2``)."""
-        return not (self.config.filter_audit and _failed_audit(anno.get("audit_result")))
+        """Whether to train on this point set (mm_olmo ``PixMoCountConfigV2``).
+
+        Beyond mm_olmo\'s audit filter this also drops unusable annotations, which mm_olmo never
+        had to: a blank ``label`` is not an error here, it silently trains ``"pointing:"`` against
+        an empty-named ``<points>`` tag, and a null ``label`` / ``points`` instead raises deep in
+        formatting. :meth:`_build_index` applies the same rules, so a row survives only while it
+        still has a usable point set.
+        """
+        if self.config.filter_audit and _failed_audit(anno.get("audit_result")):
+            return False
+        label = anno.get("label")
+        if not label or not label.strip():
+            return False
+        return anno.get("points") is not None
 
     def _build_index(self) -> np.ndarray:
         """Rows with at least one kept point set (mm_olmo's ``filter_audit`` build-time
@@ -423,7 +464,10 @@ class PixMoCountV2Dataset:
         import pyarrow.compute as pc
 
         def _keep_flat(flat) -> np.ndarray:
-            keep = np.ones(len(flat), dtype=bool)
+            # Mirrors `keep`: a usable label and non-null points, then the audit filter.
+            keep = _bool_np(
+                pc.invert(pc.equal(pc.utf8_trim_whitespace(flat.field("label")), ""))
+            ) & ~_bool_np(pc.is_null(flat.field("points")))
             if self.config.filter_audit:
                 keep &= ~_bool_np(
                     pc.is_in(
@@ -468,7 +512,7 @@ class PixMoCountV2Dataset:
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         cfg = self.config
         row = self._data[int(self._index[i])]
-        rng = example_rng(cfg.seed, i)
+        rng = self.epoch_rng(i)
         pil = _open_image(row["image"])
         messages = self.format_row(row, rng, pil.size)
         fmt = SftFormatter(

@@ -207,6 +207,22 @@ def test_default_prompt_family_is_the_bare_molmo3_tag(tmp_path, stub_renderer):
     assert {ds.user_prompt("x" * 300, np.random.RandomState(s)) for s in range(10)} == {"olmocr:"}
 
 
+def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):
+    """``target_longest_image_dim_range`` samples per example, so it has to move with the epoch;
+    otherwise every epoch renders each page at exactly the same size."""
+    root = _write_root(tmp_path)
+    ds = _cfg(root, target_longest_image_dim_range=(1000, 1400)).build(_FakeTok())
+    dims = []
+    for epoch in range(6):
+        ds.set_epoch(epoch)
+        ds[0]
+        dims.append(stub_renderer[-1][1])
+    assert len(set(dims)) > 1, dims
+    ds.set_epoch(2)
+    ds[0]
+    assert stub_renderer[-1][1] == dims[2]  # deterministic per (row, epoch)
+
+
 def test_user_prompt_per_prompt_family(tmp_path, stub_renderer):
     root = _write_root(tmp_path)
     text = "x" * 300
@@ -280,8 +296,13 @@ def test_max_sequence_length_truncates_long_pages(tmp_path, stub_renderer):
     assert len(cut["input_ids"]) == n_image + 200
     assert (cut["token_type_ids"] == 1).sum() == n_image  # the image block is never cut
     assert cut["loss_masks"].sum() > 0
-    with pytest.raises(ValueError):  # would drop <im_patch> tokens
-        _cfg(root, max_sequence_length=n_image // 2).build(tok)[2]
+    # A length that would cut the image block is unusable for every row, so the skip path runs
+    # out rather than raising the per-row ValueError.
+    tiny = _cfg(root, max_sequence_length=n_image // 2).build(tok)
+    with pytest.raises(ValueError):
+        tiny._build(2)
+    with pytest.raises(RuntimeError, match="consecutive rows"):
+        tiny[2]
 
 
 def test_real_renderer_honours_target_size(tmp_path):

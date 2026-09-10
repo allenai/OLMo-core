@@ -24,9 +24,10 @@ import os
 import re
 import tarfile
 import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -35,8 +36,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
 from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
-from .sequence_builder import example_rng
-from .sft_common import truncate_example
+from .sft_common import EpochSeededExamples, get_example_with_skip, truncate_example
 
 __all__ = [
     "TarShardIndex",
@@ -49,6 +49,10 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
+
+INDEX_FORMAT_VERSION = 2
+"""Bumped when the cached ``.npz`` layout changes, so an old cache is ignored rather than
+mis-read (v2 stores ``keys`` as unicode; v1 stored ASCII-only bytes)."""
 _TEXT_TAG_RE = re.compile(r"^\s*<text>\s*(.*?)\s*</text>\s*$", re.S)
 
 
@@ -81,6 +85,7 @@ def _scan_shard(path: str) -> Tuple[List[str], np.ndarray]:
     images: Dict[str, Tuple[int, int]] = {}
     jsons: Dict[str, Tuple[int, int]] = {}
     order: List[str] = []
+    seen: Set[str] = set()  # membership on the list would make this scan O(n^2) in shard size
     with tarfile.open(path) as tf:  # random-access mode: `next()` seeks past member data
         for m in tf:
             if not m.isfile():
@@ -93,7 +98,8 @@ def _scan_shard(path: str) -> Tuple[List[str], np.ndarray]:
                 images[stem] = (m.offset_data, m.size)
             else:
                 continue
-            if stem not in order:
+            if stem not in seen:
+                seen.add(stem)
                 order.append(stem)
     keys = [k for k in order if k in images and k in jsons]
     offsets = np.asarray([[*images[k], *jsons[k]] for k in keys], dtype=np.int64).reshape(
@@ -109,7 +115,12 @@ class TarShardIndex:
     shards: List[str]
     """Absolute shard paths, sorted; ``shard_idx`` indexes into this list."""
     keys: np.ndarray
-    """``(N,)`` sample keys (``bytes_`` dtype), for provenance."""
+    """``(N,)`` sample keys (unicode ``str_`` dtype), for provenance. Not ``bytes_``: numpy
+    encodes str to bytes through the ASCII codec, so a single non-ASCII member name would raise
+    ``UnicodeEncodeError`` out of ``__init__`` -- at mixture-build time, where the loader's
+    per-example error tolerance does not apply, and after paying the whole shard scan. Nothing
+    constrains tar member names to ASCII; the shards sampled so far happen to be clean (0
+    non-ASCII keys in 13,884 samples across six sources), so this is a guard, not a live fix."""
     shard_idx: np.ndarray
     """``(N,)`` int32 shard of each sample."""
     offsets: np.ndarray
@@ -149,25 +160,38 @@ class TarShardIndex:
             offsets.append(offs)
         return cls(
             shards=shards,
-            keys=np.asarray(keys, dtype=np.bytes_),
+            keys=np.asarray(keys, dtype=np.str_),
             shard_idx=np.concatenate(shard_idx) if shard_idx else np.zeros(0, dtype=np.int32),
             offsets=np.concatenate(offsets) if offsets else np.zeros((0, 4), dtype=np.int64),
         )
 
     def save(self, path: str) -> None:
-        """Atomic write (temp file + ``os.replace``), so concurrent ranks never read a partial
-        index."""
+        """Atomic write (temp file + ``os.replace``), so a concurrent reader never sees a partial
+        index.
+
+        The temp name carries a uuid rather than only the pid: several ranks (or two threads) can
+        build the same entry at once, and on separate container hosts sharing one cache
+        filesystem their pids collide, which would let two writers interleave into one temp file.
+        """
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.tmp-{os.getpid()}"
-        with open(tmp, "wb") as f:
-            np.savez(
-                f,
-                shards=np.asarray(self.shards, dtype=np.str_),
-                keys=self.keys,
-                shard_idx=self.shard_idx,
-                offsets=self.offsets,
-            )
-        os.replace(tmp, path)
+        tmp = f"{path}.tmp-{os.getpid()}-{uuid.uuid4().hex}"
+        try:
+            with open(tmp, "wb") as f:
+                np.savez(
+                    f,
+                    shards=np.asarray(self.shards, dtype=np.str_),
+                    keys=self.keys,
+                    shard_idx=self.shard_idx,
+                    offsets=self.offsets,
+                )
+            os.replace(tmp, path)
+        except BaseException:
+            # Never leave a half-written temp behind for the next run to trip over.
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @classmethod
     def load(cls, path: str) -> "TarShardIndex":
@@ -192,11 +216,17 @@ class TarShardIndex:
         shards = cls.list_shards(dataset_path, shard_glob)
         cache_dir = cache_dir or default_index_cache_dir()
         name = os.path.basename(os.path.normpath(dataset_path)) or "tars"
-        cache_path = os.path.join(cache_dir, f"{name}-{cls.fingerprint(shards)}.npz")
+        cache_path = os.path.join(
+            cache_dir, f"{name}-v{INDEX_FORMAT_VERSION}-{cls.fingerprint(shards)}.npz"
+        )
         if os.path.exists(cache_path):
-            index = cls.load(cache_path)
-            if index.shards == shards:
-                return index
+            try:
+                index = cls.load(cache_path)
+            except Exception as e:  # noqa: BLE001 - a damaged cache must not end the run
+                log.warning("Ignoring unreadable index cache %s (%s); rebuilding", cache_path, e)
+            else:
+                if index.shards == shards:
+                    return index
         log.info("Indexing %d tar shard(s) under %s ...", len(shards), dataset_path)
         index = cls.build(shards, num_threads=num_threads)
         index.save(cache_path)
@@ -266,7 +296,7 @@ class OcrCaptionTarsDatasetConfig(Config):
         return OcrCaptionTarsDataset(self, tokenizer)
 
 
-class OcrCaptionTarsDataset:
+class OcrCaptionTarsDataset(EpochSeededExamples):
     """Map-style dataset over the ``(image, json)`` samples of a directory of tar shards."""
 
     def __init__(self, config: OcrCaptionTarsDatasetConfig, tokenizer):
@@ -279,6 +309,7 @@ class OcrCaptionTarsDataset:
             num_threads=config.index_threads,
         )
         self._lock = threading.Lock()
+        self._warned = 0
         log.info(
             "caption tars %s (style=%s): %d samples in %d shards",
             config.dataset_path,
@@ -291,7 +322,8 @@ class OcrCaptionTarsDataset:
         return len(self.index)
 
     def key(self, i: int) -> str:
-        return self.index.keys[i].decode()
+        """This sample's tar member stem (provenance; not used to build the example)."""
+        return str(self.index.keys[i])
 
     def text(self, meta: Dict) -> str:
         """The target text of a decoded JSON record."""
@@ -304,14 +336,27 @@ class OcrCaptionTarsDataset:
             raise ValueError("empty target text")
         return text
 
-    def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
+    def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
+        """Build row ``index``, deterministically skipping rows with no usable target.
+
+        An unusable row -- a blank caption, an undecodable image, a truncation that leaves no loss
+        tokens -- must not raise out of here: it would spend the mixture loader's error budget
+        (``max_consecutive_data_errors``) and a run of them inside one shard would abort training.
+        Blank captions are plausible for the scene-text sources in particular, since not every
+        photo holds legible text, though the shards sampled so far contain none. Same policy as
+        ``finevision`` / ``mmfinereason``; see
+        :func:`~olmo_core.data.multimodal.sft_common.get_example_with_skip`.
+        """
+        return get_example_with_skip(self, index, len(self))
+
+    def _build(self, i: int) -> Dict[str, np.ndarray]:
         from PIL import Image
 
         cfg = self.config
         image_bytes, json_bytes = self.index.read_sample(i)
         text = self.text(json.loads(json_bytes))
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        rng = example_rng(cfg.seed, i)
+        rng = self.epoch_rng(i)
         prompt = style_tag_prompt(cfg.style, text, rng, cfg.system_prompt)
         seq = encode_sft_example(
             self.tokenizer,

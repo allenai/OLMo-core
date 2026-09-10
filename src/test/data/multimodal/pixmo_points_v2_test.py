@@ -121,14 +121,16 @@ def _anno(label, points, audit):
 
 
 def _write_points_v2(tmp_path):
-    """Three images: a pointing row with a passed, a failed and an empty annotation plus
+    """Four images: a pointing row with a passed, a failed and an empty annotation plus
     negatives; a counting row whose only annotation failed the audit; a row whose only
-    annotation has a blank label (never trainable)."""
+    annotation has a blank label (never trainable); and a pointing row pairing a good
+    annotation with a null-``points`` one (the row filter admits it, so ``keep`` must reject
+    the null annotation rather than let ``format_row`` raise on it)."""
     image = _image(tmp_path)
     rows = {
-        "image": [image, image, image],
-        "image_url": ["u0", "u1", "u2"],
-        "source": ["pointing", "counting", "pointing"],
+        "image": [image] * 4,
+        "image_url": ["u0", "u1", "u2", "u3"],
+        "source": ["pointing", "counting", "pointing", "pointing"],
         "annotations": [
             [
                 _anno("Red Cup", [[10.0, 20.0, 1.5], [30.0, 40.0, -1.0]], "correct"),
@@ -137,15 +139,19 @@ def _write_points_v2(tmp_path):
             ],
             [_anno("Books", [[1.0, 2.0, 0.5], [3.0, 4.0, 0.5], [5.0, 6.0, 0.5]], "error")],
             [_anno("   ", [[1.0, 1.0, 0.0]], "correct")],
+            [
+                _anno("Kettle", [[11.0, 12.0, 1.0]], "correct"),
+                _anno("Ghost", None, "correct"),
+            ],
         ],
-        "min_points": [0, 3, 1],
-        "max_points": [2, 3, 1],
-        "min_masks": [0, 0, 0],
-        "paired_negatives": [["Mug"], ["Magazines"], []],
-        "negatives": [[], [], []],
-        "easy_negatives": [["giraffe", "piano", "sailboat"], ["kite"], []],
-        "rare_negatives": [[], [], []],
-        "paired_negatives_v2": [["Mug", "Glass"], ["Magazines"], []],
+        "min_points": [0, 3, 1, 1],
+        "max_points": [2, 3, 1, 1],
+        "min_masks": [0, 0, 0, 0],
+        "paired_negatives": [["Mug"], ["Magazines"], [], []],
+        "negatives": [[], [], [], []],
+        "easy_negatives": [["giraffe", "piano", "sailboat"], ["kite"], [], []],
+        "rare_negatives": [[], [], [], []],
+        "paired_negatives_v2": [["Mug", "Glass"], ["Magazines"], [], []],
     }
     path = tmp_path / "points-v2"
     Dataset.from_dict(rows).save_to_disk(str(path))
@@ -156,16 +162,22 @@ def _write_count_v2(tmp_path):
     image = _image(tmp_path)
 
     def row(label, points, audit):
-        return [{"audit_result": audit, "count": len(points), "label": label, "points": points}]
+        count = 0 if points is None else len(points)
+        return [{"audit_result": audit, "count": count, "label": label, "points": points}]
 
     rows = {
-        "image_url": ["u0", "u1", "u2"],
-        "image_sha256": ["s0", "s1", "s2"],
-        "image": [image, image, image],
+        "image_url": ["u0", "u1", "u2", "u3", "u4", "u5"],
+        "image_sha256": ["s0", "s1", "s2", "s3", "s4", "s5"],
+        "image": [image] * 6,
         "points": [
             row("ties", [[32.0, 24.0], [16.0, 12.0]], "correct"),
             row("Cats", [[10.0, 10.0]], "clear_error"),
             row("dogs", [], "n/a"),
+            # Unusable annotations: a blank label would silently train an empty-named <points>
+            # tag, and null label / points raise deep in formatting. All three are dropped.
+            row("   ", [[1.0, 2.0]], "correct"),
+            row(None, [[3.0, 4.0]], "correct"),
+            row("kites", None, "correct"),
         ],
     }
     path = tmp_path / "count-v2"
@@ -195,14 +207,27 @@ def _labels(messages):
 def test_points_v2_index_keeps_rows_with_a_trainable_annotation(tmp_path):
     path = _write_points_v2(tmp_path)
     tok = _FakeTok()
-    assert len(_points_cfg(path).build(tok)) == 2  # the blank-label row is dropped
-    assert len(_points_cfg(path, kind="basic").build(tok)) == 1
+    assert len(_points_cfg(path).build(tok)) == 3  # the blank-label row is dropped
+    assert len(_points_cfg(path, kind="basic").build(tok)) == 2
     assert len(_points_cfg(path, kind="high_frequency").build(tok)) == 1
     # Row 1's only annotation failed the audit, so the audit filter drops the whole row.
-    assert len(_points_cfg(path, filter_audit=True).build(tok)) == 1
+    assert len(_points_cfg(path, filter_audit=True).build(tok)) == 2
     # min/max point bounds apply per annotation.
     assert len(_points_cfg(path, min_points=3).build(tok)) == 1
-    assert len(_points_cfg(path, max_points=2, min_points=1).build(tok)) == 1
+    assert len(_points_cfg(path, max_points=2, min_points=1).build(tok)) == 2
+
+
+def test_points_v2_null_points_annotation_is_never_formatted(tmp_path):
+    """The row filter tolerates a null ``points`` (it maps to -1), so ``keep`` has to reject it
+    too -- otherwise the row is admitted and ``format_row`` raises ``TypeError`` on ``len(None)``,
+    which the loader absorbs as a data error and counts against its abort threshold."""
+    path = _write_points_v2(tmp_path)
+    ds = _points_cfg(path, n_easy_samples=0, p_paired_negatives=0.0).build(_FakeTok())
+    row = next(ds._data[int(i)] for i in ds._index if ds._data[int(i)]["image_url"] == "u3")
+    assert [a["label"] for a in row["annotations"]] == ["Kettle", "Ghost"]
+    assert ds.keep(row["annotations"][1]) is False
+    messages, _ = ds.format_row(row, np.random.RandomState(0))  # must not raise
+    assert _labels(messages) == ["Kettle"]
 
 
 def test_points_v2_config_validation(tmp_path):
@@ -349,6 +374,64 @@ def test_points_v2_example_is_deterministic_per_index(tmp_path):
     assert not np.array_equal(a["input_ids"], other["input_ids"])
 
 
+def test_negatives_rotate_across_epochs(tmp_path):
+    """``p_paired_negatives`` / ``n_easy_samples`` are documented as per-epoch sub-sampling, so
+    the draw must move with the epoch. Pinned at epoch 0 the same subset is redrawn forever and
+    the rest of each pool is never trained on."""
+    path = _write_points_v2(tmp_path)
+    ds = _points_cfg(path, n_easy_samples=1, p_paired_negatives=0.5).build(_FakeTok())
+    row = ds._data[int(ds._index[0])]
+
+    seen = set()
+    for epoch in range(6):
+        ds.set_epoch(epoch)
+        messages, _ = ds.format_row(row, ds.epoch_rng(0))
+        seen.add(tuple(_labels(messages)[3:]))  # the sampled negatives
+    assert len(seen) > 1, f"negatives never rotated across epochs: {seen}"
+
+    # Deterministic within an epoch, and identical for a resumed run that replays that epoch.
+    ds.set_epoch(3)
+    a = ds[0]
+    ds.set_epoch(0)
+    ds.set_epoch(3)
+    np.testing.assert_array_equal(a["input_ids"], ds[0]["input_ids"])
+    ds.set_epoch(4)
+    assert not np.array_equal(a["input_ids"], ds[0]["input_ids"])
+
+
+def test_mixture_loader_hands_the_epoch_to_sources(tmp_path):
+    """The epoch only reaches a dataset if the loader passes it: ``reshuffle`` permutes
+    ``(source, index)`` references, which cannot rotate a draw made *inside* an example."""
+    from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfig
+
+    class _Recording:
+        def __init__(self):
+            self.epochs = []
+
+        def set_epoch(self, epoch):
+            self.epochs.append(epoch)
+
+        def __len__(self):
+            return 4
+
+        def __getitem__(self, i):
+            raise AssertionError("not iterated in this test")
+
+    seq = 8
+    sources = [_Recording(), _Recording()]
+    loader = MixtureDataLoader(
+        sources,
+        [0.5, 0.5],
+        MultimodalCollatorConfig(pad_token_id=0, pad_sequence_length=seq).build(),
+        work_dir=str(tmp_path),
+        global_batch_size=2 * seq,
+        seed=0,
+    )
+    loader.reshuffle(epoch=1)
+    loader.reshuffle(epoch=2)
+    assert [s.epochs for s in sources] == [[1, 2], [1, 2]]
+
+
 def test_points_v2_stage1_prompt_family(tmp_path):
     """Stage-1 form: ``"<style>: <lowercased label>"`` and the html-v2 answer."""
     path = _write_points_v2(tmp_path)
@@ -379,6 +462,7 @@ def test_count_v2_selection_and_pixel_points(tmp_path):
     path = _write_count_v2(tmp_path)
     tok = _FakeTok()
     ds = _count_cfg(path, audit_style=("aux_pointing",)).build(tok)
+    # 6 rows, but blank-label / null-label / null-points rows are not trainable.
     assert len(ds) == 3
     assert len(_count_cfg(path, filter_audit=True).build(tok)) == 2
 
@@ -398,6 +482,22 @@ def test_count_v2_selection_and_pixel_points(tmp_path):
     assert fmt.format_turns(msg, index=0, rng=rng)[0][0] == "aux_pointing: cats"
     (msg,) = ds.format_row(rows[2], rng, image_size=(64, 48))
     assert fmt.format_turns(msg, index=0, rng=rng)[0] == ("pointing: dogs", "There are none.")
+
+
+def test_count_v2_drops_unusable_annotations(tmp_path):
+    """mm_olmo never had to guard these; here a blank label trains ``"pointing:"`` against an
+    empty-named ``<points>`` tag, and a null label / points raises during formatting."""
+    path = _write_count_v2(tmp_path)
+    ds = _count_cfg(path).build(_FakeTok())
+    kept = [ds._data[int(i)]["image_url"] for i in ds._index]
+    assert kept == ["u0", "u1", "u2"]  # u3 blank, u4 null label, u5 null points
+    assert ds.keep({"label": "ties", "points": [], "audit_result": "n/a"}) is True
+    for bad in (
+        {"label": "   ", "points": [[1.0, 2.0]], "audit_result": "correct"},
+        {"label": None, "points": [[1.0, 2.0]], "audit_result": "correct"},
+        {"label": "kites", "points": None, "audit_result": "correct"},
+    ):
+        assert ds.keep(bad) is False, bad
 
 
 def test_count_v2_example_end_to_end(tmp_path):
@@ -457,3 +557,21 @@ def test_stage1_pointing_group_split_rule():
     )
     with pytest.raises(OLMoConfigurationError):
         mod._pointing_group_fractions(sizes, "v3")
+
+
+def test_stage1_rejects_empty_mixture_sources():
+    """A size-0 source gets weight 0 from any size-proportional split and is then skipped by the
+    loader, so a mistyped path would quietly train the rest at renormalized rates; all-empty
+    divides by zero into NaN weights."""
+    mod = _load_stage1_module()
+    with pytest.raises(OLMoConfigurationError) as e:
+        mod._size_fractions([100, 0, 50], "sqrt", ["a", "empty_one", "c"])
+    assert "empty_one" in str(e.value)
+    with pytest.raises(OLMoConfigurationError):
+        mod._size_fractions([0, 0], "linear", ["a", "b"])
+    with pytest.raises(OLMoConfigurationError):
+        mod._pointing_group_fractions([10, 0], "v2", ["a", "b"])
+    # Names are optional; the index is reported instead.
+    with pytest.raises(OLMoConfigurationError) as e:
+        mod._size_fractions([0, 3], "sqrt")
+    assert "['0']" in str(e.value)
