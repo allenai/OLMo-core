@@ -45,6 +45,58 @@ def _set_max_position_embeddings(config: Any, max_position_embeddings: int) -> N
     config.max_position_embeddings = max_position_embeddings
 
 
+def _load_routing_metadata(checkpoint_path: Path) -> dict[str, int]:
+    config_path = checkpoint_path / "config.json"
+    if not config_path.is_file():
+        return {}
+    checkpoint_config = json.loads(config_path.read_text())
+    model_config = checkpoint_config.get("model")
+    if not isinstance(model_config, dict):
+        return {}
+
+    routing_metadata = {}
+    for source_name, output_name in (
+        ("moe_num_experts_per_tok", "num_experts_per_tok"),
+        (
+            "moe_expert_weight_normalization_top_k",
+            "expert_weight_normalization_top_k",
+        ),
+    ):
+        value = model_config.get(source_name)
+        if value is not None:
+            value = int(value)
+            if value < 1:
+                raise ValueError(f"{source_name} must be positive, got {value}")
+            routing_metadata[output_name] = value
+    return routing_metadata
+
+
+def _apply_routing_metadata(config: Any, checkpoint_path: Path) -> dict[str, int]:
+    routing_metadata = _load_routing_metadata(checkpoint_path)
+    for name, value in routing_metadata.items():
+        setattr(config, name, value)
+    if (
+        routing_metadata.get("num_experts_per_tok")
+        != routing_metadata.get("expert_weight_normalization_top_k")
+    ):
+        log.warning(
+            "This checkpoint uses reference-K normalization; inference backends must honor "
+            "expert_weight_normalization_top_k=%s independently of num_experts_per_tok=%s",
+            routing_metadata.get("expert_weight_normalization_top_k"),
+            routing_metadata.get("num_experts_per_tok"),
+        )
+    return routing_metadata
+
+
+def _verify_routing_metadata(output_path: Path, checkpoint_path: Path) -> dict[str, int]:
+    expected = _load_routing_metadata(checkpoint_path)
+    exported_config = _text_config(AutoConfig.from_pretrained(output_path, trust_remote_code=False))
+    actual = {name: getattr(exported_config, name, None) for name in expected}
+    if actual != expected:
+        raise ValueError(f"Exported routing metadata differs from the source: expected={expected}, actual={actual}")
+    return expected
+
+
 def _load_generation_config(config: Any, generation_config_name: str | None) -> GenerationConfig:
     if generation_config_name is not None:
         try:
@@ -82,7 +134,8 @@ def _verify_tokenizer_metadata(
         }
         raise ValueError(f"Exported tokenizer metadata differs from the source: {mismatches}")
 
-    model_config = AutoConfig.from_pretrained(output_path, trust_remote_code=False)
+    outer_model_config = AutoConfig.from_pretrained(output_path, trust_remote_code=False)
+    model_config = _text_config(outer_model_config)
     if model_config.max_position_embeddings != max_position_embeddings:
         raise ValueError(
             "Exported model config has "
@@ -129,6 +182,21 @@ def _is_qwen35_text_config(config: Any) -> bool:
 
 def _text_config(config: Any) -> Any:
     return getattr(config, "text_config", config)
+
+
+def _save_outer_config(
+    source_config: Any,
+    text_config: Any,
+    output_path: Path,
+    text_architectures: Any,
+) -> bool:
+    """Restore and save a composite config after the text-only model is serialized."""
+    if source_config is text_config:
+        return False
+    text_config.architectures = text_architectures
+    source_config.text_config = text_config
+    source_config.save_pretrained(output_path)
+    return True
 
 
 def _load_olmo_state(checkpoint_dir: Path) -> dict[str, torch.Tensor]:
@@ -508,6 +576,7 @@ def verify_export(
         generation_config_name=generation_config_name,
         max_position_embeddings=max_position_embeddings,
     )
+    routing_metadata = _verify_routing_metadata(output_path, checkpoint_path)
     result = {
         "source_checkpoint": str(checkpoint_path),
         "hf_export": str(output_path),
@@ -516,6 +585,7 @@ def verify_export(
         "source_tensor_count": len(olmo_state),
         "hf_parameter_count": len(hf_model.state_dict()),
         "tokenizer_metadata": tokenizer_metadata,
+        "routing_metadata": routing_metadata,
     }
     (output_path / "weight-verification.json").write_text(json.dumps(result, indent=2) + "\n")
     log.info("Exact weight and tokenizer metadata verification complete")
@@ -544,8 +614,10 @@ def convert_checkpoint(
     log.info("Building native Hugging Face model skeleton from %s", hf_model_name)
     source_config = AutoConfig.from_pretrained(hf_model_name, trust_remote_code=False)
     config = _text_config(source_config)
+    text_architectures = getattr(config, "architectures", None)
     config.torch_dtype = dtype
     _set_max_position_embeddings(config, max_position_embeddings)
+    routing_metadata = _apply_routing_metadata(config, checkpoint_path)
     tokenizer_metadata = _sync_tokenizer_metadata(config, tokenizer)
     with torch.device("meta"):
         hf_model = AutoModelForCausalLM.from_config(config, trust_remote_code=False)
@@ -569,6 +641,12 @@ def convert_checkpoint(
         safe_serialization=True,
         max_shard_size=max_shard_size,
     )
+    outer_config_preserved = _save_outer_config(
+        source_config,
+        config,
+        output_path,
+        text_architectures,
+    )
     tokenizer.save_pretrained(output_path)
     generation_config.save_pretrained(output_path)
 
@@ -584,6 +662,8 @@ def convert_checkpoint(
         "tokenizer_metadata": {
             name: tokenizer_metadata[name] for name in (*_TOKEN_ID_ATTRIBUTES, "vocab_size")
         },
+        "routing_metadata": routing_metadata,
+        "outer_config_preserved": outer_config_preserved,
         "chat_template_preserved": tokenizer_metadata["chat_template"] is not None,
     }
     (output_path / "conversion.json").write_text(json.dumps(provenance, indent=2) + "\n")

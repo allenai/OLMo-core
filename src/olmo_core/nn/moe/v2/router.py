@@ -52,6 +52,7 @@ class MoERouterConfigV2(Config):
     bias: bool = False
     jitter_eps: Optional[float] = None
     normalize_expert_weights: Optional[float] = None
+    expert_weight_normalization_top_k: Optional[int] = None
     uniform_expert_assignment: bool = False
     random_expert_assignment: bool = False
     bias_gamma: Optional[float] = None
@@ -115,6 +116,9 @@ class MoERouterV2(nn.Module):
     :param jitter_eps: Controls the amount of noise added to the input during training.
     :param normalize_expert_weights: The type of norm (e.g. ``2.0`` for L2 norm) to use to normalize
         the expert weights.
+    :param expert_weight_normalization_top_k: If set, normalize selected expert weights against
+        the top weights at this reference K instead of the routed ``top_k``. This preserves the
+        routed mixture's scale when changing K from a checkpoint's native value.
     :param uniform_expert_assignment: Force uniform assignment. Useful for benchmarking.
     :param bias_gamma: If set to a positive float, experts scores for top-k routing will be adjusted
         by a bias following the "auxiliary-loss-free load balancing" strategy from DeepSeek-v3.
@@ -130,6 +134,7 @@ class MoERouterV2(nn.Module):
         bias: bool = False,
         jitter_eps: Optional[float] = None,
         normalize_expert_weights: Optional[float] = None,
+        expert_weight_normalization_top_k: Optional[int] = None,
         uniform_expert_assignment: bool = False,
         random_expert_assignment: bool = False,
         bias_gamma: Optional[float] = None,
@@ -159,6 +164,7 @@ class MoERouterV2(nn.Module):
         self.use_bias = bias
         self.jitter_eps = jitter_eps
         self.normalize_expert_weights = normalize_expert_weights
+        self.expert_weight_normalization_top_k = expert_weight_normalization_top_k
         self.uniform_expert_assignment = uniform_expert_assignment
         self.random_expert_assignment = random_expert_assignment
         self.bias_gamma = bias_gamma
@@ -180,6 +186,23 @@ class MoERouterV2(nn.Module):
         self.n_group = n_group
         self.topk_group = topk_group
         self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
+
+        if not 1 <= self.top_k <= self.num_experts:
+            raise ValueError(f"top_k must be in [1, {self.num_experts}], got {self.top_k}")
+        if self.expert_weight_normalization_top_k is not None:
+            if self.normalize_expert_weights is None:
+                raise ValueError(
+                    "expert_weight_normalization_top_k requires normalize_expert_weights"
+                )
+            if not 1 <= self.expert_weight_normalization_top_k <= self.num_experts:
+                raise ValueError(
+                    "expert_weight_normalization_top_k must be in "
+                    f"[1, {self.num_experts}], got {self.expert_weight_normalization_top_k}"
+                )
+            if self.gating_function == MoERouterGatingFunction.topk_softmax:
+                raise ValueError(
+                    "reference-K normalization is not supported with topk_softmax gating"
+                )
 
         if self.bias_gamma is not None or self.score_correction_bias:
             if self.bias_gamma is not None:
@@ -241,6 +264,14 @@ class MoERouterV2(nn.Module):
         nn.init.trunc_normal_(self.weight, std=0.02, a=-3 * 0.02, b=3 * 0.02)
         if self.bias is not None:
             nn.init.trunc_normal_(self.bias, std=0.02, a=-3 * 0.02, b=3 * 0.02)
+
+    def set_top_k(self, top_k: int) -> None:
+        """Set the routed expert count used by subsequent forwards."""
+        if not 1 <= top_k <= self.num_experts:
+            raise ValueError(f"top_k must be in [1, {self.num_experts}], got {top_k}")
+        if self._recompute_cache is not None:
+            raise RuntimeError("cannot change top_k while router recomputation is pending")
+        self.top_k = top_k
 
     @property
     def device(self) -> torch.device:
@@ -360,9 +391,16 @@ class MoERouterV2(nn.Module):
             return x * (low + noise * (high - low))
 
     @nvtx.annotate("MoERouter.get_top_k", color='blue')
-    def get_top_k(self, scores: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_top_k(
+        self, scores: torch.Tensor, *, top_k: Optional[int] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         expert_weights: torch.Tensor
         expert_indices: torch.Tensor
+        routing_top_k = self.top_k if top_k is None else top_k
+        if not 1 <= routing_top_k <= self.num_experts:
+            raise ValueError(
+                f"top_k must be in [1, {self.num_experts}], got {routing_top_k}"
+            )
         selection_scores = scores
         if self.score_bias is not None:
             selection_scores = scores + self.score_bias.unsqueeze(0)  # type: ignore[union-attr]
@@ -393,10 +431,10 @@ class MoERouterV2(nn.Module):
             selection_scores = selection_scores.masked_fill(~score_mask, float("-inf"))
 
         with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
-            if self.top_k == 1:
+            if routing_top_k == 1:
                 _, expert_indices = selection_scores.max(dim=-1, keepdim=True)
             else:
-                _, expert_indices = torch.topk(selection_scores, self.top_k, dim=-1)
+                _, expert_indices = torch.topk(selection_scores, routing_top_k, dim=-1)
         expert_weights = scores.gather(-1, expert_indices)
 
         if self.uniform_expert_assignment:
@@ -611,9 +649,14 @@ class MoERouterV2(nn.Module):
 
 
         if self.normalize_expert_weights is not None:
+            normalization_weights = expert_weights
+            if self.expert_weight_normalization_top_k is not None:
+                normalization_weights, _ = self.get_top_k(
+                    scores, top_k=self.expert_weight_normalization_top_k
+                )
             expert_weights = expert_weights.div(
                 torch.norm(
-                    expert_weights,
+                    normalization_weights,
                     p=self.normalize_expert_weights,
                     dim=-1,
                     keepdim=True,

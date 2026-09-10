@@ -75,6 +75,17 @@ def fused_linear_cross_entropy_forward(
         if ce_weight.stride(-1) != 1:
             ce_weight = ce_weight.contiguous()
 
+    kernel_compat_kwargs = {}
+    kernel_arg_names = getattr(liger_cross_entropy_kernel, "arg_names", ())
+    if "token_accuracy_ptr" in kernel_arg_names:
+        kernel_compat_kwargs.update(
+            token_accuracy_ptr=None,
+            token_accuracy_stride=0,
+            RETURN_TOKEN_ACCURACY=False,
+        )
+    if "HAS_GRADIENTS" in kernel_arg_names:
+        kernel_compat_kwargs["HAS_GRADIENTS"] = True
+
     for chunk_id in range(num_chunks):
         start_idx = chunk_id * chunk_size
         end_idx = min((chunk_id + 1) * chunk_size, BT)
@@ -119,6 +130,7 @@ def fused_linear_cross_entropy_forward(
             RETURN_Z_LOSS=return_z_loss,
             HAS_WEIGHT=True if ce_weight is not None else False,
             HAS_SOFTCAPPING=True if softcap is not None else False,
+            **kernel_compat_kwargs,
             BLOCK_SIZE=BLOCK_SIZE,
             num_warps=32 if not is_hip() else 16,
         )

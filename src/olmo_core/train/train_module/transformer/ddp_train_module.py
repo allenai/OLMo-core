@@ -183,6 +183,9 @@ class OLMoDDPTrainModule(TrainModule):
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_only = eval_only
+        self._pre_microbatch_callback: Optional[
+            Callable[[int, int, int, bool], None]
+        ] = None
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
@@ -658,6 +661,20 @@ class OLMoDDPTrainModule(TrainModule):
     @property
     def pp_enabled(self) -> bool:
         return self._pp_config is not None
+
+    def set_pre_microbatch_callback(
+        self,
+        callback: Optional[Callable[[int, int, int, bool], None]],
+    ) -> None:
+        """Set a callback invoked before each non-pipeline microbatch.
+
+        The callback receives ``(global_step, microbatch_idx,
+        num_microbatches, dry_run)``. It must make the same control-flow
+        decisions on every participating distributed rank.
+        """
+        if callback is not None and self.pp_enabled:
+            raise NotImplementedError("pre-microbatch callbacks do not support pipeline parallelism")
+        self._pre_microbatch_callback = callback
 
     @property
     def train_pp_schedule(self) -> PipelineSchedule:
@@ -1468,6 +1485,13 @@ class OLMoDDPTrainModule(TrainModule):
 
             # Train one micro-batch at a time.
             for micro_batch_idx, micro_batch in enumerate(micro_batches):
+                if self._pre_microbatch_callback is not None:
+                    self._pre_microbatch_callback(
+                        self.trainer.global_step,
+                        micro_batch_idx,
+                        num_micro_batches,
+                        dry_run,
+                    )
                 if dry_run:
                     self._print_dry_run_microbatch_progress(
                         micro_batch_idx,

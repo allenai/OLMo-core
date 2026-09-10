@@ -1,6 +1,7 @@
 """Tests for the Qwen3 MoE OLMo-to-Hugging-Face converter."""
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,72 @@ def test_max_position_embeddings_must_be_positive() -> None:
 
     with pytest.raises(ValueError, match="must be positive"):
         convert_module._set_max_position_embeddings(config, 0)
+
+
+def test_routing_metadata_is_loaded_from_training_config(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "moe_num_experts_per_tok": 12,
+                    "moe_expert_weight_normalization_top_k": 8,
+                }
+            }
+        )
+    )
+    config = SimpleNamespace(num_experts_per_tok=8)
+
+    metadata = convert_module._apply_routing_metadata(config, tmp_path)
+
+    assert metadata == {
+        "num_experts_per_tok": 12,
+        "expert_weight_normalization_top_k": 8,
+    }
+    assert config.num_experts_per_tok == 12
+    assert config.expert_weight_normalization_top_k == 8
+
+
+def test_routing_metadata_is_optional_for_plain_checkpoints(tmp_path: Path) -> None:
+    config = SimpleNamespace(num_experts_per_tok=8)
+
+    metadata = convert_module._apply_routing_metadata(config, tmp_path)
+
+    assert metadata == {}
+    assert config.num_experts_per_tok == 8
+
+
+def test_save_outer_config_restores_composite_config(tmp_path: Path) -> None:
+    class OuterConfig(SimpleNamespace):
+        def save_pretrained(self, output_path: Path) -> None:
+            self.saved_to = output_path
+
+    text_config = SimpleNamespace(architectures=["Qwen3_5MoeForCausalLM"])
+    outer_config = OuterConfig(text_config=text_config)
+
+    preserved = convert_module._save_outer_config(
+        outer_config,
+        text_config,
+        tmp_path,
+        text_architectures=None,
+    )
+
+    assert preserved is True
+    assert outer_config.text_config is text_config
+    assert text_config.architectures is None
+    assert outer_config.saved_to == tmp_path
+
+
+def test_save_outer_config_skips_standalone_text_config(tmp_path: Path) -> None:
+    config = SimpleNamespace(architectures=["Qwen3MoeForCausalLM"])
+
+    preserved = convert_module._save_outer_config(
+        config,
+        config,
+        tmp_path,
+        text_architectures=config.architectures,
+    )
+
+    assert preserved is False
 
 
 def test_qwen35_reverse_mapping_repacks_hybrid_attention_and_experts() -> None:
