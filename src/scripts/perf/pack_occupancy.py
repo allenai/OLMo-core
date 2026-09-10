@@ -67,7 +67,7 @@ class PackStat:
         return self.n_tokens / SEQUENCE_LENGTH
 
 
-def _build_mixture(mixture: str, seed: int):
+def _build_mixture(mixture: str, seed: int, only: Optional[Sequence[str]] = None):
     """Build one tier's ``(datasets, weights, names)``, matching Molmo2-Stage2's dispatch.
 
     Tier -> registry routing lives in ``mixtures.tiers``; going through it here (rather
@@ -92,6 +92,17 @@ def _build_mixture(mixture: str, seed: int):
     if mixture not in known:
         raise ValueError(f"Unknown mixture {mixture!r}; use one of: {', '.join(sorted(known))}")
     names_filter = known[mixture]
+    if only:
+        # Scoping escape hatch. ``build_mixture`` takes len() of every source it is asked
+        # for, and on a cold FineVision index cache that is minutes of weka I/O per Arrow
+        # shard -- a full 43-source tier can take hours the first time. Restricting to a
+        # few sources makes an exploratory sweep interactive, at the cost of no longer
+        # reflecting the tier's real source distribution. Prefer the full tier for any
+        # number you intend to act on.
+        missing = [n for n in only if names_filter is not None and n not in names_filter]
+        if missing:
+            log.warning("--only names not in %s: %s", mixture, ", ".join(missing))
+        names_filter = list(only)
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/Molmo2-4B", trust_remote_code=True)
     single_image_only = mixture in ("single-image-only-v9", "single-image-only-v10")
@@ -114,7 +125,9 @@ def _build_mixture(mixture: str, seed: int):
     )
 
 
-def _iter_sampled_lengths(mixture: str, limit: int, seed: int):
+def _iter_sampled_lengths(
+    mixture: str, limit: int, seed: int, only: Optional[Sequence[str]] = None
+):
     """Yield ``(n_tokens, n_crops, source)`` for `limit` examples of `mixture`.
 
     Draws in the mixture's own weighted order via ``iter_rank_mixture_refs`` -- the same
@@ -123,7 +136,7 @@ def _iter_sampled_lengths(mixture: str, limit: int, seed: int):
     """
     from olmo_core.data.multimodal.packed_mixture_iterable import iter_rank_mixture_refs
 
-    datasets, weights, names = _build_mixture(mixture, seed)
+    datasets, weights, names = _build_mixture(mixture, seed, only)
     sizes = [len(d) for d in datasets]
     log.info("mixture %s: %d sources, %d total rows", mixture, len(datasets), sum(sizes))
 
@@ -250,7 +263,8 @@ def _summarize(stats: List[PackStat], max_crops: int) -> Dict:
 
 
 def _cmd_sample(args) -> int:
-    rows = list(_iter_sampled_lengths(args.mixture, args.limit, args.seed))
+    only = args.only.split(",") if args.only else None
+    rows = list(_iter_sampled_lengths(args.mixture, args.limit, args.seed, only))
     with open(args.out, "w") as f:
         for n_tokens, n_crops, source in rows:
             f.write(json.dumps({"n_tokens": n_tokens, "n_crops": n_crops, "source": source}) + "\n")
@@ -321,6 +335,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     s.add_argument("--limit", type=int, default=2000)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--out", required=True)
+    s.add_argument(
+        "--only",
+        help="comma-separated source names to restrict to; much faster on a cold "
+        "FineVision index cache, but no longer the tier's real source distribution",
+    )
     s.set_defaults(func=_cmd_sample)
 
     w = sub.add_parser("sweep", help="replay cached lengths at several crop budgets")

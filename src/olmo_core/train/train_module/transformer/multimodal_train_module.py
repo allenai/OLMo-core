@@ -336,6 +336,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         loss_masks = batch.pop("loss_masks")
         batch.pop("pack_source_names", None)
+        # Diagnostic only (crop occupancy in SpeedMonitorCallback). Left in the dict it
+        # would land in **model_kwargs and break MultimodalLM.forward.
+        batch.pop("n_real_crops", None)
         return input_ids, labels, loss_masks, batch
 
     def _vision_is_frozen(self) -> bool:
