@@ -103,3 +103,96 @@ def test_root_subsegments_downweights_multi_label_examples():
             masks, sub, MessageWeight(root_subsegments=True), branch_scaling_already_applied=False
         )
         assert abs(float(out[0]) - expected) < 1e-4, f"{n} labels -> {out[0]}"
+
+
+def test_caption_message_weight_scales_loss_mass():
+    """`message_weight` must scale caption loss mass, and default to released behaviour.
+
+    Stage 1 sets captions to 1.25. The released ``Molmo2-4B-Pretrain`` leaves every source at 1.0
+    (``message_weight: None`` on all six datasets), which puts captions at ~77.5% of the
+    ``sum(CE*w)/sum(w)`` loss mass; 1.25 lifts that to ~81%. Measured over two-seed baselines:
+    dense_caption avg 57.271 -> 57.808 (seed spread 0.085) for pointing costs of ~0.009-0.013 f1
+    (seed spreads 0.008-0.011).
+    """
+    import numpy as np
+
+    from olmo_core.data.multimodal.message_weight import (
+        MessageWeight,
+        apply_message_weight_to_loss_masks,
+    )
+
+    sub = np.repeat([1, 2], 20).astype(np.int64)
+    base = apply_message_weight_to_loss_masks(
+        np.ones(40, dtype=np.float32),
+        sub,
+        MessageWeight.from_string("none").with_overrides(None),
+        branch_scaling_already_applied=True,
+    )
+    w125 = apply_message_weight_to_loss_masks(
+        np.ones(40, dtype=np.float32),
+        sub,
+        MessageWeight.from_string("none").with_overrides(1.25),
+        branch_scaling_already_applied=True,
+    )
+    assert abs(float(base[0]) - 1.0) < 1e-6
+    assert abs(float(w125[0]) - 1.25) < 1e-6
+    assert abs(float(w125.sum() / base.sum()) - 1.25) < 1e-6
+
+
+def test_stage1_sets_caption_message_weight():
+    """The stage-1 default must be 1.25, and it must be overridable rather than hardcoded."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_s1c", "src/scripts/train/Molmo2-Stage1.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_s1c"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass
+    assert mod.CAPTION_MESSAGE_WEIGHT == 1.25
+    src = open("src/scripts/train/Molmo2-Stage1.py").read()
+    # the value must reach the dataset config through the override-readable name, not a literal
+    assert "message_weight=caption_message_weight" in src
+    assert "caption_message_weight" in src
+
+
+def test_read_override_accepts_dashed_names():
+    """`_read_override` must normalize hyphens the way `Config.merge` does.
+
+    `_clean_opt` turns `--caption-message-weight=1.0` into `caption_message_weight`, so the merger
+    accepts the dashed spelling. A reader comparing the raw name would miss it and build the dataset
+    config from the default while `merge` set the top-level field to the requested value -- a silent
+    divergence, and it affected the pre-existing `model_size` / `train_vit` / `init_from` readers
+    too.
+    """
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_s1o", "src/scripts/train/Molmo2-Stage1.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_s1o"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass
+    for spelling in ("--caption_message_weight=1.0", "--caption-message-weight=1.0"):
+        assert mod._read_float_override([spelling], "caption_message_weight", 1.25) == 1.0
+    # unrelated keys still ignored
+    assert mod._read_float_override(["--other=3"], "caption_message_weight", 1.25) == 1.25
+
+
+def test_sft_demo_mode_threads_message_weight():
+    """`message_weight` must reach the sft_demo path, which stage 2 uses.
+
+    `PixMoCapDataset.__getitem__` returns early for `mode="sft_demo"` (built that way in
+    mixtures/image_only_v9.py), so the branched path's scaling never runs and the option would be
+    silently ignored for that mode.
+    """
+    src = open("src/olmo_core/data/multimodal/pixmo_cap.py").read()
+    demo = src.split("def _getitem_sft_demo")[1].split("\ndef ")[0]
+    assert "message_weight=" in demo, "sft_demo path does not pass message_weight"
+    assert "self.config.message_weight" in demo
