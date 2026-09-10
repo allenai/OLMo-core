@@ -1,32 +1,31 @@
 """The OCR source group for Molmo2 stage-1 (``Molmo2-Stage1.py --ocr_rate``).
 
-Twenty-two image -> free-text sources of four kinds (19 of them in
+Twenty-two image -> free-text sources of three kinds (19 of them in
 :data:`DEFAULT_OCR_SOURCES`), each a separate dataset sharing the group's rate (split by
 sqrt(size), mm_olmo's default ``root_size_factor``):
 
 * **page transcription** (style ``olmocr``): the four olmOCR-mix-1025 subsets
-  (:class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`, rendered from PDFs), plus
-  the oe-encoder ``olmocr_v6_tars`` ``s2pdf`` / ``iabooks`` (pre-rendered JPEGs, re-transcribed).
+  (:class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`, rendered from PDFs), the
+  oe-encoder ``olmocr_v6_tars`` ``s2pdf`` / ``iabooks`` (pre-rendered JPEGs, re-transcribed), and
+  ``synthdog_en``, the 500k-page SynthDoG corpus Donut was pretrained on
+  (:class:`~olmo_core.data.multimodal.synthdog.SynthDogDatasetConfig`).
 * **text-rich captions** (style ``ocr_caption``): synthetic charts / diagrams / documents /
   graphics / tables, the Cambrian OCR-heavy subsets (arxivqa, ocr_vqa, screen_qa, llavar, oodvqa)
   and TextCaps -- one dense natural-language caption per image.
 * **scene text** (style ``scene_text``): TextOCR, HierText, COCO-Text and UberText, whose target
   is the text visible in the photo.
-* **synthetic document transcription** (style ``synthdog``): ``naver-clova-ix/synthdog-en``, the
-  500k-page SynthDoG corpus Donut was pretrained on
-  (:class:`~olmo_core.data.multimodal.synthdog.SynthDogDatasetConfig`).
 
 ``s2pdf`` and ``iabooks`` are the SAME pages as olmOCR-mix ``documents`` / ``books`` train
 (97.4% / 99.4% of their page ids, and every one of their documents; none of the eval pages), only
 rendered and transcribed by a different pipeline. They are registered so either rendering can be
 chosen, but :data:`DEFAULT_OCR_SOURCES` leaves them out so a page is not counted twice.
 
-``synthdog_en`` is likewise registered but opt-in (:data:`OPT_IN_OCR_SOURCES`): its targets carry
-SynthDoG's line-wrap artefacts -- the generator breaks a word at the line end without a hyphen and
-the ground truth rejoins the pieces with a space, so ``"Closing"`` transcribes as ``"Closin g"`` in
-99.8% of sampled rows. That is a different output convention from the other transcription sources,
-which is also why it has its own style tag; see
-:mod:`~olmo_core.data.multimodal.synthdog`. Add it with ``--ocr_sources``.
+``synthdog_en`` is likewise registered but opt-in (:data:`OPT_IN_OCR_SOURCES`), for a different
+reason: it shares the ``olmocr`` tag, but its targets carry SynthDoG's line-wrap artefacts -- the
+generator breaks a word at the line end without a hyphen and the ground truth rejoins the pieces
+with a space, so ``"Closing"`` transcribes as ``"Closin g"`` in 99.8% of sampled rows. Half a
+million synthetic pages is also large next to the other sources, and the group splits by
+sqrt(size). Add it with ``--ocr_sources``; see :mod:`~olmo_core.data.multimodal.synthdog`.
 
 TextCaps' ``caption`` is its five reference captions concatenated into one string (``n_refs``),
 which is what the tars ship; it stays in the default group as a caption source but is the one to
@@ -57,7 +56,7 @@ from typing import Dict, Optional, Tuple
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
 from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
-from olmo_core.data.multimodal.synthdog import SYNTHDOG_STYLE, SynthDogDatasetConfig
+from olmo_core.data.multimodal.synthdog import SynthDogDatasetConfig
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = [
@@ -70,7 +69,6 @@ __all__ = [
     "OLMOCR_STYLE",
     "OCR_CAPTION_STYLE",
     "SCENE_TEXT_STYLE",
-    "SYNTHDOG_STYLE",
     "SYNTHDOG_SOURCES",
     "build_ocr_source",
 ]
@@ -143,7 +141,7 @@ DUPLICATE_OLMOCR_SOURCES: Dict[str, str] = {"s2pdf": "olmocr_documents", "iabook
 OPT_IN_OCR_SOURCES: Dict[str, str] = {
     "s2pdf": "same pages as olmocr_documents, rendered by a second pipeline",
     "iabooks": "same pages as olmocr_books, rendered by a second pipeline",
-    "synthdog_en": "targets carry SynthDoG's line-wrap artefacts (see synthdog.py)",
+    "synthdog_en": "500k synthetic pages whose targets carry line-wrap artefacts (synthdog.py)",
 }
 
 DEFAULT_OCR_SOURCES: Tuple[str, ...] = tuple(

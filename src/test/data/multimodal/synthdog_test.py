@@ -15,8 +15,8 @@ import pytest
 from olmo_core.data.multimodal import SynthDogDatasetConfig
 from olmo_core.data.multimodal.mixtures import ocr as ocr_mix
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
-from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
-from olmo_core.data.multimodal.synthdog import SYNTHDOG_STYLE, extract_text_sequence
+from olmo_core.data.multimodal.olmocr import OLMOCR_STYLE, OlmOcrMixDatasetConfig
+from olmo_core.data.multimodal.synthdog import extract_text_sequence
 from olmo_core.exceptions import OLMoConfigurationError
 
 
@@ -40,8 +40,11 @@ class _FakeTok:
 
 
 def test_extract_text_sequence_reads_the_donut_envelope():
+    """The whole target is the value of ``text_sequence``; the rest is Donut's task wrapper."""
     gt = json.dumps({"gt_parse": {"text_sequence": "  Dares Wins Vol. 5  "}})
     assert extract_text_sequence(gt) == "Dares Wins Vol. 5"
+    # A top-level `text_sequence` is accepted too, though the corpus never uses that shape.
+    assert extract_text_sequence(json.dumps({"text_sequence": "bare"})) == "bare"
 
 
 @pytest.mark.parametrize(
@@ -54,6 +57,7 @@ def test_extract_text_sequence_reads_the_donut_envelope():
         json.dumps({"gt_parse": {"text_sequence": None}}),
         json.dumps({"gt_parse": {"text_sequence": "   "}}),  # blank
         json.dumps({"gt_parse": "a string, not a dict"}),
+        json.dumps({"gt_parse": {"text_sequence": ["not", "a", "string"]}}),
     ],
 )
 def test_extract_text_sequence_rejects_unusable_envelopes(gt):
@@ -152,6 +156,7 @@ def test_config_fields_merge_from_cli():
         ["split=validation", "style=olmocr", "max_sequence_length=2560"]
     )
     assert (cfg.split, cfg.style, cfg.max_sequence_length) == ("validation", "olmocr", 2560)
+    assert SynthDogDatasetConfig().style == OLMOCR_STYLE  # the default is the shared OCR tag
 
 
 # ---------------------------------------------------------------------------
@@ -159,16 +164,16 @@ def test_config_fields_merge_from_cli():
 # ---------------------------------------------------------------------------
 
 
-def test_style_tag_defaults_to_its_own_and_is_settable(tmp_path):
-    """Its own tag by default: the targets keep SynthDoG's wrap artefacts, a different output
-    convention from the clean olmOCR-mix transcriptions."""
+def test_prompt_is_the_shared_ocr_transcription_tag(tmp_path):
+    """Same task as the olmOCR-mix pages, so the same tag: the user turn is ``olmocr:``."""
     root = _write_repo(tmp_path)
     ds = _cfg(root).build(_FakeTok())
-    assert ds.config.style == SYNTHDOG_STYLE == "synthdog"
-    assert {ds.user_prompt("x", np.random.RandomState(s)) for s in range(5)} == {"synthdog:"}
-    pooled = _cfg(root, style="olmocr").build(_FakeTok())
-    assert pooled.user_prompt("x", np.random.RandomState(0)) == "olmocr:"
-    v2 = _cfg(root, style="olmocr", system_prompt="style_and_length_v2").build(_FakeTok())
+    assert ds.config.style == OLMOCR_STYLE == "olmocr"
+    assert {ds.user_prompt("x", np.random.RandomState(s)) for s in range(5)} == {"olmocr:"}
+    # Separable if the wrap artefacts ever need their own tag.
+    split_off = _cfg(root, style="synthdog").build(_FakeTok())
+    assert split_off.user_prompt("x", np.random.RandomState(0)) == "synthdog:"
+    v2 = _cfg(root, system_prompt="style_and_length_v2").build(_FakeTok())
     prompts = {v2.user_prompt("x" * 300, np.random.RandomState(s)) for s in range(20)}
     assert all(p.startswith("olmocr") and p.endswith(":") for p in prompts)
     assert any(" " in p for p in prompts)  # the length bucket
@@ -183,7 +188,7 @@ def test_example_layout(tmp_path):
         assert key in ex
     assert "subsegment_ids" not in ex  # one transcription per page -> single branch
     text_ids = ex["input_ids"][ex["token_type_ids"] == 0].tolist()
-    tag = tok.encode("synthdog:")
+    tag = tok.encode("olmocr:")
     assert any(text_ids[i : i + len(tag)] == tag for i in range(len(text_ids)))
     target = tok.encode(TRAIN_TEXTS[0])
     assert ex["loss_masks"].sum() == pytest.approx(len(target) + 1)  # + the EOS target

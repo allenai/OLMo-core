@@ -9,14 +9,16 @@ an ``image`` plus a ``ground_truth`` JSON string of the shape::
 
 Only ``text_sequence`` is supervision; the rest of the envelope is Donut's task wrapper.
 
-**The targets carry SynthDoG's line-wrap artefacts, which is why this source gets its own style
-tag rather than joining ``olmocr``.** The generator lays words out and breaks a word that does not
-fit at the line end without a hyphen, and the ground truth then joins the pieces with a space, so
-a page transcribes as ``"Closin g Time"`` / ``"connectio n"`` / ``"Su perm an 's"``. Measured on
-4,000 rows of the first shard, 99.8% contain at least one such split. The text is faithful to what
-the renderer drew, but it is not the convention the olmOCR-mix pages use (clean words, markdown
-tables), and pooling the two under one tag would teach two output conventions for one prompt. Set
-``style="olmocr"`` to pool them anyway.
+The prompt is the OCR transcription tag, :data:`~.olmocr.OLMOCR_STYLE` (``"olmocr:"``), the same
+one the olmOCR-mix pages use: this is the same task, so it is the same tag.
+
+One property of the corpus to keep in mind when weighting it. The targets carry SynthDoG's
+line-wrap artefacts: the generator breaks a word that does not fit at the line end without a
+hyphen, and the ground truth then joins the pieces with a space, so a page transcribes as
+``"Closin g Time"`` / ``"connectio n"`` / ``"Su perm an 's"``. Measured on 4,000 rows of the first
+shard, 99.8% contain at least one such split. That is faithful to what the renderer drew, but it
+is not the convention the olmOCR-mix pages use (clean words, markdown tables), so under the shared
+tag the model sees both. ``style`` is settable if that turns out to need separating.
 
 Layout on disk (an ``hf download`` of the repo, i.e. ``data/<split>-*.parquet``)::
 
@@ -44,6 +46,7 @@ from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
+from .olmocr import OLMOCR_STYLE
 from .paths import SYNTHDOG_EN
 from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
 from .sft_common import (
@@ -55,7 +58,6 @@ from .sft_common import (
 )
 
 __all__ = [
-    "SYNTHDOG_STYLE",
     "SYNTHDOG_SPLITS",
     "SynthDogDatasetConfig",
     "SynthDogDataset",
@@ -63,9 +65,6 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
-
-SYNTHDOG_STYLE = "synthdog"
-"""Style tag for this source; see the module docstring for why it is not ``olmocr``."""
 
 SYNTHDOG_SPLITS = ("train", "validation")
 
@@ -75,6 +74,10 @@ _COLUMNS = ["image", "ground_truth"]
 
 def extract_text_sequence(ground_truth: str) -> str:
     """The supervised text of one row's ``ground_truth`` envelope.
+
+    The whole target is the value of ``text_sequence``; everything around it is Donut's task
+    wrapper. The envelope is uniformly ``{"gt_parse": {"text_sequence": ...}}`` (checked on 6,000
+    rows spread over 12 shards), and a top-level ``text_sequence`` is accepted as a fallback.
 
     :param ground_truth: The row's raw JSON string.
 
@@ -89,10 +92,9 @@ def extract_text_sequence(ground_truth: str) -> str:
         raise ValueError(f"ground_truth is not JSON: {e}") from None
     if not isinstance(parsed, dict):
         raise ValueError(f"ground_truth is not a JSON object but {type(parsed).__name__}")
+    envelope = parsed.get("gt_parse")
     text = (
-        parsed.get("gt_parse", {}).get("text_sequence")
-        if isinstance(parsed.get("gt_parse"), dict)
-        else None
+        envelope.get("text_sequence") if isinstance(envelope, dict) else parsed.get("text_sequence")
     )
     if not isinstance(text, str):
         raise ValueError("ground_truth has no gt_parse.text_sequence string")
@@ -112,10 +114,10 @@ class SynthDogDatasetConfig(Config):
     split: str = "train"
     """``train`` (500,000 pages) or ``validation`` (500)."""
 
-    style: str = SYNTHDOG_STYLE
-    """Style tag shown in the user turn. Its own tag by default -- the targets carry SynthDoG's
-    line-wrap artefacts, see the module docstring -- but settable to ``"olmocr"`` to pool this
-    source with the real-document page transcriptions."""
+    style: str = OLMOCR_STYLE
+    """Style tag shown in the user turn: the OCR transcription tag, shared with the olmOCR-mix
+    pages because it is the same task. Settable if this corpus's line-wrap artefacts (see the
+    module docstring) ever need their own tag."""
 
     max_crops: int = 8
     max_sequence_length: Optional[int] = None
