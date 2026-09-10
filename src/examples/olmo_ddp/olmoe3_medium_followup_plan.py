@@ -29,7 +29,7 @@ def sample_offsets(size, limit=2048):
 
 def parse_test(label):
     """Optional explicit geometry suffix; never silently change a model setting."""
-    match = re.fullmatch(r"(.+)-mb([1234])-b(8|16|32)mi", label)
+    match = re.fullmatch(r"(.+)-mb([1234])-b(8|16|32|64)mi", label)
     variant, mb, batch = (
         (match[1], int(match[2]), int(match[3]) * 1024**2) if match else (label, None, None)
     )

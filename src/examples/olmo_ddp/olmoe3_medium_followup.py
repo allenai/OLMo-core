@@ -28,7 +28,7 @@ from olmo_core.train.callbacks import Callback
 DIAGNOSTIC = os.environ.get("OLMOE3_MEDIUM_DIAGNOSTIC", "0") == "1"
 MB = TEST_MB or int(os.environ.get("OLMOE3_MEDIUM_MB", "2"))
 BATCH = TEST_BATCH or int(os.environ.get("OLMOE3_MEDIUM_BATCH", "16777216"))
-if MB not in (1, 2, 3, 4) or BATCH not in (8388608, 16777216, 33554432):
+if MB not in (1, 2, 3, 4) or BATCH not in (8388608, 16777216, 33554432, 67108864):
     raise ValueError((MB, BATCH))
 MICROBATCHES = microbatch_sequence_sizes(BATCH, base.TOPOLOGY.gpus, MB)
 

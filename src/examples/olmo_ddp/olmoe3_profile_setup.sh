@@ -3,7 +3,7 @@
 set -euo pipefail
 gh auth setup-git
 uv pip install --python "$(command -v python)" --no-deps \
-  'kernel-fun @ git+https://github.com/allenai/kernel-fun.git@7a6983baf2beb4ec4d7fe914ec9f6670438af99b#subdirectory=packages/kernel-fun'
+  'kernel-fun @ git+https://github.com/allenai/kernel-fun-dev.git@7a6983baf2beb4ec4d7fe914ec9f6670438af99b#subdirectory=packages/kernel-fun'
 python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace --backend cmake
 python - <<'PY'
 import importlib.metadata
