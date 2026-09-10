@@ -15,6 +15,7 @@ extracted*; everything shared lives here:
 * :func:`truncate_example` — right-truncate a built example, refusing to cut image tokens
   or to drop every loss token.
 * :func:`get_example_with_skip` — deterministic bad-row skipping for ``__getitem__``.
+* :class:`EpochSeededExamples` — per-example RNG streams that rotate with the training epoch.
 
 Sequence assembly itself goes through
 :func:`~olmo_core.data.multimodal.message_sequence.encode_sft_example`, so these sources
@@ -32,9 +33,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from .sequence_builder import example_rng
+
 __all__ = [
     "IMAGE_PLACEHOLDER",
     "MAX_ROW_SKIP",
+    "EpochSeededExamples",
     "load_hf_dataset",
     "strip_image_placeholders",
     "count_image_placeholders",
@@ -47,6 +51,36 @@ log = logging.getLogger(__name__)
 
 MAX_ROW_SKIP = 32
 """How many following rows :func:`get_example_with_skip` tries before giving up."""
+
+
+class EpochSeededExamples:
+    """Mixin for map-style datasets whose ``__getitem__`` *samples* something.
+
+    A source that draws a subset per example — a few of an image's negatives, a render size —
+    must advance its RNG stream with the training epoch, or it redraws the same subset forever
+    and the remainder of each pool is never trained on. mm_olmo does this by folding the epoch
+    into the per-example seed (``dataset.py:70-73``); the data loader calls :meth:`set_epoch`
+    from ``reshuffle`` so the same happens here.
+
+    Requires the host class to expose ``config.seed`` and ``__len__``. The epoch is restored
+    with the loader's state, so a resumed run replays the epoch it was in.
+    """
+
+    _epoch: int = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch used to derive per-example RNG streams (called by the data loader)."""
+        self._epoch = int(epoch)
+
+    def epoch_rng(self, index: int) -> np.random.RandomState:
+        """This row's RNG stream for the current epoch."""
+        return example_rng(
+            self.config.seed,  # type: ignore[attr-defined]
+            index,
+            epoch=self._epoch,
+            dataset_len=len(self),  # type: ignore[arg-type]
+        )
+
 
 IMAGE_PLACEHOLDER = "<image>"
 """Inline marker used by these corpora to indicate where an image belongs in the prompt."""

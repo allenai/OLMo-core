@@ -28,7 +28,14 @@ from .grounding import (
 )
 from .multiple_choice_templates import template_mc_question
 
-__all__ = ["SftFormatter", "DEMO_STYLES", "IMAGE_MC_STYLES", "MULTI_IMAGE_POINTING_STYLES"]
+__all__ = [
+    "SftFormatter",
+    "DEMO_STYLES",
+    "IMAGE_MC_STYLES",
+    "MULTI_IMAGE_POINTING_STYLES",
+    "AUX_POINTING_STYLES",
+    "base_pointing_style",
+]
 
 # Subset of mm_olmo data_formatter.py DEMO_STYLES / IMAGE_MC_STYLES used by image-only-v9.
 DEMO_STYLES = frozenset(
@@ -70,6 +77,23 @@ MULTI_IMAGE_POINTING_STYLES = frozenset(
         "multi_image_count_then_point",
     }
 )
+# mm_olmo's marker styles for point sets that FAILED the VLM audit (``PixMoPointV2.audit_style``
+# / ``PixMoCountConfigV2.audit_style``, data_formatter.py:1189, 1824-1825). They render exactly
+# like their base style -- same prompt pool, same answer -- except for the style token itself,
+# so the model learns these targets are less reliable without them diluting the primary
+# ``pointing`` / ``point_count`` distributions. Not demo styles: they keep their ``"<style>:"``
+# prefix under every system-prompt family.
+AUX_POINTING_STYLES = frozenset({"aux_pointing", "aux_point_count"})
+POINTING_STYLES = frozenset(
+    {"pointing", "point_count", "point_then_count", "cosyn_point"} | AUX_POINTING_STYLES
+)
+
+
+def base_pointing_style(style: str) -> str:
+    """Strip mm_olmo's ``aux_`` marker: ``aux_point_count`` is formatted as ``point_count``
+    (``format_points``, data_formatter.py:1189)."""
+    return style[4:] if style.startswith("aux_") else style
+
 
 CAPTION_PROMPTS = (
     "Describe this image.",
@@ -112,9 +136,7 @@ SHORT_CAPTION_PROMPTS = (
     "How would you describe this image in a sentence or two?",
 )
 
-CHAIN_OF_THOUGHT_PROMPTS = (
-    "{question} Provide reasoning steps and then give the short answer.",
-)
+CHAIN_OF_THOUGHT_PROMPTS = ("{question} Provide reasoning steps and then give the short answer.",)
 
 
 def _apply_chain_of_thought_prompt(question: str) -> str:
@@ -263,7 +285,7 @@ class SftFormatter:
             label = example.get("question", "")
         point_scale = example["point_scale"] if "point_scale" in example else 100
         norm = normalize_points(xy, point_scale=point_scale, image_size=example.get("image_size"))
-        style = example.get("style", "pointing")
+        style = base_pointing_style(example.get("style", "pointing"))
         # mm_olmo's count is always len(points) (data_formatter.py:1141) — never a
         # dataset-provided "count" field, which its formatter cannot even see.
         if style in ("point_count", "point_then_count"):
@@ -443,7 +465,7 @@ class SftFormatter:
             pool = SHORT_CAPTION_PROMPTS if style == "short_caption" else CAPTION_PROMPTS
             prompt = pool[rng.randint(len(pool))]
             output = example.get("text") or example.get("caption", "")
-        elif style in ("pointing", "point_count", "point_then_count", "cosyn_point"):
+        elif style in POINTING_STYLES:
             if "question" in example:
                 prompt = example["question"]
             else:
@@ -462,9 +484,11 @@ class SftFormatter:
                         example["label"].lower() if "label" in example else example["label_cased"]
                     )
                 else:
+                    # An ``aux_*`` style draws from its base style's pool (the marker only
+                    # changes the style token).
                     pool = (
                         POINT_COUNT_PROMPTS
-                        if style in ("point_count", "point_then_count")
+                        if base_pointing_style(style) in ("point_count", "point_then_count")
                         else POINTING_PROMPTS
                     )
                     prompt = pool[rng.randint(len(pool))].format(label=label)

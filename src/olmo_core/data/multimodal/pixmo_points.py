@@ -17,7 +17,7 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -51,21 +51,33 @@ def _build_example(
     p_high_res: float = 0.0,
     shuffle_rng: np.random.RandomState | None = None,
     seed: int = 0,
+    branch_weights: Optional[Sequence[Optional[float]]] = None,
 ) -> Dict[str, np.ndarray]:
     """Preprocess the image and assemble a (possibly multi-branch) pointing example.
 
     :param branches_text: list of ``(user_question, assistant_answer)`` strings.
+    :param branch_weights: optional per-branch loss multipliers parallel to ``branches_text``
+        (``None`` entries mean 1). mm_olmo's per-message ``AssistantMessage.weight``: the
+        branch's response tokens are scaled by it on top of ``loss_token_weighting`` and
+        ``message_weight``, which stay example-wide.
     """
     import torch
 
     from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
     branches_text = list(branches_text)
+    weights = None if branch_weights is None else list(branch_weights)
+    if weights is not None and len(weights) != len(branches_text):
+        raise ValueError(
+            f"branch_weights has {len(weights)} entries for {len(branches_text)} branches"
+        )
     if len(branches_text) > 1:
         order = np.arange(len(branches_text))
         rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
         rng.shuffle(order)
         branches_text = [branches_text[i] for i in order]
+        if weights is not None:
+            weights = [weights[i] for i in order]
 
     preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
@@ -103,9 +115,35 @@ def _build_example(
     seq["loss_masks"] = apply_message_weight_to_loss_masks(
         seq["loss_masks"], subsegment_ids, mw, branch_scaling_already_applied=True
     )
+    if weights is not None:
+        seq["loss_masks"] = _apply_branch_weights(seq["loss_masks"], subsegment_ids, weights)
     seq["images"] = images_t[0].numpy()
     seq["pooled_patches_idx"] = pooling_t[0].numpy()
     return seq
+
+
+def _apply_branch_weights(
+    loss_masks: np.ndarray,
+    subsegment_ids: Optional[np.ndarray],
+    weights: Sequence[Optional[float]],
+) -> np.ndarray:
+    """Scale each branch's loss weights by its multiplier (``None`` / 1 leave it alone).
+
+    ``loss_masks`` is aligned with ``labels`` (shifted one position left), but every position
+    that carries loss for branch ``b`` -- the token before each of its response tokens, and its
+    segment-end token -- itself belongs to ``b``, so selecting by ``subsegment_ids`` is exact.
+    A single-branch example has no ``subsegment_ids``; its one weight applies to the whole mask.
+    """
+    out = loss_masks.astype(np.float32, copy=True)
+    if subsegment_ids is None:
+        w = weights[0]
+        if w is not None and w != 1.0:
+            out *= float(w)
+        return out
+    for branch_idx, w in enumerate(weights):
+        if w is not None and w != 1.0:
+            out[subsegment_ids == branch_idx] *= float(w)
+    return out
 
 
 def _load_split(path: str, split: str):

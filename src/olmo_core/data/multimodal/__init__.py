@@ -30,6 +30,12 @@ from .mmfinereason import (
     MMFineReasonDatasetConfig,
     extract_answer_text,
 )
+from .ocr_caption_tars import (
+    OcrCaptionTarsDataset,
+    OcrCaptionTarsDatasetConfig,
+    TarShardIndex,
+)
+from .olmocr import OlmOcrMixDataset, OlmOcrMixDatasetConfig
 from .packing import pack_examples
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
 from .pixmo_points import (
@@ -40,6 +46,12 @@ from .pixmo_points import (
     PixMoPointsDataset,
     PixMoPointsDatasetConfig,
 )
+from .pixmo_points_v2 import (
+    PixMoCountV2Dataset,
+    PixMoCountV2DatasetConfig,
+    PixMoPointsV2Dataset,
+    PixMoPointsV2DatasetConfig,
+)
 from .sequence_builder import (
     ATTEND_ALL_SUBSEGMENT_ID,
     build_branched_sequence,
@@ -48,7 +60,10 @@ from .sequence_builder import (
 from .paths import (
     ACADEMIC_DATASETS,
     MOLMO_DATA_DIR,
+    OE_ENCODER_DATA,
+    OLMOCR_MIX,
     PIXMO_DATASETS,
+    PIXMO_POINTS_V2,
     TORCH_DATASETS,
     TULU4_DATA,
 )
@@ -77,6 +92,15 @@ __all__ = [
     "PixMoCountDatasetConfig",
     "CoSynPointDataset",
     "CoSynPointDatasetConfig",
+    "PixMoPointsV2Dataset",
+    "PixMoPointsV2DatasetConfig",
+    "PixMoCountV2Dataset",
+    "PixMoCountV2DatasetConfig",
+    "OlmOcrMixDataset",
+    "OlmOcrMixDatasetConfig",
+    "OcrCaptionTarsDataset",
+    "OcrCaptionTarsDatasetConfig",
+    "TarShardIndex",
     "Tulu4Dataset",
     "Tulu4DatasetConfig",
     "AcademicDataset",
@@ -92,8 +116,11 @@ __all__ = [
     "SubMixture",
     "compute_flat_mixture_weights",
     "PIXMO_DATASETS",
+    "PIXMO_POINTS_V2",
     "TULU4_DATA",
     "ACADEMIC_DATASETS",
+    "OLMOCR_MIX",
+    "OE_ENCODER_DATA",
     "MOLMO_DATA_DIR",
     "TORCH_DATASETS",
     "MultimodalCollator",

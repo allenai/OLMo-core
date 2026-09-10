@@ -33,15 +33,25 @@ ATTEND_ALL_SUBSEGMENT_ID = 10000
 LOSS_TOKEN_WEIGHTINGS = ("none", "root_subsegments", "root_subsegments_root_tokens")
 
 
-def example_rng(seed: int, index: int) -> np.random.RandomState:
-    """Per-example rng stream (mm_olmo ``dataset.py:68``, epoch 0).
+def example_rng(
+    seed: int, index: int, *, epoch: int = 0, dataset_len: int = 0
+) -> np.random.RandomState:
+    """Per-example rng stream (mm_olmo ``dataset.py:70-73``).
 
-    mm_olmo derives one stream per example as ``seed * 195172 + index`` (mod 2**32-1)
-    and threads it through the dataset's ``format_example`` AND the formatter, so all
-    of an example's draws are sequential. Using the same derivation keeps our draws
+    mm_olmo derives one stream per example as ``seed * 195172 + index + len(dataset) * epoch``
+    (mod 2**32-1) and threads it through the dataset's ``format_example`` AND the formatter, so
+    all of an example's draws are sequential. Using the same derivation keeps our draws
     alignable with mm_olmo artifacts at every index (not just index 0).
+
+    :param epoch: Training epoch. The default of 0 reproduces the single-epoch stream, so a
+        caller that does not track epochs is unaffected. Sources whose ``__getitem__`` *samples*
+        (a negative pool, a render size) must pass it, or every epoch redraws the same choice
+        and the un-sampled remainder is never trained on; see
+        :class:`~olmo_core.data.multimodal.sft_common.EpochSeededExamples`.
+    :param dataset_len: Number of rows, the stride mm_olmo advances the stream by per epoch.
+        Ignored when ``epoch`` is 0.
     """
-    return np.random.RandomState((seed * 195172 + index) % (2**32 - 1))
+    return np.random.RandomState((seed * 195172 + index + dataset_len * epoch) % (2**32 - 1))
 
 
 def build_packed_sequence(
@@ -240,11 +250,7 @@ def build_branched_sequence(
 
     def _as_segments(branch):
         """Normalize a branch to a list of (context, response) turn segments."""
-        if (
-            len(branch) == 2
-            and len(branch[0]) > 0
-            and isinstance(branch[0][0], (int, np.integer))
-        ):
+        if len(branch) == 2 and len(branch[0]) > 0 and isinstance(branch[0][0], (int, np.integer)):
             return [branch]
         return list(branch)
 
