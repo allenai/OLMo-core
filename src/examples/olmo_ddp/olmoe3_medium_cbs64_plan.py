@@ -11,9 +11,8 @@ ROOT = MOUNT / "production-cbs-medium" / CAMPAIGN
 CONTROL = MOUNT / "uploader/control"
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 WORKSPACE = "ai2/olmo3p5-training"
-# Triton rejected batch tasks (maxTaskTimeout=0); retain the original queue
-# until an alternative batch-capable cluster is selected.
-CPU_CLUSTER = "ai2/rhea"
+# CPU-only, Weka-enabled, and batch-capable; consumes no GPU allocation.
+CPU_CLUSTER = "ai2/phobos"
 BUCKET = "allenai/olmo-checkpoint-uploader-pilot-20260902-jm01"
 UPLOADER = "01M1YTRJV16A5YC300SEZAW6D1"
 PARENT_RUN = "olmoe3-medium-cbs-20260907-r3-16mi"

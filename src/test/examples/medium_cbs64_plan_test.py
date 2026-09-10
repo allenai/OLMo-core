@@ -85,7 +85,7 @@ def test_config_gate_compiles():
     cpu = template()
     cpu["tasks"][0]["resources"] = {"cpuCount": 4, "memory": "16 GiB"}
     spec = config_spec(cpu, "a" * 40)
-    assert spec["tasks"][0]["constraints"] == {"cluster": ["ai2/rhea"]}
+    assert spec["tasks"][0]["constraints"] == {"cluster": ["ai2/phobos"]}
     assert not spec["tasks"][0]["resources"].get("gpuCount")
     assert spec["tasks"][0]["context"]["minRuntime"] == "0s"
     compile(spec["tasks"][0]["arguments"][-1], "config-gate", "exec")
