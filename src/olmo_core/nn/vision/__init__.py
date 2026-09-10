@@ -23,8 +23,11 @@ from .image_vit import (
 )
 from .molmo2_image_processor import preprocess_image_molmo2
 from .molmo2_loader import (
+    VISION_BACKBONE_PREFIX,
+    canonicalize_vision_keys,
     molmo2_hf_state_dict_to_multimodal_lm,
     multimodal_lm_state_dict_to_hf,
+    strip_vision_backbone_prefix,
 )
 from .multimodal import MultimodalLM, MultimodalLMConfig
 
@@ -45,5 +48,9 @@ __all__ = [
     "MultimodalLMConfig",
     "MultimodalLM",
     "molmo2_hf_state_dict_to_multimodal_lm",
+    "multimodal_lm_state_dict_to_hf",
+    "VISION_BACKBONE_PREFIX",
+    "canonicalize_vision_keys",
+    "strip_vision_backbone_prefix",
     "preprocess_image_molmo2",
 ]

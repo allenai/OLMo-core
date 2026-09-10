@@ -315,7 +315,9 @@ def test_patch_embedding_permute_is_spatial_to_c_first():
     hf_sd = _synthetic_hf_state_dict(cfg)
     hf_sd["model.vision_backbone.image_vit.patch_embedding.weight"] = hf_patch_w
     converted = molmo2_hf_state_dict_to_multimodal_lm(hf_sd, cfg)
-    our_w = converted["vision.patch_embedding.weight"]
+    # Converter output is keyed for the model's registered names, i.e. the vision modules
+    # live under `vision_backbone.` (see `canonicalize_vision_keys`).
+    our_w = converted["vision_backbone.vision.patch_embedding.weight"]
     # In our C-first layout, (c, kh=0, kw=0) sits at flat index c*(p*p) + 0*p + 0 = c*p*p.
     for d in range(D):
         c = d % 3

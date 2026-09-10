@@ -752,8 +752,39 @@ def test_finevision_uses_hub_requires_no_dataset_path():
         FineVisionDatasetConfig(hub_repo=FINEVISION_HUB_REPO, config_name="arxivqa").uses_hub()
         is True
     )
-    assert FineVisionDatasetConfig(dataset_path="/local", hub_repo=FINEVISION_HUB_REPO).uses_hub() is False
+    assert (
+        FineVisionDatasetConfig(dataset_path="/local", hub_repo=FINEVISION_HUB_REPO).uses_hub()
+        is False
+    )
     assert FineVisionDatasetConfig(config_name="arxivqa").uses_hub() is False
+
+
+def test_finevision_matches_mm_olmo_supervision_defaults():
+    """Pin the two mm_olmo-parity supervision defaults so they can't flip back silently.
+
+    Both changed from OLMo-core's earlier behaviour (single sequential branch +
+    ``root_subsegments``) and both apply to *every* FineVision source, including the
+    opt-in v9 extras and :class:`VisualWebInstructDatasetConfig` — not only the v10
+    sources. Adopting mm_olmo's semantics everywhere is deliberate for this port; the
+    behavioural consequences are asserted by ``test_finevision_dataset_end_to_end``
+    (loss-mask sums of ``4.0`` single-turn and ``6.265986`` two-turn) — verified to fail
+    if ``_build`` is reverted to passing ``[turns]``, so the structural half of the change
+    is guarded there rather than by brittle source inspection here.
+    """
+    from olmo_core.data.multimodal import (
+        FineVisionDatasetConfig,
+        VisualWebInstructDatasetConfig,
+    )
+    from olmo_core.data.multimodal.finevision import build_finevision_v10_config
+
+    assert FineVisionDatasetConfig().loss_token_weighting == "root_subsegments_root_tokens"
+
+    # The v9-facing subclass and the v10 builder must not diverge from the base default.
+    assert VisualWebInstructDatasetConfig().loss_token_weighting == "root_subsegments_root_tokens"
+    assert (
+        build_finevision_v10_config("arxivqa").loss_token_weighting
+        == "root_subsegments_root_tokens"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +845,10 @@ def test_dynamath_loads_local_data_and_formats_examples(dynamath_data):
 
 
 def test_dynamath_variant_from_name_and_missing_path(tmp_path, monkeypatch):
-    from olmo_core.data.multimodal import DynaMathDatasetConfig, dynamath_variant_from_name
+    from olmo_core.data.multimodal import (
+        DynaMathDatasetConfig,
+        dynamath_variant_from_name,
+    )
 
     assert dynamath_variant_from_name("dynamath_seed_42_999") == "seed_42_999"
     with pytest.raises(ValueError, match="Not a DynaMath"):

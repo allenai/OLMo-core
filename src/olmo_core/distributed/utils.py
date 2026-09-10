@@ -32,26 +32,6 @@ TORCH_MASTER_PORT_ENV_VAR = "MASTER_PORT"
 log = logging.getLogger(__name__)
 
 
-def fsdp_reshard_after_forward(*, pp_enabled: bool = False) -> bool:
-    """Whether FSDP should reshard parameters after each forward.
-
-    Set ``MM_FSDP_RESHARD_AFTER_FORWARD=0`` to keep parameters unsharded across
-    microbatches within a step (ship-stack default for stage-2 throughput).
-    """
-    if os.environ.get("MM_FSDP_RESHARD_AFTER_FORWARD", "1").lower() in ("0", "false", "no"):
-        return False
-    return not pp_enabled
-
-
-def fsdp_nest_connector() -> bool:
-    """Whether ViT + connector share one FSDP subtree (mm_olmo ``vision_backbone`` layout).
-
-    Default is True. Set ``MM_FSDP_NEST_CONNECTOR=0`` to keep a separate
-    ``fully_shard(connector)`` unit (legacy OLMo-core topology) for A/B tests.
-    """
-    return os.environ.get("MM_FSDP_NEST_CONNECTOR", "1").lower() not in ("0", "false", "no")
-
-
 def log_fsdp_topology(model: torch.nn.Module, *, label: str = "model") -> None:
     """Log FSDP2 unit count and per-unit parameter totals (rank 0 only)."""
     if not dist.is_available() or not dist.is_initialized() or dist.get_rank() != 0:

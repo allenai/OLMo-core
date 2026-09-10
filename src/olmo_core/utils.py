@@ -26,7 +26,13 @@ from rich.traceback import Traceback
 from torch.utils.flop_counter import FlopCounterMode
 
 from .config import StrEnum
-from .exceptions import OLMoCLIError, OLMoEnvironmentError, OLMoError, OLMoThreadError
+from .exceptions import (
+    OLMoCLIError,
+    OLMoConfigurationError,
+    OLMoEnvironmentError,
+    OLMoError,
+    OLMoThreadError,
+)
 
 OLMO_NUM_THREADS_ENV_VAR = "OLMO_NUM_THREADS"
 LOG_FILTER_TYPE_ENV_VAR = "LOG_FILTER_TYPE"
@@ -845,3 +851,44 @@ def record_flops(
     if istrain:
         model.train()
     return total_flops
+
+
+def env_bool(name: str, default: bool) -> bool:
+    """Read a boolean from the environment, for use as a *config field default*.
+
+    Exists so tuning knobs that were historically environment variables keep working from
+    existing launch scripts while the value itself lives on a ``Config`` — resolved once
+    at config construction, so it is serialized into the saved config, overridable with
+    ``--field=value``, and type-checked. Do not call this from a hot path or to read a
+    knob directly; read the config field instead.
+
+    Accepts ``0/false/no`` and ``1/true/yes`` case-insensitively; anything else raises so
+    a typo is not silently interpreted as the default.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in ("0", "false", "no"):
+        return False
+    if value in ("1", "true", "yes"):
+        return True
+    raise OLMoConfigurationError(
+        f"environment variable {name}={raw!r} is not a boolean (use 0/1, false/true, no/yes)"
+    )
+
+
+def env_int(name: str, default: int) -> int:
+    """Read an integer from the environment, for use as a *config field default*.
+
+    See :func:`env_bool` for why this exists and when not to use it.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError as exc:
+        raise OLMoConfigurationError(
+            f"environment variable {name}={raw!r} is not an integer"
+        ) from exc
