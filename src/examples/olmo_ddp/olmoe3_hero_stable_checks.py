@@ -114,7 +114,7 @@ class Checks(unittest.TestCase):
         with self.assertRaises(ValueError):
             worker.parent("decay")
 
-    def test_cpu_controller_omits_all_resources_and_results(self):
+    def test_cpu_controller_omits_all_resources_and_uses_empty_results(self):
         template = {
             "tasks": [
                 {
@@ -127,7 +127,7 @@ class Checks(unittest.TestCase):
         for check in (True, False):
             task = controller_spec(template, "a" * 40, check=check)["tasks"][0]
             self.assertNotIn("resources", task)
-            self.assertNotIn("result", task)
+            self.assertEqual(task["result"], {"path": "/noop-results"})
             self.assertEqual(task["constraints"], {"cluster": ["ai2/phobos"]})
             self.assertEqual(task["context"]["priority"], "urgent")
 

@@ -18,7 +18,9 @@ def controller_spec(template, commit, *, check=False):
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
     task.pop("resources", None)
-    task.pop("result", None)
+    # Gantry requires BEAKER_RESULT_DATASET_ID. Register an empty directory;
+    # no checkpoint, state, or evaluation output is ever written here.
+    task["result"] = {"path": "/noop-results"}
     task["name"] = "stable-eval-preflight" if check else "stable-eval-watcher"
     task["constraints"] = {"cluster": ["ai2/phobos"]}
     task["context"] = dict(priority="urgent", minRuntime="0s", autoResume=not check)
