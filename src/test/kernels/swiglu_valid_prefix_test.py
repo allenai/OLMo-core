@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn.functional as F
 
@@ -147,3 +148,28 @@ def test_swiglu_valid_prefix_accepts_device_start_offset():
         atol=0.0,
         rtol=0.0,
     )
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("valid_rows", [0, 3, 6])
+def test_scoring_swiglu_preserves_eager_rounding(dtype, valid_rows):
+    # Stable finite values expose the missing intermediate BF16/FP16 rounding
+    # without relying on a broad tolerance that hides the original discrepancy.
+    up = torch.tensor([1.5, -2.75, 0.25, 16.0], device="cuda", dtype=dtype)
+    gate = torch.tensor([1.0, -1.0, 0.5, -2.0, 3.0, 0.125], device="cuda", dtype=dtype)
+    x = torch.cat((up.expand(8, -1), gate.repeat(2)[:8, None].expand(-1, 4)), dim=-1).contiguous()
+    out = torch.full((8, 4), 77.0, device="cuda", dtype=dtype)
+    start = torch.tensor(1, device="cuda", dtype=torch.long)
+    count = torch.tensor(valid_rows, device="cuda", dtype=torch.long)
+    result = swiglu_valid_prefix(x, count, start=start, out=out, match_eager_rounding=True)
+    eager = x[1 : 1 + valid_rows, :4] * F.silu(x[1 : 1 + valid_rows, 4:])
+    torch.testing.assert_close(
+        result[1 : 1 + valid_rows], eager, rtol=1e-6 if dtype == torch.float32 else 0, atol=0
+    )
+    assert torch.equal(result[:1], torch.full_like(result[:1], 77.0))
+    assert torch.equal(result[1 + valid_rows :], torch.full_like(result[1 + valid_rows :], 77.0))
+    if valid_rows and dtype == torch.bfloat16:
+        fused = swiglu_valid_prefix(x, count, start=start)
+        assert not torch.equal(fused[1 : 1 + valid_rows], eager)

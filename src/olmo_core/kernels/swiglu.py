@@ -39,6 +39,7 @@ if triton is not None:
         ROW_PROGRAMS: tl.constexpr,
         HAS_START_TENSOR: tl.constexpr,
         START_ROW: tl.constexpr,
+        MATCH_EAGER_ROUNDING: tl.constexpr,
     ):
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
@@ -58,7 +59,13 @@ if triton is not None:
             gate_offsets = row_idx * x_stride_0 + (col_idx + hidden) * x_stride_1
             up = tl.load(x_ptr + up_offsets, mask=mask, other=0.0).to(tl.float32)
             gate = tl.load(x_ptr + gate_offsets, mask=mask, other=0.0).to(tl.float32)
-            y = up * gate * tl.sigmoid(gate)
+            if MATCH_EAGER_ROUNDING:
+                # PyTorch's separate silu and multiply materialize silu in the
+                # input dtype. Scoring must retain that training-time rounding.
+                silu = (gate * tl.sigmoid(gate)).to(x_ptr.dtype.element_ty)
+                y = up * silu.to(tl.float32)
+            else:
+                y = up * gate * tl.sigmoid(gate)
 
             out_offsets = row_idx * out_stride_0 + col_idx * out_stride_1
             tl.store(out_ptr + out_offsets, y, mask=mask)
@@ -169,6 +176,7 @@ def swiglu_valid_prefix(
     *,
     start: torch.Tensor | int | None = None,
     out: Optional[torch.Tensor] = None,
+    match_eager_rounding: bool = False,
     block_m: int = _VALID_PREFIX_SWIGLU_BLOCK_M,
     block_n: int = _VALID_PREFIX_SWIGLU_BLOCK_N,
     row_programs: int = _VALID_PREFIX_SWIGLU_ROW_PROGRAMS,
@@ -182,7 +190,10 @@ def swiglu_valid_prefix(
     valid-row count without synchronizing to the host. ``start`` can also be a
     device scalar. The returned/output tensor has capacity shape
     ``[x.shape[0], x.shape[1] // 2]``; rows outside the requested range are
-    intentionally left untouched.
+    intentionally left untouched. With ``match_eager_rounding=True``, the CUDA
+    kernel rounds ``silu(gate)`` to the input dtype before multiplication, as
+    the eager training expression does. The default preserves the fused
+    arithmetic used by explicit fused forward/backward callers.
     """
     if x.ndim != 2:
         raise ValueError(f"Expected x rank-2 [M, 2H], got {tuple(x.shape)}")
@@ -261,6 +272,7 @@ def swiglu_valid_prefix(
         ROW_PROGRAMS=int(row_grid),
         HAS_START_TENSOR=has_start_tensor,
         START_ROW=start_row,
+        MATCH_EAGER_ROUNDING=match_eager_rounding,
         num_warps=int(num_warps),
         num_stages=int(num_stages),
     )

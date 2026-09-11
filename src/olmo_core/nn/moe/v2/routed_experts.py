@@ -1122,7 +1122,9 @@ class RoutedExperts(nn.Module):
                 and num_elements.device == up_gate.device
                 and not torch.is_grad_enabled()
             ):
-                return swiglu_valid_prefix(up_gate, num_elements, start=start)
+                return swiglu_valid_prefix(
+                    up_gate, num_elements, start=start, match_eager_rounding=True
+                )
             up, gate = up_gate.chunk(2, dim=-1)
             h = up * F.silu(gate)  # -> (BS, H)
         elif self.activation == ExpertActivation.gpt_oss_swiglu:
