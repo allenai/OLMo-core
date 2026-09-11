@@ -11,7 +11,7 @@ from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.dion import DionConfig
 from olmo_core.testing import DEVICES, requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import requires_compute_capability, requires_dion
+from olmo_core.testing.utils import requires_dion
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
@@ -67,15 +67,6 @@ def test_dion(device: torch.device, tmp_path):
 
 
 def _run_hsdp_dion(shard_degree: int, num_replicas: int):
-    # TODO(dion torch-2.13): remove once dion fixes its compiled kernels for torch 2.13.
-    # On torch 2.13, dion's compiled optimizer kernel trips PyTorch's static Triton launcher
-    # ("CUDA driver error: invalid argument"). Disable it so Inductor falls back to the dynamic
-    # launcher. Set the config attribute (read at compile time) rather than the
-    # TORCHINDUCTOR_STATIC_CUDA_LAUNCHER env var, which Inductor reads once at torch import — before
-    # this worker runs — so setting the env (here or in the parent) is a no-op. dion applied an
-    # analogous fix for NorDion2 upstream (PR #117).
-    torch._inductor.config.use_static_cuda_launcher = False
-
     device = get_default_device()
 
     # HSDP Transformer
@@ -104,28 +95,21 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
 
 @requires_dion
 @requires_multi_gpu
-# TODO(dion A100): dion HSDP crashes on A100 (sm_80) under torch 2.13 (SIGABRT / CUDA driver error)
-# even with the static-launcher workaround that fixes it on Hopper. Skip on cc < 9 for now; revisit
-# once the A100-specific dion/torch-2.13 issue is understood or fixed upstream.
-@requires_compute_capability(min_cc=9)
+# TODO(dion torch-2.13): remove once dion is torch-2.13-clean upstream. dion HSDP is broken on
+# torch 2.13 in multiple ways: the replica-only path (num_replicas > 1) deterministically feeds a
+# CPU tensor into a Triton kernel in its adamw/scalar update ("Pointer argument cannot be accessed
+# from Triton"), and the sharded path intermittently hangs on an ALLREDUCE (NCCL watchdog timeout ->
+# SIGABRT). It also crashes on A100 under torch 2.13. Skip the whole test rather than xfail, since a
+# flaky hang can't be cleanly xfailed (it would burn the 120s NCCL timeout and flip run-to-run).
+@pytest.mark.skipif(
+    parse_version(torch.__version__) >= parse_version("2.13"),
+    reason="dion HSDP is broken on torch>=2.13 (CPU-tensor Triton error + flaky ALLREDUCE hang)",
+)
 @pytest.mark.parametrize(
     "shard_degree,num_replicas",
     [
         pytest.param(2, 1, id="shard2_replica1"),
-        pytest.param(
-            1,
-            2,
-            id="shard1_replica2",
-            marks=pytest.mark.xfail(
-                parse_version(torch.__version__) >= parse_version("2.13"),
-                # TODO(dion torch-2.13): remove once dion fixes this upstream. With the static
-                # launcher disabled, dion's replica-only (num_replicas > 1) path feeds a CPU tensor
-                # into a Triton kernel in its adamw/scalar update ("Pointer argument cannot be
-                # accessed from Triton"). The sharded case (shard2_replica1) is unaffected.
-                reason="dion adamw/scalar path passes a CPU tensor to Triton on torch>=2.13",
-                strict=False,
-            ),
-        ),
+        pytest.param(1, 2, id="shard1_replica2"),
     ],
 )
 def test_hsdp_dion(shard_degree: int, num_replicas: int):
