@@ -61,6 +61,15 @@ class ProfilerCallback(Callback):
     """
     Set to ``False`` to disable profiling.
     """
+    export_chrome_trace: bool = True
+    """
+    Whether to write the chrome trace to the save folder.
+
+    Set to ``False`` to keep only the logged op tables. The export serializes and gzips
+    the whole trace, which on a large multimodal step can take long enough to look like a
+    hang and has stalled profiling runs; the op tables alone are often all that is needed
+    to rank bottlenecks.
+    """
     ranks: str | None = None
     """
     Ranks to profile. Can be:
@@ -178,6 +187,10 @@ class ProfilerCallback(Callback):
         log.info(f"Profile by total GPU time at step {self._profiler.step_num}:\n{output}")
         output = self._profiler.key_averages().table(sort_by="self_cpu_time_total", row_limit=32)
         log.info(f"Profile by total CPU time at step {self._profiler.step_num}:\n{output}")
+
+        if not self.export_chrome_trace:
+            log.info("Skipping chrome trace export (export_chrome_trace=False).")
+            return
 
         log.info("Saving chrome trace from profiler...")
         output_dir = self.trainer.work_dir / "profiler"
