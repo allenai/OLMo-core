@@ -1421,8 +1421,6 @@ class OLMoDDPTrainModule(TrainModule):
 
         torch.cuda.empty_cache()
 
-        return
-
         if profile:
             torch.cuda.synchronize()
             log.info(
