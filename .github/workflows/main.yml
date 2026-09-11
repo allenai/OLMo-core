@@ -197,7 +197,7 @@ jobs:
           - name: Test attention (GPU)
             image: *gpu_test_image
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/attention*
@@ -239,12 +239,13 @@ jobs:
           # runs on the RMA image and covers the MoE kernels plus the fused MoE-v2 GPU tests
           # (src/test/nn/ddp for the block/model, src/test/nn/moe/v2 for the EP primitives).
           - name: Test MoE kernels (GPU)
-            image: akshitab/olmo-core-tch2130cu129-rma-2026-09-10
+            image: akshitab/olmo-core-tch2130cu129-rma-2026-09-11
             gpus: 2
-            # The RMA image's kernels are built for sm_90+ (grouped_gemm has no Blackwell/sm_100
-            # build; symm_mem_vdev2d needs sm_90+), so pin to h100 — on a100/b200 grouped_gemm
-            # fails with "Grouped GEMM execution not possible with HW".
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres
+            # Runs on h100/b200 (not a100, which lacks the sm_90+ kernels). NOTE: the v1 grouped_gemm
+            # CUTLASS kernels have no Blackwell/sm_100 build, so any grouped_gemm test that isn't
+            # gated to skip off sm_90 will fail on b200 with "Grouped GEMM execution not possible
+            # with HW"; the symm_mem_vdev2d kernels build and run on sm_100 as of the block-size fix.
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/titan
             # Build the NVSHMEM symm_mem_vdev2d ext (compiled out-of-tree; needs an image with
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
