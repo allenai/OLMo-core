@@ -8,17 +8,26 @@ layouts retain the default planner. No tensor data or global PyTorch state is ch
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import torch
-from torch.distributed.checkpoint.default_planner import create_default_local_save_plan
+from torch.distributed.checkpoint.default_planner import (
+    DefaultLoadPlanner,
+    create_default_local_load_plan,
+    create_default_local_save_plan,
+)
 from torch.distributed.checkpoint.metadata import (
     ChunkStorageMetadata,
     MetadataIndex,
     TensorProperties,
+    TensorStorageMetadata,
 )
 from torch.distributed.checkpoint.planner import (
+    LoadPlan,
     SavePlan,
     TensorWriteData,
     WriteItem,
     WriteItemType,
+)
+from torch.distributed.checkpoint.planner_helpers import (
+    create_read_items_for_chunk_list,
 )
 from torch.distributed.tensor import DTensor, Replicate, Shard
 from torch.distributed.tensor.placement_types import Placement
@@ -90,3 +99,48 @@ def create_contiguous_local_save_plan(state_dict: Dict[str, Any], is_coordinator
                 continue
         items.extend(create_default_local_save_plan({name: value}, is_coordinator).items)
     return SavePlan(items)
+
+
+class ContiguousLoadPlanner(DefaultLoadPlanner):
+    """Use the same bounded shard metadata for reads, retaining DCP's resharding algorithm."""
+
+    def create_local_plan(self) -> LoadPlan:
+        # Let PyTorch handle missing keys and legacy flattened-key migration unchanged.
+        if (
+            self.metadata is None
+            or not self.state_dict.keys() <= self.metadata.state_dict_metadata.keys()
+        ):
+            return super().create_local_plan()
+        requests = []
+        for name, value in self.state_dict.items():
+            stored = self.metadata.state_dict_metadata[name]
+            if type(value) is DTensor and isinstance(stored, TensorStorageMetadata):
+                coordinate = value.device_mesh.get_coordinate()
+                if coordinate is None:
+                    continue
+                if stored.size != value.size():
+                    raise ValueError(
+                        f"Size mismatch between saved {stored.size} and current: {value.size()} for {name}"
+                    )
+                metadata = contiguous_shard_metadata(
+                    value.shape, value.device_mesh.shape, coordinate, value.placements
+                )
+                local = value.to_local()
+                if metadata is not None and type(local) is torch.Tensor:
+                    sizes, offsets = map(torch.Size, metadata)
+                    if sizes != local.size():
+                        raise ValueError(
+                            f"Checkpoint shard shape mismatch for {name}: {sizes} != {local.size()}"
+                        )
+                    requests.extend(
+                        create_read_items_for_chunk_list(
+                            name, stored, [ChunkStorageMetadata(offsets=offsets, sizes=sizes)]
+                        )
+                    )
+                    continue
+            requests.extend(
+                create_default_local_load_plan(
+                    {name: value}, self.metadata, not self.allow_partial_load
+                ).items
+            )
+        return LoadPlan(requests)

@@ -85,6 +85,7 @@ def _run_reshard(save_root, ep_degree, save_options):
             Path(save_root) / "ep1",
             load_optim_state=True,
             reset_optimizer_states_on_load=False,
+            constant_memory_planning=save_options.get("constant_memory_planning", False),
         )
         expert_names = {
             name

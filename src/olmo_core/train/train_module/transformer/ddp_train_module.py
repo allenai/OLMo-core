@@ -1235,8 +1235,24 @@ class OLMoDDPTrainModule(TrainModule):
         thread_count: Optional[int] = None,
         load_optim_state: Optional[bool] = True,
         reset_optimizer_states_on_load: Optional[bool] = None,
+        constant_memory_planning: bool = False,
+        profile: bool = False,
     ):
         from olmo_core.io import normalize_path
+
+        if profile:
+            torch.cuda.synchronize()
+        load_start = time.perf_counter()
+        load_pass_seconds = []
+
+        def load_pass(*args, **kwargs):
+            if profile:
+                torch.cuda.synchronize()
+            phase_start = time.perf_counter()
+            dist_cp.state_dict_loader.load(*args, **kwargs)
+            if profile:
+                torch.cuda.synchronize()
+            load_pass_seconds.append(time.perf_counter() - phase_start)
 
         dir = normalize_path(dir)
         reader = RemoteFileSystemReader(
@@ -1248,11 +1264,14 @@ class OLMoDDPTrainModule(TrainModule):
 
         if self.eval_only:
             sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-            dist_cp.state_dict_loader.load(
+            load_pass(
                 sd_to_load,
                 checkpoint_id=dir,
                 storage_reader=reader,
                 process_group=process_group,
+                planner=(
+                    contiguous_planner.ContiguousLoadPlanner() if constant_memory_planning else None
+                ),
             )
         else:
             optim = self._require_optimizer()
@@ -1277,11 +1296,16 @@ class OLMoDDPTrainModule(TrainModule):
                     "Skipping optimizer state during checkpoint load; loading model weights directly"
                 )
                 sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-                dist_cp.state_dict_loader.load(
+                load_pass(
                     sd_to_load,
                     checkpoint_id=dir,
                     storage_reader=reader,
                     process_group=process_group,
+                    planner=(
+                        contiguous_planner.ContiguousLoadPlanner()
+                        if constant_memory_planning
+                        else None
+                    ),
                 )
                 optim._copy_model_params_to_main_params()
                 optim._copy_main_params_to_mxfp8_weights()
@@ -1352,12 +1376,16 @@ class OLMoDDPTrainModule(TrainModule):
                         if name.endswith((".q_norm.weight", ".k_norm.weight")) and param.ndim == 2
                     }
                     expansions = prepare_qk_expansion(sd_to_load, metadata, gain_shapes)
-                dist_cp.state_dict_loader.load(
+                load_pass(
                     sd_to_load,
                     checkpoint_id=dir,
                     storage_reader=reader,
                     process_group=process_group,
-                    # planner=FlatLoadPlanner(),
+                    planner=(
+                        contiguous_planner.ContiguousLoadPlanner()
+                        if constant_memory_planning
+                        else None
+                    ),
                 )
 
                 finish_qk_expansion(sd_to_load, expansions)
@@ -1381,16 +1409,34 @@ class OLMoDDPTrainModule(TrainModule):
             buffer_reader = RemoteFileSystemReader(
                 dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
             )
-            dist_cp.state_dict_loader.load(
+            load_pass(
                 buffers_to_load,
                 checkpoint_id=dir,
                 storage_reader=buffer_reader,
                 process_group=process_group,
+                planner=(
+                    contiguous_planner.ContiguousLoadPlanner() if constant_memory_planning else None
+                ),
             )
 
         torch.cuda.empty_cache()
 
         return
+
+        if profile:
+            torch.cuda.synchronize()
+            log.info(
+                "checkpoint_load %s",
+                json.dumps(
+                    {
+                        "total_seconds": time.perf_counter() - load_start,
+                        "distributed_load_seconds": sum(load_pass_seconds),
+                        "load_pass_seconds": load_pass_seconds,
+                        "constant_memory_planning": constant_memory_planning,
+                    },
+                    sort_keys=True,
+                ),
+            )
 
     def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
         model_state: Dict[str, Any] = {}

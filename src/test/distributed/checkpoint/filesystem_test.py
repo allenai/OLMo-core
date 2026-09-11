@@ -11,6 +11,7 @@ from torch.distributed.tensor import (
     init_device_mesh,
 )
 
+from olmo_core.distributed.checkpoint.contiguous_planner import ContiguousLoadPlanner
 from olmo_core.distributed.checkpoint.filesystem import (
     RemoteFileSystemReader,
     RemoteFileSystemWriter,
@@ -63,24 +64,27 @@ def run_save_and_load_with_dtensors(
         ),
     )
 
-    # Now create new sharded copies with a different sharding strategy and load the checkpoint.
-    x_loaded = distribute_tensor(torch.zeros_like(x_full), mesh, [Shard(dim=1)])
-    y_loaded = distribute_tensor(torch.zeros_like(y_full), mesh, [Shard(dim=1)])
-    replicated_loaded = distribute_tensor(
-        torch.zeros_like(replicated.to_local()), mesh, [Replicate()]
-    )
-    distcp.state_dict_loader.load(
-        {"x": x_loaded, "y": y_loaded, "replicated": replicated_loaded},
-        checkpoint_id=dir,
-        storage_reader=RemoteFileSystemReader(dir, thread_count=thread_count),
-    )
+    # Both legacy and bounded readers must consume either save policy.
+    for load_planner in (None, ContiguousLoadPlanner()):
+        # Now create new sharded copies with a different sharding strategy and load the checkpoint.
+        x_loaded = distribute_tensor(torch.zeros_like(x_full), mesh, [Shard(dim=1)])
+        y_loaded = distribute_tensor(torch.zeros_like(y_full), mesh, [Shard(dim=1)])
+        replicated_loaded = distribute_tensor(
+            torch.zeros_like(replicated.to_local()), mesh, [Replicate()]
+        )
+        distcp.state_dict_loader.load(
+            {"x": x_loaded, "y": y_loaded, "replicated": replicated_loaded},
+            checkpoint_id=dir,
+            storage_reader=RemoteFileSystemReader(dir, thread_count=thread_count),
+            planner=load_planner,
+        )
 
-    # Make sure the loaded tensors match the original tensors.
-    x_full_loaded = x_loaded.full_tensor()
-    y_full_loaded = y_loaded.full_tensor()
-    torch.testing.assert_close(x_full, x_full_loaded)
-    torch.testing.assert_close(y_full, y_full_loaded, rtol=0, atol=0)
-    torch.testing.assert_close(replicated, replicated_loaded, rtol=0, atol=0)
+        # Make sure the loaded tensors match the original tensors.
+        x_full_loaded = x_loaded.full_tensor()
+        y_full_loaded = y_loaded.full_tensor()
+        torch.testing.assert_close(x_full, x_full_loaded)
+        torch.testing.assert_close(y_full, y_full_loaded, rtol=0, atol=0)
+        torch.testing.assert_close(replicated, replicated_loaded, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
