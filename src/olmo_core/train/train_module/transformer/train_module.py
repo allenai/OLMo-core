@@ -51,6 +51,7 @@ from olmo_core.utils import (
 from ...common import ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
 from .common import parallelize_model
+from .objective import Objective, train_batch_with_loss
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -387,6 +388,10 @@ class TransformerTrainModule(TrainModule):
                 options=self.state_dict_load_opts,
             )
             gc_cuda()
+
+    def train_batch_with_loss(self, micro_batches, objective: Objective, context_factory=None):
+        """Accumulate a caller-normalized objective with Core gradient synchronization."""
+        return train_batch_with_loss(self, micro_batches, objective, context_factory)
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.

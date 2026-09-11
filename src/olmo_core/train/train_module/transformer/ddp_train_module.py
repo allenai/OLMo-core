@@ -80,6 +80,7 @@ from olmo_core.utils import get_default_device, log_once, move_to_device
 
 from ...common import MetricMergeStrategy, ReduceType
 from ..train_module import EvalBatchSpec, TrainModule
+from .objective import Objective, train_batch_with_loss
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -1519,6 +1520,10 @@ class OLMoDDPTrainModule(TrainModule):
                 f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
                 flush=True,
             )
+
+    def train_batch_with_loss(self, micro_batches, objective: Objective, context_factory=None):
+        """Accumulate a caller-normalized objective with Core gradient synchronization."""
+        return train_batch_with_loss(self, micro_batches, objective, context_factory)
 
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):

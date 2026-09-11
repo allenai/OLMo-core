@@ -336,6 +336,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     n_kv_heads: Optional[int] = None
     head_dim: Optional[int] = None
     bias: Optional[bool] = None
+    qkv_bias: Optional[bool] = None
+    """Override Q/K/V bias independently of the output projection (default attention only)."""
     gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None
     clip_qkv: Optional[float] = None
@@ -393,16 +395,17 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         head_dim = self.head_dim or d_model // n_heads
         bias = self.bias if self.bias is not None else self.name != AttentionType.normalized
 
+        qkv_bias = bias if self.qkv_bias is None else self.qkv_bias
         params = 0
 
         # Block attention Q projection.
         params += d_model * n_heads * head_dim
-        if bias:
+        if qkv_bias:
             params += n_heads * head_dim
 
         # Block attention KV projections.
         params += 2 * d_model * n_kv_heads * head_dim
-        if bias:
+        if qkv_bias:
             params += 2 * n_kv_heads * head_dim
 
         # Block attention QK norm.
@@ -484,6 +487,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             init_device=init_device,
             cache=cache,
         )
+
+        if kwargs.get("qkv_bias") is not None and self.name != AttentionType.default:
+            raise OLMoConfigurationError("qkv_bias is only supported by default attention")
+
+        # These features currently live in the default attention constructor. Disabled
+        # flags must not break the other constructors when a config is serialized.
+        if self.name != AttentionType.default:
+            for key in ("scalable_softmax", "qk_norm_per_head_gains"):
+                if kwargs.pop(key, False):
+                    raise OLMoConfigurationError(f"'{key}' is only supported by default attention")
 
         # Attention sinks are only wired up for the default attention; drop the flag otherwise so
         # the other implementations don't see an unexpected keyword argument.
@@ -605,6 +618,7 @@ class Attention(SequenceMixer):
         n_kv_heads: Optional[int] = None,
         head_dim: Optional[int] = None,
         bias: bool = True,
+        qkv_bias: Optional[bool] = None,
         gate: Optional[GateConfig] = None,
         rope: Optional[RoPEConfig] = None,
         clip_qkv: Optional[float] = None,
@@ -643,13 +657,25 @@ class Attention(SequenceMixer):
         else:
             self.head_dim = d_model // n_heads
         self.w_q = nn.Linear(
-            d_model, n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            n_heads * self.head_dim,
+            bias=bias if qkv_bias is None else qkv_bias,
+            dtype=dtype,
+            device=init_device,
         )
         self.w_k = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias if qkv_bias is None else qkv_bias,
+            dtype=dtype,
+            device=init_device,
         )
         self.w_v = nn.Linear(
-            d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
+            d_model,
+            self.n_kv_heads * self.head_dim,
+            bias=bias if qkv_bias is None else qkv_bias,
+            dtype=dtype,
+            device=init_device,
         )
         self.w_out = nn.Linear(
             n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device

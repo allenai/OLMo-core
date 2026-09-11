@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List, Mapping
 
 import torch
 from transformers import PretrainedConfig
@@ -36,6 +36,9 @@ HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"model.layers.{LAYER}.self_attn.k_proj.weight": f"blocks.{LAYER}.attention.w_k.weight",
     f"model.layers.{LAYER}.self_attn.v_proj.weight": f"blocks.{LAYER}.attention.w_v.weight",
     f"model.layers.{LAYER}.self_attn.o_proj.weight": f"blocks.{LAYER}.attention.w_out.weight",
+    f"model.layers.{LAYER}.self_attn.q_proj.bias": f"blocks.{LAYER}.attention.w_q.bias",
+    f"model.layers.{LAYER}.self_attn.k_proj.bias": f"blocks.{LAYER}.attention.w_k.bias",
+    f"model.layers.{LAYER}.self_attn.v_proj.bias": f"blocks.{LAYER}.attention.w_v.bias",
     # MLP.
     f"model.layers.{LAYER}.mlp.gate_proj.weight": f"blocks.{LAYER}.feed_forward.w1.weight",
     f"model.layers.{LAYER}.mlp.down_proj.weight": f"blocks.{LAYER}.feed_forward.w2.weight",
@@ -99,6 +102,9 @@ HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, str] = {
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen2": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
+    },
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
@@ -120,6 +126,9 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen2": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
+    },
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
     },
@@ -189,6 +198,9 @@ OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.attention.w_k.weight": f"model.layers.{LAYER}.self_attn.k_proj.weight",
     f"blocks.{LAYER}.attention.w_v.weight": f"model.layers.{LAYER}.self_attn.v_proj.weight",
     f"blocks.{LAYER}.attention.w_out.weight": f"model.layers.{LAYER}.self_attn.o_proj.weight",
+    f"blocks.{LAYER}.attention.w_q.bias": f"model.layers.{LAYER}.self_attn.q_proj.bias",
+    f"blocks.{LAYER}.attention.w_k.bias": f"model.layers.{LAYER}.self_attn.k_proj.bias",
+    f"blocks.{LAYER}.attention.w_v.bias": f"model.layers.{LAYER}.self_attn.v_proj.bias",
     # MLP.
     f"blocks.{LAYER}.feed_forward.w1.weight": f"model.layers.{LAYER}.mlp.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward.w2.weight": f"model.layers.{LAYER}.mlp.down_proj.weight",
@@ -314,6 +326,18 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"blocks.{LAYER}.feed_forward_moe.router.weight",
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
+        ),
+    },
+    "qwen2": {
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
         ),
     },
     "llama": {
@@ -934,11 +958,21 @@ def convert_olmo3moe_state_from_hf(
 
 @beta_feature
 def convert_olmo3moe_state_to_hf(
-    config: PretrainedConfig,
-    olmo_core_state: Dict[str, Any],
+    config: PretrainedConfig, olmo_core_state: Dict[str, Any]
 ) -> Dict[str, Any]:
+    """Materialize the exact HF state; use the iterator for streaming publication."""
+    return dict(iter_olmo3moe_state_to_hf(config, olmo_core_state))
+
+
+def iter_olmo3moe_state_to_hf(
+    config: PretrainedConfig,
+    olmo_core_state: Mapping[str, Any],
+) -> Iterator[tuple[str, torch.Tensor]]:
     """
-    Convert an *unsharded* OLMo-core MoE-v2 state dict to HF ``olmo3moe`` format.
+    Yield an unsharded MoE-v2 state in HF format without retaining all layers.
+
+    A lazy input mapping may gather parameters on demand. Expert views retain
+    only the current layer slabs; the consumer controls output bucket lifetime.
 
     Inverse of :func:`convert_olmo3moe_state_from_hf`. Splits the fused
     ``w_up_gate`` routed-expert weight into per-expert HF ``up_proj``/``gate_proj``
@@ -960,20 +994,18 @@ def convert_olmo3moe_state_to_hf(
     peri_ln = getattr(config, "use_peri_ln", False)
     used: set[str] = set()
 
-    hf_state: Dict[str, Any] = {}
-
-    hf_state["model.embed_tokens.weight"] = _take(olmo_core_state, used, "embeddings.weight")
-    hf_state["model.norm.weight"] = _take(olmo_core_state, used, "lm_head.norm.weight")
-    hf_state["lm_head.weight"] = _take(olmo_core_state, used, "lm_head.w_out.weight")
+    yield "model.embed_tokens.weight", _take(olmo_core_state, used, "embeddings.weight")
+    yield "model.norm.weight", _take(olmo_core_state, used, "lm_head.norm.weight")
+    yield "lm_head.weight", _take(olmo_core_state, used, "lm_head.w_out.weight")
     if getattr(config, "embed_norm", False):
-        hf_state["model.embed_norm.weight"] = _take(olmo_core_state, used, "embedding_norm.weight")
+        yield "model.embed_norm.weight", _take(olmo_core_state, used, "embedding_norm.weight")
 
     for layer_idx in range(n_layers):
         prefix = f"model.layers.{layer_idx}."
         olmo_prefix = f"blocks.{layer_idx}."
 
         if _olmo3moe_is_kda_layer(config, layer_idx):
-            hf_state.update(_convert_kda_layer_to_hf(olmo_core_state, used, prefix, olmo_prefix))
+            yield from _convert_kda_layer_to_hf(olmo_core_state, used, prefix, olmo_prefix).items()
         else:
             attention_map = {
                 "w_q.weight": "q_proj.weight",
@@ -988,38 +1020,42 @@ def convert_olmo3moe_state_to_hf(
             if getattr(config, "scalable_softmax", False):
                 attention_map["ssmax_scale"] = "ssmax_scale"
             for olmo_suffix, hf_suffix in attention_map.items():
-                hf_state[f"{prefix}self_attn.{hf_suffix}"] = _take(
-                    olmo_core_state,
-                    used,
-                    f"{olmo_prefix}attention.{olmo_suffix}",
+                yield (
+                    f"{prefix}self_attn.{hf_suffix}",
+                    _take(olmo_core_state, used, f"{olmo_prefix}attention.{olmo_suffix}"),
                 )
 
-        hf_state[f"{prefix}post_attention_layernorm.weight"] = _take(
-            olmo_core_state, used, f"{olmo_prefix}attention_norm.weight"
+        yield (
+            f"{prefix}post_attention_layernorm.weight",
+            _take(olmo_core_state, used, f"{olmo_prefix}attention_norm.weight"),
         )
-        hf_state[f"{prefix}post_feedforward_layernorm.weight"] = _take(
-            olmo_core_state, used, f"{olmo_prefix}feed_forward_norm.weight"
+        yield (
+            f"{prefix}post_feedforward_layernorm.weight",
+            _take(olmo_core_state, used, f"{olmo_prefix}feed_forward_norm.weight"),
         )
         if peri_ln:
-            hf_state[f"{prefix}pre_attention_layernorm.weight"] = _take(
-                olmo_core_state, used, f"{olmo_prefix}attention_input_norm.weight"
+            yield (
+                f"{prefix}pre_attention_layernorm.weight",
+                _take(olmo_core_state, used, f"{olmo_prefix}attention_input_norm.weight"),
             )
-            hf_state[f"{prefix}pre_feedforward_layernorm.weight"] = _take(
-                olmo_core_state,
-                used,
-                f"{olmo_prefix}feed_forward_input_norm.weight",
+            yield (
+                f"{prefix}pre_feedforward_layernorm.weight",
+                _take(olmo_core_state, used, f"{olmo_prefix}feed_forward_input_norm.weight"),
             )
 
         if layer_idx in dense_indices:
             if not dense_layers_use_shared_expert:
-                hf_state[f"{prefix}mlp.gate_proj.weight"] = _take(
-                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w1.weight"
+                yield (
+                    f"{prefix}mlp.gate_proj.weight",
+                    _take(olmo_core_state, used, f"{olmo_prefix}feed_forward.w1.weight"),
                 )
-                hf_state[f"{prefix}mlp.down_proj.weight"] = _take(
-                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w2.weight"
+                yield (
+                    f"{prefix}mlp.down_proj.weight",
+                    _take(olmo_core_state, used, f"{olmo_prefix}feed_forward.w2.weight"),
                 )
-                hf_state[f"{prefix}mlp.up_proj.weight"] = _take(
-                    olmo_core_state, used, f"{olmo_prefix}feed_forward.w3.weight"
+                yield (
+                    f"{prefix}mlp.up_proj.weight",
+                    _take(olmo_core_state, used, f"{olmo_prefix}feed_forward.w3.weight"),
                 )
             else:
                 dense_hidden = config.dense_mlp_intermediate_size
@@ -1028,20 +1064,22 @@ def convert_olmo3moe_state_to_hf(
                     used,
                     f"{olmo_prefix}shared_experts.w_up_gate",
                 ).reshape(d_model, 2 * dense_hidden)
-                hf_state[f"{prefix}mlp.up_proj.weight"] = w_up_gate[:, :dense_hidden].T.contiguous()
-                hf_state[f"{prefix}mlp.gate_proj.weight"] = w_up_gate[
-                    :, dense_hidden:
-                ].T.contiguous()
-                hf_state[f"{prefix}mlp.down_proj.weight"] = (
+                yield f"{prefix}mlp.up_proj.weight", w_up_gate[:, :dense_hidden].T.contiguous()
+                yield f"{prefix}mlp.gate_proj.weight", w_up_gate[:, dense_hidden:].T.contiguous()
+                yield (
+                    f"{prefix}mlp.down_proj.weight",
                     _take(olmo_core_state, used, f"{olmo_prefix}shared_experts.w_down")
                     .reshape(dense_hidden, d_model)
-                    .T.contiguous()
+                    .T.contiguous(),
                 )
             continue
 
-        hf_state[f"{prefix}mlp.router.gate.weight"] = _take(
-            olmo_core_state, used, f"{olmo_prefix}routed_experts_router.weight"
-        ).reshape(n_experts, d_model)
+        yield (
+            f"{prefix}mlp.router.gate.weight",
+            _take(olmo_core_state, used, f"{olmo_prefix}routed_experts_router.weight").reshape(
+                n_experts, d_model
+            ),
+        )
 
         w_up_gate = _take(olmo_core_state, used, f"{olmo_prefix}routed_experts.w_up_gate").reshape(
             n_experts, 2 * moe_hidden, routed_d_model
@@ -1052,29 +1090,34 @@ def convert_olmo3moe_state_to_hf(
             n_experts, moe_hidden, routed_d_model
         )
         for e in range(n_experts):
-            hf_state[f"{prefix}mlp.experts.{e}.up_proj.weight"] = w_up[e].contiguous()
-            hf_state[f"{prefix}mlp.experts.{e}.gate_proj.weight"] = w_gate[e].contiguous()
-            hf_state[f"{prefix}mlp.experts.{e}.down_proj.weight"] = w_down[e].T.contiguous()
+            yield f"{prefix}mlp.experts.{e}.up_proj.weight", w_up[e].contiguous()
+            yield f"{prefix}mlp.experts.{e}.gate_proj.weight", w_gate[e].contiguous()
+            yield f"{prefix}mlp.experts.{e}.down_proj.weight", w_down[e].T.contiguous()
+
+        del w_up_gate, w_up, w_gate, w_down
 
         if latent_dim is not None:
-            hf_state[f"{prefix}mlp.latent_down_proj.weight"] = _take(
-                olmo_core_state, used, f"{olmo_prefix}latent_down_proj.weight"
+            yield (
+                f"{prefix}mlp.latent_down_proj.weight",
+                _take(olmo_core_state, used, f"{olmo_prefix}latent_down_proj.weight"),
             )
-            hf_state[f"{prefix}mlp.latent_up_proj.weight"] = _take(
-                olmo_core_state, used, f"{olmo_prefix}latent_up_proj.weight"
+            yield (
+                f"{prefix}mlp.latent_up_proj.weight",
+                _take(olmo_core_state, used, f"{olmo_prefix}latent_up_proj.weight"),
             )
             if getattr(config, "latent_moe_bias", False):
-                hf_state[f"{prefix}mlp.latent_down_proj.bias"] = _take(
-                    olmo_core_state, used, f"{olmo_prefix}latent_down_proj.bias"
+                yield (
+                    f"{prefix}mlp.latent_down_proj.bias",
+                    _take(olmo_core_state, used, f"{olmo_prefix}latent_down_proj.bias"),
                 )
-                hf_state[f"{prefix}mlp.latent_up_proj.bias"] = _take(
-                    olmo_core_state, used, f"{olmo_prefix}latent_up_proj.bias"
+                yield (
+                    f"{prefix}mlp.latent_up_proj.bias",
+                    _take(olmo_core_state, used, f"{olmo_prefix}latent_up_proj.bias"),
                 )
             if getattr(config, "latent_moe_up_proj_input_norm", False):
-                hf_state[f"{prefix}mlp.latent_up_proj_input_norm.weight"] = _take(
-                    olmo_core_state,
-                    used,
-                    f"{olmo_prefix}latent_up_proj_input_norm.weight",
+                yield (
+                    f"{prefix}mlp.latent_up_proj_input_norm.weight",
+                    _take(olmo_core_state, used, f"{olmo_prefix}latent_up_proj_input_norm.weight"),
                 )
 
         if has_shared:
@@ -1084,15 +1127,14 @@ def convert_olmo3moe_state_to_hf(
             ).reshape(d_model, 2 * shared_hidden)
             shared_up = shared_up_gate[:, :shared_hidden]
             shared_gate = shared_up_gate[:, shared_hidden:]
-            hf_state[f"{prefix}mlp.shared_expert.up_proj.weight"] = shared_up.T.contiguous()
-            hf_state[f"{prefix}mlp.shared_expert.gate_proj.weight"] = shared_gate.T.contiguous()
+            yield f"{prefix}mlp.shared_expert.up_proj.weight", shared_up.T.contiguous()
+            yield f"{prefix}mlp.shared_expert.gate_proj.weight", shared_gate.T.contiguous()
             shared_down = _take(
                 olmo_core_state, used, f"{olmo_prefix}shared_experts.w_down"
             ).reshape(shared_hidden, d_model)
-            hf_state[f"{prefix}mlp.shared_expert.down_proj.weight"] = shared_down.T.contiguous()
+            yield f"{prefix}mlp.shared_expert.down_proj.weight", shared_down.T.contiguous()
 
     _require_exact_state_keys(olmo_core_state, used, state_name="OLMo-core")
-    return hf_state
 
 
 def _convert_state(

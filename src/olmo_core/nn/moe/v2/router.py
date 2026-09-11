@@ -62,12 +62,16 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    restore_weight_scale: bool = (
+        False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    )
     expert_weight_scale: Optional[float] = None
-    original_top_k: Optional[
-        int
-    ] = None  # for restoring weight scales to match a model trained with a different top_k
-    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    original_top_k: Optional[int] = (
+        None  # for restoring weight scales to match a model trained with a different top_k
+    )
+    use_recompute_fp32_cast: bool = (
+        False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    )
     score_correction_bias: bool = False
     n_group: Optional[int] = None
     topk_group: Optional[int] = None
@@ -663,8 +667,20 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
+        replay_indices = getattr(self, "replay_expert_indices", None)
+        if replay_indices is not None:
+            if replay_indices.shape != (*scores.shape[:-1], self.top_k):
+                raise ValueError("Replay expert indices do not match the router input shape")
+            expert_indices = replay_indices.to(device=scores.device, dtype=torch.long)
+            if self.gating_function == MoERouterGatingFunction.topk_softmax:
+                expert_weights = logits.gather(-1, expert_indices).softmax(dim=-1)
+            else:
+                expert_weights = scores.gather(-1, expert_indices)
+
         UES_QUANT_SCORES = False
-        if UES_QUANT_SCORES:
+        if replay_indices is not None:
+            pass
+        elif UES_QUANT_SCORES:
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
             scores_sel = self._break_ties(scores_sel)
@@ -691,7 +707,7 @@ class MoERouterV2(nn.Module):
 
         # TODO: verify the recompute-index cache is correct under activation checkpointing;
         # known-broken under pipeline parallelism (the cached indices don't survive PP microbatching).
-        if self.use_recompute_cache:
+        if self.use_recompute_cache and replay_indices is None:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():
                     self._recompute_cache = expert_indices.detach()  # save for recompute
