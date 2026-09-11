@@ -223,12 +223,15 @@ CUDA13_ARGS = \
 # unblocks flash-linear-attention 0.5.2 and makes the RMA NCCL swap unnecessary. Built for
 # sm_90/100 only (sm_103/B300 needs CUDA 13); keeps flash-attn 3. TransformerEngine is bumped to
 # 2.18 because the MXFP8 path passes MXFP8Tensor(with_gemm_swizzled_scales=...), added in TE 2.12
-# (the base's TE 2.9 predates it).
+# (the base's TE 2.9 predates it). The CUDA devel release base (nvcc + headers) is required across
+# the whole cu129 family because TE >= 2.18 loads a system libcudart at import, which the plain
+# ubuntu base lacks ("cudart shared object not found"); the -rma / -sm80 add-ons build on top of it.
 CUDA129_ARGS = \
 	TORCH_VERSION=2.13.0 \
 	CUDA_VERSION=12.9.1 \
 	CUDA_NVCC_VERSION=12.9.86 \
-	TE_VERSION=2.18.0
+	TE_VERSION=2.18.0 \
+	BASE_IMAGE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION)
 
 # FA4 layer (CUDA-13 only): installs the flash_attn.cute wheel (AttentionBackendName.flash_4) and
 # appends it to the smoke test; adds the '-fa4' tag suffix (see FA4_TAG). The cutlass-dsl pin avoids
@@ -252,10 +255,9 @@ RMA_CU13_ARGS = \
 	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu13 \
 	NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION)
 # RMA layer for the CUDA-12.9 family. torch 2.13 already bundles nccl 2.29.7 (the RMA-capable
-# build), so no NCCL override is needed here — only the CUDA-12.9 devel base (nvcc + headers) and
-# NVSHMEM.
+# build), so no NCCL override is needed here — only NVSHMEM on top of the shared cu129 devel base
+# (see CUDA129_ARGS).
 RMA_CU129_ARGS = \
-	BASE_IMAGE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu12
 
 # ---- CUDA 12.8 family (H100, B200) — torch 2.10 -------------------------------------------------
@@ -281,14 +283,11 @@ beaker-image-cu129-rma :
 	$(MAKE) beaker-image $(CUDA129_ARGS) $(RMA_CU129_ARGS)
 
 # olmo-core-tch2130cu129-sm80-<date>  (adds sm_80 / A100 for the general, non-MoE test coverage)
-# No NVSHMEM (A100 / sm_80 can't run the symm-mem EP kernels, which need sm_90+), but it still uses a
-# CUDA 'devel' release base: transformer-engine >= 2.18 loads a system libcudart at import, which the
-# plain-ubuntu base lacks ("cudart shared object not found"). The devel base provides it (as on the
-# RMA images).
+# No NVSHMEM (A100 / sm_80 can't run the symm-mem EP kernels, which need sm_90+); uses the shared
+# cu129 devel base (see CUDA129_ARGS).
 .PHONY : beaker-image-cu129-sm80
 beaker-image-cu129-sm80 :
 	$(MAKE) beaker-image $(CUDA129_ARGS) \
-		BASE_IMAGE=nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
 		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
 		IMAGE_VARIANT=-sm80
