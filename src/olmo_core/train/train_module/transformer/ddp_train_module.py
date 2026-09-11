@@ -1,4 +1,5 @@
 import contextlib
+import dataclasses
 import json
 import logging
 import math
@@ -47,6 +48,7 @@ from olmo_core.distributed.checkpoint import (
     RemoteFileSystemReader,
     RemoteFileSystemWriter,
     _prepare_env_for_save,
+    contiguous_planner,
 )
 from olmo_core.distributed.parallel import (
     DataParallelType,
@@ -110,13 +112,24 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
 class FlatSavePlanner(DefaultSavePlanner):
     """Default planner with separately observable metadata planning cost."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, *, constant_memory_planning=False, **kwargs):
         super().__init__(**kwargs)
+        if constant_memory_planning and self._enable_plan_caching:
+            raise ValueError("Constant-memory planner does not support plan caching")
+        self.constant_memory_planning = constant_memory_planning
         self.timings: Dict[str, float] = {}
 
     def create_local_plan(self):
         start = time.perf_counter()
-        result = super().create_local_plan()
+        if self.constant_memory_planning:
+            result = contiguous_planner.create_contiguous_local_save_plan(
+                self.state_dict, self.is_coordinator
+            )
+            if self.flatten_state_dict:
+                result = dataclasses.replace(result, planner_data=self.mappings)
+            self.plan = result
+        else:
+            result = super().create_local_plan()
         self.timings["local_plan_seconds"] = time.perf_counter() - start
         return result
 
@@ -1144,12 +1157,15 @@ class OLMoDDPTrainModule(TrainModule):
         throttle_uploads: bool = False,
         compact_storage: bool = False,
         dedup_save_to_lowest_rank: bool = True,
+        constant_memory_planning: bool = False,
         profile: bool = False,
     ) -> Dict[str, float]:
         """Save native optimizer/model state and restore the live optimizer's storage.
 
         Defaults preserve the existing writer policy. ``compact_storage`` skips copies only
         for compact CPU storage; ``process_count`` selects the writer's existing spawn pool.
+        ``constant_memory_planning`` computes metadata for ordinary contiguous shards
+        arithmetically, with the default planner as fallback for other layouts.
         ``profile`` logs per-rank phases and summed worker time separately from wall time.
         Returned durations are seconds; writer byte and item counts are also included.
         """
@@ -1173,7 +1189,10 @@ class OLMoDDPTrainModule(TrainModule):
             compact_storage=compact_storage,
             profile=profile,
         )
-        planner = FlatSavePlanner(dedup_save_to_lowest_rank=dedup_save_to_lowest_rank)
+        planner = FlatSavePlanner(
+            dedup_save_to_lowest_rank=dedup_save_to_lowest_rank,
+            constant_memory_planning=constant_memory_planning,
+        )
         timings["prepare_seconds"] = timestamp() - start
         phase_start = timestamp()
         state_dict = optim.state_dict()

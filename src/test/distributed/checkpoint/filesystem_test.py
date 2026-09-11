@@ -18,6 +18,7 @@ from olmo_core.distributed.checkpoint.filesystem import (
 )
 from olmo_core.io import dir_is_empty
 from olmo_core.testing import BACKENDS, run_distributed_test
+from olmo_core.train.train_module.transformer.ddp_train_module import FlatSavePlanner
 from olmo_core.utils import get_default_device
 
 
@@ -28,6 +29,7 @@ def run_save_and_load_with_dtensors(
     throttle: bool = False,
     compact_storage: bool = False,
     balanced: bool = False,
+    constant_memory: bool = False,
 ):
     mesh = init_device_mesh(get_default_device().type, (dist.get_world_size(),))
 
@@ -56,7 +58,9 @@ def run_save_and_load_with_dtensors(
             compact_storage=compact_storage,
             profile=True,
         ),
-        planner=distcp.DefaultSavePlanner(dedup_save_to_lowest_rank=not balanced),
+        planner=FlatSavePlanner(
+            dedup_save_to_lowest_rank=not balanced, constant_memory_planning=constant_memory
+        ),
     )
 
     # Now create new sharded copies with a different sharding strategy and load the checkpoint.
@@ -84,14 +88,25 @@ def run_save_and_load_with_dtensors(
     "thread_count, process_count",
     [pytest.param(2, None, id="threads"), pytest.param(None, 2, id="processes")],
 )
-@pytest.mark.parametrize("compact_storage, balanced", [(False, False), (True, True)])
+@pytest.mark.parametrize(
+    "compact_storage, balanced, constant_memory",
+    [(False, False, False), (True, True, False), (True, True, True)],
+)
 def test_save_and_load_locally_with_dtensors(
-    backend, tmp_path, thread_count, process_count, compact_storage, balanced
+    backend, tmp_path, thread_count, process_count, compact_storage, balanced, constant_memory
 ):
     run_distributed_test(
         run_save_and_load_with_dtensors,
         backend=backend,
-        func_args=(tmp_path, thread_count, process_count, False, compact_storage, balanced),
+        func_args=(
+            tmp_path,
+            thread_count,
+            process_count,
+            False,
+            compact_storage,
+            balanced,
+            constant_memory,
+        ),
         start_method="spawn",
     )
 

@@ -11,6 +11,7 @@ from torch.distributed.tensor import Shard
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModuleConfig
@@ -52,7 +53,8 @@ def _run_reshard(save_root, ep_degree, save_options):
             ),
         )
         return config.build(
-            _build_model(512, 512, num_experts=16), device=torch.device("cuda", rank)
+            _build_model(512, 512, num_experts=16, ep_path=ExpertParallelPath.sync_1d),
+            device=torch.device("cuda", rank),
         )
 
     original = build(1)
@@ -75,8 +77,8 @@ def _run_reshard(save_root, ep_degree, save_options):
             state.full_tensor().cpu(), expected[name], rtol=0, atol=0, msg=name
         )
 
-    # NVSHMEM has one bootstrap group per process. Each target EP degree is
-    # parametrized into a fresh distributed process set, as in real launches.
+    # Each target EP degree is parametrized into a fresh distributed process set.
+    # The checkpoint layout is independent of the EP communication kernel.
     for ep in (ep_degree,):
         tm = build(ep)
         tm.load_state_dict_direct(
@@ -124,8 +126,16 @@ def _run_reshard(save_root, ep_degree, save_options):
 @pytest.mark.parametrize("ep_degree", [2, 4, 8])
 @pytest.mark.parametrize(
     "save_options",
-    [{}, {"compact_storage": True, "dedup_save_to_lowest_rank": False}],
-    ids=["legacy", "balanced-compact"],
+    [
+        {},
+        {"compact_storage": True, "dedup_save_to_lowest_rank": False},
+        {
+            "compact_storage": True,
+            "dedup_save_to_lowest_rank": False,
+            "constant_memory_planning": True,
+        },
+    ],
+    ids=["legacy", "balanced-compact", "constant-memory"],
 )
 def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path, ep_degree, save_options):
     """Use node-local temporary checkpoints; never touch Weka or user checkpoints."""
