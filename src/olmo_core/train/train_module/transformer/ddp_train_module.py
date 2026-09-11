@@ -114,7 +114,7 @@ class FlatSavePlanner(DefaultSavePlanner):
 
     def __init__(self, *, constant_memory_planning=False, **kwargs):
         super().__init__(**kwargs)
-        if constant_memory_planning and self._enable_plan_caching:
+        if constant_memory_planning and getattr(self, "_enable_plan_caching", False):
             raise ValueError("Constant-memory planner does not support plan caching")
         self.constant_memory_planning = constant_memory_planning
         self.timings: Dict[str, float] = {}
@@ -1159,7 +1159,7 @@ class OLMoDDPTrainModule(TrainModule):
         dedup_save_to_lowest_rank: bool = True,
         constant_memory_planning: bool = False,
         profile: bool = False,
-    ) -> Dict[str, float]:
+    ) -> Optional[Dict[str, float]]:
         """Save native optimizer/model state and restore the live optimizer's storage.
 
         Defaults preserve the existing writer policy. ``compact_storage`` skips copies only
@@ -1167,7 +1167,7 @@ class OLMoDDPTrainModule(TrainModule):
         ``constant_memory_planning`` computes metadata for ordinary contiguous shards
         arithmetically, with the default planner as fallback for other layouts.
         ``profile`` logs per-rank phases and summed worker time separately from wall time.
-        Returned durations are seconds; writer byte and item counts are also included.
+        Profiling returns durations in seconds plus writer byte/item counts; otherwise returns None.
         """
 
         def timestamp():
@@ -1223,7 +1223,7 @@ class OLMoDDPTrainModule(TrainModule):
             timings["total_seconds"] = timestamp() - start
             if profile:
                 log.info("checkpoint_save %s", json.dumps(timings, sort_keys=True))
-        return timings
+        return timings if profile else None
 
     def load_state_dict_direct(
         self,
