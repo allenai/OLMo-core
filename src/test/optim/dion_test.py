@@ -68,14 +68,6 @@ def test_dion(device: torch.device, tmp_path):
 
 
 def _run_hsdp_dion(shard_degree: int, num_replicas: int):
-    # TODO(dion torch-2.13): remove once dion fixes its compiled kernels for torch 2.13.
-    # On torch 2.13, dion's compiled optimizer kernel trips PyTorch's new static Triton launcher
-    # ("CUDA driver error: invalid argument" in static_triton_launcher._launch_kernel). Disabling
-    # the static launcher falls back to the dynamic one and sidesteps it. Set here (in the spawned
-    # worker, before dion compiles) rather than image-wide to avoid the launch-overhead cost on
-    # non-dion compiled paths. dion applied an analogous fix for NorDion2 upstream (PR #117).
-    os.environ["TORCHINDUCTOR_STATIC_CUDA_LAUNCHER"] = "0"
-
     device = get_default_device()
 
     # HSDP Transformer
@@ -117,6 +109,13 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
 )
 def test_hsdp_dion(shard_degree: int, num_replicas: int):
     seed_all(0)
+    # TODO(dion torch-2.13): remove once dion fixes its compiled kernels for torch 2.13.
+    # On torch 2.13, dion's compiled optimizer kernel trips PyTorch's new static Triton launcher
+    # ("CUDA driver error: invalid argument"). Disabling it falls back to the dynamic launcher and
+    # sidesteps it. It must be set BEFORE torch is imported in the worker — Inductor reads this env
+    # at import — so set it here in the parent (not inside _run_hsdp_dion): `spawn` copies the
+    # parent's os.environ into each fresh worker, which then imports torch with the flag already set.
+    os.environ["TORCHINDUCTOR_STATIC_CUDA_LAUNCHER"] = "0"
     run_distributed_test(
         _run_hsdp_dion,
         backend="nccl",
