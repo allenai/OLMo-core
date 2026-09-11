@@ -771,6 +771,14 @@ class MultimodalLM(nn.Module):
             if example_ids is not None:
                 eid = example_ids.to(device)
                 same_example = eid[:, :, None] == eid[:, None, :]
+                # Keep pad positions from attending to each other, matching the flex
+                # backend (see FlexAttentionBackend._build_mask_mod). Dense SDPA computes
+                # the whole (S, S) matrix either way, so this buys no compute here -- it
+                # is purely so the two backends produce the same hidden states.
+                pad_self_only = (eid >= 0)[:, :, None] | torch.eye(
+                    eid.shape[1], dtype=torch.bool, device=device
+                )[None]
+                same_example = same_example & pad_self_only
                 combined = same_example & seg_rule if seg_rule is not None else same_example
                 and_mask = combined.unsqueeze(1)
             elif seg_rule is not None:
