@@ -152,7 +152,9 @@ def launch(apply):
         spec = b.experiment.get_spec(b.workload.get(WATCHER_TEMPLATE)).to_json()
         task = spec["tasks"][0]
         task.pop("resources", None)
-        task.pop("result", None)
+        # Gantry requires a result dataset ID even for a CPU-only controller.
+        # This empty mount never receives checkpoint/evaluation payloads.
+        task["result"] = {"path": "/noop-results"}
         task["name"] = "ruler-watcher"
         task["context"] = dict(priority="urgent", minRuntime="0s", autoResume=True)
         task["constraints"] = {"cluster": ["ai2/phobos"]}
@@ -165,9 +167,15 @@ def launch(apply):
             "src/examples/olmo_ddp/olmoe3_hero_ruler_control.py watch",
         ]
         replace_env(
-            task, {"GIT_REF": commit, "GIT_BRANCH": BRANCH, "GANTRY_TASK_NAME": "ruler-watcher"}
+            task,
+            {
+                "GIT_REF": commit,
+                "GIT_BRANCH": BRANCH,
+                "GANTRY_TASK_NAME": "ruler-watcher",
+                "RESULTS_DIR": "/noop-results",
+            },
         )
-        assert not task.get("result", {}).get("path")
+        assert task["result"]["path"] == "/noop-results"
         spec["retry"] = {"allowedTaskRetries": 0}
         spec["description"] = (
             CAMPAIGN
