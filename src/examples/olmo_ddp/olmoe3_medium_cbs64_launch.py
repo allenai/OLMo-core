@@ -9,7 +9,6 @@ import subprocess
 from pathlib import Path
 
 from beaker import Beaker, BeakerExperimentSpec
-
 from olmoe3_medium_cbs64_plan import BRANCH_NAME, CAMPAIGN, CPU_CLUSTER, WORKSPACE
 from olmoe3_medium_cbs_control import atomic_json, replace_env
 
@@ -20,6 +19,7 @@ def main():
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--revision", type=int, choices=range(1, 10), default=1)
+    parser.add_argument("--32m-only", action="store_true", dest="only32")
     parser.add_argument("--submit", action="store_true")
     args = parser.parse_args()
     core = Path(__file__).resolve().parents[3]
@@ -52,13 +52,24 @@ def main():
         "gh auth setup-git && exec uv run --no-project --with 'beaker-py==2.7.2' "
         "--with 'olmo-checkpoint-uploader @ git+https://github.com/jacob-morrison/"
         "olmo-checkpoint-uploader.git@3b3a102b106956ae8ca1ea8e92a0ad7ec8fbacf0' "
-        + shlex.join(["python", "-u", "src/examples/olmo_ddp/olmoe3_medium_cbs64_control.py"]),
+        + shlex.join(
+            [
+                "python",
+                "-u",
+                "src/examples/olmo_ddp/olmoe3_medium_cbs64_control.py",
+                *(["--32m-only"] if args.only32 else []),
+            ]
+        ),
     ]
     spec["retry"] = {"allowedTaskRetries": 0}
     spec["description"] = (
-        f"{CAMPAIGN}: gated64GPU resume/speed,128GPU comparison,64GPU CBS32/64 to100B"
+        f"{CAMPAIGN}: reuse passed32M64GPU gates ->64GPU CBS32 to100B;128GPU tests and64M held"
+        if args.only32
+        else f"{CAMPAIGN}: gated64GPU resume/speed,128GPU comparison,64GPU CBS32/64 to100B"
     )
     name = f"{CAMPAIGN}-controller"
+    if args.only32:
+        name += "-32only"
     if args.revision != 1:
         name += f"-r{args.revision}"
     args.output.mkdir(parents=True, exist_ok=True)

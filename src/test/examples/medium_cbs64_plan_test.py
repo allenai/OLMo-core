@@ -1,6 +1,7 @@
 """CPU checks for the bounded medium continuation campaign."""
 
 import copy
+import json
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -9,8 +10,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples/olmo_ddp"))
 from olmoe3_medium_cbs64_control import (
+    COMPLETED_32M_COMMIT,
     EXCLUDED,
+    check_phases,
     config_spec,
+    execution_plan,
     registration_matches,
     training_spec,
     validation_environments,
@@ -37,6 +41,107 @@ def test_horizons_and_scaled_lrs():
     assert b.lr == pytest.approx(0.00184)
     assert a.save_interval * a.batch == b.save_interval * b.batch
     assert a.eval_interval * a.batch == b.eval_interval * b.batch
+
+
+def test_32m_only_submission_allowlist():
+    speed, branches, suffix = execution_plan(True)
+    assert speed == () and branches == ("cbs32",)
+    assert suffix != execution_plan(False)[2]
+    keys = [key for wave in (*speed, *branches) for key in WAVES[wave]]
+    assert keys == ["64g-32mi-cbs"]
+    assert all(PHASES[key].batch_mi == 32 for key in keys)
+    assert all(PHASES[key].gpus == 64 for key in keys)
+    assert PHASES[keys[0]].end - PHASES[keys[0]].start == 1000
+    assert PHASES[keys[0]].load_path == PHASES["64g-32mi-speed"].load_path
+    environments = validation_environments(template(), "a" * 40, (*speed, *branches))
+    assert set(environments) == set(keys)
+    assert all(env["OLMOE3_MEDIUM_BATCH"] == "33554432" for env in environments.values())
+
+
+@pytest.fixture
+def completed_32m(tmp_path, monkeypatch):
+    import olmoe3_medium_cbs64_plan as plan
+
+    monkeypatch.setattr(plan, "ROOT", tmp_path)
+    keys = ("64g-32mi-speed", "64g-32mi-restore")
+    for key in keys:
+        phase = PHASES[key]
+        audit = phase.root / "audit"
+        audit.mkdir(parents=True)
+        session = dict(
+            source_commit=COMPLETED_32M_COMMIT,
+            phase=key,
+            source=str(phase.load_path),
+            gpus=64,
+            batch=phase.batch,
+            lr=phase.lr,
+            start=phase.start,
+            end=phase.end,
+            tokens_start=phase.tokens_at(phase.start),
+        )
+        summary = dict(
+            completed=True,
+            source_commit=COMPLETED_32M_COMMIT,
+            phase=key,
+            gpus=64,
+            batch=phase.batch,
+            end=phase.end,
+            tokens=phase.tokens_at(phase.end),
+            skipped_updates=0,
+            routing={"telemetry_complete": True},
+            measured_updates=40,
+            measured_skipped_updates=0,
+        )
+        (audit / "session.json").write_text(json.dumps(session))
+        (audit / "summary.json").write_text(json.dumps(summary))
+        for rank in range(64):
+            complete = dict(
+                source_commit=COMPLETED_32M_COMMIT,
+                step=phase.end,
+                tokens=phase.tokens_at(phase.end),
+            )
+            restore = dict(
+                source=str(phase.load_path),
+                step=phase.start,
+                tokens=phase.tokens_at(phase.start),
+                gpus=64,
+                source_gpus=64 if phase.source_phase else 128,
+                sampled_state_exact=True,
+                verified_old_shard_halves=2,
+            )
+            (audit / f"complete-rank{rank}.json").write_text(json.dumps(complete))
+            (audit / f"restore-rank{rank}.json").write_text(json.dumps(restore))
+            if phase.save:
+                (audit / f"state-step{phase.end}-rank{rank}.json").write_text("{}")
+    return keys
+
+
+def test_reuses_individual_32m_phases_without_64m_evidence(completed_32m):
+    check_phases(completed_32m, COMPLETED_32M_COMMIT)
+    assert not (PHASES["64g-64mi-speed"].root / "audit/summary.json").exists()
+    with pytest.raises(AssertionError):
+        check_phases(completed_32m, "wrong-commit")
+
+
+@pytest.mark.parametrize("failure", ["missing_rank", "measured_skip", "bad_source", "reload_skip"])
+def test_32m_reuse_still_fails_closed(completed_32m, failure):
+    audit = PHASES[completed_32m[0]].root / "audit"
+    if failure == "missing_rank":
+        (audit / "complete-rank63.json").rename(audit / "incomplete-rank63.json")
+    else:
+        filename, field, value = {
+            "measured_skip": ("summary.json", "measured_skipped_updates", 1),
+            "bad_source": ("session.json", "source", "/wrong/source"),
+            "reload_skip": ("summary.json", "skipped_updates", 1),
+        }[failure]
+        if failure == "reload_skip":
+            audit = PHASES[completed_32m[1]].root / "audit"
+        path = audit / filename
+        value_dict = json.loads(path.read_text())
+        value_dict[field] = value
+        path.write_text(json.dumps(value_dict))
+    with pytest.raises((AssertionError, FileNotFoundError)):
+        check_phases(completed_32m, COMPLETED_32M_COMMIT)
 
 
 def test_registration_restart_ignores_only_creation_time():

@@ -5,6 +5,7 @@ waiting for an earlier workload. Separate exact-name submissions are reconciled
 against saved intent, including after a controller preemption.
 """
 
+import argparse
 import copy
 import fcntl
 import hashlib
@@ -42,6 +43,15 @@ PARENT_EXPERIMENT = "01M1YJ10RHVFBH9BHFGKZVGJ8K"
 VALIDATION_TEMPLATE = "01M1YDHB4K7930RQFR7W781HFC"
 # 534: GPU6 disconnected from its seven NVLink peers (live-verified September11).
 EXCLUDED = {f"holmes-cs-aus-{n}" for n in (485, 503, 516, 534)}
+COMPLETED_32M_COMMIT = "5464e9ac7e3873cae5f45f91244ee85bbdf908dd"
+COMPLETED_32M_EXPERIMENT = "01M27BGNM9AZQAK37GRPQDYTX4"
+
+
+def execution_plan(only32=False):
+    """Explicit allowlist;32M-only reuses qualification and submits just CBS32."""
+    if only32:
+        return (), ("cbs32",), "-r5"
+    return ("resume-speed64", "speed128"), ("cbs32", "cbs64"), SUBMISSION_SUFFIX
 
 
 def training_spec(template, wave, commit):
@@ -100,10 +110,11 @@ def training_spec(template, wave, commit):
     return spec
 
 
-def validation_environments(training, commit):
+def validation_environments(training, commit, waves=None):
     """Derive config-validation settings from the actual GPU specs, not the CPU template."""
     environments = {}
-    for wave, keys in WAVES.items():
+    for wave in WAVES if waves is None else waves:
+        keys = WAVES[wave]
         task = training_spec(training, wave, commit)["tasks"][0]
         # Secret references never enter the validation program or its provenance.
         env = {
@@ -116,7 +127,7 @@ def validation_environments(training, commit):
     return environments
 
 
-def config_spec(template, commit, training):
+def config_spec(template, commit, training, waves=None):
     spec = copy.deepcopy(template)
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
@@ -134,7 +145,7 @@ def config_spec(template, commit, training):
         "import os,subprocess,sys\n"
         "sys.path.insert(0,'src/examples/olmo_ddp')\n"
         "from olmoe3_medium_cbs64_plan import PHASES,validate\nvalidate()\n"
-        f"environments={validation_environments(training, commit)!r}\n"
+        f"environments={validation_environments(training, commit, waves)!r}\n"
         "base={k:v for k,v in os.environ.items() if not k.startswith(('OLMO','NCCL'))}\n"
         "for phase,settings in environments.items():\n"
         " print('VALIDATING_TRAINING_ENV',phase,settings,flush=True)\n"
@@ -291,28 +302,100 @@ def register_outputs(wave):
         log("uploader_registered", run_id=phase.run_id, keep=2)
 
 
-def check_wave(wave, commit):
-    for key in WAVES[wave]:
+def check_phases(keys, commit):
+    """Verify individually completed phases, even if a later sibling failed."""
+    for key in keys:
         phase = PHASES[key]
-        summary = json.loads((phase.root / "audit/summary.json").read_text())
+        audit = phase.root / "audit"
+        session = json.loads((audit / "session.json").read_text())
+        assert session["source_commit"] == commit and session["phase"] == key
+        assert session["source"] == str(phase.load_path)
+        assert (session["gpus"], session["batch"], session["lr"]) == (
+            phase.gpus,
+            phase.batch,
+            phase.lr,
+        )
+        assert (session["start"], session["end"], session["tokens_start"]) == (
+            phase.start,
+            phase.end,
+            phase.tokens_at(phase.start),
+        )
+        summary = json.loads((audit / "summary.json").read_text())
         assert summary["completed"] and summary["source_commit"] == commit
+        assert (summary["phase"], summary["gpus"], summary["batch"]) == (
+            key,
+            phase.gpus,
+            phase.batch,
+        )
         assert summary["end"] == phase.end and summary["tokens"] == phase.tokens_at(phase.end)
         if phase.end - phase.start == 60:
             assert summary["routing"]["telemetry_complete"]
+            assert summary["measured_updates"] == 40
             assert summary["measured_skipped_updates"] == 0
+        if phase.source_phase:
+            assert summary["skipped_updates"] == 0
         for rank in range(phase.gpus):
-            audit = phase.root / "audit"
             complete = json.loads((audit / f"complete-rank{rank}.json").read_text())
             assert complete["source_commit"] == commit and complete["step"] == phase.end
-            assert (audit / f"restore-rank{rank}.json").is_file()
+            assert complete["tokens"] == phase.tokens_at(phase.end)
+            restore = json.loads((audit / f"restore-rank{rank}.json").read_text())
+            assert (restore["source"], restore["step"], restore["tokens"], restore["gpus"]) == (
+                str(phase.load_path),
+                phase.start,
+                phase.tokens_at(phase.start),
+                phase.gpus,
+            )
+            if phase.gpus == 64 and not phase.source_phase:
+                assert restore["source_gpus"] == 128 and restore["sampled_state_exact"]
+                assert restore["verified_old_shard_halves"] > 0
             if phase.save:
                 assert (audit / f"state-step{phase.end}-rank{rank}.json").is_file()
         log("phase_gate_passed", **summary)
 
 
+def check_wave(wave, commit):
+    check_phases(WAVES[wave], commit)
+
+
+def reuse_completed_32m(beaker):
+    """Reuse only the pinned, successful32M speed+reload evidence, not64M."""
+    name = f"{CAMPAIGN}-resume-speed64-r4"
+    entry = json.loads((AUTOMATION / "submissions" / f"{name}.json").read_text())
+    assert entry["experiment_id"] == COMPLETED_32M_EXPERIMENT
+    spec = json.loads((AUTOMATION / "specs" / f"{name}.json").read_text())
+    assert (
+        hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+        == entry["spec_sha256"]
+    )
+    workload = beaker.workload.get(COMPLETED_32M_EXPERIMENT)
+    assert workload.experiment.name == name
+    actual = beaker.experiment.get_spec(workload).to_json()
+    for task in [*spec["tasks"], *actual["tasks"]]:
+        env = {v["name"]: v.get("value") for v in task["envVars"]}
+        assert env["GIT_REF"] == COMPLETED_32M_COMMIT
+    keys = ("64g-32mi-speed", "64g-32mi-restore")
+    check_phases(keys, COMPLETED_32M_COMMIT)
+    record = {
+        "experiment_id": COMPLETED_32M_EXPERIMENT,
+        "source_commit": COMPLETED_32M_COMMIT,
+        "phases": keys,
+        "summary_sha256": {
+            key: hashlib.sha256((PHASES[key].root / "audit/summary.json").read_bytes()).hexdigest()
+            for key in keys
+        },
+        "excluded_phases": ["64g-64mi-speed", "64g-64mi-restore"],
+    }
+    atomic_json(AUTOMATION / "reused-32m-qualification.json", record)
+    log("reused_completed_32m", **record)
+
+
 def main():
     from beaker import Beaker
 
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--32m-only", action="store_true", dest="only32")
+    args = parser.parse_args()
+    speed_waves, branch_waves, suffix = execution_plan(args.only32)
     commit = os.environ["GIT_REF"]
     assert len(commit) == 40 and all(c in "0123456789abcdef" for c in commit)
     assert MOUNT.is_mount()
@@ -323,30 +406,33 @@ def main():
     ):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         source_preflight(b)
+        if args.only32:
+            reuse_completed_32m(b)
         training = b.experiment.get_spec(b.workload.get(PARENT_EXPERIMENT)).to_json()
         config = b.experiment.get_spec(b.workload.get(VALIDATION_TEMPLATE)).to_json()
         gate = ensure(
-            b, f"{CAMPAIGN}-config{SUBMISSION_SUFFIX}", config_spec(config, commit, training)
+            b,
+            f"{CAMPAIGN}-config{suffix}",
+            config_spec(config, commit, training, (*speed_waves, *branch_waves)),
         )
         wait_success(b, gate)
-        for wave in ("resume-speed64", "speed128"):
+        for wave in speed_waves:
             source_preflight(b)
             register_outputs(wave)
-            eid = ensure(
-                b, f"{CAMPAIGN}-{wave}{SUBMISSION_SUFFIX}", training_spec(training, wave, commit)
-            )
+            eid = ensure(b, f"{CAMPAIGN}-{wave}{suffix}", training_spec(training, wave, commit))
             wait_success(b, eid)
             check_wave(wave, commit)
-        # These are not placed in the GPU queue until the128GPU gate succeeds.
+        # Full mode waits for128GPU timing;32M-only reuses its passed64GPU gates.
         # They start from the original fork, never from a timing-pass endpoint.
         branches = {}
-        for wave in ("cbs32", "cbs64"):
+        for wave in branch_waves:
             source_preflight(b)
             register_outputs(wave)
             branches[wave] = ensure(
-                b, f"{CAMPAIGN}-{wave}{SUBMISSION_SUFFIX}", training_spec(training, wave, commit)
+                b, f"{CAMPAIGN}-{wave}{suffix}", training_spec(training, wave, commit)
             )
-        atomic_json(AUTOMATION / "branches-submitted.json", branches)
+        receipt = "branches-submitted-32only.json" if args.only32 else "branches-submitted.json"
+        atomic_json(AUTOMATION / receipt, branches)
         log("cbs_branches_submitted", **branches)
         for wave, eid in branches.items():
             wait_success(b, eid)
