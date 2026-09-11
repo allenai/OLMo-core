@@ -14,7 +14,7 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
     "numpy",
-    "torch>=2.10.0",
+    "torch>=2.10.0,<2.14",
     "cached-path>=1.7.2",
     "filelock>=3.4,<4.0",
     "requests",
@@ -76,8 +76,9 @@ fa4 = [
 # 3.7.1 (and nccl 2.29.7 + a matching torchaudio), so it works on the CUDA-12.9 / torch-2.13 image
 # (see `beaker-image-cu129` in the Makefile). torch 2.10/2.11 ship triton 3.6.0 and torch 2.12 ships
 # 3.7.0, none of which satisfy the guard -- so the torch>=2.13 pin below enforces the floor. Since
-# `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13.
-fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0"]
+# `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13. The <2.14 ceiling matches the
+# torch we build/test images with and stops `.[all]` from floating up to an unshipped torch (2.14).
+fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0,<2.14"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
