@@ -77,6 +77,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    ProfilerCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -462,6 +463,18 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 project=WANDB_PROJECT,
                 enabled=WANDB_PROJECT is not None,
                 cancel_check_interval=10,
+            ),
+        )
+        # Disabled by default; turn on for a profiling run with
+        #   --trainer.callbacks.profiler.enabled=true
+        # Defaults chosen for a 100-step throughput smoke: skip the compile-warmup steps,
+        # then trace a short window. with_stack=False keeps the trace small -- a previous
+        # profiling run hung exporting the chrome trace and another OOMed mid-profile, so
+        # prefer the logged op tables and only enable the trace export deliberately.
+        .with_callback(
+            "profiler",
+            ProfilerCallback(
+                enabled=False, skip_first=5, wait=1, warmup=3, active=3, repeat=1, with_stack=False
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
