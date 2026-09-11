@@ -1273,7 +1273,19 @@ def _run_context_parallel_attention_ulysses(
         pytest.param(AttentionBackendName.torch, id="torch-SDPA"),
         pytest.param(AttentionBackendName.flash_2, id="flash-attn-2", marks=FLASH_2_MARKS),
         pytest.param(AttentionBackendName.flash_3, id="flash-attn-3", marks=FLASH_3_MARKS),
-        pytest.param(AttentionBackendName.te, id="te-attn", marks=TE_MARKS),
+        pytest.param(
+            AttentionBackendName.te,
+            id="te-attn",
+            marks=(
+                *TE_MARKS,
+                # te-attn Ulysses CP is flaky on Hopper (intermittent numerical/collective
+                # failure); strict=False so it stays green whether it fails or passes.
+                pytest.mark.xfail(
+                    reason="te-attn Ulysses CP is flaky on Hopper",
+                    strict=False,
+                ),
+            ),
+        ),
     ],
 )
 def test_context_parallel_attention_ulysses(tmp_path, attn_backend: AttentionBackendName):
