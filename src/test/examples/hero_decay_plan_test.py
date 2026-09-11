@@ -138,7 +138,8 @@ def test_protection_restores_only_parent_policy(tmp_path, monkeypatch):
 
     store = SimpleNamespace(registration_path=lambda _: path, set_lineage_deletion_policy=update)
     control.protect(store, r)
-    assert changes[-1]["deletion_mode"] == "report_only"
+    assert changes[-1]["deletion_mode"] == "apply"
+    assert changes[-1]["min_local_checkpoints"] == 10_000
     control.protect(store, r)
     assert len(changes) == 1
     original_is_file = Path.is_file

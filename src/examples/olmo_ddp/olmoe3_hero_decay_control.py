@@ -68,11 +68,16 @@ def protect(store, run):
         atomic_json(path, current)
     original = json.loads(path.read_text())
     copied = run.source.with_name(run.source.name + "-copy.json").is_file()
-    desired = original["deletion_mode"] if copied else "report_only"
-    policy = {k: original[k] for k in ("delete_grace_seconds", "min_local_checkpoints")}
-    if current["deletion_mode"] != desired:
-        store.set_lineage_deletion_policy(run.parent.run_id, deletion_mode=desired, **policy)
-        log("PARENT_RETENTION_UPDATED", arm=run.arm, mode=desired, independent_copy_verified=copied)
+    policy = {
+        k: original[k] for k in ("deletion_mode", "delete_grace_seconds", "min_local_checkpoints")
+    }
+    if not copied:
+        # Keep apply mode: the unchanged live hero validates it on an infrastructure resume.
+        # This exceeds every scheduled checkpoint in the whole 14T run; effectively a hold.
+        policy["min_local_checkpoints"] = 10_000
+    if any(current[k] != value for k, value in policy.items()):
+        store.set_lineage_deletion_policy(run.parent.run_id, **policy)
+        log("PARENT_RETENTION_UPDATED", arm=run.arm, **policy, independent_copy_verified=copied)
 
 
 def main():
