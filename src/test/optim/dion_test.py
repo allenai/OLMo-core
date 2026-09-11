@@ -1,5 +1,6 @@
 import pytest
 import torch
+from packaging.version import parse as parse_version
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -111,7 +112,20 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
     "shard_degree,num_replicas",
     [
         pytest.param(2, 1, id="shard2_replica1"),
-        pytest.param(1, 2, id="shard1_replica2"),
+        pytest.param(
+            1,
+            2,
+            id="shard1_replica2",
+            marks=pytest.mark.xfail(
+                parse_version(torch.__version__) >= parse_version("2.13"),
+                # TODO(dion torch-2.13): remove once dion fixes this upstream. With the static
+                # launcher disabled, dion's replica-only (num_replicas > 1) path feeds a CPU tensor
+                # into a Triton kernel in its adamw/scalar update ("Pointer argument cannot be
+                # accessed from Triton"). The sharded case (shard2_replica1) is unaffected.
+                reason="dion adamw/scalar path passes a CPU tensor to Triton on torch>=2.13",
+                strict=False,
+            ),
+        ),
     ],
 )
 def test_hsdp_dion(shard_degree: int, num_replicas: int):
