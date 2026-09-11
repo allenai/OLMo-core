@@ -8,8 +8,6 @@ on:
   pull_request:
     branches:
       - main
-      # TEMP: run CI on PRs into the integration branch; revert before merge.
-      - akshitab/moe-v2-core
   push:
     branches:
       - main
@@ -170,10 +168,10 @@ jobs:
           - name: Test (GPU)
             image: &gpu_test_image akshitab/olmo-core-tch2130cu129-sm80-2026-09-11
             gpus: 2
-            # beaker run cap (20m) under the 25m GH Actions step timeout, leaving room for image
-            # pull + log streaming.
-            timeout_minutes: 25
-            task_timeout: 20m
+            # The catch-all job runs a larger slice, so give it 30m on both the GH Actions step and
+            # the beaker run cap (other jobs default to 15m).
+            timeout_minutes: 30
+            task_timeout: 30m
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
