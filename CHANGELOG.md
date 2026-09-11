@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added Dolma 3.5, which contains 14T tokens worth of pretraining data, at `DataMix.Dolma3p5_14t`.
+
 ## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
 
 ### Added
