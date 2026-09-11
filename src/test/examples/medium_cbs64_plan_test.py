@@ -101,6 +101,7 @@ def template():
 
 @pytest.mark.parametrize("wave", WAVES)
 def test_specs_preserve_secrets_and_resources(wave):
+    assert "holmes-cs-aus-534" in EXCLUDED
     original = template()
     saved = copy.deepcopy(original)
     spec = training_spec(original, wave, "a" * 40)

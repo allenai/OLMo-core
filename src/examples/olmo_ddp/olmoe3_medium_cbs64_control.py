@@ -40,7 +40,8 @@ from olmoe3_medium_cbs_control import atomic_json, log, replace_env, status
 
 PARENT_EXPERIMENT = "01M1YJ10RHVFBH9BHFGKZVGJ8K"
 VALIDATION_TEMPLATE = "01M1YDHB4K7930RQFR7W781HFC"
-EXCLUDED = {f"holmes-cs-aus-{n}" for n in (485, 503, 516)}
+# 534: GPU6 disconnected from its seven NVLink peers (live-verified September11).
+EXCLUDED = {f"holmes-cs-aus-{n}" for n in (485, 503, 516, 534)}
 
 
 def training_spec(template, wave, commit):
