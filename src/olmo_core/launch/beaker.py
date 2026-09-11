@@ -143,9 +143,10 @@ class OLMoCoreBeakerImage(StrEnum):
     """
     Built with the latest compatible stable version of PyTorch (torch 2.13 / CUDA 12.9).
     """
-    stable_cu130 = "akshitab/olmo-core-tch2110cu130-2026-07-28"
+    stable_cu130 = "akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11"
     """
-    The stable image with CUDA pinned to 13.0 (torch 2.11).
+    The stable image with CUDA pinned to 13.0 (torch 2.13). Serves H100 + B200 + B300 (sm_103), and
+    includes the flash_4 attention backend and the symm-mem/RMA stack.
     """
 
     #
