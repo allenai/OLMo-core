@@ -485,7 +485,7 @@ class MoERouter(nn.Module):
                         tp_mesh=self.tp_mesh,
                         cp_mesh=self.cp_mesh,
                     )
-                    self.load_balancing_loss += lb_loss.detach()
+                    self.load_balancing_loss += get_local_tensor(lb_loss.detach())
 
                     scaled_lb_loss = self.lb_loss_weight * lb_loss
                     aux_loss = scaled_lb_loss
@@ -499,7 +499,7 @@ class MoERouter(nn.Module):
                         tp_mesh=self.tp_mesh,
                         cp_mesh=self.cp_mesh,
                     )
-                    self.z_loss += z_loss.detach()
+                    self.z_loss += get_local_tensor(z_loss.detach())
 
                     scaled_z_loss = self.z_loss_weight * z_loss
                     aux_loss = scaled_z_loss if aux_loss is None else aux_loss + scaled_z_loss

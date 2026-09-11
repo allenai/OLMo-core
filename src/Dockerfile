@@ -46,17 +46,26 @@ ARG CUDA_VERSION_PATH
 ARG TORCH_VERSION=2.10.0
 ARG INSTALL_CHANNEL=whl
 RUN pip install --no-cache-dir --index-url https://download.pytorch.org/${INSTALL_CHANNEL}/${CUDA_VERSION_PATH}/ \
-    torch==${TORCH_VERSION} torchvision torchaudio
+    torch==${TORCH_VERSION} torchvision
+
+# Install ptxas for Triton and expose it at a stable path that is copied into the release image.
+ARG CUDA_NVCC_VERSION=12.8.93
+RUN pip install --no-cache-dir nvidia-cuda-nvcc-cu12==${CUDA_NVCC_VERSION} && \
+    ln -s /opt/conda/lib/python${PYTHON_VERSION}/site-packages/nvidia/cuda_nvcc/bin/ptxas \
+        /opt/conda/bin/ptxas && \
+    /opt/conda/bin/ptxas --version
 
 # Install grouped-gemm.
 # NOTE: right now we need to build with CUTLASS so we can pass batch sizes on GPU.
 # See https://github.com/tgale96/grouped_gemm/pull/21
 ARG GROUPED_GEMM_SHA="f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
-RUN TORCH_CUDA_ARCH_LIST="9.0 10.0" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
+ARG TORCH_CUDA_ARCH_LIST="9.0 10.0"
+RUN TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}" GROUPED_GEMM_CUTLASS="1" pip install --no-build-isolation --no-cache-dir "grouped_gemm @ git+https://git@github.com/tgale96/grouped_gemm.git@${GROUPED_GEMM_SHA}"
 
 # Install flash-attn 2
 ARG FLASH_ATTN_VERSION=2.8.2
-RUN FLASH_ATTN_CUDA_ARCHS="90;100" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
+ARG FLASH_ATTN_CUDA_ARCHS="90;100"
+RUN FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" pip install --no-build-isolation --no-cache-dir flash-attn==${FLASH_ATTN_VERSION}
 
 # Install flash-attn 3.
 ARG FLASH_ATTN_3_SHA="92ca9da8d66f7b34ff50dc080ec0fef9661260d6"
@@ -103,7 +112,9 @@ RUN if [ -n "${QUACK_VERSION}" ]; then \
 COPY pyproject.toml .
 COPY src/olmo_core/__init__.py src/olmo_core/__init__.py
 COPY src/olmo_core/version.py src/olmo_core/version.py
-RUN pip install --no-cache-dir '.[all]' && \
+ARG DION_SHA="7452a5823cf9655b93c3f1d8020b4ebb2535239b"
+RUN pip install --no-cache-dir "dion @ git+https://github.com/microsoft/dion.git@${DION_SHA}" && \
+    pip install --no-cache-dir '.[all]' && \
     pip uninstall -y ai2-olmo-core && \
     rm -rf *
 
@@ -140,7 +151,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
         | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
     && apt-get update \
-    && apt-get install -y google-cloud-sdk \
+    && apt-get install -y google-cloud-cli \
     && rm -rf /var/lib/apt/lists/* \
     # GitHub CLI \
     && curl -sS https://webi.sh/gh | sh \
@@ -166,6 +177,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
+ENV TRITON_PTXAS_PATH=/opt/conda/bin/ptxas
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core
