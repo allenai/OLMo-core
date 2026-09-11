@@ -252,17 +252,17 @@ RUN if [ -n "${B300}" ]; then \
         if [ -n "$PTXAS" ]; then ln -sf "$PTXAS" /usr/local/bin/triton-ptxas; fi; \
     fi
 
-# Set to /usr/local/bin/triton-ptxas (the symlink created above) by the B300 targets. Empty for the
-# default image — Triton ignores a nonexistent/empty path and keeps its own bundled ptxas.
-ARG TRITON_PTXAS_PATH=
+# Use the image's assembler rather than Triton's bundled version. Triton 3.7 selects a separate
+# assembler for Blackwell, so both overrides must be set. CUDA-13 targets use the symlink above.
+ARG TRITON_PTXAS_PATH=/opt/conda/bin/ptxas
 ENV TRITON_PTXAS_PATH=${TRITON_PTXAS_PATH}
+ENV TRITON_PTXAS_BLACKWELL_PATH=${TRITON_PTXAS_PATH}
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_BREAK_SYSTEM_PACKAGES=1
-ENV TRITON_PTXAS_PATH=/opt/conda/bin/ptxas
 ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/root/.local/bin:/root/.cargo/bin:/opt/conda/bin:$PATH
 
 LABEL org.opencontainers.image.source=https://github.com/allenai/OLMo-core

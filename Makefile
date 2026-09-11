@@ -89,7 +89,9 @@ QUACK_VERSION = ""
 # B300 (sm_103) image switches. Empty for the default image; set by the CUDA-13 targets (via
 # CUDA13_ARGS) to bake in the B300-only fixes (see CUDA13_ARGS and the Dockerfile release stage).
 B300 =
-TRITON_PTXAS_PATH =
+# Use the image's assembler for both Triton paths, including Blackwell (SM100+).
+# CUDA-13 targets override this with their CUDA-13 assembler symlink.
+TRITON_PTXAS_PATH = /opt/conda/bin/ptxas
 # symm-mem / RMA image switches. Empty for the default image; set by the '-rma' targets so the
 # symm_mem_vdev2d (rowwise EP) and nccl_rma_p2p (custom PP) extensions can JIT-build at runtime.
 UBUNTU_VERSION = 22.04
