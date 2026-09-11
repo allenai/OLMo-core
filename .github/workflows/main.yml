@@ -166,9 +166,9 @@ jobs:
         # Beaker image is available.
         task:
           - name: Test (GPU)
-            image: &gpu_test_image akshitab/olmo-core-tch2130cu129-sm80-2026-09-10
+            image: &gpu_test_image akshitab/olmo-core-tch2130cu129-sm80-2026-09-11
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
@@ -181,7 +181,7 @@ jobs:
           - name: Test checkpoint (GPU)
             image: *gpu_test_image
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/distributed/checkpoint*
@@ -189,7 +189,7 @@ jobs:
           - name: Test transformer (GPU)
             image: *gpu_test_image
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/nn/transformer*
@@ -207,7 +207,7 @@ jobs:
             gpus: 2
             # The v1 dropless MoE tests use the grouped_gemm CUTLASS kernels, which have no
             # Blackwell (sm_100) build, so keep this job off b200.
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             # The v2 MoE GPU tests (src/test/nn/moe/v2) need the symm_mem_vdev2d NVSHMEM kernels,
             # which only the RMA image has, so they run in the "Test MoE kernels" job below; exclude
             # them here. (The fused block/model tests moved to src/test/nn/ddp, which this job's
@@ -220,7 +220,7 @@ jobs:
           - name: Test optim (GPU)
             image: *gpu_test_image
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 src/test/optim*
@@ -228,7 +228,7 @@ jobs:
           - name: Integration tests (GPU)
             image: *gpu_test_image
             gpus: 2
-            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn
+            clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes -m gpu \
                 src/integration_tests/
