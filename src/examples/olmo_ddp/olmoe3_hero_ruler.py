@@ -157,6 +157,12 @@ def main():
         verify_success(model)
         log("RULER_ALREADY_COMPLETE", model=str(model))
         return
+    # Populate the shared per-job data cache once before task workers can race extraction.
+    from olmo_eval.data.ruler_loader import download_ruler_data
+
+    log("RULER_DATA_PREPARE")
+    data_root = download_ruler_data()
+    log("RULER_DATA_READY", data_root=data_root)
     os.environ["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"
     provider = configure_provider(runtime.configure_inference, args.instances)
     log(

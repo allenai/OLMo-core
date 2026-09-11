@@ -152,6 +152,7 @@ def launch(apply):
         spec = b.experiment.get_spec(b.workload.get(WATCHER_TEMPLATE)).to_json()
         task = spec["tasks"][0]
         task.pop("resources", None)
+        task.pop("result", None)
         task["name"] = "ruler-watcher"
         task["context"] = dict(priority="urgent", minRuntime="0s", autoResume=True)
         task["constraints"] = {"cluster": ["ai2/phobos"]}
