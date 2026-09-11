@@ -1,1 +1,5 @@
-{"objective":"Stress-test the Phase-0 pack-occupancy finding before spending B300 GPU hours on it","target":8.0,"max_rounds":4,"current_round":0,"best_round":null,"best_score":null,"history":[],"status":"running"}
+{"objective":"Stress-test the Phase-0 pack-occupancy finding before spending B300 GPU hours on it",
+ "target":8.0,"max_rounds":4,"current_round":1,"best_round":0,"best_score":3.8,
+ "history":[{"round":0,"total":3.8,"gates_passed":true,"required_findings":5,
+   "outcome":"All 5 required findings accepted after independent verification. Landed the pad-tail attention fix (7018342ad); rewrote the compute claim as a decomposition (LM 3.91x, whole-model 3.10x, ~2.4x after the pad fix) instead of the padded-token ratio; added the batch-composition confound section; specified the crops=50/mb=1 memory-neutral rung; corrected the never-measured claim."}],
+ "status":"round-0 findings applied"}
