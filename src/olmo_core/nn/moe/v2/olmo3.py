@@ -308,7 +308,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         attention_bias=False,
         attention_dropout=attention.dropout or 0.0,
         rms_norm_eps=representative.layer_norm.eps,
-        sliding_window=(next(iter(window_sizes)) + 1 if window_sizes else max_position_embeddings),
+        sliding_window=(next(iter(window_sizes)) if window_sizes else max_position_embeddings),
         use_head_qk_norm=True,
         qk_norm_per_head_gains=bool(attention.qk_norm_per_head_gains),
         scalable_softmax=attention.scalable_softmax,
@@ -459,7 +459,7 @@ def build_olmo3_moe_config_from_hf_config(
     ep.validate()
 
     def make_block(layer_type: str, *, dense: bool) -> OLMoDDPTransformerBlockConfig:
-        window = int(config["sliding_window"]) - 1
+        window = int(config["sliding_window"])
         block_shared_experts: SharedExpertsConfig | None
         if dense:
             assert dense_hidden is not None

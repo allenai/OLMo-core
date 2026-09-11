@@ -270,3 +270,23 @@ def test_hf_ordinary_dense_layout_imports_without_mutating_config(global_lb):
     )
     assert reverse.dense_layers_use_shared_expert is True
     assert reverse.global_load_balancing == global_lb
+
+
+def test_sliding_window_size_matches_hf_in_both_config_directions():
+    hf = hybrid_config()
+    hf.layer_types = ["linear_attention", "sliding_attention"]
+    hf.sliding_window = 4
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf, attention_backend=AttentionBackendName.torch
+    )
+    native = config.build(init_device="cpu")
+    assert native.blocks["1"].attention.backend.window_size == (3, 0)
+    reverse = olmo3.build_olmo3_moe_hf_config_from_native_config(
+        config,
+        max_position_embeddings=32,
+        pad_token_id=0,
+        bos_token_id=None,
+        eos_token_id=1,
+    )
+    assert reverse.sliding_window == 4
+    assert reverse.layer_types == hf.layer_types
