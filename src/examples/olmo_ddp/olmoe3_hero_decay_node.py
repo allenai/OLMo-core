@@ -7,7 +7,15 @@ import subprocess
 import sys
 import time
 
-from olmoe3_hero_decay_plan import AUTOMATION, END, SMOKE_END, START, find_run, validate_checkpoint
+from olmoe3_hero_decay_plan import (
+    AUTOMATION,
+    END,
+    SMOKE_END,
+    START,
+    find_run,
+    validate_checkpoint,
+)
+from olmoe3_hero_decay_runtime import verify_runtime
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 from olmoe3_profile_node import resolve_ready_leader
@@ -16,6 +24,7 @@ from olmoe3_profile_node import resolve_ready_leader
 def main():
     from beaker import Beaker
 
+    verify_runtime()
     run = find_run(sys.argv[1])
     exp, job = os.environ["BEAKER_EXPERIMENT_ID"], os.environ["BEAKER_JOB_ID"]
     rank = int(os.environ["BEAKER_REPLICA_RANK"])

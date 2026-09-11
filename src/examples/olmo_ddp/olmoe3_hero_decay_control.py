@@ -22,6 +22,11 @@ from olmoe3_lr_sweep_watch import Controller, atomic_json, log, replace_env, sta
 from olmoe3_small_hero_plan import CONTROL, MOUNT, STATE, UPLOADER
 
 
+def training_name(run):
+    """One explicitly authorized EMO repair; retain the failed attempt's durable receipt."""
+    return run.run_id + ("-train-r2" if run.emo else "-train")
+
+
 def training_spec(original, run, commit):
     """Clone the live arm's exact worker environment and topology; isolate all identities."""
     spec = copy.deepcopy(original)
@@ -46,6 +51,9 @@ def training_spec(original, run, commit):
             "WANDB_RUN_ID": None,
             "WANDB_RESUME": None,
             "OLMO35_DECAY_LOAD": None,
+            "GANTRY_INSTALL_CMD": "true",
+            "GANTRY_POST_SETUP_CMD": "bash src/examples/olmo_ddp/olmoe3_hero_decay_setup.sh",
+            "OLMO35_DECAY_CPU_VALIDATE": None,
         },
     )
     spec["tasks"] = [task]
@@ -148,7 +156,9 @@ def main():
                 if os.statvfs(MOUNT).f_bavail * os.statvfs(MOUNT).f_frsize < 12_000_000_000_000:
                     snapshot[run.arm] = dict(state="waiting_for_storage")
                     continue
-                work = control.ensure(run.run_id + "-train", planned[run.arm])
+                if run.emo:
+                    assert status(b.workload.get("01M28S8ZSMXTQWG8N4PQYE2AH6")) == "STATUS_FAILED"
+                work = control.ensure(training_name(run), planned[run.arm])
                 state = control.report(work)
                 snapshot[run.arm] = dict(
                     state=state, experiment=work.experiment.id if work else None

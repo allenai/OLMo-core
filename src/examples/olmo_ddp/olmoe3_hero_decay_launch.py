@@ -52,9 +52,10 @@ def main():
             task.pop("leaderSelection", None)
             task["constraints"] = {"cluster": ["ai2/phobos"]}
             task["arguments"] = [
-                "python",
-                "src/examples/olmo_ddp/olmoe3_hero_decay.py",
-                "--validate-only",
+                "bash",
+                "-euc",
+                "python src/examples/olmo_ddp/olmoe3_hero_decay_runtime.py && "
+                "python src/examples/olmo_ddp/olmoe3_hero_decay.py --validate-only",
             ]
             task["context"] = dict(priority="urgent", minRuntime="0s", autoResume=False)
             for item in task["envVars"]:
@@ -71,6 +72,9 @@ def main():
                     "OLMO35_HERO_STOP": None,
                     "WANDB_RUN_ID": None,
                     "WANDB_RESUME": None,
+                    "GANTRY_INSTALL_CMD": "true",
+                    "GANTRY_POST_SETUP_CMD": "bash src/examples/olmo_ddp/olmoe3_hero_decay_setup.sh",
+                    "OLMO35_DECAY_CPU_VALIDATE": "1",
                 },
             )
             name = gate_name
