@@ -57,6 +57,12 @@ def main():
                 "--validate-only",
             ]
             task["context"] = dict(priority="urgent", minRuntime="0s", autoResume=False)
+            for item in task["envVars"]:
+                if item["name"] == "GANTRY_POST_SETUP_CMD":
+                    item["value"] = item["value"].replace(
+                        "github.com/allenai/kernel-fun.git@",
+                        "github.com/allenai/kernel-fun-dev.git@",
+                    )
             replace_env(
                 task,
                 {
