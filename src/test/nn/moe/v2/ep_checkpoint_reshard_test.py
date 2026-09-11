@@ -20,7 +20,7 @@ from olmo_core.train.train_module.transformer import (
 )
 
 
-def _run_reshard(save_root, ep_degree):
+def _run_reshard(save_root, ep_degree, save_options):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     for key in (
@@ -69,7 +69,7 @@ def _run_reshard(save_root, ep_degree):
             state.to_local().fill_(value)
             expected[name] = state.full_tensor().cpu()
     original.optim._copy_main_params_to_model_params()
-    original.save_state_dict_direct(Path(save_root) / "ep1")
+    original.save_state_dict_direct(Path(save_root) / "ep1", **save_options)
     for name, state in original.optim.states.items():
         torch.testing.assert_close(
             state.full_tensor().cpu(), expected[name], rtol=0, atol=0, msg=name
@@ -107,7 +107,7 @@ def _run_reshard(save_root, ep_degree):
 
         # The direct synchronous save temporarily changes EP checkpoint views and
         # then reloads live optimizer state. Check that all local shards survive.
-        tm.save_state_dict_direct(Path(save_root) / f"ep{ep}")
+        tm.save_state_dict_direct(Path(save_root) / f"ep{ep}", **save_options)
         tm.zero_grads()
         for name, state in tm.optim.states.items():
             torch.testing.assert_close(
@@ -122,14 +122,19 @@ def _run_reshard(save_root, ep_degree):
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("ep_degree", [2, 4, 8])
-def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path, ep_degree):
+@pytest.mark.parametrize(
+    "save_options",
+    [{}, {"compact_storage": True, "dedup_save_to_lowest_rank": False}],
+    ids=["legacy", "balanced-compact"],
+)
+def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path, ep_degree, save_options):
     """Use node-local temporary checkpoints; never touch Weka or user checkpoints."""
-    if torch.cuda.device_count() < 8:
-        pytest.skip("requires8 CUDA GPUs")
+    if torch.cuda.device_count() < ep_degree:
+        pytest.skip(f"requires {ep_degree} CUDA GPUs")
     run_distributed_test(
         _run_reshard,
-        world_size=8,
+        world_size=ep_degree,
         backend="nccl",
         start_method="spawn",
-        func_args=(str(tmp_path / "ep-reshard"), ep_degree),
+        func_args=(str(tmp_path / "ep-reshard"), ep_degree, save_options),
     )
