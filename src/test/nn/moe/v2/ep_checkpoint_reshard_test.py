@@ -141,9 +141,11 @@ def test_ep1_checkpoint_reshards_and_preserves_live_states(tmp_path, ep_degree, 
     """Use node-local temporary checkpoints; never touch Weka or user checkpoints."""
     if torch.cuda.device_count() < ep_degree:
         pytest.skip(f"requires {ep_degree} CUDA GPUs")
+    # Preserve the original eight-rank DP/EP coverage when a full node is available.
+    world_size = next(size for size in (8, 4, 2) if torch.cuda.device_count() >= size)
     run_distributed_test(
         _run_reshard,
-        world_size=ep_degree,
+        world_size=world_size,
         backend="nccl",
         start_method="spawn",
         func_args=(str(tmp_path / "ep-reshard"), ep_degree, save_options),
