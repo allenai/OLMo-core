@@ -12,7 +12,7 @@ from olmo_core.nn.transformer.config import TransformerConfig
 from olmo_core.nn.transformer.model import Transformer
 from olmo_core.optim.dion import DionConfig
 from olmo_core.testing import DEVICES, requires_multi_gpu, run_distributed_test
-from olmo_core.testing.utils import requires_dion
+from olmo_core.testing.utils import requires_compute_capability, requires_dion
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
     TransformerDataParallelConfig,
@@ -104,6 +104,10 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
 
 @requires_dion
 @requires_multi_gpu
+# TODO(dion A100): dion HSDP crashes on A100 (sm_80) under torch 2.13 (SIGABRT / CUDA driver error)
+# even with the static-launcher workaround that fixes it on Hopper. Skip on cc < 9 for now; revisit
+# once the A100-specific dion/torch-2.13 issue is understood or fixed upstream.
+@requires_compute_capability(min_cc=9)
 @pytest.mark.parametrize(
     "shard_degree,num_replicas",
     [
