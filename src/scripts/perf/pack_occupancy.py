@@ -246,7 +246,11 @@ def _replay(
 def _summarize(stats: List[PackStat], max_crops: int) -> Dict:
     if not stats:
         return {"max_crops": max_crops, "packs": 0}
-    toks = [s.n_tokens for s in stats]
+    # Clamp to the sequence length: an example longer than SEQUENCE_LENGTH is emitted as
+    # its own `over_capacity:input_ids` pack and the collator tail-truncates it
+    # (collator.py:66-71), so counting its full length would report >100% occupancy for
+    # that pack. Rare (1 row in the 3,000-example v10 sample) but it inflates the mean.
+    toks = [min(s.n_tokens, SEQUENCE_LENGTH) for s in stats]
     crops = [s.n_crops for s in stats]
     exs = [s.n_examples for s in stats]
     return {
