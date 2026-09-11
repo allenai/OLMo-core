@@ -264,10 +264,18 @@ def _summarize(stats: List[PackStat], max_crops: int) -> Dict:
 
 def _cmd_sample(args) -> int:
     only = args.only.split(",") if args.only else None
-    rows = list(_iter_sampled_lengths(args.mixture, args.limit, args.seed, only))
+    # Stream to disk as rows arrive and flush each one. Building the mixture alone can
+    # take tens of minutes (it takes len() of every source), and a crash late in the run
+    # -- e.g. one source with an unset data-root env var -- would otherwise discard hours
+    # of decoding. A partial file is still a usable input to `sweep`.
+    rows = []
     with open(args.out, "w") as f:
-        for n_tokens, n_crops, source in rows:
+        for n_tokens, n_crops, source in _iter_sampled_lengths(
+            args.mixture, args.limit, args.seed, only
+        ):
             f.write(json.dumps({"n_tokens": n_tokens, "n_crops": n_crops, "source": source}) + "\n")
+            f.flush()
+            rows.append((n_tokens, n_crops, source))
     log.info("wrote %d rows to %s", len(rows), args.out)
     if rows:
         toks = [r[0] for r in rows]
