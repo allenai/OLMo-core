@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -13,7 +14,11 @@ from torch.distributed.tensor import Placement
 
 from olmo_core.config import DType
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
-from olmo_core.nn.attention.flash_linear_attn_api import dispatch_chunk_kda, has_fla
+from olmo_core.nn.attention.flash_linear_attn_api import (
+    dispatch_chunk_kda,
+    has_fla,
+    has_kernel_fun,
+)
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
     UlyssesContextParallelStyle,
@@ -21,9 +26,12 @@ from olmo_core.nn.attention.ring import (
 from olmo_core.nn.buffer_cache import BufferCache
 from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import ActivationFunction
+from olmo_core.utils import log_once
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+
+log = logging.getLogger(__name__)
 
 
 class KimiDeltaAttention(SequenceMixer):
@@ -33,6 +41,11 @@ class KimiDeltaAttention(SequenceMixer):
     KDA uses a vector-valued decay for every key channel and a scalar delta
     gate for every value head. The surrounding OLMo-core adapter retains packed
     document convolutions, initialization, and sequence-mixer interfaces.
+
+    .. warning::
+        ``use_experimental_kernels`` opts both the KDA chunk kernel and the short
+        convolutions into the **experimental** kernels from the ``kernel-fun`` package. See
+        :class:`KimiDeltaAttentionConfig` for what opting in entails.
     """
 
     def __init__(
@@ -47,6 +60,7 @@ class KimiDeltaAttention(SequenceMixer):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
+        use_experimental_kernels: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ) -> None:
@@ -54,6 +68,11 @@ class KimiDeltaAttention(SequenceMixer):
         if not has_fla():
             raise RuntimeError(
                 "KimiDeltaAttention requires flash-linear-attention with fla.ops.kda"
+            )
+        if use_experimental_kernels and not has_kernel_fun():
+            raise RuntimeError(
+                "KimiDeltaAttention(use_experimental_kernels=True) requires the kernel-fun package; "
+                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
             )
         from fla.modules import FusedRMSNormGated
 
@@ -64,6 +83,20 @@ class KimiDeltaAttention(SequenceMixer):
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
+        self.use_experimental_kernels = use_experimental_kernels
+        if use_experimental_kernels:
+            log_once(
+                log,
+                "KDA is running with the EXPERIMENTAL kernels from kernel-fun "
+                "(use_experimental_kernels=True): the KDA chunk kernel and the fused "
+                "short-conv kernels behind the Q/K/V convolutions. These are new and are "
+                "not numerically identical to FLA's kernels. The KDA kernel only engages "
+                "on Blackwell at chunk size 64 without packed-document cu_seqlens; every "
+                "other shape falls back to FLA — which the kernels log, with the reason, "
+                "once per process. See the kernel_fun.kda and kernel_fun.cconv packages "
+                "for the supported box.",
+                level=logging.WARNING,
+            )
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * expand_v)
@@ -101,6 +134,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_experimental_kernels=use_experimental_kernels,
         )
         self.k_conv1d = CausalConv1d(
             hidden_size=self.key_dim,
@@ -109,6 +143,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_experimental_kernels=use_experimental_kernels,
         )
         self.v_conv1d = CausalConv1d(
             hidden_size=self.value_dim,
@@ -117,6 +152,7 @@ class KimiDeltaAttention(SequenceMixer):
             activation=ActivationFunction.silu.value,
             dtype=dtype,
             init_device=init_device,
+            use_experimental_kernels=use_experimental_kernels,
         )
 
         self.g_proj_1 = nn.Linear(d_model, self.head_v_dim, bias=False, **factory)
@@ -160,6 +196,11 @@ class KimiDeltaAttention(SequenceMixer):
         v = v.view(batch_size, seq_len, self.n_v_heads, self.head_v_dim)
         raw_decay = raw_decay.view(batch_size, seq_len, self.n_v_heads, self.head_k_dim)
 
+        # No kernel-fun version log here. The package logs `kernel_fun.versions()` itself,
+        # once per process, from inside its `torch.compiler.disable`d entry points — free,
+        # where this frame is compiled and a call here cost two graph breaks. It also
+        # raised `TypeError: unhashable type: 'dict'`: `log_once` is `lru_cache`d and
+        # `versions()` returns a dict.
         o, _ = dispatch_chunk_kda(
             q=q,
             k=k,
@@ -171,6 +212,7 @@ class KimiDeltaAttention(SequenceMixer):
             use_qk_l2norm_in_kernel=True,
             use_gate_in_kernel=True,
             cu_seqlens=cu_doc_lens,
+            use_experimental_kernels=self.use_experimental_kernels,
         )
         output_gate = self.g_proj_2(self.g_proj_1(x)).view(
             batch_size, seq_len, self.n_v_heads, self.head_v_dim
@@ -286,6 +328,26 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     :param conv_size: The kernel size of the causal convolutions applied to Q, K, and V.
     :param conv_bias: Whether the causal convolutions include bias parameters.
     :param norm_eps: Epsilon used by the gated RMS normalization on the output.
+    :param use_experimental_kernels: **Experimental.** Whether to use the kernels from the
+        ``kernel-fun`` package instead of FLA's: the CuTe/Triton KDA kernels
+        (:func:`kernel_fun.kda.chunk_kda`) for the fixed-length chunk path, and the fused
+        short-conv kernels (:func:`kernel_fun.cconv.causal_conv1d`) for the layer's three
+        causal convolutions. This single flag controls both. Requires the package,
+        installed with the ``kernel-fun`` extra (``pip install
+        'ai2-olmo-core[kernel-fun]'``); building the layer without it raises. Each kernel
+        only takes effect on the hardware/shapes it supports (Blackwell, chunk-size-64, no
+        packed-document ``cu_seqlens`` for KDA; Hopper and up, no bias, no packed-document
+        ``cu_seqlens`` for the conv); otherwise the layer silently falls back to FLA.
+
+        These kernels are faster but newer and far less exercised than FLA's: they are
+        not bit-identical to FLA's monolith, so loss curves will not match a run with this
+        turned off. Swapped in are the forward scan+readout, the gate activation (fused
+        into the cumsum rather than run as eager fp32 ops), and four of the backward's
+        seven stages; the rest are FLA's own kernels at FLA's own stage boundaries. At the
+        production shape this measured 1.54x on the op. Leave it off unless you are
+        deliberately testing the kernels, and check the ``kernel-fun`` lines in the
+        training log to confirm they engaged — the fallback is silent by design and reads
+        as a correct 1.00x.
     :param dtype: The parameter dtype.
     """
 
@@ -297,6 +359,7 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
     conv_size: int = 4
     conv_bias: bool = False
     norm_eps: float = 1e-5
+    use_experimental_kernels: bool = False
     dtype: DType = DType.float32
 
     def num_params(self, d_model: int) -> int:
@@ -341,6 +404,7 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
             conv_size=self.conv_size,
             conv_bias=self.conv_bias,
             norm_eps=self.norm_eps,
+            use_experimental_kernels=self.use_experimental_kernels,
             dtype=self.dtype.as_pt(),
             init_device=init_device,
         )
