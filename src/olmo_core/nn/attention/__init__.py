@@ -202,6 +202,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
     scalable_softmax: bool = False
+    qk_norm_per_head_gains: Optional[bool] = None
 
     def num_params(self, d_model: int) -> int:
         """
@@ -228,7 +229,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
 
         # Block attention QK norm.
         if self.qk_norm is not None:
-            if self.use_head_qk_norm:
+            if self.use_head_qk_norm and not self.qk_norm_per_head_gains:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
                 params += self.qk_norm.num_params(n_heads * head_dim)  # q_norm
@@ -345,6 +346,10 @@ class Attention(SequenceMixer):
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
+    :param use_head_qk_norm: Apply the QK norm head-wise, i.e. to each head separately with
+        normalization statistics computed over ``head_dim`` instead of the full hidden dimension.
+    :param qk_norm_per_head_gains: Give each head its own norm gain (and bias) parameters instead
+        of sharing them across heads. Requires ``use_head_qk_norm=True``.
     :param dropout: Dropout probability.
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
@@ -375,8 +380,14 @@ class Attention(SequenceMixer):
         cache: Optional[BufferCache] = None,
         use_head_qk_norm: bool = False,
         scalable_softmax: bool = False,
+        qk_norm_per_head_gains: bool = False,
     ):
         super().__init__()
+
+        if qk_norm_per_head_gains and not use_head_qk_norm:
+            raise OLMoConfigurationError(
+                "'qk_norm_per_head_gains' requires 'use_head_qk_norm=True'"
+            )
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
@@ -430,8 +441,17 @@ class Attention(SequenceMixer):
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
             if use_head_qk_norm:
-                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
-                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                q_weight_shape: Optional[Tuple[int, ...]] = None
+                k_weight_shape: Optional[Tuple[int, ...]] = None
+                if qk_norm_per_head_gains:
+                    q_weight_shape = (n_heads, self.head_dim)
+                    k_weight_shape = (self.n_kv_heads, self.head_dim)
+                self.q_norm = qk_norm.build(
+                    size=self.head_dim, init_device=init_device, weight_shape=q_weight_shape
+                )
+                self.k_norm = qk_norm.build(
+                    size=self.head_dim, init_device=init_device, weight_shape=k_weight_shape
+                )
             else:
                 self.q_norm = qk_norm.build(size=n_heads * self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(
@@ -652,6 +672,11 @@ class Attention(SequenceMixer):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.use_head_qk_norm:
+            # NOTE: with per-head gains ('qk_norm_per_head_gains=True') the norm weight has shape
+            # (n_heads, head_dim), and correctness relies on applying the norm *after* the
+            # head-wise view above so that head 'h' broadcasts against gain row 'h'. Under tensor
+            # parallelism this still holds: the norm runs in the sequence-sharded region where all
+            # heads are present locally and the weight is replicated.
             if self.q_norm is not None:
                 q = self.q_norm(q)
             if self.k_norm is not None:
