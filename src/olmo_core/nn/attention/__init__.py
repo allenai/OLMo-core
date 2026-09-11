@@ -15,6 +15,7 @@ from olmo_core.distributed.parallel.tensor_parallel import SequenceParallel
 from olmo_core.doc_utils import beta_feature
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
+from olmo_core.nn.attention.kda import KimiDeltaAttention, KimiDeltaAttentionConfig
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.attention.recurrent import GatedDeltaNet, GatedDeltaNetConfig
 
@@ -77,6 +78,8 @@ __all__ = [
     "UlyssesContextParallelStyle",
     "GatedDeltaNetConfig",
     "GatedDeltaNet",
+    "KimiDeltaAttentionConfig",
+    "KimiDeltaAttention",
 ]
 
 log = logging.getLogger(__name__)
