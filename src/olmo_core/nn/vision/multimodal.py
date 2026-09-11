@@ -483,16 +483,30 @@ class MultimodalLM(nn.Module):
             self._n_connector_params_cache = sum(p.numel() for p in self.connector.parameters())
         return self._n_connector_params_cache
 
+    def vision_is_trainable(self) -> bool:
+        """True when any vision-encoder parameter requires grad.
+
+        Derived from ``requires_grad`` rather than from a config flag or a parameter-name
+        pattern, so it stays correct across renames of the vision subtree.
+        """
+        return any(p.requires_grad for p in self.vision.parameters())
+
     def image_encoder_flops(
         self, n_crops: int, n_patches_per_crop: int, n_pooled_tokens: int
     ) -> int:
         """Idealized FLOPs for the vision half of one batch, for MFU accounting.
 
         The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
-        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
-        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
-        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
-        (fwd+bwd) per pooled output token.
+        full ``B * n_crops`` of the images tensor. Per patch it costs 2 FLOPs/param for the
+        linear layers plus the attention score+context quadratic ``4·L·P·d``; that is the
+        **forward** cost, and a trainable encoder additionally pays backward, taken at the
+        usual 2x forward, so the whole term is tripled. The connector is always trained →
+        6 FLOPs/param (fwd+bwd) per pooled output token.
+
+        Stage 1 freezes the encoder and Stage 2 trains it (``VISION_LR``), so this is
+        decided per model instance from ``requires_grad`` rather than assumed. Assuming
+        "frozen" unconditionally under-counted Stage-2 vision FLOPs roughly 3x, and hence
+        under-reported Stage-2 MFU.
 
         :param n_crops: total number of image crops processed by the ViT this batch.
         :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
@@ -501,7 +515,8 @@ class MultimodalLM(nn.Module):
         d = self.cfg.vision.image_emb_dim
         n_layers = self.cfg.vision.image_num_layers
         n_raw = n_crops * n_patches_per_crop
-        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit_fwd = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit = vit_fwd * (3 if self.vision_is_trainable() else 1)
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 

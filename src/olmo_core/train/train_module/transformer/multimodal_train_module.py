@@ -342,9 +342,14 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         return input_ids, labels, loss_masks, batch
 
     def _vision_is_frozen(self) -> bool:
-        """True when no vision-encoder parameter requires grad (encoder fully frozen)."""
+        """True when no vision-encoder parameter requires grad (encoder fully frozen).
+
+        Distinct from ``not vision_is_trainable()`` only for a vision module with no
+        parameters at all, which is neither trainable nor meaningfully "frozen" -- and
+        which must not take the activation-checkpointing skip below.
+        """
         params = list(self._multimodal.vision.parameters())
-        return bool(params) and not any(p.requires_grad for p in params)
+        return bool(params) and not self._multimodal.vision_is_trainable()
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         super()._set_model_mode(mode)
