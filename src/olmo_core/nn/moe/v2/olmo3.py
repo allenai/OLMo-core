@@ -86,13 +86,8 @@ def build_olmo3_moe_hf_config_from_native_config(
         raise NotImplementedError("Olmo3Moe export requires attention sequence mixers.")
     if router is None or routed_experts is None:
         raise NotImplementedError("Olmo3Moe blocks require routed experts and a router.")
-    if any(
-        b.routed_experts_router.emo is not None or b.routed_experts_router.global_load_balancing
-        for b in moe_blocks
-    ):
-        raise NotImplementedError(
-            "The MILES factory does not support EMo or global load balancing."
-        )
+    if any(b.routed_experts_router.emo is not None for b in moe_blocks):
+        raise NotImplementedError("The MILES factory does not support EMo.")
     if representative.layer_norm is None:
         raise NotImplementedError("Olmo3Moe export requires RMS layer norms.")
     if attention.rope is not None and attention.rope.scaling is not None:
@@ -188,6 +183,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         router.normalize_expert_weights,
         router.restore_weight_scale,
         router.original_top_k,
+        router.global_load_balancing,
     )
     for block in moe_blocks[1:]:
         block_router = block.routed_experts_router
@@ -206,6 +202,7 @@ def build_olmo3_moe_hf_config_from_native_config(
             block_router.normalize_expert_weights,
             block_router.restore_weight_scale,
             block_router.original_top_k,
+            block_router.global_load_balancing,
         ) != routed_signature:
             raise ValueError("Routed expert architecture must be consistent across MoE layers.")
 
@@ -292,6 +289,7 @@ def build_olmo3_moe_hf_config_from_native_config(
         n_routed_experts=routed_experts.num_experts,
         num_experts_per_tok=router.top_k,
         original_num_experts_per_tok=router.original_top_k,
+        global_load_balancing=router.global_load_balancing,
         num_hidden_layers=model_config.n_layers,
         num_attention_heads=attention.n_heads,
         num_key_value_heads=attention.n_kv_heads,
@@ -360,10 +358,8 @@ def build_olmo3_moe_config_from_hf_config(
             "emo_max_document_expert_pool",
             "emo_eval_document_expert_pool",
         )
-    ) or config.get("global_load_balancing", False):
-        raise NotImplementedError(
-            "The MILES factory does not support EMo or global load balancing."
-        )
+    ):
+        raise NotImplementedError("The MILES factory does not support EMo.")
     rope_parameters = config.get("rope_parameters") or config.get("rope_scaling") or {}
     if rope_parameters and rope_parameters.get("rope_type", "default") != "default":
         raise NotImplementedError("Scaled RoPE is not supported by this stage-one factory.")
@@ -436,7 +432,12 @@ def build_olmo3_moe_config_from_hf_config(
         original_top_k=config.get("original_num_experts_per_tok"),
         lb_loss_weight=router_aux_loss_weight,
         z_loss_weight=router_z_loss_weight,
-        lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        global_load_balancing=bool(config.get("global_load_balancing", False)),
+        lb_loss_granularity=(
+            MoELoadBalancingLossGranularity.local_batch
+            if config.get("global_load_balancing", False)
+            else MoELoadBalancingLossGranularity.instance
+        ),
         dtype=dtype,
     )
     shared_hidden = config.get("shared_expert_intermediate_size")
@@ -588,11 +589,31 @@ def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
     return wrapped if isinstance(wrapped, torch.nn.Module) else model
 
 
+def _config_for_native_dense_layout(
+    model: torch.nn.Module, config: PretrainedConfig
+) -> PretrainedConfig:
+    # This HF field describes the source Core tensor layout. Both layouts export
+    # exactly the same HF MLP. The adapter always builds shared-expert dense blocks,
+    # but can import HF files originally exported from ordinary dense blocks.
+    layouts = {
+        hasattr(model.get_submodule(f"blocks.{index}"), "shared_experts")
+        and model.get_submodule(f"blocks.{index}").shared_experts is not None
+        for index in (config.dense_layers_indices or [])
+    }
+    if len(layouts) > 1:
+        raise NotImplementedError("Mixed native dense tensor layouts are unsupported.")
+    if layouts and next(iter(layouts)) != config.dense_layers_use_shared_expert:
+        config = deepcopy(config)
+        config.dense_layers_use_shared_expert = next(iter(layouts))
+    return config
+
+
 def load_olmo3_moe_hf_state(
     model: torch.nn.Module, hf_config: PretrainedConfig, hf_state: Mapping[str, torch.Tensor]
 ) -> None:
     """Load a full HF state into an unsharded or EP-sharded OLMoDDP model."""
     model = _unwrap_model(model)
+    hf_config = _config_for_native_dense_layout(model, hf_config)
     native_state = convert_state_from_hf(hf_config, dict(hf_state), model_type="olmo3moe")
     parameters = dict(model.named_parameters())
     for layer_idx in range(hf_config.num_hidden_layers):
@@ -661,7 +682,7 @@ def gather_olmo3_moe_hf_state(
             native_state[f"{prefix}w_k.weight"] = k
             native_state[f"{prefix}w_v.weight"] = v
 
-    return convert_state_to_hf(hf_config, native_state)
+    return convert_state_to_hf(_config_for_native_dense_layout(model, hf_config), native_state)
 
 
 class _GatheredMoEState(Mapping[str, torch.Tensor]):
@@ -715,4 +736,5 @@ def iter_olmo3_moe_hf_state(
     CPU replica is staged. The current expert slabs and consumer's output bucket
     still need device memory; this is not an arbitrarily small-memory exporter.
     """
+    hf_config = _config_for_native_dense_layout(_unwrap_model(model), hf_config)
     yield from iter_olmo3moe_state_to_hf(hf_config, _GatheredMoEState(model, hf_config))

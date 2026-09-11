@@ -232,3 +232,41 @@ def test_fused_attention_rejects_unsupported_hero_features(feature):
         OLMoConfigurationError, match=f"'{feature}' is only supported by default attention"
     ):
         config.build(init_device="meta")
+
+
+@pytest.mark.parametrize("global_lb", [False, True])
+def test_hf_ordinary_dense_layout_imports_without_mutating_config(global_lb):
+    hf = hybrid_config()
+    hf.dense_layers_use_shared_expert = False
+    hf.global_load_balancing = global_lb
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf,
+        dtype=DType.bfloat16,
+        attention_backend=AttentionBackendName.torch,
+    )
+    model = config.build(init_device="cpu")
+    assert model.blocks["1"].routed_experts_router.global_load_balancing == global_lb
+    reference = Olmo3MoeForCausalLM(hf).to(torch.bfloat16)
+    with torch.no_grad():
+        for name, value in reference.named_parameters():
+            if name.endswith(("A_log", "dt_bias")):
+                value.zero_()
+    expected = reference.state_dict()
+    olmo3.load_olmo3_moe_hf_state(model, hf, expected)
+    assert hf.dense_layers_use_shared_expert is False
+    streamed = dict(olmo3.iter_olmo3_moe_hf_state(model, hf))
+    gathered = olmo3.gather_olmo3_moe_hf_state(model, hf)
+    assert hf.dense_layers_use_shared_expert is False
+    assert streamed.keys() == gathered.keys() == expected.keys()
+    for key in expected:
+        torch.testing.assert_close(streamed[key], expected[key], rtol=0, atol=0, check_dtype=False)
+        torch.testing.assert_close(gathered[key], expected[key], rtol=0, atol=0, check_dtype=False)
+    reverse = olmo3.build_olmo3_moe_hf_config_from_native_config(
+        config,
+        max_position_embeddings=32,
+        pad_token_id=0,
+        bos_token_id=None,
+        eos_token_id=1,
+    )
+    assert reverse.dense_layers_use_shared_expert is True
+    assert reverse.global_load_balancing == global_lb
