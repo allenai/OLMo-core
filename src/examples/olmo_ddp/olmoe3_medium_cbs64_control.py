@@ -27,10 +27,12 @@ from olmoe3_medium_cbs64_plan import (
     PARENT_RUN,
     PHASES,
     ROOT,
+    SUBMISSION_SUFFIX,
     UPLOADER,
     VARIANT,
     WAVES,
     WORKSPACE,
+    phase_environment,
     validate,
 )
 from olmoe3_medium_cbs_control import atomic_json, log, replace_env, status
@@ -52,6 +54,9 @@ def training_spec(template, wave, commit):
         host for host in hosts if not any(host == n or host.startswith(n + ".") for n in EXCLUDED)
     ]
     assert len(task["constraints"]["hostname"]) >= phase.gpus // 8
+    # A parent profiling template can contain ranks beyond this wave's world size.
+    # These are timing/CBS jobs, not Nsight captures. Do not inherit any Nsight knobs.
+    task["envVars"] = [v for v in task["envVars"] if not v["name"].startswith("OLMOE3_NSYS_")]
     task["arguments"] = [
         "python",
         "src/examples/olmo_ddp/olmoe3_medium_cbs64_node.py",
@@ -93,7 +98,23 @@ def training_spec(template, wave, commit):
     return spec
 
 
-def config_spec(template, commit):
+def validation_environments(training, commit):
+    """Derive config-validation settings from the actual GPU specs, not the CPU template."""
+    environments = {}
+    for wave, keys in WAVES.items():
+        task = training_spec(training, wave, commit)["tasks"][0]
+        # Secret references never enter the validation program or its provenance.
+        env = {
+            v["name"]: v["value"]
+            for v in task["envVars"]
+            if "value" in v and v["name"].startswith(("OLMO", "NCCL"))
+        }
+        for key in keys:
+            environments[key] = phase_environment(env, PHASES[key])
+    return environments
+
+
+def config_spec(template, commit, training):
     spec = copy.deepcopy(template)
     assert len(spec["tasks"]) == 1
     task = spec["tasks"][0]
@@ -111,9 +132,12 @@ def config_spec(template, commit):
         "import os,subprocess,sys\n"
         "sys.path.insert(0,'src/examples/olmo_ddp')\n"
         "from olmoe3_medium_cbs64_plan import PHASES,validate\nvalidate()\n"
-        "for phase in PHASES:\n"
+        f"environments={validation_environments(training, commit)!r}\n"
+        "base={k:v for k,v in os.environ.items() if not k.startswith(('OLMO','NCCL'))}\n"
+        "for phase,settings in environments.items():\n"
+        " print('VALIDATING_TRAINING_ENV',phase,settings,flush=True)\n"
         " subprocess.run([sys.executable,'src/examples/olmo_ddp/olmoe3_medium_cbs64.py',"
-        "'--validate-only'],env=dict(os.environ,OLMOE3_MEDIUM_CBS64_PHASE=phase),check=True)\n"
+        "'--validate-only'],env=dict(base,**settings),check=True)\n"
         "print('ALL_MEDIUM_CBS64_CONFIGS_VALIDATED',flush=True)\n"
     )
     task["arguments"] = ["python", "-u", "-c", code]
@@ -292,12 +316,16 @@ def main():
         source_preflight(b)
         training = b.experiment.get_spec(b.workload.get(PARENT_EXPERIMENT)).to_json()
         config = b.experiment.get_spec(b.workload.get(VALIDATION_TEMPLATE)).to_json()
-        gate = ensure(b, f"{CAMPAIGN}-config", config_spec(config, commit))
+        gate = ensure(
+            b, f"{CAMPAIGN}-config{SUBMISSION_SUFFIX}", config_spec(config, commit, training)
+        )
         wait_success(b, gate)
         for wave in ("resume-speed64", "speed128"):
             source_preflight(b)
             register_outputs(wave)
-            eid = ensure(b, f"{CAMPAIGN}-{wave}", training_spec(training, wave, commit))
+            eid = ensure(
+                b, f"{CAMPAIGN}-{wave}{SUBMISSION_SUFFIX}", training_spec(training, wave, commit)
+            )
             wait_success(b, eid)
             check_wave(wave, commit)
         # These are not placed in the GPU queue until the128GPU gate succeeds.
@@ -306,7 +334,9 @@ def main():
         for wave in ("cbs32", "cbs64"):
             source_preflight(b)
             register_outputs(wave)
-            branches[wave] = ensure(b, f"{CAMPAIGN}-{wave}", training_spec(training, wave, commit))
+            branches[wave] = ensure(
+                b, f"{CAMPAIGN}-{wave}{SUBMISSION_SUFFIX}", training_spec(training, wave, commit)
+            )
         atomic_json(AUTOMATION / "branches-submitted.json", branches)
         log("cbs_branches_submitted", **branches)
         for wave, eid in branches.items():

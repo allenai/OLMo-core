@@ -23,6 +23,8 @@ FORK_STEP = 4000
 FORK_TOKENS = FORK_STEP * B16
 TARGET_TOKENS = 6000 * B16
 VARIANT = "optimized-metrics5"
+# Explicit user-authorized retry; preserve the original submission ledger.
+SUBMISSION_SUFFIX = "-r2"
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,21 @@ WAVES = {
     "cbs32": ("64g-32mi-cbs",),
     "cbs64": ("64g-64mi-cbs",),
 }
+
+
+def phase_environment(environ, phase):
+    """Pin timing-only phase settings before imports, without inherited Nsight ranks."""
+    env = {k: v for k, v in environ.items() if not k.startswith("OLMOE3_NSYS_")}
+    env.update(
+        OLMOE3_MEDIUM_CBS64_PHASE=phase.name,
+        OLMOE3_MEDIUM_GPUS=str(phase.gpus),
+        OLMOE3_MEDIUM_MB="2",
+        OLMOE3_MEDIUM_BATCH=str(phase.batch),
+        OLMOE3_DEEP_PROFILE_TEST=VARIANT,
+        OLMOE3_DEEP_PROFILE_PASS="timing",
+        OLMOE3_MEDIUM_CAPTURE="0",
+    )
+    return env
 
 
 def old_rank_for_half(rank, half, group):

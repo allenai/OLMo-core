@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from olmoe3_medium_cbs64_plan import AUTOMATION, PHASES, ROOT, WAVES
+from olmoe3_medium_cbs64_plan import AUTOMATION, PHASES, ROOT, WAVES, phase_environment
 from olmoe3_profile_node import resolve_ready_leader
 
 
@@ -49,7 +49,7 @@ def main():
     port = 29000 + int(hashlib.sha256(experiment.encode()).hexdigest()[:8], 16) % 900
     for index, phase in enumerate(phases):
         # Fresh process groups/model/optimizer for every pass, including restore smoke.
-        env = dict(os.environ, OLMOE3_MEDIUM_CBS64_PHASE=phase.name)
+        env = phase_environment(os.environ, phase)
         print(f"MEDIUM_CBS64_AGENT node={rank} phase={phase.name}", flush=True)
         subprocess.run(
             [

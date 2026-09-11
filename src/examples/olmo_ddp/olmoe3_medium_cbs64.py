@@ -25,19 +25,20 @@ from olmoe3_medium_cbs64_plan import (
     TARGET_TOKENS,
     VARIANT,
     old_rank_for_half,
+    phase_environment,
     validate,
 )
 from olmoe3_medium_followup_plan import sample_offsets
 
 validate()
 PHASE = PHASES[os.environ["OLMOE3_MEDIUM_CBS64_PHASE"]]
-os.environ["OLMOE3_MEDIUM_GPUS"] = str(PHASE.gpus)
-os.environ["OLMOE3_MEDIUM_MB"] = "2"
-os.environ["OLMOE3_MEDIUM_BATCH"] = str(PHASE.batch)
-os.environ["OLMOE3_DEEP_PROFILE_TEST"] = VARIANT
-os.environ["OLMOE3_DEEP_PROFILE_PASS"] = "timing"
 if os.environ.get("OLMOE3_MEDIUM_DIAGNOSTIC", "0") != "0":
     raise RuntimeError("No gradient-only or optimizer-disabled mode in this campaign")
+phase_env = phase_environment(os.environ, PHASE)
+for key in tuple(os.environ):
+    if key.startswith("OLMOE3_NSYS_"):
+        del os.environ[key]
+os.environ.update(phase_env)
 
 import olmoe3_medium_followup as followup
 import torch
@@ -48,8 +49,14 @@ from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.internal.experiment import build_config, main
 from olmo_core.optim.scheduler import WSD
 from olmo_core.train import Duration
-from olmo_core.train.callbacks import Callback, CheckpointerCallback, LMEvaluatorCallbackConfig
-from olmo_core.train.callbacks.checkpoint_ready_notifier import CheckpointReadyNotifierCallback
+from olmo_core.train.callbacks import (
+    Callback,
+    CheckpointerCallback,
+    LMEvaluatorCallbackConfig,
+)
+from olmo_core.train.callbacks.checkpoint_ready_notifier import (
+    CheckpointReadyNotifierCallback,
+)
 from olmo_core.train.callbacks.checkpointer import CheckpointRemovalStrategy
 from olmo_core.train.common import LoadStrategy
 
@@ -454,6 +461,7 @@ def trainer_config(common):
 def validate_config():
     """Build real configs in the training image before scheduling a large allocation."""
     from types import SimpleNamespace
+
     from olmo_core.data import TokenizerConfig
 
     common = SimpleNamespace(

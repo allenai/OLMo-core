@@ -7,16 +7,23 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples/olmo_ddp"))
-from olmoe3_medium_cbs64_control import EXCLUDED, config_spec, training_spec
+from olmoe3_medium_cbs64_control import (
+    EXCLUDED,
+    config_spec,
+    training_spec,
+    validation_environments,
+)
 from olmoe3_medium_cbs64_plan import (
     FORK_TOKENS,
     PHASES,
     TARGET_TOKENS,
     WAVES,
     old_rank_for_half,
+    phase_environment,
     validate,
 )
 from olmoe3_medium_followup_plan import microbatch_sequence_sizes, parse_test
+from olmoe3_nsys_tools import NsysSettings
 
 
 def test_horizons_and_scaled_lrs():
@@ -56,6 +63,10 @@ def template():
                 "envVars": [
                     {"name": "BEAKER_TOKEN", "secret": "jacobm_BEAKER_TOKEN"},
                     {"name": "OLMOE3_MEDIUM_CBS_RUN", "value": "old-parent"},
+                    {"name": "OLMOE3_NSYS_RANKS", "value": ",".join(map(str, range(0, 128, 8)))},
+                    {"name": "OLMOE3_NSYS_VERSION", "value": "2026.4.1"},
+                    {"name": "OLMOE3_MEDIUM_CAPTURE", "value": "1"},
+                    {"name": "OLMOE3_DEEP_PROFILE_PASS", "value": "nsys"},
                 ],
             }
         ],
@@ -74,6 +85,9 @@ def test_specs_preserve_secrets_and_resources(wave):
     env = {item["name"]: item for item in task["envVars"]}
     assert env["BEAKER_TOKEN"] == {"name": "BEAKER_TOKEN", "secret": "jacobm_BEAKER_TOKEN"}
     assert "OLMOE3_MEDIUM_CBS_RUN" not in env
+    assert not any(k.startswith("OLMOE3_NSYS_") for k in env)
+    assert env["OLMOE3_MEDIUM_CAPTURE"]["value"] == "0"
+    assert env["OLMOE3_DEEP_PROFILE_PASS"]["value"] == "timing"
     assert env["NUM_NODES"]["value"] == str(first.gpus // 8)
     assert task["context"] == {"priority": "urgent", "minRuntime": "1h", "autoResume": False}
     assert task["result"] == {"path": "/noop-results"}
@@ -84,7 +98,7 @@ def test_specs_preserve_secrets_and_resources(wave):
 def test_config_gate_compiles():
     cpu = template()
     cpu["tasks"][0]["resources"] = {"cpuCount": 4, "memory": "16 GiB", "sharedMemory": "2 GiB"}
-    spec = config_spec(cpu, "a" * 40)
+    spec = config_spec(cpu, "a" * 40, template())
     assert spec["tasks"][0]["constraints"] == {"cluster": ["ai2/phobos"]}
     assert "resources" not in spec["tasks"][0]
     assert spec["tasks"][0]["context"]["minRuntime"] == "0s"
@@ -93,13 +107,57 @@ def test_config_gate_compiles():
 
 def test_config_gate_rejects_gpu_template():
     with pytest.raises(AssertionError, match="must not request GPUs"):
-        config_spec(template(), "a" * 40)
+        config_spec(template(), "a" * 40, template())
 
 
 def test_config_gate_accepts_no_resource_template():
     cpu = template()
     del cpu["tasks"][0]["resources"]
-    assert "resources" not in config_spec(cpu, "a" * 40)["tasks"][0]
+    assert "resources" not in config_spec(cpu, "a" * 40, template())["tasks"][0]
+
+
+@pytest.mark.parametrize("key", PHASES)
+def test_all_phase_environments_clear_stale_capture_settings(key):
+    stale = {v["name"]: v["value"] for v in template()["tasks"][0]["envVars"] if "value" in v}
+    stale["PATH"] = "/unchanged"
+    saved = dict(stale)
+    phase = PHASES[key]
+    env = phase_environment(stale, phase)
+    assert stale == saved and env["PATH"] == "/unchanged"
+    assert env["OLMOE3_MEDIUM_BATCH"] == str(phase.batch)
+    assert env["OLMOE3_MEDIUM_GPUS"] == str(phase.gpus)
+    assert env["OLMOE3_MEDIUM_CAPTURE"] == "0"
+    assert env["OLMOE3_DEEP_PROFILE_PASS"] == "timing"
+    assert not any(k.startswith("OLMOE3_NSYS_") for k in env)
+    assert max(NsysSettings.from_env(env, phase.gpus).ranks) < phase.gpus
+
+
+def test_cpu_gate_uses_actual_gpu_spec_environments(monkeypatch):
+    import subprocess
+
+    cpu = template()
+    cpu["tasks"][0].pop("resources")
+    training = template()
+    training["tasks"][0]["envVars"].append(
+        {"name": "OLMO_PROFILE_TEST_MARKER", "value": "gpu-spec"}
+    )
+    expected = validation_environments(training, "a" * 40)
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda command, **kw: calls.append((command, kw)))
+    monkeypatch.setenv("OLMOE3_NSYS_RANKS", "0,9999")
+    monkeypatch.setenv("OLMO_CPU_TEMPLATE_ONLY", "stale")
+    code = config_spec(cpu, "a" * 40, training)["tasks"][0]["arguments"][-1]
+    assert "BEAKER_TOKEN" not in code and "jacobm_BEAKER_TOKEN" not in code
+    exec(compile(code, "actual-gpu-config-gate", "exec"), {})
+    assert len(calls) == len(PHASES)
+    for command, kwargs in calls:
+        assert command[-1] == "--validate-only" and kwargs["check"]
+        env = kwargs["env"]
+        key = env["OLMOE3_MEDIUM_CBS64_PHASE"]
+        assert env["OLMO_PROFILE_TEST_MARKER"] == "gpu-spec"
+        assert "OLMO_CPU_TEMPLATE_ONLY" not in env
+        actual = {k: v for k, v in env.items() if k.startswith(("OLMO", "NCCL"))}
+        assert actual == expected[key]
 
 
 @pytest.mark.parametrize("gpus", [64, 128])
