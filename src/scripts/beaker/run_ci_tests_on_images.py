@@ -38,12 +38,13 @@ from typing import Dict, List, Optional, Tuple
 # The image matrix, by label -> tag stem (the '<date>' suffix is appended at runtime). Mirrors the
 # Makefile targets in `beaker-image-<label>`.
 IMAGE_TAG_STEMS: Dict[str, str] = {
-    "cu128": "tch2100cu128",
-    "cu128-rma": "tch2100cu128-rma",
-    "cu130": "tch2110cu130",
-    "cu130-fa4": "tch2110cu130-fa4",
-    "cu130-rma": "tch2110cu130-rma",
-    "cu130-fa4-rma": "tch2110cu130-fa4-rma",
+    "cu129": "tch2130cu129",
+    "cu129-rma": "tch2130cu129-rma",
+    "cu129-sm80": "tch2130cu129-sm80",
+    "cu130": "tch2130cu130",
+    "cu130-fa4": "tch2130cu130-fa4",
+    "cu130-rma": "tch2130cu130-rma",
+    "cu130-fa4-rma": "tch2130cu130-fa4-rma",
 }
 
 NUM_GPUS = 2
@@ -64,8 +65,8 @@ DEFAULT_CLUSTERS_BY_GPU: Dict[str, List[str]] = {
 
 
 def compatible_gpus(image_label: str) -> List[str]:
-    """GPUs an image can run on. CUDA-12.8 images (sm_90/100) can't run on B300 (sm_103)."""
-    return ["h100", "b200"] if image_label.startswith("cu128") else ["h100", "b200", "b300"]
+    """GPUs an image can run on. CUDA-12.9 images (sm_90/100) can't run on B300 (sm_103)."""
+    return ["h100", "b200"] if image_label.startswith("cu129") else ["h100", "b200", "b300"]
 
 
 # A test skipped on *every* image is a coverage gap UNLESS it needs more GPUs than we launch with.
