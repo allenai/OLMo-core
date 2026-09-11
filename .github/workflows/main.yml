@@ -8,6 +8,8 @@ on:
   pull_request:
     branches:
       - main
+      # TEMP: run CI on PRs into the integration branch; revert before merge.
+      - akshitab/moe-v2-core
   push:
     branches:
       - main
@@ -154,9 +156,7 @@ jobs:
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
-    # Per-task override (defaults to 15m); the catch-all "Test (GPU)" job runs a larger slice and
-    # needs more headroom for the beaker run + image pull to finish before the GH Actions step times out.
-    timeout-minutes: ${{ matrix.task.timeout_minutes || 15 }}
+    timeout-minutes: 15
     env:
       GANTRY_GITHUB_TESTING: "true" # force better logging for CI
     strategy:
@@ -168,17 +168,17 @@ jobs:
           - name: Test (GPU)
             image: &gpu_test_image akshitab/olmo-core-tch2130cu129-sm80-2026-09-11
             gpus: 2
-            # The catch-all job runs a larger slice, so give it 30m on both the GH Actions step and
-            # the beaker run cap (other jobs default to 15m).
-            timeout_minutes: 30
-            task_timeout: 30m
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
+            # nn/ddp (fused MoE-v2 block/model tests) runs in the "Test MoE kernels" job; it also
+            # needs the symm_mem_vdev2d NVSHMEM kernels the sm80 image lacks, so ignore it here.
+            # (It slipped in once the image gained TE, blowing this job's time budget.)
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
                 --ignore-glob='src/test/distributed/checkpoint*' \
                 --ignore-glob='src/test/nn/transformer*' \
                 --ignore-glob='src/test/nn/attention*' \
                 --ignore-glob='src/test/nn/moe*' \
+                --ignore-glob='src/test/nn/ddp*' \
                 --ignore-glob='src/test/optim*' \
                 src/test/
 
@@ -209,8 +209,6 @@ jobs:
           - name: Test MoE (GPU)
             image: *gpu_test_image
             gpus: 2
-            # The v1 dropless MoE tests use the grouped_gemm CUTLASS kernels, which have no
-            # Blackwell (sm_100) build, so keep this job off b200.
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             # The v2 MoE GPU tests (src/test/nn/moe/v2) need the symm_mem_vdev2d NVSHMEM kernels,
             # which only the RMA image has, so they run in the "Test MoE kernels" job below; exclude
@@ -307,7 +305,7 @@ jobs:
             --priority normal \
             --min-runtime 0 \
             --gpus ${{ matrix.task.gpus }} \
-            --task-timeout ${{ matrix.task.task_timeout || '15m' }} \
+            --task-timeout 15m \
             --host-networking \
             ${{ matrix.task.clusters || '--cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn' }} \
             --system-python \
