@@ -74,9 +74,10 @@ fa4 = [
 ]
 # NOTE: fla 0.5.2 requires triton >= 3.7.1 (a hard guard on Hopper). torch 2.13 bundles triton
 # 3.7.1 (and nccl 2.29.7 + a matching torchaudio), so it works on the CUDA-12.9 / torch-2.13 image
-# (see `beaker-image-cu129` in the Makefile). Requires that image (or torch >= 2.13); the older
-# torch 2.10/2.11 images ship triton 3.6.0 and cannot run fla 0.5.2.
-fla = ["flash-linear-attention==0.5.2"]
+# (see `beaker-image-cu129` in the Makefile). torch 2.10/2.11 ship triton 3.6.0 and torch 2.12 ships
+# 3.7.0, none of which satisfy the guard -- so the torch>=2.13 pin below enforces the floor. Since
+# `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13.
+fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]

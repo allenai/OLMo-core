@@ -60,8 +60,8 @@ __all__ = [
 ]
 
 _LOCAL = threading.local()
-_DEFAULT_TORCH = "2.10.0".replace(".", "")
-_DEFAULT_CUDA = "12.8".replace(".", "")
+_DEFAULT_TORCH = "2.13.0".replace(".", "")
+_DEFAULT_CUDA = "12.9".replace(".", "")
 
 
 def is_running_in_beaker() -> bool:
@@ -139,17 +139,13 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-    stable = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-sm80-2026-08-25"
+    stable = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-sm80-2026-09-10"
     """
-    Built with the latest compatible stable version of PyTorch.
+    Built with the latest compatible stable version of PyTorch (torch 2.13 / CUDA 12.9).
     """
     stable_cu130 = "akshitab/olmo-core-tch2110cu130-2026-07-28"
     """
-    The stable image with CUDA pinned to 13.0.
-    """
-    stable_cu128 = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu128-sm80-2026-08-25"
-    """
-    The stable image with CUDA pinned to 12.8.
+    The stable image with CUDA pinned to 13.0 (torch 2.11).
     """
 
     #
