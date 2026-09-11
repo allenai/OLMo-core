@@ -1,0 +1,3002 @@
+{
+  "experiment_url": "https://beaker.org/ex/01KY900EAB86BKYVSW9E49H040",
+  "dataset": "01KY900EAQZ68K3A219Y292JHY",
+  "metrics_sha256": "e063ef5591f9c8407f7e1224f4d90cb490338fab1f68636b370691d7198fd403",
+  "model": "/weka/oe-training-default/ai2-llm/checkpoints/yashasbls/hybrid-small-2.7B-Cx100-v2/step604266-hf/",
+  "task_definitions": {
+    "ruler_niah_mq__16384": {
+      "task": "ruler_niah_mq__16384",
+      "config": {
+        "name": "ruler_niah_mq__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "549fa4d04522b78d"
+    },
+    "ruler_niah_mk_1__32768": {
+      "task": "ruler_niah_mk_1__32768",
+      "config": {
+        "name": "ruler_niah_mk_1__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "19930919c873ce08"
+    },
+    "ruler_niah_s_1__32768": {
+      "task": "ruler_niah_s_1__32768",
+      "config": {
+        "name": "ruler_niah_s_1__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "89b900e5ccde810b"
+    },
+    "ruler_niah_s_2__4096": {
+      "task": "ruler_niah_s_2__4096",
+      "config": {
+        "name": "ruler_niah_s_2__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "d903f970329bc5cd"
+    },
+    "ruler_qa_2__16384": {
+      "task": "ruler_qa_2__16384",
+      "config": {
+        "name": "ruler_qa_2__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "1d07f334155ea29a"
+    },
+    "ruler_cwe__16384": {
+      "task": "ruler_cwe__16384",
+      "config": {
+        "name": "ruler_cwe__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "0ce81bf39622688c"
+    },
+    "ruler_cwe__65536": {
+      "task": "ruler_cwe__65536",
+      "config": {
+        "name": "ruler_cwe__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "2cf5e44209a9bd05"
+    },
+    "ruler_niah_mq__32768": {
+      "task": "ruler_niah_mq__32768",
+      "config": {
+        "name": "ruler_niah_mq__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "fccc54a5804c1374"
+    },
+    "ruler_cwe__131072": {
+      "task": "ruler_cwe__131072",
+      "config": {
+        "name": "ruler_cwe__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "e58b2829792cd8cd"
+    },
+    "ruler_qa_2__65536": {
+      "task": "ruler_qa_2__65536",
+      "config": {
+        "name": "ruler_qa_2__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "5736de904872ad19"
+    },
+    "ruler_qa_2__131072": {
+      "task": "ruler_qa_2__131072",
+      "config": {
+        "name": "ruler_qa_2__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "e914fcd2743408da"
+    },
+    "ruler_niah_s_2__32768": {
+      "task": "ruler_niah_s_2__32768",
+      "config": {
+        "name": "ruler_niah_s_2__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "97438a1bfb4c293c"
+    },
+    "ruler_qa_2__8192": {
+      "task": "ruler_qa_2__8192",
+      "config": {
+        "name": "ruler_qa_2__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "662e9f7557bacb82"
+    },
+    "ruler_niah_s_1__131072": {
+      "task": "ruler_niah_s_1__131072",
+      "config": {
+        "name": "ruler_niah_s_1__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "37d5ca968e37e015"
+    },
+    "ruler_niah_mk_2__4096": {
+      "task": "ruler_niah_mk_2__4096",
+      "config": {
+        "name": "ruler_niah_mk_2__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "d7739140dce47ad9"
+    },
+    "ruler_niah_s_1__16384": {
+      "task": "ruler_niah_s_1__16384",
+      "config": {
+        "name": "ruler_niah_s_1__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "871266646474bb7d"
+    },
+    "ruler_niah_mv__16384": {
+      "task": "ruler_niah_mv__16384",
+      "config": {
+        "name": "ruler_niah_mv__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 250,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "28ed108ccc0ac2c9"
+    },
+    "ruler_niah_mk_2__65536": {
+      "task": "ruler_niah_mk_2__65536",
+      "config": {
+        "name": "ruler_niah_mk_2__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "51ed3881c7840728"
+    },
+    "ruler_niah_s_2__8192": {
+      "task": "ruler_niah_s_2__8192",
+      "config": {
+        "name": "ruler_niah_s_2__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "4a7544fa3adaa72c"
+    },
+    "ruler_qa_1__131072": {
+      "task": "ruler_qa_1__131072",
+      "config": {
+        "name": "ruler_qa_1__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "20476d0f557347a9"
+    },
+    "ruler_niah_mk_2__16384": {
+      "task": "ruler_niah_mk_2__16384",
+      "config": {
+        "name": "ruler_niah_mk_2__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "c019896b86cbc3b6"
+    },
+    "ruler_niah_mk_1__131072": {
+      "task": "ruler_niah_mk_1__131072",
+      "config": {
+        "name": "ruler_niah_mk_1__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "39b289f4d5b8a464"
+    },
+    "ruler_fwe__8192": {
+      "task": "ruler_fwe__8192",
+      "config": {
+        "name": "ruler_fwe__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "7bcb21a36d6f7c71"
+    },
+    "ruler_qa_1__65536": {
+      "task": "ruler_qa_1__65536",
+      "config": {
+        "name": "ruler_qa_1__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "c1ae9dd718dd94a2"
+    },
+    "ruler_niah_s_3__65536": {
+      "task": "ruler_niah_s_3__65536",
+      "config": {
+        "name": "ruler_niah_s_3__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "7177a4c353bd4a00"
+    },
+    "ruler_niah_s_3__8192": {
+      "task": "ruler_niah_s_3__8192",
+      "config": {
+        "name": "ruler_niah_s_3__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "f9828cdb81f6e569"
+    },
+    "ruler_vt__32768": {
+      "task": "ruler_vt__32768",
+      "config": {
+        "name": "ruler_vt__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "21bfbe941d4777e0"
+    },
+    "ruler_qa_1__32768": {
+      "task": "ruler_qa_1__32768",
+      "config": {
+        "name": "ruler_qa_1__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "3747e0e225bc1304"
+    },
+    "ruler_qa_2__32768": {
+      "task": "ruler_qa_2__32768",
+      "config": {
+        "name": "ruler_qa_2__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "49dabf2804320f06"
+    },
+    "ruler_niah_s_3__131072": {
+      "task": "ruler_niah_s_3__131072",
+      "config": {
+        "name": "ruler_niah_s_3__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "ef9952427198e209"
+    },
+    "ruler_qa_1__8192": {
+      "task": "ruler_qa_1__8192",
+      "config": {
+        "name": "ruler_qa_1__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "6e15dee6817b6613"
+    },
+    "ruler_fwe__131072": {
+      "task": "ruler_fwe__131072",
+      "config": {
+        "name": "ruler_fwe__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "da131d14f6ad4ad7"
+    },
+    "ruler_fwe__4096": {
+      "task": "ruler_fwe__4096",
+      "config": {
+        "name": "ruler_fwe__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "453036c90c73d4b6"
+    },
+    "ruler_niah_mk_2__32768": {
+      "task": "ruler_niah_mk_2__32768",
+      "config": {
+        "name": "ruler_niah_mk_2__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "c5c6205d4ae0ac0f"
+    },
+    "ruler_qa_1__16384": {
+      "task": "ruler_qa_1__16384",
+      "config": {
+        "name": "ruler_qa_1__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "caa0799714c09822"
+    },
+    "ruler_niah_mk_1__4096": {
+      "task": "ruler_niah_mk_1__4096",
+      "config": {
+        "name": "ruler_niah_mk_1__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "5ddefb5e843ac0e6"
+    },
+    "ruler_vt__8192": {
+      "task": "ruler_vt__8192",
+      "config": {
+        "name": "ruler_vt__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "0752ac2f9deb3a9a"
+    },
+    "ruler_niah_s_3__16384": {
+      "task": "ruler_niah_s_3__16384",
+      "config": {
+        "name": "ruler_niah_s_3__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "dd6c77ba574009b2"
+    },
+    "ruler_niah_mk_3__4096": {
+      "task": "ruler_niah_mk_3__4096",
+      "config": {
+        "name": "ruler_niah_mk_3__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "4303d101852b14a1"
+    },
+    "ruler_niah_mk_3__131072": {
+      "task": "ruler_niah_mk_3__131072",
+      "config": {
+        "name": "ruler_niah_mk_3__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "eed81932644b750d"
+    },
+    "ruler_niah_mq__131072": {
+      "task": "ruler_niah_mq__131072",
+      "config": {
+        "name": "ruler_niah_mq__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "422887a592b7d542"
+    },
+    "ruler_niah_mq__65536": {
+      "task": "ruler_niah_mq__65536",
+      "config": {
+        "name": "ruler_niah_mq__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "4cad5b3732806563"
+    },
+    "ruler_niah_mv__4096": {
+      "task": "ruler_niah_mv__4096",
+      "config": {
+        "name": "ruler_niah_mv__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 300,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "df21ffa3453d34fb"
+    },
+    "ruler_niah_mk_2__131072": {
+      "task": "ruler_niah_mk_2__131072",
+      "config": {
+        "name": "ruler_niah_mk_2__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "d7255a6dec30a8c4"
+    },
+    "ruler_niah_mk_1__16384": {
+      "task": "ruler_niah_mk_1__16384",
+      "config": {
+        "name": "ruler_niah_mk_1__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "478033df7cd2ed2c"
+    },
+    "ruler_qa_2__4096": {
+      "task": "ruler_qa_2__4096",
+      "config": {
+        "name": "ruler_qa_2__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "0a8bf2fbd32f457e"
+    },
+    "ruler_niah_s_2__16384": {
+      "task": "ruler_niah_s_2__16384",
+      "config": {
+        "name": "ruler_niah_s_2__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "ab22c1130256582e"
+    },
+    "ruler_niah_s_1__8192": {
+      "task": "ruler_niah_s_1__8192",
+      "config": {
+        "name": "ruler_niah_s_1__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "5543edbb7bbfabbb"
+    },
+    "ruler_fwe__65536": {
+      "task": "ruler_fwe__65536",
+      "config": {
+        "name": "ruler_fwe__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "920d72844239f4c2"
+    },
+    "ruler_niah_s_1__4096": {
+      "task": "ruler_niah_s_1__4096",
+      "config": {
+        "name": "ruler_niah_s_1__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "dd35604194a8f665"
+    },
+    "ruler_niah_s_2__131072": {
+      "task": "ruler_niah_s_2__131072",
+      "config": {
+        "name": "ruler_niah_s_2__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "4a92defef8914e87"
+    },
+    "ruler_fwe__16384": {
+      "task": "ruler_fwe__16384",
+      "config": {
+        "name": "ruler_fwe__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "91e8696c4ae3c62e"
+    },
+    "ruler_niah_s_2__65536": {
+      "task": "ruler_niah_s_2__65536",
+      "config": {
+        "name": "ruler_niah_s_2__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "1a4cff0a4aaaac8b"
+    },
+    "ruler_niah_mk_1__8192": {
+      "task": "ruler_niah_mk_1__8192",
+      "config": {
+        "name": "ruler_niah_mk_1__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "c59f9770ec1de4be"
+    },
+    "ruler_fwe__32768": {
+      "task": "ruler_fwe__32768",
+      "config": {
+        "name": "ruler_fwe__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "9534d2e9883af28a"
+    },
+    "ruler_niah_s_3__32768": {
+      "task": "ruler_niah_s_3__32768",
+      "config": {
+        "name": "ruler_niah_s_3__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "b2a8f30b568b019d"
+    },
+    "ruler_niah_mk_2__8192": {
+      "task": "ruler_niah_mk_2__8192",
+      "config": {
+        "name": "ruler_niah_mk_2__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "b181dc9dcfc6e8df"
+    },
+    "ruler_vt__16384": {
+      "task": "ruler_vt__16384",
+      "config": {
+        "name": "ruler_vt__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "45d7a6c4f2253295"
+    },
+    "ruler_vt__131072": {
+      "task": "ruler_vt__131072",
+      "config": {
+        "name": "ruler_vt__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "a054d60fea0aca4f"
+    },
+    "ruler_niah_mk_1__65536": {
+      "task": "ruler_niah_mk_1__65536",
+      "config": {
+        "name": "ruler_niah_mk_1__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "19b20899bb83898e"
+    },
+    "ruler_vt__4096": {
+      "task": "ruler_vt__4096",
+      "config": {
+        "name": "ruler_vt__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "88999a6259badd00"
+    },
+    "ruler_qa_1__4096": {
+      "task": "ruler_qa_1__4096",
+      "config": {
+        "name": "ruler_qa_1__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "RulerQAScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "f5459e72d865eb5e"
+    },
+    "ruler_vt__65536": {
+      "task": "ruler_vt__65536",
+      "config": {
+        "name": "ruler_vt__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "22b63001c6e9873f"
+    },
+    "ruler_niah_s_3__4096": {
+      "task": "ruler_niah_s_3__4096",
+      "config": {
+        "name": "ruler_niah_s_3__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "02bfffe6aae6be2e"
+    },
+    "ruler_niah_s_1__65536": {
+      "task": "ruler_niah_s_1__65536",
+      "config": {
+        "name": "ruler_niah_s_1__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 50,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "f6aea6fb291e77ed"
+    },
+    "ruler_niah_mk_3__16384": {
+      "task": "ruler_niah_mk_3__16384",
+      "config": {
+        "name": "ruler_niah_mk_3__16384",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "ad75a0de72bf1dbb"
+    },
+    "ruler_niah_mk_3__65536": {
+      "task": "ruler_niah_mk_3__65536",
+      "config": {
+        "name": "ruler_niah_mk_3__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "b95049f74803b3d0"
+    },
+    "ruler_cwe__32768": {
+      "task": "ruler_cwe__32768",
+      "config": {
+        "name": "ruler_cwe__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "ebb1152fdd7790e4"
+    },
+    "ruler_niah_mq__4096": {
+      "task": "ruler_niah_mq__4096",
+      "config": {
+        "name": "ruler_niah_mq__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "ea16c212a134f8e8"
+    },
+    "ruler_niah_mk_3__32768": {
+      "task": "ruler_niah_mk_3__32768",
+      "config": {
+        "name": "ruler_niah_mk_3__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "947e5feeb6ea4619"
+    },
+    "ruler_niah_mk_3__8192": {
+      "task": "ruler_niah_mk_3__8192",
+      "config": {
+        "name": "ruler_niah_mk_3__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "82da6f78322729fe"
+    },
+    "ruler_niah_mq__8192": {
+      "task": "ruler_niah_mq__8192",
+      "config": {
+        "name": "ruler_niah_mq__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "862a051c2a0c47fa"
+    },
+    "ruler_cwe__8192": {
+      "task": "ruler_cwe__8192",
+      "config": {
+        "name": "ruler_cwe__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "85fd504f42548f62"
+    },
+    "ruler_cwe__4096": {
+      "task": "ruler_cwe__4096",
+      "config": {
+        "name": "ruler_cwe__4096",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 100,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "270a9c6af27e6696"
+    },
+    "ruler_niah_mv__131072": {
+      "task": "ruler_niah_mv__131072",
+      "config": {
+        "name": "ruler_niah_mv__131072",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 250,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "d7225908db987a42"
+    },
+    "ruler_niah_mv__65536": {
+      "task": "ruler_niah_mv__65536",
+      "config": {
+        "name": "ruler_niah_mv__65536",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 250,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "57444d6f676215e3"
+    },
+    "ruler_niah_mv__32768": {
+      "task": "ruler_niah_mv__32768",
+      "config": {
+        "name": "ruler_niah_mv__32768",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 250,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "e0a08554c20dd67f"
+    },
+    "ruler_niah_mv__8192": {
+      "task": "ruler_niah_mv__8192",
+      "config": {
+        "name": "ruler_niah_mv__8192",
+        "data_source": null,
+        "fewshot_source": null,
+        "formatter": null,
+        "metrics": [
+          {
+            "type": "RecallMetric",
+            "name": "recall",
+            "scorer": "SubstringRecallScorer"
+          }
+        ],
+        "num_fewshot": 0,
+        "fewshot_seed": 42,
+        "limit": 100,
+        "seed": 42,
+        "split": "test",
+        "primary_metric": null,
+        "sampling_params": {
+          "max_tokens": 250,
+          "temperature": 0,
+          "top_p": 1,
+          "top_k": null,
+          "stop_sequences": null,
+          "num_samples": 1,
+          "logprobs": null,
+          "do_sample": true
+        },
+        "output_score_aggregation": "max",
+        "max_length": null,
+        "answer_extractor": null,
+        "dependencies": null
+      },
+      "num_instances": 100,
+      "task_hash": "524201581c8d09e9"
+    }
+  },
+  "summary": {
+    "ruler_all__4096": {
+      "metric": "recall:substring_recall",
+      "score": 0.886897435897436
+    },
+    "ruler_all__8192": {
+      "metric": "recall:substring_recall",
+      "score": 0.805448717948718
+    },
+    "ruler_all__16384": {
+      "metric": "recall:substring_recall",
+      "score": 0.366025641025641
+    },
+    "ruler_all__32768": {
+      "metric": "recall:substring_recall",
+      "score": 0.16017948717948716
+    },
+    "ruler_all__65536": {
+      "metric": "recall:substring_recall",
+      "score": 0.08256410256410256
+    },
+    "ruler_all__131072": {
+      "metric": "recall:substring_recall",
+      "score": 0.040512820512820506
+    }
+  },
+  "source": {
+    "GITHUB_REPO": "allenai/olmo-eval",
+    "GIT_REF": "f8816eea36563f27b4a9dd2533d68d34f3c67d3f"
+  }
+}
