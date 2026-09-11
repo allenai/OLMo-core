@@ -24,7 +24,7 @@ FORK_TOKENS = FORK_STEP * B16
 TARGET_TOKENS = 6000 * B16
 VARIANT = "optimized-metrics5"
 # Explicit user-authorized retry; preserve the original submission ledger.
-SUBMISSION_SUFFIX = "-r2"
+SUBMISSION_SUFFIX = "-r3"
 
 
 @dataclass(frozen=True)

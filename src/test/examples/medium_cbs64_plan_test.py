@@ -2,6 +2,7 @@
 
 import copy
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "examples/olmo_ddp"
 from olmoe3_medium_cbs64_control import (
     EXCLUDED,
     config_spec,
+    registration_matches,
     training_spec,
     validation_environments,
 )
@@ -35,6 +37,30 @@ def test_horizons_and_scaled_lrs():
     assert b.lr == pytest.approx(0.00184)
     assert a.save_interval * a.batch == b.save_interval * b.batch
     assert a.eval_interval * a.batch == b.eval_interval * b.batch
+
+
+def test_registration_restart_ignores_only_creation_time():
+    @dataclass(frozen=True)
+    class Registration:
+        run_id: str = "run"
+        bucket_id: str = "private-bucket"
+        deletion_mode: str = "apply"
+        min_local_checkpoints: int = 2
+        enabled: bool = True
+        created_at: str = "original"
+
+    original = Registration()
+    requested = replace(original, created_at="restart")
+    assert registration_matches(original, requested)
+    assert original.created_at == "original" and requested.created_at == "restart"
+    for field, value in (
+        ("run_id", "other"),
+        ("bucket_id", "other"),
+        ("deletion_mode", "report_only"),
+        ("min_local_checkpoints", 1),
+        ("enabled", False),
+    ):
+        assert not registration_matches(original, replace(requested, **{field: value}))
 
 
 @pytest.mark.parametrize("group", ["dp", "ep_dp"])

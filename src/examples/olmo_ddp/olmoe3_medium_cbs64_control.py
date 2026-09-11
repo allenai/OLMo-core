@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from olmoe3_medium_cbs64_plan import (
@@ -252,6 +253,11 @@ def source_preflight(beaker):
     )
 
 
+def registration_matches(existing, requested):
+    """Preserve creation time on restart, while comparing every identity/policy field."""
+    return existing == replace(requested, created_at=existing.created_at)
+
+
 def register_outputs(wave):
     from olmo_checkpoint_uploader.models import Registration
     from olmo_checkpoint_uploader.state import StateStore
@@ -276,7 +282,9 @@ def register_outputs(wave):
         path = store.registration_path(phase.run_id)
         if path.exists():
             existing = Registration.from_dict(json.loads(path.read_text()))
-            assert existing == registration, f"Registration changed: {phase.run_id}"
+            assert registration_matches(
+                existing, registration
+            ), f"Registration changed: {phase.run_id}"
         else:
             store.register(registration)
         log("uploader_registered", run_id=phase.run_id, keep=2)
