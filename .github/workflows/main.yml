@@ -156,7 +156,9 @@ jobs:
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Per-task override (defaults to 15m); the catch-all "Test (GPU)" job runs a larger slice and
+    # needs more headroom for the beaker run + image pull to finish before the GH Actions step times out.
+    timeout-minutes: ${{ matrix.task.timeout_minutes || 15 }}
     env:
       GANTRY_GITHUB_TESTING: "true" # force better logging for CI
     strategy:
@@ -168,6 +170,7 @@ jobs:
           - name: Test (GPU)
             image: &gpu_test_image akshitab/olmo-core-tch2130cu129-sm80-2026-09-11
             gpus: 2
+            timeout_minutes: 25
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
