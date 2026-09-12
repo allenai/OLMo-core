@@ -38,12 +38,13 @@ from typing import Dict, List, Optional, Tuple
 # The image matrix, by label -> tag stem (the '<date>' suffix is appended at runtime). Mirrors the
 # Makefile targets in `beaker-image-<label>`.
 IMAGE_TAG_STEMS: Dict[str, str] = {
-    "cu128": "tch2100cu128",
-    "cu128-rma": "tch2100cu128-rma",
-    "cu130": "tch2110cu130",
-    "cu130-fa4": "tch2110cu130-fa4",
-    "cu130-rma": "tch2110cu130-rma",
-    "cu130-fa4-rma": "tch2110cu130-fa4-rma",
+    "cu129": "tch2130cu129",
+    "cu129-rma": "tch2130cu129-rma",
+    "cu129-sm80": "tch2130cu129-sm80",
+    "cu130": "tch2130cu130",
+    "cu130-fa4": "tch2130cu130-fa4",
+    "cu130-rma": "tch2130cu130-rma",
+    "cu130-fa4-rma": "tch2130cu130-fa4-rma",
 }
 
 NUM_GPUS = 2
@@ -53,19 +54,30 @@ NUM_GPUS = 2
 # differs from these, so we don't set one.)
 GPU_TYPE_NAMES: Dict[str, str] = {
     "h100": "NVIDIA H100 80GB HBM3",
+    "a100": "NVIDIA A100-SXM4-80GB",
     "b200": "NVIDIA B200",
     "b300": "NVIDIA B300",
 }
 DEFAULT_CLUSTERS_BY_GPU: Dict[str, List[str]] = {
     "h100": ["ai2/jupiter", "ai2/ceres"],
+    "a100": ["ai2/saturn"],
     "b200": ["ai2/titan"],
     "b300": ["ai2/holmes"],
 }
 
 
 def compatible_gpus(image_label: str) -> List[str]:
-    """GPUs an image can run on. CUDA-12.8 images (sm_90/100) can't run on B300 (sm_103)."""
-    return ["h100", "b200"] if image_label.startswith("cu128") else ["h100", "b200", "b300"]
+    """GPUs an image can run on, by the arches its kernels are built for.
+
+    - ``cu129-sm80`` adds sm_80, so it also runs on A100.
+    - Other cu129 images are sm_90/100 (H100, B200) -- no A100 (sm_80), no B300 (sm_103).
+    - cu130 images add sm_103, so they also run on B300.
+    """
+    if image_label == "cu129-sm80":
+        return ["h100", "a100", "b200"]
+    if image_label.startswith("cu129"):
+        return ["h100", "b200"]
+    return ["h100", "b200", "b300"]
 
 
 # A test skipped on *every* image is a coverage gap UNLESS it needs more GPUs than we launch with.

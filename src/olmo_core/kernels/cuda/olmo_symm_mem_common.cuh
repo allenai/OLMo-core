@@ -51,7 +51,11 @@
 #define ROWWISE_COMBINE_FUSED_VECS_PER_THREAD 16
 #define ROWWISE_WEIGHTED_PUT_ELEMS_PER_THREAD 32
 #define ROWWISE_MXFP8_BLOCK_SIZE 32
-#define ROWWISE_MXFP8_Q_CHUNK_BLOCKS 128
+// Blocks staged per warp in the rowwise MXFP8 quant dispatch. Reduced from 128 to 32 so the
+// per-warp staging buffer fits sm_100's 48 KB static shared-memory cap (at 128 the kernel needs
+// ~80 KB and nvlink rejects it on Blackwell: "uses too much shared data"). 32 keeps sm_90 working
+// and unblocks sm_100.
+#define ROWWISE_MXFP8_Q_CHUNK_BLOCKS 32
 #define ROWWISE_MXFP8_MAX_SCALE_GROUPS 1024
 
 namespace {

@@ -48,14 +48,18 @@ build :
 #  * The corresponding versions specified in 'pyproject.toml' include the new version.
 #  * The versions installed in '.github/actions/setup-python-env/action.yml' match if necessary.
 # NOTE: See https://hub.docker.com/r/nvidia/cuda/tags?name=devel-ubuntu22.04 for available CUDA versions.
-CUDA_VERSION = 12.8.1
+CUDA_VERSION = 12.9.1
 CUDA_VERSION_PATH=cu$(shell echo $(CUDA_VERSION) | cut -d"." -f1-2 | tr -d .)
-CUDA_NVCC_VERSION = 12.8.93
+CUDA_NVCC_VERSION = 12.9.86
 PYTHON_VERSION = 3.12
-TORCH_VERSION = 2.10.0
+TORCH_VERSION = 2.13.0
 TORCH_VERSION_SHORT = $(shell echo $(TORCH_VERSION) | tr -d .)
 INSTALL_CHANNEL = whl
-DION_SHA = "7452a5823cf9655b93c3f1d8020b4ebb2535239b"
+# Bumped from 7452a58 (2026-01, ~98 commits stale) to pick up dion's torch-2.13 + distributed
+# fixes: the megabatch_orthogonalize_async hang fix (#74), allreduce-sync change (#75), FSDP2
+# padding fix (#97), and the PyTorch-2.13/Triton-3.7.1 inductor-miscompile fix (#117). The old pin's
+# HSDP path deadlocks on an ALLREDUCE on torch 2.13 (works on 2.10).
+DION_SHA = "e64832041d8e01989abf609c9550f6307efbff2a"
 GROUPED_GEMM_SHA = "f1429a3c44c98f7912aa4b00125144cdf4e7fdb2"
 # Compute capabilities the from-source CUDA extensions (grouped-gemm, transformer-engine, ...) are
 # built for. The CUDA-13 targets (beaker-image-cu130*) extend these with sm_103 (B300 / Blackwell Ultra).
@@ -74,7 +78,9 @@ FLASH_ATTN_4_EXTRAS =
 # Pin for nvidia-cutlass-dsl (FA4's DSL dep). FA4 betas pin it loosely, so pip can float to a
 # version whose API dropped symbols the wheel needs (4.6.x removed ThrMma, breaking 4.0.0b16).
 FLASH_ATTN_4_CUTLASS_DSL_VERSION =
-TE_VERSION = 2.9
+# TE 2.18: the MXFP8 path passes MXFP8Tensor(with_gemm_swizzled_scales=...), added in TE 2.12, and
+# TE >= 2.18 needs the CUDA devel base below (it loads a system libcudart at import).
+TE_VERSION = 2.18.0
 RING_FLASH_ATTN_VERSION = 0.1.8
 LIGER_KERNEL_VERSION = 0.6.4
 # NOTE: Quack currently requires CUDA 12.9 or higher and PyTorch 2.9.1
@@ -83,13 +89,18 @@ QUACK_VERSION = ""
 # B300 (sm_103) image switches. Empty for the default image; set by the CUDA-13 targets (via
 # CUDA13_ARGS) to bake in the B300-only fixes (see CUDA13_ARGS and the Dockerfile release stage).
 B300 =
-TRITON_PTXAS_PATH =
+# Use the image's assembler for both Triton paths, including Blackwell (SM100+).
+# CUDA-13 targets override this with their CUDA-13 assembler symlink.
+TRITON_PTXAS_PATH = /opt/conda/bin/ptxas
 # symm-mem / RMA image switches. Empty for the default image; set by the '-rma' targets so the
 # symm_mem_vdev2d (rowwise EP) and nccl_rma_p2p (custom PP) extensions can JIT-build at runtime.
 UBUNTU_VERSION = 22.04
-# Release-stage base. Default plain Ubuntu; the RMA targets override with a CUDA 'devel' base so the
-# runtime ships nvcc + CUDA headers those extensions need to compile.
-BASE_IMAGE = ubuntu:$(UBUNTU_VERSION)
+# Release-stage base. A CUDA 'devel' base (nvcc + CUDA headers) is the default: TE >= 2.18 loads a
+# system libcudart at import, and the RMA extensions (symm_mem_vdev2d, nccl_rma_p2p) JIT-compile at
+# runtime. Derived from CUDA_VERSION so the release base always matches the build stage's CUDA (a
+# caller overriding only CUDA_VERSION -- e.g. the docker.yml matrix -- gets a matching base, not a
+# stale one). Override BASE_IMAGE explicitly only for a non-standard base.
+BASE_IMAGE = nvidia/cuda:$(CUDA_VERSION)-cudnn-devel-ubuntu$(UBUNTU_VERSION)
 # NCCL exposing the RMA one-sided window signal API (ncclPutSignal / ncclWaitSignal) for nccl_rma_p2p.
 NCCL_RMA_VERSION = 2.29.7
 # NCCL / NVSHMEM install specs passed to the Dockerfile. Empty = torch's bundled NCCL, no NVSHMEM.
@@ -151,7 +162,9 @@ docker-image :
 		--build-arg TRITON_PTXAS_PATH="$(TRITON_PTXAS_PATH)" \
 		--target release \
 		-t olmo-core:$(IMAGE_TAG) .
-	@docker run --rm olmo-core:$(IMAGE_TAG) python -c '$(DOCKER_VALIDATE_IMPORTS)'
+	@# --gpus all: transformer-engine (>= 2.18) dlopens libcuda at import, so the validation
+	@# container needs the driver exposed. Requires a GPU host + nvidia-container-toolkit.
+	@docker run --rm --gpus all olmo-core:$(IMAGE_TAG) python -c '$(DOCKER_VALIDATE_IMPORTS)'
 	@echo "✓ Image validated. Python environment:"
 	@echo ""
 	@docker run --rm olmo-core:$(IMAGE_TAG) pip list
@@ -184,10 +197,13 @@ beaker-image : docker-image
 ####################################################################################################
 # Image build matrix
 #
-# Two CUDA families, each optionally layered with flash-attn 4 (FA4) and/or the symm-mem/RMA stack:
-#   * CUDA 12.8 (torch 2.10) — built for sm_90/100 (H100, B200).
-#   * CUDA 13.0 (torch 2.11) — built for sm_90/100/103, so ONE image serves H100 + B200 + B300.
-#     The tag carries no GPU generation (naming stays consistent with the older CUDA-12 images).
+# Two CUDA families, both on torch 2.13, each optionally layered with flash-attn 4 (FA4) and/or the
+# symm-mem/RMA stack:
+#   * CUDA 12.9 (torch 2.13) — the default (the build variables above) — built for sm_90/100
+#     (H100, B200). Runs on the current H100/B200 CI driver (unlike CUDA 13); torch 2.13 dropped the
+#     cu128 wheel and bundles triton 3.7.1 + nccl 2.29.7, unblocking flash-linear-attention 0.5.2.
+#   * CUDA 13.0 (torch 2.13) — built for sm_90/100/103, so ONE image serves H100 + B200 + B300.
+#     The tag carries no GPU generation (naming stays consistent with the CUDA-12 images).
 #
 # FA4 (`flash_attn.cute`) is CUDA-13 only: the `flash-attn-4` package ships a `cu13` extra and no
 # `cu12`, so it is offered on the CUDA-13 targets only. RMA works on both families (the NVSHMEM /
@@ -197,13 +213,13 @@ beaker-image : docker-image
 # wins, so an FA4 layer's DOCKER_VALIDATE_IMPORTS overrides the base one.
 ####################################################################################################
 
-# CUDA-13 base (torch 2.11, validated on B300). Adds sm_103 to the arch lists, registers torch's
-# bundled nvrtc so transformer-engine imports on CUDA 13, points Triton at a CUDA-13 ptxas, and skips
-# the flash-attn 3 build (FA3 has no sm_103 kernels and doesn't build on CUDA 13 — dropped from the
-# smoke test too). If flash-attn / transformer-engine / grouped-gemm fail to build, bump them to
-# CUDA-13-compatible releases.
+# CUDA-13 base (torch 2.13). Successor to the torch-2.11 cu130 base. Adds sm_103 to the arch lists,
+# registers torch's bundled nvrtc so transformer-engine imports on CUDA 13, points Triton at a
+# CUDA-13 ptxas, and skips the flash-attn 3 build (FA3 has no sm_103 kernels and doesn't build on
+# CUDA 13 — dropped from the smoke test too). The devel base derives from CUDA_VERSION (see
+# BASE_IMAGE); inherits torch 2.13 + TE 2.18 from the defaults. If flash-attn / transformer-engine /
+# grouped-gemm fail to build, bump them to CUDA-13-compatible releases.
 CUDA13_ARGS = \
-	TORCH_VERSION=2.11.0 \
 	CUDA_VERSION=13.0.1 \
 	TORCH_CUDA_ARCH_LIST="9.0 10.0 10.3" \
 	FLASH_ATTN_CUDA_ARCHS="90;100;103" \
@@ -220,58 +236,59 @@ FA4_ARGS = \
 	FLASH_ATTN_4_CUTLASS_DSL_VERSION=4.5.3 \
 	DOCKER_VALIDATE_IMPORTS="import torch; import transformer_engine.pytorch; import flash_attn; import flash_attn.cute"
 
-# symm-mem / RMA layer: a CUDA 'devel' release base (ships nvcc + headers) plus NVSHMEM and an
-# RMA-capable NCCL, so the symm_mem_vdev2d (rowwise EP) and nccl_rma_p2p (custom PP) extensions can
-# JIT-build at runtime. Required for EP>1 / rowwise runs; EP=1 runs don't need it. Adds the '-rma'
-# tag suffix (see RMA_TAG). One bundle per CUDA family — the wheels are CUDA-major-specific.
-RMA_CU12_ARGS = \
-	BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
-	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu12 \
-	NCCL_PIP_SPEC=nvidia-nccl-cu12==$(NCCL_RMA_VERSION)
+# symm-mem / RMA layer: NVSHMEM plus (on CUDA 13) an RMA-capable NCCL, so the symm_mem_vdev2d
+# (rowwise EP) and nccl_rma_p2p (custom PP) extensions can JIT-build at runtime. Required for EP>1 /
+# rowwise runs; EP=1 runs don't need it. Adds the '-rma' tag suffix (see RMA_TAG). The devel base is
+# already the default (see BASE_IMAGE). One bundle per CUDA family — the wheels are CUDA-major-specific.
 RMA_CU13_ARGS = \
-	BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu13 \
 	NCCL_PIP_SPEC=nvidia-nccl-cu13==$(NCCL_RMA_VERSION)
+# RMA layer for the CUDA-12.9 family. torch 2.13 already bundles nccl 2.29.7 (the RMA-capable build),
+# so no NCCL override is needed here — only NVSHMEM (on the default cu129 devel base).
+RMA_CU129_ARGS = \
+	NVSHMEM_PIP_SPEC=nvidia-nvshmem-cu12
 
-# ---- CUDA 12.8 family (H100, B200) — torch 2.10 -------------------------------------------------
-# olmo-core-tch2100cu128-<date>
-.PHONY : beaker-image-cu128
-beaker-image-cu128 :
+# ---- CUDA 12.9 family (H100, B200) — torch 2.13 [default] --------------------------------------
+# olmo-core-tch2130cu129-<date>  (the default build variables above)
+.PHONY : beaker-image-cu129
+beaker-image-cu129 :
 	$(MAKE) beaker-image
 
-# olmo-core-tch2100cu128-rma-<date>
-.PHONY : beaker-image-cu128-rma
-beaker-image-cu128-rma :
-	$(MAKE) beaker-image $(RMA_CU12_ARGS)
+# olmo-core-tch2130cu129-rma-<date>
+.PHONY : beaker-image-cu129-rma
+beaker-image-cu129-rma :
+	$(MAKE) beaker-image $(RMA_CU129_ARGS)
 
-# ---- CUDA 13.0 family (H100, B200, B300) — torch 2.11 ------------------------------------------
-# olmo-core-tch2110cu130-<date>
-.PHONY : beaker-image-cu130
-beaker-image-cu130 :
-	$(MAKE) beaker-image $(CUDA13_ARGS)
-
-# olmo-core-tch2110cu130-fa4-<date>
-.PHONY : beaker-image-cu130-fa4
-beaker-image-cu130-fa4 :
-	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS)
-
-# olmo-core-tch2110cu130-rma-<date>
-.PHONY : beaker-image-cu130-rma
-beaker-image-cu130-rma :
-	$(MAKE) beaker-image $(CUDA13_ARGS) $(RMA_CU13_ARGS)
-
-# olmo-core-tch2110cu130-fa4-rma-<date>  (flash_4 attention + symm-mem/RMA rowwise EP)
-.PHONY : beaker-image-cu130-fa4-rma
-beaker-image-cu130-fa4-rma :
-	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS) $(RMA_CU13_ARGS)
-
-# ---- sm_80 (A100) variant ----------------------------------------------------------------------
-.PHONY : beaker-image-sm80
-beaker-image-sm80 :
+# olmo-core-tch2130cu129-sm80-<date>  (adds sm_80 / A100 for the general, non-MoE test coverage)
+# No NVSHMEM (A100 / sm_80 can't run the symm-mem EP kernels, which need sm_90+); uses the default
+# cu129 devel base.
+.PHONY : beaker-image-cu129-sm80
+beaker-image-cu129-sm80 :
 	$(MAKE) beaker-image \
 		TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0" \
 		FLASH_ATTN_CUDA_ARCHS="80;90;100" \
 		IMAGE_VARIANT=-sm80
+
+# ---- CUDA 13.0 family (H100, B200, B300) — torch 2.13 -----------------------------------------
+# olmo-core-tch2130cu130-<date>
+.PHONY : beaker-image-cu130
+beaker-image-cu130 :
+	$(MAKE) beaker-image $(CUDA13_ARGS)
+
+# olmo-core-tch2130cu130-fa4-<date>
+.PHONY : beaker-image-cu130-fa4
+beaker-image-cu130-fa4 :
+	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS)
+
+# olmo-core-tch2130cu130-rma-<date>
+.PHONY : beaker-image-cu130-rma
+beaker-image-cu130-rma :
+	$(MAKE) beaker-image $(CUDA13_ARGS) $(RMA_CU13_ARGS)
+
+# olmo-core-tch2130cu130-fa4-rma-<date>  (flash_4 attention + symm-mem/RMA rowwise EP)
+.PHONY : beaker-image-cu130-fa4-rma
+beaker-image-cu130-fa4-rma :
+	$(MAKE) beaker-image $(CUDA13_ARGS) $(FA4_ARGS) $(RMA_CU13_ARGS)
 
 .PHONY : get-beaker-workspace
 get-beaker-workspace :

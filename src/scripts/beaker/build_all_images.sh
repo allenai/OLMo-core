@@ -21,12 +21,13 @@ set -uo pipefail
 # The image matrix, in build order. The CUDA-13 base is built before its FA4/RMA variants so they
 # reuse its (cached) heavy build stage.
 ALL_SUFFIXES=(
-    cu128            # tch2100cu128-<date>          H100/B200
-    cu128-rma        # tch2100cu128-rma-<date>      H100/B200, symm-mem/RMA
-    cu130            # tch2110cu130-<date>          H100/B200/B300
-    cu130-fa4        # tch2110cu130-fa4-<date>      + flash_4
-    cu130-rma        # tch2110cu130-rma-<date>      + symm-mem/RMA
-    cu130-fa4-rma    # tch2110cu130-fa4-rma-<date>  H100/B200/B300, flash_4 + symm-mem/RMA
+    cu129            # tch2130cu129-<date>          H100/B200 (default)
+    cu129-rma        # tch2130cu129-rma-<date>      H100/B200, symm-mem/RMA
+    cu129-sm80       # tch2130cu129-sm80-<date>     + A100/sm_80 (general test coverage)
+    cu130            # tch2130cu130-<date>          H100/B200/B300
+    cu130-fa4        # tch2130cu130-fa4-<date>      + flash_4
+    cu130-rma        # tch2130cu130-rma-<date>      + symm-mem/RMA
+    cu130-fa4-rma    # tch2130cu130-fa4-rma-<date>  H100/B200/B300, flash_4 + symm-mem/RMA
 )
 
 # Resolve repo root (this script lives at src/scripts/beaker/).

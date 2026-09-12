@@ -20,6 +20,7 @@ from olmo_core.nn.moe.v2.routed_experts import (
 )
 from olmo_core.nn.parallel.distributed import MultiGroupDistributedDataParallel
 from olmo_core.testing import requires_gpu
+from olmo_core.testing.utils import requires_compute_capability
 
 
 def test_rowwise_fp8_config_validate_block_size():
@@ -465,6 +466,9 @@ def test_block_refresh_rowwise_fp8_cache_shared_only_does_not_refresh_routed():
 
 
 @requires_gpu
+# FP8 e4m3 (fp8e4nv) quantization requires sm_89+/Hopper; A100 (sm_80) only supports
+# fp8e4b15/fp8e5, so the prequant path fails there. Gate to compute capability >= 9.
+@requires_compute_capability(min_cc=9)
 def test_routed_experts_refresh_marks_owned_prequant_caches_versionless(monkeypatch):
     module = RoutedExperts(
         d_model=512,

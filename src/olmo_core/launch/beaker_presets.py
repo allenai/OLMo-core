@@ -63,7 +63,7 @@ class LaunchPreset:
 OLMO_DDP = LaunchPreset(
     name="olmo-ddp",
     description="OLMoDDP / fused MoE-v2 runs: B300 fa4-rma image, alloc-fragmentation fix, symm_mem_vdev2d prebuild.",
-    beaker_image="akshitab/olmo-core-tch2110cu130-fa4-rma-2026-07-24",
+    beaker_image="akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11",
     env_vars=[
         ("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"),
         ("OLMO_SYMM_VDEV2D_AUTO_BUILD", "1"),
