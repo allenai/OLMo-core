@@ -97,8 +97,10 @@ TRITON_PTXAS_PATH = /opt/conda/bin/ptxas
 UBUNTU_VERSION = 22.04
 # Release-stage base. A CUDA 'devel' base (nvcc + CUDA headers) is the default: TE >= 2.18 loads a
 # system libcudart at import, and the RMA extensions (symm_mem_vdev2d, nccl_rma_p2p) JIT-compile at
-# runtime. The CUDA-13 targets override this with the matching cu13 devel base.
-BASE_IMAGE = nvidia/cuda:12.9.1-cudnn-devel-ubuntu$(UBUNTU_VERSION)
+# runtime. Derived from CUDA_VERSION so the release base always matches the build stage's CUDA (a
+# caller overriding only CUDA_VERSION -- e.g. the docker.yml matrix -- gets a matching base, not a
+# stale one). Override BASE_IMAGE explicitly only for a non-standard base.
+BASE_IMAGE = nvidia/cuda:$(CUDA_VERSION)-cudnn-devel-ubuntu$(UBUNTU_VERSION)
 # NCCL exposing the RMA one-sided window signal API (ncclPutSignal / ncclWaitSignal) for nccl_rma_p2p.
 NCCL_RMA_VERSION = 2.29.7
 # NCCL / NVSHMEM install specs passed to the Dockerfile. Empty = torch's bundled NCCL, no NVSHMEM.
@@ -214,12 +216,11 @@ beaker-image : docker-image
 # CUDA-13 base (torch 2.13). Successor to the torch-2.11 cu130 base. Adds sm_103 to the arch lists,
 # registers torch's bundled nvrtc so transformer-engine imports on CUDA 13, points Triton at a
 # CUDA-13 ptxas, and skips the flash-attn 3 build (FA3 has no sm_103 kernels and doesn't build on
-# CUDA 13 — dropped from the smoke test too). Overrides the default cu12.9 devel base with the cu13
-# one; inherits torch 2.13 + TE 2.18 from the defaults. If flash-attn / transformer-engine /
+# CUDA 13 — dropped from the smoke test too). The devel base derives from CUDA_VERSION (see
+# BASE_IMAGE); inherits torch 2.13 + TE 2.18 from the defaults. If flash-attn / transformer-engine /
 # grouped-gemm fail to build, bump them to CUDA-13-compatible releases.
 CUDA13_ARGS = \
 	CUDA_VERSION=13.0.1 \
-	BASE_IMAGE=nvidia/cuda:13.0.1-cudnn-devel-ubuntu$(UBUNTU_VERSION) \
 	TORCH_CUDA_ARCH_LIST="9.0 10.0 10.3" \
 	FLASH_ATTN_CUDA_ARCHS="90;100;103" \
 	B300=1 \
