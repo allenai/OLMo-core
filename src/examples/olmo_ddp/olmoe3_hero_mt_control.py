@@ -15,6 +15,7 @@ from olmoe3_hero_mt_plan import (
     CONTROL,
     DECAY_JOBS,
     END,
+    METADATA_CACHE,
     MOUNT,
     PT_STEP,
     STATE,
@@ -53,6 +54,7 @@ def training_spec(original, run, commit):
             "OLMO35_DECAY_CPU_VALIDATE": None,
             "WANDB_RUN_ID": None,
             "WANDB_RESUME": None,
+            "CACHED_PATH_CACHE_ROOT": str(METADATA_CACHE),
         },
     )
     spec["tasks"] = [task]
@@ -96,6 +98,19 @@ def main():
             )
             for r in runs()
         }
+        names = {r.arm: r.run_id + "-train" for r in runs()}
+        repair = os.environ.get("OLMO35_MT_REPAIR_EMO_CACHE") == "1"
+        if repair:
+            # Explicit user-authorized replacement of the failed writer only. Preserve the
+            # exact durable spec of the non-EMO job already running on its original commit.
+            assert status(b.workload.get("01M2B3JSEC9X8V6G73707WZ3JF")) == "STATUS_FAILED"
+            names["emo"] += "-r2-metadata-cache"
+            original_non = AUTOMATION / "specs" / f"{names['non-emo']}.json"
+            planned["non-emo"] = json.loads(original_non.read_text())
+            entry = json.loads(
+                (AUTOMATION / "submissions" / f"{names['non-emo']}.json").read_text()
+            )
+            assert entry["experiment_id"] == "01M2B7GXHRSW8J2T5K0637HGJM"
         followups = {r.arm: eval_specs(b, r, commit) for r in runs()}
         for spec in [
             *planned.values(),
@@ -123,9 +138,16 @@ def main():
         plan = dict(source_commit=commit, runs=[r.as_dict() for r in runs()])
         plan_path = AUTOMATION / "plan.json"
         if plan_path.exists():
-            assert json.loads(plan_path.read_text()) == plan
+            old = json.loads(plan_path.read_text())
+            assert old["runs"] == plan["runs"]
+            assert repair or old == plan
         else:
             atomic_json(plan_path, plan)
+        if repair:
+            atomic_json(
+                AUTOMATION / f"repair-metadata-cache-{commit}.json",
+                dict(**plan, training_names=names, replaced="01M2B3JSEC9X8V6G73707WZ3JF"),
+            )
         log("MT_WATCHER_ARMED", **plan, gpu_resources=0)
         previous = None
         while True:
@@ -153,7 +175,7 @@ def main():
                     if fs.f_bavail * fs.f_frsize < 12_000_000_000_000:
                         snapshot[r.arm] = dict(state="waiting_for_storage")
                         continue
-                    work = control.ensure(r.run_id + "-train", planned[r.arm])
+                    work = control.ensure(names[r.arm], planned[r.arm])
                     state = control.report(work)
                     row = dict(
                         state=state,

@@ -7,13 +7,13 @@ import subprocess
 
 from olmoe3_hero_mt_control import training_spec
 from olmoe3_hero_mt_eval import eval_specs
-from olmoe3_hero_mt_plan import BRANCH, CAMPAIGN, DECAY_JOBS, END, WORKSPACE, runs
+from olmoe3_hero_mt_plan import BRANCH, CAMPAIGN, DECAY_JOBS, END, METADATA_CACHE, WORKSPACE, runs
 from olmoe3_lr_sweep_watch import replace_env, status
 
 UPLOADER_REF = "50069318bd7b6bcfed655a8a01d2892e56b7abff"
 
 
-def build_spec(beaker, commit, stage, gate=None):
+def build_spec(beaker, commit, stage, gate=None, repair=False):
     template = "01M29363936Y2BSJYTPPZFMV9X" if stage == "validate" else "01M2938WCZRD02WRGKBP158RSE"
     spec = copy.deepcopy(beaker.experiment.get_spec(beaker.workload.get(template)).to_json())
     assert len(spec["tasks"]) == 1
@@ -31,6 +31,7 @@ def build_spec(beaker, commit, stage, gate=None):
             "-euc",
             "python src/examples/olmo_ddp/olmoe3_hero_decay_runtime.py && "
             "python src/examples/olmo_ddp/olmoe3_hero_mt.py --validate-only && "
+            "python src/examples/olmo_ddp/olmoe3_hero_mt_cache.py && "
             "python src/examples/olmo_ddp/olmoe3_hero_mt.py --data-probe",
         ]
     else:
@@ -59,6 +60,8 @@ def build_spec(beaker, commit, stage, gate=None):
             "OLMO35_DECAY_LOAD": None,
             "WANDB_RUN_ID": None,
             "WANDB_RESUME": None,
+            "CACHED_PATH_CACHE_ROOT": str(METADATA_CACHE),
+            "OLMO35_MT_REPAIR_EMO_CACHE": "1" if repair else None,
         },
     )
     spec["retry"] = {"allowedTaskRetries": 0}
@@ -77,6 +80,7 @@ def main():
     parser.add_argument("stage", choices=("validate", "watch"))
     parser.add_argument("--gate")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--repair-emo-cache", action="store_true")
     args = parser.parse_args()
     assert not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -92,7 +96,9 @@ def main():
                 BeakerExperimentSpec.from_json(copy.deepcopy(spec))
         if args.stage == "watch":
             assert args.gate and status(b.workload.get(args.gate)) == "STATUS_SUCCEEDED"
-        spec = build_spec(b, commit, args.stage, args.gate)
+            if args.repair_emo_cache:
+                assert status(b.workload.get("01M2B3D90M8A07BE9F0YFDW9W2")) == "STATUS_CANCELED"
+        spec = build_spec(b, commit, args.stage, args.gate, args.repair_emo_cache)
         parsed = BeakerExperimentSpec.from_json(copy.deepcopy(spec))
         assert not parsed.to_json()["tasks"][0].get("resources")
         name = f"{CAMPAIGN}-{args.stage}-{commit[:8]}"

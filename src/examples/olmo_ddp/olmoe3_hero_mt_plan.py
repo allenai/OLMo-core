@@ -11,6 +11,7 @@ ROOT = MOUNT / "production-hero-small-midtrain" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
 DATA_WORK = ROOT / "data-work"
+METADATA_CACHE = DATA_WORK / "cached-path-metadata"
 PT_STEP = 120000
 LR = 1.1e-3 * 0.2
 WARMUP = 2000
