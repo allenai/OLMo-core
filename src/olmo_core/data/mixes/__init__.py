@@ -37,6 +37,7 @@ class DataMix(DataMixBase):
 
     # Pretraining mixes
     OLMoE_mix_0824 = "OLMoE-mix-0824"
+    OLMoE_mix_0824_dev = "OLMoE-mix-0824-dev"
     dolma17 = "dolma17"
     OLMo_mix_0625 = "OLMo-mix-0625"
     OLMo_mix_0625_150Bsample = "OLMo-mix-0625-150Bsample"
@@ -56,6 +57,7 @@ class DataMix(DataMixBase):
 
     # Validation mixes
     v3_small_ppl_validation = "v3-small-ppl-validation"
+    c4_ppl_validation = "c4-ppl-validation"
     code_fresh_ppl_validation = "code-fresh-ppl-validation"
 
     @classmethod
@@ -82,7 +84,7 @@ class DataMix(DataMixBase):
             base_dir = base_dir + "/"
 
         tokenizer_id: str = tokenizer
-        if self == DataMix.v3_small_ppl_validation:
+        if self == DataMix.v3_small_ppl_validation or self == DataMix.c4_ppl_validation:
             if tokenizer == TokenizerName.gpt_neox_olmo_dolma_v1_5:
                 tokenizer_id = "gptneox20b"
             elif tokenizer == TokenizerName.dolma2:

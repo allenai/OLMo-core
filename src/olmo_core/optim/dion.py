@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Tuple
 
 import torch
+from packaging.version import parse as parse_version
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.distributed.parallel import (
@@ -130,7 +131,18 @@ class DionConfig(MatrixAwareOptimConfig):
         has_dp_shard = MeshDimName.dp_shard in dim_names
 
         if has_dp_replicate and has_dp_shard:
-            # HSDP configuration
+            # HSDP configuration.
+            # TODO(dion torch-2.13): remove once dion is torch-2.13-clean upstream. Dion + HSDP is
+            # broken on torch >= 2.13: the replica-only path feeds a CPU tensor into a Triton kernel,
+            # and the sharded path can hang on an ALLREDUCE until the NCCL watchdog aborts. Fail fast
+            # with a clear message instead of erroring or hanging deep in the optimizer step.
+            if parse_version(torch.__version__) >= parse_version("2.13"):
+                raise RuntimeError(
+                    "Dion with HSDP is not supported on torch >= 2.13 (upstream dion bug: a "
+                    "CPU-tensor Triton error in the replica-only path and a flaky ALLREDUCE hang in "
+                    "the sharded path). Use a torch < 2.13 image for Dion+HSDP runs, or switch the "
+                    "data-parallel strategy (FSDP or DDP)."
+                )
             meshes["replicate_mesh"] = get_dp_replicate_mesh(world_mesh)
             meshes["outer_shard_mesh"] = get_dp_shard_mesh(world_mesh)
         elif MeshDimName.dp in dim_names or any(d.startswith("dp") for d in dim_names):

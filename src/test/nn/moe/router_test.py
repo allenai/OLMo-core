@@ -42,6 +42,28 @@ def test_router(
 
 
 @pytest.mark.parametrize("device", DEVICES)
+def test_router_random_expert_assignment(device: torch.device):
+    router = MoELinearRouter(
+        d_model=128,
+        num_experts=8,
+        top_k=2,
+        random_expert_assignment=True,
+    ).to(device)
+
+    x1 = torch.randn((2, 4, 128), device=device)
+    x2 = torch.randn((2, 4, 128), device=device)
+
+    torch.manual_seed(123)
+    weights1, indices1, _, _ = router(x1)
+    torch.manual_seed(123)
+    weights2, indices2, _, _ = router(x2)
+
+    # With the same RNG state, random routing is independent of token values.
+    torch.testing.assert_close(weights1, weights2)
+    torch.testing.assert_close(indices1, indices2)
+
+
+@pytest.mark.parametrize("device", DEVICES)
 def test_router_with_bias_gamma(device: torch.device):
     router1 = MoELinearRouter(
         d_model=128,

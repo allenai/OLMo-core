@@ -6,12 +6,17 @@ import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import DTensor, Shard
 
+from olmo_core.config import DType
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_full_tensor, get_rank, get_world_size
-from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
+from olmo_core.nn.attention import (
+    AttentionConfig,
+    GatedDeltaNetConfig,
+    NemotronMamba2Config,
+)
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.testing import requires_gpu, run_distributed_test
@@ -78,6 +83,15 @@ def test_gated_delta_net_num_flops_per_token():
     # At long sequence lengths, recurrent layers use fewer FLOPs than quadratic attention.
     gdn_flops = gdn.num_flops_per_token(seq_len)
     attn_flops = attn.num_flops_per_token(seq_len)  # type: ignore
+    # Training FLOPs apply a factor of 3 (forward + dgrad + wgrad): the base
+    # 2-ops-per-MAC counts become 6, 6, and 24 respectively.
+    linear_flops = 6 * sum(
+        m.weight.numel() for m in (gdn.w_q, gdn.w_k, gdn.w_v, gdn.w_a, gdn.w_b, gdn.w_g, gdn.w_out)
+    )
+    conv_flops = 6 * gdn.conv_size * (gdn.key_dim + gdn.key_dim + gdn.value_dim)
+    recurrent_flops = 24 * gdn.n_v_heads * gdn.head_k_dim * gdn.head_v_dim
+
+    assert gdn_flops == linear_flops + conv_flops + recurrent_flops
     assert 0 < gdn_flops < attn_flops
 
 
@@ -139,3 +153,78 @@ def test_context_parallel_gdn_ulysses(tmp_path):
         start_method="spawn",
         func_args=(checkpoint_dir, inputs_path, outputs_path, gdn_kwargs),
     )
+
+
+def _small_nemotron_mamba2_config() -> NemotronMamba2Config:
+    return NemotronMamba2Config(
+        mamba_num_heads=4,
+        mamba_head_dim=16,
+        n_groups=1,
+        ssm_state_size=16,
+        chunk_size=8,
+        dtype=DType.float32,
+    )
+
+
+def test_nemotron_mamba2_num_params():
+    d_model = 64
+    config = _small_nemotron_mamba2_config()
+    module = config.build(d_model, layer_idx=0, n_layers=2, init_device="meta")
+    actual = sum(p.numel() for p in module.parameters())
+    assert config.num_params(d_model) == actual
+
+
+def test_nemotron_mamba2_forward_runs_on_cpu():
+    seed_all(0)
+    d_model = 64
+    module = _small_nemotron_mamba2_config().build(d_model, layer_idx=0, n_layers=2)
+    x = torch.randn(2, 12, d_model)
+    with torch.no_grad():
+        out = module(x)
+    assert out.shape == (2, 12, d_model)
+
+
+def test_nemotron_mamba2_dt_bias_initialized_within_configured_range():
+    seed_all(0)
+    config = NemotronMamba2Config(
+        mamba_num_heads=512,
+        mamba_head_dim=8,
+        n_groups=1,
+        ssm_state_size=16,
+        time_step_min=0.001,
+        time_step_max=0.1,
+        time_step_floor=0.0001,
+        dtype=DType.float32,
+    )
+    # init_weights drives the seeded generator; without it the constructor's reset_parameters uses
+    # the global RNG (seeded by seed_all above), which is fine for the range check.
+    module = config.build(64, layer_idx=0, n_layers=1)
+    # softplus(dt_bias) must recover effective timesteps within the configured range, not the
+    # softplus(1) == 1.31 that a plain ones-init would give.
+    dt = torch.nn.functional.softplus(module.dt_bias.float())
+    assert dt.min() >= config.time_step_floor - 1e-6
+    assert dt.max() <= config.time_step_max + 1e-4
+
+
+def test_nemotron_mamba2_dt_bias_uses_supplied_generator_not_global_rng():
+    from olmo_core.nn.transformer.init import InitMethod
+
+    config = _small_nemotron_mamba2_config()
+
+    def init_dt_bias(global_seed: int) -> torch.Tensor:
+        # Perturb the ambient global RNG differently each time.
+        torch.manual_seed(global_seed)
+        module = config.build(64, layer_idx=0, n_layers=2)
+        generator = torch.Generator()
+        generator.manual_seed(2026)
+        module.init_weights(
+            init_method=InitMethod.normal,
+            d_model=64,
+            block_idx=0,
+            num_blocks=2,
+            generator=generator,
+        )
+        return module.dt_bias.detach().clone()
+
+    # An identical supplied generator must produce identical dt_bias regardless of global RNG state.
+    torch.testing.assert_close(init_dt_bias(1), init_dt_bias(999))

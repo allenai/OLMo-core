@@ -1,0 +1,214 @@
+from dataclasses import dataclass
+from typing import Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from olmo_core._nvtx import nvtx
+from olmo_core.config import Config, DType
+
+from .routed_experts import ExpertActivation
+
+
+def _swiglu(up: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+    gate = F.silu(gate)
+    hidden = up * gate
+    return hidden
+
+
+def _relu2(up: torch.Tensor) -> torch.Tensor:
+    return F.relu(up).square()
+
+
+@dataclass
+class SharedExpertsConfig(Config):
+
+    """
+    Configuration for shared experts in a MoE block.
+    """
+
+    # Input (and output) dimension of the experts
+    d_model: int
+
+    # Hidden (intermediate) dimension of the experts
+    hidden_size: int
+
+    # Number of shared experts (can be >= 1)
+    num_experts: int
+
+    # Whether to use bias in the experts
+    bias: bool
+
+    # default dtype for the experts
+    dtype: DType
+
+    activation: ExpertActivation = ExpertActivation.swiglu
+
+    def build(self, init_device: str = "cpu") -> "SharedExperts":
+        kwargs = self.as_dict()
+
+        return SharedExperts(init_device=init_device, **kwargs)
+
+    def num_params(self) -> int:
+        """
+        The number of params that the module will have once built.
+
+        :param d_model: The model dimensionality.
+        """
+
+        up_factor = 2 if self.activation == ExpertActivation.swiglu else 1
+        params = (up_factor + 1) * self.d_model * self.hidden_size  # up[/gate], down
+        if self.bias:
+            params += up_factor * self.hidden_size  # up[/gate] bias
+            params += self.d_model  # down bias
+
+        params *= self.num_experts  # for each expert
+
+        return params
+
+
+class SharedExperts(nn.Module):
+    """
+    Shared experts module for MoE blocks.
+
+    Shared experts work like a regular feed-forward but can support more than 1 expert.
+    All experts will have the same number of input tokens, so it's possible that we concatenate
+    the weights of all experts and use a single linear layer to process the input.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        hidden_size: int,
+        num_experts: int,
+        bias: bool,
+        dtype: DType,
+        activation: ExpertActivation = ExpertActivation.swiglu,
+        init_device: str = "cpu",
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        self.activation = ExpertActivation(activation)
+
+        assert not bias, "Shared experts do not support bias for now."
+
+        E, D, H = num_experts, d_model, hidden_size
+        up_factor = 2 if self.activation == ExpertActivation.swiglu else 1
+
+        # One big column-packed weight for up(+gate): (D, E*up_factor*H)
+        self.w_up_gate = nn.Parameter(
+            torch.empty(D, E * up_factor * H, device=init_device, dtype=dtype.as_pt())
+        )
+        # Per-expert down: (E, H, D)
+        self.w_down = nn.Parameter(torch.empty(E, H, D, device=init_device, dtype=dtype.as_pt()))
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # Standalone default; the model-level init may override this with a depth-scaled std.
+        std = 0.02
+        for w in (self.w_up_gate, self.w_down):
+            nn.init.trunc_normal_(w, mean=0.0, std=std, a=-3 * std, b=3 * std)
+
+    def _raise_if_fp8_anchor_storage_released(self) -> None:
+        if getattr(self, "_fp8_anchor_storage_released", False):
+            raise RuntimeError(
+                "SharedExperts bf16 fallback cannot run after fp8-only anchor storage has been released"
+            )
+
+    @nvtx.annotate("SharedExperts.forward", color="pink")
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, S, D) -> out: (E, B, S, D)
+        Fast path:
+          1) [BS, D] @ [D, E*2H] -> [BS, E*2H]
+          2) reshape+permute -> (E, BS, 2, H)
+          3) in-place SiLU on gate, elementwise multiply
+          4) bmm with per-expert down: (E, BS, H) x (E, H, D) -> (E, BS, D)
+        """
+        self._raise_if_fp8_anchor_storage_released()
+        B, S, D = x.shape
+        E, H = self.num_experts, self.hidden_size
+        BS = B * S
+
+        # 1) One big GEMM (best utilization, contiguous out in last dim)
+        x2 = x.reshape(BS, D)  # (BS, D)
+        up_gate = x2 @ self.w_up_gate  # (BS, E*2H)
+
+        # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
+        #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
+        if self.activation == ExpertActivation.swiglu:
+            up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+            up = up_gate.select(2, 0)  # each (E, BS, H) views
+            gate = up_gate.select(2, 1)
+            hidden = _swiglu(up, gate)  # (E, BS, H)
+        elif self.activation == ExpertActivation.relu2:
+            up = up_gate.view(BS, E, H).permute(1, 0, 2)
+            hidden = _relu2(up)
+        else:
+            raise NotImplementedError(self.activation)
+
+        # 4) Per-expert down-proj as grouped GEMM
+        #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
+        # TODO: add an E==1 fast path. For a single (shared) expert the permute above is a no-op
+        # and this batched bmm is slower than a plain mm; doing `hidden.squeeze(0) @
+        # w_down.squeeze(0)` would let the eager dense path match FeedForward. Under torch.compile
+        # (max-autotune) they already reach parity, so this only matters for eager execution.
+        out = torch.bmm(hidden, self.w_down)
+
+        return out.view(E, B, S, D)
+
+    @nvtx.annotate("SharedExperts.forward1", color="purple")
+    def forward1(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Split the forward pass into two parts for better overlap in EP.
+        """
+        self._raise_if_fp8_anchor_storage_released()
+        B, S, D = x.shape
+        E, H = self.num_experts, self.hidden_size
+        BS = B * S
+
+        # 1) One big GEMM (best utilization, contiguous out in last dim)
+        x2 = x.reshape(BS, D)  # (BS, D)
+        up_gate = x2 @ self.w_up_gate  # (BS, E*2H)
+
+        # 2) Reshape to separate experts and [up|gate], then make per-expert leading dim
+        #    Shapes: (BS, E, 2, H) -> (E, BS, 2, H)
+        if self.activation == ExpertActivation.swiglu:
+            up_gate = up_gate.view(BS, E, 2, H).permute(1, 0, 2, 3)
+            up = up_gate.select(2, 0)  # each (E, BS, H) views
+            gate = up_gate.select(2, 1)
+            return up, gate
+        if self.activation == ExpertActivation.relu2:
+            up = up_gate.view(BS, E, H).permute(1, 0, 2)
+            return up, up.new_empty(0)
+        raise NotImplementedError(self.activation)
+
+    @nvtx.annotate("SharedExperts.forward2", color="purple")
+    def forward2(self, up: torch.Tensor, gate: torch.Tensor, xshape: torch.Size) -> torch.Tensor:
+        """
+        Split the forward pass into two parts for better overlap in EP.
+        """
+        self._raise_if_fp8_anchor_storage_released()
+        E, _H = self.num_experts, self.hidden_size
+        B, S, D = xshape
+        # 3) SwiGLU: split into up / gate; materialize gate once and do in-place SiLU
+
+        if self.activation == ExpertActivation.swiglu:
+            hidden = _swiglu(up, gate)  # (E, BS, H)
+        elif self.activation == ExpertActivation.relu2:
+            hidden = _relu2(up)
+        else:
+            raise NotImplementedError(self.activation)
+
+        # 4) Per-expert down-proj as grouped GEMM
+        #    hidden: (E, BS, H), w_down: (E, H, D) -> out: (E, BS, D)
+        out = torch.bmm(hidden, self.w_down)
+
+        return out.view(E, B, S, D)
+
+    def extra_repr(self):
+        return f"num_experts={self.num_experts}, hidden_size={self.hidden_size}, d_model={self.d_model}"

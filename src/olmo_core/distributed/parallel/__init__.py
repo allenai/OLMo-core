@@ -12,6 +12,7 @@ from .context_parallel import ContextParallelConfig
 from .data_parallel import DataParallelConfig, DataParallelType, DPMeshDimName
 from .expert_parallel import ExpertParallelConfig
 from .pipeline_parallel import (
+    PipelineP2PBackend,
     PipelineParallelConfig,
     PipelineSchedule,
     PipelineScheduleType,
@@ -39,6 +40,7 @@ __all__ = [
     "DPMeshDimName",
     "TensorParallelConfig",
     "ExpertParallelConfig",
+    "PipelineP2PBackend",
     "PipelineParallelConfig",
     "PipelineScheduleType",
     "PipelineSplitStyle",
@@ -94,6 +96,10 @@ class MeshDimName(StrEnum):
 
     dp_ep = "dp_ep"
     dp_cp = "dp_cp"
+
+    # For OLMoDDPTrainModule.
+    ep_mp = "ep_mp"  # EP for model parallelism (sharding the model's experts).
+    ep_dp = "ep_dp"  # EP for data parallelism (gradient reduction).
 
 
 _WORLD_MESH: Optional[DeviceMesh] = None

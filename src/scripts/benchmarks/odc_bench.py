@@ -27,10 +27,10 @@ Run manually:
 
 .. code-block:: bash
 
-    python src/scripts/benchmark_odc.py
-    python src/scripts/benchmark_odc.py --n-layers 8 --d-model 8192 --d-ff 32768
-    python src/scripts/benchmark_odc.py --only swiglu rms_norm
-    python src/scripts/benchmark_odc.py --layers 1 4 8 --dtype bf16 fp32 --iters 5
+    python src/scripts/benchmarks/odc_bench.py
+    python src/scripts/benchmarks/odc_bench.py --n-layers 8 --d-model 8192 --d-ff 32768
+    python src/scripts/benchmarks/odc_bench.py --only swiglu rms_norm
+    python src/scripts/benchmarks/odc_bench.py --layers 1 4 8 --dtype bf16 fp32 --iters 5
 """
 
 from __future__ import annotations

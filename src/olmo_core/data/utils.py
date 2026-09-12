@@ -544,6 +544,7 @@ def segment_documents_into_instances(
     ] = np.uint32,
     bos_token_id: Optional[int] = None,
     sample: Optional[Tuple[int, int]] = None,
+    use_array_if_local: Optional[bool] = None,
 ) -> Tuple[int, int]:
     """
     Segment documents into instances of at most ``sequence_length`` tokens.
@@ -557,7 +558,11 @@ def segment_documents_into_instances(
     idx_gen = (
         idx
         for start_idx, end_idx in iter_document_indices(
-            path, eos_token_id=eos_token_id, bos_token_id=bos_token_id, dtype=dtype
+            path,
+            eos_token_id=eos_token_id,
+            bos_token_id=bos_token_id,
+            dtype=dtype,
+            use_array_if_local=use_array_if_local,
         )
         for idx in (start_idx, start_idx + min(end_idx - start_idx, max_sequence_length))
     )

@@ -214,25 +214,38 @@ class SourceMixtureDataset:  # Note: "dataset" naming is a bit inconsistent with
     A list of sources and their associated paths and token counts.
     """
 
+    filter_zero_token_paths: bool = False
+    """
+    If ``True``, drop paths that contribute zero tokens from :meth:`to_index` and :meth:`to_paths`.
+    Defaults to ``False`` to preserve the historical path indexing (zero-token paths produce no
+    instances downstream anyway, but keeping them keeps the ``(path, idx)`` numbering stable).
+    """
+
+    def selected_path_tokens(self) -> List[SourcePathTokens]:
+        """
+        Flatten the mixture to its per-path token counts, optionally dropping zero-token paths
+        (see :data:`filter_zero_token_paths`). Both :meth:`to_index` and :meth:`to_paths` route
+        through this so their ``idx`` ordering stays aligned.
+        """
+        path_tokens = list(chain.from_iterable(outcome.path_tokens for outcome in self.sources))
+        if self.filter_zero_token_paths:
+            path_tokens = [item for item in path_tokens if item.tokens > 0]
+        return path_tokens
+
     def to_index(self) -> Dict[Tuple[str, int], int]:
         """
         Convert the dataset to an indexed array of dict((int, path), int).
         """
         return {
-            (str(outcome.path), idx): outcome.tokens
-            for idx, outcome in enumerate(
-                list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
-            )
+            (str(item.path), idx): item.tokens
+            for idx, item in enumerate(self.selected_path_tokens())
         }
 
     def to_paths(self) -> List[PathOrStr]:
         """
         Convert the dataset to a list of paths while maintaining stable ordering.
         """
-        return [
-            item.path
-            for item in list(chain.from_iterable([outcome.path_tokens for outcome in self.sources]))
-        ]
+        return [item.path for item in self.selected_path_tokens()]
 
 
 @dataclass
