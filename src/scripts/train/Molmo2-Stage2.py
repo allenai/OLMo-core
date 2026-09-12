@@ -21,6 +21,7 @@ Set ``--trainer.load_path=null`` to initialise from HF ``allenai/Molmo2-4B`` ins
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
@@ -50,6 +51,7 @@ from olmo_core.data.multimodal.mixtures.tiers import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
@@ -506,6 +508,23 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         BeakerEnvVar(name=name, value=value) for name, value in SHIP_STACK_ENV.items()
     ]
 
+    # Data roots the container cannot infer. MOLMO_EXPERIMENT_DATA_DIR deliberately has no
+    # default (see paths.py: a library default must not point at one person's scratch), so
+    # without forwarding it a v10/v11 mixture dies building its DynaMath / FineVision
+    # sources *inside* the job -- after it has queued for a node and started. Forward
+    # whatever the submitting shell has.
+    for _var in (
+        "MOLMO_DATA_DIR",
+        "MOLMO_EXPERIMENT_DATA_DIR",
+        "MOLMO_CACHE_DIR",
+        "FINEVISION_ROOT",
+    ):
+        _value = os.environ.get(_var)
+        if _value:
+            launch_config.env_vars = list(launch_config.env_vars) + [
+                BeakerEnvVar(name=_var, value=_value)
+            ]
+
     return _apply_mixture_pack_profile(
         ExperimentConfig(
             model=model_config,
@@ -668,6 +687,17 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
+    # Fail here rather than on an allocated node. MOLMO_EXPERIMENT_DATA_DIR has no default
+    # (paths.py), and the v10/v11 mixtures build DynaMath / FineVision sources from it, so
+    # without it the job queues for a node, starts, and only then dies in dataset build.
+    # build_config forwards the variable into the container when it is set.
+    if is_v10_mixture(config.mixture) and not os.environ.get("MOLMO_EXPERIMENT_DATA_DIR"):
+        raise OLMoConfigurationError(
+            f"Mixture {config.mixture!r} includes sources under the experimental-data "
+            "staging root, but MOLMO_EXPERIMENT_DATA_DIR is not set in this shell, so the "
+            "job would fail at dataset build only after being scheduled. Export it before "
+            "launching, e.g. /weka/oe-training-default/donovanc/molmo-experimental-data"
+        )
     config.launch.launch(follow=True)
 
 
