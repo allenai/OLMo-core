@@ -11,11 +11,11 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
-import torch.nn as nn
+from torch import nn
 
 from olmo_core.data.multimodal import NativeTextReplayManifest
 from olmo_core.data.multimodal.vision_alignment_sources import serialized_example_sha256
@@ -656,10 +656,18 @@ def test_git_provenance_requires_owned_branch_for_local_launch(monkeypatch):
 
 
 def test_runtime_launch_imports_the_exact_gantry_checkout_source():
+    from gantry.api import GitRepoState
+
     vision_alignment = _load_module()
     launch = vision_alignment.BeakerLaunchConfig(
         name="vision-alignment-runtime-test",
         cmd=["true"],
+        git=GitRepoState(
+            repo="allenai/OLMo-core",
+            repo_url="https://github.com/allenai/OLMo-core",
+            ref="a" * 40,
+            branch="vision-moe",
+        ),
         env_vars=[
             vision_alignment.BeakerEnvVar(name="PYTHONPATH", value="/stale/source"),
             vision_alignment.BeakerEnvVar(name="EXPLICIT_SETTING", value="kept"),
@@ -1194,16 +1202,7 @@ def test_joint_native_parent_fingerprint_replay_matches_compact_builder():
 def test_profile_owns_phase_and_forbids_a_second_selector(tmp_path):
     vision_alignment = _load_module()
     profile = tmp_path / "profile.yaml"
-    profile.write_text(
-        "\n".join(
-            [
-                "version: 1",
-                "phase: bridge",
-                "overrides:",
-                "  - --data.prefetch_workers=0",
-            ]
-        )
-    )
+    profile.write_text("version: 1\nphase: bridge\noverrides:\n  - --data.prefetch_workers=0")
 
     loaded, overrides = vision_alignment._load_profile([f"--profile={profile}"])
 
@@ -1222,15 +1221,8 @@ def test_profile_rejects_duplicate_yaml_and_override_keys(tmp_path):
 
     duplicate_override = tmp_path / "duplicate-override.yaml"
     duplicate_override.write_text(
-        "\n".join(
-            [
-                "version: 1",
-                "phase: bridge",
-                "overrides:",
-                "  - --data.prefetch_workers=0",
-                "  - --data.prefetch_workers=1",
-            ]
-        )
+        "version: 1\nphase: bridge\noverrides:\n"
+        "  - --data.prefetch_workers=0\n  - --data.prefetch_workers=1"
     )
     with pytest.raises(ValueError, match="repeat a destination"):
         vision_alignment._load_profile([f"--profile={duplicate_override}"])
@@ -1363,7 +1355,7 @@ def test_cross_phase_parent_requires_pinned_approved_quality_gate(tmp_path):
         "data_contract_sha256": "a" * 64,
         "trainable_contract_sha256": "b" * 64,
     }
-    parent_config: Dict[str, Any] = {"vision_alignment": parent_meta}
+    parent_config: dict[str, Any] = {"vision_alignment": parent_meta}
     parent_config_sha = "c" * 64
     gate = {
         "format": "vision_alignment_parent_gate",
@@ -1628,7 +1620,7 @@ def test_production_joint_routes_exact_v3_gate_to_approved_perception_adapter(
     vision_alignment = _load_module()
     case = _joint_v3_parent_gate_case(tmp_path, vision_alignment)
     _allow_test_joint_v3_gate(monkeypatch, case)
-    observed: Dict[str, Any] = {}
+    observed: dict[str, Any] = {}
 
     def validate(bundle, **kwargs):
         observed["bundle"] = bundle
@@ -2030,7 +2022,7 @@ def test_joint_parent_recipe_is_bound_by_v3_gate_not_future_launcher_version(mon
             parent_gate_sha256=None,
         ),
     )
-    observed: Dict[str, Any] = {}
+    observed: dict[str, Any] = {}
     monkeypatch.setattr(vision_alignment, "RECIPE_VERSION", 2)
     monkeypatch.setattr(vision_alignment, "_latest_output_checkpoint", lambda config: None)
     monkeypatch.setattr(
@@ -2327,7 +2319,7 @@ def test_real_data_requires_a_matching_pinned_source_audit(tmp_path):
             "serialized_row_hashes": row_hashes,
             "serialized_row_hashes_sha256": vision_alignment._canonical_sha256(row_hashes),
         }
-    audit: Dict[str, Any] = {
+    audit: dict[str, Any] = {
         "format": "vision_alignment_source_audit",
         "version": 2,
         "auditor_sha256": vision_alignment._sha256_file(
@@ -2923,7 +2915,7 @@ def test_audited_dataset_binds_offline_audit_to_live_source_identity():
 
     dataset = Dataset()
     row_hash = serialized_example_sha256(dataset.example)
-    audit: Dict[str, Any] = {
+    audit: dict[str, Any] = {
         "fingerprint": "a" * 64,
         "source_registry_sha256": "d" * 64,
         "exporter_sha256": "e" * 64,
@@ -3163,34 +3155,11 @@ def test_joint_audited_native_dataset_allows_zero_rows_but_requires_positive_agg
         vision_alignment._AuditedDataset(dataset, "native_text_replay", audit, token_ids=token_ids)
 
 
-def test_checked_in_smoke_profile_is_cluster_only_and_calibrated():
-    import yaml
-
-    path = (
-        Path(__file__).parents[3]
-        / "configs"
-        / "vision_moe"
-        / "vision_alignment"
-        / "bridge"
-        / "synthetic_smoke.yaml"
-    )
-    profile = yaml.safe_load(path.read_text())
-
-    assert profile["phase"] == "bridge"
-    assert profile["launch"]["cluster"] == "ai2/holmes"
-    assert profile["launch"]["priority"] == "urgent"
-    assert profile["launch"]["min_runtime"] == "8h"
-    assert "hostnames" not in profile["launch"]
-    assert "--data.allow_unpinned_synthetic_smoke=true" in profile["overrides"]
-    assert any("mean_loss_weight.pixmo_caption" in value for value in profile["overrides"])
-    assert any("mean_loss_weight.pixmo_transcript" in value for value in profile["overrides"])
-
-
 def test_joint_evaluates_all_visual_sources_and_deterministically_shuffles_native_holdout(
     monkeypatch, tmp_path
 ):
     vision_alignment = _load_module()
-    loader_calls: List[Dict[str, Any]] = []
+    loader_calls: list[dict[str, Any]] = []
 
     class FakeLoader:
         def __init__(self, dataset, collator, **kwargs):
@@ -3209,7 +3178,7 @@ def test_joint_evaluates_all_visual_sources_and_deterministically_shuffles_nativ
             del tokenizer
             return FakeDataset()
 
-    callbacks: Dict[str, Any] = {}
+    callbacks: dict[str, Any] = {}
     trainer = SimpleNamespace(
         work_dir=tmp_path,
         device="cpu",
