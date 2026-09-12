@@ -5,10 +5,10 @@ import os
 import shutil
 import subprocess
 import sysconfig
-from pathlib import Path
 
 from .cuda_build_utils import (
     _env_bool,
+    _extension_source_directory,
     _find_nvshmem_paths,
     _infer_cmake_cuda_architectures,
     _torch_cuda_arch_list_from_cmake_architectures,
@@ -19,7 +19,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
     from setuptools import setup
     from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
-    this_dir = Path(__file__).resolve().parent
+    this_dir = _extension_source_directory(__file__, inplace=inplace)
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
     cpp_src = cuda_dir / "olmo_symm_mem_bindings.cpp"
@@ -81,7 +81,7 @@ def _build_extension_setuptools(*, inplace: bool, verbose: bool, force: bool) ->
 def _build_extension_cmake(*, inplace: bool, verbose: bool, force: bool) -> None:
     import torch
 
-    this_dir = Path(__file__).resolve().parent
+    this_dir = _extension_source_directory(__file__, inplace=inplace)
     repo_root = this_dir.parents[2]
     cuda_dir = this_dir / "cuda"
     build_dir = repo_root / "build" / "olmo_symm_mem_cmake"

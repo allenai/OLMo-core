@@ -115,7 +115,7 @@ def _torch_cuda_arch_list_from_cmake_architectures(cuda_architectures: str) -> s
     return " ".join(torch_archs)
 
 
-def _infer_cmake_cuda_architectures(torch_module) -> str | None:
+def _infer_cmake_cuda_architectures(torch_module) -> str:
     explicit = os.getenv("CMAKE_CUDA_ARCHITECTURES") or os.getenv("CUDAARCHS")
     if explicit:
         return explicit
@@ -124,11 +124,9 @@ def _infer_cmake_cuda_architectures(torch_module) -> str | None:
     if torch_cuda_arch_list:
         return _cmake_cuda_architectures(torch_cuda_arch_list)
 
-    if not torch_module.cuda.is_available():
-        return None
-
     archs: list[str] = []
-    for device_idx in range(torch_module.cuda.device_count()):
+    device_count = torch_module.cuda.device_count() if torch_module.cuda.is_available() else 0
+    for device_idx in range(device_count):
         major, minor = torch_module.cuda.get_device_capability(device_idx)
         arch = f"{major}{minor}"
         if major == 10 and _env_bool(
@@ -138,4 +136,23 @@ def _infer_cmake_cuda_architectures(torch_module) -> str | None:
             arch = f"{arch}a"
         if arch not in archs:
             archs.append(arch)
-    return ";".join(archs) if archs else None
+    if not archs:
+        raise RuntimeError(
+            "Cannot determine CUDA architectures: no visible CUDA devices. "
+            "Set TORCH_CUDA_ARCH_LIST explicitly (e.g. '9.0' for H100, '10.0a' for B200, "
+            "or '10.3a' for B300), or set CMAKE_CUDA_ARCHITECTURES."
+        )
+    return ";".join(archs)
+
+
+def _extension_source_directory(module_file: str, *, inplace: bool) -> Path:
+    # Gantry can install a wheel while pytest prepends the checkout's src/ directory.
+    # In that case --inplace must build the checkout's sources into that same checkout.
+    if inplace:
+        for root in (Path.cwd(), *Path.cwd().parents):
+            candidate = root / "src" / "olmo_core" / "kernels"
+            if (root / "pyproject.toml").is_file() and (
+                candidate / "cuda" / "olmo_symm_mem_kernels.cu"
+            ).is_file():
+                return candidate
+    return Path(module_file).resolve().parent
