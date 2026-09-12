@@ -728,13 +728,17 @@ class _GatheredMoEState(Mapping[str, torch.Tensor]):
 
 
 def iter_olmo3_moe_hf_state(
-    model: torch.nn.Module, hf_config: PretrainedConfig
+    model: torch.nn.Module, hf_config: PretrainedConfig, *, fused_experts: bool = False
 ) -> Iterator[tuple[str, torch.Tensor]]:
     """Stream HF tensors on the model device using the canonical converter.
 
     All EP ranks must consume the iterator in the same order. No complete model
     CPU replica is staged. The current expert slabs and consumer's output bucket
     still need device memory; this is not an arbitrarily small-memory exporter.
+    ``fused_experts`` yields each layer's routed experts as two stacked tensors
+    in the serving engine's layout instead of per-expert slices.
     """
     hf_config = _config_for_native_dense_layout(_unwrap_model(model), hf_config)
-    yield from iter_olmo3moe_state_to_hf(hf_config, _GatheredMoEState(model, hf_config))
+    yield from iter_olmo3moe_state_to_hf(
+        hf_config, _GatheredMoEState(model, hf_config), fused_experts=fused_experts
+    )

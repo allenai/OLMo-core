@@ -967,6 +967,8 @@ def convert_olmo3moe_state_to_hf(
 def iter_olmo3moe_state_to_hf(
     config: PretrainedConfig,
     olmo_core_state: Mapping[str, Any],
+    *,
+    fused_experts: bool = False,
 ) -> Iterator[tuple[str, torch.Tensor]]:
     """
     Yield an unsharded MoE-v2 state in HF format without retaining all layers.
@@ -978,8 +980,16 @@ def iter_olmo3moe_state_to_hf(
     ``w_up_gate`` routed-expert weight into per-expert HF ``up_proj``/``gate_proj``
     and reshapes ``w_down`` into per-expert HF ``down_proj``.
 
+    With ``fused_experts`` the routed experts of each layer are yielded as two
+    stacked tensors instead of ``3 * n_routed_experts`` slices:
+    ``mlp.experts.gate_up_proj.weight`` of shape ``[E, 2 * moe_hidden, d]`` with
+    gate rows before up rows, and ``mlp.experts.down_proj.weight`` of shape
+    ``[E, d, moe_hidden]``. That is the serving engine's fused expert layout, for
+    online weight publication; it is not the HF checkpoint format.
+
     :param config: The Hugging Face ``Olmo3MoeConfig``.
     :param olmo_core_state: An unsharded OLMo-core model state dict.
+    :param fused_experts: Yield stacked per-layer expert tensors.
     """
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
@@ -1089,10 +1099,17 @@ def iter_olmo3moe_state_to_hf(
         w_down = _take(olmo_core_state, used, f"{olmo_prefix}routed_experts.w_down").reshape(
             n_experts, moe_hidden, routed_d_model
         )
-        for e in range(n_experts):
-            yield f"{prefix}mlp.experts.{e}.up_proj.weight", w_up[e].contiguous()
-            yield f"{prefix}mlp.experts.{e}.gate_proj.weight", w_gate[e].contiguous()
-            yield f"{prefix}mlp.experts.{e}.down_proj.weight", w_down[e].T.contiguous()
+        if fused_experts:
+            yield (
+                f"{prefix}mlp.experts.gate_up_proj.weight",
+                torch.cat((w_gate, w_up), dim=1).contiguous(),
+            )
+            yield f"{prefix}mlp.experts.down_proj.weight", w_down.transpose(1, 2).contiguous()
+        else:
+            for e in range(n_experts):
+                yield f"{prefix}mlp.experts.{e}.up_proj.weight", w_up[e].contiguous()
+                yield f"{prefix}mlp.experts.{e}.gate_proj.weight", w_gate[e].contiguous()
+                yield f"{prefix}mlp.experts.{e}.down_proj.weight", w_down[e].T.contiguous()
 
         del w_up_gate, w_up, w_gate, w_down
 
