@@ -249,6 +249,10 @@ jobs:
           - name: Test MoE kernels (GPU)
             image: akshitab/olmo-core-tch2130cu129-rma-2026-09-11
             gpus: 2
+            # Builds the symm_mem ext then runs kernels + nn/ddp + MoE-v2 EP tests; needs more than
+            # 15m (reached 80% at the cap), so give it a larger beaker run cap + GH step timeout.
+            timeout_minutes: 35
+            task_timeout: 30m
             # Runs on h100/b200 (not a100, which lacks the sm_90+ kernels). NOTE: the v1 grouped_gemm
             # CUTLASS kernels have no Blackwell/sm_100 build, so any grouped_gemm test that isn't
             # gated to skip off sm_90 will fail on b200 with "Grouped GEMM execution not possible
@@ -258,7 +262,7 @@ jobs:
             # NVSHMEM + CUDA toolkit) before pytest, so the rowwise-EP tests that import the built
             # module at collection time can run. One `bash -c` so both run inside the gantry container.
             run: |
-              bash -c 'python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
+              bash -c 'export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"; python -m olmo_core.kernels.build_symm_mem_vdev2d_ext --inplace && python -c "from olmo_core.kernels import _symm_mem_vdev2d_ext_gpu" && pytest -v --color=yes --durations=3 -m gpu src/test/kernels/ src/test/nn/ddp/ src/test/nn/moe/v2/ src/test/nn/moe/moe_test.py src/test/nn/moe/routed_experts_v2_test.py src/test/train/train_module/transformer/ddp_train_module_test.py'
     steps:
       - uses: actions/checkout@v5
         with:
